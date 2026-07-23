@@ -651,3 +651,74 @@ Git evidence:
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the task-7 checkbox was held solely on harness-review F1, and F1 is resolved, landed, record-covered, and independently re-exercised. The hold reason recorded in evidence-t7.md is line-for-line the F1 defect (matched against frc-20260720-01301d50); the fix 09f29b7 (live blobs coord-sync 5a9ba6b / coord-push 79245cd, identical to the delta-review record hcr-20260720-79170b4e's covered_files) implements all four REQUIRED-FIXes; and rather than trust the recorded exit-0 I re-ran both suites myself with the throttle guard ACTIVE — coord-push 14/0 and coord-sync's F1 scenarios S10 (event cycle <600s still advances origin, --force bypasses the callee throttle) + S11 (throttled is no-signal, dead-remote streak still fires exactly ONE A2c alert) are GREEN. The one coord-sync FAIL (Scenario 5a) is a proven ~52-min-runtime timing artifact unrelated to F1 or the code (the same marker-check-only mechanism is green in Scenarios 6 and 8, which control their own fresh floor stamp) — filed via nl-issue. Every other verification axis from the prior comprehensive PASS STANDS (F1 touched no server/web file). All five re-verify conditions the prior held FAIL enumerated (a-e) are satisfied.
+
+---
+
+## Task 9 — Acceptance (builder evidence entry, 2026-07-23; task-verifier verdict INCOMPLETE conf 9 — checkbox NOT flipped)
+
+### Status
+The end-user-advocate runtime pass RAN against live :7733 (artifact:
+`.claude/worktrees/sweet-hamilton-c9a5b6/.claude/state/acceptance/cockpit-roadmap-redesign/artifact.json`,
+9 screenshots + console/network logs beside it; 7 PASS / 1 FAIL / 1 NOT-EXERCISABLE). The one
+FAIL (s4 became-link false-miss) is FIXED at b496b4f and was independently re-derived by
+task-verifier at wire + suite + served-client level (its evidence block is in the session
+transcript and summarized below). REMAINING BLOCKER: the operator's own cold-start walkthrough
+— named in T9's task text, human-only, surfaced to NEEDS-YOU. T9 flips only after it.
+
+### Comprehension Articulation (Task 9)
+
+**Spec meaning.** T9 conjoins TWO acceptance components: (1) an adversarial runtime pass by
+end-user-advocate — the one agent whose verdict does not trust the builders — executed against
+the LIVE deployed surface (:7733), covering the shell + all three views via the plan's 9
+Acceptance Scenarios; and (2) the operator's OWN cold-start walkthrough on the new surface,
+which replaces the retired ask-p1 walkthrough as the human sign-off that the surface answers
+the four bucket questions cold in <60s. Machine proxy (advocate s9) does not substitute for
+(2); both must occur. "Verification: full" means the task closes on demonstrated user paths,
+not component evidence.
+
+**Edge cases covered.** The false-miss class (a cross-view link whose target key style changed
+under Round 8 re-rooting): fixed, pinned negatively (T5-7 rejects the item.id shape) and
+positively (S3b pins became.roadmap_id === plan slug). The duplicate-surface class (an interim
+view surviving its replacement): interim ask tree hidden at ledger mount with registration-
+precedence verified (last registerView wins; Harness Health clones from its own template).
+Honest-negative rendering: live stalled=0/unknown=0 renders zero badges — no false attention
+states fabricated.
+
+**Edge cases NOT covered.** (a) Live end-to-end stall roll-up click-through (plan scenario 6 /
+artifact s5): NOT-EXERCISABLE without injecting state into lock-guarded live files exported to
+peers within ~2min — accepted residual, fixture-pinned in two suites; remains undemonstrated
+until the first natural stall. (b) Plan-3's interactive REFUSE clause and once-only defect
+filing: not exercised in this runtime pass (fixture coverage cited below). (c) The operator
+walkthrough — outstanding by definition until the human performs it.
+
+**Assumptions.** The live :7733 process serves the code under verification (verified by
+task-verifier: served requests.js targets ev.plan_slug — the fix is LIVE, not just merged).
+The acceptance artifact's scenario set is an honest but non-identical projection of the plan's
+9 scenarios; the disposition table below closes that record gap explicitly rather than
+silently substituting.
+
+### Per-scenario dispositions (closing task-verifier check-7's record gap)
+
+Mapping of the PLAN's 9 Acceptance Scenarios to their actual disposition. Where the runtime
+pass did not exercise a scenario live, the disposition cites the existing two-gate-PASSed
+fixture coverage, s5-style — named coverage, never silent substitution (citations per
+task-verifier's own check-7 mapping, re-stated here as the record):
+
+| Plan scenario | Disposition |
+|---|---|
+| 1 (archived rebuild renders COMPLETE, never ACTIVE) | LIVE PASS (artifact s1). Note: p1's chip reads "complete (operator override)" — see adjudication below. |
+| 2 (merged-undeployed renders OUTSIDE Complete + labeled override) | FIXTURE-COVERED: T1 three-class complete-oracle fixtures (server.selftest.js) + R5 exceptional-column pins; not live-exercised (no live merged-unverified item existed in the corpus at run time). |
+| 3 (context-less add: interactive REFUSE / mechanical quarantine / once-only defect) | PARTIAL LIVE (quarantine rendering + Inbox-count exclusion PASS in artifact s3); REFUSE clause + once-only filing FIXTURE-COVERED: T4 lint-REFUSE pins + auditor filed-once state tests. |
+| 4 (badge wall impossible: 700 bookkeeping badges → one chip per class) | FIXTURE-COVERED: T6-0..T6-5 badge-multiplicity tests (cockpit.selftest.js); not live-injectable without fabricating telemetry. |
+| 5 (peer publish ~2min event path + idle keepalive floor) | FIXTURE-COVERED: T7 coord-sync S10/S11 + coord-push S10 (throttle-ACTIVE event cycle; keepalive floor), re-run green by the T7 verifier; cross-machine live check awaits the second machine's installer (NEEDS-YOU). |
+| 6 (collapsed-tree stall roll-up + badge click-through + Back) | NOT-EXERCISABLE live (= artifact s5): no natural stalled item; injection races lock-guarded shared state. Fixture-pinned (roll-up computation + badge rendering suites). Accepted residual: undemonstrated until the first natural stall. |
+| 7 (corrupt plan → unknown; unreadable ledger → pane-error, never win state) | FIXTURE-COVERED: T1 unknown-on-input-failure (no default-guess branch, selftest-pinned) + T4 pane-error/win-state-only-on-success pins. |
+| 8 (operator title survives distiller re-run) | FIXTURE-COVERED: T2 title-precedence fold (operator beats newer auto regardless of timestamp; server.selftest.js + ask-registry.sh scenario Q/Q3 pins). |
+| 9 (cold-start walk <60s, four bucket questions) | LIVE PASS by machine proxy (artifact s9, 1.7s); OPERATOR half OUTSTANDING — the blocking ask. |
+
+### Adjudication: p1's "complete (operator override)" under merged-is-deployed (task-verifier observation)
+The p1 override was recorded 2026-07-17 — TWO DAYS BEFORE the merged-is-deployed oracle
+existed (it shipped in this plan's T1, 2026-07-19). The label honestly preserves the
+historical provenance of the completion rather than retroactively re-attributing it to an
+oracle that post-dates it; sibling archived plans completed after T1 render oracle-derived
+plain "complete", which is the demonstrated oracle path. No defect; no action.
