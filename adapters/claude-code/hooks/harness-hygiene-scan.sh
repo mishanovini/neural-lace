@@ -1093,6 +1093,7 @@ fi
   echo "operator say-so — constitution §7.)"
   echo "Denylist: adapters/claude-code/patterns/harness-denylist.txt"
   echo "Rule: principles/harness-hygiene.md"
+  echo "This gate: ~/.claude/hooks/harness-hygiene-scan.sh (source: adapters/claude-code/hooks/harness-hygiene-scan.sh)"
   echo "================================================================"
 } >&2
 

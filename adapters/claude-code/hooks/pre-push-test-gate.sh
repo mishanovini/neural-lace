@@ -171,6 +171,8 @@ regressions before they leave the dev box; remote gate catches
 them before they reach master. Both belt-and-suspenders.
 
 See harness-architecture.md for the pattern rationale.
+
+This gate: ~/.claude/hooks/pre-push-test-gate.sh (source: adapters/claude-code/hooks/pre-push-test-gate.sh)
 ==============================================================
 EOF
   exit 1
@@ -181,6 +183,7 @@ if ! grep -q "TESTS_PASSED_FOR_SHA=$head_sha" "$receipt" 2>/dev/null; then
   cat >&2 <<EOF
 [pre-push-test-gate] BLOCKED — receipt at $receipt does not contain
 "TESTS_PASSED_FOR_SHA=$head_sha". Re-run tests and re-record.
+This gate: ~/.claude/hooks/pre-push-test-gate.sh (source: adapters/claude-code/hooks/pre-push-test-gate.sh)
 EOF
   exit 1
 fi

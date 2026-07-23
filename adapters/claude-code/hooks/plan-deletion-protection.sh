@@ -180,6 +180,8 @@ Other options:
 NOTE: this block prevented the ENTIRE command from running — including any
 fix/edit/git add prefix before the git commit. Nothing was executed. Re-run
 the non-commit part as its own call first, then commit separately.
+
+This gate: ~/.claude/hooks/plan-deletion-protection.sh (source: adapters/claude-code/hooks/plan-deletion-protection.sh)
 MSG
   exit 1
 }

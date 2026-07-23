@@ -309,6 +309,8 @@ when you intended to be in a worktree. Run \`pwd\` and \`git worktree list\`
 to confirm. The user's primary project checkout MUST NOT be overwritten
 with placeholder values; only worktrees with their own isolated
 .env.local should receive build-time stubs.
+
+This gate: ~/.claude/hooks/env-local-protection.sh (source: adapters/claude-code/hooks/env-local-protection.sh)
 EOF
   return 1
 }

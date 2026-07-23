@@ -548,6 +548,8 @@ Before the session can end, do ONE of:
      (>=1 non-whitespace line, mtime < 1h). NEVER --no-verify.
 
 See ~/.claude/doctrine/gate-respect.md — diagnose before bypass.
+
+This gate: ~/.claude/hooks/workstreams-stop-gate.sh (source: adapters/claude-code/hooks/workstreams-stop-gate.sh)
 ================================================================
 MSG
 

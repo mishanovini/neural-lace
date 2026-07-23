@@ -156,6 +156,8 @@ emit_block() {
 BLOCKED: task-completed-evidence-gate — $title
 ================================================================
 $body
+
+This gate: ~/.claude/hooks/task-completed-evidence-gate.sh (source: adapters/claude-code/hooks/task-completed-evidence-gate.sh)
 MSG
   printf '{"continue": false, "stopReason": "%s"}\n' "$title" || true
   exit 2

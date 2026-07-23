@@ -121,6 +121,7 @@ _wig_block() {
     _wig_report_gap "$check" "$err_msg"
     return 0
   fi
+  echo "This gate: ~/.claude/hooks/work-integrity-gate.sh (source: adapters/claude-code/hooks/work-integrity-gate.sh)" >&2
   _wig_ledger "block" "${check}: ${err_msg}"
   retry_guard_block_or_exit \
     "work-integrity-gate" \

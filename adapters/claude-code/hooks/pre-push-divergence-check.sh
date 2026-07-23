@@ -132,6 +132,8 @@ _main_check() {
     echo "Bypass (only if you understand the consequence):" >&2
     echo "  git push --no-verify" >&2
     echo "" >&2
+    echo "This gate: ~/.claude/hooks/pre-push-divergence-check.sh (source: adapters/claude-code/hooks/pre-push-divergence-check.sh)" >&2
+    echo "" >&2
   done
 
   [ "$saw_block" = "1" ] && return 1

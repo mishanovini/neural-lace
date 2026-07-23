@@ -3079,6 +3079,7 @@ if [[ "$FINDING_COUNT" -gt 0 ]]; then
   echo "before a plan can be marked ACTIVE so that Gen 3 anti-patterns" >&2
   echo "don't survive into execution." >&2
   echo "" >&2
+  echo "This gate: ~/.claude/hooks/plan-reviewer.sh (source: adapters/claude-code/hooks/plan-reviewer.sh)" >&2
   exit 1
 fi
 

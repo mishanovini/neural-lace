@@ -683,6 +683,7 @@ See also: ~/.claude/doctrine/planning.md "Identifying a gap = writing a
 backlog entry, in the same response" — the same principle applies to
 bugs surfaced during execution.
 
+This gate: ~/.claude/hooks/bug-persistence-gate.sh (source: adapters/claude-code/hooks/bug-persistence-gate.sh)
 ================================================================
 MSG
 

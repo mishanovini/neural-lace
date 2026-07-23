@@ -145,6 +145,8 @@ emit_block() {
 BLOCKED: teammate-spawn-validator — $title
 ================================================================
 $body
+
+This gate: ~/.claude/hooks/teammate-spawn-validator.sh (source: adapters/claude-code/hooks/teammate-spawn-validator.sh)
 MSG
   exit 2
 }

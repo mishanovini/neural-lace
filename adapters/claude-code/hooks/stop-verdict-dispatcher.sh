@@ -1319,6 +1319,8 @@ _svd_emit_block_message() {
     echo "design), end with an honest PAUSING:/BLOCKED: marker naming it, or take"
     echo "the named waiver escape hatch above — never re-assert DONE: over an"
     echo "unresolved verification-class gap (see the DONE-refusal note above)."
+    echo ""
+    echo "This gate: ~/.claude/hooks/stop-verdict-dispatcher.sh (source: adapters/claude-code/hooks/stop-verdict-dispatcher.sh)"
     echo "================================================================"
   } >&2
 

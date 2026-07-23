@@ -208,6 +208,7 @@ run_gate() {
   emit_block "Edit on ~/.claude/local/$basename requires authorization. The user must invoke '/grant-local-edit $basename' before this edit can land. Markers live in ~/.claude/state/local-edit-<slug>-<timestamp>.txt and expire after 30 min. See rules/local-edit-authorization.md."
   echo "[local-edit-gate] BLOCK: $basename has no fresh authorization marker" >&2
   echo "[local-edit-gate]        run /grant-local-edit $basename to authorize this edit" >&2
+  echo "[local-edit-gate] This gate: ~/.claude/hooks/local-edit-gate.sh (source: adapters/claude-code/hooks/local-edit-gate.sh)" >&2
   return 2
 }
 

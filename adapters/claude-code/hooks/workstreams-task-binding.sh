@@ -258,7 +258,7 @@ _run_on_stop() {
   fi
 
   # The injection text (shared by warn + block).
-  local nudge="[workstreams-task-binding] This session made $toolcalls tool calls but created/updated ZERO tasks. Record what you did in the task list so it survives to the next session: call TaskCreate (and TaskUpdate it to completed). The harness mirrors your tasks into the durable Workstreams tracker automatically. To intentionally skip (rare): write a waiver naming BOTH why this gate exists and why that does not apply here (ADR 058 D5 pin f) to $state_dir/workstreams-task-waiver-\$(date +%s).txt, e.g. printf 'Purpose: this gate exists to prevent unrecorded session work\\nBecause: <your reason>\\n' > $state_dir/workstreams-task-waiver-\$(date +%s).txt, or set WS_TASK_STOP_MODE=warn."
+  local nudge="[workstreams-task-binding] This session made $toolcalls tool calls but created/updated ZERO tasks. Record what you did in the task list so it survives to the next session: call TaskCreate (and TaskUpdate it to completed). The harness mirrors your tasks into the durable Workstreams tracker automatically. To intentionally skip (rare): write a waiver naming BOTH why this gate exists and why that does not apply here (ADR 058 D5 pin f) to $state_dir/workstreams-task-waiver-\$(date +%s).txt, e.g. printf 'Purpose: this gate exists to prevent unrecorded session work\\nBecause: <your reason>\\n' > $state_dir/workstreams-task-waiver-\$(date +%s).txt, or set WS_TASK_STOP_MODE=warn. This gate: ~/.claude/hooks/workstreams-task-binding.sh (source: adapters/claude-code/hooks/workstreams-task-binding.sh)"
 
   if [[ "$mode" == "warn" ]]; then
     printf '%s\n' "$nudge" >&2
@@ -381,7 +381,7 @@ _run_on_message() {
     fi
   fi
 
-  local nudge="[workstreams-task-binding] You're about to commit to something (\"I'll …\"/\"going to …\") but no TaskCreate appears in the recent transcript. Record the commitment first: TaskCreate it so it's tracked and survives the session. (Set WS_TASK_MESSAGE_MODE=off to silence.)"
+  local nudge="[workstreams-task-binding] You're about to commit to something (\"I'll …\"/\"going to …\") but no TaskCreate appears in the recent transcript. Record the commitment first: TaskCreate it so it's tracked and survives the session. (Set WS_TASK_MESSAGE_MODE=off to silence.) This gate: ~/.claude/hooks/workstreams-task-binding.sh (source: adapters/claude-code/hooks/workstreams-task-binding.sh)"
 
   if [[ "$mode" == "block" ]]; then
     printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "$nudge" | (jq -Rs . 2>/dev/null || printf '"%s"' "$nudge"))"

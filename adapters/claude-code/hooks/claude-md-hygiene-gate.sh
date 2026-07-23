@@ -389,6 +389,7 @@ if [[ "$TOTAL" -gt 0 ]]; then
   echo "NOTE: this block prevented the ENTIRE command from running — including any" >&2
   echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run" >&2
   echo "the non-commit part as its own call first, then commit separately." >&2
+  echo "This gate: ~/.claude/hooks/claude-md-hygiene-gate.sh (source: adapters/claude-code/hooks/claude-md-hygiene-gate.sh)" >&2
   exit 2
 fi
 

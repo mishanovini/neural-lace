@@ -638,6 +638,7 @@ if [[ -n "$BLOCKERS" ]]; then
   echo "" >&2
   echo "To resolve: address each blocker above. Do not --no-verify." >&2
   echo "" >&2
+  echo "This gate: ~/.claude/hooks/pre-commit-tdd-gate.sh (source: adapters/claude-code/hooks/pre-commit-tdd-gate.sh)" >&2
   exit 1
 fi
 

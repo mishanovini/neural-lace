@@ -137,6 +137,8 @@ emit_block() {
 BLOCKED: task-created-validator — $title
 ================================================================
 $body
+
+This gate: ~/.claude/hooks/task-created-validator.sh (source: adapters/claude-code/hooks/task-created-validator.sh)
 MSG
   # Some Claude Code event handlers honor stdout JSON. Emit a
   # block decision for completeness; stderr+exit-2 is the

@@ -516,6 +516,7 @@ _block() {
     echo "one waiver also covers a follow-up \`git worktree remove\` re-block on"
     echo "the same branch.)"
     echo ""
+    echo "This gate: ~/.claude/hooks/concurrent-ownership-gate.sh (source: adapters/claude-code/hooks/concurrent-ownership-gate.sh)"
     echo "================================================================"
   } >&2
   cat <<'JSON'

@@ -245,6 +245,8 @@ if [ "$HAS_RECORD_ADD_OR_MOD" -eq 1 ] && [ "$HAS_INDEX" -eq 0 ]; then
     echo "the index."
     echo ""
     echo "To bypass (not recommended): git commit --no-verify"
+    echo ""
+    echo "This gate: ~/.claude/hooks/decisions-index-gate.sh (source: adapters/claude-code/hooks/decisions-index-gate.sh)"
     echo "================================================================"
   } >&2
   exit 1
