@@ -80,6 +80,10 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
 - Defender note: exclusions verified in place (T6) yet Antimalware still 25% CPU during the storm —
   behavior monitoring scans process creation regardless of exclusions; confirms fork-RATE reduction
   (T2/T3) is the load-bearing fix.
+- 2026-07-23 (T3 builder trail, union-kept at integration): the shared lock lib
+  session-start-auto-install.sh already uses is the SAME lib T3 extends to harness-doctor.sh and
+  session-start-digest.sh; separately declared above by the orchestrator — this line preserves the
+  builder's own scope-drift trail.
 
 ## Notes
 T2/T3 are the highest-leverage (they contain the fork storm). T1 is bookkeeping to get the diagnosis
