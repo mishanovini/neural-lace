@@ -210,3 +210,43 @@ LAW: the Roadmap is the PLAN/work tree (phases → tasks → subtasks + live age
 tab is the ask/intent ledger. They are different trees rooted on different things. Provenance
 links Roadmap→Requests where a plan has a linked ask (C6 bidirectional law preserved), but the
 Roadmap's ROOTS are plans, never asks.
+
+## Round 9 — 2026-07-23, operator walkthrough of the round-8 deploy (verbatim; screenshot: #roadmap, 16 phases)
+
+> "This is an improvement, but there are still so many things missing. It sure as hell seems
+> like you are just completely forgetting all the things I've asked you for. I see a partial
+> tree structure with no context. I see the progress of phases but I don't see any information
+> about what those phases are a part of, nor do I see what project it's a part of, nor do I see
+> any of the other work that's going on. I do not see the to-do list pane that we've talked
+> about repeatedly. I do see the backlog pane on a different page. Are you aware of all the
+> things that I've asked for as part of this plan? Is there a reason why it's been such a
+> fucking struggle to get you to implement the specific things that I've asked for so fucking
+> many times?"
+
+This is the operator's cold-start walkthrough (T9's human component): VERDICT FAIL — friction
+list becomes the Round-9 fix round. Live-render audit against the verbatim record:
+
+| # | Operator ask (round) | Live state 2026-07-23 | Diagnosis |
+|---|---|---|---|
+| R9-1 | Items named by intent, always editable (r3) | Plan phases render RAW SLUGS ("nl-finding-030-crlf-validator-skip") | Renderer ignores the plan file's own `# Plan:` H1 title — distillation lane covers asks, never plan titles. FIX: render H1 title, slug as tooltip/fallback. |
+| R9-2 | "Phases of a project" — series under an intent (r2, r6 gap 6) | "PHASE 1 OF 16" numbers 16 UNRELATED plans as one giant series | 8A re-root flattened the grouping level: series-numbering across unrelated plans implies membership in nothing. FIX: group by project (header per group), number within group. |
+| R9-3 | Which project each item belongs to (r9 explicit) | No per-item project label (only the filter chip) | FIX: subtle per-phase project chip. |
+| R9-4 | Harness chores excluded (r4 operator B) | "0 hidden (harness chores)" while nl-finding-*/watchdog/enforcement plans render as phases | Chore classifier keys on ASK provenance; machine-filed PLANS (no linked ask) default to not-chore — classifier inert on the new plan-rooted tree. FIX: plan-level provenance classes (nl-issue/finding/sweep/watchdog slugs + header field going forward), hidden-count disclosure kept. |
+| R9-5 | Provenance never noise (r6 gap 2) | "from your request(s): (no captured request — registered directly)" repeats on nearly every phase | Same noise class the dedup law targeted. FIX: suppress the line entirely when no real link exists. |
+| R9-6 | To-do list pane visible ("talked about repeatedly") | Standalone pane RETIRED into Inbox "My items" (A10 adjudication — reviews', not operator's, decision); backlog on Requests tab only | Operator verbatim outranks the A10 adjudication (constitution: inputs doc is supreme). FIX: compact My-items + Backlog side panes on the Roadmap landing. |
+| R9-7 | ALL current work incl. live background agents visible (r6 "everything on one page", 7B-i) | No live-agent leaves render; no other-work surface | Agent-leaf pipeline exists (roadmap-routes /agent/ leaves) but only task-BOUND sessions attribute; unbound sessions invisible. FIX: verify pipeline live + render an "unattributed live sessions (N)" node so running work is never invisible. |
+| R9-8 | Everything = across the operator's projects | Only neural-lace plans root the tree | Plan scan covers this repo only (verify config); other repos' work invisible. FIX: scan configured repos' docs/plans/ (projects config); honest absence note where a repo has no plans. |
+
+Shipped-and-confirmed by the same walkthrough (for the record): statuses on every item,
+progress fractions, build-order series, completed collapse+aging, junk asks gone from the
+Roadmap (8B), filter/kanban/chips chrome, Inbox count.
+
+Root cause of the recurring fidelity gap (why rounds keep finding misses), named honestly:
+(1) each hop of the pipeline (sit-down -> synthesis -> two gate reviews -> adjudications ->
+9 builder dispatches) translated the verbatim record, and translation leaked — A10 retired the
+operator's to-do pane on the reviews' authority, 8A dropped the grouping level while gaining
+plan-roots; (2) T9 acceptance verified the PLAN's scenarios, not this verbatim record — the
+oracle was the synthesis, so builders "passed" while operator asks were missing; (3) several
+shipped mechanisms are INERT on live data (chore classifier classifying nothing, agent leaves
+with no bound sessions, provenance line rendering its own absence) — component-done, not
+functionally-done (constitution §4). Round-9 verification will use THIS table as the oracle.
