@@ -2548,26 +2548,6 @@
       "honest_status": "retired to attic at O.4 cutover (attic + exit-0 shim, per manifest-amendments.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/manifest-amendments.md Entry 2) — superseded by needs-you.sh per that file's own header; item-extraction from Stop-time transcript scanning is no longer the mechanism. Removed from workstreams-stop-writer.sh's MEMBERS array in the same integration commit."
     },
     {
-      "id": "workstreams-spawn-gate",
-      "kind": "gate",
-      "doctrine_file": "doctrine/workstreams-state.md",
-      "hooks": [
-        "workstreams-state-gate.sh"
-      ],
-      "events": [
-        "PreToolUse"
-      ],
-      "wired_template": false,
-      "selftest": false,
-      "jit_triggers": {
-        "paths": [],
-        "keywords": []
-      },
-      "blocking": false,
-      "budget_class": "none",
-      "honest_status": "retired at O.4 cutover (attic + exit-0 shim, per template-wiring.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/template-wiring.md) — the ONLY protected consumer (workstreams-ui's tree-state read) was replaced by derived-truth reads (nl <sub> --json); law 2 (EVERY-SIGNAL-HAS-A-CONSUMER) has no consumer left to protect. Closes NL-FINDING-024 at the root (the spawn writer -> gate PreToolUse race this finding describes can no longer fire). Blocking-gate budget 10/12 -> 8/12."
-    },
-    {
       "id": "workstreams-stop-gate",
       "kind": "gate",
       "doctrine_file": "doctrine/workstreams-state.md",

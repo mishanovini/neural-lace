@@ -294,24 +294,6 @@
         ]
       },
       {
-        "matcher": "Task|Agent|Workflow",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-state-gate.sh --builder-tracking"
-          }
-        ]
-      },
-      {
-        "matcher": "mcp__ccd_session__spawn_task|mcp__ccd_session_mgmt__start_code_task",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "bash ~/.claude/hooks/workstreams-state-gate.sh"
-          }
-        ]
-      },
-      {
         "matcher": "Bash",
         "hooks": [
           {

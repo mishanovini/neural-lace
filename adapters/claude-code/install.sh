@@ -1161,6 +1161,26 @@ PRUNED_FILES=(
   # push make a stray live copy near-harmless even if this list is ever
   # forgotten (accept-as-dead-drift is the A6 fallback if this list rots).
   "scripts/sync-pt-to-personal.sh"
+  # retired 2026-07-23, agent-efficiency-fixes-2026-07 plan T5: the O.4
+  # (2026-07-07, commit 568daa0) attic move + exit-0 shim was correct, but a
+  # 2026-07-12 template-live-drift "fix" (b71456d) re-added the two
+  # workstreams-state-gate.sh PreToolUse wirings to settings.json.template by
+  # copying FROM an already-drifted live settings.json instead of reconciling
+  # live TO the retirement -- re-wiring a dead exit-0 shim into every
+  # Task|Agent|Workflow dispatch and every spawn_task/start_code_task call
+  # (docs/backlog.md HOOK-SHIM-RETIRE-01, live-confirmed still wired 2x in
+  # this machine's ~/.claude/settings.json as of 2026-07-23). The template
+  # wiring is removed (this commit) and the hooks/ shim hard-deleted outright
+  # -- the full original already lives at adapters/claude-code/attic/
+  # workstreams-state-gate.sh (untouched, from the 568daa0 move), so no
+  # further attic move is needed, only pruning the stray live shim copy.
+  # merge_settings() (session-start-auto-install.sh) is additive-only and has
+  # no removal path for the two already-merged live settings.json entries;
+  # this PRUNED_FILES entry only removes the stray hooks/ FILE, not the two
+  # live settings.json hook wirings -- see docs/backlog.md HOOK-SHIM-RETIRE-01
+  # for the still-open settings-entry-removal gap (no reconcile mechanism
+  # exists for settings.json hook entries as of this commit).
+  "hooks/workstreams-state-gate.sh"
 )
 
 prune_retired_files() {
