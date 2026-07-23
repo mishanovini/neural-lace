@@ -5266,14 +5266,46 @@ EOF
   _stamp_claim_honesty_green "$D"
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
-  # NOTE: the doctor invocation below runs the REAL $SELF_TEST_HOOK from its
-  # real on-disk location, so it sources the REAL lib/sessionstart-
-  # singleflight.sh relative to its own SCRIPT_DIR — HARNESS_DOCTOR_HOME only
-  # overrides resolve_live_home's return value (used as SSF_STATE_DIR's
-  # base), not where the script/lib physically live. Pre-claim the
-  # SessionStart-origin lock under that SAME state dir, as if a sibling
-  # session already ran the quick check moments ago.
-  ( SSF_STATE_DIR="$D/live/state/singleflight" source "$SCRIPT_DIR/lib/sessionstart-singleflight.sh"; ss_singleflight doctor-quick 120 ) >/dev/null 2>&1
+  # NOTE 1: the doctor invocation below runs the REAL $SELF_TEST_HOOK from
+  # its real on-disk location, so it sources the REAL lib/sessionstart-
+  # singleflight.sh relative to its own SCRIPT_DIR — HARNESS_DOCTOR_HOME
+  # only overrides resolve_live_home's return value (used as
+  # SSF_STATE_DIR's base), not where the script/lib physically live.
+  # Pre-claim the SessionStart-origin lock under that SAME state dir, as
+  # if a sibling session already ran the quick check moments ago.
+  # NOTE 2: `VAR=val source file` scopes VAR to the `source` command
+  # ITSELF only — it does NOT persist for a later chained command (source
+  # is a builtin, not a function call). `source` and the SSF_STATE_DIR-
+  # bearing `ss_singleflight` call are therefore two SEPARATE statements,
+  # with the env var attached directly to the function call — mirroring
+  # session-start-auto-install.sh's own working pattern and the real gate
+  # a few lines below.
+  # NOTE 3: `source file` with NO explicit arguments inherits the CALLING
+  # SCOPE's own positional parameters ($1, $2, ...) — and we are executing
+  # this INLINE inside harness-doctor.sh's own top-level
+  # `if [[ "${1:-}" == "--self-test" ]]` block (not a function body, so
+  # there is no fresh $1), meaning $1 here is STILL this whole script's
+  # own "--self-test". The sourced lib's OWN bottom-of-file
+  # `if [[ "${1:-}" == "--self-test" ]]` block sees that SAME inherited
+  # "--self-test" and runs ITS OWN 11-scenario suite, ending in `exit 0` —
+  # which, being inside our `( )` subshell, terminates the subshell
+  # BEFORE the `ss_singleflight doctor-quick` line below it ever runs,
+  # silently defeating the whole pre-claim. Passing an explicit empty
+  # argument to `source` overrides $1 for the sourced file's execution
+  # (bash's documented `source file [arguments]` behavior), so the
+  # library takes its normal (non-self-test) path and simply defines its
+  # functions. (All three of these NOTEs were found via a manual
+  # reproduction during this fix's own build — the original one-liner
+  # here silently 1) wrote its pre-claim lock to the REAL machine's
+  # $HOME/.claude/state/singleflight/ instead of the sandboxed fixture
+  # path, AND, even after fixing that, 2) never actually created the lock
+  # at all because of this exact $1 inheritance — confirmed by
+  # instrumenting this block and observing the library's OWN self-test
+  # summary line print instead of the intended pre-claim.)
+  (
+    source "$SCRIPT_DIR/lib/sessionstart-singleflight.sh" ""
+    SSF_STATE_DIR="$D/live/state/singleflight" ss_singleflight doctor-quick 120
+  ) >/dev/null 2>&1
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" NL_SESSIONSTART_ORIGIN=1 bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
   _assert "9-ssf-sessionstart-origin-skips-on-held-lock" 0 "$RC" "SESSIONSTART-SINGLEFLIGHT-01" "$OUT"
   if printf '%s' "$OUT" | grep -q "GREEN\|FAILED"; then
