@@ -587,7 +587,7 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/harness-doctor.sh --quick"
+            "command": "NL_SESSIONSTART_ORIGIN=1 bash ~/.claude/hooks/harness-doctor.sh --quick"
           },
           {
             "type": "command",
@@ -607,7 +607,7 @@
           },
           {
             "type": "command",
-            "command": "bash ~/.claude/hooks/session-start-digest.sh"
+            "command": "NL_SESSIONSTART_ORIGIN=1 bash ~/.claude/hooks/session-start-digest.sh"
           }
         ]
       }
