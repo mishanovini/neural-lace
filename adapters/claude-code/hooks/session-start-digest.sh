@@ -2214,6 +2214,110 @@ EOF
   _ck_contains "S18c sibling dirty worktree WITHOUT a heartbeat still surfaces (per-worktree granularity, not a global suppress)" "$out18c" "s18-wt-b"
   _ck_not_contains "S18c live-heartbeat-owned dirty worktree -> excluded from the ORPHANED set entirely" "$out18c" "s18-wt-c"
 
+  # ---- S19 (T2 fix, agent-efficiency-fixes-2026-07): the --self-test entry
+  # point itself now honors the NL-FINDING-040 reentry guard. Previously it
+  # did NOT — a real gap versus the default case just below, which has
+  # always honored it: an automation-spawned/reentrant invocation (a stray
+  # recursive call, a future launcher bug) that reached --self-test would
+  # have run the full ~19-scenario suite regardless of NL_HOOK_REENTRY=1.
+  # Real subprocess invocation under NL_HOOK_REENTRY=1 must skip
+  # IMMEDIATELY — no "self-test summary" anywhere in the output proves
+  # run_self_test itself never executed, not merely that some assertion
+  # inside it was skipped.
+  local s19="$tmp/s19"
+  _seed_repo "$s19"
+  local s19_home="$tmp/s19-home"
+  mkdir -p "$s19_home/.claude/state"
+  local s19_script="$HOOKS_DIR/$(basename "${BASH_SOURCE[0]}")"
+  local out19
+  out19="$(
+    cd "$s19" && \
+    NL_HOOK_REENTRY=1 HOME="$s19_home" HARNESS_SELFTEST=1 \
+      bash "$s19_script" --self-test </dev/null 2>&1
+  )"
+  _ck_contains "S19 reentrant --self-test invocation skips (guard message present)" "$out19" "skipping self-test sweep"
+  _ck_not_contains "S19 reentrant --self-test invocation never runs the real suite" "$out19" "self-test summary"
+
+  # ---- S20 (T3 extension, SESSIONSTART-SINGLEFLIGHT-01): the default
+  # (flagless) SessionStart path is single-flighted, scoped PER-REPO-ROOT via
+  # ss_repo_key (unlike harness-doctor.sh's machine-global lock — this
+  # hook's feeds are genuinely per-$PWD). Only NL_SESSIONSTART_ORIGIN=1
+  # invocations (the SessionStart wiring's own marker) are ever debounced;
+  # an explicit/manual invocation is never suppressed by a held lock.
+  local s20="$tmp/s20"
+  _seed_repo "$s20"
+  local s20_cache="$tmp/s20-doctor-cache.json"
+  printf '{"ts":"%s","verdict_line":"[doctor] GREEN — 7 checks passed","exit_code":0}\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$s20_cache"
+  local s20_script="$HOOKS_DIR/$(basename "${BASH_SOURCE[0]}")"
+
+  # S20a: pre-claim the SessionStart-origin lock for this repo root (as if a
+  # sibling session already ran the digest moments ago), then invoke with
+  # NL_SESSIONSTART_ORIGIN=1 -> must skip (rc 0, one-line note, no feeds).
+  local s20_home="$tmp/s20-home"
+  mkdir -p "$s20_home/.claude/state"
+  # NOTE 1: pre-claim MUST key off the POST-cd $PWD, not the pre-cd $s20
+  # variable — on this MSYS/Git-Bash setup a path under the Windows TEMP
+  # dir resolves to a DIFFERENT string once `cd`'d into (e.g.
+  # "C:/Users/.../AppData/Local/Temp/..." vs "/tmp/..." — the same physical
+  # directory, two string forms). The production code (below, and in the
+  # real script) always computes ss_repo_key against $PWD at call time, so
+  # the fixture's pre-claim must match that exact resolved form or the key
+  # mismatch silently defeats the whole scenario.
+  # NOTE 2: `VAR=val source file` only scopes VAR to the `source` command
+  # ITSELF — it does NOT persist for a subsequent chained command, even
+  # under `&&` (source is a builtin, not a function call; the transient-
+  # assignment scoping that makes `VAR=val ss_singleflight ...` reliable —
+  # the exact pattern session-start-auto-install.sh and the real gate below
+  # both use — does not extend across a `source` boundary). `source` and
+  # the SSF_STATE_DIR-bearing `ss_singleflight` call are therefore two
+  # SEPARATE statements below, with the env var attached directly to the
+  # function call, mirroring the working pattern. (Both of the above were
+  # found via a manual reproduction during this fix's own build — the
+  # ORIGINAL version of this scenario silently wrote its pre-claim lock to
+  # the REAL machine's $HOME/.claude/state/singleflight/ instead of the
+  # sandboxed fixture path, and never actually exercised the skip path.)
+  (
+    cd "$s20"
+    source "$HOOKS_DIR/lib/sessionstart-singleflight.sh"
+    SSF_STATE_DIR="$s20_home/.claude/state/singleflight" \
+      ss_singleflight "digest-$(ss_repo_key "$PWD")" 120
+  ) >/dev/null 2>&1
+  local out20a
+  out20a="$(
+    cd "$s20" && \
+    NL_SESSIONSTART_ORIGIN=1 HOME="$s20_home" HARNESS_SELFTEST=1 \
+    DOCTOR_CACHE_PATH="$s20_cache" DIGEST_SEEN_PATH="$tmp/s20a-seen.jsonl" \
+      bash "$s20_script" </dev/null 2>&1
+  )"
+  _ck_contains "S20a SessionStart-origin + held lock -> skip (SESSIONSTART-SINGLEFLIGHT-01 note)" "$out20a" "SESSIONSTART-SINGLEFLIGHT-01"
+  _ck_not_contains "S20a skip means run_digest never rendered a feed line" "$out20a" "doctor:"
+
+  # S20b: SAME repo, a FRESH home (no lock claimed yet) -> SessionStart-
+  # origin invocation runs normally (doctor feed line present).
+  local s20b_home="$tmp/s20b-home"
+  mkdir -p "$s20b_home/.claude/state"
+  local out20b
+  out20b="$(
+    cd "$s20" && \
+    NL_SESSIONSTART_ORIGIN=1 HOME="$s20b_home" HARNESS_SELFTEST=1 \
+    DOCTOR_CACHE_PATH="$s20_cache" DIGEST_SEEN_PATH="$tmp/s20b-seen.jsonl" \
+      bash "$s20_script" </dev/null 2>&1
+  )"
+  _ck_contains "S20b SessionStart-origin, no lock held yet -> runs normally (doctor feed present)" "$out20b" "doctor:"
+
+  # S20c: explicit invocation (NO NL_SESSIONSTART_ORIGIN) against the SAME
+  # held lock from S20a -> never single-flighted away (explicit/manual runs
+  # are unaffected by this mechanism).
+  local out20c
+  out20c="$(
+    cd "$s20" && \
+    HOME="$s20_home" HARNESS_SELFTEST=1 \
+    DOCTOR_CACHE_PATH="$s20_cache" DIGEST_SEEN_PATH="$tmp/s20c-seen.jsonl" \
+      bash "$s20_script" </dev/null 2>&1
+  )"
+  _ck_contains "S20c explicit invocation (no NL_SESSIONSTART_ORIGIN) never suppressed by a held lock" "$out20c" "doctor:"
+
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
   echo "self-test summary: $pass passed, $fail failed"
@@ -2256,6 +2360,24 @@ run_ack_finding_021() {
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
   case "${1:-}" in
     --self-test)
+      # T2 origin guard (agent-efficiency-fixes-2026-07, docs/lessons/
+      # 2026-07-20-efficiency-recurrence-live-diagnosis.md): unlike the
+      # default (flagless) case below, THIS entry point ran unconditionally
+      # regardless of NL_HOOK_REENTRY — a real gap, since --self-test fans
+      # out into >15 scenarios and forks member hooks' own --self-test in
+      # turn (the exact recursive fan-out class the 07-20 live diagnosis
+      # observed). An automation-spawned/reentrant invocation that somehow
+      # reaches --self-test (a stray recursive call, a future launcher bug)
+      # now no-ops here too, same as every other reentrant path. Explicit
+      # human/CI invocations are NEVER affected: NL_HOOK_REENTRY is only ever
+      # set by automation about to spawn a `claude` child (session-
+      # resumer.sh), never present in an interactive shell or a sweep's own
+      # env. Fail-open: missing lib -> suite runs unchanged.
+      if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+        hook_reentry_note "session-start-digest" 2>/dev/null || true
+        echo "[session-start-digest] reentrant/automation-spawned invocation — skipping self-test sweep (NL-FINDING-040 guard)"
+        exit 0
+      fi
       run_self_test
       exit $?
       ;;
@@ -2290,6 +2412,30 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
         hook_reentry_note "session-start-digest" 2>/dev/null || true
         echo "[session-start-digest] reentrant/automation-spawned invocation — skipping digest (NL-FINDING-040 guard)"
         exit 0
+      fi
+      # ---- SESSIONSTART-SINGLEFLIGHT-01 (T3 extension, agent-efficiency-
+      # fixes-2026-07) ----------------------------------------------------
+      # settings.json.template's SessionStart wiring marks ITS OWN call with
+      # NL_SESSIONSTART_ORIGIN=1 (an operator/agent typing `bash session-
+      # start-digest.sh` directly, or health-tick.sh's own --refresh-doctor-
+      # cache path, never sets this) so N sessions starting within ~2 min in
+      # the SAME repo debounce to one real run_digest — the rest skip fast
+      # with a one-line note. UNLIKE harness-doctor.sh's SessionStart-quick
+      # lock (machine-global), this one is scoped PER REPO ROOT ($PWD) via
+      # ss_repo_key: run_digest's feeds (git-freshness, worktree-advice,
+      # stranded-work) are genuinely per-project, so a session starting in a
+      # DIFFERENT repo/worktree must never dedupe against this one. Fail-
+      # open: any lib/lock failure falls through to a normal run.
+      if [[ "${NL_SESSIONSTART_ORIGIN:-0}" == "1" ]]; then
+        # shellcheck source=lib/sessionstart-singleflight.sh
+        source "$HOOKS_DIR/lib/sessionstart-singleflight.sh" 2>/dev/null || true
+        if declare -F ss_singleflight >/dev/null 2>&1; then
+          _digest_ssf_key="digest-$(ss_repo_key "$PWD")"
+          if ! SSF_STATE_DIR="${HOME:-}/.claude/state/singleflight" ss_singleflight "$_digest_ssf_key" 120; then
+            echo "[session-start-digest] another SessionStart-origin session ran the digest within ~2 min for this repo — skipping (SESSIONSTART-SINGLEFLIGHT-01)"
+            exit 0
+          fi
+        fi
       fi
       DIGEST_STDIN=""
       if [[ ! -t 0 ]]; then

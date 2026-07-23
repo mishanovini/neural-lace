@@ -143,9 +143,15 @@
 # ESCAPE HATCH
 # ============
 # None needed — this is a read-only diagnostic tool, not a blocking
-# PreToolUse/Stop gate. It is not currently wired into settings.json; it is
-# invoked on demand (`harness-doctor.sh --quick`) or by a future Stop/CI
-# surface (B.6 wiring reconciliation).
+# PreToolUse/Stop gate. It IS wired into settings.json.template's SessionStart
+# hook (`--quick`, NL_SESSIONSTART_ORIGIN=1 marked as of T3 in
+# agent-efficiency-fixes-2026-07 — see the single-flight guard below), and is
+# also invoked on demand (`harness-doctor.sh --quick`/`--full`) by an operator
+# or agent. (Earlier revisions of this comment claimed "not currently wired
+# into settings.json" — that had gone stale; corrected honestly per
+# constitution §10, no behavior change.) `--full` is NOT wired anywhere
+# automatic (verified: no CI workflow, cron, or scheduled task invokes it;
+# see check_selftest_sweep's header comment) — it is manual-only.
 
 set -u
 
@@ -696,13 +702,40 @@ check_wave_e_surfaces() {
 
   # --- E.1: session-start-digest.sh (predicates 1, 2, 4; predicate 3 is a
   # one-time point-in-time check per the fragment, not a recurring gate). ---
+  #
+  # T2 FIX (agent-efficiency-fixes-2026-07, docs/lessons/2026-07-20-
+  # efficiency-recurrence-live-diagnosis.md — THE dominant root cause, found
+  # via live process capture during this fix's own build: 7 concurrent
+  # 12+-minute `session-start-digest.sh --self-test` runs + 3 concurrent
+  # `harness-doctor.sh --quick` runs, 94 bash.exe total). Predicate 1 used to
+  # EXECUTE `bash session-start-digest.sh --self-test` (the full ~19-
+  # scenario suite, no timeout, no HARNESS_SELFTEST env set by the caller)
+  # INLINE and UNCONDITIONALLY as part of run_quick_checks — i.e. on EVERY
+  # SessionStart and resume, contradicting this file's own header claim
+  # ("--quick ... Never runs self-tests. Fast (<2s typical)"). As the digest
+  # suite grew (git-heavy worktree/heartbeat fixtures) this turned a
+  # documented <2s check into a multi-MINUTE blocking call that piled up
+  # across every simultaneously-starting/resuming session — the true origin
+  # of the 07-20 recursion observation (check_selftest_sweep, --full-only
+  # and already timeout-guarded, was a real but secondary contributor).
+  # Fixed to match the sibling E.7/E.8 predicates just below (structural
+  # presence — exists, executable, declares --self-test — never execution).
+  # The REAL suite execution is check_selftest_sweep's job (--full only,
+  # already covers this exact hook via its live-hooks-dir sweep, already
+  # timeout-guarded, already reentry-guarded as of this same fix). Deliberate
+  # fidelity trade: a digest hook whose own self-test suite is logically
+  # broken now surfaces via an explicit `--full` run, not automatically on
+  # every --quick/SessionStart — the alternative (this exact predicate) is
+  # the incident being fixed. Follow-up logged to docs/backlog.md: a
+  # health-tick-driven cache of the digest's last self-test verdict would let
+  # --quick WARN with detail between --full runs instead of going silent.
   local e1_hook="${live_home}/hooks/session-start-digest.sh"
   if [[ ! -f "$e1_hook" ]]; then
     _warn "wave-e-e1-digest" "session-start-digest.sh missing from live mirror at ${e1_hook} — E.1 not yet installed on this machine"
-  else
-    if ! bash "$e1_hook" --self-test >/dev/null 2>&1; then
-      _red "wave-e-e1-digest" "session-start-digest.sh --self-test exited non-zero at ${e1_hook}"
-    fi
+  elif [[ ! -x "$e1_hook" ]]; then
+    _red "wave-e-e1-digest" "session-start-digest.sh missing or not executable at ${e1_hook}"
+  elif ! grep -q -- '--self-test' "$e1_hook" 2>/dev/null; then
+    _red "wave-e-e1-digest" "session-start-digest.sh has no --self-test entrypoint"
   fi
   local e1_probe_guard="${repo_root}/adapters/claude-code/attic/principles-compliance-gate.sh"
   if [[ -n "$repo_root" && -f "$e1_probe_guard" ]]; then
@@ -2760,6 +2793,21 @@ check_review_grandfather_integrity() {
 
 check_selftest_sweep() {
   local live_home="$1"
+  # T2 origin guard (agent-efficiency-fixes-2026-07, docs/lessons/2026-07-20-
+  # efficiency-recurrence-live-diagnosis.md): this is the CHOKE POINT that
+  # fans a single `--full` invocation out into "every live hook's own
+  # --self-test" (session-start-digest.sh --self-test among them — the
+  # observed 07-20 recursion class). The outer reentry check (before mode
+  # dispatch, further down this file) already suppresses automation-spawned/
+  # reentrant invocations of the WHOLE script, including --full — this is
+  # defense-in-depth so the guard travels with the function itself and does
+  # not silently regress if a future refactor calls check_selftest_sweep from
+  # anywhere else. Fail-open: missing lib -> sweep proceeds unchanged.
+  if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+    _warn "selftest-sweep" "reentrant/automation-spawned invocation — skipping the self-test sweep (NL-FINDING-040 guard)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
   local hooks_dir="${live_home}/hooks"
   [[ -d "$hooks_dir" ]] || { _warn "selftest-sweep" "no live hooks directory — nothing to check"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
 
@@ -2772,7 +2820,10 @@ check_selftest_sweep() {
     # 4-8 min; NL-FINDING-018-era doctor --full run), and 600s killed plan-reviewer
     # (green standalone at 987s, measured 2026-07-03). Default 1500 (~1.5x slowest
     # measured suite), env-overridable; per-hook budgets via manifest = E-wave.
-    out="$(HARNESS_SELFTEST=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$hook" --self-test </dev/null 2>&1)"
+    # NL_SELFTEST_SWEEP=1 marks this child as launched by the sanctioned sweep
+    # entrypoint (provenance only — child scripts are not required to gate on
+    # it; the reentry guard above is what actually blocks unsanctioned fan-out).
+    out="$(HARNESS_SELFTEST=1 NL_SELFTEST_SWEEP=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$hook" --self-test </dev/null 2>&1)"
     rc=$?
     if [[ "$rc" -ne 0 ]]; then
       local last_line
@@ -5121,6 +5172,122 @@ EOF
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
   _assert "8-selftest-sweep-green" 0 "$RC" "" "$OUT"
 
+  # ---- E.1 (T2 fix, THE dominant root cause -- agent-efficiency-fixes-
+  # 2026-07): --quick must NEVER execute session-start-digest.sh --self-test
+  # -- only check structural presence (exists/executable/declares the
+  # entrypoint), mirroring the sibling E.7/E.8 predicates. This fixture's
+  # --self-test body intentionally `exit 1`s; if --quick still executed it
+  # (the pre-fix behavior -- a full multi-minute suite run inline on every
+  # SessionStart/resume), this would RED with "exited non-zero". Absence of
+  # ANY e1-digest finding proves the execution truly stopped, not merely
+  # that the message text changed. Previously UNTESTED: no scenario in this
+  # suite ever populated a real session-start-digest.sh into a fixture's
+  # live/hooks/, so this predicate had zero self-test coverage before now.
+  D=$(_scenario_dir c10-e1-no-exec)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/live/hooks/session-start-digest.sh" <<'EOF'
+#!/bin/bash
+if [[ "${1:-}" == "--self-test" ]]; then
+  echo "self-test: intentional failure (must never be reached by --quick)" >&2
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$D/live/hooks/session-start-digest.sh"
+  _write_settings "$D/live/settings.json" "session-start-digest.sh"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  cp "$D/live/hooks/session-start-digest.sh" "$D/repo/adapters/claude-code/hooks/session-start-digest.sh"
+  OUT="$(_run_quick "$D")"
+  if printf '%s' "$OUT" | grep -qi "e1-digest"; then
+    echo "self-test (e1-quick-never-executes): FAIL (a wave-e-e1-digest finding leaked through -- --quick executed the stub's --self-test body): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (e1-quick-never-executes): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- E.1 RED: hook present, executable, but declares no --self-test
+  # entrypoint at all (structural, not behavioral -- grep only). ----
+  D=$(_scenario_dir c10-e1-no-flag)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/live/hooks/session-start-digest.sh" <<'EOF'
+#!/bin/bash
+exit 0
+EOF
+  chmod +x "$D/live/hooks/session-start-digest.sh"
+  _write_settings "$D/live/settings.json" "session-start-digest.sh"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  cp "$D/live/hooks/session-start-digest.sh" "$D/repo/adapters/claude-code/hooks/session-start-digest.sh"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "e1-no-selftest-entrypoint-red" 1 "$RC" "RED wave-e-e1-digest.*no --self-test entrypoint" "$OUT"
+
+  # ---- Check 8 (T2, agent-efficiency-fixes-2026-07): a reentrant/
+  # automation-spawned invocation of --full NEVER fans out into the
+  # self-test sweep, even against a fixture hook whose --self-test would
+  # otherwise RED (docs/lessons/2026-07-20-efficiency-recurrence-live-
+  # diagnosis.md golden scenario). Reuses the c7-red failing.sh fixture.
+  # This exercises the pre-existing NL-FINDING-040 top-level guard AND
+  # check_selftest_sweep's own inner guard together (the inner one is
+  # defense-in-depth for a future call site that might bypass the outer
+  # one — not independently isolable via subprocess invocation since this
+  # script has no source-guard around its main body). Previously UNTESTED:
+  # NL_HOOK_REENTRY never appeared anywhere in this self-test suite before.
+  D=$(_scenario_dir c8-reentry)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/live/hooks/failing.sh" <<'EOF'
+#!/bin/bash
+if [[ "${1:-}" == "--self-test" ]]; then
+  echo "self-test: intentional failure" >&2
+  exit 1
+fi
+exit 0
+EOF
+  chmod +x "$D/live/hooks/failing.sh"
+  _write_settings "$D/live/settings.json" "failing.sh"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  cp "$D/live/hooks/failing.sh" "$D/repo/adapters/claude-code/hooks/failing.sh"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" NL_HOOK_REENTRY=1 bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
+  _assert "8-selftest-sweep-reentry-suppressed" 0 "$RC" "skipping checks" "$OUT"
+  if printf '%s' "$OUT" | grep -q "RED selftest-sweep"; then
+    echo "self-test (8-selftest-sweep-reentry-no-fanout): FAIL (a RED selftest-sweep line leaked through under NL_HOOK_REENTRY=1 -- the fan-out was NOT suppressed): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (8-selftest-sweep-reentry-no-fanout): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- SESSIONSTART-SINGLEFLIGHT-01 (T3 extension): NL_SESSIONSTART_ORIGIN=1
+  # + a FRESH sibling lock -> the quick check is skipped (rc 0, one-line
+  # note), proving the debounce actually bites for the SessionStart-origin
+  # path. A plain explicit invocation (no NL_SESSIONSTART_ORIGIN) against the
+  # SAME held lock must NOT be single-flighted away -- explicit/manual
+  # doctor runs are never suppressed by this mechanism.
+  D=$(_scenario_dir c9-ssf)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # NOTE: the doctor invocation below runs the REAL $SELF_TEST_HOOK from its
+  # real on-disk location, so it sources the REAL lib/sessionstart-
+  # singleflight.sh relative to its own SCRIPT_DIR — HARNESS_DOCTOR_HOME only
+  # overrides resolve_live_home's return value (used as SSF_STATE_DIR's
+  # base), not where the script/lib physically live. Pre-claim the
+  # SessionStart-origin lock under that SAME state dir, as if a sibling
+  # session already ran the quick check moments ago.
+  ( SSF_STATE_DIR="$D/live/state/singleflight" source "$SCRIPT_DIR/lib/sessionstart-singleflight.sh"; ss_singleflight doctor-quick 120 ) >/dev/null 2>&1
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" NL_SESSIONSTART_ORIGIN=1 bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "9-ssf-sessionstart-origin-skips-on-held-lock" 0 "$RC" "SESSIONSTART-SINGLEFLIGHT-01" "$OUT"
+  if printf '%s' "$OUT" | grep -q "GREEN\|FAILED"; then
+    echo "self-test (9-ssf-skip-means-no-checks-ran): FAIL (expected a bare skip, but checks appear to have run): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (9-ssf-skip-means-no-checks-ran): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+  # Explicit invocation (no NL_SESSIONSTART_ORIGIN) against the SAME held
+  # lock -> runs normally (not single-flighted away).
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "9-ssf-explicit-invocation-never-suppressed" 0 "$RC" "GREEN" "$OUT"
+
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2
   if [[ "$FAILED" -gt 0 ]]; then
@@ -5166,6 +5333,32 @@ fi
 
 if [[ -z "${REPO_ROOT:-}" ]]; then
   echo "[doctor] WARN repo-root: could not resolve repo root (git unavailable and NL_REPO_ROOT unset) — repo-relative checks will warn"
+fi
+
+# ---- SESSIONSTART-SINGLEFLIGHT-01 (T3 extension, agent-efficiency-fixes-2026-07) ----
+# settings.json.template's SessionStart wiring marks ITS OWN call with
+# NL_SESSIONSTART_ORIGIN=1 (never set by an operator/agent typing
+# `harness-doctor.sh --quick`/`--full` by hand, and never set by
+# health-tick.sh's own refresh via session-start-digest.sh's
+# --refresh-doctor-cache path) so we can debounce ONLY the SessionStart-
+# origin call: when N sessions start within ~2 min, the FIRST one's quick
+# check covers the rest. This doctor's checks are machine-GLOBAL — LIVE_HOME
+# is the one shared ~/.claude, and REPO_ROOT resolves to the one canonical NL
+# checkout regardless of which project directory a given session started in
+# (see resolve_repo_root — it derives from SCRIPT_DIR, not $PWD) — so, unlike
+# session-start-digest.sh's per-$PWD lock, NO repo-scoping is needed here;
+# one lock name is correct, mirroring auto-install's exact pattern. Fail-
+# open: any lib/lock failure falls through to a normal run (ss_singleflight's
+# own contract) — a broken lock must never suppress a real health check.
+if [[ "${NL_SESSIONSTART_ORIGIN:-0}" == "1" ]]; then
+  # shellcheck source=lib/sessionstart-singleflight.sh
+  source "$SCRIPT_DIR/lib/sessionstart-singleflight.sh" 2>/dev/null || true
+  if declare -F ss_singleflight >/dev/null 2>&1; then
+    if ! SSF_STATE_DIR="${LIVE_HOME}/state/singleflight" ss_singleflight "doctor-quick" 120; then
+      echo "[doctor] another SessionStart-origin session ran the quick check within ~2 min — skipping (SESSIONSTART-SINGLEFLIGHT-01)"
+      exit 0
+    fi
+  fi
 fi
 
 run_quick_checks "$LIVE_HOME" "$REPO_ROOT"
