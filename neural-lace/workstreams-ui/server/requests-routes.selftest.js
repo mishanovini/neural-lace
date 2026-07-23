@@ -84,7 +84,8 @@ async function main() {
     { ask_id: 'ask-open', record_type: 'created', ts: '2026-07-15T10:00:00Z', summary: 'A fresh idea', repo: '/r', project: 'demo', origin_session: 'sess-1', status: 'active', emitter: 'ask-registry' },
 
     // ask-promoted: registered, then linked to a plan -> state=closed,
-    // reason=promoted, "became -> demo-plan", reciprocal roadmap_id=ask id.
+    // reason=promoted, "became -> demo-plan", reciprocal roadmap_id=PLAN slug
+    // (Round 8 re-rooted the Roadmap on plan slugs; an ask id false-misses).
     { ask_id: 'ask-promoted', record_type: 'created', ts: '2026-07-10T10:00:00Z', summary: 'Build the alpha feature', repo: '/r', project: 'demo', origin_session: 'sess-2', status: 'active', emitter: 'ask-registry' },
     { ask_id: 'ask-promoted', record_type: 'plan_linked', ts: '2026-07-10T11:00:00Z', plan_slug: 'demo-plan' },
 
@@ -164,9 +165,9 @@ async function main() {
     const openItem = findItem(items, 'ask-open');
     ok('S3 a never-touched ask renders state=open with no closed_reason', openItem && openItem.state === 'open' && openItem.closed_reason === '');
     const promoted = findItem(items, 'ask-promoted');
-    ok('S3b a plan-linked ask renders CLOSED, reason=promoted, "became" names the plan + the reciprocal roadmap id',
+    ok('S3b a plan-linked ask renders CLOSED, reason=promoted, "became" names the plan + the reciprocal roadmap id (= the plan slug, Round 8)',
       promoted && promoted.state === 'closed' && promoted.closed_reason === 'promoted' &&
-      promoted.became && promoted.became.plan_slug === 'demo-plan' && promoted.became.roadmap_id === 'ask-promoted');
+      promoted.became && promoted.became.plan_slug === 'demo-plan' && promoted.became.roadmap_id === 'demo-plan');
     const doneDirect = findItem(items, 'ask-done-direct');
     ok('S3c a directly-done ask (never promoted) renders CLOSED, reason=done, no became', doneDirect && doneDirect.state === 'closed' && doneDirect.closed_reason === 'done' && doneDirect.became === null);
     const dismissed = findItem(items, 'ask-dismissed');

@@ -1170,8 +1170,15 @@ ok('T5-6b a missing detach verb surfaces a NAMED error in the row\'s aria-live f
   /Could not detach this amendment/.test(requestsJs));
 
 // --- "became →" cross-view arrow (C6 reciprocal law, C2 shell rules) ---
-ok('T5-7 "became →" links use #roadmap/<id> addressing via the shell\'s navigate()',
-  /#roadmap\/'\s*\+\s*item\.id/.test(requestsJs.replace(/\n\s*/g, ' ')) && /shell\.navigate/.test(requestsJs));
+// 2026-07-22 acceptance S4: the target is the promoted PLAN slug (Round 8
+// re-rooted the Roadmap on plan slugs) — an `item.id` (ask id) target
+// false-misses with the C3 banner. The pin asserts the slug shape AND the
+// slug's derivation from the promoted event.
+ok('T5-7 "became →" links address #roadmap/<plan-slug> (never the ask id) via the shell\'s navigate()',
+  /#roadmap\/'\s*\+\s*becameSlug/.test(requestsJs.replace(/\n\s*/g, ' ')) &&
+  /becameSlug = ev\.plan_slug/.test(requestsJs) &&
+  !/#roadmap\/'\s*\+\s*item\.id/.test(requestsJs.replace(/\n\s*/g, ' ')) &&
+  /shell\.navigate/.test(requestsJs));
 
 // --- findability (C8): substring filter box + age-grouped closed requests ---
 ok('T5-8 a substring filter box matches title + distilled intent + verbatim origin',

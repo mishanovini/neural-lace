@@ -123,6 +123,17 @@
 
   panel.insertBefore(section, panel.firstChild);
 
+  // The interim ask tree (#askTreeSection) predates this ledger and rendered
+  // the SAME asks a second time below it (2026-07-22 acceptance finding).
+  // Hidden, not removed: asks.js still owns the node, and hash addressing no
+  // longer depends on it — this module's 'requests' adapter wins the
+  // registration (last registerView call wins). style.display, not the
+  // hidden attribute, so no class-level display rule can resurrect it.
+  var interimTree = document.getElementById('askTreeSection');
+  if (interimTree) interimTree.style.display = 'none';
+  var interimColHandle = document.getElementById('colResizeHandle');
+  if (interimColHandle) interimColHandle.style.display = 'none';
+
   // ============================================================
   // state
   // ============================================================
@@ -276,9 +287,15 @@
       var ageSpan = el('span', 'rl-event-age', formatAge(ev.ts));
       li.appendChild(ageSpan);
       if (ev.type === 'promoted' && shell) {
-        li.appendChild(btn('ghost small rl-became-link', 'open on the Roadmap', function () {
-          shell.navigate('#roadmap/' + item.id);
-        }));
+        // Round 8 re-rooted the Roadmap on PLAN slugs (roadmap-routes.js
+        // id: pf.slug) — the target is the promoted plan, never this ask's
+        // own id (2026-07-22 acceptance S4: ask-id targets false-miss).
+        var becameSlug = ev.plan_slug || (item.became && item.became.plan_slug) || '';
+        if (becameSlug) {
+          li.appendChild(btn('ghost small rl-became-link', 'open on the Roadmap', function () {
+            shell.navigate('#roadmap/' + becameSlug);
+          }));
+        }
       }
       if (ev.detachable) {
         var feedback = el('span', 'rl-event-feedback', '');

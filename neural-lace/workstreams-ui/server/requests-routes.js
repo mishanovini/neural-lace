@@ -34,7 +34,10 @@
 //   state: 'open'|'closed',
 //   closed_reason: ''|'promoted'|'done'|'dismissed'|'merged',
 //   closed_at,                       // ISO ts | ''
-//   became: {plan_slug, roadmap_id} | null,   // roadmap_id addresses #roadmap/<id> (C6 reciprocal law)
+//   became: {plan_slug, roadmap_id} | null,   // roadmap_id addresses #roadmap/<id> (C6 reciprocal
+//                                             // law). Round 8 re-rooted the Roadmap on PLAN slugs
+//                                             // (roadmap-routes.js id: pf.slug), so roadmap_id IS
+//                                             // the plan slug — an ask id here false-misses.
 //   merged_into,                     // ask_id | ''
 //   timeline: [TimelineEvent],       // OLDEST-FIRST; origin always first (I6 timeline anatomy)
 // }
@@ -250,7 +253,7 @@ function classifyRequestState(cur) {
     const latest = promotedEvents.length ? promotedEvents[promotedEvents.length - 1] : null;
     const slug = latest ? latest.plan_slug : cur.plan_slugs[cur.plan_slugs.length - 1];
     const closedAt = latest ? latest.ts : '';
-    return { state: 'closed', closed_reason: 'promoted', closed_at: closedAt, became: { plan_slug: slug, roadmap_id: cur.ask_id } };
+    return { state: 'closed', closed_reason: 'promoted', closed_at: closedAt, became: { plan_slug: slug, roadmap_id: slug } };
   }
   return { state: 'open', closed_reason: '', closed_at: '', became: null };
 }
