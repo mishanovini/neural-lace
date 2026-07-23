@@ -3,6 +3,8 @@
 > **Audience:** Developers using this harness  
 > **Purpose:** Understand how the Claude Code AI harness is configured, what each file does, and how the automation works
 
+**Structural note (2026-07-23):** `hooks/workstreams-state-gate.sh` (an already-attic'd Wave O.4 exit-0 shim that had been mistakenly re-wired into `settings.json.template` by a later drift fix) was hard-deleted from `hooks/` — see `docs/backlog.md` `HOOK-SHIM-RETIRE-01` and the generated `docs/harness-architecture.md` for the current, authoritative hook inventory.
+
 ---
 
 ## Quick Start

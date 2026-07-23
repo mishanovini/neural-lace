@@ -1,5 +1,5 @@
 # Workstreams State — compact
-> Enforcement: workstreams-state-gate.sh (PreToolUse spawn), workstreams-stop-gate.sh (Stop), workstreams-emit.sh (writer). Full: doctrine/workstreams-state-full.md
+> Enforcement: workstreams-stop-gate.sh (Stop), workstreams-emit.sh (writer). Full: doctrine/workstreams-state-full.md
 > Applies: every Dispatch orchestrator spawn (mcp__ccd_session__spawn_task / start_code_task) — Dispatch-only, not sub-agent Task/Agent.
 
 - The tree is only as truthful as what the orchestrator writes. Write the **semantically true** tree, not just a well-shaped one: gates verify freshness + JSON shape + branch-name presence in `snapshot.nodes`; they cannot verify the node IS the real work, that `open`/`archived` states reflect reality, or that waiting-on-operator items are genuinely waiting on the operator. That's the Pattern — orchestrator self-applies it.

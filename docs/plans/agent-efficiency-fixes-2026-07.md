@@ -37,6 +37,11 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
 ## In-flight scope updates
 - 2026-07-22: docs/lessons/2026-07-20-efficiency-recurrence-live-diagnosis.md — the recurrence diagnosis this plan converts to build work
 - 2026-07-22: docs/plans/agent-efficiency-fixes-2026-07.md — this plan file
+- 2026-07-23: `adapters/claude-code/settings.json.template` — T5 dead-wiring removal (already named in `## In-flight amendments` below; duplicated here in the exact-match heading scope-enforcement-gate.sh's parser recognizes — that gate matches `^## In-flight scope updates[[:space:]]*$` literally and does not see entries under a differently-named heading)
+- 2026-07-23: `adapters/claude-code/hooks/workstreams-state-gate.sh` — T5 dead-shim hard-delete (same duplication reason as above)
+- 2026-07-23: `adapters/claude-code/doctrine/workstreams-state.md` — T5 stale-enforcement-line fix (same duplication reason as above)
+- 2026-07-23: `adapters/claude-code/hooks/*.sh` — T7 path-in-block-message sweep (already named in `## In-flight amendments` below; glob covers the sweep's per-file touches without listing all individually)
+- 2026-07-23: `docs/harness-guide.md` — T5 docs-freshness-gate satisfaction note for the workstreams-state-gate.sh structural deletion
 
 ## In-flight amendments (2026-07-23, orchestrating session 29f2930a — operator authorized "build the efficiency batch")
 - T4 is built as a BLOCK (not warn) with a structured-waiver hatch and fail-open on internal error —
