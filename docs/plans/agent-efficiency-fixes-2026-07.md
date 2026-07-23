@@ -38,6 +38,23 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
 - 2026-07-22: docs/lessons/2026-07-20-efficiency-recurrence-live-diagnosis.md — the recurrence diagnosis this plan converts to build work
 - 2026-07-22: docs/plans/agent-efficiency-fixes-2026-07.md — this plan file
 
+## In-flight amendments (2026-07-23, orchestrating session 29f2930a — operator authorized "build the efficiency batch")
+- T4 is built as a BLOCK (not warn) with a structured-waiver hatch and fail-open on internal error —
+  operator-facing rationale delivered in chat 2026-07-23: a drive-wide `find /` has no legitimate use
+  on this machine (golden scenario: the 2026-07-20 live `find / -iname scope-enforcement-gate*` at 13%
+  CPU, killed by hand). Plan text said "warn"; decide-and-go per §8, reversible (flip block→warn).
+- NEW SWEEP TASK T7 — path-in-block-message convention: every gate block message names its OWN
+  absolute hook path, removing the reason agents hunt the filesystem for gate sources (the observed
+  trigger for the `find /` class). Scope: hooks/*.sh block-message emitters EXCLUDING files T2/T3 own
+  (session-start-digest.sh, session-start-auto-install.sh, harness-doctor.sh).
+- T6 evidence (operator, 2026-07-23, screenshots in session 29f2930a): Defender exclusions verified
+  live — folders incl. ~/.claude, claude-projects, Temp/claude, Temp/claude-scratch, C:/Program
+  Files/Git; process exclusions bash/git/claude/node et al. Exceeds the task's asked set.
+- Scope additions: `adapters/claude-code/hooks/find-disk-scan-gate.sh` (T4 block-mode name),
+  `adapters/claude-code/settings.json.template` (T4 wiring + T5 shim removals),
+  `adapters/claude-code/manifest.json` (T4 entry + T5 entry updates), `docs/harness-architecture.md`
+  (regen), `adapters/claude-code/hooks/lib/sessionstart-singleflight.sh` (T3 extends the EXISTING lib).
+
 ## Notes
 T2/T3 are the highest-leverage (they contain the fork storm). T1 is bookkeeping to get the diagnosis
 onto master for the operator's review session (their explicit request: "land on master").
