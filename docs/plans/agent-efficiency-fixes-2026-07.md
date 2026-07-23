@@ -37,6 +37,15 @@ converts the diagnosis into shipped fixes. Diagnosis of record:
 ## In-flight scope updates
 - 2026-07-22: docs/lessons/2026-07-20-efficiency-recurrence-live-diagnosis.md — the recurrence diagnosis this plan converts to build work
 - 2026-07-22: docs/plans/agent-efficiency-fixes-2026-07.md — this plan file
+- 2026-07-23: `adapters/claude-code/hooks/find-disk-scan-gate.sh` — T4 block-mode gate
+- 2026-07-23: `adapters/claude-code/settings.json.template` — T4 PreToolUse wiring + T5 shim-wiring removals
+- 2026-07-23: `adapters/claude-code/scripts/blocking-budget-check.js` — T4 budget cap 13->14 (named rationale); T5 may re-lower
+- 2026-07-23: `adapters/claude-code/manifest.json` — T4 entry + T5 retired-entry updates
+- 2026-07-23: `adapters/claude-code/hooks/lib/sessionstart-singleflight.sh` — T3 extends the existing lib
+- 2026-07-23: `adapters/claude-code/hooks/*.sh` — T7 path-in-block-message sweep (message text only) + T2/T3 guard/lock edits
+- 2026-07-23: `adapters/claude-code/attic/**` — T5 shim retirements
+- 2026-07-23: `adapters/claude-code/install.sh` — T5 prune_retired_files additions
+- 2026-07-23: `docs/harness-architecture.md` — regen (structural changes)
 
 ## In-flight amendments (2026-07-23, orchestrating session 29f2930a — operator authorized "build the efficiency batch")
 - T4 is built as a BLOCK (not warn) with a structured-waiver hatch and fail-open on internal error —
