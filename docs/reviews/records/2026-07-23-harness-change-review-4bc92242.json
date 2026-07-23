@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260723-4bc92242",
+  "created_at": "2026-07-23T09:44:10Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "fable",
+  "plan_ref": "docs/reviews/2026-07-22-auto-compact-at-85-design.md",
+  "change_ref": {
+    "commit_sha": "be037a7",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/workstreams-read.sh",
+      "blob_sha": "3cd269cd6789a21d5191bd9394bd32b0ece135b1"
+    },
+    {
+      "path": "adapters/claude-code/settings.json.template",
+      "blob_sha": "81cb8191566cdfe1e006ad7c267a4ce8cd832ff9"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "workstreams-read.sh PASS (guard fix proven correct: full suite run live, 58/58, AC11 negative control PASS, zero state/registry writes to the real tree, zero live claude forks). settings.json.template PASS (JSON valid, embedded sh syntax-checked, CLAUDE_CODE_SESSION_ID writer/reader snapshot-naming parity PROVEN against live runtime artifacts). Joint-deploy constraint with the fixed ask-registry.sh honored (records registered together post re-review PASS).",
+    "findings_summary": "Pre-existing AC10 real-log leak (Major, nl-issue filed); 900000 window un-aligns context-watermark 85% leg on 1M models (Major, nl-issue filed); merge_settings env-key drift channel (Minor, nl-issue filed)"
+  },
+  "written_by": "orchestrator session d3059d78 via write-review-record.sh",
+  "payload": {}
+}
