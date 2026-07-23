@@ -319,6 +319,26 @@ ar_state_dir() {
 ar_registry_file() { printf '%s/ask-registry.jsonl' "$(ar_state_dir)"; }
 
 # ----------------------------------------------------------------------
+# _ar_timeout_claude <seconds> <claude-args...> — BOUNDED model fork.
+# Added 2026-07-22 (harness-review Major): both async lanes forked
+# `env -u CLAUDECODE claude --model haiku -p ...` with NO time bound. While
+# the lane was dormant (ASK_SUMMARIZER unset by every caller) that cost
+# nothing; workstreams-read.sh now DEFAULTS it on for every operator prompt in
+# an ask-attached session, which turns a dormant unbounded fork into a live
+# one that nothing reaps if it hangs. Async is not the same as bounded.
+# House pattern borrowed from supervisor-tick.sh:228 `_st_run` — use
+# `timeout` when present, degrade to a plain call (documented) when absent.
+# ----------------------------------------------------------------------
+_ar_timeout_claude() {
+  local secs="$1"; shift
+  if command -v timeout >/dev/null 2>&1; then
+    timeout "${secs}s" env -u CLAUDECODE claude "$@"
+  else
+    env -u CLAUDECODE claude "$@"
+  fi
+}
+
+# ----------------------------------------------------------------------
 # _ar_mirror_path — resolve the in-repo mirror path per the order above.
 # ----------------------------------------------------------------------
 _ar_mirror_path() {
@@ -451,7 +471,7 @@ _ar_haiku_summarize() {
     # but the lane was DEAD from any hook context). The guard's own message
     # names unsetting CLAUDECODE as the bypass; a failure here still
     # degrades silently (empty stdout -> return 1).
-    out="$(env -u CLAUDECODE claude --model haiku -p "Summarize the following operator request in one plain-text sentence, no markdown, at most 140 characters: $text" 2>/dev/null)"
+    out="$(_ar_timeout_claude 20 "Summarize the following operator request in one plain-text sentence, no markdown, at most 140 characters: $text" 2>/dev/null)"
   else
     printf ''
     return 1
@@ -536,7 +556,7 @@ _ar_classify_candidate_text() {
     # env -u CLAUDECODE: same nested-session-guard bypass as
     # _ar_haiku_summarize above (hook-spawned lane; failure degrades
     # silently to "candidate stays pending").
-    out="$(env -u CLAUDECODE claude --model haiku -p "You label operator prompts inside an ongoing request thread. Reply with EXACTLY 'amendment: <one plain-text sentence label, max 140 chars>' if the prompt changes, extends, or re-scopes the ongoing request; reply with EXACTLY 'noise' if it is conversational (acknowledgement, question, status check, tangent that changes nothing). The prompt: $text" 2>/dev/null)"
+    out="$(_ar_timeout_claude 20 "You label operator prompts inside an ongoing request thread. Reply with EXACTLY 'amendment: <one plain-text sentence label, max 140 chars>' if the prompt changes, extends, or re-scopes the ongoing request; reply with EXACTLY 'noise' if it is conversational (acknowledgement, question, status check, tangent that changes nothing). The prompt: $text" 2>/dev/null)"
   else
     printf ''
     return 1

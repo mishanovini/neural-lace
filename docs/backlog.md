@@ -1133,3 +1133,28 @@ Anthropic-side" theme).
 **Trigger:** 77 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 10d old (threshold >7d).
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## NL-ISSUES-TRIAGE-20260722 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 85 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 12d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## ROADMAP-FILTER-HIDDEN-COUNT-01 — project chip hides phases with NO "N hidden" disclosure (C4 violation)
+
+**Severity:** P2 (trust: a filtered view is indistinguishable from an empty roadmap)
+**What:** Operator-reported 2026-07-22: the Roadmap rendered "PHASE 1 OF 1" while 16 of 17 phases
+existed, because a persisted `neural-lace` project chip filtered them out. The chrome showed only
+"0 hidden (harness chores)" — which covers the CHORE filter, not the PROJECT chip. The operator
+reasonably concluded the deploy had not landed.
+**Why it matters:** the plan's own C4 law requires a filtered-empty state to NAME the filter +
+show the hidden count + offer one-click clear. That law is implemented for harness-chores and NOT
+for the project chip — so the most-used filter is the one with no disclosure.
+**Fix:** render a hidden-count chip per ACTIVE filter (project chip, and any future facet), same
+shape as the chores chip ("16 hidden (project: neural-lace) [clear]"). Generalize: every filter
+that can remove items from a view must contribute to the disclosure line — audit the Requests and
+Inbox views for the same gap.
+**Root cause of the underlying emptiness (FIXED, d10343d):** plan `project` was read off
+`linkedAsks[0].project`, so plans without a linked ask got `project:''`. Attribution now derives
+from the plan's own repo path. The DISCLOSURE gap above is the separate, still-open half.

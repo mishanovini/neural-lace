@@ -88,9 +88,13 @@ level.
   outcome text), and WHY-is-it-yours (why the call belongs to the
   operator, not the session). `needs-you.sh add --section decision` scores
   every new entry against these at write time (`_ny_lint_decision_text`)
-  and stores the result as a `lint_warnings` array on the item — WARN-only,
-  never blocking (`add` always exits 0; the ledger's availability outranks
-  its tidiness). Both consuming surfaces render the array HONESTLY rather
+  and stores the result as a `lint_warnings` array on the item. TWO-PATH
+  contract (T4/A1 block-promotion 2026-07-20): an INTERACTIVE `add --section
+  decision` failing the lint BLOCKS (exit 1, nothing written, teaching
+  message) so the session retries with context; a `--mechanical` caller
+  stores-and-quarantines (exit 0, `lint_warnings` stamped, NEVER rejected —
+  the ledger-never-rejects contract is preserved so a waiting item never
+  lands nowhere). Both consuming surfaces render the array HONESTLY rather
   than rejecting the entry:
     - `nl needs-me` (text mode) prints a `needs context: <gap list> (id:
       ...)` line under any item whose `lint_warnings` is non-empty; a

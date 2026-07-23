@@ -182,3 +182,31 @@ Two binding requirements (extend Round 6; same authority):
     listRawHeartbeats + session→plan/task attribution), each with its own live status
     (running / stalled / done). "Everything currently being worked on, on one page" (Round 6)
     includes the live agents, positioned in the tree where the work actually sits.
+
+## Round 8 — 2026-07-21, decisions after the round 6+7 fix deployed (operator, AskUserQuestion)
+
+Context: rounds 6+7 rendering fixes deployed to :7733 (distilled leaves, immediate collapse,
+compact chrome, no-paragraph, hierarchy, series-render). Live-DOM check found TWO data-shape
+residuals: (a) junk conversational captures ("The computer rebooted.", "is that really the
+cleanest way…") still render as top-level roadmap items; (b) the operator's ACTUAL current
+work (redesign 8/9, supervisor-tick) does NOT appear — the Roadmap is rooted on captured ASKS,
+and active plans have no linked ask. Two decisions:
+
+8A. ROADMAP ROOTS ON ACTIVE PLANS AS PHASES (operator chose "Active plans as phases"). The
+    Roadmap tree roots on PLAN files shown as connected phase-nodes in build order, each with
+    its tasks as leaves (subtasks per 7B). Requests/asks move ENTIRELY to the Requests tab.
+    This is the operator's round-1/6 vision made literal: "a series of plans being worked on,
+    phases 1-4, each a branch with tasks as leaves." Show the full status spread the operator
+    named (round 4): upcoming / in-progress / partially-done / complete — so roots = ACTIVE +
+    recently-completed (aging window) + any DRAFT/queued plans, in build order, status chip on
+    each. Completed plans collapse per the I2 aging law.
+8B. JUNK HIDDEN FROM ROADMAP ENTIRELY (operator chose "Hide from Roadmap"). Consequence of 8A:
+    an unlinked junk ask has NO plan, so a plan-rooted Roadmap never shows it — junk vanishes
+    for free, living only in the Requests tab. The noise classifier (round-6 gap 5) becomes a
+    Requests-tab-cleanliness nicety, NOT a Roadmap blocker. Retroactive classify sweep +
+    classifier deploy stay queued but non-blocking.
+
+LAW: the Roadmap is the PLAN/work tree (phases → tasks → subtasks + live agents); the Requests
+tab is the ask/intent ledger. They are different trees rooted on different things. Provenance
+links Roadmap→Requests where a plan has a linked ask (C6 bidirectional law preserved), but the
+Roadmap's ROOTS are plans, never asks.

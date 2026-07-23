@@ -1046,7 +1046,72 @@ button, a, [role="button"] { min-height: 24px; }
 .rm-drill { display: none; padding: 4px 8px 6px 20px; font-size: 12px; color: var(--muted); }
 .rm-node[open] > .rm-drill { display: block; }
 .rm-drill-label { font-weight: 600; }
-.rm-from-requests, .rm-status-reason, .rm-title-edit, .rm-rank-row { margin: 3px 0; }
+.rm-from-requests, .rm-status-reason, .rm-title-edit, .rm-rank-row, .rm-item-chrome { margin: 3px 0; }
+
+/* ---- round-6 gap 1/7A/7B/7B-i: task-leaf structure as LISTS, never a
+   paragraph wall — lead sentences, sub-bullet subtasks, live agent leaves.
+   All compact, scannable, indented one level under the drill-down. ---- */
+.rm-lead-points, .rm-subtasks, .rm-subtask-body, .rm-agents {
+  margin: 2px 0 4px 0;
+  padding-left: 18px;
+}
+.rm-lead-points > li, .rm-subtasks > li, .rm-agents > li { margin: 1px 0; }
+.rm-subtask-title { font-weight: 600; }
+.rm-subtask-body { font-size: 11px; color: var(--muted); }
+.rm-agent { display: flex; align-items: baseline; gap: 6px; list-style: none; margin-left: -18px; }
+.rm-agent-glyph { font-size: 10px; }
+.rm-agent-running .rm-agent-glyph { color: var(--ok); }
+.rm-agent-stalled .rm-agent-glyph { color: var(--interrupt); }
+.rm-agent-unknown .rm-agent-glyph { color: var(--warn); }
+.rm-agent-text { font-size: 12px; }
+
+/* ---- round-6 gap 4: compact icon chrome — hidden until hover OR
+   focus-within (never hover-only — WCAG 2.2 2.5.7 stands: a keyboard user
+   tabbing into the row reveals it via :focus-within before the browser
+   paints a focused-but-invisible frame). Opacity (not visibility/display)
+   keeps every button genuinely focusable throughout. No transition — the
+   reveal is INSTANT on focus, so a keyboard user is never looking at a
+   focused-but-still-invisible control even for one frame. ---- */
+.rm-title-edit, .rm-item-chrome {
+  opacity: 0;
+  pointer-events: none;
+}
+.rm-node > .rm-drill:hover .rm-title-edit,
+.rm-node > .rm-drill:hover .rm-item-chrome,
+.rm-title-edit:focus-within,
+.rm-item-chrome:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* an OPEN title editor (input/save/cancel visible) must never be hidden
+   again by a stray mouseout — the row stays visible for the whole edit
+   (JS toggles .rm-editing on open/close; no :has() dependency) */
+.rm-title-edit.rm-editing { opacity: 1; pointer-events: auto; }
+.rm-icon-btn { min-width: 24px; padding: 3px 6px; font-size: 13px; line-height: 1; }
+
+/* ---- round-6 gap 6: sibling PLAN nodes under an intent render as a
+   connected series of numbered "phases" (the operator's own mental model —
+   "phase one through four"). The connector line is ADDITIVE to the "Phase
+   N of M" TEXT label, never color/line-only. ---- */
+.rm-phase-step { position: relative; padding-left: 16px; margin: 2px 0; }
+.rm-phase-step::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 18px;
+  bottom: -6px;
+  width: 2px;
+  background: var(--border2);
+}
+.rm-phase-step:last-child::before { display: none; }
+.rm-phase-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 1px;
+}
 
 /* ---- six-value status chips (C5): text + color, never color-only ---- */
 .chip.rm-status { white-space: nowrap; }

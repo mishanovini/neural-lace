@@ -1657,8 +1657,14 @@ EOF
       export PROGRESS_LOG_STATE_DIR="$s9/progress-logs"
       export OPERATOR_TODO_PATH="$s9/operator-todo.md"
       unset HARNESS_SELFTEST 2>/dev/null || true
-      bash "$s9_needsyou" add --section decision --text $'Ship tonight?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-s9a" >/dev/null
-      bash "$s9_needsyou" add --section decision --text $'Ship tomorrow?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-s9b" >/dev/null
+      # --mechanical: this is a fixture with no live actor to retry a lint block
+      # (the A1 case). Post T4/A1 cold-reader block-promotion, an interactive
+      # `add --section decision` with lint-poor text BLOCKS (exit 1, nothing
+      # written); the mechanical path stores-and-quarantines (exit 0, lint_warnings
+      # stamped, never rejected) — which is what this fixture needs so S9 still
+      # writes its two rows and the digest self-test stays green.
+      bash "$s9_needsyou" add --section decision --mechanical --text $'Ship tonight?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-s9a" >/dev/null
+      bash "$s9_needsyou" add --section decision --mechanical --text $'Ship tomorrow?\nTier 1 — reversible.\nMy pick: yes.' --session "sess-s9b" >/dev/null
     )
     if [[ -f "$s9/NEEDS-YOU.md" ]]; then
       local s9_dir; s9_dir="$(dirname "$s9/NEEDS-YOU.md")"
