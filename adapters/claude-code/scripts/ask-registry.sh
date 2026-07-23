@@ -319,7 +319,7 @@ ar_state_dir() {
 ar_registry_file() { printf '%s/ask-registry.jsonl' "$(ar_state_dir)"; }
 
 # ----------------------------------------------------------------------
-# _ar_timeout_claude <seconds> <claude-args...> — BOUNDED model fork.
+# _ar_timeout_claude <seconds> <prompt...> — BOUNDED cheap-model fork.
 # Added 2026-07-22 (harness-review Major): both async lanes forked
 # `env -u CLAUDECODE claude --model haiku -p ...` with NO time bound. While
 # the lane was dormant (ASK_SUMMARIZER unset by every caller) that cost
@@ -328,13 +328,26 @@ ar_registry_file() { printf '%s/ask-registry.jsonl' "$(ar_state_dir)"; }
 # one that nothing reaps if it hangs. Async is not the same as bounded.
 # House pattern borrowed from supervisor-tick.sh:228 `_st_run` — use
 # `timeout` when present, degrade to a plain call (documented) when absent.
+# `--model haiku -p` is BAKED IN here, not passed by callers (2026-07-22
+# re-review of be037a7, Critical: the first extraction let call sites drop
+# the flags — the lane forked the DEFAULT model with no print flag). This
+# file's contract is hardcoded-cheap-model-only; a helper named *_claude
+# that could fork anything else is the defect class, so the helper makes
+# it unexpressable. AR_DRYRUN_ARGV=1 prints the argv instead of forking
+# (self-test seam: the suite asserts the real invocation shape without
+# ever risking a live model call).
 # ----------------------------------------------------------------------
 _ar_timeout_claude() {
   local secs="$1"; shift
+  if [[ "${AR_DRYRUN_ARGV:-0}" == "1" ]]; then
+    printf '%s ' "timeout" "${secs}s" "env" "-u" "CLAUDECODE" "claude" "--model" "haiku" "-p" "$@"
+    printf '\n'
+    return 0
+  fi
   if command -v timeout >/dev/null 2>&1; then
-    timeout "${secs}s" env -u CLAUDECODE claude "$@"
+    timeout "${secs}s" env -u CLAUDECODE claude --model haiku -p "$@"
   else
-    env -u CLAUDECODE claude "$@"
+    env -u CLAUDECODE claude --model haiku -p "$@"
   fi
 }
 
@@ -1646,6 +1659,18 @@ cmd_selftest() {
     pass "production-shape registry file is valid JSONL end-to-end (jq)"
   else
     fail "production-shape registry file failed jq validation"
+  fi
+
+  # --- model-fork argv shape (2026-07-22 re-review of be037a7, Critical class:
+  # refactor-drops-flags-in-untested-live-branch). The _AR_HAIKU_CMD/_AR_CLASSIFY_CMD
+  # seams replace the ENTIRE invocation, so no other scenario can see the real
+  # argv; AR_DRYRUN_ARGV prints it without ever forking a model.
+  local v_argv
+  v_argv="$(AR_DRYRUN_ARGV=1 _ar_timeout_claude 20 "shape probe prompt")"
+  if [[ "$v_argv" == "timeout 20s env -u CLAUDECODE claude --model haiku -p shape probe prompt " ]]; then
+    pass "model-fork argv carries the full bounded cheap-model shape (timeout Ns env -u CLAUDECODE claude --model haiku -p <prompt>)"
+  else
+    fail "model-fork argv shape regressed: got '$v_argv'"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true
