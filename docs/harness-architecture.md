@@ -15,8 +15,8 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 131 |
-| Unique hook scripts | 111 |
+| Total manifest entries | 130 |
+| Unique hook scripts | 110 |
 | Blocking gates (`blocking: true`) | 36 |
 
 ## Hooks by event
@@ -64,7 +64,6 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | vaporware-volume | gate | no | vaporware-volume-gate.sh |
 | PreToolUse | wire-check | gate | yes | wire-check-gate.sh |
 | PreToolUse | workstreams-emitters | writer | no | workstreams-emit-reconciler.sh, workstreams-emit.sh, workstreams-orchestrator-queue.sh, workstreams-read.sh |
-| PreToolUse | workstreams-spawn-gate | gate | no | workstreams-state-gate.sh |
 | SessionStart | background-work-tracking | surfacer | no | stalled-work-surfacer.sh |
 | SessionStart | decision-context-emitters | writer | no | decision-context-pending-surfacer.sh, decision-context-reply-emit.sh |
 | SessionStart | discovery-cheatsheet | surfacer | no | session-start-discovery-cheatsheet.sh |
@@ -127,7 +126,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 36 | 15 |
+| gate | 36 | 14 |
 | writer | 0 | 28 |
 | surfacer | 0 | 22 |
 | pattern | 0 | 27 |
@@ -146,7 +145,7 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 | session-start | 15 |
 | pretool | 30 |
 | posttool | 6 |
-| none | 72 |
+| none | 71 |
 
 ## Doctrine index
 
@@ -206,7 +205,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/vaporware-prevention.md | 3 (runtime-verification, vaporware-config-control, vaporware-volume) |
 | doctrine/work-shapes.md | 1 (work-shapes) |
 | doctrine/workstream-memory-ecology.md | 1 (workstream-memory-ecology) |
-| doctrine/workstreams-state.md | 7 (workstreams-emitters, workstreams-extract-pending, workstreams-spawn-gate, workstreams-stop-gate, workstreams-stop-writer, workstreams-task-binding, workstreams-turn-emit) |
+| doctrine/workstreams-state.md | 6 (workstreams-emitters, workstreams-extract-pending, workstreams-stop-gate, workstreams-stop-writer, workstreams-task-binding, workstreams-turn-emit) |
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
@@ -341,7 +340,6 @@ Entries with no doctrine_file (`-`): 33.
 | workstream-memory-ecology | pattern | — | no | none | — |
 | workstreams-emitters | writer | PostToolUse, PreToolUse, SessionStart, Stop, UserPromptSubmit | no | none | workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5. workstreams-extract-pending.sh split out to its own entry (id: workstreams-extract-pending) and retired at O.4 cutover; removed from workstreams-stop-writer.sh's MEMBERS array in the same commit. |
 | workstreams-extract-pending | writer | manual | no | none | retired to attic at O.4 cutover (attic + exit-0 shim, per manifest-amendments.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/manifest-amendments.md Entry 2) — superseded by needs-you.sh per that file's own header; item-extraction from Stop-time transcript scanning is no longer the mechanism. Removed from workstreams-stop-writer.sh's MEMBERS array in the same integration commit. |
-| workstreams-spawn-gate | gate | PreToolUse | no | none | retired at O.4 cutover (attic + exit-0 shim, per template-wiring.md fragment adapters/claude-code/tests/fixtures/wave-o/O.4/template-wiring.md) — the ONLY protected consumer (workstreams-ui's tree-state read) was replaced by derived-truth reads (nl <sub> --json); law 2 (EVERY-SIGNAL-HAS-A-CONSUMER) has no consumer left to protect. Closes NL-FINDING-024 at the root (the spawn writer -> gate PreToolUse race this finding describes can no longer fire). Blocking-gate budget 10/12 -> 8/12. |
 | workstreams-stop-gate | gate | Stop | no | stop | retired at D.5 cutover (attic + exit-0 shim); consolidated into the single workstreams Stop writer per ADR 058 D5 / specs-d |
 | workstreams-stop-writer | writer | Stop | no | stop | — |
 | workstreams-task-binding | gate | SessionStart, Stop | no | stop | retired at D.5 cutover (attic + exit-0 shim); consolidated into the single workstreams Stop writer (D.0 collision resolution) per ADR 058 D5 / specs-d |
