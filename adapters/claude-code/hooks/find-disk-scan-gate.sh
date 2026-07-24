@@ -38,9 +38,11 @@
 #     `C:\`, `C:/`. Options before the root (find's roots precede its
 #     expression) are skipped; a trailing `-maxdepth N` (any N) after a
 #     drive-wide root does NOT make the scan safe — still blocked.
-#   - `grep -r`/`-R`/`--recursive` (any combined short-flag form, e.g.
-#     `-rn`, `-irn`) or `rg` (recursive by default) whose search path is one
-#     of the same drive-wide roots.
+#   - `grep -r`/`-R`/`--recursive`/`--dereference-recursive` (case-
+#     INsensitive — `-R` and `-r` are both recognized, including any
+#     combined short-flag form, e.g. `-rn`, `-Rn`, `-irn`) or `rg`
+#     (recursive by default) whose search path is one of the same
+#     drive-wide roots.
 #   - PowerShell `Get-ChildItem -Recurse` (path in any argument order,
 #     including named `-Path`) whose path argument is a drive-wide root.
 #   - Any of the above inside a command chain (`&&`, `;`, `|`, `||`) — every
@@ -70,7 +72,14 @@
 # "Command:" line whose content is a substring of (or contains) the actual
 # blocked command. Suppresses the block for THIS command, this run only;
 # every use is ledger-logged (lib/signal-ledger.sh, event "waiver"). Fails
-# closed: missing/stale/clause-less/non-matching waivers do not unlock.
+# closed: missing/stale/clause-less/non-matching waivers do not unlock. The
+# block message instructs writing this file with the Write tool, not a
+# shell command — a Bash/PowerShell waiver-write would itself be a command
+# containing the quoted original blocked command text and would pass back
+# through this same PreToolUse gate (batch-review Major finding: this was
+# a real re-block risk before the quote-aware segment-splitter fix below;
+# the Write-tool instruction removes the risk structurally, independent of
+# how well the splitter parses any given quoting shape).
 #
 # FAIL-OPEN: no jq / empty payload / malformed JSON / tool other than
 # Bash|PowerShell -> exit 0 (allow). This gate teaches; it must never brick
@@ -85,6 +94,14 @@
 #     substitution or variable expansion (`R=/; find "$R"`), base64-encoded
 #     commands, or `$'...'` ANSI-C quoting of the root is not evaluated —
 #     only a literal, directly-visible root token is checked.
+#   - The quote-aware segment splitter (_fdsg_split_segments) tracks single-
+#     and double-quote state char-by-char but does NOT track parenthesis
+#     depth or backslash-escaped quotes: an unquoted subshell/command-
+#     substitution containing a top-level-looking separator (`echo $(echo
+#     a && echo b)`) could still split at the wrong point, and a backslash-
+#     escaped quote inside a double-quoted span (`"foo\"bar"`) ends the
+#     quote-tracking early. Neither is evaluated for a masked drive-wide
+#     root the way the common/documented quoting shapes above are.
 #   - PowerShell aliases for Get-ChildItem (`gci`, `ls`, `dir`) are not
 #     recognized — only the literal cmdlet name `Get-ChildItem`.
 #   - `find`'s pre-path global options are handled for the common set
@@ -153,15 +170,61 @@ _fdsg_tokenize() {
   fi
 }
 
-# Split a full command string into segments on &&, ;, | (|| reduces to the
-# same result via the single-| pass — both pipe chars become breaks either
-# way). Prints one segment per line.
+# Split a full command string into segments on TOP-LEVEL (unquoted) &&, ;,
+# |, || only. Quote-AWARE: a separator character appearing inside a single-
+# or double-quoted span is part of that span's literal text, not a break —
+# fixes the quote-unaware-splitting Major finding (batch review): the prior
+# sed-based version split on ANY occurrence of these characters regardless
+# of quoting, so `git commit -m "guard against && find / scans"` and
+# `echo "do not run ; find / here"` were hard-blocked on quoted PROSE that
+# merely mentions a separator + `find /`-shaped text, and the gate's own
+# waiver-remedy snippet (which echoes the original blocked command back
+# inside a quoted `printf 'Command: %s\n' "..."` argument) could re-trip
+# itself the same way when the operator re-ran it. Character-by-character
+# scan mirrors _fdsg_tokenize's quote-state tracking exactly. Prints one
+# segment per line (always newline-terminated, including the last one —
+# `while read` drops an unterminated last line otherwise).
 _fdsg_split_segments() {
-  # Trailing \n matters: `while read` drops an unterminated last line (its
-  # read call returns non-zero on EOF-without-newline, so the loop body
-  # never runs for it) — printf '%s\n' guarantees the last segment always
-  # has a terminator to read up to.
-  printf '%s\n' "$1" | sed -e 's/&&/\n/g' -e 's/;/\n/g' -e 's/|/\n/g'
+  local s="$1" i n ch in_sq=0 in_dq=0 cur=""
+  n=${#s}
+  for ((i=0; i<n; i++)); do
+    ch="${s:i:1}"
+    if [[ $in_sq -eq 1 ]]; then
+      cur+="$ch"
+      [[ "$ch" == "'" ]] && in_sq=0
+      continue
+    fi
+    if [[ $in_dq -eq 1 ]]; then
+      cur+="$ch"
+      [[ "$ch" == '"' ]] && in_dq=0
+      continue
+    fi
+    case "$ch" in
+      "'") in_sq=1; cur+="$ch" ;;
+      '"') in_dq=1; cur+="$ch" ;;
+      '&')
+        if [[ "${s:i+1:1}" == "&" ]]; then
+          printf '%s\n' "$cur"; cur=""; i=$((i+1))
+        else
+          cur+="$ch"
+        fi
+        ;;
+      ';')
+        printf '%s\n' "$cur"; cur=""
+        ;;
+      '|')
+        if [[ "${s:i+1:1}" == "|" ]]; then
+          printf '%s\n' "$cur"; cur=""; i=$((i+1))
+        else
+          printf '%s\n' "$cur"; cur=""
+        fi
+        ;;
+      *)
+        cur+="$ch"
+        ;;
+    esac
+  done
+  printf '%s\n' "$cur"
 }
 
 # _fdsg_check_find <tokens...>  (tokens[0] == "find")
@@ -210,9 +273,14 @@ _fdsg_check_grep_rg() {
   elif [[ "$base" == "grep" ]]; then
     for ((j=1; j<n; j++)); do
       case "${args[$j]}" in
-        --recursive) is_recursive_grep=1 ;;
+        --recursive|--dereference-recursive) is_recursive_grep=1 ;;
         -*)
-          if [[ "${args[$j]}" == -*r* ]] && [[ "${args[$j]}" != --* ]]; then
+          # Case-insensitive: -r AND -R both mean recursive (grep(1) -R
+          # differs from -r only in symlink-following, not recursion).
+          # Fix for the missed-uppercase-R Major finding (batch review):
+          # the prior `-*r*` glob was case-sensitive and let `-R`/`-Rn`
+          # slip through uncaught.
+          if [[ "${args[$j]}" == -*[rR]* ]] && [[ "${args[$j]}" != --* ]]; then
             is_recursive_grep=1
           fi
           ;;
@@ -366,13 +434,15 @@ _fdsg_block_message() {
     echo "Hatch (cost: unlocks THIS command for <1h, ledger-logged — never a"
     echo "blanket suppression): a genuinely-needed one-off drive-wide scan"
     echo "gets a fresh (<1h) structured waiver naming BOTH purpose clauses"
-    echo "AND the command:"
-    echo "  mkdir -p \"$state_dir\" && \\"
-    echo "  { printf 'Purpose: this gate exists to prevent disk-wide find/grep/rg/Get-ChildItem scans\\n'; \\"
-    echo "    printf 'Because: <why this specific one-off is genuinely needed>\\n'; \\"
-    echo "    printf 'Command: %s\\n' \"$full_cmd\"; \\"
-    echo "  } > \"$state_dir/find-disk-scan-waiver-\$(date +%s).txt\""
-    echo "Re-run the command after writing the waiver."
+    echo "AND the command. Use the Write tool (NOT a shell command — writing"
+    echo "the waiver via Bash/PowerShell would echo this blocked command back"
+    echo "through this same gate and could re-trip it) to create:"
+    echo "  $state_dir/find-disk-scan-waiver-<unix-timestamp>.txt"
+    echo "with this content:"
+    echo "  Purpose: this gate exists to prevent disk-wide find/grep/rg/Get-ChildItem scans"
+    echo "  Because: <why this specific one-off is genuinely needed>"
+    echo "  Command: $full_cmd"
+    echo "Then re-run the original command."
     echo "================================================================"
   } >&2
   cat <<JSON
@@ -444,6 +514,8 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _block_test "golden scenario verbatim (2026-07-20 live PID 14916)" 'find / -iname "scope-enforcement-gate*"'
   _block_test "find /c/ drive mount" 'find /c/ -name x'
   _block_test "grep -r rooted at /" 'grep -r pattern /'
+  _block_test "grep -R (uppercase recursive) rooted at /" 'grep -R pattern /'
+  _block_test "grep -Rn (uppercase combined short-flag) rooted at /c/" 'grep -Rn pattern /c/'
   _block_test "rg rooted at bare Windows drive" 'rg x C:\'
   _block_test "PowerShell Get-ChildItem -Recurse C:\\" 'Get-ChildItem C:\ -Recurse' "PowerShell"
   _block_test "chained: cd foo && find /" 'cd foo && find / -name x'
@@ -468,6 +540,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _allow_test "rg scoped to src/" 'rg pattern src/'
   _allow_test "Get-ChildItem -Recurse . scoped" 'Get-ChildItem -Recurse .' "PowerShell"
   _allow_test "non-find command" 'echo hello world'
+
+  # ---- NEGATIVE: quoted separator + find/-root-shaped PROSE must never
+  # split/match (quote-unaware-splitting Major finding, batch review) ----
+  _allow_test 'git commit -m with quoted && find / inside the message' 'git commit -m "guard against && find / scans"'
+  _allow_test 'echo with quoted ; find / inside the string' 'echo "do not run ; find / here"'
 
   # Malformed JSON -> fail-open (allow).
   MALFORMED_RC=$(printf '{not json at all' | bash "$_FDSG_SELF" >/dev/null 2>"$TMP/malformed_err.txt"; echo $?)
