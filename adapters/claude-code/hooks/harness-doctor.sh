@@ -92,8 +92,10 @@
 #   budget-chains           : Stop <= 6, SessionStart <= 8 total hook
 #                             entries, checked against BOTH the live
 #                             settings.json and the committed template.
-#   budget-blocking-gates   : <= 13 blocking session-event UNITS (raised from
-#                             12 -> 13, harness-governance-batch 2026-07-16:
+#   budget-blocking-gates   : <= 14 blocking session-event UNITS (raised
+#                             13 -> 14, agent-efficiency batch 2026-07-23:
+#                             find-disk-scan-gate; prior 12 -> 13,
+#                             harness-governance-batch 2026-07-16:
 #                             gh-merge-canonical + review-before-deploy are
 #                             this batch's governance gates, each carrying
 #                             the full §10 evidence bar; evidence-before-fix
@@ -1847,7 +1849,7 @@ check_budget_blocking_gates() {
   if [[ "$rc" -ne 0 ]]; then
     local units_line
     units_line="$(printf '%s\n' "$out" | grep -m1 'blocking session-event units:' || true)"
-    _red "budget-blocking-gates" "${units_line:-blocking-budget-check.js reported over-budget} (budget <= 13 consolidated units per specs-d §D.0.4, raised from 12 harness-governance-batch 2026-07-16) — ${manifest}; remediation: demote via scripts/gate-demotion.sh (F.5) or consolidate per ADR 059 D7"
+    _red "budget-blocking-gates" "${units_line:-blocking-budget-check.js reported over-budget} (budget <= 14 consolidated units per specs-d §D.0.4, raised 13->14 agent-efficiency batch 2026-07-23) — ${manifest}; remediation: demote via scripts/gate-demotion.sh (F.5) or consolidate per ADR 059 D7"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
@@ -3462,12 +3464,13 @@ EOF
   # (PreToolUse here) to be counted at all; each fixture id is distinct so
   # none of them hit the UNIT_MAP consolidation table (that table's own
   # behavior is exercised live against the real manifest, not re-tested
-  # here — this fixture only needs to prove the RED/GREEN threshold at 13,
-  # raised from 12 harness-governance-batch 2026-07-16 (gh-merge-canonical +
-  # review-before-deploy, each carrying the full §10 evidence bar;
-  # evidence-before-fix / task 3 is WARN-MODE, consumes no unit). 13 is the
-  # MEASURED integrated count, not headroom; budget stays deliberately
-  # tight — raise only with named gates).
+  # here — this fixture only needs to prove the RED/GREEN threshold at 14,
+  # raised from 13 agent-efficiency batch 2026-07-23 (find-disk-scan-gate,
+  # full §10 evidence bar; prior raise 12->13 harness-governance-batch
+  # 2026-07-16: gh-merge-canonical + review-before-deploy; evidence-before-
+  # fix is WARN-MODE, consumes no unit). 14 is the MEASURED integrated
+  # count, not headroom; budget stays deliberately tight — raise only with
+  # named gates. Fixture counts track the cap: RED = cap+1, GREEN = cap.
   _write_blocking_manifest_fixture() {
     local dir="$1" count="$2"
     local entries="" i
@@ -3487,17 +3490,17 @@ EOF
   }
   D=$(_scenario_dir bbg-red)
   _stamp_claim_honesty_green "$D"
-  _write_blocking_manifest_fixture "$D" 14
+  _write_blocking_manifest_fixture "$D" 15
   _copy_blocking_budget_tooling "$D"
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
-  _assert "budget-blocking-gates-red" 1 "$RC" "RED budget-blocking-gates.*blocking session-event units: 14" "$OUT"
+  _assert "budget-blocking-gates-red" 1 "$RC" "RED budget-blocking-gates.*blocking session-event units: 15" "$OUT"
 
-  # ---- Check: budget-blocking-gates GREEN fixture — 13 units (at budget) ----
+  # ---- Check: budget-blocking-gates GREEN fixture — 14 units (at budget) ----
   D=$(_scenario_dir bbg-green)
   _stamp_claim_honesty_green "$D"
-  _write_blocking_manifest_fixture "$D" 13
+  _write_blocking_manifest_fixture "$D" 14
   _copy_blocking_budget_tooling "$D"
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
