@@ -74,6 +74,15 @@
       "created_at": "2026-07-24T01:17:30Z"
     },
     {
+      "path": "adapters/claude-code/hooks/context-watermark.sh",
+      "blob_sha": "a2ed3dac097f11353c590466c7eab5737877d0f7",
+      "record_id": "hcr-20260724-44ab0857",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-24T01:31:53Z"
+    },
+    {
       "path": "adapters/claude-code/hooks/decisions-index-gate.sh",
       "blob_sha": "3aa1983aff1d15c18432ed4e700edad54f33f73d",
       "record_id": "hcr-20260724-63b76ebb",
@@ -675,6 +684,15 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-21T00:47:39Z"
+    },
+    {
+      "path": "adapters/claude-code/scripts/supervisor-tick.sh",
+      "blob_sha": "c0ddec1236ac8429241a4e8f936e3dce58fe5860",
+      "record_id": "hcr-20260724-44ab0857",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-24T01:31:53Z"
     },
     {
       "path": "adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
