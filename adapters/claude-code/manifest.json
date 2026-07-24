@@ -1518,6 +1518,62 @@
       "honesty_rationale": "New-file naming-convention check on the session's own newly-added migration — resolvable by renaming in the same commit."
     },
     {
+      "id": "perf-ledger",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "lib/perf-ledger.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "hooks/lib/perf-ledger.sh",
+          "docs/plans/perf-telemetry-2026-07.md"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "perf-telemetry-2026-07 plan P1, root cause = the E.1 fork-storm (agent-efficiency-fixes plan): weeks of zero mechanical signal on per-call hook latency, discovered only when the operator's machine became unresponsive (docs/lessons/2026-07-13-agent-efficiency-bottlenecks-process-spawn-and-hook-latency.md: 'a large hook takes over a second to decide to do nothing'). Investigated FIRST (per the plan's mandate) whether a single PreToolUse chain wrapper exists to time — PROVEN it does not (settings.json.template wires each hook as its own independent command entry; 24 separate Bash-matcher blocks). Shipped shape: self-metering sourced into the 5 highest-cost per-Bash-call hooks by line count (the 07-13 lesson's own proxy for parse-tax): scope-enforcement-gate.sh (2127 lines), plan-deletion-protection.sh (1066), concurrent-ownership-gate.sh (1029), evidence-before-fix-gate.sh (1009), pr-template-inline-gate.sh (735). Each emits one {ts,hook,ms} JSONL line per real invocation into a daily-rotated ~/.claude/state/perf/chain-YYYYMMDD.jsonl file — this is P3's future p95-by-hook oracle. Golden scenario for the plan as a whole (docs/plans/perf-telemetry-2026-07.md Testing Strategy): replaying the 07-23 storm shape against a P3 budget would RED naming the offender by exactly this ledger's hook field — the mechanical signal E.1 never had.",
+      "fp_expectation": "None expected — this is a writer, not a gate (never blocks, never alters exit codes; `pl_meter_end` always returns 0 even on a metering failure, verified by its own self-test Scenario 5). The only failure surface is accidental production-ledger pollution during a hook's OWN self-test (self-tests re-invoke the hook as a real child subprocess to test its production code path) — closed by exporting PERF_LEDGER_DIR (or relying on the pre-existing HARNESS_SELFTEST=1 export) before each self-test spawns its child scenarios; verified live at build time (ran all 5 hooks' self-tests back to back, confirmed zero lines landed in the real ~/.claude/state/perf/ afterward).",
+      "retirement_condition": "Retire the self-metering shape (not the ledger schema) once P6 (PRETOOLUSE-DISPATCHER-01, out of this plan's scope) ships a real in-process dispatcher — at that point a single wrapper can time the WHOLE chain per Bash call, which is a strict superset of this lib's 5-hook self-metering and should replace it rather than run alongside it.",
+      "honesty_rationale": "Zero-fork, zero-block, observe-only writer with no enforce mode to graduate into (mirrors supervisor-tick's/health-tick's own honesty_rationale shape): it only appends a JSONL line, never alters a hook's decision or exit code. Hot-path overhead is asserted in its own --self-test (Scenario 6: 500 begin/end pairs complete in well under 1s — a single real Windows fork alone costs ~190ms per the 07-13 lesson, so 500 forks would take ~95s) AND via a static fork-counting harness (Scenario 7: greps the hot-path function bodies for command substitution/backtick/pipe/named-external-command, distinguishing arithmetic expansion `$((...))` and the `||` OR-operator from real fork sources — both were live false-positives caught and fixed during this build)."
+    },
+    {
+      "id": "perf-tick-snapshot",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "lib/perf-tick-snapshot.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "hooks/lib/perf-tick-snapshot.sh",
+          "scripts/supervisor-tick.sh",
+          "scripts/health-tick.sh",
+          "docs/plans/perf-telemetry-2026-07.md"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "perf-telemetry-2026-07 plan P2 (PERF-ESTATE-PROGRAM-01's named home): one snapshot JSONL line per tick — bash.exe count, claude.exe count, worktree count, Defender CPU — into ~/.claude/state/perf/ticks.jsonl, piggybacked onto the EXISTING supervisor-tick.sh (primary) and health-tick.sh (fallback, since supervisor-tick is operator-armed and may be inert) rather than a new scheduler, same design constraint as P1. Same orphan-reap process-enumeration mechanism investigated first for accuracy: PROVEN that MSYS `ps -W` reports ParentProcessId=0 for essentially every process outside the current session's own tree (cannot judge cross-session orphaning), matching session-heartbeat-lib.sh's own documented pid-liveness caveat; `wmic process get ... ParentProcessId` instead returns the REAL win32 parent id system-wide, verified by cross-referencing against CommandLine for the same pids. Golden scenario for orphan reap specifically: the operator's own 2026-07-23 storm discipline ('manual kill: only provably-orphaned/redundant') encoded as a mechanical predicate — parent-dead (via the real wmic PPID, not the unreliable MSYS one) AND age >= PERF_TICK_ORPHAN_AGE_MIN (default 15min, generous headroom over the seconds a hook normally takes) AND not any live session's heartbeat pid AND not self — verified live at build time against a REAL disposable spawned process (killed via `taskkill //PID //F`, confirmed gone via wmic afterward) plus a real machine tick that found and correctly identified one genuinely stale cross-project bash.exe (340min old, dead parent) in default unarmed would_reap mode.",
+      "fp_expectation": "Reap FPs are the dominant risk this entry exists to name honestly. Default posture is UNARMED (PERF_TICK_REAP_ARMED unset) — every candidate is logged as would_reap, never killed, until the operator explicitly sets the env var (mirrors session-resumer.sh's own explicit-arming precedent and this plan's own Notes section naming the 43-worktree PURGE decision as operator-only). Guard layers, each independently self-tested against a fixture proving it holds: (1) parent-alive -> never a candidate (one-snapshot point-in-time PID set, no race between listing and checking); (2) age < threshold -> never a candidate (still-working hooks are not orphans); (3) any session-heartbeat file's pid -> never a candidate (never reaps a live builder's own tracked process); (4) self pid -> never a candidate. A REAL build-time bug this entry's self-test now regression-guards: wmic's captured CSV output showed a DOUBLED trailing CR (hex 0d 0d 0a, MSYS text-mode re-translation) that silently collapsed a real ~300-row snapshot to bash_count=0/claude_count=0 with degraded=false (looked healthy, was silently wrong) — caught only by testing against REAL wmic output at realistic scale, not small synthetic fixtures; fixed (tr -d NUL+CR at the source) and pinned by a dedicated regression scenario using the exact byte pattern.",
+      "retirement_condition": "Retire once P6 (PRETOOLUSE-DISPATCHER-01) or a future dedicated supervisor process subsumes both ticks' passive-observability role; individually, drop the health-tick.sh fallback specifically once supervisor-tick.sh's own NL-SupervisorTick scheduled task is confirmed armed and running on this machine (its cadence would then make the hourly fallback redundant) — do not drop it before that confirmation, per the plan's own 'P3 gets data regardless' rationale for shipping both.",
+      "honesty_rationale": "Snapshot half is zero-block observability (mirrors perf-ledger/supervisor-tick/health-tick's own shape). Reap half is REAL (a genuine `taskkill //PID //F`, not a no-op) but default-OFF and requires an explicit operator env-var to arm — never silently destructive, an agent session cannot arm it merely by running code. No enforce mode to graduate into for the snapshot writer; the reap mechanism's only 'graduation' is the operator setting PERF_TICK_REAP_ARMED=1 themselves after reviewing would_reap output, which is a deliberate design choice (not a build gap) given the exact failure class (killing a live process) this plan exists to prevent recurring."
+    },
+    {
       "id": "plan-deletion-protection",
       "kind": "gate",
       "doctrine_file": "doctrine/planning.md",

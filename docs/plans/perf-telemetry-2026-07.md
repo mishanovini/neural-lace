@@ -74,6 +74,22 @@ that were supposed to notice. This plan builds the feedback loop, not another re
 - docs/harness-architecture.md — regen.
 - docs/backlog.md — absorbed-row deletion + follow-on rows.
 
+## In-flight scope updates
+- 2026-07-23: adapters/claude-code/hooks/scope-enforcement-gate.sh, plan-deletion-protection.sh,
+  concurrent-ownership-gate.sh, evidence-before-fix-gate.sh, pr-template-inline-gate.sh — the P1
+  self-metering targets (the 5 highest-cost per-Bash-call hooks by line count, per the 07-13
+  profile the task description names explicitly); the Files table only named the new lib file,
+  not the 5 existing hooks it gets sourced into.
+- 2026-07-23: adapters/claude-code/scripts/supervisor-tick.sh — P2's declared PRIMARY tick
+  (PERF-ESTATE-PROGRAM-01's named home per this plan's own P2 task line); the Files table only
+  listed health-tick.sh (the fallback), omitting the primary target.
+- 2026-07-23: adapters/claude-code/hooks/lib/perf-tick-snapshot.sh — new file, P2's shared
+  snapshot/reap lib, sourced by both supervisor-tick.sh and health-tick.sh (avoids duplicating
+  the process-enumeration/orphan-reap logic in two files).
+- 2026-07-23: adapters/claude-code/doctrine/INDEX.md — regenerated in the same commit as
+  docs/harness-architecture.md (both are manifest.json-derived; manifest-check.sh --gen-index
+  writes this file mechanically whenever entries change, same trigger as the architecture doc).
+
 ## Assumptions
 - $EPOCHREALTIME is available (bash ≥5 ships with current Git for Windows — verify in P1
   self-test; fallback: skip metering, never fork for a timestamp).

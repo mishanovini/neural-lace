@@ -225,6 +225,28 @@ run_tick() {
     _ht_record "heartbeat-reap" "session-heartbeat-reap" "rc=0" "rc=${_HT_STEP_RC}" "$_HT_STEP_MS" "REAP_ERROR" "${_HT_STEP_OUT:0:200}"
   fi
 
+  # ---- (e) P2 perf snapshot + orphan reap (perf-telemetry-2026-07 plan,
+  # fallback tick — supervisor-tick.sh is the plan's declared PRIMARY home
+  # but is OPERATOR-ARMED and may be inert on a given machine; this hourly
+  # tick is already armed everywhere, so P3 gets data regardless). Shares
+  # the SAME lib as supervisor-tick.sh (never a second implementation of
+  # "collect a snapshot / decide an orphan"). Passive observability, not a
+  # health check: never recorded via _ht_record, so a perf-snapshot hiccup
+  # never triggers this tick's own anomaly alert — P3 (future task) is the
+  # thing that turns ledger data into a RED, not this writer step. -------
+  local pts_lib="$HOOKS_DIR/lib/perf-tick-snapshot.sh"
+  if [[ -f "$pts_lib" ]]; then
+    local pts_cmd="${HEALTH_TICK_PERF_SNAPSHOT_CMD:-bash -c \"source '$pts_lib' && pts_run_tick\"}"
+    _ht_run_step "perf-snapshot" "$pts_cmd"
+    if [[ "$_HT_STEP_RC" -eq 0 ]]; then
+      echo "[health-tick] perf snapshot written: ${_HT_STEP_OUT:-<empty>}"
+    elif [[ "$_HT_STEP_RC" -ne 125 ]]; then
+      echo "[health-tick] WARN: perf snapshot step failed (rc=${_HT_STEP_RC}, non-fatal, no alert): ${_HT_STEP_OUT:0:200}" >&2
+    fi
+  else
+    echo "[health-tick] WARN: perf-tick-snapshot.sh lib not found at ${pts_lib} — perf snapshot skipped this fire (graceful, no crash)" >&2
+  fi
+
   ended_at="$(_ht_now_iso)"
   local total=$(( healthy + anomalies ))
 
@@ -418,6 +440,37 @@ cmd_selftest() {
     pass "reap failure -> REAP_ERROR anomaly recorded, tick exit 0"
   else
     fail "expected exit 0 + REAP_ERROR alert (rc=$rc6, file: $(cat "$f6" 2>/dev/null))"
+  fi
+
+  echo "Scenario 7: P2 perf snapshot fallback (perf-telemetry-2026-07 plan) — this tick writes a real ticks.jsonl line via the shared lib, and a perf-snapshot failure never triggers this tick's own anomaly alert"
+  local pts_lib="$HOOKS_DIR/lib/perf-tick-snapshot.sh"
+  if [[ -f "$pts_lib" ]]; then
+    local d7="$TMP/s7-alerts" perf7="$TMP/s7-perf"
+    mkdir -p "$d7"
+    # Export the PERF_TICK_* overrides so the DEFAULT
+    # HEALTH_TICK_PERF_SNAPSHOT_CMD (which sources pts_lib and calls
+    # pts_run_tick) inherits them naturally through the process tree —
+    # avoids nested-quoting a nested `bash -c` command-line string.
+    HEALTH_TICK_ALERT_DIR="$d7" HEALTH_TICK_DOCTOR_CMD="$GREEN_DOCTOR" \
+      HEALTH_TICK_TASK_HEALTH_CMD="$HEALTHY_TASKS" HEALTH_TICK_REAP_CMD="$OK_REAP" \
+      PERF_TICK_LEDGER_DIR="$perf7" \
+      PERF_TICK_PROCESS_LIST_CMD="printf 'Node,CreationDate,Name,ParentProcessId,ProcessId\nOFFICE_PC,20260101000000.000000-420,bash.exe,1,111\nOFFICE_PC,20260101000000.000000-420,claude.exe,1,222\n'" \
+      PERF_TICK_DEFENDER_CMD="true" \
+      PERF_TICK_WORKTREE_COUNT_OVERRIDE=4 \
+      bash "$SELF" >/dev/null 2>&1
+    local pts_file="$perf7/ticks.jsonl"
+    if [[ -f "$pts_file" ]] && grep -qE '"bash_count":1,"claude_count":1,"worktree_count":4' "$pts_file"; then
+      pass "health-tick's own run wrote a fixture-driven ticks.jsonl line via the shared perf-tick-snapshot.sh lib"
+    else
+      fail "expected a ticks.jsonl line with bash_count=1/claude_count=1/worktree_count=4 at $pts_file: $(cat "$pts_file" 2>/dev/null)"
+    fi
+    if [[ -z "$(ls -A "$d7" 2>/dev/null)" ]]; then
+      pass "perf snapshot step is passive observability — never counted toward this tick's own anomaly alert"
+    else
+      fail "perf snapshot step unexpectedly triggered an anomaly alert: $(ls "$d7")"
+    fi
+  else
+    fail "perf-tick-snapshot.sh lib not found at $pts_lib"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true

@@ -685,6 +685,13 @@ run_self_test() {
   TMPDIR_ST=$(mktemp -d 2>/dev/null || mktemp -d -t efgself)
   trap 'rm -rf "$TMPDIR_ST"' RETURN
 
+  # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): every scenario
+  # below re-invokes this script as a REAL child `bash "$SCRIPT_PATH"`
+  # subprocess. Without this export every self-test run would write
+  # dozens of real lines into the operator's actual ~/.claude/state/perf
+  # ledger.
+  export PERF_LEDGER_DIR="$TMPDIR_ST/perf"
+
   local SCRIPT_PATH
   SCRIPT_PATH="$(cd "$(dirname "$0")" 2>/dev/null && pwd)/$(basename "$0")"
 
@@ -1003,7 +1010,22 @@ insert a duplicate row.' \
   [[ "$FAILED" -eq 0 ]]
 }
 
+# --- P1 perf metering (perf-telemetry-2026-07 plan) -------------------------
+# Self-metering: one of the 5 highest-cost per-Bash-call hooks (no single
+# PreToolUse chain wrapper exists — see hooks/lib/perf-ledger.sh's header
+# for the PROVEN instrumentation-point finding). Wrapped around the
+# production `main` dispatch branch only (never the --self-test branch);
+# a trap on EXIT covers every exit path inside main() without touching
+# each one individually. Builtin-only, zero forks.
+source "$SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
+
 case "${1:-}" in
   --self-test) run_self_test; exit $? ;;
-  *) main ;;
+  *)
+    if declare -F pl_meter_begin >/dev/null 2>&1; then
+      pl_meter_begin
+      trap 'pl_meter_end "evidence-before-fix-gate"' EXIT
+    fi
+    main
+    ;;
 esac

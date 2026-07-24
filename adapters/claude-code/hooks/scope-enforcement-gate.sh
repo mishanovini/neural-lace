@@ -369,6 +369,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
   fi
   trap 'rm -rf "$TMPROOT"' EXIT
 
+  # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): every scenario
+  # below re-invokes this script as a REAL child `bash "$SELF_TEST_HOOK"`
+  # subprocess (not passed --self-test, so it runs the real production
+  # path, now metered — see the "Main hook logic" section's perf-metering
+  # block). Without this export every self-test run would write dozens of
+  # real lines into the operator's actual ~/.claude/state/perf ledger.
+  export PERF_LEDGER_DIR="$TMPROOT/perf"
+
   # Helper: build a fresh git repo with a plan + staged files, then
   # invoke the hook against synthesized stdin JSON. Returns hook's
   # exit code.
@@ -1401,6 +1409,19 @@ fi
 # ============================================================
 # Main hook logic
 # ============================================================
+
+# --- P1 perf metering (perf-telemetry-2026-07 plan) -------------------------
+# Self-metering: this is one of the 5 highest-cost per-Bash-call hooks (no
+# single PreToolUse chain wrapper exists to time the whole chain — see
+# hooks/lib/perf-ledger.sh's own header for the PROVEN instrumentation-point
+# finding). Builtin-only ($EPOCHREALTIME), zero forks; a trap on EXIT covers
+# every exit path in this file (all the `exit 0`/`exit 2` calls below) without
+# touching each one individually.
+source "$_SEG_SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
+if declare -F pl_meter_begin >/dev/null 2>&1; then
+  pl_meter_begin
+  trap 'pl_meter_end "scope-enforcement-gate"' EXIT
+fi
 
 # --- Cheap pre-filter (perf; behavior-preserving) ---------------------------
 # This gate only ever ACTS on a `git commit` command; every other command is a

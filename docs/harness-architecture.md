@@ -15,8 +15,8 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 130 |
-| Unique hook scripts | 110 |
+| Total manifest entries | 132 |
+| Unique hook scripts | 112 |
 | Blocking gates (`blocking: true`) | 36 |
 
 ## Hooks by event
@@ -55,6 +55,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | PreToolUse | observed-errors-first | gate | no | observed-errors-gate.sh |
 | PreToolUse | outcome-evidence | gate | no | outcome-evidence-gate.sh |
 | PreToolUse | parallel-dev-migration-naming | gate | yes | migration-naming-gate.sh |
+| PreToolUse | perf-ledger | writer | no | lib/perf-ledger.sh |
 | PreToolUse | plan-deletion-protection | gate | yes | plan-deletion-protection.sh |
 | PreToolUse | plan-edit-validator | gate | yes | plan-edit-validator.sh |
 | PreToolUse | pr-template-inline | gate | no | pr-template-inline-gate.sh |
@@ -102,6 +103,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | manual | harness-doctor | surfacer | no | harness-doctor.sh |
 | manual | harness-hygiene-scan | gate | yes | harness-hygiene-scan.sh |
 | manual | ntfy-push | surfacer | no | — |
+| manual | perf-tick-snapshot | writer | no | lib/perf-tick-snapshot.sh |
 | manual | plan-reviewer | gate | yes | plan-reviewer.sh |
 | manual | propagation-engine | writer | no | propagation-trigger-router.sh |
 | manual | review-before-deploy | gate | yes | — |
@@ -127,7 +129,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
 | gate | 36 | 14 |
-| writer | 0 | 28 |
+| writer | 0 | 30 |
 | surfacer | 0 | 22 |
 | pattern | 0 | 27 |
 | convention | 0 | 3 |
@@ -143,9 +145,9 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 30 |
+| pretool | 31 |
 | posttool | 6 |
-| none | 71 |
+| none | 72 |
 
 ## Doctrine index
 
@@ -209,7 +211,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
-Entries with no doctrine_file (`-`): 33.
+Entries with no doctrine_file (`-`): 35.
 
 ## Full entry listing
 
@@ -291,6 +293,8 @@ Entries with no doctrine_file (`-`): 33.
 | orchestrator-pattern | pattern | — | no | none | — |
 | outcome-evidence | gate | PreToolUse | no | pretool | Demoted to warn (exit 0 + additionalContext + ledger event) at Wave D.6 per specs-d §D.0.4. |
 | parallel-dev-migration-naming | gate | PreToolUse | yes | pretool | — |
+| perf-ledger | writer | PreToolUse | no | pretool | — |
+| perf-tick-snapshot | writer | manual | no | none | — |
 | plan-deletion-protection | gate | PreToolUse | yes | pretool | — |
 | plan-edit-validator | gate | PreToolUse | yes | pretool | — |
 | plan-lifecycle | writer | PostToolUse, SessionStart | no | posttool | plan-status-archival-sweep.sh dispatched via session-start-surfacer-pack.sh since D.5; plan-auto-closure.sh/plan-lifecycle.sh fire on PostToolUse as before. |

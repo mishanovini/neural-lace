@@ -785,6 +785,18 @@ fi
 # Main hook logic
 # ============================================================
 
+# --- P1 perf metering (perf-telemetry-2026-07 plan) -------------------------
+# Self-metering: one of the 5 highest-cost per-Bash-call hooks (no single
+# PreToolUse chain wrapper exists — see hooks/lib/perf-ledger.sh's header
+# for the PROVEN instrumentation-point finding). Builtin-only, zero forks;
+# a trap on EXIT covers every exit path below (including the cheap
+# pre-filter further down) without touching each one individually.
+source "$_COG_SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
+if declare -F pl_meter_begin >/dev/null 2>&1; then
+  pl_meter_begin
+  trap 'pl_meter_end "concurrent-ownership-gate"' EXIT
+fi
+
 # --- Read tool input (env var OR stdin) ---
 INPUT="${CLAUDE_TOOL_INPUT:-}"
 if [[ -z "$INPUT" ]] && [[ ! -t 0 ]]; then

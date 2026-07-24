@@ -50,6 +50,24 @@ _PDP_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 source "$_PDP_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
 # shellcheck source=lib/signal-ledger.sh
 source "$_PDP_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+# shellcheck source=lib/perf-ledger.sh
+source "$_PDP_SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
+
+# --- P1 perf metering (perf-telemetry-2026-07 plan) -------------------------
+# Self-metering: one of the 5 highest-cost per-Bash-call hooks (no single
+# PreToolUse chain wrapper exists — see hooks/lib/perf-ledger.sh's header for
+# the PROVEN instrumentation-point finding). Placed BEFORE the cheap
+# pre-filter below (line ~84) so its `exit 0` — the dominant exit path for
+# non-destructive commands — is metered too; a trap on EXIT covers every
+# exit path in this file without touching each one. Builtin-only, zero
+# forks. Skipped for the `--self-test` parent process itself (checked via
+# $1 directly — SELF_TEST isn't assigned until further below — the
+# self-test harness sandboxes PERF_LEDGER_DIR before spawning its child
+# scenarios, see run_self_test, so metering still fires correctly there).
+if [[ "${1:-}" != "--self-test" ]] && declare -F pl_meter_begin >/dev/null 2>&1; then
+  pl_meter_begin
+  trap 'pl_meter_end "plan-deletion-protection"' EXIT
+fi
 
 PDP_STATE_DIR="${CLAUDE_STATE_DIR:-.claude/state}"
 PDP_WAIVER_GLOB='plan-deletion-waiver-*.txt'
@@ -814,6 +832,16 @@ inspect_command() {
 # ============================================================
 run_self_test() {
   local total=0 passed=0 failed_names=""
+
+  # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): scenarios below
+  # spawn REAL child `bash "$SELF_PATH"` subprocesses (by design — see the
+  # cheap pre-filter's comment: they are NOT marked SELF_TEST so the harness
+  # exercises the pre-filter on natural verbs). Those children now source
+  # perf-ledger.sh too. Without this override every self-test run would
+  # write ~19 real lines into the operator's actual ~/.claude/state/perf
+  # ledger. Exported so every child subprocess inherits it.
+  export PERF_LEDGER_DIR
+  PERF_LEDGER_DIR="$(mktemp -d -t pdpst-perf-XXXXXX 2>/dev/null || printf '%s/pdpst-perf-selftest' "${TMPDIR:-/tmp}")"
 
   # run_scenario <name> <expect: BLOCK|PASS|WARN> <pre-setup-fn> <command>
   run_scenario() {

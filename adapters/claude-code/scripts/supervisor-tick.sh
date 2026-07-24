@@ -436,6 +436,28 @@ run_tick() {
     _st_log "wrote alert: ${wrote:-<write-failed>}"
   fi
 
+  # ---- (e) P2 perf snapshot + orphan reap (perf-telemetry-2026-07 plan) --
+  # Piggybacks this EXISTING tick — no new scheduler. Bounded by the same
+  # SUPERVISOR_TICK_BUDGET_SECS via _st_run; gracefully degrades (logs a
+  # WARN, never crashes the tick) if the shared lib is missing. Shared
+  # with health-tick.sh (the plan's declared fallback, since this tick is
+  # OPERATOR-ARMED and may be inert on a given machine) so P3 gets data
+  # regardless of which tick is actually firing.
+  local pts_lib="$HOOKS_DIR/lib/perf-tick-snapshot.sh"
+  if [[ -f "$pts_lib" ]]; then
+    remaining=$(( budget - SECONDS )); [[ "$remaining" -le 0 ]] && remaining=1
+    local pts_out pts_rc
+    pts_out="$(_st_run "$remaining" bash -c "source '$pts_lib' && pts_run_tick" 2>&1)"
+    pts_rc=$?
+    if [[ "$pts_rc" -eq 0 ]]; then
+      _st_log "perf snapshot written: ${pts_out:-<empty>}"
+    else
+      _st_log "WARN: perf snapshot step failed/timed out (rc=${pts_rc}): ${pts_out:0:200}"
+    fi
+  else
+    _st_log "WARN: perf-tick-snapshot.sh lib not found at ${pts_lib} — perf snapshot skipped this fire (graceful, no crash)"
+  fi
+
   _st_log "tick done in ${SECONDS}s: total_orphans=${total_orphans} alerted_this_fire=${new_count} live_sessions=${live_sessions}"
   echo "[supervisor-tick] ${total_orphans} orphan(s) found, ${new_count} alerted this fire, ${live_sessions} live session(s) machine-wide, done in ${SECONDS}s"
   return 0
@@ -618,6 +640,36 @@ EOF
     fi
   else
     fail "no ledger record present to backdate for the TTL scenario"
+  fi
+
+  echo "Scenario 5: P2 perf snapshot (perf-telemetry-2026-07 plan) — this tick writes a real ticks.jsonl line via the shared lib, end to end"
+  local pts_lib="$HOOKS_DIR/lib/perf-tick-snapshot.sh"
+  if [[ -f "$pts_lib" ]]; then
+    export PERF_TICK_LEDGER_DIR="$T/perf"
+    export PERF_TICK_WORKTREE_COUNT_OVERRIDE=3
+    export PERF_TICK_DEFENDER_CMD="true"
+    export PERF_TICK_PROCESS_LIST_CMD="printf 'Node,CreationDate,Name,ParentProcessId,ProcessId\nOFFICE_PC,20260101000000.000000-420,bash.exe,1,111\nOFFICE_PC,20260101000000.000000-420,claude.exe,1,222\nOFFICE_PC,20260101000000.000000-420,node.exe,0,1\n'"
+    local out5
+    out5="$(bash "$SELF" 2>&1)"
+    local pts_file="$T/perf/ticks.jsonl"
+    if [[ -f "$pts_file" ]]; then
+      pass "supervisor-tick's own run wrote a ticks.jsonl line via the shared perf-tick-snapshot.sh lib"
+    else
+      fail "expected $pts_file to exist after a tick fire; tick output: $out5"
+    fi
+    if [[ -f "$pts_file" ]] && grep -qE '"bash_count":1,"claude_count":1,"worktree_count":3' "$pts_file"; then
+      pass "ticks.jsonl line carries the fixture-driven bash_count/claude_count/worktree_count"
+    else
+      fail "ticks.jsonl fields mismatch: $(cat "$pts_file" 2>/dev/null)"
+    fi
+    if [[ -f "$pts_file" ]] && grep -q '"reaped":\[\]' "$pts_file"; then
+      pass "no orphans in this fixture -> reaped:[] (legitimate empty-reap result, not an error)"
+    else
+      fail "expected reaped:[] with no orphan-shaped rows in the fixture: $(cat "$pts_file" 2>/dev/null)"
+    fi
+    unset PERF_TICK_LEDGER_DIR PERF_TICK_WORKTREE_COUNT_OVERRIDE PERF_TICK_DEFENDER_CMD PERF_TICK_PROCESS_LIST_CMD
+  else
+    fail "perf-tick-snapshot.sh lib not found at $pts_lib"
   fi
 
   rm -rf "$T" 2>/dev/null || true

@@ -372,6 +372,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
   TMPDIR_TEST=$(mktemp -d)
   trap 'rm -rf "$TMPDIR_TEST"' EXIT
 
+  # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): every scenario
+  # below re-invokes this script as a REAL child `bash "$SCRIPT"`
+  # subprocess. Without this export every self-test run would write
+  # dozens of real lines into the operator's actual ~/.claude/state/perf
+  # ledger.
+  export PERF_LEDGER_DIR="$TMPDIR_TEST/perf"
+
   VALID_BODY='## Summary
 
 A valid PR body.
@@ -583,6 +590,22 @@ fi
 # Main hook entry
 # ============================================================
 
+# --- P1 perf metering (perf-telemetry-2026-07 plan) -------------------------
+# Self-metering: one of the 5 highest-cost per-Bash-call hooks (no single
+# PreToolUse chain wrapper exists — see hooks/lib/perf-ledger.sh's header
+# for the PROVEN instrumentation-point finding). This file already sets its
+# own `trap ... EXIT` further below (temp-file cleanup, line ~695ish) — that
+# assignment OVERWRITES a trap set here, so the meter call is CHAINED into
+# that existing trap's command string instead (search "pl_meter_end" below)
+# rather than set independently. This trap here covers every EARLIER exit
+# path (lines 594-686ish); `set -eo pipefail` is active, so pl_meter_end
+# must never itself fail (it doesn't — see its own contract).
+source "$_PTIG_SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
+if declare -F pl_meter_begin >/dev/null 2>&1; then
+  pl_meter_begin
+  trap 'pl_meter_end "pr-template-inline-gate"' EXIT
+fi
+
 INPUT="${CLAUDE_TOOL_INPUT:-}"
 if [[ -z "$INPUT" ]]; then
   if [[ ! -t 0 ]]; then
@@ -692,7 +715,11 @@ source "$VALIDATOR_LIB"
 # Capture validator output (stdout + stderr) for surfacing.
 VALIDATOR_STDOUT_FILE=$(mktemp)
 VALIDATOR_STDERR_FILE=$(mktemp)
-trap 'rm -f "$VALIDATOR_STDOUT_FILE" "$VALIDATOR_STDERR_FILE"' EXIT
+# P1 perf metering: this trap assignment OVERWRITES the earlier
+# `trap 'pl_meter_end ...' EXIT` set at "Main hook entry" above (bash keeps
+# only one handler per signal) — so the meter call is CHAINED into this
+# replacement trap's command string to preserve both behaviors.
+trap '{ declare -F pl_meter_end >/dev/null 2>&1 && pl_meter_end "pr-template-inline-gate"; } || true; rm -f "$VALIDATOR_STDOUT_FILE" "$VALIDATOR_STDERR_FILE"' EXIT
 
 VALIDATOR_EXIT=0
 validate_pr_body "$EXTRACT_RESULT" >"$VALIDATOR_STDOUT_FILE" 2>"$VALIDATOR_STDERR_FILE" || VALIDATOR_EXIT=$?
