@@ -1409,3 +1409,40 @@ details[open] > summary .rm-rollups { display: none; }
    needed; only the section wrapper itself is new, visually separated the
    same way .ask-completed-group already separates its own trailing group. */
 .ib-my-items-wrap { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* ---- Round 9 (operator audit 2026-07-23) ---- */
+/* R9-2: project group — a visible header naming what the phases belong to. */
+.rm-project-group { margin: 10px 0 14px; }
+.rm-project-group-head {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  padding: 4px 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+}
+/* R9-3: per-item project tag (text chip, never color-only). */
+.rm-project-tag { font-size: 10px; opacity: 0.75; }
+/* R9-7: unattributed live sessions — one top-of-tree collapsible node. */
+.rm-unbound-sessions {
+  margin: 0 0 10px; padding: 4px 8px;
+  border: 1px dashed var(--border); border-radius: 6px;
+}
+.rm-unbound-summary { cursor: pointer; display: flex; gap: 8px; align-items: center; }
+.rm-unbound-summary .rm-title { font-size: 12px; }
+/* R9-6: landing sidebar (My items + Backlog compact mirrors). */
+.rm-layout { display: flex; align-items: flex-start; gap: 16px; }
+.rm-layout > .roadmap-section { flex: 1 1 0; min-width: 0; }
+.rm-sidebar { flex: 0 0 300px; max-width: 300px; display: flex; flex-direction: column; gap: 10px; }
+.rm-side-pane { padding: 6px 10px; }
+.rm-side-summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+.rm-side-body { max-height: 40vh; overflow-y: auto; }
+.rm-side-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.rm-side-item { display: flex; gap: 6px; align-items: baseline; margin: 3px 0; font-size: 12px; }
+.rm-side-text { min-width: 0; overflow-wrap: anywhere; }
+.rm-side-done { text-decoration: line-through; opacity: 0.6; }
+.rm-side-pointer .rm-side-glyph { opacity: 0.7; }
+.rm-side-more, .rm-side-empty, .rm-side-error, .rm-side-tiers { font-size: 11px; opacity: 0.75; margin-top: 4px; }
+.rm-side-error { color: var(--warn, #c96); }
+.rm-side-tier { font-size: 10px; }
+.rm-side-foot { margin-top: 6px; }
+@media (max-width: 1100px) {
+  .rm-layout { flex-direction: column; }
+  .rm-sidebar { flex: none; max-width: none; width: 100%; }
+}

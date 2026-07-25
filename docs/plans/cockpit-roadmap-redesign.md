@@ -466,6 +466,15 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   OLD pane; now pin the new My-items surface per this task's own
   instructions) + T8-15..T8-20/T4-18..T4-20 added.
 
+- 2026-07-23: ROUND 9 FIX ROUND (operator walkthrough VERDICT FAIL — verbatim + 8-fix audit
+  table in docs/reviews/2026-07-17-cockpit-ux-design-input.md Round 9; that table is the
+  verification oracle for this round, NOT the plan scenarios). Files: the already-declared
+  `neural-lace/workstreams-ui/server/roadmap-routes.js`, `neural-lace/workstreams-ui/web/*`
+  (roadmap.js, inbox.js, index.html, app.css, cockpit.selftest.js),
+  `neural-lace/workstreams-ui/server/roadmap-routes.selftest.js`; plus
+  `neural-lace/workstreams-ui/config/projects.example.json` (multi-repo plan-scan roots,
+  R9-8). T9 remains unflipped; the operator re-walk after this round's deploy is the close.
+
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
   (Fable proposal §7) — WITH the A3 caveat: the plain last-non-empty-wins fold is insufficient

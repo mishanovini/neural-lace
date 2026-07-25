@@ -1062,9 +1062,64 @@ ok('R8-1 the "intent" kind is GONE from roadmap.js entirely — the tree roots o
   !/kind === 'intent'/.test(roadmapJsNoComments) && !/'rm-kind-intent'/.test(roadmapJsNoComments));
 ok('R8-2 the compact edit/rank chrome (drilldown) now gates on kind:"plan" — plans are the new top-level, editable/reorderable object',
   /item\.kind === 'plan'/.test(roadmapJsNoComments));
-ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/phaseLabel connector treatment renderChildList already used one level down — reused, not reinvented, and now the top-level phases (round 6: "phase one through four") actually render connected',
+ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/phaseLabel connector treatment renderChildList already used one level down — since R9-2, numbered WITHIN the project group (never a flat cross-project series)',
   /isPhaseSeries\(live\)/.test(roadmapJsNoComments) &&
-  /rm-phase-series/.test(roadmapJsNoComments) && /phaseLabel\(i, live\.length\)/.test(roadmapJsNoComments));
+  /rm-phase-series/.test(roadmapJsNoComments) && /phaseLabel\(gi, g\.items\.length\)/.test(roadmapJsNoComments) &&
+  !/phaseLabel\(i, live\.length\)/.test(roadmapJsNoComments));
+
+// --- Round 9 (operator audit 2026-07-23 — the audit table IS the oracle) ---
+// R9-2: the top level groups by PROJECT with a visible header; the pure
+// helpers run for REAL via the marker-anchored extraction technique
+// (badge-law precedent above; markers ship in roadmap.js itself).
+(function () {
+  var bi = roadmapJs.indexOf('// PROJECT-GROUPING-BEGIN');
+  var ei = roadmapJs.indexOf('// PROJECT-GROUPING-END');
+  var src = (bi !== -1 && ei > bi) ? roadmapJs.slice(bi, ei) : null;
+  ok('R9-2a selftest can locate the PROJECT-GROUPING extraction anchors in roadmap.js', !!src);
+  if (!src) return;
+  var sandbox = {
+    items: [
+      { id: 'a', project: 'neural-lace', status: { value: 'complete' } },
+      { id: 'b', project: 'foresight', status: { value: 'in-progress' } },
+      { id: 'c', project: 'neural-lace', status: { value: 'not-started' } },
+    ],
+  };
+  vmMod.createContext(sandbox);
+  try {
+    vmMod.runInContext(src + '\nout = { g: groupItemsByProject(items), h: projectGroupHeaderText };', sandbox);
+  } catch (e) { sandbox.out = { __error: String(e) }; }
+  var g = (sandbox.out && sandbox.out.g) || [];
+  ok('R9-2 groupItemsByProject groups by project preserving first-appearance (build) order',
+    g.length === 2 && g[0].project === 'neural-lace' && g[0].items.length === 2 &&
+    g[0].items[0].id === 'a' && g[0].items[1].id === 'c' && g[1].project === 'foresight');
+  var h = sandbox.out && sandbox.out.h ? sandbox.out.h('neural-lace', g[0] ? g[0].items : []) : '';
+  ok('R9-2b projectGroupHeaderText names the project + phase count + status spread (text, never color-only)',
+    /neural-lace/.test(h) && /2 phases/.test(h) && /1 complete/.test(h) && /1 not started/.test(h));
+})();
+ok('R9-2c renderTree renders the group header element (rm-project-group-head) and scopes phase steps inside the group container',
+  /rm-project-group-head/.test(roadmapJsNoComments) && /groupItemsByProject\(live\)/.test(roadmapJsNoComments));
+ok('R9-2d reorder stays GLOBAL: renderNode receives the item\'s index in the full build-order list, never the group-local index',
+  /renderNode\(it, live\.indexOf\(it\), live\.length\)/.test(roadmapJsNoComments));
+// R9-3: per-item project chip on tree rows and kanban cards.
+ok('R9-3 tree rows and kanban cards carry the project tag chip (rm-project-tag)',
+  (roadmapJsNoComments.match(/rm-project-tag/g) || []).length >= 2);
+// R9-5: the provenance line renders ONLY when a real linked request exists.
+ok('R9-5 "from your request(s)" gates on a non-empty link list — the "(no captured request)" filler line is gone',
+  !/no captured request/.test(roadmapJsNoComments));
+// R9-7: the unbound-sessions node renders at the top of the roadmap body.
+ok('R9-7 renderUnboundSessions exists, renders rm-agents rows, and renderAll mounts it from payload.unbound_sessions',
+  /function renderUnboundSessions/.test(roadmapJsNoComments) &&
+  /unbound_sessions/.test(roadmapJsNoComments) && /rm-unbound-sessions/.test(roadmapJsNoComments));
+// R9-6: the landing sidebar — compact My-items + Backlog mirrors of the
+// SAME endpoints (one writer; counts can never disagree).
+ok('R9-6 index.html carries the rm-layout sidebar with both panes',
+  /rmSidebar/.test(html) && /rmMyItemsPane/.test(html) && /rmBacklogPane/.test(html));
+ok('R9-6b the sidebar reuses the canonical endpoints (GET/POST /api/todo, GET /api/backlog) — no third data source',
+  /loadSideMyItems/.test(roadmapJsNoComments) && /loadSideBacklog/.test(roadmapJsNoComments) &&
+  /'\/api\/todo'/.test(roadmapJsNoComments) && /'\/api\/backlog'/.test(roadmapJsNoComments));
+ok('R9-6c pane collapsed-state persists (localStorage) and My-items never reloads on the 30s tick (write-safety precedent)',
+  /rm\.side\.myitems\.open/.test(roadmapJsNoComments) && /rm\.side\.backlog\.open/.test(roadmapJsNoComments) &&
+  /setInterval\(loadSideBacklog/.test(roadmapJsNoComments) && !/setInterval\(loadSideMyItems/.test(roadmapJsNoComments));
 ok('R8-4 the rank-move and title-save wire bodies are id-keyed (a plan slug), not ask_id-keyed (the old ask-rooted contract) — no POST body anywhere still sends ask_id',
   /JSON\.stringify\(\{ id: item\.id, title: t \}\)/.test(roadmapJsNoComments) &&
   /JSON\.stringify\(\{ id: itemId, direction: direction \}\)/.test(roadmapJsNoComments) &&

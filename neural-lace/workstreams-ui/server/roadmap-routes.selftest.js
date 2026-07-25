@@ -207,6 +207,75 @@ async function main() {
   ].join('\n'));
   // ghost-plan deliberately DOES NOT EXIST on disk -> unknown(reason).
 
+  // ---- R9-1 fixture: an H1 that reads nothing like the slug (proves the
+  // renderer uses the H1, not the slug, when no operator title/linked ask
+  // title is present) --------------------------------------------------
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'h1-title-fixture.md'), [
+    '<!-- scaffold-created: 2026-07-23T00:00:00Z by start-plan.sh slug=h1-title-fixture -->',
+    '# Plan: A Completely Different Human Title', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. something',
+    '',
+  ].join('\n'));
+
+  // ---- R9-4 fixtures: plan-level provenance classification ---------------
+  // Machine-slug-heuristic positives (no linked ask at all — the exact
+  // shape the pre-fix classifier was inert on).
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'harness-chore-fixture.md'), [
+    '# Plan: Harness Chore Fixture', '', 'Status: ACTIVE', '', '## Tasks', '', '- [ ] 1. x', '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'nl-finding-999-chore-fixture.md'), [
+    '# Plan: NL Finding Chore Fixture', '', 'Status: ACTIVE', '', '## Tasks', '', '- [ ] 1. x', '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'agent-watchdog-fixture.md'), [
+    '# Plan: Agent Watchdog Fixture', '', 'Status: ACTIVE', '', '## Tasks', '', '- [ ] 1. x', '',
+  ].join('\n'));
+  // Negative case: "sweeper" must NOT false-positive the "sweep" word
+  // heuristic (hyphen-bounded on purpose).
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'worktree-sweeper-fixture.md'), [
+    '# Plan: Worktree Sweeper Fixture', '', 'Status: ACTIVE', '', '## Tasks', '', '- [ ] 1. x', '',
+  ].join('\n'));
+  // Explicit header OVERRIDES the heuristic in BOTH directions.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'harness-explicit-operator-override.md'), [
+    '# Plan: Harness Explicit Operator Override', '', 'Status: ACTIVE', 'provenance: operator', '',
+    '## Tasks', '', '- [ ] 1. x', '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'not-chore-shaped-explicit-machine.md'), [
+    '# Plan: Not Chore Shaped Explicit Machine', '', 'Status: ACTIVE', 'provenance: machine', '',
+    '## Tasks', '', '- [ ] 1. x', '',
+  ].join('\n'));
+  // A machine-SHAPED slug that IS linked to a real ask must stay 'operator'
+  // (A9: provenance = PROVENANCE, never subject matter — a linked ask is an
+  // operator REQUEST regardless of the plan's own slug shape).
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'harness-linked-to-operator-ask.md'), [
+    '# Plan: Harness Linked To Operator Ask', '', 'Status: ACTIVE', '', '## Tasks', '', '- [ ] 1. x', '',
+  ].join('\n'));
+
+  // ---- R9-8 fixture: a SECOND repo with its own docs/plans/, plus a THIRD
+  // configured repo with NO docs/plans/ at all (honest absence) ------------
+  const otherRepoDir = path.join(tmp, 'other-repo');
+  fs.mkdirSync(path.join(otherRepoDir, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(otherRepoDir, 'docs', 'plans', 'other-repo-plan.md'), [
+    '# Plan: Other Repo Effort', '', 'Status: ACTIVE', '', '## Tasks', '', '- [ ] 1. do the other-repo thing', '',
+  ].join('\n'));
+  const emptyRepoDir = path.join(tmp, 'empty-repo-no-plans');
+  fs.mkdirSync(emptyRepoDir, { recursive: true });
+  // The projects-config env override starts pointed at a NONEXISTENT file —
+  // configuredRepoRoots() must degrade to [] honestly, so the zero-config
+  // default (S1-era GETs below) stays single-repo (R9-8's own binding rule).
+  process.env.ROADMAP_PROJECTS_CONFIG = path.join(tmp, 'no-such-projects-config.json');
+
+  // ---- R9-7b fixture: a heartbeat for a session attached to NO task
+  // anywhere (a CRASHED one, written up front — proves the "crashed
+  // sessions never count as unattributed-and-RUNNING" exclusion; a FRESH
+  // one is added later, mid-test, to prove the null -> non-null transition
+  // honestly rather than starting from a state that already has one). -----
+  fs.writeFileSync(path.join(heartbeatDir, 'sess-unbound-crashed.json'), JSON.stringify({
+    schema: 1, session_id: 'sess-unbound-crashed', pid: 2, cwd: repoDir, repo_root: repoDir,
+    worktree_root: repoDir, branch: 'fixture', model: 'fixture',
+    last_activity_ts: new Date(Date.now() - 30 * 86400000).toISOString(), // 30 days — well past crashed
+    last_event: 'fixture', marker_state: 'none',
+  }));
+
   // ---- fixture registry --------------------------------------------------
   const reg = [
     // ask-alpha: operator ask, demo-plan linked (in-progress overall).
@@ -248,6 +317,11 @@ async function main() {
     // ask-chore: machine-filed, ALSO no plan_linked — a second, distinct
     // junk shape (mechanism-filed rather than conversational fragment).
     { ask_id: 'ask-chore', record_type: 'created', ts: '2026-07-12T10:00:00Z', summary: 'nl-issue: tighten a gate message', repo: repoDir, project: 'neural-lace', origin_session: '', status: 'active', emitter: 'auto-sweep' },
+    // ask-harness-linked: a REAL operator ask linked to a machine-SHAPED
+    // slug (R9-4) — proves the linked-ask precedence beats the slug
+    // heuristic (A9: never hide operator-requested harness work).
+    { ask_id: 'ask-harness-linked', record_type: 'created', ts: '2026-07-14T10:00:00Z', summary: 'Please fix the harness gate message', repo: repoDir, project: 'fixture-proj', origin_session: 'sess-op-1', status: 'active', emitter: 'ask-registry' },
+    { ask_id: 'ask-harness-linked', record_type: 'plan_linked', ts: '2026-07-14T10:05:00Z', plan_slug: 'harness-linked-to-operator-ask' },
   ];
   fs.writeFileSync(path.join(stateDir, 'ask-registry.jsonl'),
     reg.map((r) => JSON.stringify(r)).join('\n') + '\n');
@@ -336,8 +410,8 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 8 top-level plans (the ones that qualify) — no more, no less; ancient-ghost-plan is correctly EXCLUDED (not a 9th item)',
-      items.length === 8, topIds.join(','));
+    ok('S1e exactly 16 top-level plans (the ones that qualify — 8 original + 8 round-9 R9-1/R9-4 fixtures) — no more, no less; ancient-ghost-plan is correctly EXCLUDED (not a 9th/17th item)',
+      items.length === 16, topIds.join(','));
 
     // ---- GHOST-BOUNDING (2026-07-21 fix): a recently-linked missing plan
     // still renders as an honest unknown root; an ANCIENT one (its only
@@ -557,6 +631,102 @@ async function main() {
     ok('S19b a DONE task carries NO live_sessions (finished work has no "currently running" agent)',
       demoT1 && Array.isArray(demoT1.live_sessions) && demoT1.live_sessions.length === 0,
       demoT1 && JSON.stringify(demoT1.live_sessions));
+
+    // ============================================================
+    // ROUND 9 (2026-07-23) — the operator's cold-start walkthrough FAIL,
+    // docs/reviews/2026-07-17-cockpit-ux-design-input.md "Round 9" — the
+    // 8-fix audit table is the oracle for this block.
+    // ============================================================
+
+    // ---- R9-1: the plan file's own H1 title, not the raw slug ---------
+    const h1Fixture = findItem(items, 'h1-title-fixture');
+    ok('R9-1 a plan renders its own H1 TITLE ("A Completely Different Human Title"), never the raw slug ("h1-title-fixture") — the H1 is found even past a leading scaffold HTML comment',
+      h1Fixture && h1Fixture.title === 'A Completely Different Human Title' && h1Fixture.title !== h1Fixture.id,
+      h1Fixture && h1Fixture.title);
+    ok('R9-1b a plan with NO linked ask AND NO H1-shaped heading falls all the way back to the slug (redesign-plan\'s H1 is "redesign", proving the H1 itself is honored, not just this fixture)',
+      redesign && redesign.title === 'redesign' && redesign.title !== redesign.id,
+      redesign && redesign.title);
+    ok('R9-1c the plan H1 title outranks an auto-distilled ASK title (demo-plan carries BOTH: H1 "demo" and ask-alpha\'s auto summary "Build the alpha feature") — an ask summary is a best-effort prompt distillation (round 1: "not a good reference for what my actual ask was"); the plan\'s own deliberately-authored H1 wins whenever no operator edit exists',
+      demoPlan && demoPlan.title === 'demo' && demoPlan.title_source === 'auto',
+      demoPlan && JSON.stringify({ title: demoPlan.title, title_source: demoPlan.title_source }));
+
+    // ---- R9-4: plan-level provenance classification --------------------
+    const harnessChore = findItem(items, 'harness-chore-fixture');
+    ok('R9-4 a "harness-" prefixed slug with NO linked ask classifies as provenance:machine (the chore classifier is no longer inert on plan-rooted rows)',
+      harnessChore && harnessChore.provenance === 'machine', harnessChore && harnessChore.provenance);
+    const nlFindingChore = findItem(items, 'nl-finding-999-chore-fixture');
+    ok('R9-4b an "nl-finding-" prefixed slug classifies as provenance:machine',
+      nlFindingChore && nlFindingChore.provenance === 'machine', nlFindingChore && nlFindingChore.provenance);
+    const watchdogChore = findItem(items, 'agent-watchdog-fixture');
+    ok('R9-4c a slug containing "watchdog" (mid-slug, not just a prefix) classifies as provenance:machine',
+      watchdogChore && watchdogChore.provenance === 'machine', watchdogChore && watchdogChore.provenance);
+    const sweeperFixture = findItem(items, 'worktree-sweeper-fixture');
+    ok('R9-4d "sweeper" does NOT false-positive the "sweep" word heuristic (hyphen-bounded on purpose) — stays provenance:operator',
+      sweeperFixture && sweeperFixture.provenance === 'operator', sweeperFixture && sweeperFixture.provenance);
+    const explicitOperatorOverride = findItem(items, 'harness-explicit-operator-override');
+    ok('R9-4e an explicit `provenance: operator` plan-header field OVERRIDES the "harness-" slug heuristic (never hides an operator-marked plan)',
+      explicitOperatorOverride && explicitOperatorOverride.provenance === 'operator',
+      explicitOperatorOverride && explicitOperatorOverride.provenance);
+    const explicitMachineOverride = findItem(items, 'not-chore-shaped-explicit-machine');
+    ok('R9-4f an explicit `provenance: machine` plan-header field OVERRIDES a non-matching slug in the OTHER direction too',
+      explicitMachineOverride && explicitMachineOverride.provenance === 'machine',
+      explicitMachineOverride && explicitMachineOverride.provenance);
+    const harnessLinked = findItem(items, 'harness-linked-to-operator-ask');
+    ok('R9-4g a machine-SHAPED slug ("harness-...") that IS linked to a real operator ask stays provenance:operator (A9: classifier keys on PROVENANCE, never subject matter — a linked ask always wins over the slug heuristic)',
+      harnessLinked && harnessLinked.provenance === 'operator', harnessLinked && harnessLinked.provenance);
+    const hiddenChoreCount = items.filter((i) => i.provenance === 'machine').length;
+    ok('R9-4h the hidden-count is now TRUE/non-zero — the pre-fix defect was "0 hidden" while chore-shaped plans rendered; exactly the 4 real machine-classified fixtures above (harness-chore, nl-finding-999-chore, agent-watchdog, not-chore-shaped-explicit-machine), never more, never fewer',
+      hiddenChoreCount === 4, hiddenChoreCount + ': ' + items.filter((i) => i.provenance === 'machine').map((i) => i.id).join(','));
+
+    // ---- R9-7b: unbound (unattributed) live sessions -------------------
+    ok('R9-7b honest absence: with only a BOUND session (sess-op-1, attached to rich-plan/1) and a CRASHED unbound one, unbound_sessions is null — never a fake/empty node',
+      r1.json.unbound_sessions === null || r1.json.unbound_sessions === undefined,
+      JSON.stringify(r1.json.unbound_sessions));
+    // Now attach a genuinely RUNNING session with NO task binding anywhere —
+    // the real-world shape this fix targets (a live heartbeat the tree
+    // cannot attribute to any task).
+    fs.writeFileSync(path.join(heartbeatDir, 'sess-unbound-running.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-unbound-running', pid: 3, cwd: repoDir, repo_root: repoDir,
+      worktree_root: repoDir, branch: 'fixture-branch', model: 'fixture',
+      last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
+    }));
+    const r9r7 = await httpGet(PORT, '/api/roadmap');
+    const unbound = r9r7.json.unbound_sessions;
+    ok('R9-7b a genuinely running, unattributed session now surfaces the top-of-tree node, named + counted',
+      unbound && unbound.kind === 'unbound-sessions' && /1\)/.test(unbound.title),
+      JSON.stringify(unbound));
+    ok('R9-7b-2 the node lists the session (short-form id + branch + running status), never a color-only signal',
+      unbound && Array.isArray(unbound.live_sessions) && unbound.live_sessions.length === 1 &&
+      unbound.live_sessions[0].id.indexOf('sess-unbound-running'.slice(0, 8)) !== -1 &&
+      /running/.test(unbound.live_sessions[0].status.label),
+      unbound && JSON.stringify(unbound.live_sessions));
+    ok('R9-7b-3 sess-op-1 (bound to rich-plan/1) is NEVER listed as unattributed — attribution, not mere existence, is what is being tested',
+      unbound && !unbound.live_sessions.some((a) => a.id.indexOf('sess-op-1') !== -1),
+      unbound && JSON.stringify(unbound.live_sessions));
+    ok('R9-7b-4 the CRASHED unbound heartbeat (30 days stale) never counts as "running, unattributed" — crashed is excluded, not just unbound',
+      unbound && !unbound.live_sessions.some((a) => a.id.indexOf('sess-unbound-crashed') !== -1),
+      unbound && JSON.stringify(unbound.live_sessions));
+
+    // ---- R9-8: multi-repo roots -----------------------------------------
+    ok('R9-8 zero-config default: with no projects config, a second repo\'s plan never appears (single-repo behavior unchanged)',
+      topIds.indexOf('other-repo-plan') === -1);
+    const projectsConfigPath = path.join(tmp, 'fixture-projects.json');
+    fs.writeFileSync(projectsConfigPath, JSON.stringify({
+      'other-project': otherRepoDir,
+      'empty-project': emptyRepoDir,
+    }));
+    process.env.ROADMAP_PROJECTS_CONFIG = projectsConfigPath;
+    const rMulti = await httpGet(PORT, '/api/roadmap');
+    const multiItems = (rMulti.json && rMulti.json.items) || [];
+    const multiIds = multiItems.map((i) => i.id);
+    ok('R9-8b once a repo is CONFIGURED, its docs/plans/ plan roots the tree too, attributed to ITS OWN project (not "self"/neural-lace)',
+      multiIds.indexOf('other-repo-plan') !== -1 &&
+      findItem(multiItems, 'other-repo-plan').project === 'other-repo',
+      JSON.stringify({ ids: multiIds, project: findItem(multiItems, 'other-repo-plan') && findItem(multiItems, 'other-repo-plan').project }));
+    ok('R9-8c the self repo\'s own plans are UNCHANGED by adding other configured repos (this repo is still scanned, still first)',
+      multiIds.indexOf('demo-plan') !== -1 && multiIds.indexOf('redesign-plan') !== -1);
+    ok('R9-8d a THIRD configured repo with NO docs/plans/ at all contributes NOTHING — honest absence, never a crash, never a synthesized item',
+      rMulti.status === 200 && rMulti.json.ok === true);
 
     // ---- S14: error honesty — a torn registry file never crashes the route,
     // AND (round 8) the roadmap now SURVIVES a corrupt registry entirely,

@@ -280,6 +280,63 @@
   }
   // PHASE-SERIES-END
 
+  // PROJECT-GROUPING-BEGIN
+  // Round 9 gap 2 (R9-2, operator audit): 8A re-rooted the tree on plans,
+  // and renderTree's own top-level "phase series" treatment (isPhaseSeries/
+  // phaseLabel, previously reused verbatim from renderChildList — see
+  // R8-3/R8-6) then numbered EVERY unrelated plan as one giant
+  // cross-project series ("PHASE 1 OF 16"), which "implies membership in
+  // nothing" (the operator's own words). FIX: group the top-level list by
+  // PROJECT (a visible header naming the project + counts, R9-2/R9-3),
+  // number phases WITHIN each group. groupItemsByProject/
+  // projectGroupHeaderText are pure (no DOM) — extracted for the same
+  // real-execution test technique as isPhaseSeries/visibleFromRequests
+  // above (cockpit.selftest.js runs these in a vm sandbox).
+  //
+  // Groups preserve FIRST-APPEARANCE order over the incoming array, which
+  // is already build-order-sorted server-side (rank, then added_ts) — so a
+  // project's own items stay in their real build order within its group;
+  // "keep reorder buttons working" (R9-2) holds because moveRank/the
+  // up/down button disabled-state below are computed against the items'
+  // TRUE GLOBAL position (not the group-local index) — reordering still
+  // operates on the one real build-order list the server keeps.
+  function groupItemsByProject(items) {
+    var order = [];
+    var byProject = {};
+    (items || []).forEach(function (it) {
+      var key = it.project || '';
+      if (!byProject[key]) { byProject[key] = []; order.push(key); }
+      byProject[key].push(it);
+    });
+    return order.map(function (key) { return { project: key, items: byProject[key] }; });
+  }
+  function projectGroupHeaderText(project, items) {
+    // A self-contained label map (deliberately NOT the outer STATUS_LABEL
+    // var) so this function stays a PURE, standalone-executable unit — the
+    // same real-execution test technique cockpit.selftest.js already uses
+    // for isPhaseSeries/visibleFromRequests (extracted + run in a vm
+    // sandbox with no outer-scope access).
+    var LABELS = {
+      'not-started': 'not started', 'in-progress': 'in progress',
+      'merged-unverified': 'merged — deploy unverified', 'complete': 'complete',
+      'stalled': 'stalled', 'unknown': 'status unknown',
+    };
+    var counts = {};
+    (items || []).forEach(function (it) {
+      var v = (it.status && it.status.value) || 'unknown';
+      counts[v] = (counts[v] || 0) + 1;
+    });
+    var order = ['complete', 'in-progress', 'not-started', 'stalled', 'merged-unverified', 'unknown'];
+    var parts = order.filter(function (v) { return counts[v]; }).map(function (v) {
+      return counts[v] + ' ' + (LABELS[v] || v);
+    });
+    var label = project || '(no project)';
+    var count = (items || []).length;
+    return label + ' — ' + count + (count === 1 ? ' phase' : ' phases') +
+      (parts.length ? ' (' + parts.join(', ') + ')' : '');
+  }
+  // PROJECT-GROUPING-END
+
   // ============================================================
   // status chip + roll-up badges + markers (shared by tree AND kanban)
   // ============================================================
@@ -417,6 +474,41 @@
     return frag;
   }
 
+  // R9-7 (operator audit row 7): running work is NEVER invisible. Sessions
+  // with a live heartbeat but no task binding render as ONE top-of-tree
+  // collapsible node (server: deriveUnboundSessionsNode -> payload
+  // `unbound_sessions`; null when nothing is live — honest absence, no
+  // fake node). Same rm-agents markup/classes as the task-level leaves.
+  function renderUnboundSessions(node) {
+    var det = document.createElement('details');
+    det.className = 'rm-unbound-sessions';
+    det.dataset.itemId = node.id;
+    if (openSet['unbound:(top)']) det.open = true;
+    det.addEventListener('toggle', function () {
+      if (det.open) openSet['unbound:(top)'] = true; else delete openSet['unbound:(top)'];
+    });
+    var sum = document.createElement('summary');
+    sum.className = 'rm-unbound-summary';
+    sum.appendChild(el('span', 'rm-title', node.title));
+    sum.appendChild(el('span', 'chip rm-status rm-status-in-progress', (node.status && node.status.label) || 'running'));
+    det.appendChild(sum);
+    var list = el('ul', 'rm-agents');
+    (node.live_sessions || []).forEach(function (a) {
+      var li = document.createElement('li');
+      li.className = 'rm-agent rm-agent-' + (a.status && a.status.value || 'unknown');
+      var glyph = el('span', 'rm-agent-glyph', AGENT_STATUS_GLYPH[a.status && a.status.value] || '○');
+      glyph.setAttribute('aria-hidden', 'true');
+      li.appendChild(glyph);
+      var label = (a.status && a.status.label) || 'status unknown';
+      var text = a.title + ' — ' + label;
+      if (a.status && a.status.since) text += ', ' + formatAge(a.status.since);
+      li.appendChild(el('span', 'rm-agent-text', text));
+      list.appendChild(li);
+    });
+    det.appendChild(list);
+    return det;
+  }
+
   // ============================================================
   // drill-down body (C6 + C5 reasons + title edit + rank reorder)
   // ============================================================
@@ -425,24 +517,29 @@
 
     // from your request(s) — C6, the round-1 verbatim direction: drill-down
     // ONLY (never inline-by-default), and suppressed entirely when it would
-    // just echo this item's own title back (round-6 gap 2). Both
-    // directions law: the Requests view renders "became →" back (task 5).
+    // just echo this item's own title back (round-6 gap 2). ROUND-9 R9-5:
+    // the row now renders ONLY when a genuine (non-duplicate) linked
+    // request actually exists — the pre-fix "(no captured request —
+    // registered directly)" fallback rendered on nearly every phase once
+    // 8A re-rooted the tree on plans (most plans have no linked ask at
+    // all), which is exactly the provenance noise C6's dedup law targeted;
+    // `!frInfo.allSuppressed` alone was insufficient because it stays FALSE
+    // (i.e. "not suppressed") when from_requests was empty from the start,
+    // which is the common case post-8A — entries.length > 0 is the real
+    // gate. Both directions law: the Requests view renders "became →" back
+    // (task 5).
     var frInfo = visibleFromRequests(item);
-    if (!frInfo.allSuppressed) {
+    if (!frInfo.allSuppressed && frInfo.entries.length > 0) {
       var frRow = el('div', 'rm-from-requests');
       frRow.appendChild(el('span', 'rm-drill-label', 'from your request(s): '));
-      if (frInfo.entries.length === 0) {
-        frRow.appendChild(el('span', 'rm-drill-none', '(no captured request — registered directly)'));
-      } else {
-        frInfo.entries.forEach(function (r) {
-          frRow.appendChild(btn('ghost small rm-request-link', r.title || r.id, function () {
-            // T3-fix2: encode the id segment (encode/decode symmetry with
-            // app.js routeFromHash's decodeURIComponent) — a raw '%' in an id
-            // otherwise throws URIError in the hashchange handler.
-            if (shell) shell.navigate('#request/' + encodeURIComponent(r.id));
-          }));
-        });
-      }
+      frInfo.entries.forEach(function (r) {
+        frRow.appendChild(btn('ghost small rm-request-link', r.title || r.id, function () {
+          // T3-fix2: encode the id segment (encode/decode symmetry with
+          // app.js routeFromHash's decodeURIComponent) — a raw '%' in an id
+          // otherwise throws URIError in the hashchange handler.
+          if (shell) shell.navigate('#request/' + encodeURIComponent(r.id));
+        }));
+      });
       box.appendChild(frRow);
     }
 
@@ -609,7 +706,17 @@
     var sum = document.createElement('summary');
     sum.className = 'rm-row';
     var titleSpan = el('span', 'rm-title', item.title);
+    // R9-1: the slug becomes a tooltip/secondary once the H1 title takes
+    // the primary spot (item.id IS the slug for a plan-kind node — see
+    // roadmap-routes.js's `id: pf.slug`, no separate field needed).
+    if (item.kind === 'plan') titleSpan.title = item.id;
     sum.appendChild(titleSpan);
+    // R9-3: a subtle per-phase PROJECT chip (text, never color-only) so
+    // every phase row names which project it belongs to, not just the
+    // filter-chip toolbar.
+    if (item.kind === 'plan' && item.project) {
+      sum.appendChild(el('span', 'chip rm-project-tag', item.project));
+    }
     sum.appendChild(statusChip(item));
     var prog = progressNode(item);
     if (prog) sum.appendChild(prog);
@@ -690,23 +797,36 @@
       var isComplete = it.status && it.status.value === 'complete';
       if (isComplete && agedOut(it.completed_at)) aged.push(it); else live.push(it);
     });
-    // Round 8 (8A): the tree now ROOTS ON PLANS, so the top-level list IS
-    // the operator's "series of phases" (round 6: "phase one through
-    // four... each a branch with its tasks as leaves") — the SAME
-    // isPhaseSeries/phaseLabel connector treatment renderChildList already
-    // applies one level down is reused here at the top level too.
+    // Round 8 (8A): the tree roots on PLANS — the top level is the
+    // operator's "series of phases". Round 9 (R9-2): grouped by PROJECT —
+    // a flat cross-project series ("PHASE 1 OF 16") implies membership in
+    // nothing (operator audit row 2). Phases number WITHIN their group;
+    // reorder buttons keep operating on the true GLOBAL build-order
+    // position (renderNode receives the item's index in `live`, never the
+    // group-local one).
     var phaseSeries = isPhaseSeries(live);
     if (phaseSeries) tree.classList.add('rm-phase-series');
-    live.forEach(function (it, i) {
-      var node = renderNode(it, i, live.length);
+    var groups = phaseSeries ? groupItemsByProject(live) : [{ project: '', items: live }];
+    groups.forEach(function (g) {
+      var container = tree;
       if (phaseSeries) {
-        var step = el('div', 'rm-phase-step');
-        step.appendChild(el('div', 'rm-phase-label', phaseLabel(i, live.length)));
-        step.appendChild(node);
-        tree.appendChild(step);
-      } else {
-        tree.appendChild(node);
+        var groupEl = el('section', 'rm-project-group');
+        groupEl.setAttribute('aria-label', 'project ' + (g.project || '(no project)'));
+        groupEl.appendChild(el('div', 'rm-project-group-head', projectGroupHeaderText(g.project, g.items)));
+        tree.appendChild(groupEl);
+        container = groupEl;
       }
+      g.items.forEach(function (it, gi) {
+        var node = renderNode(it, live.indexOf(it), live.length);
+        if (phaseSeries) {
+          var step = el('div', 'rm-phase-step');
+          step.appendChild(el('div', 'rm-phase-label', phaseLabel(gi, g.items.length)));
+          step.appendChild(node);
+          container.appendChild(step);
+        } else {
+          container.appendChild(node);
+        }
+      });
     });
     if (aged.length) {
       aged.sort(function (a, b) { return String(b.completed_at).localeCompare(String(a.completed_at)); });
@@ -744,8 +864,11 @@
         var card = el('div', 'rm-card');
         card.dataset.itemId = it.id;
         card.tabIndex = -1;
-        card.appendChild(el('div', 'rm-card-title', it.title));
+        var cardTitle = el('div', 'rm-card-title', it.title);
+        cardTitle.title = it.id; // R9-1: slug as tooltip here too
+        card.appendChild(cardTitle);
         var chipRow = el('div', 'rm-card-chips');
+        if (it.project) chipRow.appendChild(el('span', 'chip rm-project-tag', it.project)); // R9-3
         chipRow.appendChild(statusChip(it)); // same chips as the tree (I3)
         var prog = progressNode(it);
         if (prog) chipRow.appendChild(prog);
@@ -952,6 +1075,10 @@
     var st = captureUiState();
     var f = applyFilters(lastPayload.items || []);
     body.innerHTML = '';
+    var ub = lastPayload.unbound_sessions;
+    if (ub && ub.live_sessions && ub.live_sessions.length) {
+      body.appendChild(renderUnboundSessions(ub));
+    }
     if (f.visible.length === 0) {
       body.appendChild(renderEmptyStates(f));
     } else {
@@ -1111,10 +1238,147 @@
   }
 
   // ============================================================
+  // R9-6 sidebar (operator audit row 6): compact My-items + Backlog panes
+  // on the landing. Same GET/POST /api/todo and GET /api/backlog contracts
+  // as inbox.js "My items" and backlog.js — one writer (the server), two
+  // compact mirrors; full editing stays on the Inbox/Requests surfaces.
+  // Collapsed state persists (localStorage, kanban-toggle discipline);
+  // My-items reloads once at boot + after every write (inbox.js precedent:
+  // never on the 30s tick, so an in-flight click is never destroyed);
+  // Backlog is read-only here and MAY refresh on the tick safely.
+  // ============================================================
+  var LS_SIDE_MYITEMS = 'rm.side.myitems.open';
+  var LS_SIDE_BACKLOG = 'rm.side.backlog.open';
+  var SIDE_LIST_CAP = 8; // compact pane: cap rows, name the remainder
+
+  function sidePaneBoot(paneId, lsKey) {
+    var pane = document.getElementById(paneId);
+    if (!pane) return null;
+    var saved = lsGet(lsKey);
+    if (saved === '0') pane.open = false;
+    pane.addEventListener('toggle', function () { lsSet(lsKey, pane.open ? '1' : '0'); });
+    return pane;
+  }
+
+  function loadSideMyItems() {
+    var bodyEl = document.getElementById('rmMyItemsBody');
+    var countEl = document.getElementById('rmMyItemsCount');
+    if (!bodyEl) return;
+    fetch('/api/todo').then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || j.ok === false) {
+        bodyEl.innerHTML = '';
+        bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+        return;
+      }
+      var ops = j.operator_items || [];
+      var ptrs = (j.pointer_items || []).filter(function (p) { return !p.checked; });
+      if (countEl) countEl.textContent = '(' + (ops.filter(function (o) { return !o.checked; }).length + ptrs.length) + ' open)';
+      bodyEl.innerHTML = '';
+      if (!ops.length && !ptrs.length) {
+        bodyEl.appendChild(el('div', 'rm-side-empty', 'nothing on your list'));
+        return;
+      }
+      var list = el('ul', 'rm-side-list');
+      ops.forEach(function (item) {
+        var li = el('li', 'rm-side-item');
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.checked = !!item.checked;
+        cb.setAttribute('aria-label', (item.checked ? 'mark not done: ' : 'mark done: ') + item.text);
+        cb.addEventListener('change', function () {
+          cb.disabled = true;
+          fetch('/api/todo', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'toggle', index: item.index }),
+          }).then(function (r) { return r.json(); }).then(function (r) {
+            if (r && r.ok) { loadSideMyItems(); }
+            else { cb.checked = !cb.checked; cb.disabled = false; }
+          }).catch(function () { cb.checked = !cb.checked; cb.disabled = false; });
+        });
+        li.appendChild(cb);
+        li.appendChild(el('span', 'rm-side-text' + (item.checked ? ' rm-side-done' : ''), item.text));
+        list.appendChild(li);
+      });
+      ptrs.slice(0, SIDE_LIST_CAP).forEach(function (p) {
+        var li = el('li', 'rm-side-item rm-side-pointer');
+        var t = p.title || p.needs_you_id;
+        li.appendChild(el('span', 'rm-side-glyph', '?'));
+        var span = el('span', 'rm-side-text', t.length > 90 ? t.slice(0, 90) + '…' : t);
+        span.title = t;
+        li.appendChild(span);
+        list.appendChild(li);
+      });
+      if (ptrs.length > SIDE_LIST_CAP) {
+        list.appendChild(el('li', 'rm-side-item rm-side-more', '+' + (ptrs.length - SIDE_LIST_CAP) + ' more in the Inbox'));
+      }
+      bodyEl.appendChild(list);
+    }).catch(function () {
+      bodyEl.innerHTML = '';
+      bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+    });
+  }
+
+  function loadSideBacklog() {
+    var bodyEl = document.getElementById('rmBacklogBody');
+    var countEl = document.getElementById('rmBacklogCount');
+    if (!bodyEl) return;
+    fetch('/api/backlog').then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || j.ok === false) {
+        bodyEl.innerHTML = '';
+        bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+        return;
+      }
+      var counts = j.counts || {};
+      if (countEl) countEl.textContent = '(' + (counts.open_total || 0) + ' open)';
+      bodyEl.innerHTML = '';
+      var byTier = counts.by_tier || {};
+      var tierLine = ['high', 'medium', 'low'].filter(function (t) { return byTier[t]; })
+        .map(function (t) { return byTier[t] + ' ' + t; }).join(' · ');
+      if (tierLine) bodyEl.appendChild(el('div', 'rm-side-tiers', tierLine));
+      var compact = j.compact || {};
+      var list = el('ul', 'rm-side-list');
+      var shown = 0;
+      ['high', 'medium'].forEach(function (tier) {
+        var rows = (compact[tier] && compact[tier].rows) || [];
+        rows.forEach(function (row) {
+          if (shown >= SIDE_LIST_CAP) return;
+          shown++;
+          var li = el('li', 'rm-side-item');
+          li.appendChild(el('span', 'chip rm-side-tier rm-side-tier-' + tier, tier));
+          var t = row.title || row.id || String(row);
+          var span = el('span', 'rm-side-text', t.length > 90 ? t.slice(0, 90) + '…' : t);
+          span.title = t;
+          li.appendChild(span);
+          list.appendChild(li);
+        });
+      });
+      if (list.children.length) bodyEl.appendChild(list);
+      else bodyEl.appendChild(el('div', 'rm-side-empty', 'no high/medium rows — see the full list'));
+    }).catch(function () {
+      bodyEl.innerHTML = '';
+      bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+    });
+  }
+
+  function bootSidebar() {
+    if (!document.getElementById('rmSidebar')) return;
+    sidePaneBoot('rmMyItemsPane', LS_SIDE_MYITEMS);
+    sidePaneBoot('rmBacklogPane', LS_SIDE_BACKLOG);
+    var openInbox = document.getElementById('rmMyItemsOpenInbox');
+    if (openInbox && shell) openInbox.addEventListener('click', function () { shell.navigate('#inbox'); });
+    var openReq = document.getElementById('rmBacklogOpenRequests');
+    if (openReq && shell) openReq.addEventListener('click', function () { shell.navigate('#requests'); });
+    loadSideMyItems();
+    loadSideBacklog();
+    setInterval(loadSideBacklog, REFRESH_INTERVAL_MS); // backlog is read-only here — tick-safe
+  }
+
+  // ============================================================
   // boot: initial load + the 30s tick (C7)
   // ============================================================
   syncToolbar();
   load();
+  bootSidebar();
   setInterval(function () {
     load();
     setAgeLabel(); // age text keeps counting even between successful loads

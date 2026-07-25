@@ -45,6 +45,13 @@
        survive the view's state-preserving re-renders (C7).
        ============================================================ -->
   <div id="tabRoadmapPanel" class="tab-panel" role="tabpanel" aria-labelledby="tabRoadmapBtn">
+    <!-- R9-6 (operator audit row 6): My items + Backlog live ON the landing
+         as a compact right sidebar — the operator's repeatedly-stated ask;
+         reverses the A10 pane retirement for VISIBILITY (the Inbox "My
+         items" section and the Requests-tab backlog pane both remain the
+         full-featured surfaces; these panes are compact mirrors of the
+         SAME endpoints — one writer, counts can never disagree). -->
+    <div class="rm-layout">
     <section id="roadmapSection" class="pane roadmap-section" aria-label="roadmap">
       <div class="roadmap-toolbar">
         <input id="roadmapFilter" type="text" placeholder="filter the roadmap…"
@@ -57,6 +64,19 @@
       <div id="roadmapMissBanner" class="miss-banner" hidden></div>
       <div class="pane-body roadmap-body" id="roadmapBody"></div>
     </section>
+    <aside id="rmSidebar" class="rm-sidebar" aria-label="my items and backlog">
+      <details id="rmMyItemsPane" class="pane rm-side-pane" open>
+        <summary class="rm-side-summary">My items <span id="rmMyItemsCount" aria-live="off">(—)</span></summary>
+        <div class="pane-body rm-side-body" id="rmMyItemsBody"></div>
+        <div class="rm-side-foot"><button type="button" id="rmMyItemsOpenInbox" class="ghost small">open in Inbox</button></div>
+      </details>
+      <details id="rmBacklogPane" class="pane rm-side-pane" open>
+        <summary class="rm-side-summary">Backlog <span id="rmBacklogCount" aria-live="off">(—)</span></summary>
+        <div class="pane-body rm-side-body" id="rmBacklogBody"></div>
+        <div class="rm-side-foot"><button type="button" id="rmBacklogOpenRequests" class="ghost small">open full backlog</button></div>
+      </details>
+    </aside>
+    </div>
   </div>
 
   <!-- ============================================================

@@ -72,17 +72,21 @@
 //     accumulated).
 //
 // ============================================================
-// PAYLOAD CONTRACT (pinned for the T1 status-derivation seam)
+// PAYLOAD CONTRACT (pinned for the T1 status-derivation seam; extended by
+// the round-9 fix round — docs/reviews/2026-07-17-cockpit-ux-design-
+// input.md "Round 9" — see the R9-* markers scattered through this file for
+// each fix's own rationale)
 // ============================================================
 // GET /api/roadmap -> {
-//   ok, generated_at, completed_age_days,
-//   items: [RoadmapItem]            // top-level PLANS, in BUILD ORDER
+//   ok, generated_at, completed_age_days, stale_links_omitted,
+//   items: [RoadmapItem],           // top-level PLANS, in BUILD ORDER
+//   unbound_sessions: UnboundSessionsNode | null,  // R9-7b — see below
 // }
 // RoadmapItem = {
 //   id,                             // plan: <slug>; task: <slug>/<task_id>
 //   kind: 'plan'|'task',
 //   title, title_source: 'operator'|'auto',
-//   project, provenance: 'operator', provenance_reason: '',
+//   project, provenance: 'operator'|'machine', provenance_reason: '',
 //   rank,                           // effective build-order rank (number|null)
 //   added_ts, added_mid_build,
 //   status: {
@@ -103,6 +107,22 @@
 //   subtasks: [{title, body_points: [string]}],
 //   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
 // }
+// UnboundSessionsNode (R9-7b, OPTIONAL — null when no such session exists,
+// honest absence, never a fake/empty node) = {
+//   id: '(unattributed)', kind: 'unbound-sessions', title,
+//   status: {value:'in-progress', label, reason:'', since:''},
+//   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
+// }
+//
+// R9-1 (title): the plan file's own H1 (`# Plan: <title>` / `# Plan —
+// <title>`, HTML-comment-prefixed scaffolds tolerated) outranks a fallback
+// ask-distilled title and the raw slug; an OPERATOR title edit
+// (title_source:'operator', A3) still always outranks everything, the H1
+// included — title_source precedence is UNCHANGED by this fix. Fallback is
+// the slug when no plan carries a `# Plan: ...` H1 at all.
+// R9-4 (provenance): a plan's `provenance` is no longer hardcoded
+// 'operator' — see planProvenanceClass() below for the full precedence
+// (explicit plan-header field > linked-ask presence > slug heuristic).
 //
 // ============================================================
 // STATUS DERIVATION (unchanged from the T1 wiring — this file supplies the
@@ -372,6 +392,34 @@ function newestLinkTs(links) {
 // COUNTED (never a silent drop — the caller surfaces one honest aggregate
 // line, never 150+ individual dead roots). The originating ask itself
 // stays fully visible in the Requests tab regardless (unchanged).
+// configuredRepoRoots() -> [{key, root}] — R9-8: EXPLICIT machine-local
+// repo config only (config/projects.json, the SAME two-layer convention
+// config/projects.js already established for the Docs browser: the
+// tracked config/projects.example.json is a generic placeholder; the real,
+// gitignored config/projects.json carries real absolute paths).
+//
+// Deliberately does NOT call config/projects.js's own loadProjects() here:
+// that function's auto-discovery ALSO pulls in every sibling repo under
+// ~/claude-projects with a docs/ dir, which would silently expand the
+// Roadmap's repo scan far beyond "configured repos" (R9-8's own wording)
+// the instant ANY sibling repo happens to exist on the machine — R9-8's
+// own binding rule is "keep the single-repo behavior as the zero-config
+// default", so this reads the raw JSON directly and stays scoped to repos
+// the operator actually configured. A malformed/absent config file is an
+// honest zero-length list (never a crash, never a silent guess).
+function configuredRepoRoots() {
+  const cfgPath = process.env.ROADMAP_PROJECTS_CONFIG ||
+    path.join(__dirname, '..', 'config', 'projects.json');
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch (_) { return []; }
+  const out = [];
+  Object.keys(raw || {}).forEach((key) => {
+    if (key === '_comment') return;
+    if (typeof raw[key] === 'string' && raw[key]) out.push({ key: key, root: raw[key] });
+  });
+  return out;
+}
+
 function discoverPlanFiles(scanRoot, planAskLinks) {
   const seenSlugs = {};
   const out = [];
@@ -382,12 +430,24 @@ function discoverPlanFiles(scanRoot, planAskLinks) {
   // alongside (never instead of) mtime.
   const recentSlugs = Object.assign({}, recentSlugsFromAskLinks(planAskLinks, cutoffMs), recentSlugsFromEvents(cutoffMs));
 
-  scanPlanDir(path.join(scanRoot, 'docs', 'plans'), { archived: false }).forEach((pf) => {
-    seenSlugs[pf.slug] = true; out.push(pf);
-  });
-  scanPlanDir(path.join(scanRoot, 'docs', 'plans', 'archive'), { archived: true, cutoffMs: cutoffMs, recentSlugs: recentSlugs }).forEach((pf) => {
-    if (seenSlugs[pf.slug]) return;
-    seenSlugs[pf.slug] = true; out.push(pf);
+  // R9-8: scan THIS repo first (self — preserves the exact prior
+  // single-repo behavior/order when zero repos are configured), then every
+  // EXPLICITLY-configured repo's own docs/plans + docs/plans/archive, same
+  // aging/ghost rules, deduped by slug (first-seen wins — self takes
+  // precedence on a same-slug collision across repos). A configured repo
+  // with no docs/plans/ at all renders NOTHING for it (scanPlanDir already
+  // degrades an unreadable directory to an empty array — honest absence,
+  // never synthesized).
+  const repoRoots = [{ key: 'self', root: scanRoot }].concat(configuredRepoRoots());
+  repoRoots.forEach((r) => {
+    scanPlanDir(path.join(r.root, 'docs', 'plans'), { archived: false }).forEach((pf) => {
+      if (seenSlugs[pf.slug]) return;
+      seenSlugs[pf.slug] = true; out.push(pf);
+    });
+    scanPlanDir(path.join(r.root, 'docs', 'plans', 'archive'), { archived: true, cutoffMs: cutoffMs, recentSlugs: recentSlugs }).forEach((pf) => {
+      if (seenSlugs[pf.slug]) return;
+      seenSlugs[pf.slug] = true; out.push(pf);
+    });
   });
 
   Object.keys(planAskLinks).forEach((slug) => {
@@ -522,6 +582,67 @@ function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) {
   });
 }
 
+// deriveUnboundSessionsNode(hbCtx) -> UnboundSessionsNode | null — R9-7b.
+//
+// DIAGNOSIS (2026-07-23, against the REAL live state, read-only):
+// ~/.claude/state/heartbeats/ carries ~20 real session heartbeats, several
+// genuinely fresh (this very build's own session among them). The
+// task-BOUND leaf pipeline (deriveLiveAgentLeaves, wired since round-7B-i)
+// DOES work — S18/S19 in this file's own selftest prove a bound session
+// renders as a live leaf. The operator-visible gap is entirely on the
+// OTHER half: ~/.claude/state/progress-logs/_id.jsonl carries 946 real
+// task_started/task_done events (incl. several for THIS plan,
+// cockpit-roadmap-redesign, task 9) filed under the literal ask_id string
+// "<id" — an emitter bug (a shell template placeholder that was never
+// substituted before being used as a filename) that is OUT OF SCOPE for
+// this file (it lives in the dispatch/emit hook layer, not
+// roadmap-routes.js) and is flagged separately (nl-issue), never
+// silently patched here. Its practical consequence: every session whose
+// dispatch event landed under that broken filename is invisible to
+// eventsForSlug's per-ask lookup, so those sessions' heartbeats are
+// currently-running but attributed to NOTHING the tree can find — exactly
+// the class this node exists to surface, regardless of which specific
+// root cause (this bug, a plan with no task-binding at all, or a future
+// unrelated cause) puts a session in that state on any given day.
+//
+// HONEST ABSENCE (R9-7's own binding rule): zero unattributed-but-running
+// sessions -> null, never a fake/empty node.
+function deriveUnboundSessionsNode(hbCtx) {
+  const heartbeats = hbCtx.heartbeats || [];
+  const bound = hbCtx.boundSessionIds || {};
+  const th = deriveLib.activityThresholdsMs();
+  const running = heartbeats.filter((h) => {
+    if (!h || !h.session_id || bound[h.session_id]) return false;
+    const ageMs = hbCtx.nowMs - Date.parse(h.last_activity_ts);
+    const cls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
+    return cls !== 'crashed'; // throttled/stale are NOT crashed (A6 disjunct) — still "running" for this purpose
+  });
+  if (!running.length) return null;
+  const children = running.map((h) => {
+    const ageMs = hbCtx.nowMs - Date.parse(h.last_activity_ts);
+    const cls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
+    const shortId = String(h.session_id).slice(0, 8);
+    const label = cls === 'active' ? 'running' : ('running (' + cls + ')');
+    return {
+      id: 'unattributed/' + h.session_id,
+      kind: 'agent',
+      title: 'session ' + shortId + (h.branch ? ' (' + h.branch + ')' : ''),
+      status: { value: 'in-progress', label: label, reason: '', since: h.last_activity_ts || '' },
+    };
+  });
+  return {
+    id: '(unattributed)',
+    kind: 'unbound-sessions',
+    title: 'live sessions not yet attributed to a task (' + running.length + ')',
+    status: {
+      value: 'in-progress',
+      label: running.length + ' running, unattributed to a task',
+      reason: '', since: '',
+    },
+    live_sessions: children,
+  };
+}
+
 // deriveTaskNode(slug, t, ...) — id scheme is now `<slug>/<task_id>` (the
 // ask_id segment is gone: plans, not asks, are the root, so a task's
 // address is relative to its plan alone).
@@ -554,6 +675,15 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
   const liveSessions = (!t.done && taskSessionIds.length)
     ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs)
     : [];
+  // R9-7b bookkeeping: a session id ATTACHED to a not-done task is
+  // "attributed" regardless of whether a matching heartbeat file exists —
+  // it already renders its own leaf above (running, or an honest "unknown,
+  // no heartbeat evidence" leaf, S19). Marking it here is what lets
+  // deriveUnboundSessionsNode tell "genuinely unattributed" apart from
+  // "attributed to a task, just heartbeat-lookup-failed".
+  if (!t.done && taskSessionIds.length && hbCtx.boundSessionIds) {
+    taskSessionIds.forEach((sid) => { hbCtx.boundSessionIds[sid] = true; });
+  }
 
   return {
     id: slug + '/' + t.id,
@@ -632,16 +762,107 @@ function planProjectFromPath(absPath) {
   return m ? m[1] : '';
 }
 
+// ----------------------------------------------------------------------
+// R9-1 (title) + R9-4 (provenance) — plan-header extras.
+//
+// Deliberately kept LOCAL to this file rather than added to plan-parse.js:
+// this fix round's scope is roadmap-routes.js + its own selftest only, and
+// this codebase's own established convention is small, deliberately
+// duplicated per-file glue (see plan-parse.js's own header note) rather
+// than widening a shared module's surface for one caller. Both reads below
+// share ONE fs.readFileSync — called once per plan, not per field.
+// ----------------------------------------------------------------------
+
+// H1_PLAN_TITLE_RE — matches "# Plan: <title>" AND the real corpus's
+// "# Plan — <title>" em-dash variant (whole-corpus check, 2026-07-23:
+// every currently-ACTIVE top-level plan uses one of these two shapes).
+// A leading HTML scaffold comment (`<!-- scaffold-created: ... -->`, the
+// real shape start-plan.sh emits) is stripped before scanning, so the H1
+// is found even when it is not literally the file's first line.
+const H1_PLAN_TITLE_RE = /^#\s*Plan\s*[:—-]\s*(.+?)\s*$/;
+// PROVENANCE_HEADER_RE — an OPTIONAL, explicit plan-header field
+// (`provenance: machine` / `provenance: operator`) that overrides the slug
+// heuristic below in EITHER direction (R9-4's own binding requirement).
+const PROVENANCE_HEADER_RE = /^provenance:\s*(machine|operator)\s*$/im;
+
+function planFileHeaderExtras(absPath) {
+  let text;
+  try { text = fs.readFileSync(absPath, 'utf8'); } catch (_) { return { h1Title: '', provenanceField: '' }; }
+  const stripped = text.replace(/<!--[\s\S]*?-->/g, '');
+  const lines = stripped.split('\n');
+  let h1Title = '';
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].replace(/\r$/, '').trim();
+    if (!line) continue;
+    const m = H1_PLAN_TITLE_RE.exec(line);
+    if (m) h1Title = m[1].trim();
+    break; // the first non-blank line (post comment-strip) is the H1 or it
+           // isn't — either way, stop scanning here (bounded, honest: no
+           // deeper heuristic hunts for a title buried mid-file).
+  }
+  const pm = PROVENANCE_HEADER_RE.exec(text);
+  return { h1Title: h1Title, provenanceField: pm ? pm[1].toLowerCase() : '' };
+}
+
+// R9-4 — slug-prefix/word heuristics, scanned against the REAL live plan
+// corpus (2026-07-23: docs/plans + docs/plans/archive) for every prefix the
+// operator named plus what that scan turned up. PREFIXES (anchored at the
+// start of the slug): nl-issue(s)-, nl-finding-, harness-, evidence-bar-.
+// WORDS (may appear anywhere, hyphen-bounded so "sweeper"/"watchdogged"
+// never false-positive): sweep, watchdog.
+const MACHINE_SLUG_PREFIX_RE = /^(nl-issues?-|nl-finding-|harness-|evidence-bar-)/;
+const MACHINE_SLUG_WORD_RE = /(^|-)(sweep|watchdog)(-|$)/;
+function slugLooksMachineFiled(slug) {
+  const s = String(slug || '');
+  return MACHINE_SLUG_PREFIX_RE.test(s) || MACHINE_SLUG_WORD_RE.test(s);
+}
+
+// planProvenanceClass(slug, headerField, hasLinkedAsk) -> {provenance,
+// provenance_reason} — R9-4's binding precedence:
+//   1. An explicit `provenance: machine|operator` plan-header field ALWAYS
+//      wins, in EITHER direction (the operator's own correction path for
+//      whatever the heuristic below gets wrong).
+//   2. A plan linked to a real, non-dismissed ask (an operator REQUEST) is
+//      never hidden by subject-matter/slug shape — A9's own binding rule
+//      ("classifier = PROVENANCE, NOT subject matter — else operator-
+//      requested harness work vanishes").
+//   3. Otherwise, the slug heuristic decides; absent any signal, the
+//      default stays 'operator' (never hide on silence — A9).
+function planProvenanceClass(slug, headerField, hasLinkedAsk) {
+  if (headerField === 'operator' || headerField === 'machine') {
+    return { provenance: headerField, provenance_reason: 'plan header: provenance: ' + headerField };
+  }
+  if (hasLinkedAsk) {
+    return { provenance: 'operator', provenance_reason: 'linked to an operator request' };
+  }
+  if (slugLooksMachineFiled(slug)) {
+    return { provenance: 'machine', provenance_reason: 'slug matches a machine-filed naming pattern' };
+  }
+  return { provenance: 'operator', provenance_reason: '' };
+}
+
 function derivePlanRootNode(pf, linkedAsks, hbCtx) {
   const fromRequests = (linkedAsks || []).map((a) => ({ id: a.ask_id, title: a.title }));
   const addedTs = planFallbackAddedTs(pf, linkedAsks);
+  const headerExtras = planFileHeaderExtras(pf.absPath);
+  const firstLink = linkedAsks[0];
+  // R9-1: operator title (title_source:'operator' on the FIRST linked ask,
+  // the same delegation target title edits already write through) always
+  // wins; else the plan's own H1 outranks an auto-distilled ask title (an
+  // ask summary is a best-effort distillation of a prompt — round 1's own
+  // "not a good reference for what my actual ask was" — while the plan's
+  // H1 is a deliberately-authored name); else the ask auto-title; else the
+  // raw slug (now truly the last resort, not the common case).
+  const operatorTitle = (firstLink && firstLink.title_source === 'operator') ? firstLink.title : '';
+  const askAutoTitle = (firstLink && firstLink.title_source !== 'operator') ? (firstLink.title || '') : '';
+  const provClass = planProvenanceClass(pf.slug, headerExtras.provenanceField, !!(linkedAsks && linkedAsks.length));
   const node = {
     id: pf.slug,
     kind: 'plan',
-    title: (linkedAsks[0] && linkedAsks[0].title) || pf.slug,
-    title_source: (linkedAsks[0] && linkedAsks[0].title_source) || 'auto',
+    title: operatorTitle || headerExtras.h1Title || askAutoTitle || pf.slug,
+    title_source: operatorTitle ? 'operator' : 'auto',
     project: (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath),
-    provenance: 'operator', provenance_reason: '',
+    provenance: provClass.provenance, provenance_reason: provClass.provenance_reason,
     rank: null, added_ts: addedTs, added_mid_build: false,
     status: null, progress: null, completed_at: '',
     from_requests: fromRequests,
@@ -768,7 +989,11 @@ function buildRoadmapPayload() {
   // a genuinely-absent store (benign) from one that exists but could not be
   // read (a real derivation-input failure — C5). Pure fs read, no spawn (A6).
   const hbResult = deriveLib.listRawHeartbeatsResult();
-  const hbCtx = { heartbeats: hbResult.heartbeats, heartbeatsStoreOk: hbResult.ok, nowMs: Date.now() };
+  // R9-7b: boundSessionIds is populated AS A SIDE EFFECT of every task's own
+  // derivation below (deriveTaskNode marks each session id attached to a
+  // not-done task) — mutated-through-hbCtx is the same threading pattern
+  // heartbeats/nowMs already use for this exact request-scoped object.
+  const hbCtx = { heartbeats: hbResult.heartbeats, heartbeatsStoreOk: hbResult.ok, nowMs: Date.now(), boundSessionIds: {} };
 
   const items = planFiles.map((pf) => {
     const linkedAsks = planAskLinks[pf.slug] || [];
@@ -787,10 +1012,15 @@ function buildRoadmapPayload() {
     return String(a.added_ts).localeCompare(String(b.added_ts));
   });
 
+  // R9-7b: computed AFTER every plan/task has been derived, so
+  // boundSessionIds reflects the WHOLE tree, not just one plan.
+  const unboundSessionsNode = deriveUnboundSessionsNode(hbCtx);
+
   return {
     ok: true,
     generated_at: new Date().toISOString(),
     completed_age_days: COMPLETED_AGE_DAYS,
+    unbound_sessions: unboundSessionsNode,
     // stale_links_omitted (2026-07-21 ghost-bounding fix): the count of
     // ask-linked plan slugs whose file could not be resolved AND whose
     // newest linking ask is older than completed_age_days — excluded from
@@ -966,4 +1196,10 @@ module.exports = {
   isEligiblePlanStatus,
   ROLLUP_CLASSES,
   COMPLETED_AGE_DAYS,
+  // round-9 fix-round exports (test/reuse hooks)
+  planFileHeaderExtras,
+  planProvenanceClass,
+  slugLooksMachineFiled,
+  configuredRepoRoots,
+  deriveUnboundSessionsNode,
 };
