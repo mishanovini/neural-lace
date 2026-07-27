@@ -64,6 +64,12 @@
       <div id="roadmapMissBanner" class="miss-banner" hidden></div>
       <div class="pane-body roadmap-body" id="roadmapBody"></div>
     </section>
+    <!-- Column resize handle (R9 follow-up, operator 2026-07-24: panels must
+         stay adjustable — the liked task-8 feature): same ARIA window-splitter
+         pattern + setupHandle machinery as the Requests tab's colResizeHandle. -->
+    <div id="rmColResizeHandle" class="resize-handle resize-handle-col" role="separator"
+         aria-orientation="vertical" aria-label="resize roadmap and sidebar columns"
+         tabindex="0"></div>
     <aside id="rmSidebar" class="rm-sidebar" aria-label="my items and backlog">
       <details id="rmMyItemsPane" class="pane rm-side-pane" open>
         <summary class="rm-side-summary">My items <span id="rmMyItemsCount" aria-live="off">(—)</span></summary>

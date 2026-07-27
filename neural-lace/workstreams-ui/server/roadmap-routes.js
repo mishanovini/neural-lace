@@ -862,6 +862,7 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     title: operatorTitle || headerExtras.h1Title || askAutoTitle || pf.slug,
     title_source: operatorTitle ? 'operator' : 'auto',
     project: (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath),
+    plan_path: pf.absPath, // R9 follow-up (operator 2026-07-24): every phase IS a plan file — link it
     provenance: provClass.provenance, provenance_reason: provClass.provenance_reason,
     rank: null, added_ts: addedTs, added_mid_build: false,
     status: null, progress: null, completed_at: '',

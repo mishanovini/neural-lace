@@ -332,7 +332,10 @@
     });
     var label = project || '(no project)';
     var count = (items || []).length;
-    return label + ' — ' + count + (count === 1 ? ' phase' : ' phases') +
+    // "plans, in build order" not "phases" (operator 2026-07-24: "is there a
+    // plan this is tied to?" — each phase IS one plan file; the header says
+    // so instead of implying membership in some unnamed program).
+    return label + ' — ' + count + (count === 1 ? ' plan' : ' plans') + ', in build order' +
       (parts.length ? ' (' + parts.join(', ') + ')' : '');
   }
   // PROJECT-GROUPING-END
@@ -514,6 +517,21 @@
   // ============================================================
   function drilldown(item, topLevelIndex, topLevelCount) {
     var box = el('div', 'rm-drill');
+
+    // R9 follow-up (operator 2026-07-24: "is there a plan this is tied to?
+    // why don't I see a link?"): every phase IS a plan file — link it,
+    // absolute path (operator directive: links are always absolute).
+    if (item.kind === 'plan' && item.plan_path) {
+      var planRow = el('div', 'rm-plan-link-row');
+      planRow.appendChild(el('span', 'rm-drill-label', 'plan: '));
+      var a = document.createElement('a');
+      a.className = 'rm-plan-link';
+      a.textContent = item.plan_path.replace(/^.*[\\/](docs[\\/])/, '$1').replace(/\\/g, '/');
+      a.title = item.plan_path;
+      a.href = 'file:///' + String(item.plan_path).replace(/\\/g, '/').replace(/^\/+/, '');
+      planRow.appendChild(a);
+      box.appendChild(planRow);
+    }
 
     // from your request(s) — C6, the round-1 verbatim direction: drill-down
     // ONLY (never inline-by-default), and suppressed entirely when it would
@@ -1264,20 +1282,49 @@
     var bodyEl = document.getElementById('rmMyItemsBody');
     var countEl = document.getElementById('rmMyItemsCount');
     if (!bodyEl) return;
-    fetch('/api/todo').then(function (r) { return r.json(); }).then(function (j) {
+    // R9 follow-up (operator 2026-07-24: "why don't I see anything on my
+    // to-do list? you just told me something was waiting on me"): the
+    // operator's mental model of "my list" is EVERYTHING waiting on them —
+    // which lives in the Inbox's answerable set, not only the todo file
+    // (whose auto-pointer splice also lands pre-checked — needs-you.sh bug,
+    // nl-issue filed). Both sources render here; the Inbox stays canonical.
+    Promise.all([
+      fetch('/api/todo').then(function (r) { return r.json(); }).catch(function () { return null; }),
+      fetch('/api/inbox').then(function (r) { return r.json(); }).catch(function () { return null; }),
+    ]).then(function (both) {
+      var j = both[0];
+      var inbox = both[1];
       if (!j || j.ok === false) {
         bodyEl.innerHTML = '';
         bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
         return;
       }
+      var answerable = (inbox && inbox.ok !== false && inbox.answerable) || [];
       var ops = j.operator_items || [];
       var ptrs = (j.pointer_items || []).filter(function (p) { return !p.checked; });
-      if (countEl) countEl.textContent = '(' + (ops.filter(function (o) { return !o.checked; }).length + ptrs.length) + ' open)';
+      if (countEl) countEl.textContent = '(' + (answerable.length + ops.filter(function (o) { return !o.checked; }).length + ptrs.length) + ' open)';
       bodyEl.innerHTML = '';
-      if (!ops.length && !ptrs.length) {
+      if (answerable.length) {
+        var wlist = el('ul', 'rm-side-list');
+        answerable.slice(0, SIDE_LIST_CAP).forEach(function (item) {
+          var li = el('li', 'rm-side-item rm-side-waiting');
+          var t = item.title || item.ask || item.id;
+          var goBtn = btn('ghost small rm-side-go', t.length > 90 ? t.slice(0, 90) + '…' : t, function () {
+            if (shell) shell.navigate('#inbox/' + encodeURIComponent(item.id));
+          });
+          goBtn.title = item.ask || t;
+          li.appendChild(el('span', 'rm-side-glyph', item.kind === 'decision' ? '◆' : '▸'));
+          li.appendChild(goBtn);
+          wlist.appendChild(li);
+        });
+        bodyEl.appendChild(el('div', 'rm-side-tiers', answerable.length + ' waiting on you (Inbox):'));
+        bodyEl.appendChild(wlist);
+      }
+      if (!answerable.length && !ops.length && !ptrs.length) {
         bodyEl.appendChild(el('div', 'rm-side-empty', 'nothing on your list'));
         return;
       }
+      if (!ops.length && !ptrs.length) return;
       var list = el('ul', 'rm-side-list');
       ops.forEach(function (item) {
         var li = el('li', 'rm-side-item');

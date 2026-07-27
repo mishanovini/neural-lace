@@ -1446,3 +1446,8 @@ details[open] > summary .rm-rollups { display: none; }
   .rm-layout { flex-direction: column; }
   .rm-sidebar { flex: none; max-width: none; width: 100%; }
 }
+/* R9 follow-up 2026-07-24: the ledger takes the hidden interim tree's flex
+   slot so the column handle splits a real pair again. */
+.ws-layout .requests-ledger-in-layout { flex: 1 1 0; min-width: 0; margin: 0; }
+.rm-plan-link-row { margin: 2px 0 6px; font-size: 12px; }
+.rm-plan-link { overflow-wrap: anywhere; }

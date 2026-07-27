@@ -1442,6 +1442,16 @@
     apply: function (el, px) { el.style.width = px + 'px'; el.style.flexBasis = px + 'px'; },
   });
 
+  // Roadmap-tab column handle (R9 follow-up, operator 2026-07-24: panels
+  // must stay adjustable). Same shape as the Requests handle above;
+  // setupHandle already no-ops gracefully when either element is absent.
+  setupHandle({
+    handleId: 'rmColResizeHandle', targetId: 'rmSidebar', storeKey: 'ws.rm.colWidth',
+    min: COL_MIN, max: COL_MAX, axis: 'x', sign: -1,
+    read: function (el) { return el.getBoundingClientRect().width; },
+    apply: function (el, px) { el.style.width = px + 'px'; el.style.flexBasis = px + 'px'; el.style.maxWidth = px + 'px'; },
+  });
+
   // Row handle: [My To-Do pane-body] [handle] [Backlog]. Dragging DOWN
   // (clientY increases) grows the To-Do pane's own scroll height — sign:+1.
   // Sets overflow-y:auto on the SAME element being resized so it becomes

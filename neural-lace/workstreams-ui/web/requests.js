@@ -121,18 +121,25 @@
   body.id = 'requestsLedgerBody';
   section.appendChild(body);
 
-  panel.insertBefore(section, panel.firstChild);
-
-  // The interim ask tree (#askTreeSection) predates this ledger and rendered
-  // the SAME asks a second time below it (2026-07-22 acceptance finding).
-  // Hidden, not removed: asks.js still owns the node, and hash addressing no
-  // longer depends on it — this module's 'requests' adapter wins the
-  // registration (last registerView call wins). style.display, not the
-  // hidden attribute, so no class-level display rule can resurrect it.
+  // Mount INSIDE the ws-layout row, in the interim ask tree's old slot, so
+  // the ledger sits BESIDE the Backlog sidebar and the existing column
+  // resize handle keeps splitting a real pair (operator 2026-07-24: "why
+  // are the panels no longer adjustable" — the first hide left the handle
+  // with nothing on its left). The interim tree itself stays hidden
+  // (2026-07-22 acceptance: it duplicated the same asks below the ledger);
+  // asks.js still owns its node, and hash addressing does not depend on it
+  // (this module's 'requests' adapter wins the last-registerView-wins
+  // registration). style.display, not the hidden attribute, so no
+  // class-level display rule can resurrect it.
+  var layoutRow = panel.querySelector('.ws-layout');
   var interimTree = document.getElementById('askTreeSection');
   if (interimTree) interimTree.style.display = 'none';
-  var interimColHandle = document.getElementById('colResizeHandle');
-  if (interimColHandle) interimColHandle.style.display = 'none';
+  if (layoutRow) {
+    section.classList.add('requests-ledger-in-layout');
+    layoutRow.insertBefore(section, layoutRow.firstChild);
+  } else {
+    panel.insertBefore(section, panel.firstChild); // markup drift fallback — ledger above, never lost
+  }
 
   // ============================================================
   // state

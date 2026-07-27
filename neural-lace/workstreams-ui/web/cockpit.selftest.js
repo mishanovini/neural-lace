@@ -1093,8 +1093,8 @@ ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/phaseLab
     g.length === 2 && g[0].project === 'neural-lace' && g[0].items.length === 2 &&
     g[0].items[0].id === 'a' && g[0].items[1].id === 'c' && g[1].project === 'foresight');
   var h = sandbox.out && sandbox.out.h ? sandbox.out.h('neural-lace', g[0] ? g[0].items : []) : '';
-  ok('R9-2b projectGroupHeaderText names the project + phase count + status spread (text, never color-only)',
-    /neural-lace/.test(h) && /2 phases/.test(h) && /1 complete/.test(h) && /1 not started/.test(h));
+  ok('R9-2b projectGroupHeaderText names the project + plan count ("N plans, in build order" — each phase IS a plan) + status spread (text, never color-only)',
+    /neural-lace/.test(h) && /2 plans, in build order/.test(h) && /1 complete/.test(h) && /1 not started/.test(h));
 })();
 ok('R9-2c renderTree renders the group header element (rm-project-group-head) and scopes phase steps inside the group container',
   /rm-project-group-head/.test(roadmapJsNoComments) && /groupItemsByProject\(live\)/.test(roadmapJsNoComments));
@@ -1120,6 +1120,26 @@ ok('R9-6b the sidebar reuses the canonical endpoints (GET/POST /api/todo, GET /a
 ok('R9-6c pane collapsed-state persists (localStorage) and My-items never reloads on the 30s tick (write-safety precedent)',
   /rm\.side\.myitems\.open/.test(roadmapJsNoComments) && /rm\.side\.backlog\.open/.test(roadmapJsNoComments) &&
   /setInterval\(loadSideBacklog/.test(roadmapJsNoComments) && !/setInterval\(loadSideMyItems/.test(roadmapJsNoComments));
+// --- R9 follow-ups (operator re-walk 2026-07-24) ---
+ok('R9F-1 every plan phase links its plan FILE (absolute file:// href, plans only) in the drill-down',
+  // raw roadmapJs, not the no-comments variant: the comment-stripper eats
+  // the '//' INSIDE the 'file:///' string literal.
+  /plan_path/.test(roadmapJsNoComments) && /rm-plan-link/.test(roadmapJsNoComments) && /file:\/\/\//.test(roadmapJs));
+ok('R9F-2 the My-items pane surfaces the Inbox ANSWERABLE set (the real waiting-on-you), navigating #inbox/<id> — todo file alone was empty while 4 items waited',
+  /\/api\/inbox/.test(roadmapJsNoComments) && /rm-side-waiting/.test(roadmapJsNoComments) &&
+  /#inbox\/'\s*\+\s*encodeURIComponent/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')));
+// self-read (requestsJs/appJs are declared LATER in this file — TDZ):
+(function () {
+  var reqSrc = '';
+  var appSrc = '';
+  try { reqSrc = fs.readFileSync(path.join(D, 'requests.js'), 'utf8'); } catch (_) {}
+  try { appSrc = fs.readFileSync(path.join(D, 'app.js'), 'utf8'); } catch (_) {}
+  ok('R9F-3 the Requests ledger mounts INSIDE .ws-layout (the hidden interim tree\'s flex slot) so the column resize handle splits a real pair again',
+    /requests-ledger-in-layout/.test(reqSrc) && /layoutRow\.insertBefore\(section/.test(reqSrc) &&
+    !/interimColHandle/.test(reqSrc));
+  ok('R9F-4 the Roadmap tab has its own column resize handle wired through the SAME setupHandle machinery (adjustable panes stay a feature)',
+    /rmColResizeHandle/.test(html) && /rmColResizeHandle/.test(appSrc) && /targetId: 'rmSidebar'/.test(appSrc));
+})();
 ok('R8-4 the rank-move and title-save wire bodies are id-keyed (a plan slug), not ask_id-keyed (the old ask-rooted contract) — no POST body anywhere still sends ask_id',
   /JSON\.stringify\(\{ id: item\.id, title: t \}\)/.test(roadmapJsNoComments) &&
   /JSON\.stringify\(\{ id: itemId, direction: direction \}\)/.test(roadmapJsNoComments) &&
