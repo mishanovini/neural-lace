@@ -279,9 +279,35 @@ run_tick() {
   # hiccup can never trigger this tick's own anomaly alert. Housekeeping
   # that cries wolf about itself is worse than housekeeping that quietly
   # skips a cycle; the sweep's own log is the durable record. ----------
+  # ARMING (harness-review bab00ab, Critical 1 — PROVEN): an agent commit
+  # must NOT hard-code the operator's deletion-approval flag into an
+  # unattended task. Three written records set the opposite convention:
+  # manifest.json's perf-tick-snapshot entry ("an agent session cannot arm
+  # it merely by running code"; worktree purges "operator-only"), ADR-061
+  # §5 invariant 2 ("this ADR ships nothing armed"), and NEEDS-YOU.md's
+  # log of per-batch operator asks including one the permission classifier
+  # DENIED. So this step ships OBSERVE-FIRST, exactly like the
+  # PERF_TICK_REAP_ARMED precedent on this same tick: report mode by
+  # default, and it prunes ONLY when the operator has created the arming
+  # marker themselves. Code an agent writes can never flip this.
   local whs="$SCRIPT_DIR/worktree-hygiene-sweep.sh"
+  local arm_marker="${WORKTREE_PRUNE_ARM_MARKER:-$HOME/.claude/state/worktree-prune-armed}"
   if [[ -f "$whs" ]]; then
-    local wt_cmd="${HEALTH_TICK_WORKTREE_PRUNE_CMD:-WORKTREE_SWEEP_APPROVE=1 bash \"$whs\" --prune}"
+    # HARNESS_SELFTEST tri-state (review Minor F7): the default below
+    # touches REAL state, so it must honor the same sandboxing contract
+    # _ht_alert_dir implements — an explicit override wins, otherwise a
+    # self-test never reaches the real sweep at all.
+    local wt_cmd
+    if [[ -n "${HEALTH_TICK_WORKTREE_PRUNE_CMD:-}" ]]; then
+      wt_cmd="$HEALTH_TICK_WORKTREE_PRUNE_CMD"
+    elif [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+      wt_cmd="echo 'sandboxed: worktree prune skipped under HARNESS_SELFTEST'"
+    elif [[ -f "$arm_marker" ]]; then
+      wt_cmd="WORKTREE_SWEEP_APPROVE=1 bash \"$whs\" --prune \"\$HOME/claude-projects/neural-lace\""
+    else
+      # Observe-first default: classify and report, delete NOTHING.
+      wt_cmd="bash \"$whs\" \"\$HOME/claude-projects/neural-lace\""
+    fi
     _ht_run_step "worktree-prune" "$wt_cmd"
     if [[ "$_HT_STEP_RC" -eq 0 ]]; then
       local pruned_n
