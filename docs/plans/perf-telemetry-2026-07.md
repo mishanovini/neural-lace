@@ -127,6 +127,37 @@ parallel with P5 (doc-only). Each: build → verify → harness-review → deplo
 The operator's bar for this plan: no idea may terminate in a document. P4 is the enforcement of
 that bar applied to this plan itself — if the weekly perf loop stops running, the doctor goes RED.
 
+### Acknowledged: P1+P2 ship a WRITER-WITHOUT-A-CONSUMER gap (harness-review Major, 2026-07-24)
+P1 and P2 are both WRITERS. P1 appends a per-tool-call latency line to `~/.claude/state/perf/`;
+P2 appends a per-tick snapshot line to `ticks.jsonl`. Their CONSUMER is P3 (the `perf-budgets`
+doctor check that turns those lines into a RED naming the offending hook) and P4 (loop-liveness).
+P3 and P4 are not built yet. So between P1+P2 landing and P3+P4 landing, this plan is doing
+**exactly the thing its own Design constraints section forbids**: "Every measurement must be
+CONSUMED by a mechanism, never land in a file nobody reads. A metric without a budget is a
+report; a budget without a RED is a wish."
+
+This is stated here rather than quietly tolerated because unconsumed-writer is the same shape as
+the defect this whole plan exists to fix — the E.1 fork-storm ran for weeks with data being
+produced and nothing reading it. A gap that is named, bounded, and scheduled is a different thing
+from a gap nobody noticed; this note is what makes the difference real.
+
+Terms under which the gap is accepted:
+- **Bounded by sequencing, not by intention.** P3+P4 are the very next dispatch (see Dispatch
+  sequencing above) and are deliberately ONE builder, immediately after P1+P2 — P3 was scoped
+  from the start to consume P1's real ledger, so the consumer cannot drift far from the writer.
+- **The window is the risk.** While it is open, a perf regression IS recorded but produces no
+  RED and no alert. Nobody is watching the ledger by hand. Anyone reading `ticks.jsonl` or the
+  perf ledger during this window must not assume a quiet file means a healthy machine — it means
+  nothing is judging the file yet.
+- **The writers are self-limiting.** Both are passive and non-blocking: P1 is builtin-append-only
+  on the hot path (<5ms, zero forks, asserted in self-test), P2 rides an existing tick and is
+  never counted toward that tick's anomaly alert. A writer with no consumer is a wasted signal,
+  not a hazard — the cost of the open window is missed detection, never added load or a false RED.
+- **Closure condition.** This note is deleted, not amended, when P3's `perf-budgets` check and
+  P4's loop-liveness check are both live and green in `harness-doctor.sh`. If P3+P4 stall, the
+  honest resolution is to REMOVE the P1/P2 writers rather than leave data accumulating that
+  nothing reads — an unread ledger is the vaporware this plan was opened to eliminate.
+
 Carried from PERF-ESTATE-PROGRAM-01 (absorbed row, 2026-07-23):
 - Its live evidence baseline: 67 bash + 16 claude processes; workstreams-read self-test ~40 min
   under load; nl-issue one-line append >2 min; git commits ~15s via global hooksPath; ~85
