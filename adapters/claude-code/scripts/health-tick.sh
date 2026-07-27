@@ -57,7 +57,16 @@
 #       heartbeat-file growth, ADR-061 §2). A nonzero exit / timeout is
 #       an anomaly (the verb's own contract is exit-0-always, so any
 #       failure here is real).
-#   (d) if any anomaly: write ONE alert JSON into
+#   (d) worktree auto-prune — `worktree-hygiene-sweep.sh --prune` with
+#       WORKTREE_SWEEP_APPROVE=1. Closes the "creation is automatic,
+#       cleanup is only a Pattern" gap: every isolation:worktree dispatch
+#       CREATES a worktree mechanically, but nothing ever removed one.
+#       PASSIVE observability — never counted toward this tick's anomaly
+#       alert (see the step's own comment for the full safety argument).
+#   (e) perf snapshot + orphan reap — the perf-telemetry-2026-07 P2
+#       writer, via the shared lib/perf-tick-snapshot.sh. Also PASSIVE:
+#       never counted toward the anomaly alert.
+#   (f) if any anomaly: write ONE alert JSON into
 #       ~/.claude/state/external-monitor-alerts/ in EXACTLY the schema
 #       external-monitor-alert-surfacer.sh consumes (schema_version 1,
 #       monitor_url/started_at/ended_at/total_routes/healthy_count/
@@ -77,6 +86,15 @@
 #   HEALTH_TICK_DOCTOR_CMD      full command line replacing step (a)
 #   HEALTH_TICK_TASK_HEALTH_CMD full command line replacing step (b)
 #   HEALTH_TICK_REAP_CMD        full command line replacing step (c)
+#   HEALTH_TICK_WORKTREE_PRUNE_CMD
+#                               full command line replacing step (d).
+#                               The self-test MUST set this (scoped to a
+#                               fixture repo): the default form takes no
+#                               repo argument, so the sweep would
+#                               discover and prune the operator's REAL
+#                               worktrees under $HOME/claude-projects.
+#   HEALTH_TICK_PERF_SNAPSHOT_CMD
+#                               full command line replacing step (e)
 #   (steps (b)/(c) also inherit SCHTASKS_CMD / HEARTBEAT_STATE_DIR /
 #   OBS_* sandboxing from the underlying scripts' own contracts)
 #
@@ -225,6 +243,58 @@ run_tick() {
     _ht_record "heartbeat-reap" "session-heartbeat-reap" "rc=0" "rc=${_HT_STEP_RC}" "$_HT_STEP_MS" "REAP_ERROR" "${_HT_STEP_OUT:0:200}"
   fi
 
+  # ---- (d) worktree auto-prune -----------------------------------------
+  # THE GAP THIS CLOSES: worktree CREATION is a Mechanism — every
+  # `isolation: "worktree"` dispatch makes one, automatically, with no
+  # human in the loop. Worktree REMOVAL was only ever a Pattern: a human
+  # remembering to run the sweep. worktree-hygiene-sweep.sh's SAFE-PRUNE
+  # path has been fully built and fully self-tested for weeks, but
+  # NOTHING on this machine ever set WORKTREE_SWEEP_APPROVE=1, so
+  # `--prune` had never once fired in production. Built, tested, and
+  # completely unreached is the harness's cardinal defect (constitution
+  # §10: wire it or delete the claim). This step is the wiring.
+  #
+  # SAFETY — this step decides NOTHING. Every "may I delete this"
+  # judgment is delegated to the sweep's own SAFE-PRUNE predicate:
+  # 0 unique patches vs the resolved base AND 0 dirty files AND last
+  # commit older than WORKTREE_SWEEP_AGE_DAYS (default 7). Removal is
+  # `git worktree remove` WITHOUT --force and `git branch -d` NOT -D, so
+  # git itself refuses unmerged work as a second, independent guard this
+  # script does not control. HOLDS-CONTENT / LIVE-OWNED / ORPHANED
+  # worktrees are never touched by --prune at all — a locked worktree
+  # (the shape a live or crashed dispatched agent leaves) is excluded
+  # from SAFE-PRUNE by construction. Every removal is appended to
+  # $WORKTREE_SWEEP_LOG (~/.claude/state/worktree-sweep.log).
+  #
+  # ON SETTING THE APPROVAL FLAG HERE: the operator's standing order
+  # (sweep header, 2026-06-09) is that nothing is deleted without
+  # explicit approval, and WORKTREE_SWEEP_APPROVE=1 IS that approval
+  # channel. Arming it on this tick is approval for the SAFE-PRUNE CLASS
+  # specifically — a class whose definition is "provably carries nothing"
+  # — and is NOT a blanket licence to remove worktrees. The flag stays
+  # required (and unset) for every other caller, so an interactive
+  # `--prune` still refuses with exit 3 exactly as before.
+  #
+  # PASSIVE: like (e) below, never recorded via _ht_record, so a prune
+  # hiccup can never trigger this tick's own anomaly alert. Housekeeping
+  # that cries wolf about itself is worse than housekeeping that quietly
+  # skips a cycle; the sweep's own log is the durable record. ----------
+  local whs="$SCRIPT_DIR/worktree-hygiene-sweep.sh"
+  if [[ -f "$whs" ]]; then
+    local wt_cmd="${HEALTH_TICK_WORKTREE_PRUNE_CMD:-WORKTREE_SWEEP_APPROVE=1 bash \"$whs\" --prune}"
+    _ht_run_step "worktree-prune" "$wt_cmd"
+    if [[ "$_HT_STEP_RC" -eq 0 ]]; then
+      local pruned_n
+      pruned_n="$(printf '%s\n' "$_HT_STEP_OUT" | grep -c 'PRUNED worktree' || true)"
+      [[ -n "$pruned_n" ]] || pruned_n=0
+      echo "[health-tick] worktree prune: ${pruned_n} worktree(s) pruned (SAFE-PRUNE class only; see $HOME/.claude/state/worktree-sweep.log)"
+    elif [[ "$_HT_STEP_RC" -ne 125 ]]; then
+      echo "[health-tick] WARN: worktree prune step failed (rc=${_HT_STEP_RC}, non-fatal, no alert): ${_HT_STEP_OUT:0:200}" >&2
+    fi
+  else
+    echo "[health-tick] WARN: worktree-hygiene-sweep.sh not found at ${whs} — worktree prune skipped this fire (graceful, no crash)" >&2
+  fi
+
   # ---- (e) P2 perf snapshot + orphan reap (perf-telemetry-2026-07 plan,
   # fallback tick — supervisor-tick.sh is the plan's declared PRIMARY home
   # but is OPERATOR-ARMED and may be inert on a given machine; this hourly
@@ -250,7 +320,7 @@ run_tick() {
   ended_at="$(_ht_now_iso)"
   local total=$(( healthy + anomalies ))
 
-  # ---- (d) one alert file iff any anomaly --------------------------------
+  # ---- (f) one alert file iff any anomaly --------------------------------
   if [[ "$anomalies" -gt 0 ]]; then
     local alert_dir alert_file ts_name
     alert_dir="$(_ht_alert_dir)"
@@ -296,6 +366,16 @@ cmd_selftest() {
     return 1
   fi
   export HARNESS_SELFTEST=1
+
+  # SUITE-WIDE SAFETY INTERLOCK for step (d). The DEFAULT prune command
+  # takes no repo argument, so the sweep would fall through to
+  # discover_repos() and prune the OPERATOR'S REAL worktrees under
+  # $HOME/claude-projects — on every self-test run, including the ones
+  # the doctor and install.sh invoke. Every scenario therefore inherits a
+  # no-op here; ONLY the dedicated prune scenario below overrides it, and
+  # only with a command scoped to its own throwaway fixture repo. Removing
+  # this line makes the suite destructive against real state.
+  export HEALTH_TICK_WORKTREE_PRUNE_CMD="true"
 
   local SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
   local SURFACER="$HOOKS_DIR/external-monitor-alert-surfacer.sh"
@@ -471,6 +551,103 @@ cmd_selftest() {
     fi
   else
     fail "perf-tick-snapshot.sh lib not found at $pts_lib"
+  fi
+
+  echo "Scenario 8: worktree auto-prune (step d) — ONE tick removes a SAFE-PRUNE fixture worktree (0 unique patches, clean, >7d old) and its branch, while leaving a dirty worktree and an unintegrated-patch worktree untouched; the prune step never triggers this tick's own anomaly alert"
+  local whs="$SCRIPT_DIR/worktree-hygiene-sweep.sh"
+  if [[ -f "$whs" ]]; then
+    local d8="$TMP/s8-alerts" r8="$TMP/s8-repo" past8
+    mkdir -p "$d8"
+    past8=$(( $(date +%s) - 30 * 86400 ))
+
+    # Fixture repo: one commit dated 30d ago, so every branch cut from it
+    # is older than the 7d WORKTREE_SWEEP_AGE_DAYS default.
+    git init -q "$r8" 2>/dev/null
+    git -C "$r8" config user.email test@example.com
+    git -C "$r8" config user.name "Self Test"
+    git -C "$r8" symbolic-ref HEAD refs/heads/master
+    echo base > "$r8/f.txt"
+    git -C "$r8" add f.txt
+    GIT_AUTHOR_DATE="@$past8 +0000" GIT_COMMITTER_DATE="@$past8 +0000" \
+      git -C "$r8" -c commit.gpgsign=false commit -qm "init (30d ago)"
+
+    # wt-safe:   at master tip, clean, 30d old            -> SAFE-PRUNE
+    # wt-dirty:  at master tip, 30d old, one untracked    -> HOLDS-CONTENT
+    # wt-unique: clean + old but carries a unique patch   -> HOLDS-CONTENT
+    git -C "$r8" worktree add -q "$TMP/s8-wt-safe" -b s8-safe >/dev/null 2>&1
+    git -C "$r8" worktree add -q "$TMP/s8-wt-dirty" -b s8-dirty >/dev/null 2>&1
+    echo scratch > "$TMP/s8-wt-dirty/untracked.txt"
+    git -C "$r8" worktree add -q "$TMP/s8-wt-unique" -b s8-unique >/dev/null 2>&1
+    echo unique > "$TMP/s8-wt-unique/u.txt"
+    git -C "$TMP/s8-wt-unique" add u.txt
+    GIT_AUTHOR_DATE="@$past8 +0000" GIT_COMMITTER_DATE="@$past8 +0000" \
+      git -C "$TMP/s8-wt-unique" -c commit.gpgsign=false commit -qm "unique patch (30d ago)"
+
+    # Precondition: prove the fixture exists BEFORE the tick, so a PASS
+    # below can never be vacuous (a never-created dir is also "gone").
+    if [[ -d "$TMP/s8-wt-safe" ]]; then
+      pass "(pre) SAFE-PRUNE fixture worktree exists before the tick"
+    else
+      fail "(pre) fixture worktree was never created — scenario 8 cannot prove anything"
+    fi
+
+    local rc8
+    HEALTH_TICK_ALERT_DIR="$d8" HEALTH_TICK_DOCTOR_CMD="$GREEN_DOCTOR" \
+      HEALTH_TICK_TASK_HEALTH_CMD="$HEALTHY_TASKS" HEALTH_TICK_REAP_CMD="$OK_REAP" \
+      HEALTH_TICK_WORKTREE_PRUNE_CMD="WORKTREE_SWEEP_APPROVE=1 WORKTREE_SWEEP_LOG='$TMP/s8-sweep.log' OBS_TRANSCRIPTS_ROOT='$TMP/s8-tx' bash '$whs' --prune '$r8'" \
+      bash "$SELF" >/dev/null 2>&1
+    rc8=$?
+
+    if [[ "$rc8" -eq 0 ]]; then pass "tick with the prune step exits 0"; else fail "tick with the prune step exited $rc8"; fi
+
+    # THE ASSERTION the operator asked for: one tick, worktree gone.
+    if [[ ! -d "$TMP/s8-wt-safe" ]]; then
+      pass "ONE tick pruned the SAFE-PRUNE worktree (step (d) actually fires — WORKTREE_SWEEP_APPROVE is really set)"
+    else
+      fail "SAFE-PRUNE worktree survived the tick — step (d) did not fire"
+    fi
+    if ! git -C "$r8" rev-parse --verify --quiet refs/heads/s8-safe >/dev/null 2>&1; then
+      pass "its branch was deleted too (via git branch -d, not -D)"
+    else
+      fail "worktree removed but branch s8-safe survived"
+    fi
+    if [[ -d "$TMP/s8-wt-dirty" ]] && [[ -d "$TMP/s8-wt-unique" ]]; then
+      pass "HOLDS-CONTENT worktrees untouched (dirty + unique-patch both remain)"
+    else
+      fail "prune removed a HOLDS-CONTENT worktree — SAFE-PRUNE predicate breached"
+    fi
+    if [[ -d "$r8/.git" ]] && [[ -f "$r8/f.txt" ]]; then
+      pass "primary worktree never touched"
+    else
+      fail "primary worktree damaged by the prune step"
+    fi
+    if grep -q 'removed worktree=.*s8-wt-safe' "$TMP/s8-sweep.log" 2>/dev/null; then
+      pass "removal appended to the sweep log (durable record of what the tick deleted)"
+    else
+      fail "no sweep-log line for the removal: $(cat "$TMP/s8-sweep.log" 2>/dev/null)"
+    fi
+    # Passive-observability contract, same as scenario 7's perf step.
+    if [[ -z "$(ls -A "$d8" 2>/dev/null)" ]]; then
+      pass "prune step is passive — an all-green tick that pruned still writes NO anomaly alert"
+    else
+      fail "prune step triggered an anomaly alert: $(ls "$d8")"
+    fi
+
+    echo "Scenario 8b: a FAILING prune step never propagates and never alerts"
+    local d8b="$TMP/s8b-alerts" rc8b
+    mkdir -p "$d8b"
+    HEALTH_TICK_ALERT_DIR="$d8b" HEALTH_TICK_DOCTOR_CMD="$GREEN_DOCTOR" \
+      HEALTH_TICK_TASK_HEALTH_CMD="$HEALTHY_TASKS" HEALTH_TICK_REAP_CMD="$OK_REAP" \
+      HEALTH_TICK_WORKTREE_PRUNE_CMD="echo boom >&2; exit 4" \
+      bash "$SELF" >/dev/null 2>&1
+    rc8b=$?
+    if [[ "$rc8b" -eq 0 ]] && [[ -z "$(ls -A "$d8b" 2>/dev/null)" ]]; then
+      pass "prune failure -> tick still exits 0 and writes no alert (housekeeping never cries wolf)"
+    else
+      fail "prune failure leaked: rc=$rc8b, alerts=$(ls "$d8b" 2>/dev/null)"
+    fi
+  else
+    fail "worktree-hygiene-sweep.sh not found at $whs (cannot test step (d))"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true
