@@ -1023,10 +1023,23 @@ ok('T3-39 isPhaseSeries/phaseLabel: sibling PLAN children render as a numbered "
     const label = runPure(phaseSeriesSrc, 'phaseLabel(1, 4)');
     return a === true && b === false && c === false && label === 'Phase 2 of 4';
   })());
-ok('T3-40 renderChildList wraps a phase-series in a text-labeled connector (.rm-phase-step/.rm-phase-label), never color-only, and CSS draws the connector as an ADDITIVE line (never the only cue)',
+ok('T3-40 renderChildList wraps a phase-series in a text-labeled connector (.rm-phase-step + the R10-1 INLINE .rm-phase-inline label on the title row), never color-only, and CSS draws the connector as an ADDITIVE line (never the only cue)',
   /rm-phase-series/.test(roadmapJsNoComments) && /rm-phase-step/.test(roadmapJsNoComments) &&
-  /rm-phase-label/.test(roadmapJsNoComments) &&
-  /\.rm-phase-step::before\s*\{[^}]*background:/.test(C) && /\.rm-phase-label\s*\{/.test(C));
+  /rm-phase-inline/.test(roadmapJsNoComments) &&
+  /\.rm-phase-step::before\s*\{[^}]*background:/.test(C) && /\.rm-phase-inline\s*\{/.test(C));
+
+// --- Round 10 (operator re-walk 2026-07-27) ---
+ok('R10-1 the phase label rides the TITLE ROW (renderNode 4th arg -> rm-phase-inline); the separate rm-phase-label line is gone from the renderers',
+  /renderNode\(it, live\.indexOf\(it\), live\.length,/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')) &&
+  !/el\('div', 'rm-phase-label'/.test(roadmapJsNoComments));
+ok('R10-2 every node row carries an explicit disclosure chevron that rotates on open (expandability is visible, not implied)',
+  /rm-chevron/.test(roadmapJsNoComments) && /details\[open\] > \.rm-row > \.rm-chevron/.test(C));
+ok('R10-3 the project group header carries the aggregate series progress — bar + ALWAYS the "N/M complete" text (never bar-only)',
+  /rm-group-progress-fill/.test(roadmapJsNoComments) && /rm-group-progress-text/.test(roadmapJsNoComments) &&
+  /complete'/.test(roadmapJsNoComments));
+ok('R10-4 reorder feedback names WHAT moved, its NEW position, and WHOSE build order — never a bare "Order updated"',
+  /now phase ' \+ \(newIdx \+ 1\)/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')) &&
+  /intended build order/.test(roadmapJsNoComments) && !/say\('Order updated\.'/.test(roadmapJsNoComments));
 
 // --- gap 4: compact icon chrome, hover/focus-within, never hover-only -----
 ok('T3-41 Edit-title/Move-up/Move-down are compact icon buttons (short glyph text) carrying a full aria-label — never bare icons with no accessible name',
@@ -1099,7 +1112,7 @@ ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/phaseLab
 ok('R9-2c renderTree renders the group header element (rm-project-group-head) and scopes phase steps inside the group container',
   /rm-project-group-head/.test(roadmapJsNoComments) && /groupItemsByProject\(live\)/.test(roadmapJsNoComments));
 ok('R9-2d reorder stays GLOBAL: renderNode receives the item\'s index in the full build-order list, never the group-local index',
-  /renderNode\(it, live\.indexOf\(it\), live\.length\)/.test(roadmapJsNoComments));
+  /renderNode\(it, live\.indexOf\(it\), live\.length,/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')));
 // R9-3: per-item project chip on tree rows and kanban cards.
 ok('R9-3 tree rows and kanban cards carry the project tag chip (rm-project-tag)',
   (roadmapJsNoComments.match(/rm-project-tag/g) || []).length >= 2);

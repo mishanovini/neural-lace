@@ -610,11 +610,11 @@
 
       // build-order reorder — keyboard-operable REAL buttons, never
       // drag-only (A7 + WCAG 2.2 2.5.7, delta R2).
-      var upBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↑', function () { moveRank(item.id, 'up', say); });
+      var upBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↑', function () { moveRank(item, 'up', say); });
       upBtn.setAttribute('aria-label', 'Move up in build order: ' + item.title);
       upBtn.dataset.focusKey = 'rank-up:' + item.id;
       upBtn.disabled = topLevelIndex === 0;
-      var downBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↓', function () { moveRank(item.id, 'down', say); });
+      var downBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↓', function () { moveRank(item, 'down', say); });
       downBtn.setAttribute('aria-label', 'Move down in build order: ' + item.title);
       downBtn.dataset.focusKey = 'rank-down:' + item.id;
       downBtn.disabled = topLevelIndex === topLevelCount - 1;
@@ -698,12 +698,30 @@
     });
   }
 
-  function moveRank(itemId, direction, say) {
+  function moveRank(item, direction, say) {
+    var itemId = typeof item === 'string' ? item : item.id;
     fetch('/api/roadmap/rank', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ id: itemId, direction: direction }),
     }).then(function (r) { return r.json(); }).then(function (j) {
-      if (j && j.ok) { say(j.unchanged ? 'Already at the edge of the list.' : 'Order updated.', false); load(); }
+      if (j && j.ok) {
+        // R10-4 (operator: "it says it changed the ordering, but I don't
+        // know what that actually means"): name WHAT moved, WHERE it now
+        // sits, and WHICH group's build order — never a bare "updated".
+        if (j.unchanged) {
+          say('No change — this item is already at the ' + (direction === 'up' ? 'top' : 'bottom') + ' of its build order.', false);
+        } else if (typeof item === 'object' && lastPayload) {
+          var siblings = (lastPayload.items || []).filter(function (x) { return x.project === item.project; });
+          var oldIdx = siblings.findIndex(function (x) { return x.id === itemId; });
+          var newIdx = oldIdx + (direction === 'up' ? -1 : 1);
+          var shortT = (item.title || itemId).slice(0, 50);
+          say('Moved "' + shortT + '" ' + direction + ' — now phase ' + (newIdx + 1) + ' of ' +
+            siblings.length + ' in ' + (item.project || 'this project') + "'s intended build order.", false);
+        } else {
+          say('Build order updated.', false);
+        }
+        load();
+      }
       else { say('Could not reorder: ' + ((j && j.error) || 'unknown error'), true); }
     }).catch(function (e) { say('Could not reorder: ' + e, true); });
   }
@@ -711,7 +729,7 @@
   // ============================================================
   // tree rendering
   // ============================================================
-  function renderNode(item, topLevelIndex, topLevelCount) {
+  function renderNode(item, topLevelIndex, topLevelCount, phaseText) {
     var det = document.createElement('details');
     det.className = 'rm-node rm-kind-' + item.kind;
     det.dataset.itemId = item.id;
@@ -723,6 +741,12 @@
 
     var sum = document.createElement('summary');
     sum.className = 'rm-row';
+    // R10-2: explicit disclosure chevron (CSS rotates it on open) — the
+    // native marker was suppressed, leaving expandability invisible.
+    sum.appendChild(el('span', 'rm-chevron', '▸'));
+    // R10-1: the phase label lives ON the title row (the separate label
+    // line above each node made the title read as a child item).
+    if (phaseText) sum.appendChild(el('span', 'rm-phase-inline', phaseText));
     var titleSpan = el('span', 'rm-title', item.title);
     // R9-1: the slug becomes a tooltip/secondary once the H1 title takes
     // the primary spot (item.id IS the slug for a plan-kind node — see
@@ -776,10 +800,10 @@
     var totalCount = children.length;
     if (phaseSeries) wrap.classList.add('rm-phase-series');
     live.forEach(function (c) {
-      var node = renderNode(c, -1, -1);
+      var node = renderNode(c, -1, -1,
+        phaseSeries ? phaseLabel(children.indexOf(c), totalCount) : null);
       if (phaseSeries) {
         var step = el('div', 'rm-phase-step');
-        step.appendChild(el('div', 'rm-phase-label', phaseLabel(children.indexOf(c), totalCount)));
         step.appendChild(node);
         wrap.appendChild(step);
       } else {
@@ -830,15 +854,33 @@
       if (phaseSeries) {
         var groupEl = el('section', 'rm-project-group');
         groupEl.setAttribute('aria-label', 'project ' + (g.project || '(no project)'));
-        groupEl.appendChild(el('div', 'rm-project-group-head', projectGroupHeaderText(g.project, g.items)));
+        var head = el('div', 'rm-project-group-head');
+        head.appendChild(el('span', 'rm-group-head-text', projectGroupHeaderText(g.project, g.items)));
+        // R10-3: the series IS the project's master sequence — an aggregate
+        // bar makes it read as one plan-of-plans ("N of M complete"), with
+        // the "M/N" text always beside the bar (never bar-only).
+        var done = g.items.filter(function (x) { return x.status && x.status.value === 'complete'; }).length;
+        var barWrap = el('span', 'rm-group-progress');
+        var bar = el('span', 'rm-group-progress-bar');
+        bar.setAttribute('role', 'img');
+        bar.setAttribute('aria-label', done + ' of ' + g.items.length + ' plans complete');
+        var fill = el('span', 'rm-group-progress-fill');
+        fill.style.width = (g.items.length ? Math.round((done / g.items.length) * 100) : 0) + '%';
+        bar.appendChild(fill);
+        barWrap.appendChild(bar);
+        barWrap.appendChild(el('span', 'rm-group-progress-text', done + '/' + g.items.length + ' complete'));
+        head.appendChild(barWrap);
+        groupEl.appendChild(head);
         tree.appendChild(groupEl);
         container = groupEl;
       }
       g.items.forEach(function (it, gi) {
-        var node = renderNode(it, live.indexOf(it), live.length);
+        // R10-1: phase label rides the title row (renderNode 4th arg) — the
+        // rm-phase-step wrapper stays for the series connector line only.
+        var node = renderNode(it, live.indexOf(it), live.length,
+          phaseSeries ? phaseLabel(gi, g.items.length) : null);
         if (phaseSeries) {
           var step = el('div', 'rm-phase-step');
-          step.appendChild(el('div', 'rm-phase-label', phaseLabel(gi, g.items.length)));
           step.appendChild(node);
           container.appendChild(step);
         } else {

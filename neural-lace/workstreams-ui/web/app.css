@@ -1451,3 +1451,12 @@ details[open] > summary .rm-rollups { display: none; }
 .ws-layout .requests-ledger-in-layout { flex: 1 1 0; min-width: 0; margin: 0; }
 .rm-plan-link-row { margin: 2px 0 6px; font-size: 12px; }
 .rm-plan-link { overflow-wrap: anywhere; }
+/* R10 (operator round 10, 2026-07-27) */
+.rm-chevron { display: inline-block; width: 12px; font-size: 10px; opacity: 0.6; transition: transform 0.12s; }
+details[open] > .rm-row > .rm-chevron { transform: rotate(90deg); }
+.rm-phase-inline { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.65; margin-right: 6px; white-space: nowrap; }
+.rm-project-group-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.rm-group-progress { display: inline-flex; align-items: center; gap: 6px; }
+.rm-group-progress-bar { display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.rm-group-progress-fill { display: block; height: 100%; background: var(--ok, #4a4); }
+.rm-group-progress-text { font-size: 11px; opacity: 0.8; }
