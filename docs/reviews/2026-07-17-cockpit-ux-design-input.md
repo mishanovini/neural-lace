@@ -250,3 +250,45 @@ oracle was the synthesis, so builders "passed" while operator asks were missing;
 shipped mechanisms are INERT on live data (chore classifier classifying nothing, agent leaves
 with no bound sessions, provenance line rendering its own absence) — component-done, not
 functionally-done (constitution §4). Round-9 verification will use THIS table as the oracle.
+
+## Round 10 — 2026-07-27, operator re-walk of the R9-follow-up deploy (verbatim; screenshots: #roadmap, Circuit group expanded)
+
+> "I'm seeing improvements, and I still have a few more that we need to make. I don't see the
+> road map itself until I open up one of the leaves. Which seems kind of backwards, right? All
+> of the phases are part of the same master plan, so the plan should be at the branch level
+> above the phases. Do you think? I just realized that each phase has its own plan, so it makes
+> sense that the plan file is attached to that individual phase. That does make sense. But all
+> of these phases are part of a larger master plan, right? That is not made clear in this UI at
+> all. This also makes me wonder why various phases are complete, but progress is not in order
+> of the phases for some reason.
+>
+> And it seems unnecessary to have a single item listed underneath each phase. I think each of
+> those items listed is kind of a title and information about the phase itself. Does it make
+> sense to put those all on the same line as the phase number? And can we provide a UI element
+> that makes it a little bit more obvious that there are children of each of those items that
+> can be expanded?
+>
+> Also, I just clicked a button to change the ordering of something that I don't know what. It
+> says it changed the ordering, but I don't know what that actually means. What order did it
+> change? What item was even selected to be changed? And should I even be allowed to change the
+> ordering?"
+
+Fix table (R10) + answers-of-record:
+- R10-1 ONE-LINE PHASES: "PHASE N OF M" merges INTO the title row (the separate label line
+  above each node made the title read as a child item). One row: phase label + title + chips.
+- R10-2 VISIBLE EXPANDABILITY: collapsed plan nodes get an explicit disclosure chevron
+  (rotates on open) — the native details expansion was invisible as an affordance.
+- R10-3 MASTER-PLAN CLARITY: the project group header gains an aggregate series progress
+  ("N of M plans complete" + bar) so the phase-series reads as the project's one master
+  sequence. HONEST LIMIT: no master-plan ARTIFACT exists in the data — the series (build
+  order) IS the master view; a real `program:` grouping level (plans declaring membership in
+  a named initiative) is a data-model follow-on offered as a decision, not silently built.
+- R10-4 REORDER FEEDBACK: the move up/down result names WHAT moved, WHERE, and IN WHICH
+  group's build order ("moved 'X' up — now #3 of 16 in Circuit's build order"), replacing the
+  context-free "order changed". Reorder itself STAYS: it is the operator's own round-2
+  mechanism ("lists all the plans in the order they are intended to be built").
+- ANSWER-OF-RECORD (progress out of phase order): build order = INTENDED order (rank;
+  default = plan-creation order for pre-ranked plans), while historical work happened
+  opportunistically — completed phases scattering mid-series is honest data, not a rendering
+  bug. The reorder control is how intent gets corrected; a status-sort toggle is a possible
+  follow-on if wanted.
