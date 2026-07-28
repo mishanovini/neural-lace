@@ -2702,6 +2702,64 @@
       "blocking": false,
       "budget_class": "session-start",
       "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
+    },
+    {
+      "id": "estate-janitor",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "../scripts/estate-janitor.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/estate-janitor.sh",
+          "scripts/estate-brief.sh",
+          "scripts/install-estate-janitor-task.ps1",
+          "docs/plans/accountable-estate-program-2026-07.md",
+          "docs/designs/accountable-estate-2026-07-27.md"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "Accountable Estate program (docs/plans/accountable-estate-program-2026-07.md) T1, per the architecture review's corrected Slice 1 (docs/reviews/2026-07-27-accountable-estate-architecture-review.md): 'new janitor task reduces already-existing truth... into snapshot.json... Zero write-path changes, zero migration.' Reduces session heartbeats (via session-heartbeat-lib.sh's hb_classify -- the SAME shared oracle, never re-implemented), the process table (bash.exe/claude.exe counts, delegated to perf-tick-snapshot.sh's read-only pts_collect_processes -- never its mutation-capable pts_reap_orphans), `git worktree list --porcelain` across configured repos (ESTATE_JANITOR_REPOS_CONFIG > ~/.claude/config/estate-repos.txt > this repo's own main checkout), the signal-ledger tail, and a simplified ask-registry fold, into one snapshot.json with an orphaned-worktree/branch found-list. Verified live against this machine's real estate (94 real worktrees at build time) in addition to a 13-scenario fixture-sandboxed --self-test covering: empty-state degrade, live-heartbeat classification, orphan detection (a worktree with no live-owning heartbeat vs one that IS owned), orphan-branch detection (excluding the default branch), malformed signal-ledger lines, and the ask-registry fold's operator-beats-auto title precedence.",
+      "fp_expectation": "None expected -- pure reducer/renderer, never a gate, never blocks or alters any caller's exit code. The only failure surface is a source read genuinely failing (missing dir, absent jq/wmic, an unreadable repo), which degrades to a named `*_degraded:true` field on that section only -- proven honest by --self-test scenarios that simulate each failure (missing ask-registry file, malformed ledger line, absent heartbeat dir) and assert the degrade, never a crash.",
+      "retirement_condition": "Retire this per-source ad-hoc reduction once the program's later slices (T5+ store consolidation, review F5/F10) land a real queryable obligation store that already carries session/worktree/ask state as first-class records -- at that point the janitor's job becomes 'read the store', a strict simplification of what this file does today. Checked at build time for an EXISTING redundant surface to retire in this same commit (Program rule 3): none qualified -- `nl status`/observability-derive.sh's od_sessions is the live INTERACTIVE CLI surface (a different consumer: a session asking about itself, not the operator reading a static artifact outside any session) and stays; worktree-hygiene-sweep.sh's --stranded detection and supervisor-tick.sh's orphan-worktree alerting are MUTATION-ADJACENT (they write NEEDS-YOU alerts) and this T1 slice ships zero alerting -- retiring them now would silently drop the operator's only current stranded-worktree alert channel before this slice's own alerting story exists (that is explicitly T3/T4 territory per the program plan). Logged honestly rather than retiring something not actually redundant.",
+      "honesty_rationale": "Zero-mutation by construction: this file only ever reads existing state and writes its OWN new output artifact (snapshot.json) -- it never reaps a process, never prunes a worktree, never deletes a branch, never writes to any of the stores it reduces (heartbeats/signal-ledger/ask-registry are read-only inputs). No enforce mode exists to graduate into for this slice; the program's own Slice 1 is explicitly observe-only (docs/reviews/2026-07-27-accountable-estate-architecture-review.md: 'Zero write-path changes, zero migration')."
+    },
+    {
+      "id": "estate-brief",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "../scripts/estate-brief.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/estate-brief.sh",
+          "scripts/estate-janitor.sh",
+          "docs/plans/accountable-estate-program-2026-07.md"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "Accountable Estate program T1's outcome-metric SURFACE: 'what is running and who asked... answerable from ONE surface in <30s.' Renders estate-janitor.sh's snapshot.json into a scannable text brief (house law: lists, no paragraphs) -- RUNNING sessions by classify, ASKED (active asks from the ask-registry fold), ORPHANED WORKTREES / ORPHANED BRANCHES found-lists, and COUNTS, every section row-capped (ESTATE_BRIEF_MAX_ROWS, default 20) with a '+N more' line so a 94-worktree real estate still renders as one screen. --write persists the identical text to brief.txt (the file an operator or scheduled task reads without re-running anything). Verified live against this machine's real snapshot in addition to a 17-scenario --self-test (missing/malformed snapshot degrade, full-fixture section-by-section content assertions, degraded-flag surfacing, --write persistence, row-cap behavior). Build-time regression pinned: this platform's jq emits CRLF (`@tsv` rows end `\\r\\n`, PROVEN via `od -c`), silently corrupting the LAST field of every parsed row (invisible when printed, breaks exact-match assertions) -- every TSV-read loop strips the trailing \\r unconditionally.",
+      "fp_expectation": "None expected -- pure renderer, never a gate. A missing snapshot, invalid JSON, or absent jq each render an honest one-line placeholder (asserted by dedicated self-test scenarios) rather than crashing or fabricating a brief.",
+      "retirement_condition": "Retire/replace once a later slice re-points a real UI (design's own 'Workstreams UI is kept, not rebuilt -- re-pointed at the estate ledger') at the same snapshot -- this text renderer remains the zero-dependency fallback surface for a terminal/file-only read.",
+      "honesty_rationale": "Pure read + render; the only write is its own optional brief.txt artifact (--write), never a mutation of any source it reads. No enforce mode exists to graduate into."
     }
   ]
 }

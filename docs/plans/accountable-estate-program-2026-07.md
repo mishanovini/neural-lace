@@ -90,7 +90,8 @@ part-time autonomous work with review gates. T10 adds 5–10 bs and is separatel
       T4). Verification: full.
 
 ## Files to Modify/Create
-- adapters/claude-code/scripts/estate-janitor.sh (+ installer task) — T1
+- adapters/claude-code/scripts/estate-janitor.sh — T1 (deterministic bash, plus installer task)
+- adapters/claude-code/scripts/install-estate-janitor-task.ps1 — T1 installer, ship-only per task scope
 - adapters/claude-code/scripts/estate-brief.sh — T1/T2
 - adapters/claude-code/scripts/ask-registry.sh (extend: deadline/SLA/default-action verbs) — T2
 - adapters/claude-code/hooks/lib/admission-lib.sh — T3/T4/T6
@@ -125,3 +126,5 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-27: docs/reviews/2026-07-27-accountable-estate-architecture-review.md — binding review verdict
 - 2026-07-27: docs/runbooks/windows-machine-perf-setup.md — other-machine setup prerequisite
 - 2026-07-27: docs/plans/accountable-estate-program-2026-07.md — this plan
+- 2026-07-28: adapters/claude-code/manifest.json — T1 entries (estate-janitor, estate-brief)
+- 2026-07-28: docs/backlog.md — T1 perf finding (ESTATE-T1-HB-CLASSIFY-PERF-01)

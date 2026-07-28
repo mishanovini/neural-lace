@@ -1249,3 +1249,53 @@ repo, so this retrofit is cosmetic/documentary until cross-repo resolution
 is itself in scope (decide-and-go (b) in the plan's Decisions Log defers
 that).
 **Filed by:** cockpit-roadmap-redesign R11 retrofit research (this build).
+
+## ESTATE-T1-HB-CLASSIFY-PERF-01 — hb_classify's transcript-mtime join is slow under real machine scale/contention
+
+**Severity:** P2 (correctness unaffected; wall-clock only).
+**Finding (PROVEN at build time, accountable-estate-program-2026-07 T1 build):**
+`estate-janitor.sh run` against this machine's REAL state (17 real heartbeat
+files, 547 real transcript files under `~/.claude/projects`, ~70-100
+concurrent bash/claude/conhost processes at measurement time) took 96s to
+classify just 17 heartbeats via `session-heartbeat-lib.sh`'s shared
+`hb_classify` — the full run (heartbeats + process counts + `git worktree
+list` across 94 real worktrees + branch enumeration + signal-ledger tail +
+ask-registry fold) did not complete within 600s. Isolated timing: heartbeats
+09:46:24->09:48:00 (96s for 17 files); process_counts 09:48:01->09:48:03 (2s,
+expected — one wmic call); worktrees started 09:48:06, still running at the
+120s debug-script deadline.
+**Hypothesis, tested and REFUTED:** suspected `hb_is_stale`'s transcript-
+mtime join (`_hb_find_transcript`'s `find -maxdepth 4` over the full
+`~/.claude/projects` tree, 547 real files) as the dominant cost. Refutation
+test run: `OBS_TRANSCRIPTS_ROOT=<empty-dir> estate-janitor.sh run` (bypasses
+every transcript find entirely) still did not complete within 90s, same as
+the un-bypassed run — REFUTES the transcript-join-alone hypothesis. The real
+bottleneck is broader: most likely the `git worktree list --porcelain` +
+per-repo `for-each-ref` branch enumeration across this machine's 94 real
+worktrees (each orphan-branch row still does a `_ej_json_escape` pair of
+forks), compounded by this machine's ~70-100 concurrent bash/claude/conhost
+processes at measurement time making EVERY fork in the pipeline
+(heartbeats' hb_classify, worktree/branch enumeration, jq calls) slower than
+on an unloaded machine — not one single hot spot but broad fork-cost
+inflation under real contention. Not further isolated (see Action below —
+next attempt should instrument `_ej_collect_worktrees_and_orphans`
+specifically, the way heartbeats was isolated here, before assuming which
+sub-path to optimize next).
+**Not fixed in T1** — `hb_classify` is a shared, already-self-tested oracle
+(session-heartbeat-lib.sh) used by session-heartbeat.sh's own sweep and
+harness-doctor.sh; patching its internals is out of T1's scope (Chesterton's
+Fence + risk of regressing a load-bearing shared classifier) and arguably
+belongs to this SAME program's later admission-governor slices (T3+), which
+exist precisely to address machine-load-driven cost. estate-janitor.sh's own
+--self-test (13/13, fixture-sandboxed, fast) proves the REDUCER's logic is
+correct; this finding is about wall-clock on ground truth this machine
+happens to carry right now, not a defect in the T1 reducer.
+**Action (future):** either (a) profile hb_classify directly to confirm/
+refute the transcript-find hypothesis and consider indexing `~/.claude/
+projects` once per janitor tick instead of once per stale session, or (b)
+accept the cost and size the scheduled task's cadence/ExecutionTimeLimit
+accordingly (install-estate-janitor-task.ps1 currently ships a 10-minute
+limit at a 5-minute default cadence — MAY need widening on this specific
+machine until (a) lands).
+**Filed by:** accountable-estate-program-2026-07 T1 build (estate-janitor.sh
++ estate-brief.sh).
