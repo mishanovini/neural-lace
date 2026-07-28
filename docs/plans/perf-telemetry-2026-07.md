@@ -89,6 +89,33 @@ that were supposed to notice. This plan builds the feedback loop, not another re
 - 2026-07-23: adapters/claude-code/doctrine/INDEX.md — regenerated in the same commit as
   docs/harness-architecture.md (both are manifest.json-derived; manifest-check.sh --gen-index
   writes this file mechanically whenever entries change, same trigger as the architecture doc).
+- 2026-07-28 (P1+P2 supersession found at build-dispatch time): a builder dispatched to build
+  P1+P2 ran the mandatory Phase-0 supersession check FIRST and found both ALREADY SHIPPED —
+  commit `3cff15d` (2026-07-27, already an ancestor of master and of every open worktree HEAD
+  checked, including this one) built `hooks/lib/perf-ledger.sh` (P1) and
+  `hooks/lib/perf-tick-snapshot.sh` (P2), wired both into the manifest (`perf-ledger` +
+  `perf-tick-snapshot` entries), sourced perf-ledger into the 5 named hooks (scope-enforcement-
+  gate, plan-deletion-protection, concurrent-ownership-gate, evidence-before-fix-gate, pr-
+  template-inline-gate), and wired perf-tick-snapshot into both supervisor-tick.sh (primary) and
+  health-tick.sh (fallback) exactly per this plan's own task text. `671dd20` (2026-07-27) then
+  added the honest writer-without-consumer acknowledgement now living in the Notes section below.
+  **The checkboxes above were never flipped** — this is a bookkeeping gap, not a build gap; no
+  rebuild was performed (would have duplicated shipped work). Re-verified live on this machine
+  today: `perf-ledger.sh --self-test` 12/12 PASS; `perf-tick-snapshot.sh --self-test` 20/21 PASS
+  — one flake, Scenario 9 (armed-mode real-process reap): the disposable process WAS actually
+  terminated (`taskkill //PID //F` proven) but the ledger line logged `action=reap_failed`
+  instead of `action=reaped` (HYPOTHESIZED: a status-check race under this machine's current
+  concurrent load — 2 other agents were running at the same time; REFUTED if the same scenario
+  fails in isolation with no concurrent load). Filed as harness friction via `nl-issue.sh`, not
+  fixed here (out of this dispatch's scope; P2 is shipped functionality, not a build task).
+  Live (non-self-test) P1 ledger lines already exist on this machine from real hook invocations —
+  `~/.claude/state/perf/chain-20260728.jsonl` — e.g.
+  `{"ts":"2026-07-28T03:51:35","hook":"scope-enforcement-gate","ms":73606}`. P2's `ticks.jsonl`
+  does not exist yet on this machine (supervisor-tick/health-tick have not ticked since P2
+  shipped, or supervisor-tick's operator-arm step hasn't run) — worth a look, not evidence of a
+  build defect. **Recommendation to orchestrator: dispatch `task-verifier` against P1 and P2
+  citing `3cff15d`/`671dd20` and the self-test replay above to flip both checkboxes; do not
+  re-dispatch a builder for P1/P2.**
 
 ## Assumptions
 - $EPOCHREALTIME is available (bash ≥5 ships with current Git for Windows — verify in P1
