@@ -292,3 +292,42 @@ Fix table (R10) + answers-of-record:
   opportunistically — completed phases scattering mid-series is honest data, not a rendering
   bug. The reorder control is how intent gets corrected; a status-sort toggle is a possible
   follow-on if wanted.
+
+## Round 11 — 2026-07-28, operator (verbatim; screenshots: #roadmap + another session's A2P master-plan status table)
+
+> "Labeling each item as phases is misleading. The term 'phases' is used as a way of chunking a
+> typical plan. When you design plans, you create master plans, which are then broken down into
+> plans, which have been broken down into phases, batches, and tasks. I want that hierarchy
+> represented correctly. I don't want you making shit up. This UI is supposed to be
+> representative of the way that you build things. [...] I just asked another session to lay out
+> the progress of all the work that it's working on as part of its master plan [...] If this is
+> the case, this seems to me like the appropriate hierarchy to use. I want to see this accurately
+> represented in the Workstreams UI. There are also multiple master plans. Each of those master
+> plans should be their own node. The way that you currently have this laid out in just phases,
+> with no clear distinction as to what is grouped together, what's tied together, and there's no
+> clear order of operations. It seems completely random, which is fucking stupid. Do we need to
+> bring in the UX designer to spend some time actually paying attention to what sort of
+> organization is practical?"
+
+VERIFIED (this session, against real files): the hierarchy the other session showed is real
+house practice — (a) plan files with `## Tasks` are the atom; (b) lettered-batch task IDs
+(`A1..E*`, roughly foundations→engine→surfaces→cutover→docs) appear in 4 real Circuit plans
+(3 archived + conversation-quality-phase2); (c) oversized tasks spawn CHILD PLAN files
+(C2 → C2-0..C2-6 pattern). HONEST GAP: "master plan" is practice, not mechanism — no
+`parent-plan:`/`master-plan:` header field exists; parent↔child lives in prose. That gap is
+WHY the roadmap flattened sibling plans into a fake "Phase N of M" series: the data carries no
+grouping. The R10 phase labeling is hereby retired as misleading (operator: phases chunk a
+SINGLE plan; sibling plans are not phases of anything).
+
+R11 DIRECTION (gated on ux-designer review THIS round, per the operator's explicit ask):
+- R11-A MECHANICAL HIERARCHY: new optional plan-header field `parent-plan: <slug>` (child →
+  master); batch level DERIVED from lettered task IDs when present (honest absence: unlettered
+  plans render tasks directly). Retrofit only where genuinely true, never fabricated.
+- R11-B RENDERING: top level per project = MASTER PLANS (plans with children) + standalone
+  plans, in build order; under a master: its child plans (+ the master's own direct tasks);
+  under a plan: batches (when lettered) → tasks → subtasks + live sessions. "Phase" label
+  RETIRED at the sibling-plan level; position-in-build-order shown without inventing terms.
+- R11-C ORDER OF OPERATIONS: every level states its ordering rule visibly (build order for
+  plans; batch letter then task id within a plan).
+- R11-D ux-designer plan-time review of this IA BEFORE the renderer is rebuilt — the operator
+  asked for the designer by name; translation-loss is the disease of record (Round 9).
