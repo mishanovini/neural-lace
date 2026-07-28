@@ -23,7 +23,7 @@ or claim) as part of its Definition of Done. 4. Observe-first before every enfor
 
 ## Scope / Tasks (LOE: plan-level reference classes per review F11; 1 bs = one builder-session ≈ 80–150k tokens; bands are P50–P90 priors, calibrated as T7 lands)
 
-- [ ] T1 — Read-only estate inventory + daily brief. New janitor scheduled task (deterministic bash)
+- [x] T1 — Read-only estate inventory + daily brief. New janitor scheduled task (deterministic bash)
       reducing existing truth (heartbeats, process table, `git worktree list`, signal-ledger tail,
       ask-registry) → `snapshot.json` + rendered brief, incl. orphaned-worktree/branch found-list.
       Outcome metric: "what is running and who asked" answerable from one surface in <30 s.
