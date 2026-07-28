@@ -67,11 +67,15 @@ or claim) as part of its Definition of Done. 4. Observe-first before every enfor
 part-time autonomous work with review gates. T10 adds 5–10 bs and is separately authorized.**
 
 ## Additions 2026-07-28 (operator directives — design §3b.1–3b.3; append-only to avoid collision with in-flight builders)
-- [ ] T11 — Keep-moving watchdog: janitor rule (idle orchestrator ∧ non-empty frontier ∧ no live
-      children ≥N min → resumer-channel nudge) + orchestrator-pattern doctrine edits (background-
-      first dispatch; watchers are Monitors/ticks, never builder sessions). Outcome metric: zero
-      "idle orchestrator + ready work >30 min" events in a 7-day window. LOE: SMALL-MED, 1–2 bs
-      (depends-on: T1, T3). Verification: full.
+- [ ] T11 — Keep-moving watchdog + completion-refill contract (design §3b.1 rules 1–4): janitor
+      rule (idle orchestrator ∧ non-empty frontier ∧ no live children ≥N min → resumer-channel
+      nudge) + orchestrator-pattern doctrine edits (background-first dispatch; watchers are
+      Monitors/ticks, never builder sessions) + **child-completion notifications carry the refill
+      prompt** (frontier count + free slots injected with the wake event) obliging a FULL frontier
+      re-dispatch — never one-for-one replacement; unexplained non-dispatch with ready work +
+      headroom = the watchdog's idle anomaly. Outcome metrics: zero "idle orchestrator + ready
+      work >30 min" events in a 7-day window AND median completion→next-dispatch latency <2 min.
+      LOE: SMALL-MED, 1.5–2.5 bs (depends-on: T1, T3). Verification: full.
 - [ ] T12 — Presence-aware headroom: last-input idle capture in janitor → presence.json; admission
       lib widens/narrows ladder. Outcome metric: idle-hours dispatch width ≥2× active-hours width
       with zero interactive-use complaints. LOE: SMALL, 0.5–1 bs (depends-on: T3). Verification: full.

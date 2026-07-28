@@ -106,6 +106,15 @@ with a non-empty frontier. Nothing re-invokes it. Three binding rules:
    dispatch/completion event ≥N min ∧ no live children → nudge via the resumer channel ("frontier
    has K ready items, headroom exists — dispatch or record why not"). Idleness becomes a detected
    anomaly, not a silent state.
+4. **Child-completion = a mandatory REFILL moment (operator directive, repeated 2026-07-28).**
+   Every child-completion notification obliges the orchestrator to recompute the frontier and
+   dispatch EVERYTHING dispatchable under current headroom — never a one-for-one replacement, and
+   never just recording the result and waiting. A completion event both frees a slot AND may
+   unblock dependent tasks, so the correct response is a full refill pass. Ending the turn while
+   dispatchable items + headroom exist requires an explicit recorded reason; the watchdog (rule 3)
+   treats an unexplained gap as the idle anomaly. Enforcement: the completion notification itself
+   carries the refill prompt (frontier count + free slots injected by the janitor/queue layer), so
+   the obligation arrives WITH the wake event rather than relying on the orchestrator's memory.
 
 ### 3b.2 Model routing — why it gets ignored today, and the mechanical fix
 Today model choice is an LLM judgment at dispatch time, guided by doctrine (pattern-rung → skipped
