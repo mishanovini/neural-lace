@@ -1460,3 +1460,22 @@ details[open] > .rm-row > .rm-chevron { transform: rotate(90deg); }
 .rm-group-progress-bar { display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
 .rm-group-progress-fill { display: block; height: 100%; background: var(--ok, #4a4); }
 .rm-group-progress-text { font-size: 11px; opacity: 0.8; }
+
+/* R11 (round 11, 2026-07-28) — master-plan hierarchy: docs/reviews/
+   2026-07-28-roadmap-hierarchy-ux-review.md */
+.rm-master-tag { font-weight: 600; }
+.rm-master-fraction { opacity: 0.85; }
+.rm-dangling-badge, .rm-cycle-badge {
+  color: var(--warn, #c96); border-color: var(--warn, #c96);
+}
+.rm-subsection { margin: 4px 0 8px 4px; }
+.rm-subsection-label {
+  font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+  opacity: 0.65; margin: 6px 0 4px;
+}
+.rm-batch { margin: 2px 0; border-left: 2px solid var(--border); padding-left: 6px; }
+.rm-batch-summary { cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+details[open] > .rm-batch-summary > .rm-chevron { transform: rotate(90deg); }
+.rm-batch-label { font-weight: 600; }
+.rm-batch-fraction { opacity: 0.8; }
+.rm-master-tag { font-size: 10px; opacity: 0.8; border-style: dashed; }

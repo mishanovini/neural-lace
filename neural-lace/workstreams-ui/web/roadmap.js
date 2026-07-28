@@ -196,6 +196,10 @@
     }
     var kids = item.children || [];
     for (var j = 0; j < kids.length; j++) { if (itemMatchesText(kids[j], q)) return true; }
+    // R11 (I4: filter matches render with their full ancestor chain) — a
+    // master's resolved child plans must be searchable too.
+    var childPlans = item.child_plans || [];
+    for (var k = 0; k < childPlans.length; k++) { if (itemMatchesText(childPlans[k], q)) return true; }
     return false;
   }
 
@@ -272,11 +276,19 @@
   // "series of phases" ("phase one through four... each phase has its own
   // plan") — rendered as connected, numbered steps in build order, never a
   // plain flat list indistinguishable from an intent's other child kinds.
+  //
+  // R11 I5 (terminology sweep — "phases" labeling retired, docs/reviews/
+  // 2026-07-28-roadmap-hierarchy-ux-review.md): the user-facing chip is now
+  // "#k of n" (the Tree anatomy's own literal spec — "▸ #3 of 9 · <title>"),
+  // never "Phase 3 of 9". Internal identifiers (isPhaseSeries, rm-phase-*
+  // CSS classes) are left as-is (I5: internal identifiers rename OR
+  // annotate — annotated here; a pure rename buys nothing user-facing and
+  // widens this diff for no behavioral change).
   function isPhaseSeries(children) {
     return !!(children && children.length && children[0] && children[0].kind === 'plan');
   }
-  function phaseLabel(index, total) {
-    return 'Phase ' + (index + 1) + ' of ' + total;
+  function buildOrderLabel(index, total) {
+    return '#' + (index + 1) + ' of ' + total;
   }
   // PHASE-SERIES-END
 
@@ -311,25 +323,30 @@
     return order.map(function (key) { return { project: key, items: byProject[key] }; });
   }
   function projectGroupHeaderText(project, items) {
-    // A self-contained label map (deliberately NOT the outer STATUS_LABEL
-    // var) so this function stays a PURE, standalone-executable unit — the
-    // same real-execution test technique cockpit.selftest.js already uses
-    // for isPhaseSeries/visibleFromRequests (extracted + run in a vm
-    // sandbox with no outer-scope access).
-    var LABELS = {
-      'not-started': 'not started', 'in-progress': 'in progress',
-      'merged-unverified': 'merged — deploy unverified', 'complete': 'complete',
-      'stalled': 'stalled', 'unknown': 'status unknown',
-    };
+    // R11 anatomy L0 (ux review): the FOUR-BUCKET count strip in the
+    // operator's own round-1 words — upcoming / in progress / partially
+    // done / complete. Mapping: not-started→upcoming; in-progress AND
+    // stalled→in progress (lifecycle position; the stall itself surfaces
+    // via badges, never hidden); merged-unverified→partially done (the R3
+    // complete oracle: not complete until nothing is left for production);
+    // unknown appended separately when nonzero (honest partition
+    // exception, never silently bucketed). Pure, standalone-executable
+    // (vm-sandbox test technique — no outer-scope access).
     var counts = {};
     (items || []).forEach(function (it) {
       var v = (it.status && it.status.value) || 'unknown';
       counts[v] = (counts[v] || 0) + 1;
     });
-    var order = ['complete', 'in-progress', 'not-started', 'stalled', 'merged-unverified', 'unknown'];
-    var parts = order.filter(function (v) { return counts[v]; }).map(function (v) {
-      return counts[v] + ' ' + (LABELS[v] || v);
+    var buckets = [
+      ['upcoming', (counts['not-started'] || 0)],
+      ['in progress', (counts['in-progress'] || 0) + (counts['stalled'] || 0)],
+      ['partially done', (counts['merged-unverified'] || 0)],
+      ['complete', (counts['complete'] || 0)],
+    ];
+    var parts = buckets.filter(function (b) { return b[1]; }).map(function (b) {
+      return b[1] + ' ' + b[0];
     });
+    if (counts['unknown']) parts.push(counts['unknown'] + ' status unknown');
     var label = project || '(no project)';
     var count = (items || []).length;
     // "plans, in build order" not "phases" (operator 2026-07-24: "is there a
@@ -381,6 +398,44 @@
     wrap.appendChild(barOuter);
     wrap.appendChild(el('span', 'rm-progress-text', p.done + '/' + p.total));
     return wrap;
+  }
+
+  // R11 Critical 5: a master's TWO SEPARATE labeled fractions ("plans 2/7",
+  // "own tasks 3/5") — NEVER blended into one number. The `[master]` tag is
+  // driven ONLY by `master_summary` being present, i.e. ONLY from RESOLVED
+  // children (server-side applyMasterHierarchy) — never merely from a
+  // declared `parent_plan` string on some OTHER plan.
+  function masterSummaryNode(item) {
+    var ms = item.master_summary;
+    if (!ms) return null;
+    var frag = document.createDocumentFragment();
+    frag.appendChild(el('span', 'chip rm-master-tag', 'master — ' + ms.plans.total + (ms.plans.total === 1 ? ' plan' : ' plans')));
+    frag.appendChild(el('span', 'chip rm-master-fraction', 'plans ' + ms.plans.done + '/' + ms.plans.total));
+    frag.appendChild(el('span', 'chip rm-master-fraction', 'own tasks ' + ms.own_tasks.done + '/' + ms.own_tasks.total));
+    return frag;
+  }
+
+  // R11 Critical 4(2)/(4): the reference-lifecycle badges. Both are REAL
+  // buttons (text, never color-only) so the reason is one click away —
+  // consistent with the stalled/unknown status chip's own affordance.
+  function referenceLifecycleBadges(item) {
+    var frag = document.createDocumentFragment();
+    if (item.dangling_parent) {
+      var b = btn('chip rm-dangling-badge', "parent '" + item.parent_plan + "' not found", function () {
+        var det = findItemEl(item.id);
+        if (det && det.tagName === 'DETAILS') det.open = true;
+      });
+      b.title = 'this plan declares parent-plan: ' + item.parent_plan + ', but no such plan resolves in this project';
+      frag.appendChild(b);
+    }
+    if (item.cycle_flag) {
+      var cb = btn('chip rm-cycle-badge', 'cycle detected with \'' + item.cycle_with + '\'', function () {
+        if (item.cycle_with) expandPathTo(item.cycle_with);
+      });
+      cb.title = 'a parent-plan cycle was found and broken here — both plans are flagged';
+      frag.appendChild(cb);
+    }
+    return frag;
   }
 
   function rollupBadges(item) {
@@ -715,8 +770,10 @@
           var oldIdx = siblings.findIndex(function (x) { return x.id === itemId; });
           var newIdx = oldIdx + (direction === 'up' ? -1 : 1);
           var shortT = (item.title || itemId).slice(0, 50);
-          say('Moved "' + shortT + '" ' + direction + ' — now phase ' + (newIdx + 1) + ' of ' +
-            siblings.length + ' in ' + (item.project || 'this project') + "'s intended build order.", false);
+          // I5 (terminology sweep — "phases" retired): "#N of M", never
+          // "phase N of M".
+          say('Moved "' + shortT + '" ' + direction + ' — now #' + (newIdx + 1) + ' of ' +
+            siblings.length + ' in ' + (item.project || 'this project') + "'s build order.", false);
         } else {
           say('Build order updated.', false);
         }
@@ -729,14 +786,52 @@
   // ============================================================
   // tree rendering
   // ============================================================
+
+  // R11 Critical 6 — the ACTIVE-PATH default-expansion policy. A container
+  // defaults OPEN only when its SUBTREE (never merely itself) holds an
+  // active thing — in-progress, a live session, or waiting-on-operator —
+  // so the chain down to the active row is visible while every idle
+  // sibling stays one line. The operator's explicit choices always win:
+  // toggle stores true AND false (an explicit close survives re-renders;
+  // the old delete-on-close made the default re-open it every tick).
+  function nodeIsActive(n) {
+    if (!n) return false;
+    if (n.live_sessions && n.live_sessions.length) return true;
+    if (!n.status) return false;
+    if (n.status.value === 'in-progress') return true;
+    return n.status.value === 'stalled' && n.status.reason_class === 'waiting-on-you';
+  }
+  function subtreeHasActive(n) {
+    var lists = [n.children, n.child_plans];
+    for (var li = 0; li < lists.length; li++) {
+      var arr = lists[li] || [];
+      for (var i = 0; i < arr.length; i++) {
+        if (nodeIsActive(arr[i]) || subtreeHasActive(arr[i])) return true;
+      }
+    }
+    return false;
+  }
+  function defaultOpen(item) {
+    var expl = openSet[item.id];
+    if (expl === true) return true;
+    if (expl === false) return false;
+    return subtreeHasActive(item);
+  }
+
   function renderNode(item, topLevelIndex, topLevelCount, phaseText) {
     var det = document.createElement('details');
     det.className = 'rm-node rm-kind-' + item.kind;
     det.dataset.itemId = item.id;
     det.tabIndex = -1; // landing target: programmatically focusable (C2)
-    if (openSet[item.id]) det.open = true;
+    if (defaultOpen(item)) det.open = true;
+    // Record only DEVIATIONS from the rendered state: the programmatic
+    // default-open above also fires 'toggle', and persisting the default as
+    // an explicit choice would freeze the active-path recomputation.
+    var renderedOpen = det.open;
     det.addEventListener('toggle', function () {
-      if (det.open) openSet[item.id] = true; else delete openSet[item.id];
+      if (det.open === renderedOpen) return;
+      renderedOpen = det.open;
+      openSet[item.id] = det.open;
     });
 
     var sum = document.createElement('summary');
@@ -760,9 +855,17 @@
       sum.appendChild(el('span', 'chip rm-project-tag', item.project));
     }
     sum.appendChild(statusChip(item));
-    var prog = progressNode(item);
-    if (prog) sum.appendChild(prog);
+    // R11 Critical 5: a master shows its TWO labeled fractions instead of
+    // the plain progress bar (never a blended single number); every other
+    // node keeps the existing bar+"n/m" text (C5's pre-existing law).
+    if (item.master_summary) {
+      sum.appendChild(masterSummaryNode(item));
+    } else {
+      var prog = progressNode(item);
+      if (prog) sum.appendChild(prog);
+    }
     sum.appendChild(markerChips(item));
+    sum.appendChild(referenceLifecycleBadges(item)); // R11 Critical 4(2)/(4)
     // a fully-collapsed complete subtree keeps its recency in the headline
     if ((item.status && item.status.value === 'complete' && item.completed_at) ||
         (item.status && item.status.value === 'merged-unverified' && item.completed_at)) {
@@ -775,12 +878,83 @@
     det.appendChild(drilldown(item, topLevelIndex, topLevelCount));
 
     var kids = item.children || [];
+    var childPlans = item.child_plans || [];
     // round-6 gap 3: a FULLY-COMPLETE node's children collapse into the
     // roll-up IMMEDIATELY, regardless of the per-child 7-day window — see
     // the COLLAPSE-LAW block above. item.status is only ever 'complete'
     // once every child has shipped, so this is never a false bypass.
     var parentFullyComplete = !!(item.status && item.status.value === 'complete');
-    if (kids.length) det.appendChild(renderChildList(kids, item.id, parentFullyComplete));
+    if (childPlans.length) {
+      // R11 Critical 3/I1 (anatomy L2): a master's two child kinds render as
+      // TWO LABELED subsections — "Plans — build order" first, then "Direct
+      // tasks — task id" (I6: reuses the SAME details/summary renderNode
+      // path as everything else — no bespoke markup).
+      det.appendChild(renderLabeledSubsection('Plans — build order', 'rm-master-plans',
+        renderChildList(childPlans, item.id, parentFullyComplete)));
+      if (kids.length) {
+        det.appendChild(renderLabeledSubsection('Direct tasks — task id', 'rm-master-owntasks',
+          renderChildList(kids, item.id, parentFullyComplete)));
+      }
+    } else if (kids.length) {
+      det.appendChild(renderChildList(kids, item.id, parentFullyComplete));
+    }
+    return det;
+  }
+
+  // renderLabeledSubsection(label, cls, contentEl) — a plain (non-collapsible)
+  // labeled wrapper: the LABEL itself is not a toggle (the anatomy calls for
+  // it as a caption naming the group, not another expand/collapse level);
+  // the details/summary discipline lives one level down, on each row inside.
+  function renderLabeledSubsection(label, cls, contentEl) {
+    var wrap = el('div', 'rm-subsection ' + cls);
+    wrap.appendChild(el('div', 'rm-subsection-label', label));
+    wrap.appendChild(contentEl);
+    return wrap;
+  }
+
+  // renderTaskBatches(liveChildren) — R11 anatomy L3: groups a plan's task
+  // children into CONTIGUOUS runs sharing the same (server-derived) `.batch`
+  // label, file order preserved (never re-sorted); a task with `batch: ''`
+  // renders directly, un-wrapped, exactly as before batching existed.
+  function renderTaskBatches(liveChildren) {
+    var frag = document.createDocumentFragment();
+    var i = 0;
+    while (i < liveChildren.length) {
+      var c = liveChildren[i];
+      var label = c.batch || '';
+      if (!label) { frag.appendChild(renderNode(c, -1, -1)); i++; continue; }
+      var runEnd = i;
+      while (runEnd < liveChildren.length && (liveChildren[runEnd].batch || '') === label) runEnd++;
+      frag.appendChild(renderBatchRow(label, liveChildren.slice(i, runEnd)));
+      i = runEnd;
+    }
+    return frag;
+  }
+
+  // renderBatchRow — I6: reuses the details/summary disclosure pattern (a11y
+  // by construction); VERBATIM label + a "done/total" fraction chip.
+  // Defaults OPEN (a batch carries no attention state of its own — the
+  // roll-up law already surfaces attention on the tasks inside); an explicit
+  // operator close is remembered for this session (own key namespace, does
+  // not collide with the item-id-keyed openSet entries elsewhere).
+  function renderBatchRow(label, tasks) {
+    var key = 'batch:' + (tasks[0] && tasks[0].id || label);
+    var det = document.createElement('details');
+    det.className = 'rm-batch';
+    det.open = openSet.hasOwnProperty(key) ? openSet[key] : true;
+    det.addEventListener('toggle', function () {
+      if (det.open) delete openSet[key]; else openSet[key] = false;
+    });
+    var sum = document.createElement('summary');
+    sum.className = 'rm-batch-summary';
+    sum.appendChild(el('span', 'rm-chevron', '▸'));
+    sum.appendChild(el('span', 'rm-batch-label', label));
+    var done = tasks.filter(function (t) { return t.status && t.status.value === 'complete'; }).length;
+    sum.appendChild(el('span', 'chip rm-batch-fraction', done + '/' + tasks.length));
+    det.appendChild(sum);
+    var body = el('div', 'rm-children');
+    tasks.forEach(function (t) { body.appendChild(renderNode(t, -1, -1)); });
+    det.appendChild(body);
     return det;
   }
 
@@ -799,17 +973,26 @@
     var phaseSeries = isPhaseSeries(children);
     var totalCount = children.length;
     if (phaseSeries) wrap.classList.add('rm-phase-series');
-    live.forEach(function (c) {
-      var node = renderNode(c, -1, -1,
-        phaseSeries ? phaseLabel(children.indexOf(c), totalCount) : null);
-      if (phaseSeries) {
-        var step = el('div', 'rm-phase-step');
-        step.appendChild(node);
-        wrap.appendChild(step);
-      } else {
-        wrap.appendChild(node);
-      }
-    });
+    // R11 Critical 1/2 (anatomy L3): task children carrying a `.batch` label
+    // render as grouped batch rows — "batch rows only when the file carries
+    // them" (a plan with no batch structure renders its tasks directly,
+    // unchanged). Batches never apply to child-PLAN nesting (phaseSeries).
+    var hasBatches = !phaseSeries && live.some(function (c) { return c.batch; });
+    if (hasBatches) {
+      wrap.appendChild(renderTaskBatches(live));
+    } else {
+      live.forEach(function (c) {
+        var node = renderNode(c, -1, -1,
+          phaseSeries ? buildOrderLabel(children.indexOf(c), totalCount) : null);
+        if (phaseSeries) {
+          var step = el('div', 'rm-phase-step');
+          step.appendChild(node);
+          wrap.appendChild(step);
+        } else {
+          wrap.appendChild(node);
+        }
+      });
+    }
     if (aged.length) {
       aged.sort(function (a, b) { return String(b.completed_at).localeCompare(String(a.completed_at)); });
       var roll = document.createElement('details');
@@ -878,7 +1061,7 @@
         // R10-1: phase label rides the title row (renderNode 4th arg) — the
         // rm-phase-step wrapper stays for the series connector line only.
         var node = renderNode(it, live.indexOf(it), live.length,
-          phaseSeries ? phaseLabel(gi, g.items.length) : null);
+          phaseSeries ? buildOrderLabel(gi, g.items.length) : null);
         if (phaseSeries) {
           var step = el('div', 'rm-phase-step');
           step.appendChild(node);
@@ -914,13 +1097,27 @@
   // ============================================================
   function renderKanban(visibleItems) {
     var board = el('div', 'rm-kanban');
+    // R11 I4: cards are PLANS — a master is never a card (its status is
+    // derived; mixing kinds breaks column semantics). Its child plans ARE
+    // cards, each carrying a master chip so the grouping stays readable.
+    var cardEntries = [];
+    visibleItems.forEach(function (it) {
+      if (it.master_summary) {
+        (it.child_plans || []).forEach(function (cp) {
+          cardEntries.push({ item: cp, masterTitle: it.title });
+        });
+      } else {
+        cardEntries.push({ item: it, masterTitle: null });
+      }
+    });
     KANBAN_COLUMNS.forEach(function (col) {
-      var cards = visibleItems.filter(function (it) { return (it.status && it.status.value) === col; });
+      var cards = cardEntries.filter(function (e) { return (e.item.status && e.item.status.value) === col; });
       if (KANBAN_EXCEPTIONAL[col] && cards.length === 0) return; // R5: exceptional columns only when non-empty
       var colEl = el('section', 'rm-kanban-col rm-kanban-col-' + col);
       colEl.setAttribute('aria-label', KANBAN_COLUMN_LABEL[col]);
       colEl.appendChild(el('div', 'rm-kanban-col-head', KANBAN_COLUMN_LABEL[col] + ' (' + cards.length + ')'));
-      cards.forEach(function (it) {
+      cards.forEach(function (entry) {
+        var it = entry.item;
         var card = el('div', 'rm-card');
         card.dataset.itemId = it.id;
         card.tabIndex = -1;
@@ -928,6 +1125,7 @@
         cardTitle.title = it.id; // R9-1: slug as tooltip here too
         card.appendChild(cardTitle);
         var chipRow = el('div', 'rm-card-chips');
+        if (entry.masterTitle) chipRow.appendChild(el('span', 'chip rm-master-tag', entry.masterTitle)); // I4
         if (it.project) chipRow.appendChild(el('span', 'chip rm-project-tag', it.project)); // R9-3
         chipRow.appendChild(statusChip(it)); // same chips as the tree (I3)
         var prog = progressNode(it);
@@ -1205,11 +1403,15 @@
   function findItemEl(id) {
     return body.querySelector('[data-item-id="' + cssEscape(id) + '"]');
   }
+  // R11: both traversals now ALSO recurse into `child_plans` (a master's
+  // resolved children — Critical 3/4), not just `children` (own tasks) —
+  // a nested child plan must stay hash-addressable/expandable exactly like
+  // any other item.
   function findItemData(id, list) {
     var items = list || (lastPayload && lastPayload.items) || [];
     for (var i = 0; i < items.length; i++) {
       if (items[i].id === id) return items[i];
-      var hit = findItemData(id, items[i].children || []);
+      var hit = findItemData(id, items[i].children || []) || findItemData(id, items[i].child_plans || []);
       if (hit) return hit;
     }
     return null;
@@ -1219,7 +1421,7 @@
     for (var i = 0; i < items.length; i++) {
       var t = (trail || []).concat([items[i].id]);
       if (items[i].id === id) return t;
-      var hit = pathTo(id, items[i].children || [], t);
+      var hit = pathTo(id, items[i].children || [], t) || pathTo(id, items[i].child_plans || [], t);
       if (hit) return hit;
     }
     return null;
