@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260728-3d5d64f9",
+  "created_at": "2026-07-28T06:52:30Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "fable",
+  "plan_ref": "docs/plans/supervisor-tick.md",
+  "change_ref": {
+    "commit_sha": "1397c34",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/supervisor-tick.sh",
+      "blob_sha": "565551ad7a053778105583f42ddaf80ac257f485"
+    },
+    {
+      "path": "adapters/claude-code/scripts/install-coord-sync-task.ps1",
+      "blob_sha": "abafd5030573da2466772a802358f4ffc01c7eca"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — supervisor-tick.sh at master (1397c34+3cff15d): Mechanism-class non-blocking surfacer with real teeth and a real FP guard — self-test 19/19 re-run by reviewer with zero real ~/.claude writes (sandbox PROVEN), remedy-chain deadlock-free, golden-scenario citations verified; two Major follow-ups filed to the nl-issue ledger (fail-open-to-silence; NEVER-auto-destroys needs the armable-reap qualifier) — neither blocks deploy since the identical defects already exist in the live 1397c34 copy and the mechanism stays inert until the operator registers NL-SupervisorTick.",
+    "findings_summary": "2 Major follow-ups (fail-open-to-silence sweep degrade; stale NEVER-destroys absolutes post-3cff15d fold) + 5 Minor, all persisted to nl-issues ledger by the reviewer"
+  },
+  "written_by": "orchestrator session d3059d78 via write-review-record.sh",
+  "payload": {}
+}
