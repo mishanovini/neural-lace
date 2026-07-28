@@ -29,7 +29,7 @@ or claim) as part of its Definition of Done. 4. Observe-first before every enfor
       Outcome metric: "what is running and who asked" answerable from one surface in <30 s.
       LOE: SMALL, 1–2 bs (class: reducer+renderer; comparable: digest sections, coord-sync).
       Verification: full.
-- [ ] T2 — Ask SLAs: deadline/default-action/SLA verbs on ask-registry + the brief's ≤5-asks panel.
+- [x] T2 — Ask SLAs: deadline/default-action/SLA verbs on ask-registry + the brief's ≤5-asks panel.
       Outcome metric: zero operator-asks silently older than their deadline in a 14-day window.
       LOE: SMALL, 1 bs (class: lib-extension+view). Verification: full.
 - [ ] T3 — Admission lib (slots + rate + HALT + drain flag), OBSERVE MODE ONLY, called from the
