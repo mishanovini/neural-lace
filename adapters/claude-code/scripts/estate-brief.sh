@@ -124,120 +124,68 @@ _eb_render() {
     return 0
   fi
 
-  local generated_at machine
-  generated_at="$(jq -r '.generated_at // "unknown"' "$snap")"
-  machine="$(jq -r '.machine // "unknown"' "$snap")"
-  local age; age="$(_eb_age_str "$generated_at")"
-
-  printf 'ESTATE BRIEF — generated %s (%s) — %s\n' "$generated_at" "$age" "$machine"
-  printf '\n'
-
-  # ---- RUNNING ----
-  local n_sessions n_live n_stale n_throttled n_crashed n_unknown
-  n_sessions="$(jq -r '.sessions | length' "$snap")"
-  n_live="$(jq -r '[.sessions[] | select(.classify=="live")] | length' "$snap")"
-  n_stale="$(jq -r '[.sessions[] | select(.classify=="stale")] | length' "$snap")"
-  n_throttled="$(jq -r '[.sessions[] | select(.classify=="throttled")] | length' "$snap")"
-  n_crashed="$(jq -r '[.sessions[] | select(.classify=="crashed")] | length' "$snap")"
-  n_unknown="$(jq -r '[.sessions[] | select(.classify!="live" and .classify!="stale" and .classify!="throttled" and .classify!="crashed")] | length' "$snap")"
-  printf 'RUNNING (%s sessions: %s live, %s stale, %s throttled, %s crashed, %s unknown)\n' \
-    "$n_sessions" "$n_live" "$n_stale" "$n_throttled" "$n_crashed" "$n_unknown"
-  if [[ "$n_sessions" -eq 0 ]]; then
-    printf '  (none)\n'
-  else
-    local line sid cls branch last_event last_ts wt
-    while IFS=$'\t' read -r sid cls branch wt last_event last_ts; do
-      # PROVEN at build time (od -c on this platform's jq @tsv output): jq
-      # emits a CRLF line ending, so the LAST field of every row carries a
-      # trailing \r that is invisible when printed but breaks any exact
-      # match against that field. Strip unconditionally (no-op if absent).
-      last_ts="${last_ts%$'\r'}"
-      printf '  %s | %-9s | branch=%s | %s (%s) | wt=%s\n' \
-        "${sid:0:12}" "$cls" "$branch" "$last_event" "$(_eb_age_str "$last_ts")" "$(_eb_short "$wt" 40)"
-    done < <(jq -r --argjson n "$max_rows" '.sessions[:$n][] | [.session_id,.classify,.branch,.worktree_root,.last_event,.last_activity_ts] | @tsv' "$snap")
-    if [[ "$n_sessions" -gt "$max_rows" ]]; then
-      printf '  ... +%s more\n' "$(( n_sessions - max_rows ))"
-    fi
-  fi
-  printf '\n'
-
-  # ---- ASKED ----
-  local n_asks; n_asks="$(jq -r '.asks | length' "$snap")"
-  local asks_degraded; asks_degraded="$(jq -r '.asks_degraded' "$snap")"
-  printf 'ASKED (%s active)%s\n' "$n_asks" "$([[ "$asks_degraded" == "true" ]] && echo ' [DEGRADED: ask-registry unreadable or jq missing]' || echo '')"
-  if [[ "$n_asks" -eq 0 ]]; then
-    printf '  (none)\n'
-  else
-    local ask_id summary project
-    while IFS=$'\t' read -r ask_id summary project; do
-      project="${project%$'\r'}"   # jq @tsv CRLF quirk — see RUNNING section comment
-      printf '  %s | %s | %s\n' "$ask_id" "$(_eb_short "$summary" 70)" "$project"
-    done < <(jq -r --argjson n "$max_rows" '.asks[:$n][] | [.ask_id,.summary,.project] | @tsv' "$snap")
-    if [[ "$n_asks" -gt "$max_rows" ]]; then
-      printf '  ... +%s more\n' "$(( n_asks - max_rows ))"
-    fi
-  fi
-  printf '\n'
-
-  # ---- ORPHANED WORKTREES ----
-  local n_owt; n_owt="$(jq -r '.orphaned_worktrees | length' "$snap")"
-  printf 'ORPHANED WORKTREES (%s found — no live heartbeat)\n' "$n_owt"
-  if [[ "$n_owt" -eq 0 ]]; then
-    printf '  (none)\n'
-  else
-    local repo path branch
-    while IFS=$'\t' read -r repo path branch; do
-      branch="${branch%$'\r'}"   # jq @tsv CRLF quirk — see RUNNING section comment
-      printf '  %s | branch=%s | %s\n' "$(_eb_short "$path" 55)" "$branch" "$(_eb_short "$repo" 30)"
-    done < <(jq -r --argjson n "$max_rows" '.orphaned_worktrees[:$n][] | [.repo,.path,.branch] | @tsv' "$snap")
-    if [[ "$n_owt" -gt "$max_rows" ]]; then
-      printf '  ... +%s more\n' "$(( n_owt - max_rows ))"
-    fi
-  fi
-  printf '\n'
-
-  # ---- ORPHANED BRANCHES ----
-  local n_obr; n_obr="$(jq -r '.orphaned_branches | length' "$snap")"
-  printf 'ORPHANED BRANCHES (%s found — no worktree)\n' "$n_obr"
-  if [[ "$n_obr" -eq 0 ]]; then
-    printf '  (none)\n'
-  else
-    local repo branch age_days
-    while IFS=$'\t' read -r repo branch age_days; do
-      age_days="${age_days%$'\r'}"   # jq @tsv CRLF quirk — see RUNNING section comment
-      printf '  %s | %s | last commit %sd ago\n' "$(_eb_short "$repo" 30)" "$branch" "${age_days:-?}"
-    done < <(jq -r --argjson n "$max_rows" '.orphaned_branches[:$n][] | [.repo,.branch,(.last_commit_age_days|tostring)] | @tsv' "$snap")
-    if [[ "$n_obr" -gt "$max_rows" ]]; then
-      printf '  ... +%s more\n' "$(( n_obr - max_rows ))"
-    fi
-  fi
-  printf '\n'
-
-  # ---- COUNTS ----
-  local bash_count claude_count proc_degraded wt_total wt_degraded repos_n ledger_n ledger_degraded
-  bash_count="$(jq -r '.process_counts.bash_count' "$snap")"
-  claude_count="$(jq -r '.process_counts.claude_count' "$snap")"
-  proc_degraded="$(jq -r '.process_counts.degraded' "$snap")"
-  wt_total="$(jq -r '.worktrees | length' "$snap")"
-  wt_degraded="$(jq -r '.worktrees_degraded' "$snap")"
-  repos_n="$(jq -r '.repos_scanned | length' "$snap")"
-  ledger_n="$(jq -r '.signal_ledger_tail | length' "$snap")"
-  ledger_degraded="$(jq -r '.signal_ledger_degraded' "$snap")"
-  printf 'COUNTS\n'
-  printf '  bash.exe: %s | claude.exe: %s | worktrees: %s (across %s repos) | signal-ledger tail: %s lines\n' \
-    "$bash_count" "$claude_count" "$wt_total" "$repos_n" "$ledger_n"
-
-  local -a degraded_flags=()
-  [[ "$(jq -r '.sessions_degraded' "$snap")" == "true" ]] && degraded_flags+=("heartbeats")
-  [[ "$proc_degraded" == "true" ]] && degraded_flags+=("process_counts")
-  [[ "$wt_degraded" == "true" ]] && degraded_flags+=("worktrees")
-  [[ "$ledger_degraded" == "true" ]] && degraded_flags+=("signal_ledger")
-  [[ "$asks_degraded" == "true" ]] && degraded_flags+=("asks")
-  if [[ "${#degraded_flags[@]}" -eq 0 ]]; then
-    printf '  degraded sections: none\n'
-  else
-    printf '  degraded sections: %s\n' "$(printf '%s,' "${degraded_flags[@]}" | sed 's/,$//')"
-  fi
+  # T1 perf fix (2026-07-28, same class as the janitor's, measured live):
+  # the section-by-section render forked jq ~34 times plus two command
+  # substitutions PER ROW (_eb_age_str/_eb_short are pure bash, but `$()`
+  # forks a subshell regardless) — ~70 forks ≈ 38.6s wall on this machine
+  # under load, missing the <30s outcome metric on the READ path. The
+  # ENTIRE brief now renders in ONE jq program (age + truncation computed
+  # jq-side, mirroring _eb_age_str/_eb_short's exact output formats, which
+  # stay for the no-jq path and other callers). One fork ≈ seconds.
+  local now_epoch; now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
+  jq -r --argjson maxn "$max_rows" --argjson now "$now_epoch" '
+    def agestr(ts):
+      if (ts // "") == "" then "unknown"
+      else ((ts | try fromdateiso8601 catch null) as $e |
+        if $e == null then "unknown"
+        else (([$now - $e, 0] | max) as $d | ($d / 60 | floor) as $m |
+          if $m < 60 then "\($m)m ago"
+          elif $m < 1440 then "\($m / 60 | floor)h ago"
+          else "\($m / 1440 | floor)d ago" end)
+        end)
+      end;
+    def short(mx): (. // "") | if length <= mx then . else .[0:mx-3] + "..." end;
+    def more(total): if total > $maxn then ["  ... +\(total - $maxn) more"] else [] end;
+    (.sessions // []) as $ss | (.asks // []) as $asks |
+    (.orphaned_worktrees // []) as $owt | (.orphaned_branches // []) as $obr |
+    (
+      ["ESTATE BRIEF — generated \(.generated_at // "unknown") (\(agestr(.generated_at))) — \(.machine // "unknown")", ""]
+      + ["RUNNING (\($ss | length) sessions: \([$ss[] | select(.classify == "live")] | length) live, \([$ss[] | select(.classify == "stale")] | length) stale, \([$ss[] | select(.classify == "throttled")] | length) throttled, \([$ss[] | select(.classify == "crashed")] | length) crashed, \([$ss[] | select(.classify != "live" and .classify != "stale" and .classify != "throttled" and .classify != "crashed")] | length) unknown)"]
+      + (if ($ss | length) == 0 then ["  (none)"] else
+          [$ss[:$maxn][] | "  \((.session_id // "")[0:12]) | \((.classify + "         ")[0:9]) | branch=\(.branch // "") | \(.last_event // "") (\(agestr(.last_activity_ts))) | wt=\(.worktree_root | short(40))"]
+          + more($ss | length)
+        end)
+      + [""]
+      + ["ASKED (\($asks | length) active)\(if .asks_degraded == true then " [DEGRADED: ask-registry unreadable or jq missing]" else "" end)"]
+      + (if ($asks | length) == 0 then ["  (none)"] else
+          [$asks[:$maxn][] | "  \(.ask_id) | \(.summary | short(70)) | \(.project // "")"]
+          + more($asks | length)
+        end)
+      + [""]
+      + ["ORPHANED WORKTREES (\($owt | length) found — no live heartbeat)"]
+      + (if ($owt | length) == 0 then ["  (none)"] else
+          [$owt[:$maxn][] | "  \(.path | short(55)) | branch=\(.branch // "unknown") | \(.repo | short(30))"]
+          + more($owt | length)
+        end)
+      + [""]
+      + ["ORPHANED BRANCHES (\($obr | length) found — no worktree)"]
+      + (if ($obr | length) == 0 then ["  (none)"] else
+          [$obr[:$maxn][] | "  \(.repo | short(30)) | \(.branch) | last commit \(.last_commit_age_days // "?" | tostring)d ago"]
+          + more($obr | length)
+        end)
+      + [""]
+      + ["COUNTS",
+         "  bash.exe: \(.process_counts.bash_count) | claude.exe: \(.process_counts.claude_count) | worktrees: \(.worktrees | length) (across \(.repos_scanned | length) repos) | signal-ledger tail: \(.signal_ledger_tail | length) lines",
+         "  degraded sections: \(
+           ([if .sessions_degraded == true then "heartbeats" else empty end,
+             if .process_counts.degraded == true then "process_counts" else empty end,
+             if .worktrees_degraded == true then "worktrees" else empty end,
+             if .signal_ledger_degraded == true then "signal_ledger" else empty end,
+             if .asks_degraded == true then "asks" else empty end]) as $f |
+           if ($f | length) == 0 then "none" else ($f | join(",")) end)"]
+    ) | .[]
+  ' "$snap"
+  return 0
 }
 
 _eb_run() {

@@ -344,27 +344,49 @@ _ej_collect_heartbeats() {
   local -a rows=() live_keys=()
 
   if command -v jq >/dev/null 2>&1; then
+    # T1 perf fix (2026-07-28, ESTATE-T1-HB-CLASSIFY-PERF-01): one bare
+    # 2-arg hb_classify measured 5.8s WALL on this machine (spawn tax: a
+    # per-call `find` over ~550 transcripts + per-field jq + `date` forks)
+    # — 17 heartbeats = the builder's observed 96s. hb_classify's own
+    # batched 7-arg contract (the od_sessions precedent documented in
+    # session-heartbeat-lib.sh) eliminates every per-call fork: transcript
+    # path from ONE find-built index (explicit-empty = "index proved no
+    # transcript", honored by the lib), last-activity epoch from the SAME
+    # batched jq pass (fromdateiso8601, never a bash `date` per file),
+    # now-epoch computed once, pid pre-supplied.
+    local now_epoch; now_epoch="$(date -u +%s)"
+    local -A _ej_tmap=()
+    if declare -F _hb_transcripts_dir >/dev/null 2>&1; then
+      local _tdir _tf _tbase
+      _tdir="$(_hb_transcripts_dir)"
+      if [[ -n "$_tdir" && -d "$_tdir" ]]; then
+        while IFS= read -r _tf; do
+          _tbase="${_tf##*/}"; _tbase="${_tbase%.jsonl}"
+          _ej_tmap["$_tbase"]="$_tf"
+        done < <(find "$_tdir" -maxdepth 4 -type f -name '*.jsonl' 2>/dev/null)
+      fi
+    fi
     local tsv
-    tsv="$(jq -r '[(.session_id//""),(.cwd//""),(.repo_root//""),(.worktree_root//""),(.branch//""),(.model//""),(.last_activity_ts//""),(.last_event//""),(.marker_state//""),((.pid//"")|tostring)] | @tsv' "${files[@]}" 2>/dev/null)"
+    tsv="$(jq -r '[(.session_id//""),(.cwd//""),(.repo_root//""),(.worktree_root//""),(.branch//""),(.model//""),(.last_activity_ts//""),(.last_event//""),(.marker_state//""),((.pid//"")|tostring),(((.last_activity_ts//"")|if .=="" then 0 else (try fromdateiso8601 catch 0) end)|tostring)] | @tsv' "${files[@]}" 2>/dev/null)"
     local idx=0
-    local sid cwd repo_root worktree_root branch model last_ts last_event marker pid f cls pid_json
-    while IFS=$'\t' read -r sid cwd repo_root worktree_root branch model last_ts last_event marker pid; do
+    local sid cwd repo_root worktree_root branch model last_ts last_event marker pid last_epoch f cls pid_json
+    while IFS=$'\t' read -r sid cwd repo_root worktree_root branch model last_ts last_event marker pid last_epoch; do
       # PROVEN at build time: this platform's jq emits CRLF line endings for
       # `@tsv` output (od -c confirmed a literal \r before every \n) — the
       # SAME class of quirk perf-tick-snapshot.sh's own header documents for
       # wmic CSV. Only the LAST field of each row carries it (the \r sits
       # right before the newline the `read` loop already consumes), but it
       # silently breaks any exact-match/regex check against that field
-      # (e.g. pid's `^[0-9]+$` test) without ever showing up when the value
-      # is merely printed (a lone \r is invisible in most renders). Strip it
-      # unconditionally — a no-op when absent, cheap (parameter expansion,
-      # no fork).
-      pid="${pid%$'\r'}"
+      # without ever showing up when the value is merely printed (a lone \r
+      # is invisible in most renders). Strip it unconditionally — a no-op
+      # when absent, cheap (parameter expansion, no fork).
+      last_epoch="${last_epoch%$'\r'}"
+      [[ "$last_epoch" =~ ^[0-9]+$ ]] || last_epoch=0
       f="${files[$idx]:-}"
       idx=$((idx+1))
       [[ -n "$f" ]] || continue
       if declare -F hb_classify >/dev/null 2>&1; then
-        cls="$(hb_classify "$f" 2>/dev/null)"
+        cls="$(hb_classify "$f" "" "${_ej_tmap[$sid]-}" "$sid" "$last_epoch" "$now_epoch" "$pid" 2>/dev/null)"
       else
         cls="unknown"
       fi
