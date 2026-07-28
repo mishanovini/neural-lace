@@ -1188,3 +1188,64 @@ from the plan's own repo path. The DISCLOSURE gap above is the separate, still-o
 **Trigger:** 103 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 20d old (threshold >7d).
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## ROADMAP-R11-ACTIVE-PATH-EXPANSION-01 — Critical 6 not implemented
+
+**Severity:** P1 (a bound Critical constraint of the Round-11 hierarchy binding
+spec, docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md).
+**Gap:** `openSet` in `neural-lace/workstreams-ui/web/roadmap.js` still starts
+empty every session with no default-expansion heuristic. The spec requires:
+L0 project groups open (already true — not collapsible), every L1 row
+visible as one line (already true — summary rows), but auto-open chains to
+in-progress/live-session/waiting-on-operator descendants on first render,
+with a persisted-openSet-always-wins rule, is NOT built.
+**Fix shape:** a `seedDefaultOpenSet()` walk over the first successful
+payload (before the first `renderAll()`), guarded by a one-time flag so
+subsequent user toggles are never re-clobbered by the heuristic.
+**Filed by:** cockpit-roadmap-redesign R11 hierarchy-renderer build, wall-clock
+stop at 90 minutes.
+
+## ROADMAP-R11-L0-FOUR-BUCKET-STRIP-01 — L0 count strip not built
+
+**Severity:** P2.
+**Gap:** the Tree anatomy's L0 project header calls for a four-bucket count
+strip (upcoming / in progress / partially done / complete; merged-unverified
+maps to partially done). `projectGroupHeaderText()` in roadmap.js still
+renders a six-value prose breakdown (all enum values, unmapped), not the
+four-bucket strip the spec names.
+**Filed by:** same build/stop as above.
+
+## ROADMAP-R11-KANBAN-MASTER-CHIPS-01 — I4 kanban master-chip rule not built
+
+**Severity:** P2.
+**Gap:** I4 requires kanban cards to stay PLANS with masters rendering as
+CHIPS on child cards (never as their own cards). `renderKanban()` in
+roadmap.js still treats `child_plans` as invisible to the kanban view (a
+nested child plan currently never appears there at all, since
+`visibleItems` is the top-level-only list) — neither the "master renders as
+a chip on the child card" rule nor "nested child plans appear as cards" is
+implemented.
+**Filed by:** same build/stop as above.
+
+## ROADMAP-R11-CROSS-REPO-RETROFIT-PATCH-01 — apply a verified cross-repo parent-plan header
+
+**Severity:** P3 (data-only, no code change).
+**Finding (research-verified, not fabricated):** a genuine parent/child plan
+family exists across two repos — master
+`Circuit/docs/plans/2026-04-20-a2p-10dlc-multi-channel-consent.md` (slug
+`2026-04-20-a2p-10dlc-multi-channel-consent`) and child
+`pocket-technician-marketing/docs/plans/2026-04-23-a2p-campaign-resubmission.md`
+(slug `2026-04-23-a2p-campaign-resubmission`). Evidence: the pt-marketing
+plan's own text (~line 38-40) explicitly defers scope to "circuit/docs/plans/
+2026-04-20-a2p-10dlc-multi-channel-consent.md"; the Circuit plan's scope
+section explicitly names the pocket-technician-marketing repo's form-wiring
+work. No genuine same-repo family exists in neural-lace itself (checked).
+**Action:** in the pt-marketing repo, add a header line `parent-plan:
+2026-04-20-a2p-10dlc-multi-channel-consent` to
+`docs/plans/2026-04-23-a2p-campaign-resubmission.md`, in the header block
+(after `Status:`/`Execution Mode:`, before the first blank line/`##`
+heading) — same-project (same-repo) resolution only applies within ONE
+repo, so this retrofit is cosmetic/documentary until cross-repo resolution
+is itself in scope (decide-and-go (b) in the plan's Decisions Log defers
+that).
+**Filed by:** cockpit-roadmap-redesign R11 retrofit research (this build).

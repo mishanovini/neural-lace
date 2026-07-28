@@ -66,11 +66,14 @@ function httpPostJson(port, urlPath, obj) {
   });
 }
 
-// findItem(items, id) — depth-first search over the payload tree.
+// findItem(items, id) — depth-first search over the payload tree. Recurses
+// into BOTH `children` (a plan's own tasks) and `child_plans` (R11: a
+// master's RESOLVED child plans, nested per Critical 3/4 — no longer
+// present at the top level once resolved).
 function findItem(items, id) {
   for (let i = 0; i < (items || []).length; i++) {
     if (items[i].id === id) return items[i];
-    const hit = findItem(items[i].children, id);
+    const hit = findItem(items[i].children, id) || findItem(items[i].child_plans, id);
     if (hit) return hit;
   }
   return null;
@@ -117,6 +120,63 @@ async function main() {
     '- [x] 1. build the first thing',
     '- [ ] 2. build the second thing',
     '- [ ] 3. build the third thing',
+    '',
+  ].join('\n'));
+  // R11-A fixtures (operator round 11): the master/child mechanical link
+  // (`parent-plan:` header) + lettered-batch task ids — the shapes the old
+  // grammar silently dropped.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'master-fixture.md'), [
+    '# Plan: The Master Sequence', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. direct master task',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'child-a-fixture.md'), [
+    '# Plan: Child A', '', 'Status: ACTIVE', 'parent-plan: master-fixture', '', '## Tasks', '',
+    '- [x] A1. lettered foundations task',
+    '- [ ] B2. lettered engine task',
+    '- [ ] 3. unlettered task',
+    '',
+  ].join('\n'));
+  // R11 Critical 4(2): a `parent-plan:` reference that never resolves — the
+  // child must render STANDALONE + `dangling_parent: true`, never silently
+  // dropped, never a fake master materialized for it.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'dangling-child-fixture.md'), [
+    '# Plan: Dangling Child', '', 'Status: ACTIVE', 'parent-plan: no-such-master-anywhere', '',
+    '## Tasks', '', '- [ ] 1. a task whose declared parent never resolves', '',
+  ].join('\n'));
+  // R11 Critical 4(1): PINNING — an archived master with NO recency evidence
+  // (would normally be excluded entirely by the aging gate — see
+  // scanPlanDir's header note) must still render when a NON-TERMINAL child
+  // plan references it.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'archive', 'pinned-master-fixture.md'), [
+    '# Plan: Pinned Master', '', 'Status: COMPLETED', '', '## Tasks', '',
+    '- [x] 1. old master task, long since archived, zero recency evidence', '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'pinned-child-fixture.md'), [
+    '# Plan: Pinned Child', '', 'Status: ACTIVE', 'parent-plan: pinned-master-fixture', '',
+    '## Tasks', '', '- [ ] 1. still active work under an archived-and-aged-out master', '',
+  ].join('\n'));
+  // R11 Critical 2: a MULTI-task letter run must render the mechanical span
+  // "Tasks <first>-<last>", never a bare letter, never a prose gloss.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'batch-run-fixture.md'), [
+    '# Plan: Batch Run', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [x] A1 first foundations task',
+    '- [ ] A2 second foundations task',
+    '- [ ] A3 third foundations task',
+    '- [ ] B1 first engine task',
+    '- [ ] B2 second engine task',
+    '',
+  ].join('\n'));
+  // R11 Critical 1/2: `###` sub-headings inside `## Tasks` are the batch
+  // label source, VERBATIM, taking priority (these tasks are plain
+  // numeric — the heading is the ONLY possible batch signal here).
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'heading-batch-fixture.md'), [
+    '# Plan: Heading Batch', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '### Phase B — Foundations', '',
+    '- [x] 1. first task under the heading',
+    '- [ ] 2. second task under the heading',
+    '### Phase C — Engine', '',
+    '- [ ] 3. a task under a different heading',
     '',
   ].join('\n'));
   // shipped-plan: all tasks done -> the no-signal oracle class must render
@@ -410,8 +470,103 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 16 top-level plans (the ones that qualify — 8 original + 8 round-9 R9-1/R9-4 fixtures) — no more, no less; ancient-ghost-plan is correctly EXCLUDED (not a 9th/17th item)',
-      items.length === 16, topIds.join(','));
+    ok('S1e exactly 21 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
+      items.length === 21, topIds.join(','));
+    ok('R11 child-a-fixture no longer appears in the TOP-LEVEL list (it renders once, nested under its master)',
+      topIds.indexOf('child-a-fixture') === -1, topIds.join(','));
+
+    // ---- R11 (round 11): the mechanical master/child hierarchy ----
+    const masterFixture = findItem(items, 'master-fixture');
+    const childA = findItem(items, 'child-a-fixture');
+    ok('R11-A1 a plan with a `parent-plan:` header carries parent_plan=<master slug>; plans without it carry \'\' (standalone — never inferred)',
+      childA && childA.parent_plan === 'master-fixture' &&
+      masterFixture && masterFixture.parent_plan === '' &&
+      findItem(items, 'demo-plan').parent_plan === '',
+      childA && childA.parent_plan);
+    ok('R11 Critical 3/4: master-fixture resolves child-a-fixture into `child_plans` (the RENDERED grouping, not merely a supported field) and NEVER masters an unrelated plan',
+      !!masterFixture && Array.isArray(masterFixture.child_plans) && masterFixture.child_plans.length === 1 &&
+      masterFixture.child_plans[0].id === 'child-a-fixture' &&
+      childA.resolved_parent === 'master-fixture' && childA.dangling_parent === false,
+      masterFixture && JSON.stringify(masterFixture.child_plans && masterFixture.child_plans.map((c) => c.id)));
+    ok('R11 Critical 5: master_summary carries TWO SEPARATE labeled fractions (plans done/total, own_tasks done/total) — never one blended number',
+      !!masterFixture.master_summary &&
+      masterFixture.master_summary.plans.total === 1 && masterFixture.master_summary.plans.done === 0 &&
+      masterFixture.master_summary.own_tasks.total === 1 && masterFixture.master_summary.own_tasks.done === 0,
+      JSON.stringify(masterFixture.master_summary));
+    ok('R11 a plan with NO resolved children carries master_summary: null (the `[master]` tag is driven ONLY by resolved children)',
+      findItem(items, 'demo-plan').master_summary === null);
+
+    // ---- R11 Critical 1/2: batch derivation — mechanical span, NEVER a bare letter ----
+    ok('R11 lettered task ids PARSE (the old grammar silently dropped them); a length-1 letter run renders the mechanical "Task <id>" span, never a bare letter or a prose gloss',
+      !!findItem(items, 'child-a-fixture/A1') && findItem(items, 'child-a-fixture/A1').batch === 'Task A1' &&
+      findItem(items, 'child-a-fixture/A1').status && findItem(items, 'child-a-fixture/A1').status.value === 'complete' &&
+      !!findItem(items, 'child-a-fixture/B2') && findItem(items, 'child-a-fixture/B2').batch === 'Task B2' &&
+      !!findItem(items, 'child-a-fixture/3') && findItem(items, 'child-a-fixture/3').batch === '');
+    ok('R11-A3 the lettered plan\'s PROGRESS counts all three tasks (1/3 done) — the dropped-task data hole under "progress seems random" is closed',
+      childA && childA.progress && childA.progress.done === 1 && childA.progress.total === 3,
+      childA && JSON.stringify(childA.progress));
+
+    // ---- R11 Critical 2: multi-task letter run -> mechanical SPAN label ----
+    ok('R11 Critical 2: a multi-task letter run renders the mechanical span "Tasks <first>-<last>", never a bare letter, never a prose gloss ("foundations"/"engine")',
+      findItem(items, 'batch-run-fixture/A1').batch === 'Tasks A1–A3' &&
+      findItem(items, 'batch-run-fixture/A2').batch === 'Tasks A1–A3' &&
+      findItem(items, 'batch-run-fixture/A3').batch === 'Tasks A1–A3' &&
+      findItem(items, 'batch-run-fixture/B1').batch === 'Tasks B1–B2' &&
+      findItem(items, 'batch-run-fixture/B2').batch === 'Tasks B1–B2',
+      JSON.stringify(['A1', 'A2', 'A3', 'B1', 'B2'].map((id) => findItem(items, 'batch-run-fixture/' + id) && findItem(items, 'batch-run-fixture/' + id).batch)));
+
+    // ---- R11 Critical 1/2: `###` sub-heading batch source, VERBATIM, takes priority ----
+    ok('R11 Critical 1/2: `###` sub-headings inside `## Tasks` supply the batch label VERBATIM (plain numeric ids here — the heading is the ONLY possible source)',
+      findItem(items, 'heading-batch-fixture/1').batch === 'Phase B — Foundations' &&
+      findItem(items, 'heading-batch-fixture/2').batch === 'Phase B — Foundations' &&
+      findItem(items, 'heading-batch-fixture/3').batch === 'Phase C — Engine',
+      JSON.stringify(['1', '2', '3'].map((id) => findItem(items, 'heading-batch-fixture/' + id) && findItem(items, 'heading-batch-fixture/' + id).batch)));
+
+    // ---- R11 Critical 4(2): dangling parent-plan reference ----
+    const danglingChild = findItem(items, 'dangling-child-fixture');
+    ok('R11 Critical 4(2): a dangling parent-plan reference renders the child STANDALONE + dangling_parent:true (badge "parent \'<slug>\' not found" is client-rendered from these two fields) — never silently dropped, never a fake master',
+      !!danglingChild && danglingChild.dangling_parent === true &&
+      danglingChild.parent_plan === 'no-such-master-anywhere' && danglingChild.resolved_parent === '' &&
+      topIds.indexOf('dangling-child-fixture') !== -1,
+      danglingChild && JSON.stringify({ dp: danglingChild.dangling_parent, pp: danglingChild.parent_plan, rp: danglingChild.resolved_parent }));
+
+    // ---- R11 Critical 4(1): PINNING an aged-out master with a live child ----
+    const pinnedMaster = findItem(items, 'pinned-master-fixture');
+    ok('R11 Critical 4(1): a master normally EXCLUDED by archive-aging (zero recency evidence) is PINNED on the tree because a non-terminal child still references it',
+      !!pinnedMaster && pinnedMaster.pinned === true && topIds.indexOf('pinned-master-fixture') !== -1,
+      JSON.stringify(pinnedMaster && { pinned: pinnedMaster.pinned, reason: pinnedMaster.pinned_reason }));
+    ok('R11 the pinned master correctly resolves its child + aggregates the two labeled counts (Critical 5)',
+      !!pinnedMaster && Array.isArray(pinnedMaster.child_plans) && pinnedMaster.child_plans.length === 1 &&
+      pinnedMaster.child_plans[0].id === 'pinned-child-fixture' && !!pinnedMaster.master_summary &&
+      topIds.indexOf('pinned-child-fixture') === -1,
+      pinnedMaster && JSON.stringify(pinnedMaster.child_plans && pinnedMaster.child_plans.map((c) => c.id)));
+
+    // ---- R11 Critical 4(3)/(4) UNIT tests: applyMasterHierarchy in isolation
+    // (same-project scoping + cycle-breaking) — no filesystem/HTTP involved,
+    // deterministic regardless of file-mtime ordering. ----
+    (function () {
+      function fakeNode(id, project, parentPlan) {
+        return { id: id, project: project, parent_plan: parentPlan || '', status: { value: 'in-progress' }, progress: null, roll_up: {} };
+      }
+      const crossProjItems = [fakeNode('master-x', 'projX', ''), fakeNode('child-wrong-project', 'projY', 'master-x')];
+      const crossHier = roadmapRoutes.applyMasterHierarchy(crossProjItems);
+      const childWrong = crossHier.topLevel.find((x) => x.id === 'child-wrong-project');
+      ok('R11 Critical 4(3) unit: a parent_plan slug match in a DIFFERENT project is treated as unresolved (dangling) — cross-repo resolution is out of scope this round',
+        !!childWrong && childWrong.dangling_parent === true && childWrong.resolved_parent === '',
+        JSON.stringify(childWrong));
+
+      const cycleItems = [fakeNode('cyc-a', 'projZ', 'cyc-b'), fakeNode('cyc-b', 'projZ', 'cyc-a')];
+      const cycleHier = roadmapRoutes.applyMasterHierarchy(cycleItems);
+      const cycA = cycleItems.find((x) => x.id === 'cyc-a');
+      const cycB = cycleItems.find((x) => x.id === 'cyc-b');
+      ok('R11 Critical 4(4) unit: an A<->B parent-plan cycle flags BOTH plans, each naming the other',
+        cycA.cycle_flag === true && cycB.cycle_flag === true &&
+        cycA.cycle_with === 'cyc-b' && cycB.cycle_with === 'cyc-a',
+        JSON.stringify({ a: { f: cycA.cycle_flag, w: cycA.cycle_with }, b: { f: cycB.cycle_flag, w: cycB.cycle_with } }));
+      ok('R11 Critical 4(4) unit: the cycle is broken at exactly ONE edge — exactly one of the two is a top-level root, the other nests under it (never both roots, never both vanish)',
+        cycleHier.topLevel.some((x) => x.id === 'cyc-a') !== cycleHier.topLevel.some((x) => x.id === 'cyc-b'),
+        JSON.stringify(cycleHier.topLevel.map((x) => x.id)));
+    })();
 
     // ---- GHOST-BOUNDING (2026-07-21 fix): a recently-linked missing plan
     // still renders as an honest unknown root; an ANCIENT one (its only

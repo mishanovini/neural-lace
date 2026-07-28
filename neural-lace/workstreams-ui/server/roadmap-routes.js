@@ -646,7 +646,7 @@ function deriveUnboundSessionsNode(hbCtx) {
 // deriveTaskNode(slug, t, ...) — id scheme is now `<slug>/<task_id>` (the
 // ask_id segment is gone: plans, not asks, are the root, so a task's
 // address is relative to its plan alone).
-function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx) {
+function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabel) {
   let status;
   let completedAt = '';
   const taskSessionIds = (sessionsByTask && sessionsByTask[t.id]) || [];
@@ -690,6 +690,7 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     kind: 'task',
     title: 'task ' + t.id + ': ' + distilled.title,
     title_source: 'auto',
+    batch: batchLabel || '', // R11 Critical 1/2: '' when the plan carries no batch structure
     project: '', provenance: 'operator', provenance_reason: '',
     rank: null, added_ts: '', added_mid_build: false,
     status: status,
@@ -784,10 +785,17 @@ const H1_PLAN_TITLE_RE = /^#\s*Plan\s*[:—-]\s*(.+?)\s*$/;
 // (`provenance: machine` / `provenance: operator`) that overrides the slug
 // heuristic below in EITHER direction (R9-4's own binding requirement).
 const PROVENANCE_HEADER_RE = /^provenance:\s*(machine|operator)\s*$/im;
+// R11-A (operator round 11): the master-plan hierarchy made MECHANICAL.
+// `parent-plan: <slug>` in a plan's header block declares this plan a CHILD
+// of the named master plan. Practice-verified (child plans spawned from
+// oversized tasks, e.g. the A2P C2 family); previously prose-only, which is
+// why the tree couldn't render the grouping. Optional — absent means
+// standalone; NEVER inferred from prose (round-9 disease rule).
+const PARENT_PLAN_HEADER_RE = /^parent-plan:\s*([a-z0-9._-]+)\s*$/im;
 
 function planFileHeaderExtras(absPath) {
   let text;
-  try { text = fs.readFileSync(absPath, 'utf8'); } catch (_) { return { h1Title: '', provenanceField: '' }; }
+  try { text = fs.readFileSync(absPath, 'utf8'); } catch (_) { return { h1Title: '', provenanceField: '', parentPlan: '' }; }
   const stripped = text.replace(/<!--[\s\S]*?-->/g, '');
   const lines = stripped.split('\n');
   let h1Title = '';
@@ -801,7 +809,63 @@ function planFileHeaderExtras(absPath) {
            // deeper heuristic hunts for a title buried mid-file).
   }
   const pm = PROVENANCE_HEADER_RE.exec(text);
-  return { h1Title: h1Title, provenanceField: pm ? pm[1].toLowerCase() : '' };
+  const pp = PARENT_PLAN_HEADER_RE.exec(text);
+  return {
+    h1Title: h1Title,
+    provenanceField: pm ? pm[1].toLowerCase() : '',
+    parentPlan: pp ? pp[1] : '',
+  };
+}
+
+// R11 Critical 1/2 batch derivation — REPLACES the R11-A single-letter
+// `taskBatchLetter` (that shape rendered a bare "A"/"B", which the binding
+// ux-review (docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md)
+// rejected: every derived label must quote a string that exists in the
+// source artifact — a bare letter quotes nothing).
+//
+// The ONLY two batch sources, in priority order, NEVER title/description
+// text (the PROVEN trap: conversation-quality-phase2's letters are title
+// cross-references over plain 0-9 ids — title-derivation would invert its
+// real P0->P5 priority order; this function never reads title/description,
+// only the task's own `.id` token and plan-parse.js's new `.section`
+// field, so that trap cannot reach it structurally):
+//   (a) `###` sub-headings inside `## Tasks` — plan-parse.js's `.section`
+//       field, VERBATIM, grouped into contiguous runs (never re-sorted).
+//   (b) a single-uppercase-letter id PREFIX (`A1`, `B2`) — grouped into
+//       contiguous SAME-LETTER runs in file order; label = the mechanical
+//       span "Tasks <first>-<last>" (or "Task <id>" for a length-1 run) —
+//       the "foundations->engine->..." GLOSS never renders (practice, not
+//       data).
+// Returns {<taskId>: <batch label>, ...} — '' for a task in neither shape
+// (honest absence; the renderer shows it directly, no batch wrapper).
+function deriveTaskBatches(tasks) {
+  const list = tasks || [];
+  const labels = {};
+  const hasHeadings = list.some((t) => t.section);
+  if (hasHeadings) {
+    list.forEach((t) => { labels[t.id] = t.section || ''; });
+    return labels;
+  }
+  const LETTER_PREFIX_RE = /^([A-Z])[0-9]/;
+  let runIds = [], runLetter = '';
+  function closeRun() {
+    if (!runIds.length) return;
+    const label = runIds.length > 1
+      ? ('Tasks ' + runIds[0] + '–' + runIds[runIds.length - 1])
+      : ('Task ' + runIds[0]);
+    runIds.forEach((id) => { labels[id] = label; });
+    runIds = []; runLetter = '';
+  }
+  list.forEach((t) => {
+    const m = LETTER_PREFIX_RE.exec(String(t.id || ''));
+    const letter = m ? m[1] : '';
+    if (!letter) { closeRun(); labels[t.id] = ''; return; }
+    if (runLetter && runLetter !== letter) closeRun();
+    runLetter = letter;
+    runIds.push(t.id);
+  });
+  closeRun();
+  return labels;
 }
 
 // R9-4 — slug-prefix/word heuristics, scanned against the REAL live plan
@@ -863,6 +927,7 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     title_source: operatorTitle ? 'operator' : 'auto',
     project: (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath),
     plan_path: pf.absPath, // R9 follow-up (operator 2026-07-24): every phase IS a plan file — link it
+    parent_plan: headerExtras.parentPlan, // R11-A: '' = standalone; slug = child of that master
     provenance: provClass.provenance, provenance_reason: provClass.provenance_reason,
     rank: null, added_ts: addedTs, added_mid_build: false,
     status: null, progress: null, completed_at: '',
@@ -912,7 +977,8 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
   });
 
   const tasks = loaded.tasks || [];
-  node.children = tasks.map((t) => deriveTaskNode(pf.slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx));
+  const batchLabels = deriveTaskBatches(tasks); // R11 Critical 1/2
+  node.children = tasks.map((t) => deriveTaskNode(pf.slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabels[t.id]));
   const total = tasks.length;
   const done = tasks.filter((t) => t.done).length;
   const anyInProgress = node.children.some((c) => c.status.value === 'in-progress');
@@ -956,29 +1022,211 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
 // exemplar} where exemplar is one item id a badge click can expand to.
 // Unchanged by the re-rooting: it only ever reads a child's own
 // status.value/reason_class, generically, regardless of kind.
+function absorbIntoRollUp(agg, cls, count, exemplar) {
+  if (!agg[cls]) agg[cls] = { count: 0, exemplar: exemplar };
+  agg[cls].count += count;
+  if (!agg[cls].exemplar) agg[cls].exemplar = exemplar;
+}
+
+// absorbOneChildRollUp(agg, child) — the one rule shared by computeRollUps
+// (own-task children) and absorbChildPlanRollUps (R11 master/child-plan
+// nesting, below): a stalled/unknown child contributes ONE count under its
+// class, PLUS whatever the child already rolled up from its own subtree.
+function absorbOneChildRollUp(agg, child) {
+  const st = child.status || {};
+  if (st.value === 'stalled') {
+    const cls = ROLLUP_CLASSES.indexOf(st.reason_class) !== -1 ? st.reason_class : 'blocked-on';
+    absorbIntoRollUp(agg, cls, 1, child.id);
+  }
+  if (st.value === 'unknown') absorbIntoRollUp(agg, 'unknown', 1, child.id);
+  Object.keys(child.roll_up || {}).forEach((cls) => {
+    absorbIntoRollUp(agg, cls, child.roll_up[cls].count, child.roll_up[cls].exemplar);
+  });
+}
+
 function computeRollUps(node) {
   const agg = {};
-  function absorb(cls, count, exemplar) {
-    if (!agg[cls]) agg[cls] = { count: 0, exemplar: exemplar };
-    agg[cls].count += count;
-    if (!agg[cls].exemplar) agg[cls].exemplar = exemplar;
-  }
   (node.children || []).forEach((child) => {
     computeRollUps(child);
-    const st = child.status || {};
-    if (st.value === 'stalled') {
-      const cls = ROLLUP_CLASSES.indexOf(st.reason_class) !== -1 ? st.reason_class : 'blocked-on';
-      absorb(cls, 1, child.id);
-    }
-    if (st.value === 'unknown') absorb('unknown', 1, child.id);
-    Object.keys(child.roll_up || {}).forEach((cls) => {
-      absorb(cls, child.roll_up[cls].count, child.roll_up[cls].exemplar);
-    });
+    absorbOneChildRollUp(agg, child);
   });
   node.roll_up = agg;
 }
 
-function buildRoadmapPayload() {
+// absorbChildPlanRollUps(node) — R11 Critical 1 generalization: a master's
+// roll-up badges must ALSO reflect its resolved CHILD PLANS (node.child_plans,
+// applyMasterHierarchy below), not just its own direct tasks — "applies to
+// EVERY leaf-derived attention signal ... audited against the law, not just
+// stalled." Mutates node.roll_up (already seeded by computeRollUps above,
+// from the master's own tasks) rather than replacing it — both sources
+// count toward the SAME per-class badge.
+function absorbChildPlanRollUps(node) {
+  (node.child_plans || []).forEach((child) => { absorbOneChildRollUp(node.roll_up, child); });
+}
+
+// ----------------------------------------------------------------------
+// R11 Critical 3/4/5 — the master-plan hierarchy: reference lifecycle +
+// master aggregation. Ships in the SAME round as the renderer rebuild per
+// Critical 3 ("acceptance oracle = master nodes visibly group their REAL
+// children on the live tree, never 'renderer supports parent-plan'").
+// ----------------------------------------------------------------------
+
+// repoRootFromAbsPath(absPath) -> the repo root a plan file lives under
+// (the part of its path before `/docs/plans/...`), used to re-resolve a
+// SAME-PROJECT parent-plan reference directly, bypassing discovery filters
+// entirely (the pinning case below).
+function repoRootFromAbsPath(absPath) {
+  if (!absPath) return '';
+  const m = String(absPath).replace(/\\/g, '/').match(/^(.*)\/docs\/plans\//);
+  return m ? m[1] : '';
+}
+
+// pinDanglingActiveMasters(items, ...) — Critical 4(1): "a master with ANY
+// non-terminal child is PINNED on the tree regardless of its own
+// aging/archive status." A master can be excluded from `items` by the
+// normal archive-aging gate (discoverPlanFiles) even though a still-active
+// child plan names it as `parent-plan:` — this direct-loads that master
+// file (same repo root as the child, SAME-PROJECT ONLY — decide-and-go (b):
+// cross-repo parent-plan out of scope until configured) bypassing the aging
+// cutoff (never bypassing plan-status eligibility — a REFERENCE/NORMATIVE
+// master still does not belong on the tree). A genuinely-absent parent file
+// is left alone here — it stays dangling, handled by applyMasterHierarchy.
+function pinDanglingActiveMasters(items, planAskLinks, planRankOverlay, hbCtx) {
+  const bySlug = {};
+  items.forEach((n) => { bySlug[n.id] = n; });
+  const attempted = {};
+  items.slice().forEach((child) => {
+    const parentSlug = child.parent_plan;
+    if (!parentSlug || bySlug[parentSlug] || attempted[parentSlug]) return;
+    attempted[parentSlug] = true;
+    if (child.status && child.status.value === 'complete') return; // pin rule is for a NON-TERMINAL child only
+    const childRepoRoot = repoRootFromAbsPath(child.plan_path);
+    if (!childRepoRoot) return;
+    const abs = planParse.resolvePlanAbsPath(childRepoRoot, parentSlug);
+    if (!abs) return; // genuinely absent -> stays dangling
+    let text;
+    try { text = fs.readFileSync(abs, 'utf8'); } catch (_) { return; }
+    if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
+    if (planProjectFromPath(abs) !== child.project) return; // same-project resolution ONLY
+    const pf = { slug: parentSlug, absPath: abs, archived: /[\\/]archive[\\/]/.test(abs), mtimeMs: 0 };
+    const linkedAsks = planAskLinks[parentSlug] || [];
+    const node = derivePlanRootNode(pf, linkedAsks, hbCtx);
+    node.rank = planEffectiveRank(pf, linkedAsks, planRankOverlay);
+    node.pinned = true;
+    node.pinned_reason = "kept on the tree: a non-terminal child plan ('" + child.id + "') still references it";
+    computeRollUps(node);
+    bySlug[parentSlug] = node;
+    items.push(node);
+  });
+  return items;
+}
+
+// applyMasterHierarchy(items) -> {topLevel} — Critical 4(2)(3)(4) + Critical
+// 5, in one pass over the already-built, already-sorted flat item list:
+//   (2) dangling parent -> child stays standalone, `dangling_parent: true`
+//       (client renders the "parent '<slug>' not found" badge from the
+//       already-present `parent_plan` string — no extra field needed).
+//   (3) resolution is SAME-PROJECT-SCOPED — a same-slug match in a
+//       DIFFERENT project is treated as unresolved (never cross-repo this
+//       round).
+//   (4) a cycle (A's resolved parent is B, B's is ... A) is broken at the
+//       BACK EDGE (the revisiting node's own resolved-parent link is
+//       dropped, so it renders standalone) and BOTH endpoints are flagged.
+// Critical 5: a master's TWO labeled counts (`master_summary.plans` = child
+// plan completion fraction, `master_summary.own_tasks` = the master's own
+// direct-task fraction) are computed here, NEVER blended into one number.
+// The `[master]` tag (client-side) is driven ONLY by `child_plans.length`,
+// i.e. only from RESOLVED children — never merely from a declared
+// `parent_plan` string on some other plan.
+function applyMasterHierarchy(items) {
+  const bySlug = {};
+  items.forEach((n) => {
+    n.dangling_parent = false;
+    n.cycle_flag = false;
+    n.cycle_with = '';
+    n.resolved_parent = '';
+    n.child_plans = [];
+    n.master_summary = null;
+    bySlug[n.id] = n;
+  });
+
+  items.forEach((n) => {
+    if (!n.parent_plan) return;
+    const cand = bySlug[n.parent_plan];
+    if (cand && cand.project === n.project) n.resolved_parent = n.parent_plan;
+    else n.dangling_parent = true; // not found, or a cross-project match (out of scope this round)
+  });
+
+  // Cycle detection: DFS over resolved_parent edges with a recursion stack;
+  // a back-edge to a node CURRENTLY on the stack is the cycle. Break it by
+  // clearing the REVISITING node's own resolved_parent (that one edge never
+  // renders); flag BOTH endpoints so the operator sees the whole cycle.
+  const state = {};
+  function visit(id, stack) {
+    if (state[id] === 'done' || state[id] === 'visiting') return;
+    const node = bySlug[id];
+    if (!node) return;
+    state[id] = 'visiting';
+    stack.push(id);
+    const p = node.resolved_parent;
+    if (p) {
+      if (stack.indexOf(p) !== -1) {
+        node.cycle_flag = true; node.cycle_with = p;
+        const other = bySlug[p];
+        if (other) { other.cycle_flag = true; if (!other.cycle_with) other.cycle_with = id; }
+        node.resolved_parent = ''; // break the back-edge -> this node renders standalone
+      } else {
+        visit(p, stack);
+      }
+    }
+    stack.pop();
+    state[id] = 'done';
+  }
+  items.forEach((n) => visit(n.id, []));
+
+  // Nest: every surviving resolved_parent edge makes this node a
+  // `child_plans` entry of its master.
+  items.forEach((n) => {
+    if (n.resolved_parent && bySlug[n.resolved_parent]) {
+      bySlug[n.resolved_parent].child_plans.push(n);
+    }
+  });
+
+  // Master aggregation (Critical 5) + roll-up absorption (C1 generalization
+  // — a master's badges must reflect its child plans too), processed
+  // children-before-parents so a multi-level master's own absorption
+  // already sees its children's FINALIZED roll-ups (the tree is acyclic
+  // post cycle-breaking, so this recursion always terminates).
+  const finalized = {};
+  function finalize(id) {
+    if (finalized[id]) return;
+    finalized[id] = true;
+    const node = bySlug[id];
+    if (!node) return;
+    node.child_plans.forEach((c) => finalize(c.id));
+    if (node.child_plans.length) {
+      const done = node.child_plans.filter((c) => c.status && c.status.value === 'complete').length;
+      node.master_summary = {
+        plans: { done: done, total: node.child_plans.length },
+        own_tasks: node.progress ? { done: node.progress.done, total: node.progress.total } : { done: 0, total: 0 },
+      };
+      absorbChildPlanRollUps(node);
+    }
+  }
+  items.forEach((n) => finalize(n.id));
+
+  return { topLevel: items.filter((n) => !n.resolved_parent) };
+}
+
+// buildRoadmapTree() -> {flatItems, topLevel, ghostCount} — the shared
+// derivation core: EVERY plan node (masters, standalones, and every
+// resolved child plan) in ONE flat array (flatItems — the id-addressable
+// set the rank/title endpoints below resolve against, since a nested child
+// plan keeps its own `id` and must stay reachable for edits/reorder), plus
+// `topLevel` (Critical 3/4: child plans nested under their master are
+// REMOVED from the top-level list — they render only once, under their
+// master's "Plans — build order" subsection).
+function buildRoadmapTree() {
   const byAsk = foldRegistryForRoadmap();
   const planAskLinks = buildPlanAskLinks(byAsk);
   const scanRoot = planScanRoot();
@@ -996,13 +1244,18 @@ function buildRoadmapPayload() {
   // heartbeats/nowMs already use for this exact request-scoped object.
   const hbCtx = { heartbeats: hbResult.heartbeats, heartbeatsStoreOk: hbResult.ok, nowMs: Date.now(), boundSessionIds: {} };
 
-  const items = planFiles.map((pf) => {
+  let items = planFiles.map((pf) => {
     const linkedAsks = planAskLinks[pf.slug] || [];
     const node = derivePlanRootNode(pf, linkedAsks, hbCtx);
     node.rank = planEffectiveRank(pf, linkedAsks, planRankOverlay);
     computeRollUps(node);
     return node;
   });
+
+  // R11 Critical 4(1): pin a master excluded by aging when a non-terminal
+  // child still references it — BEFORE the build-order sort, so a pinned
+  // master participates in ordering like any other item.
+  items = pinDanglingActiveMasters(items, planAskLinks, planRankOverlay, hbCtx);
 
   // Build order (A7 + round 8): ranked items by rank, then everything else
   // by the fallback added_ts (earliest-created first) — the pinned DEFAULT.
@@ -1017,19 +1270,48 @@ function buildRoadmapPayload() {
   // boundSessionIds reflects the WHOLE tree, not just one plan.
   const unboundSessionsNode = deriveUnboundSessionsNode(hbCtx);
 
+  // R11 Critical 3/4/5: resolve parent-plan -> nest verified children under
+  // their master, break+flag cycles, aggregate the two labeled counts.
+  const hierarchy = applyMasterHierarchy(items);
+
+  return {
+    flatItems: items, // every node, id-addressable, incl. nested child plans
+    topLevel: hierarchy.topLevel,
+    ghostCount: discovered.ghostCount,
+    unboundSessionsNode: unboundSessionsNode,
+  };
+}
+
+function buildRoadmapPayload() {
+  const tree = buildRoadmapTree();
   return {
     ok: true,
     generated_at: new Date().toISOString(),
     completed_age_days: COMPLETED_AGE_DAYS,
-    unbound_sessions: unboundSessionsNode,
+    unbound_sessions: tree.unboundSessionsNode,
     // stale_links_omitted (2026-07-21 ghost-bounding fix): the count of
     // ask-linked plan slugs whose file could not be resolved AND whose
     // newest linking ask is older than completed_age_days — excluded from
     // `items` entirely (never 150+ dead roots), but named here as ONE
     // honest aggregate rather than a silent drop (C5).
-    stale_links_omitted: discovered.ghostCount,
-    items: items,
+    stale_links_omitted: tree.ghostCount,
+    items: tree.topLevel,
   };
+}
+
+// computeSiblingIds(tree, itemId) -> [id, ...] | null — R11 Important I3:
+// "reorder scoped WITHIN the current sibling list." A nested child plan's
+// siblings are its master's OTHER resolved child plans (`child_plans`,
+// already in build order); everything else (masters + standalone plans)
+// shares the top-level list, exactly as before nesting existed.
+function computeSiblingIds(tree, itemId) {
+  const node = tree.flatItems.find((n) => n.id === itemId);
+  if (!node) return null;
+  if (node.resolved_parent) {
+    const parent = tree.flatItems.find((n) => n.id === node.resolved_parent);
+    if (parent) return (parent.child_plans || []).map((c) => c.id);
+  }
+  return tree.topLevel.map((n) => n.id);
 }
 
 // firstLinkedAskId(slug) — the ONE-writer delegation target for a title/
@@ -1122,10 +1404,14 @@ function handle(req, res) {
       const itemId = typeof input.id === 'string' ? input.id : '';
       const direction = input.direction === 'up' ? 'up' : (input.direction === 'down' ? 'down' : '');
       if (!itemId || !direction) return sendJson(res, 400, { ok: false, error: 'id and direction (up|down) are required' });
-      let payload;
-      try { payload = buildRoadmapPayload(); }
+      let tree;
+      try { tree = buildRoadmapTree(); }
       catch (e) { return sendJson(res, 500, { ok: false, error: String(e && e.message || e) }); }
-      const ids = payload.items.map((i) => i.id);
+      // R11 I3: reorder is scoped WITHIN the current sibling list — a nested
+      // child plan reorders among its master's other child plans, never the
+      // whole tree.
+      const ids = computeSiblingIds(tree, itemId);
+      if (!ids) return sendJson(res, 404, { ok: false, error: 'roadmap item not found: ' + itemId });
       const idx = ids.indexOf(itemId);
       if (idx === -1) return sendJson(res, 404, { ok: false, error: 'roadmap item not found: ' + itemId });
       const swapWith = direction === 'up' ? idx - 1 : idx + 1;
@@ -1135,14 +1421,12 @@ function handle(req, res) {
       const newOrder = ids.slice();
       newOrder[idx] = ids[swapWith];
       newOrder[swapWith] = itemId;
-      // Materialize the FULL order into the plan-rank overlay (instant,
-      // works today regardless of ask linkage); additionally best-effort
-      // record the moved plan's FIRST linked ask's rank in the registry
-      // when one exists (preserving the pre-existing registry-writeback
-      // for the common linked case) — a plan with no linked ask simply
-      // skips that best-effort delegation (registry_recorded:false), an
-      // honest degrade, never a crash.
-      const overlay = {};
+      // Merge into the EXISTING overlay (read, not replace): only THIS
+      // sibling group's ranks change — a different master's children (or
+      // the top-level list, when this reorder is itself nested) must keep
+      // their own stored ranks untouched (I3 scoping applies to the WRITE
+      // too, not just the computed order).
+      const overlay = readPlanRankOverlay();
       newOrder.forEach((id, i) => { overlay[id] = (i + 1) * 10; });
       try { writePlanRankOverlay(overlay); }
       catch (e) { return sendJson(res, 500, { ok: false, error: 'could not save the new order' }); }
@@ -1203,4 +1487,10 @@ module.exports = {
   slugLooksMachineFiled,
   configuredRepoRoots,
   deriveUnboundSessionsNode,
+  // R11 (round 11) exports — batch derivation + master hierarchy (test/reuse hooks)
+  deriveTaskBatches,
+  buildRoadmapTree,
+  applyMasterHierarchy,
+  pinDanglingActiveMasters,
+  repoRootFromAbsPath,
 };

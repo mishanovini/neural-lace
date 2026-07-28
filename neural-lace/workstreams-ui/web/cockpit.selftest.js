@@ -1015,13 +1015,13 @@ ok('T3-38 the completed-rollup summary text uses the item\'s (already-distilled)
   / completed ▸ — latest: '\s*\+\s*\(aged\[0\]\.title/.test(roadmapJsNoComments));
 
 // --- gap 6: connected phase series for sibling plan nodes -----------------
-ok('T3-39 isPhaseSeries/phaseLabel: sibling PLAN children render as a numbered "Phase N of M" series; non-plan children (tasks under a plan, intents at top level) do not',
+ok('T3-39 isPhaseSeries/buildOrderLabel: sibling PLAN children render as a numbered "#N of M" series (R11 I5: "phases" terminology retired — a bare "#2 of 4", never "Phase 2 of 4"); non-plan children (tasks under a plan, intents at top level) do not',
   (function () {
     const a = runPure(phaseSeriesSrc, 'isPhaseSeries([{kind:"plan"},{kind:"plan"}])');
     const b = runPure(phaseSeriesSrc, 'isPhaseSeries([{kind:"task"},{kind:"task"}])');
     const c = runPure(phaseSeriesSrc, 'isPhaseSeries([])');
-    const label = runPure(phaseSeriesSrc, 'phaseLabel(1, 4)');
-    return a === true && b === false && c === false && label === 'Phase 2 of 4';
+    const label = runPure(phaseSeriesSrc, 'buildOrderLabel(1, 4)');
+    return a === true && b === false && c === false && label === '#2 of 4';
   })());
 ok('T3-40 renderChildList wraps a phase-series in a text-labeled connector (.rm-phase-step + the R10-1 INLINE .rm-phase-inline label on the title row), never color-only, and CSS draws the connector as an ADDITIVE line (never the only cue)',
   /rm-phase-series/.test(roadmapJsNoComments) && /rm-phase-step/.test(roadmapJsNoComments) &&
@@ -1037,9 +1037,10 @@ ok('R10-2 every node row carries an explicit disclosure chevron that rotates on 
 ok('R10-3 the project group header carries the aggregate series progress — bar + ALWAYS the "N/M complete" text (never bar-only)',
   /rm-group-progress-fill/.test(roadmapJsNoComments) && /rm-group-progress-text/.test(roadmapJsNoComments) &&
   /complete'/.test(roadmapJsNoComments));
-ok('R10-4 reorder feedback names WHAT moved, its NEW position, and WHOSE build order — never a bare "Order updated"',
-  /now phase ' \+ \(newIdx \+ 1\)/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')) &&
-  /intended build order/.test(roadmapJsNoComments) && !/say\('Order updated\.'/.test(roadmapJsNoComments));
+ok('R10-4 reorder feedback names WHAT moved, its NEW position, and WHOSE build order — never a bare "Order updated" (R11 I5: "#N of M", never "phase N of M")',
+  /now #' \+ \(newIdx \+ 1\)/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')) &&
+  /build order/.test(roadmapJsNoComments) && !/say\('Order updated\.'/.test(roadmapJsNoComments) &&
+  !/now phase '/.test(roadmapJsNoComments));
 
 // --- gap 4: compact icon chrome, hover/focus-within, never hover-only -----
 ok('T3-41 Edit-title/Move-up/Move-down are compact icon buttons (short glyph text) carrying a full aria-label — never bare icons with no accessible name',
@@ -1075,10 +1076,38 @@ ok('R8-1 the "intent" kind is GONE from roadmap.js entirely — the tree roots o
   !/kind === 'intent'/.test(roadmapJsNoComments) && !/'rm-kind-intent'/.test(roadmapJsNoComments));
 ok('R8-2 the compact edit/rank chrome (drilldown) now gates on kind:"plan" — plans are the new top-level, editable/reorderable object',
   /item\.kind === 'plan'/.test(roadmapJsNoComments));
-ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/phaseLabel connector treatment renderChildList already used one level down — since R9-2, numbered WITHIN the project group (never a flat cross-project series)',
+ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/buildOrderLabel connector treatment renderChildList already used one level down — since R9-2, numbered WITHIN the project group (never a flat cross-project series)',
   /isPhaseSeries\(live\)/.test(roadmapJsNoComments) &&
-  /rm-phase-series/.test(roadmapJsNoComments) && /phaseLabel\(gi, g\.items\.length\)/.test(roadmapJsNoComments) &&
-  !/phaseLabel\(i, live\.length\)/.test(roadmapJsNoComments));
+  /rm-phase-series/.test(roadmapJsNoComments) && /buildOrderLabel\(gi, g\.items\.length\)/.test(roadmapJsNoComments) &&
+  !/buildOrderLabel\(i, live\.length\)/.test(roadmapJsNoComments));
+
+// --- R11 (round 11, 2026-07-28) — master-plan hierarchy client render ---
+// docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md is the BINDING
+// build spec; server-side derivation is roadmap-routes.selftest.js's own
+// R11 block — these pins cover the CLIENT rendering contract only.
+ok('R11-C1 a master renders TWO SEPARATE labeled fractions ("plans done/total", "own tasks done/total") — never one blended progress number — and the [master] tag/fraction chips are driven ONLY by master_summary (i.e. only resolved children)',
+  /function masterSummaryNode/.test(roadmapJsNoComments) &&
+  /'plans '\s*\+\s*ms\.plans\.done/.test(roadmapJsNoComments) &&
+  /'own tasks '\s*\+\s*ms\.own_tasks\.done/.test(roadmapJsNoComments) &&
+  /if \(item\.master_summary\)/.test(roadmapJsNoComments));
+ok('R11-C2 a master SUPPRESSES the plain progress bar in favor of the two labeled fractions (never renders both — that would be the blended-number trap in a different shape)',
+  /if \(item\.master_summary\) \{\s*sum\.appendChild\(masterSummaryNode\(item\)\);\s*\} else \{/.test(roadmapJsNoComments.replace(/\n\s*/g, '\n')) ||
+  /masterSummaryNode\(item\)\);\s*\} else \{\s*var prog = progressNode/.test(roadmapJsNoComments));
+ok('R11-C3 dangling parent-plan renders a REAL button badge naming the missing slug ("parent \'<slug>\' not found") — never silently dropped, never a fake master; a broken cycle renders a distinct badge naming the other plan',
+  /function referenceLifecycleBadges/.test(roadmapJsNoComments) &&
+  /"parent '" \+ item\.parent_plan \+ "' not found"/.test(roadmapJsNoComments) &&
+  /cycle detected with/.test(roadmapJsNoComments));
+ok('R11-C4 a master\'s two child kinds render as TWO LABELED subsections ("Plans — build order" then "Direct tasks — task id"), reusing the SAME details/summary renderChildList path (I6 — no bespoke markup)',
+  /'Plans — build order'/.test(roadmapJsNoComments) && /'Direct tasks — task id'/.test(roadmapJsNoComments) &&
+  /function renderLabeledSubsection/.test(roadmapJsNoComments));
+ok('R11-C5 task children carrying a `.batch` label group into a details/summary BATCH ROW (verbatim label + done/total fraction chip); a task with no batch label still renders directly, unwrapped',
+  /function renderTaskBatches/.test(roadmapJsNoComments) && /function renderBatchRow/.test(roadmapJsNoComments) &&
+  /done \+ '\/' \+ tasks\.length/.test(roadmapJsNoComments) && /rm-batch-label/.test(roadmapJsNoComments));
+ok('R11-C6 both tree traversals (findItemData, pathTo) recurse into `child_plans`, not just `children` — a nested resolved child plan stays hash-addressable and reachable by a roll-up-badge expand exactly like any other item',
+  /findItemData\(id, items\[i\]\.children \|\| \[\]\) \|\| findItemData\(id, items\[i\]\.child_plans \|\| \[\]\)/.test(roadmapJsNoComments) &&
+  /pathTo\(id, items\[i\]\.children \|\| \[\], t\) \|\| pathTo\(id, items\[i\]\.child_plans \|\| \[\], t\)/.test(roadmapJsNoComments));
+ok('R11-C7 the substring filter (I4) also searches a master\'s resolved child plans, not just its own tasks — a filter match keeps its full ancestor chain visible',
+  /childPlans\[k\], q/.test(roadmapJsNoComments));
 
 // --- Round 9 (operator audit 2026-07-23 — the audit table IS the oracle) ---
 // R9-2: the top level groups by PROJECT with a visible header; the pure
@@ -1106,9 +1135,26 @@ ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/phaseLab
     g.length === 2 && g[0].project === 'neural-lace' && g[0].items.length === 2 &&
     g[0].items[0].id === 'a' && g[0].items[1].id === 'c' && g[1].project === 'foresight');
   var h = sandbox.out && sandbox.out.h ? sandbox.out.h('neural-lace', g[0] ? g[0].items : []) : '';
-  ok('R9-2b projectGroupHeaderText names the project + plan count ("N plans, in build order" — each phase IS a plan) + status spread (text, never color-only)',
-    /neural-lace/.test(h) && /2 plans, in build order/.test(h) && /1 complete/.test(h) && /1 not started/.test(h));
+  ok('R9-2b projectGroupHeaderText names the project + plan count + the R11 FOUR-BUCKET strip in the operator\'s round-1 words',
+    /neural-lace/.test(h) && /2 plans, in build order/.test(h) && /1 complete/.test(h) && /1 upcoming/.test(h));
+  // R11 anatomy L0 (orchestrator gap-closure): the four-bucket mapping law.
+  var h2 = sandbox.out && sandbox.out.h ? sandbox.out.h('p', [
+    { status: { value: 'not-started' } }, { status: { value: 'stalled' } },
+    { status: { value: 'merged-unverified' } }, { status: { value: 'unknown' } },
+  ]) : '';
+  ok('R11-L0 the strip maps not-started→upcoming, stalled→in progress (lifecycle position; the stall shows via badges), merged-unverified→partially done, and appends unknown separately when nonzero',
+    /1 upcoming/.test(h2) && /1 in progress/.test(h2) && /1 partially done/.test(h2) && /1 status unknown/.test(h2));
 })();
+// R11 Critical 6 (orchestrator gap-closure): active-path default expansion.
+ok('R11-C6 containers default OPEN only when the SUBTREE holds active work (in-progress / live session / waiting-on-you); toggle stores true AND false so an explicit close survives re-renders; only user deviations recorded',
+  /function subtreeHasActive/.test(roadmapJsNoComments) && /function defaultOpen/.test(roadmapJsNoComments) &&
+  /openSet\[item\.id\] = det\.open/.test(roadmapJsNoComments) &&
+  /renderedOpen/.test(roadmapJsNoComments) &&
+  !/if \(openSet\[item\.id\]\) det\.open = true;/.test(roadmapJsNoComments));
+// R11 I4 (orchestrator gap-closure): kanban cards stay plans; masters are chips.
+ok('R11-I4 kanban flattens child_plans into cards (masters never cards) and each child card carries its master chip (rm-master-tag)',
+  /cardEntries/.test(roadmapJsNoComments) && /rm-master-tag/.test(roadmapJsNoComments) &&
+  /it\.master_summary/.test(roadmapJsNoComments));
 ok('R9-2c renderTree renders the group header element (rm-project-group-head) and scopes phase steps inside the group container',
   /rm-project-group-head/.test(roadmapJsNoComments) && /groupItemsByProject\(live\)/.test(roadmapJsNoComments));
 ok('R9-2d reorder stays GLOBAL: renderNode receives the item\'s index in the full build-order list, never the group-local index',

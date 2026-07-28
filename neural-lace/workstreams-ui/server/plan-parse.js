@@ -57,7 +57,18 @@
 // convention of small, deliberately duplicated per-file glue — see
 // auditor.js's header "WHY THE READERS BELOW ARE DUPLICATED")
 // ============================================================
-//   parseTasks(markdown)        -> [{id, done, description}, ...]
+//   parseTasks(markdown)        -> [{id, done, description, section}, ...]
+//     R11 EXTENSION (2026-07-28, operator round 11, "batch source" Critical
+//     1/2 — docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md): each
+//     task now also carries `section`, the VERBATIM text of the nearest
+//     `###` sub-heading appearing INSIDE the file's `## Tasks` section, in
+//     file-order (heading-position tracking — a task before any `###`
+//     heading, or in a plan with no `## Tasks` heading at all, or outside a
+//     `## Tasks` section entirely, carries `section: ''`, honest absence).
+//     This is the ONLY batch-label source alongside the task's own id token
+//     (never title/description text — see roadmap-routes.js's
+//     deriveTaskBatches for the consumer + the PROVEN title-cross-reference
+//     trap this additive field exists to avoid).
 //   parsePlanStatus(markdown)   -> string ('' if no `Status:` header line)
 //   resolvePlanAbsPath(repoRoot, slug) -> absolute path | null
 //     (checks `<repoRoot>/docs/plans/<slug>.md` then
@@ -94,13 +105,25 @@ const path = require('path');
 // `^- \[[ xX]\][ \t]+` line anchor exactly).
 const TASK_LINE_START_RE = /^- \[([ xX])\][ \t]+(.*)$/;
 
-// TASK_ID_TOKEN_RE — ported VERBATIM from plan-lifecycle.sh's
+// TASK_ID_TOKEN_RE — ported from plan-lifecycle.sh's
 // `extract_all_task_line_ids` (adapters/claude-code/hooks/plan-lifecycle.sh
 // ~L342-356): an optional letter-prefix (`A.`, `F.`), mandatory digits, an
 // optional single trailing letter, then zero or more repeated
 // `.digits[letter]` groups. Accepts every shape live in the plan corpus
 // today: `1`, `6.2`, `A.1`, `B.0`, `D.2`, `F.2b`, `20R`.
-const TASK_ID_TOKEN_RE = /^([A-Za-z]+\.)?[0-9]+[A-Za-z]?(\.[0-9]+[A-Za-z]?)*/;
+//
+// R11 EXTENSION (2026-07-28, operator round 11): the LETTERED-BATCH shapes
+// (`A1`, `B2`, `C2-3` — single UPPERCASE batch letter directly fused to the
+// digits, dash-separated sub-ids) verified live in 4 Circuit plans + the
+// A2P master family were SILENTLY DROPPED by the verbatim port (proven:
+// parseTasks on `- [ ] A1. lettered...` returned []) — every lettered plan
+// rendered with most tasks invisible, corrupting the roadmap's progress
+// counts ("progress seems completely random" had a data hole under it).
+// The prefix is deliberately a SINGLE UPPERCASE letter so prose bullets
+// like `v2 rollout` stay non-tasks; plan-lifecycle.sh shares the old
+// grammar and its own lettered blindness is filed via nl-issue (parity
+// delta is DELIBERATE here, not drift — see the R11 pins).
+const TASK_ID_TOKEN_RE = /^([A-Za-z]+\.)?[A-Z]?[0-9]+[A-Za-z]?([.-][0-9]+[A-Za-z]?)*/;
 
 // MODE_PREFIX_RE — the `[serial]`/`[parallel]` dispatch-mode prefix that
 // immediately follows the id + separator on many newer plans.
@@ -137,11 +160,23 @@ function stripIdSeparator(s) {
 // plan's task block reads visually as one unit. Capture ends at a blank
 // line, a heading line (`#...`), a new task line (which starts the next
 // task), or any other non-indented line (a sibling top-level list item).
+// HEADING_RE — any ATX heading line (`#` through `######`), capturing its
+// level (hash count) and verbatim text (trailing whitespace stripped only —
+// never re-worded, per R11's "must quote a string that exists in the source
+// artifact" general law).
+const HEADING_RE = /^(#{1,6})[ \t]+(.*)$/;
+
 function parseTasks(markdown) {
   const text = markdown == null ? '' : String(markdown);
   const lines = text.split('\n');
   const tasks = [];
   let current = null;
+  // R11 batch-source tracking (Critical 1/2): a task's `section` is the
+  // VERBATIM nearest-preceding `###` heading, but ONLY while inside a `##
+  // Tasks` heading's span — a `###` anywhere else (e.g. under `## Files to
+  // Modify`) never leaks in as a false batch label.
+  let inTasksSection = false;
+  let currentBatchHeading = '';
 
   lines.forEach((rawLine) => {
     const line = rawLine.replace(/\r$/, '');
@@ -159,6 +194,7 @@ function parseTasks(markdown) {
           id: idM[0],
           done: (m[1] === 'x' || m[1] === 'X'),
           description: descRest,
+          section: inTasksSection ? currentBatchHeading : '',
         };
         tasks.push(current);
         return;
@@ -171,8 +207,29 @@ function parseTasks(markdown) {
       return;
     }
 
+    const hm = HEADING_RE.exec(line);
+    if (hm) {
+      const level = hm[1].length;
+      const headingText = hm[2].replace(/\s+$/, '');
+      if (level === 2) {
+        // A NEW `##` heading — `## Tasks` (any casing) opens the span;
+        // any other `##` heading (e.g. `## Files to Modify/Create`) closes
+        // it. Either way the prior sub-heading no longer applies.
+        inTasksSection = /^tasks$/i.test(headingText.trim());
+        currentBatchHeading = '';
+      } else if (level === 3 && inTasksSection) {
+        currentBatchHeading = headingText.trim();
+      } else if (level <= 2) {
+        // (level === 1, or an unreached level===2 branch above) — a
+        // top-level heading always closes any open Tasks span.
+        inTasksSection = false;
+        currentBatchHeading = '';
+      }
+      current = null;
+      return;
+    }
+
     if (line.trim() === '') { current = null; return; }
-    if (/^#/.test(line)) { current = null; return; }
 
     if (current && /^[ \t]/.test(line)) {
       const cont = line.trim();
@@ -323,6 +380,49 @@ function selfTest() {
     letteredTasks[1].id === 'A.7' && letteredTasks[1].done === false &&
     letteredTasks[2].id === '20R' && letteredTasks[2].done === true,
     JSON.stringify(letteredTasks));
+
+  // R11 batch-source (Critical 1/2): `###` sub-headings inside `## Tasks`
+  // are captured VERBATIM per task, file-order, never re-worded.
+  const sectionedTasks = parseTasks([
+    '## Tasks', '',
+    '### Phase B — Foundations', '',
+    '- [x] B1 first foundations task',
+    '- [ ] B2 second foundations task',
+    '### Phase C — Engine', '',
+    '- [ ] C1 engine task',
+    '',
+  ].join('\n'));
+  ok('R11 tasks under a `###` sub-heading carry its VERBATIM text as `section`',
+    sectionedTasks.length === 3 &&
+    sectionedTasks[0].section === 'Phase B — Foundations' &&
+    sectionedTasks[1].section === 'Phase B — Foundations' &&
+    sectionedTasks[2].section === 'Phase C — Engine',
+    JSON.stringify(sectionedTasks));
+
+  // A task appearing BEFORE any `###` heading (or in a plan with no `###`
+  // headings at all) carries `section: ''` — honest absence, never a guess.
+  const unsectionedTasks = parseTasks([
+    '## Tasks', '',
+    '- [ ] 1. plain task, no sub-heading above it',
+    '',
+  ].join('\n'));
+  ok('a task with no preceding `###` sub-heading carries section: \'\'',
+    unsectionedTasks.length === 1 && unsectionedTasks[0].section === '',
+    JSON.stringify(unsectionedTasks));
+
+  // A `###` heading OUTSIDE `## Tasks` (e.g. under a later `## Files to
+  // Modify` section) must NEVER leak in as a false batch label for tasks
+  // that happen to precede it in a DIFFERENT file, nor persist past the
+  // `## Tasks` span's own close.
+  const crossSectionTasks = parseTasks([
+    '## Tasks', '',
+    '- [ ] 1. a task with no sub-heading',
+    '## Files to Modify', '',
+    '### some/path.js', '',
+  ].join('\n'));
+  ok('a `###` heading outside `## Tasks` never contaminates section tracking',
+    crossSectionTasks.length === 1 && crossSectionTasks[0].section === '',
+    JSON.stringify(crossSectionTasks));
 
   // [serial]/[parallel] prefix + Verification suffix + continuation lines.
   const richTasks = parseTasks([

@@ -474,6 +474,21 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   `neural-lace/workstreams-ui/server/roadmap-routes.selftest.js`; plus
   `neural-lace/workstreams-ui/config/projects.example.json` (multi-repo plan-scan roots,
   R9-8). T9 remains unflipped; the operator re-walk after this round's deploy is the close.
+- 2026-07-28: ROUND 11 HIERARCHY ROUND (operator: master-plan hierarchy, "phases" labeling
+  retired — Round 11 verbatim in the design-input record; ux-designer review
+  `docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md` is the BINDING build spec, six
+  Critical constraints, operator-requested gate). Same file set as Round 9 plus
+  `neural-lace/workstreams-ui/server/plan-parse.js` (R11 grammar extension: lettered task
+  ids `A1`/`B2`/`C2-3` were SILENTLY DROPPED — proven data hole under the operator's
+  "progress seems random" complaint; single-uppercase-letter prefix + dash sub-ids added,
+  parity delta vs plan-lifecycle.sh deliberate + nl-issue filed) and
+  `docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md` (the spec). parent-plan header
+  field + batch fields shipped server-side; renderer rebuild + verified-real-family
+  retrofit ship together per Critical 3.
+- 2026-07-28: `docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md` — the R11 binding
+  ux-review spec file (gate input; path-first entry, the scope gate parses only this shape).
+- 2026-07-28: `neural-lace/workstreams-ui/server/plan-parse.js` — R11 lettered-id grammar
+  extension (gate input; same parse-shape note as above).
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
