@@ -119,6 +119,21 @@ async function main() {
     '- [ ] 3. build the third thing',
     '',
   ].join('\n'));
+  // R11-A fixtures (operator round 11): the master/child mechanical link
+  // (`parent-plan:` header) + lettered-batch task ids — the shapes the old
+  // grammar silently dropped.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'master-fixture.md'), [
+    '# Plan: The Master Sequence', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. direct master task',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'child-a-fixture.md'), [
+    '# Plan: Child A', '', 'Status: ACTIVE', 'parent-plan: master-fixture', '', '## Tasks', '',
+    '- [x] A1. lettered foundations task',
+    '- [ ] B2. lettered engine task',
+    '- [ ] 3. unlettered task',
+    '',
+  ].join('\n'));
   // shipped-plan: all tasks done -> the no-signal oracle class must render
   // as merged-unverified, OUTSIDE complete (A4 binding rule). Linked to
   // ask-shipped.
@@ -410,8 +425,24 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 16 top-level plans (the ones that qualify — 8 original + 8 round-9 R9-1/R9-4 fixtures) — no more, no less; ancient-ghost-plan is correctly EXCLUDED (not a 9th/17th item)',
-      items.length === 16, topIds.join(','));
+    ok('S1e exactly 18 top-level plans (8 original + 8 round-9 R9-1/R9-4 fixtures + 2 R11-A master/child fixtures) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
+      items.length === 18, topIds.join(','));
+
+    // ---- R11-A (round 11): the mechanical hierarchy fields ----
+    const childA = findItem(items, 'child-a-fixture');
+    ok('R11-A1 a plan with a `parent-plan:` header carries parent_plan=<master slug>; plans without it carry \'\' (standalone — never inferred)',
+      childA && childA.parent_plan === 'master-fixture' &&
+      findItem(items, 'master-fixture') && findItem(items, 'master-fixture').parent_plan === '' &&
+      findItem(items, 'demo-plan').parent_plan === '',
+      childA && childA.parent_plan);
+    ok('R11-A2 lettered task ids PARSE (the old grammar silently dropped them) and carry their batch letter; unlettered siblings carry \'\'',
+      !!findItem(items, 'child-a-fixture/A1') && findItem(items, 'child-a-fixture/A1').batch === 'A' &&
+      findItem(items, 'child-a-fixture/A1').status && findItem(items, 'child-a-fixture/A1').status.value === 'complete' &&
+      !!findItem(items, 'child-a-fixture/B2') && findItem(items, 'child-a-fixture/B2').batch === 'B' &&
+      !!findItem(items, 'child-a-fixture/3') && findItem(items, 'child-a-fixture/3').batch === '');
+    ok('R11-A3 the lettered plan\'s PROGRESS counts all three tasks (1/3 done) — the dropped-task data hole under "progress seems random" is closed',
+      childA && childA.progress && childA.progress.done === 1 && childA.progress.total === 3,
+      childA && JSON.stringify(childA.progress));
 
     // ---- GHOST-BOUNDING (2026-07-21 fix): a recently-linked missing plan
     // still renders as an honest unknown root; an ANCIENT one (its only

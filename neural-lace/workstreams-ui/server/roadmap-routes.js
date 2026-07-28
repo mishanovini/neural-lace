@@ -690,6 +690,7 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     kind: 'task',
     title: 'task ' + t.id + ': ' + distilled.title,
     title_source: 'auto',
+    batch: taskBatchLetter(t.id), // R11-A: '' when the plan doesn't letter its tasks
     project: '', provenance: 'operator', provenance_reason: '',
     rank: null, added_ts: '', added_mid_build: false,
     status: status,
@@ -784,10 +785,17 @@ const H1_PLAN_TITLE_RE = /^#\s*Plan\s*[:—-]\s*(.+?)\s*$/;
 // (`provenance: machine` / `provenance: operator`) that overrides the slug
 // heuristic below in EITHER direction (R9-4's own binding requirement).
 const PROVENANCE_HEADER_RE = /^provenance:\s*(machine|operator)\s*$/im;
+// R11-A (operator round 11): the master-plan hierarchy made MECHANICAL.
+// `parent-plan: <slug>` in a plan's header block declares this plan a CHILD
+// of the named master plan. Practice-verified (child plans spawned from
+// oversized tasks, e.g. the A2P C2 family); previously prose-only, which is
+// why the tree couldn't render the grouping. Optional — absent means
+// standalone; NEVER inferred from prose (round-9 disease rule).
+const PARENT_PLAN_HEADER_RE = /^parent-plan:\s*([a-z0-9._-]+)\s*$/im;
 
 function planFileHeaderExtras(absPath) {
   let text;
-  try { text = fs.readFileSync(absPath, 'utf8'); } catch (_) { return { h1Title: '', provenanceField: '' }; }
+  try { text = fs.readFileSync(absPath, 'utf8'); } catch (_) { return { h1Title: '', provenanceField: '', parentPlan: '' }; }
   const stripped = text.replace(/<!--[\s\S]*?-->/g, '');
   const lines = stripped.split('\n');
   let h1Title = '';
@@ -801,7 +809,21 @@ function planFileHeaderExtras(absPath) {
            // deeper heuristic hunts for a title buried mid-file).
   }
   const pm = PROVENANCE_HEADER_RE.exec(text);
-  return { h1Title: h1Title, provenanceField: pm ? pm[1].toLowerCase() : '' };
+  const pp = PARENT_PLAN_HEADER_RE.exec(text);
+  return {
+    h1Title: h1Title,
+    provenanceField: pm ? pm[1].toLowerCase() : '',
+    parentPlan: pp ? pp[1] : '',
+  };
+}
+
+// R11-A batch derivation: a task id like "A1"/"C2" carries its BATCH letter
+// (house pattern: A–E ≈ foundations → engine → operator surfaces → cutover
+// → docs; verified in 4 real Circuit plans). Plain-numbered ids have no
+// batch — honest absence, the renderer shows tasks directly.
+function taskBatchLetter(taskId) {
+  const m = /^([A-Ea-e])\d/.exec(String(taskId || '').trim());
+  return m ? m[1].toUpperCase() : '';
 }
 
 // R9-4 — slug-prefix/word heuristics, scanned against the REAL live plan
@@ -863,6 +885,7 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     title_source: operatorTitle ? 'operator' : 'auto',
     project: (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath),
     plan_path: pf.absPath, // R9 follow-up (operator 2026-07-24): every phase IS a plan file — link it
+    parent_plan: headerExtras.parentPlan, // R11-A: '' = standalone; slug = child of that master
     provenance: provClass.provenance, provenance_reason: provClass.provenance_reason,
     rank: null, added_ts: addedTs, added_mid_build: false,
     status: null, progress: null, completed_at: '',

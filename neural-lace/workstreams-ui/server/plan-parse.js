@@ -94,13 +94,25 @@ const path = require('path');
 // `^- \[[ xX]\][ \t]+` line anchor exactly).
 const TASK_LINE_START_RE = /^- \[([ xX])\][ \t]+(.*)$/;
 
-// TASK_ID_TOKEN_RE — ported VERBATIM from plan-lifecycle.sh's
+// TASK_ID_TOKEN_RE — ported from plan-lifecycle.sh's
 // `extract_all_task_line_ids` (adapters/claude-code/hooks/plan-lifecycle.sh
 // ~L342-356): an optional letter-prefix (`A.`, `F.`), mandatory digits, an
 // optional single trailing letter, then zero or more repeated
 // `.digits[letter]` groups. Accepts every shape live in the plan corpus
 // today: `1`, `6.2`, `A.1`, `B.0`, `D.2`, `F.2b`, `20R`.
-const TASK_ID_TOKEN_RE = /^([A-Za-z]+\.)?[0-9]+[A-Za-z]?(\.[0-9]+[A-Za-z]?)*/;
+//
+// R11 EXTENSION (2026-07-28, operator round 11): the LETTERED-BATCH shapes
+// (`A1`, `B2`, `C2-3` — single UPPERCASE batch letter directly fused to the
+// digits, dash-separated sub-ids) verified live in 4 Circuit plans + the
+// A2P master family were SILENTLY DROPPED by the verbatim port (proven:
+// parseTasks on `- [ ] A1. lettered...` returned []) — every lettered plan
+// rendered with most tasks invisible, corrupting the roadmap's progress
+// counts ("progress seems completely random" had a data hole under it).
+// The prefix is deliberately a SINGLE UPPERCASE letter so prose bullets
+// like `v2 rollout` stay non-tasks; plan-lifecycle.sh shares the old
+// grammar and its own lettered blindness is filed via nl-issue (parity
+// delta is DELIBERATE here, not drift — see the R11 pins).
+const TASK_ID_TOKEN_RE = /^([A-Za-z]+\.)?[A-Z]?[0-9]+[A-Za-z]?([.-][0-9]+[A-Za-z]?)*/;
 
 // MODE_PREFIX_RE — the `[serial]`/`[parallel]` dispatch-mode prefix that
 // immediately follows the id + separator on many newer plans.
