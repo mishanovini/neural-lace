@@ -90,7 +90,10 @@ part-time autonomous work with review gates. T10 adds 5–10 bs and is separatel
       T4). Verification: full.
 
 ## Files to Modify/Create
-- adapters/claude-code/scripts/estate-janitor.sh — T1 (deterministic bash, plus installer task)
+- adapters/claude-code/scripts/estate-janitor.sh — T1 (deterministic bash, plus installer task); T2
+  extended the ask-fold to carry deadline/default_action (brief-only wiring gap the table didn't
+  originally name — estate-brief.sh renders ONLY snapshot.json, never raw ask-registry.jsonl, so the
+  SLA panel had no source without this)
 - adapters/claude-code/scripts/install-estate-janitor-task.ps1 — T1 installer, ship-only per task scope
 - adapters/claude-code/scripts/estate-brief.sh — T1/T2
 - adapters/claude-code/scripts/ask-registry.sh (extend: deadline/SLA/default-action verbs) — T2

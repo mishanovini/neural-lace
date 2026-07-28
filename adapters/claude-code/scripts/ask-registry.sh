@@ -109,6 +109,58 @@
 #     record. `--emitter` defaults to "operator-ui" (this verb only makes
 #     sense as an operator action).
 #
+# ============================================================
+# ASK SLAs (accountable-estate-program-2026-07 Task 2 — deadline/
+# default-action/SLA-readout verbs. Design §2's `operator-ask` fields:
+# "what, why, deadline, default-action (what happens/doesn't if
+# unanswered), SLA state. Hard cap <=5 open; re-surfaced every brief until
+# closed; breaching SLA escalates visually, never silently expires."
+# ============================================================
+#
+#   ask-registry.sh set-deadline --ask-id <id> --deadline <iso8601>
+#                                 [--emitter <name>]
+#     Sets/updates the ask's deadline. `--deadline` MUST parse as a
+#     timestamp (`date -u -d`/BSD `-j -f` fallback, same parser family as
+#     estate-brief.sh's `_eb_age_str`); an unparseable value is REJECTED
+#     (no-op, stderr note, exit 0 — never a malformed deadline persisted).
+#     The parsed value is NORMALIZED to canonical `%Y-%m-%dT%H:%M:%SZ`
+#     before it is stored, so every downstream jq reader (this file's own
+#     `sla` verb, estate-janitor.sh's ask-fold, estate-brief.sh's SLA
+#     panel) can rely on `fromdateiso8601` parsing it without a second
+#     format dialect to support. Appends a `record_type:"deadline_set"`
+#     record. `--emitter` defaults to "operator-ui".
+#
+#   ask-registry.sh clear-deadline --ask-id <id> [--emitter <name>]
+#     Removes a previously-set deadline (the ask goes back to "no
+#     deadline"). Appends a `record_type:"deadline_cleared"` record. See
+#     DEADLINE FOLD below — this verb only works BECAUSE deadline folding
+#     is record-type-ordered, not plain last-non-empty-wins (a blank
+#     `deadline` field would otherwise never be able to overwrite an
+#     earlier non-blank one under this file's normal fold rule).
+#
+#   ask-registry.sh set-default-action --ask-id <id> --default-action <text>
+#                                       [--emitter <name>]
+#     Records what should happen if the deadline passes unanswered (e.g.
+#     "DEMOTE" or "proceed with recommendation X") — DATA describing a
+#     disposition, applied as data only this slice (constraint: T2 ships
+#     visibility, not automatic enforcement of the disposition). Text is
+#     capped at 140 chars (same `_ar_truncate140` convention as summaries/
+#     titles). Appends a `record_type:"default_action_set"` record.
+#     `--emitter` defaults to "operator-ui".
+#
+#   ask-registry.sh sla [--now <iso8601>] [--due-soon-hours <n>]
+#     Read-only SLA read-out: folds every ACTIVE ask's deadline +
+#     default_action (see DEADLINE FOLD / SCHEMA below) and prints one
+#     tab-separated row per ask — `ask_id, sla_state, deadline,
+#     default_action, summary` — sorted soonest-deadline-first (undated
+#     asks last). `sla_state` is one of: `overdue` (deadline < now) |
+#     `due-soon` (0 <= deadline-now <= --due-soon-hours, default 48,
+#     env-overridable via ESTATE_ASK_SLA_DUE_SOON_HOURS) | `ok` (deadline
+#     further out) | `no-deadline`. `--now` overrides "current time" for
+#     deterministic manual/CI probing; defaults to the real wall clock.
+#     Degrades to an honest stderr note (never a crash) when jq is
+#     missing or the registry file does not exist yet.
+#
 #   ask-registry.sh list
 #     Read-only: prints the registry file's raw JSONL lines (or nothing if
 #     absent). Task 11's server-side reader is the real consumer going
@@ -132,19 +184,40 @@
 #
 #   {"ask_id":"...","record_type":"created|session_attached|plan_linked|
 #    status_change|merged|project_override|summary_updated|
-#    amendment_candidate|candidate_classified|amended",
+#    amendment_candidate|candidate_classified|amended|deadline_set|
+#    deadline_cleared|default_action_set",
 #    "ts":"ISO-8601-UTC","user":"...","machine":"...",
 #    "repo":"...","project":"...","summary":"...","verbatim_ref":"...",
 #    "origin_session":"...","status":"active|done|dismissed|merged",
 #    "plan_slug":"...","session_id":"...","resumed_from":"...",
 #    "merged_into":"...","emitter":"...",
 #    "title_source":"auto|operator|","candidate_id":"cand-...|",
-#    "classification":"pending|amendment|noise|detached|"}
+#    "classification":"pending|amendment|noise|detached|",
+#    "deadline":"ISO-8601-UTC|","default_action":"..."}
 #
-# The last three fields are the cockpit-roadmap-redesign Task 2 (A2/A3/I6)
-# additions — always present, empty when not applicable; pre-existing
+# The title_source/candidate_id/classification fields are the
+# cockpit-roadmap-redesign Task 2 (A2/A3/I6) additions; `deadline` and
+# `default_action` are the accountable-estate-program-2026-07 Task 2
+# additions — all always present, empty when not applicable; pre-existing
 # records simply lack them and readers MUST treat a missing `title_source`
-# as "auto" (legacy records are all machine-captured).
+# as "auto" (legacy records are all machine-captured) and a missing/empty
+# `deadline`/`default_action` as "none set".
+#
+# DEADLINE FOLD (BINDING on every reader — the deadline-equivalent of the
+# title precedence exception above): `deadline` does NOT follow plain
+# last-non-empty-wins. A reader folds ONLY the records whose `record_type`
+# is `deadline_set` or `deadline_cleared`, sorted by `ts`, and takes the
+# LAST one: if it is `deadline_set`, the ask's deadline is that record's
+# `deadline` value; if it is `deadline_cleared`, the ask has NO deadline —
+# REGARDLESS of any earlier `deadline_set` record's value. This carve-out
+# exists for the same reason as the title exception: plain
+# last-non-empty-wins can never represent "the deadline was explicitly
+# removed" (a blank field would just be skipped, per the fold rule's own
+# "blanks never overwrite" clause), so clearing needs its own record_type
+# rather than a blank `deadline` on a generic record. `default_action`
+# has NO such carve-out — it folds via plain last-non-empty-wins like
+# `repo`/`project`, via any record (typically `default_action_set`) that
+# carries a non-empty value.
 #
 # FOLD CONTRACT (append-only; the file is NEVER rewritten — every mutation
 # is a NEW line): to compute an ask's CURRENT state, a reader iterates every
@@ -408,6 +481,31 @@ _ar_in_list() {
   local x
   for x in "$@"; do [[ "$x" == "$needle" ]] && return 0; done
   return 1
+}
+
+# ----------------------------------------------------------------------
+# _ar_normalize_iso8601 <text> — parses <text> as a timestamp (GNU `date
+# -d`, falling back to BSD `date -j -f '%Y-%m-%dT%H:%M:%SZ'`, the same
+# parser family as estate-brief.sh's `_eb_age_str`) and prints it
+# reformatted to canonical `%Y-%m-%dT%H:%M:%SZ` UTC. Prints nothing and
+# returns 1 on ANY unparseable input — callers must treat that as
+# rejection (no-op), never store the raw unparsed text. Normalizing at
+# write time (rather than storing whatever the caller typed) guarantees
+# every downstream jq reader's `fromdateiso8601` (this file's `sla` verb,
+# estate-janitor.sh's ask-fold, estate-brief.sh's SLA panel) can parse
+# every stored deadline without a second format dialect to support.
+# ----------------------------------------------------------------------
+_ar_normalize_iso8601() {
+  local ts="$1"
+  [[ -n "$ts" ]] || return 1
+  local out
+  out="$(date -u -d "$ts" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  if [[ -z "$out" ]]; then
+    out="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$ts" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  fi
+  [[ -n "$out" ]] || return 1
+  printf '%s' "$out"
+  return 0
 }
 
 # ----------------------------------------------------------------------
@@ -706,11 +804,13 @@ _ar_resolve_project() {
 #                    <summary> <verbatim_ref> <origin_session> <plan_slug>
 #                    <session_id> <resumed_from> <merged_into> <emitter>
 #                    [<title_source>] [<candidate_id>] [<classification>]
+#                    [<deadline>] [<default_action>]
 #   The ONE writer every verb below calls: builds the flat JSON record,
 #   appends it to the primary registry file, and best-effort mirrors it
 #   (constraint 11). Never fails the caller. Prints the registry file path.
-#   The three TRAILING args are optional (cockpit-roadmap-redesign Task 2):
-#   existing 13-arg call sites keep working; the JSON always emits all 19
+#   The FIVE trailing args are optional (three from cockpit-roadmap-
+#   redesign Task 2, two from accountable-estate-program-2026-07 Task 2):
+#   existing 13-arg call sites keep working; the JSON always emits all 21
 #   fields (empty when not applicable — the flat all-fields convention).
 # ----------------------------------------------------------------------
 _ar_append_record() {
@@ -719,6 +819,7 @@ _ar_append_record() {
   shift 9
   local session_id="$1" resumed_from="$2" merged_into="$3" emitter="$4"
   local title_source="${5:-}" candidate_id="${6:-}" classification="${7:-}"
+  local deadline="${8:-}" default_action="${9:-}"
 
   local ts; ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown')"
   local user machine
@@ -727,7 +828,7 @@ _ar_append_record() {
   machine="$(hostname 2>/dev/null || echo unknown)"
 
   local json
-  json="$(printf '{"ask_id":"%s","record_type":"%s","ts":"%s","user":"%s","machine":"%s","repo":"%s","project":"%s","summary":"%s","verbatim_ref":"%s","origin_session":"%s","status":"%s","plan_slug":"%s","session_id":"%s","resumed_from":"%s","merged_into":"%s","emitter":"%s","title_source":"%s","candidate_id":"%s","classification":"%s"}' \
+  json="$(printf '{"ask_id":"%s","record_type":"%s","ts":"%s","user":"%s","machine":"%s","repo":"%s","project":"%s","summary":"%s","verbatim_ref":"%s","origin_session":"%s","status":"%s","plan_slug":"%s","session_id":"%s","resumed_from":"%s","merged_into":"%s","emitter":"%s","title_source":"%s","candidate_id":"%s","classification":"%s","deadline":"%s","default_action":"%s"}' \
     "$(_ar_json_escape "$ask_id")" "$(_ar_json_escape "$record_type")" "$ts" \
     "$(_ar_json_escape "$user")" "$(_ar_json_escape "$machine")" \
     "$(_ar_json_escape "$repo")" "$(_ar_json_escape "$project")" \
@@ -736,7 +837,8 @@ _ar_append_record() {
     "$(_ar_json_escape "$plan_slug")" "$(_ar_json_escape "$session_id")" \
     "$(_ar_json_escape "$resumed_from")" "$(_ar_json_escape "$merged_into")" \
     "$(_ar_json_escape "$emitter")" "$(_ar_json_escape "$title_source")" \
-    "$(_ar_json_escape "$candidate_id")" "$(_ar_json_escape "$classification")")"
+    "$(_ar_json_escape "$candidate_id")" "$(_ar_json_escape "$classification")" \
+    "$(_ar_json_escape "$deadline")" "$(_ar_json_escape "$default_action")")"
 
   local f dir
   f="$(ar_registry_file)"
@@ -1108,6 +1210,162 @@ cmd_override_project() {
   fi
   _ar_append_record "project_override" "$ask_id" "" "" "$project" "" "" "" \
     "" "" "" "" "$emitter"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_set_deadline — accountable-estate-program-2026-07 Task 2. Validates
+# + normalizes --deadline (see _ar_normalize_iso8601); an unparseable
+# value is REJECTED (no-op, stderr note, exit 0 — never a malformed
+# deadline persisted, same discipline as set-status's vocabulary check).
+# ----------------------------------------------------------------------
+cmd_set_deadline() {
+  local ask_id="" deadline="" emitter="operator-ui"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --deadline) deadline="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -z "$ask_id" || -z "$deadline" ]]; then
+    echo "ask-registry.sh set-deadline: --ask-id and --deadline are required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+  local normalized
+  if ! normalized="$(_ar_normalize_iso8601 "$deadline")"; then
+    echo "ask-registry.sh set-deadline: --deadline '$deadline' is not a parseable timestamp — no-op, never blocks caller" >&2
+    return 0
+  fi
+  _ar_append_record "deadline_set" "$ask_id" "" "" "" "" "" "" "" \
+    "" "" "" "$emitter" "" "" "" "$normalized" ""
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_clear_deadline — appends deadline_cleared; see DEADLINE FOLD in the
+# header SCHEMA section for why this needs its own record_type rather
+# than a blank deadline on a generic record.
+# ----------------------------------------------------------------------
+cmd_clear_deadline() {
+  local ask_id="" emitter="operator-ui"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -z "$ask_id" ]]; then
+    echo "ask-registry.sh clear-deadline: --ask-id is required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+  _ar_append_record "deadline_cleared" "$ask_id" "" "" "" "" "" "" "" \
+    "" "" "" "$emitter" "" "" "" "" ""
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_set_default_action — records the disposition to apply if the
+# deadline passes unanswered, AS DATA (this slice ships visibility only;
+# no automatic side-effect reads/acts on this field yet — Program rule 3
+# of docs/plans/accountable-estate-program-2026-07.md's binding rules is
+# observe-first before any enforcement flip, same discipline as the
+# admission lib's T3/T6 split).
+# ----------------------------------------------------------------------
+cmd_set_default_action() {
+  local ask_id="" default_action="" emitter="operator-ui"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --default-action) default_action="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  if [[ -z "$ask_id" || -z "$default_action" ]]; then
+    echo "ask-registry.sh set-default-action: --ask-id and a non-empty --default-action are required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+  default_action="$(_ar_truncate140 "$default_action")"
+  _ar_append_record "default_action_set" "$ask_id" "" "" "" "" "" "" "" \
+    "" "" "" "$emitter" "" "" "" "" "$default_action"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_sla — read-only SLA read-out (accountable-estate-program-2026-07
+# Task 2). Folds every ACTIVE ask's deadline (DEADLINE FOLD rule) +
+# default_action (plain last-non-empty-wins) and prints one TSV row per
+# ask: ask_id, sla_state, deadline, default_action, summary — sorted
+# soonest-deadline-first (undated last). Honest degrade (stderr note,
+# exit 0, never a crash) when jq is missing or no registry exists yet.
+# ----------------------------------------------------------------------
+cmd_sla() {
+  local now_override="" due_soon_hours="${ESTATE_ASK_SLA_DUE_SOON_HOURS:-48}"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --now) now_override="${2:-}"; shift 2 ;;
+      --due-soon-hours) due_soon_hours="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  [[ "$due_soon_hours" =~ ^[0-9]+$ ]] || due_soon_hours=48
+
+  local f; f="$(ar_registry_file)"
+  if [[ ! -f "$f" ]]; then
+    echo "ask-registry.sh sla: no registry file at $f (no asks registered yet)" >&2
+    return 0
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "ask-registry.sh sla: jq is not available; cannot compute SLA states" >&2
+    return 0
+  fi
+
+  local now_epoch=""
+  if [[ -n "$now_override" ]]; then
+    now_epoch="$(date -u -d "$now_override" '+%s' 2>/dev/null)"
+    [[ -n "$now_epoch" ]] || now_epoch="$(date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$now_override" '+%s' 2>/dev/null)"
+  fi
+  if [[ -z "$now_epoch" ]]; then
+    now_epoch="$(date -u '+%s' 2>/dev/null || echo 0)"
+  fi
+
+  printf 'ask_id\tsla_state\tdeadline\tdefault_action\tsummary\n'
+  jq -s -r --argjson now "$now_epoch" --argjson duesoon "$due_soon_hours" '
+    group_by(.ask_id) | map(
+      (map(select(.ts != null and .ts != "")) | sort_by(.ts)) as $s |
+      {
+        ask_id: $s[0].ask_id,
+        status: ([$s[] | select((.status // "") != "")][-1].status // "active"),
+        summary: (
+          (([$s[] | select((.record_type=="created" or .record_type=="summary_updated") and .title_source=="operator" and ((.summary // "") != ""))])[-1].summary) //
+          (([$s[] | select((.record_type=="created" or .record_type=="summary_updated") and ((.summary // "") != ""))])[-1].summary) // ""
+        ),
+        deadline: (
+          ([$s[] | select(.record_type=="deadline_set" or .record_type=="deadline_cleared")][-1]) as $dl |
+          if $dl == null then "" elif $dl.record_type=="deadline_cleared" then "" else ($dl.deadline // "") end
+        ),
+        default_action: ([$s[] | select((.default_action // "") != "")][-1].default_action // "")
+      }
+    )
+    | map(select(.status=="active"))
+    | map(. + {
+        _epoch: ((.deadline // "") as $d | if $d == "" then null else ($d | try fromdateiso8601 catch null) end)
+      })
+    | map(. + {
+        sla_state: (
+          if ._epoch == null then "no-deadline"
+          elif ._epoch < $now then "overdue"
+          elif (._epoch - $now) <= ($duesoon * 3600) then "due-soon"
+          else "ok" end
+        )
+      })
+    | sort_by([(if ._epoch == null then 1 else 0 end), (._epoch // 0)])
+    | .[]
+    | "\(.ask_id)\t\(.sla_state)\t\(.deadline)\t\(.default_action)\t\(.summary)"
+  ' "$f"
   return 0
 }
 
@@ -1626,6 +1884,122 @@ cmd_selftest() {
     fail "expected the earlier flagless merge record to carry emitter=ask-registry"
   fi
 
+  # ==========================================================================
+  # ASK SLA scenarios (accountable-estate-program-2026-07 Task 2 —
+  # deadline/clear-deadline/default-action/sla). All in-process (calling
+  # cmd_* directly, not forking a subprocess) to stay fast on this
+  # fork-taxed machine — synchronous/deterministic, no async model-fork
+  # lane involved (that caution applies to Scenarios M/N/R2/R3/R4/Q3/Q4
+  # above, none of which these touch).
+  # ==========================================================================
+
+  echo "Scenario W: set-deadline normalizes a parseable timestamp and appends deadline_set; sla reports it"
+  cmd_register --ask-id "ask-selftest-sla" --summary "sla host ask" >/dev/null
+  cmd_set_deadline --ask-id "ask-selftest-sla" --deadline "2026-08-01 00:00:00" >/dev/null
+  if grep -q '"ask_id":"ask-selftest-sla".*"record_type":"deadline_set".*"deadline":"2026-08-01T00:00:00Z"' "$REG"; then
+    pass "set-deadline normalized a space-separated timestamp to canonical %Y-%m-%dT%H:%M:%SZ"
+  else
+    fail "expected a deadline_set record with deadline=2026-08-01T00:00:00Z for ask-selftest-sla"
+  fi
+
+  echo "Scenario W2: set-deadline with an UNPARSEABLE value is REJECTED (no-op, file unchanged)"
+  before_lines=$(wc -l < "$REG" | tr -d ' ')
+  cmd_set_deadline --ask-id "ask-selftest-sla" --deadline "not-a-real-date" >/dev/null 2>&1
+  after_lines=$(wc -l < "$REG" | tr -d ' ')
+  if [[ "$before_lines" == "$after_lines" ]]; then
+    pass "set-deadline rejected an unparseable timestamp (no new record)"
+  else
+    fail "expected no new record for an unparseable deadline, lines went $before_lines -> $after_lines"
+  fi
+
+  echo "Scenario W3: set-deadline/clear-deadline/set-default-action with missing --ask-id are documented no-ops"
+  before_lines=$(wc -l < "$REG" | tr -d ' ')
+  cmd_set_deadline --deadline "2026-08-01T00:00:00Z" >/dev/null 2>&1
+  cmd_clear_deadline >/dev/null 2>&1
+  cmd_set_default_action --default-action "DEMOTE" >/dev/null 2>&1
+  after_lines=$(wc -l < "$REG" | tr -d ' ')
+  if [[ "$before_lines" == "$after_lines" ]]; then
+    pass "all three SLA verbs no-op cleanly on a missing --ask-id"
+  else
+    fail "expected no new records for missing --ask-id calls, lines went $before_lines -> $after_lines"
+  fi
+
+  echo "Scenario X: DEADLINE FOLD — clear-deadline after set-deadline wins regardless of the earlier non-empty value (record-type-ordered, not last-non-empty-wins)"
+  cmd_register --ask-id "ask-selftest-clear" --summary "clear test ask" >/dev/null
+  cmd_set_deadline --ask-id "ask-selftest-clear" --deadline "2026-09-01T00:00:00Z" >/dev/null
+  cmd_clear_deadline --ask-id "ask-selftest-clear" >/dev/null
+  local clear_sla; clear_sla="$(cmd_sla | grep '^ask-selftest-clear' || true)"
+  if [[ "$clear_sla" == *$'\t'"no-deadline"$'\t'* ]]; then
+    pass "clear-deadline after set-deadline resolves to no-deadline in the fold (X: $clear_sla)"
+  else
+    fail "expected ask-selftest-clear to fold to no-deadline after clear, got: '$clear_sla'"
+  fi
+
+  echo "Scenario Y: set-default-action appends default_action_set (truncated to 140 chars); a second call is last-non-empty-wins"
+  cmd_register --ask-id "ask-selftest-daction" --summary "default action test ask" >/dev/null
+  cmd_set_default_action --ask-id "ask-selftest-daction" --default-action "DEMOTE" >/dev/null
+  cmd_set_default_action --ask-id "ask-selftest-daction" --default-action "proceed with recommendation X" >/dev/null
+  local daction_sla; daction_sla="$(cmd_sla | grep '^ask-selftest-daction' || true)"
+  if [[ "$daction_sla" == *"proceed with recommendation X"* ]]; then
+    pass "the SECOND set-default-action call wins (last-non-empty-wins fold, no special precedence): $daction_sla"
+  else
+    fail "expected the latest default_action to win for ask-selftest-daction, got: '$daction_sla'"
+  fi
+
+  echo "Scenario Y2: set-default-action with a missing --default-action is a no-op"
+  before_lines=$(wc -l < "$REG" | tr -d ' ')
+  cmd_set_default_action --ask-id "ask-selftest-daction" >/dev/null 2>&1
+  after_lines=$(wc -l < "$REG" | tr -d ' ')
+  if [[ "$before_lines" == "$after_lines" ]]; then
+    pass "set-default-action rejected a missing --default-action (no new record)"
+  else
+    fail "expected no new record for a missing --default-action, lines went $before_lines -> $after_lines"
+  fi
+
+  echo "Scenario Z: sla classifies overdue/due-soon/ok/no-deadline correctly and sorts soonest-deadline-first (undated last)"
+  local z_overdue z_duesoon z_ok
+  z_overdue="$(date -u -d '-3 days' '+%Y-%m-%dT%H:%M:%SZ')"
+  z_duesoon="$(date -u -d '+1 day' '+%Y-%m-%dT%H:%M:%SZ')"
+  z_ok="$(date -u -d '+5 days' '+%Y-%m-%dT%H:%M:%SZ')"
+  cmd_register --ask-id "ask-z-overdue" --summary "z overdue" >/dev/null
+  cmd_set_deadline --ask-id "ask-z-overdue" --deadline "$z_overdue" >/dev/null
+  cmd_register --ask-id "ask-z-duesoon" --summary "z due soon" >/dev/null
+  cmd_set_deadline --ask-id "ask-z-duesoon" --deadline "$z_duesoon" >/dev/null
+  cmd_register --ask-id "ask-z-ok" --summary "z ok" >/dev/null
+  cmd_set_deadline --ask-id "ask-z-ok" --deadline "$z_ok" >/dev/null
+  cmd_register --ask-id "ask-z-undated" --summary "z undated" >/dev/null
+  local z_out; z_out="$(cmd_sla)"
+  local z_state_overdue z_state_duesoon z_state_ok z_state_undated
+  z_state_overdue="$(printf '%s\n' "$z_out" | grep '^ask-z-overdue' | cut -f2)"
+  z_state_duesoon="$(printf '%s\n' "$z_out" | grep '^ask-z-duesoon' | cut -f2)"
+  z_state_ok="$(printf '%s\n' "$z_out" | grep '^ask-z-ok' | cut -f2)"
+  z_state_undated="$(printf '%s\n' "$z_out" | grep '^ask-z-undated' | cut -f2)"
+  if [[ "$z_state_overdue" == "overdue" && "$z_state_duesoon" == "due-soon" && "$z_state_ok" == "ok" && "$z_state_undated" == "no-deadline" ]]; then
+    pass "sla_state correct for all four buckets (overdue/due-soon/ok/no-deadline)"
+  else
+    fail "expected overdue/due-soon/ok/no-deadline, got '$z_state_overdue'/'$z_state_duesoon'/'$z_state_ok'/'$z_state_undated'"
+  fi
+  local z_pos_overdue z_pos_duesoon z_pos_ok z_pos_undated
+  z_pos_overdue=$(printf '%s\n' "$z_out" | grep -n '^ask-z-overdue' | cut -d: -f1)
+  z_pos_duesoon=$(printf '%s\n' "$z_out" | grep -n '^ask-z-duesoon' | cut -d: -f1)
+  z_pos_ok=$(printf '%s\n' "$z_out" | grep -n '^ask-z-ok' | cut -d: -f1)
+  z_pos_undated=$(printf '%s\n' "$z_out" | grep -n '^ask-z-undated' | cut -d: -f1)
+  if [[ -n "$z_pos_overdue" && -n "$z_pos_duesoon" && -n "$z_pos_ok" && -n "$z_pos_undated" \
+        && "$z_pos_overdue" -lt "$z_pos_duesoon" && "$z_pos_duesoon" -lt "$z_pos_ok" && "$z_pos_ok" -lt "$z_pos_undated" ]]; then
+    pass "sla sorts soonest-deadline-first, undated last"
+  else
+    fail "expected sort order overdue < due-soon < ok < undated, got positions $z_pos_overdue/$z_pos_duesoon/$z_pos_ok/$z_pos_undated"
+  fi
+
+  echo "Scenario Z2: sla degrades honestly (stderr note, exit 0, never a crash) when no registry file exists yet"
+  local z2_out z2_rc
+  z2_out="$(ASK_REGISTRY_STATE_DIR="$TMP/no-such-dir-$$" cmd_sla 2>&1)"; z2_rc=$?
+  if [[ "$z2_rc" == "0" && "$z2_out" == *"no asks registered yet"* ]]; then
+    pass "sla degrades honestly when the registry file does not exist (exit 0, honest note)"
+  else
+    fail "expected exit 0 + an honest 'no asks registered yet' note, got rc=$z2_rc out='$z2_out'"
+  fi
+
   echo "Scenario V: PRODUCTION SHAPE — real flagless subprocess invocations (bash ask-registry.sh <verb>), full title+timeline pipeline"
   local V_DIR="$TMP/prod-shape"
   mkdir -p "$V_DIR/ar" "$V_DIR/pl"
@@ -1718,6 +2092,26 @@ case "${1:-}" in
     cmd_override_project "$@"
     exit 0
     ;;
+  set-deadline)
+    shift
+    cmd_set_deadline "$@"
+    exit 0
+    ;;
+  clear-deadline)
+    shift
+    cmd_clear_deadline "$@"
+    exit 0
+    ;;
+  set-default-action)
+    shift
+    cmd_set_default_action "$@"
+    exit 0
+    ;;
+  sla)
+    shift
+    cmd_sla "$@"
+    exit 0
+    ;;
   set-title)
     shift
     cmd_set_title "$@"
@@ -1776,6 +2170,19 @@ Verbs:
                           Mark source as a duplicate of target.
   override-project --ask-id <id> --project <name>
                           Operator override of an ask's project grouping.
+  set-deadline --ask-id <id> --deadline <iso8601> [--emitter <name>]
+                          Set/update the ask's deadline (rejects an
+                          unparseable timestamp; normalizes to canonical
+                          UTC form before storing).
+  clear-deadline --ask-id <id> [--emitter <name>]
+                          Remove a previously-set deadline.
+  set-default-action --ask-id <id> --default-action <text> [--emitter <name>]
+                          Record what should happen if the deadline
+                          passes unanswered (data only this slice).
+  sla [--now <iso8601>] [--due-soon-hours <n>]
+                          Read-only: list active asks with SLA state
+                          (overdue|due-soon|ok|no-deadline), sorted
+                          soonest-deadline-first.
   set-title --ask-id <id> --title <text> [--emitter <name>]
                           Operator title edit (title_source=operator — ALWAYS
                           outranks auto at fold time, regardless of

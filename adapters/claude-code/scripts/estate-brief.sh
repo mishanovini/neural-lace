@@ -1,11 +1,26 @@
 #!/bin/bash
-# estate-brief.sh — Accountable Estate program, T1 (docs/plans/
+# estate-brief.sh — Accountable Estate program, T1+T2 (docs/plans/
 # accountable-estate-program-2026-07.md): renders estate-janitor.sh's
 # snapshot.json into a SCANNABLE TEXT BRIEF. This script IS the outcome
 # metric's surface: "what is running and who asked... answerable from
 # ONE surface in <30s" (plan T1) / "Daily brief (generated artifact, <=1
 # screen): running now... your asks with deadlines... cost+throughput
 # counters" (docs/designs/accountable-estate-2026-07-27.md §4).
+#
+# T2 addition: the ASKED panel is now an SLA panel — top asks sorted
+# overdue-first, then due-soon-or-later (any dated ask not yet overdue),
+# then undated last, hard-capped at ESTATE_BRIEF_MAX_ASK_ROWS (default
+# 5, per the design's "your <=5 asks with deadlines" — a TIGHTER cap
+# than the other sections' ESTATE_BRIEF_MAX_ROWS). Each row's deadline
+# state renders as TEXT ("overdue 3d" / "due in 2d" / "no deadline"),
+# computed from the `deadline` field estate-janitor.sh's ask-fold now
+# carries (never re-derived from raw ask-registry.jsonl — this script
+# still only ever reads snapshot.json). `default_action` is folded into
+# the snapshot and available via `ask-registry.sh sla`, but is NOT
+# rendered on the brief row this slice (kept to the three example
+# states the design/plan name; showing the disposition text as well was
+# judged to add row noise without a stated requirement — a reversible,
+# builder-scoped call).
 #
 # House law (design §6b directive): "lists, no paragraphs." Every section
 # below is a flat list, capped for scannability (ESTATE_BRIEF_MAX_ROWS,
@@ -108,6 +123,7 @@ _eb_short() {
 _eb_render() {
   local snap; snap="$(_eb_snapshot_path)"
   local max_rows="${ESTATE_BRIEF_MAX_ROWS:-20}"
+  local ask_max_rows="${ESTATE_BRIEF_MAX_ASK_ROWS:-5}"
 
   if [[ ! -f "$snap" ]]; then
     printf 'ESTATE BRIEF — no snapshot found at %s\n' "$snap"
@@ -133,7 +149,7 @@ _eb_render() {
   # jq-side, mirroring _eb_age_str/_eb_short's exact output formats, which
   # stay for the no-jq path and other callers). One fork ≈ seconds.
   local now_epoch; now_epoch="$(date -u +%s 2>/dev/null || echo 0)"
-  jq -r --argjson maxn "$max_rows" --argjson now "$now_epoch" '
+  jq -r --argjson maxn "$max_rows" --argjson askmaxn "$ask_max_rows" --argjson now "$now_epoch" '
     def agestr(ts):
       if (ts // "") == "" then "unknown"
       else ((ts | try fromdateiso8601 catch null) as $e |
@@ -145,33 +161,53 @@ _eb_render() {
         end)
       end;
     def short(mx): (. // "") | if length <= mx then . else .[0:mx-3] + "..." end;
-    def more(total): if total > $maxn then ["  ... +\(total - $maxn) more"] else [] end;
+    def more(total; capn): if total > capn then ["  ... +\(total - capn) more"] else [] end;
+    # T2 SLA panel (accountable-estate-program-2026-07): deadline-state
+    # TEXT + sort bucket, computed at RENDER time from the deadline
+    # field the estate-janitor.sh ask-fold now carries (never a live
+    # ask-registry.jsonl re-read; this script only ever reads
+    # snapshot.json). sla_epoch returns null for an unparseable/absent
+    # deadline (folds to the undated bucket, never a crash).
+    def sla_epoch: (.deadline // "") as $d | if $d == "" then null else ($d | try fromdateiso8601 catch null) end;
+    def sla_bucket: (sla_epoch) as $e | if $e == null then 2 elif $e < $now then 0 else 1 end;
+    def sla_text:
+      (sla_epoch) as $e |
+      if $e == null then "no deadline"
+      else
+        (($e - $now)) as $diff |
+        (if $diff < 0 then -$diff else $diff end) as $mag |
+        ($mag / 86400 | floor) as $d | ($mag / 3600 | floor) as $h |
+        if $diff < 0 then (if $d >= 1 then "overdue \($d)d" else "overdue \($h)h" end)
+        else (if $d >= 1 then "due in \($d)d" else "due in \($h)h" end)
+        end
+      end;
     (.sessions // []) as $ss | (.asks // []) as $asks |
     (.orphaned_worktrees // []) as $owt | (.orphaned_branches // []) as $obr |
+    ($asks | map(. + {_bucket: sla_bucket, _epoch: sla_epoch}) | sort_by([._bucket, (._epoch // 0)])) as $asks_sorted |
     (
       ["ESTATE BRIEF — generated \(.generated_at // "unknown") (\(agestr(.generated_at))) — \(.machine // "unknown")", ""]
       + ["RUNNING (\($ss | length) sessions: \([$ss[] | select(.classify == "live")] | length) live, \([$ss[] | select(.classify == "stale")] | length) stale, \([$ss[] | select(.classify == "throttled")] | length) throttled, \([$ss[] | select(.classify == "crashed")] | length) crashed, \([$ss[] | select(.classify != "live" and .classify != "stale" and .classify != "throttled" and .classify != "crashed")] | length) unknown)"]
       + (if ($ss | length) == 0 then ["  (none)"] else
           [$ss[:$maxn][] | "  \((.session_id // "")[0:12]) | \((.classify + "         ")[0:9]) | branch=\(.branch // "") | \(.last_event // "") (\(agestr(.last_activity_ts))) | wt=\(.worktree_root | short(40))"]
-          + more($ss | length)
+          + more($ss | length; $maxn)
         end)
       + [""]
-      + ["ASKED (\($asks | length) active)\(if .asks_degraded == true then " [DEGRADED: ask-registry unreadable or jq missing]" else "" end)"]
+      + ["ASKED (\($asks | length) active, top \([$askmaxn, ($asks|length)] | min) by SLA)\(if .asks_degraded == true then " [DEGRADED: ask-registry unreadable or jq missing]" else "" end)"]
       + (if ($asks | length) == 0 then ["  (none)"] else
-          [$asks[:$maxn][] | "  \(.ask_id) | \(.summary | short(70)) | \(.project // "")"]
-          + more($asks | length)
+          [$asks_sorted[:$askmaxn][] | "  \(.ask_id) | \(sla_text) | \(.summary | short(60)) | \(.project // "")"]
+          + more($asks | length; $askmaxn)
         end)
       + [""]
       + ["ORPHANED WORKTREES (\($owt | length) found — no live heartbeat)"]
       + (if ($owt | length) == 0 then ["  (none)"] else
           [$owt[:$maxn][] | "  \(.path | short(55)) | branch=\(.branch // "unknown") | \(.repo | short(30))"]
-          + more($owt | length)
+          + more($owt | length; $maxn)
         end)
       + [""]
       + ["ORPHANED BRANCHES (\($obr | length) found — no worktree)"]
       + (if ($obr | length) == 0 then ["  (none)"] else
           [$obr[:$maxn][] | "  \(.repo | short(30)) | \(.branch) | last commit \(.last_commit_age_days // "?" | tostring)d ago"]
-          + more($obr | length)
+          + more($obr | length; $maxn)
         end)
       + [""]
       + ["COUNTS",
@@ -249,7 +285,7 @@ EOF
   local out3; out3="$(_eb_render)"
   [[ "$out3" == *"RUNNING (1 sessions: 1 live"* ]] && pass "RUNNING section counts 1 live session" || fail "RUNNING section count mismatch: $out3"
   [[ "$out3" == *"build/foo"* ]] && pass "session row shows the branch" || fail "session row missing branch"
-  [[ "$out3" == *"ASKED (1 active)"* ]] && pass "ASKED section counts 1 active ask" || fail "ASKED count mismatch"
+  [[ "$out3" == *"ASKED (1 active, top 1 by SLA)"* ]] && pass "ASKED section counts 1 active ask" || fail "ASKED count mismatch"
   [[ "$out3" == *"Fix the thing that broke"* ]] && pass "ask row shows the summary" || fail "ask row missing summary"
   [[ "$out3" == *"ORPHANED WORKTREES (1 found"* ]] && pass "orphaned worktree count correct" || fail "orphaned worktree count mismatch"
   [[ "$out3" == *"wt-orphan"* ]] && pass "orphaned worktree row shows the path" || fail "orphaned worktree row missing path"
@@ -300,6 +336,60 @@ EOF
   local out6; out6="$(ESTATE_BRIEF_MAX_ROWS=10 _eb_render)"
   [[ "$out6" == *"ORPHANED WORKTREES (30 found"* ]] && pass "full count (30) reported in the section header even though rows are capped" || fail "expected count 30 in header"
   [[ "$out6" == *"+20 more"* ]] && pass "capped display shows a '+N more' line (10 shown, 20 remaining)" || fail "expected '+20 more' line"
+
+  echo "Scenario 7 (accountable-estate-program-2026-07 Task 2): SLA panel renders deadline-state TEXT and sorts overdue-first, then dated, then undated last"
+  local overdue_ts duesoon_ts
+  overdue_ts="$(date -u -d '-3 days' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  duesoon_ts="$(date -u -d '+2 days 12 hours' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  cat > "$ESTATE_SNAPSHOT_PATH" <<EOF
+{"schema":1,"generated_at":"2026-01-01T00:00:00Z","machine":"testhost","asks_fold":"simplified","repos_config_source":"default-config-file",
+"sessions":[],"sessions_degraded":false,
+"process_counts":{"bash_count":0,"claude_count":0,"degraded":false},
+"worktrees":[],"worktrees_degraded":false,
+"orphaned_worktrees":[],"orphaned_branches":[],"repos_scanned":[],
+"signal_ledger_tail":[],"signal_ledger_degraded":false,
+"asks":[
+  {"ask_id":"ask-undated","summary":"no deadline ask","project":"p","status":"active","deadline":"","default_action":""},
+  {"ask_id":"ask-overdue","summary":"overdue ask","project":"p","status":"active","deadline":"$overdue_ts","default_action":"DEMOTE"},
+  {"ask_id":"ask-duesoon","summary":"due soon ask","project":"p","status":"active","deadline":"$duesoon_ts","default_action":""}
+],
+"asks_degraded":false}
+EOF
+  local out7; out7="$(_eb_render)"
+  [[ "$out7" == *"ask-overdue"*"overdue 3d"* ]] && pass "overdue ask renders 'overdue 3d'" || fail "expected 'overdue 3d' for ask-overdue, got: $out7"
+  [[ "$out7" == *"ask-duesoon"*"due in 2d"* ]] && pass "future-dated ask renders 'due in 2d'" || fail "expected 'due in 2d' for ask-duesoon, got: $out7"
+  [[ "$out7" == *"ask-undated"*"no deadline"* ]] && pass "undated ask renders 'no deadline'" || fail "expected 'no deadline' for ask-undated, got: $out7"
+  local pos_overdue pos_duesoon pos_undated
+  pos_overdue=$(printf '%s\n' "$out7" | grep -n "ask-overdue" | head -1 | cut -d: -f1)
+  pos_duesoon=$(printf '%s\n' "$out7" | grep -n "ask-duesoon" | head -1 | cut -d: -f1)
+  pos_undated=$(printf '%s\n' "$out7" | grep -n "ask-undated" | head -1 | cut -d: -f1)
+  if [[ -n "$pos_overdue" && -n "$pos_duesoon" && -n "$pos_undated" && "$pos_overdue" -lt "$pos_duesoon" && "$pos_duesoon" -lt "$pos_undated" ]]; then
+    pass "asks sorted overdue-first, dated-future next, undated last"
+  else
+    fail "expected sort order overdue < due-soon < undated, got positions $pos_overdue/$pos_duesoon/$pos_undated"
+  fi
+
+  echo "Scenario 8 (accountable-estate-program-2026-07 Task 2): ASKED panel caps at ESTATE_BRIEF_MAX_ASK_ROWS (default 5), independent of the larger ESTATE_BRIEF_MAX_ROWS used by other sections"
+  {
+    printf '{"schema":1,"generated_at":"2026-01-01T00:00:00Z","machine":"testhost","asks_fold":"simplified","repos_config_source":"x",\n'
+    printf '"sessions":[],"sessions_degraded":false,"process_counts":{"bash_count":0,"claude_count":0,"degraded":false},\n'
+    printf '"worktrees":[],"worktrees_degraded":false,"orphaned_worktrees":[],"orphaned_branches":[],"repos_scanned":["/x"],"signal_ledger_tail":[],"signal_ledger_degraded":false,\n'
+    printf '"asks":['
+    local j jfirst=1
+    for j in $(seq 1 7); do
+      [[ "$jfirst" == "1" ]] && jfirst=0 || printf ','
+      printf '{"ask_id":"ask-%d","summary":"ask number %d","project":"p","status":"active","deadline":"","default_action":""}' "$j" "$j"
+    done
+    printf '],"asks_degraded":false}\n'
+  } | tr -d '\n' > "$ESTATE_SNAPSHOT_PATH"
+  local out8; out8="$(ESTATE_BRIEF_MAX_ROWS=20 _eb_render)"
+  [[ "$out8" == *"ASKED (7 active"* ]] && pass "ASKED header reports the full active count (7) even though rows are capped at 5" || fail "expected 'ASKED (7 active' in header, got: $out8"
+  [[ "$out8" == *"+2 more"* ]] && pass "ASKED panel shows '+2 more' (7 asks, cap 5) while ESTATE_BRIEF_MAX_ROWS=20 governs other sections" || fail "expected '+2 more' for the ASKED section, got: $out8"
+  local ask_rows_shown; ask_rows_shown=$(printf '%s\n' "$out8" | grep -cE '^  ask-[0-9]+ \|')
+  [[ "$ask_rows_shown" == "5" ]] && pass "exactly 5 ask rows rendered (ESTATE_BRIEF_MAX_ASK_ROWS default)" || fail "expected exactly 5 ask rows, got $ask_rows_shown"
+  local out8b; out8b="$(ESTATE_BRIEF_MAX_ASK_ROWS=3 _eb_render)"
+  local ask_rows_shown_b; ask_rows_shown_b=$(printf '%s\n' "$out8b" | grep -cE '^  ask-[0-9]+ \|')
+  [[ "$ask_rows_shown_b" == "3" ]] && pass "ESTATE_BRIEF_MAX_ASK_ROWS is env-overridable (3 shown)" || fail "expected exactly 3 ask rows with ESTATE_BRIEF_MAX_ASK_ROWS=3, got $ask_rows_shown_b"
 
   rm -rf "$T" 2>/dev/null || true
   unset ESTATE_STATE_DIR ESTATE_SNAPSHOT_PATH

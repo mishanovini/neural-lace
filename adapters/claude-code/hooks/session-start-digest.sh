@@ -669,6 +669,39 @@ feed_unresolved_gaps() {
 }
 
 # ----------------------------------------------------------------------
+# accountable-estate-program-2026-07 Task 2, Program rule 3 (retirement)
+# disposition: is feed_needs_you (below) or feed_backlog_accountability
+# (this file) now redundant with ask-registry.sh's new deadline/SLA
+# visibility (set-deadline/clear-deadline/set-default-action/sla) and
+# estate-brief.sh's SLA panel? EVALUATED, NOT RETIRED. Reasons:
+#   (1) Different populations. ask-registry's asks are auto-captured
+#       operator prompts (workstreams-read.sh's capture splices);
+#       NEEDS-YOU.md items are hand-authored via needs-you.sh add() at
+#       specific decision points (constitution section 2's "chat is a
+#       notification, the file is the record" mechanism); backlog.md
+#       rows are harness-friction items filed via nl-issue.sh. These are
+#       THREE still-unmerged stores (design doc section 6b F5/F6:
+#       consolidation to <=3 stores is explicitly T10-territory, DEFERRED
+#       until T1-T9 prove out) -- an ask-registry SLA entry existing for
+#       one item says nothing about whether a DIFFERENT NEEDS-YOU.md or
+#       backlog.md item has (or lacks) a deadline.
+#   (2) F6's own migration-sequencing warning applies directly: "NEEDS-
+#       YOU.md is constitution-anchored -- regenerating it as a view
+#       while un-migrated writers still hand-write it clobbers live
+#       operator asks." Retiring feed_needs_you's digest surfacing NOW,
+#       before any writer migration, would silently drop the operator's
+#       only current visibility channel for NEEDS-YOU-only items that
+#       have no ask-registry counterpart -- the exact failure class F6
+#       (and this program's own pre-mortem, Program rule 3) exists to
+#       prevent.
+#   (3) feed_backlog_accountability's age-tiered escalation (overdue/
+#       hard-bound/fester-count) is a DIFFERENT domain (harness-build
+#       follow-ups, not operator-answer asks) with its own vocabulary
+#       (priority/fester) that ask-SLA does not model at all.
+# Disposition: RETAIN both feeds unchanged this slice. Re-evaluate at
+# T10 (store consolidation) once NEEDS-YOU.md/backlog.md items have a
+# real migration path onto the estate ledger's operator-ask type.
+# ----------------------------------------------------------------------
 # Feed 13: NEEDS-YOU.md link + open-item count (§E.6). Tolerate absent.
 # ----------------------------------------------------------------------
 # ----------------------------------------------------------------------

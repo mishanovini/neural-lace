@@ -110,6 +110,18 @@
 # Requires jq; degrades to `asks:[] asks_degraded:true` without it (never
 # a crash, never a wrong answer presented as right).
 #
+# accountable-estate-program-2026-07 Task 2 addition: the fold also
+# carries `deadline` and `default_action` per ask (ask-registry.sh's own
+# SCHEMA header names the full contract). `deadline` follows that file's
+# DEADLINE FOLD carve-out — ONLY deadline_set/deadline_cleared records,
+# latest by ts wins, a deadline_cleared record blanks it regardless of
+# an earlier non-empty deadline_set — NOT plain last-non-empty-wins (a
+# blank could never otherwise overwrite a set value). `default_action`
+# has no such carve-out (plain last-non-empty-wins, same as repo/
+# project). estate-brief.sh's SLA panel computes sla_state/day-count
+# text from `deadline` at RENDER time (this janitor stays a dumb
+# reducer — it never classifies overdue/due-soon/ok itself).
+#
 # ============================================================
 # DEGRADATION CONTRACT (binding — every source above)
 # ============================================================
@@ -638,6 +650,11 @@ _ej_collect_asks() {
           (([$s[] | select((.record_type=="created" or .record_type=="summary_updated") and .title_source=="operator" and ((.summary // "") != ""))])[-1].summary) //
           (([$s[] | select((.record_type=="created" or .record_type=="summary_updated") and ((.summary // "") != ""))])[-1].summary) // ""
         ),
+        deadline: (
+          ([$s[] | select(.record_type=="deadline_set" or .record_type=="deadline_cleared")][-1]) as $dl |
+          if $dl == null then "" elif $dl.record_type=="deadline_cleared" then "" else ($dl.deadline // "") end
+        ),
+        default_action: ([$s[] | select((.default_action // "") != "")][-1].default_action // ""),
         last_ts: $s[-1].ts
       }
     ) | map(select(.status=="active"))
@@ -838,6 +855,27 @@ EOF
     [[ "$s1" == "operator title wins" ]] && pass "operator-sourced title wins over auto (fold precedence)" || fail "expected 'operator title wins', got '$s1'"
     local n2; n2="$(jq -r '[.asks[] | select(.ask_id=="ask-2")] | length' "$snap")"
     [[ "$n2" == "0" ]] && pass "a done ask is excluded from the active asks[] list" || fail "ask-2 (status=done) should be excluded, found $n2"
+  fi
+
+  echo "Scenario 7b (accountable-estate-program-2026-07 Task 2): deadline/default_action are folded into asks[]; DEADLINE FOLD carve-out (clear wins over an earlier set) is honored"
+  cat > "$(_ej_ask_registry_path)" <<'EOF'
+{"ask_id":"ask-dl","record_type":"created","ts":"2026-07-01T00:00:00Z","user":"u","machine":"m","repo":"r","project":"p","summary":"has a deadline","verbatim_ref":"","origin_session":"","status":"active","plan_slug":"","session_id":"s1","resumed_from":"","merged_into":"","emitter":"ask-registry","title_source":"auto","candidate_id":"","classification":"","deadline":"","default_action":""}
+{"ask_id":"ask-dl","record_type":"deadline_set","ts":"2026-07-02T00:00:00Z","user":"u","machine":"m","repo":"","project":"","summary":"","verbatim_ref":"","origin_session":"","status":"","plan_slug":"","session_id":"","resumed_from":"","merged_into":"","emitter":"operator-ui","title_source":"","candidate_id":"","classification":"","deadline":"2026-08-01T00:00:00Z","default_action":""}
+{"ask_id":"ask-dl","record_type":"default_action_set","ts":"2026-07-03T00:00:00Z","user":"u","machine":"m","repo":"","project":"","summary":"","verbatim_ref":"","origin_session":"","status":"","plan_slug":"","session_id":"","resumed_from":"","merged_into":"","emitter":"operator-ui","title_source":"","candidate_id":"","classification":"","deadline":"","default_action":"DEMOTE"}
+{"ask_id":"ask-cleared","record_type":"created","ts":"2026-07-01T00:00:00Z","user":"u","machine":"m","repo":"r","project":"p","summary":"had a deadline, then cleared","verbatim_ref":"","origin_session":"","status":"active","plan_slug":"","session_id":"s2","resumed_from":"","merged_into":"","emitter":"ask-registry","title_source":"auto","candidate_id":"","classification":"","deadline":"","default_action":""}
+{"ask_id":"ask-cleared","record_type":"deadline_set","ts":"2026-07-02T00:00:00Z","user":"u","machine":"m","repo":"","project":"","summary":"","verbatim_ref":"","origin_session":"","status":"","plan_slug":"","session_id":"","resumed_from":"","merged_into":"","emitter":"operator-ui","title_source":"","candidate_id":"","classification":"","deadline":"2026-08-15T00:00:00Z","default_action":""}
+{"ask_id":"ask-cleared","record_type":"deadline_cleared","ts":"2026-07-04T00:00:00Z","user":"u","machine":"m","repo":"","project":"","summary":"","verbatim_ref":"","origin_session":"","status":"","plan_slug":"","session_id":"","resumed_from":"","merged_into":"","emitter":"operator-ui","title_source":"","candidate_id":"","classification":"","deadline":"","default_action":""}
+{"ask_id":"ask-undated","record_type":"created","ts":"2026-07-01T00:00:00Z","user":"u","machine":"m","repo":"r","project":"p","summary":"no deadline at all","verbatim_ref":"","origin_session":"","status":"active","plan_slug":"","session_id":"s3","resumed_from":"","merged_into":"","emitter":"ask-registry","title_source":"auto","candidate_id":"","classification":"","deadline":"","default_action":""}
+EOF
+  snap="$(ej_run)"
+  if command -v jq >/dev/null 2>&1; then
+    local dl_v da_v; dl_v="$(jq -r '.asks[] | select(.ask_id=="ask-dl") | .deadline' "$snap")"
+    da_v="$(jq -r '.asks[] | select(.ask_id=="ask-dl") | .default_action' "$snap")"
+    [[ "$dl_v" == "2026-08-01T00:00:00Z" && "$da_v" == "DEMOTE" ]] && pass "ask-dl folds deadline + default_action from deadline_set/default_action_set records" || fail "expected deadline=2026-08-01T00:00:00Z default_action=DEMOTE for ask-dl, got deadline=$dl_v default_action=$da_v"
+    local cl_v; cl_v="$(jq -r '.asks[] | select(.ask_id=="ask-cleared") | .deadline' "$snap")"
+    [[ "$cl_v" == "" ]] && pass "ask-cleared folds to an EMPTY deadline after deadline_cleared, despite an earlier non-empty deadline_set (DEADLINE FOLD carve-out honored)" || fail "expected an empty deadline for ask-cleared after clear, got '$cl_v'"
+    local un_v; un_v="$(jq -r '.asks[] | select(.ask_id=="ask-undated") | .deadline' "$snap")"
+    [[ "$un_v" == "" ]] && pass "ask-undated (no deadline record at all) folds to an empty deadline, not a crash on missing fields" || fail "expected an empty deadline for ask-undated, got '$un_v'"
   fi
 
   echo "Scenario 8: jq absence degrades asks honestly (asks_degraded=true, never a crash) — simulated via a bogus registry path"
