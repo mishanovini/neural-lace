@@ -490,6 +490,8 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - 2026-07-28: `neural-lace/workstreams-ui/server/plan-parse.js` — R11 lettered-id grammar
   extension (gate input; same parse-shape note as above).
 
+- 2026-07-28: `docs/reviews/2026-07-28-operator-requests-ledger.md` — operator-requested request→disposition index for the round-10/11 work (gate input).
+
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
   (Fable proposal §7) — WITH the A3 caveat: the plain last-non-empty-wins fold is insufficient
