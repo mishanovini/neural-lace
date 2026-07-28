@@ -1910,6 +1910,42 @@ PLANEOF
     *) echo "FAIL: PL4c expected an UNRESOLVED-prefixed marker filename for a bare-project-root cwd hint, got '$(basename "${dpfile4b:-}" 2>/dev/null)'"; fail=$((fail+1)) ;;
   esac
 
+  # PL4d (REGRESSION, proven 2026-07-27 bug): a fixture plan whose header
+  # still carries the LITERAL un-substituted template placeholder
+  # (`ask-id: <id | none — no linked ask>` — real example still on disk:
+  # docs/plans/cockpit-roadmap-redesign.md:7) must resolve the dispatch's
+  # task_started event into the SAME "unlinked" per-ask log a plan with NO
+  # ask-id header at all would use — NEVER a separate `_id.jsonl` (the
+  # plausible-but-wrong file _resolve_ask_id_for_plan_slug produced
+  # pre-fix; 1090 real events found filed there on this machine).
+  local plfixph="$tmp/planfix-placeholder"
+  mkdir -p "$plfixph/docs/plans"
+  cat >"$plfixph/docs/plans/pl-fixture-placeholder.md" <<'PLANEOF'
+# Plan: PL fixture (unsubstituted placeholder)
+Status: ACTIVE
+ask-id: <id | none — no linked ask>
+PLANEOF
+  if command -v git >/dev/null 2>&1; then
+    ( cd "$plfixph" && git init -q . && git config core.hooksPath "" \
+        && git config user.email t@e.test && git config user.name t \
+        && git add -A && git commit -qm init ) >/dev/null 2>&1
+  fi
+  local plog4d="$tmp/pl-progresslog-4d"
+  ( cd "$plfixph" && PROGRESS_LOG_STATE_DIR="$plog4d" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dispatch-provenance-4d" \
+      CONV_TREE_STATE_PATH="$tmp/pl-4d.json" CLAUDE_SESSION_ID="sess-pl-4d" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-placeholder.md","prompt":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-placeholder.md in your worktree."},"session_id":"sess-pl-4d"}' >/dev/null 2>&1 )
+  if [[ -f "$plog4d/unlinked.jsonl" ]] && grep -q '"plan_slug":"pl-fixture-placeholder"' "$plog4d/unlinked.jsonl"; then
+    echo "PASS: PL4d a plan header carrying the literal un-substituted placeholder resolves to the unlinked log, same as no ask-id header at all"; pass=$((pass+1))
+  else
+    echo "FAIL: PL4d expected the placeholder-plan's task_started event in $plog4d/unlinked.jsonl"; fail=$((fail+1))
+    ls -la "$plog4d" 2>/dev/null
+  fi
+  if [[ -f "$plog4d/_id.jsonl" ]]; then
+    echo "FAIL: PL4d _id.jsonl was created — _resolve_ask_id_for_plan_slug is still handing the literal placeholder token to pl_emit"; fail=$((fail+1))
+  else
+    echo "PASS: PL4d no _id.jsonl (the historical garbage filename) was created"; pass=$((pass+1))
+  fi
+
   # PL5: failure isolation — missing progress-log.sh/dispatch-provenance.sh
   # CLIs (simulated via the override env vars) never blocks the caller.
   local rcPL5
@@ -2484,6 +2520,22 @@ _extract_task_id() {
 # splices independently best-effort per this file's own failure-isolation
 # contract. Empty when the plan/header/repo is unresolvable -- pl_emit's own
 # orphan lane (pl_path_for("") -> unlinked.jsonl) absorbs it, same as Task 1.
+#
+# PLACEHOLDER GUARD (fix, 2026-07-27 -- SAME proven bug and SAME fix as
+# plan-lifecycle.sh's extract_ask_id; kept in sync deliberately since this
+# is a KNOWN duplication, not a shared function): a plan header still
+# carrying the LITERAL un-substituted template default (`ask-id: <id | none
+# — no linked ask>`, adapters/claude-code/templates/plan-template.md's own
+# text; real example still on disk: docs/plans/cockpit-roadmap-redesign.md:7)
+# matches the awk pattern below and used to hand back the truncated literal
+# token `<id` as if it were a real ask-id -- pl_emit then filed the event
+# under the plausible-but-wrong `_id.jsonl` (1090 real events proven on this
+# machine, most from THIS splice's own --on-builder-dispatch task_started
+# emission). A token starting with `<` is never a legitimate ask-id, so it
+# means the same thing an absent header means and now resolves to the same
+# empty/"unlinked" case. (progress-log-lib.sh's pl_path_for independently
+# quarantines any placeholder-shaped ask_id reaching it by any other path --
+# a writer-side backstop, not relied on here.)
 _resolve_ask_id_for_plan_slug() {
   local slug="$1"
   [[ -z "$slug" ]] && { printf ''; return 0; }
@@ -2491,14 +2543,19 @@ _resolve_ask_id_for_plan_slug() {
   root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf ''; return 0; }
   local planfile="$root/docs/plans/$slug.md"
   [[ -f "$planfile" ]] || { printf ''; return 0; }
-  awk '
+  local raw
+  raw="$(awk '
     /^ask-id:[[:space:]]*[^[:space:]]+/ {
       sub(/^ask-id:[[:space:]]*/, "", $0)
       sub(/[[:space:]].*$/, "", $0)
       print $0
       exit
     }
-  ' "$planfile" 2>/dev/null
+  ' "$planfile" 2>/dev/null)"
+  case "$raw" in
+    '<'*) printf ''; return 0 ;;
+  esac
+  printf '%s' "$raw"
 }
 
 # _dispatch_state_dir -- resolve the dispatch-provenance state dir with the

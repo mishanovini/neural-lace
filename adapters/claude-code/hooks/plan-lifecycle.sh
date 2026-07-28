@@ -258,15 +258,38 @@ extract_checked_task_ids() {
 # file (hooks/lib/progress-log-lib.sh's pl_path_for fallback) rather than
 # being dropped. A full orphan-lane reattachment (matching an unlinked
 # event back to an ask once linkage appears) is Task 2/12's job.
+#
+# PLACEHOLDER GUARD (fix, 2026-07-27; proven bug — see nl-issue / roadmap-
+# routes.js's deriveUnboundSessionsNode header comment ~line 585):
+# adapters/claude-code/templates/plan-template.md's own header default is
+# the LITERAL `ask-id: <id | none — no linked ask>`. start-plan.sh
+# substitutes that line at creation time, but a plan hand-copied from the
+# template (or created before that substitution existed — e.g. docs/plans/
+# cockpit-roadmap-redesign.md:7, still literal today) keeps the raw text.
+# The awk pattern below still matches it (the first token, `<id`, is
+# non-whitespace) and used to hand THAT literal token back as if it were a
+# real ask-id — pl_emit then filed every event under the plausible-but-wrong
+# `_id.jsonl` (1090 real events, proven on this machine). A token that
+# starts with `<` is never a legitimate ask-id (ask-registry.sh's own ids
+# are always `ask-...`), so it means EXACTLY what an absent header means —
+# "no ask was ever actually linked" — and now resolves to that SAME empty/
+# "unlinked" case instead. (progress-log-lib.sh's pl_path_for also
+# independently quarantines any placeholder-shaped ask_id that reaches it
+# by some other path, as a writer-side backstop — not relied on here.)
 extract_ask_id() {
-  awk '
+  local raw
+  raw="$(awk '
     /^ask-id:[[:space:]]*[^[:space:]]+/ {
       sub(/^ask-id:[[:space:]]*/, "", $0)
       sub(/[[:space:]].*$/, "", $0)
       print $0
       exit
     }
-  '
+  ')"
+  case "$raw" in
+    '<'*) printf ''; return 0 ;;
+  esac
+  printf '%s' "$raw"
 }
 
 # emit_task_done_progress_log_events <repo_root> <rel-path> <pre> <post>
@@ -1193,6 +1216,44 @@ EOP
   F13="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
   if [ ! -f "$F13" ] || ! grep -q '"plan_slug":"case13"' "$F13"; then
     echo "FAIL scenario 13: expected a task_done event for the ask-id-less plan in the unlinked log" >&2
+    exit 1
+  fi
+
+  # ---- Scenario 13b (REGRESSION, proven 2026-07-27 bug): a plan header
+  # carrying the LITERAL un-substituted template placeholder
+  # (`ask-id: <id | none — no linked ask>` — plan-template.md's own literal
+  # default; real example still on disk today: docs/plans/cockpit-roadmap-
+  # redesign.md:7) must resolve the SAME as no header at all (the "unlinked"
+  # lane) — NEVER a separate `_id.jsonl` (the plausible-but-wrong file the
+  # pre-fix extract_ask_id produced; 1090 real events found filed there on
+  # this machine) ----
+  cat > docs/plans/case13b.md <<'EOP'
+# Plan: Case 13b (unsubstituted template placeholder ask-id header)
+Status: ACTIVE
+ask-id: <id | none — no linked ask>
+
+## Tasks
+- [ ] 1. only task
+EOP
+  git add docs/plans/case13b.md
+  git commit -q -m "plan: case13b"
+  PRE13B=$(git show HEAD:docs/plans/case13b.md)
+  cat > docs/plans/case13b.md <<'EOP'
+# Plan: Case 13b (unsubstituted template placeholder ask-id header)
+Status: ACTIVE
+ask-id: <id | none — no linked ask>
+
+## Tasks
+- [x] 1. only task
+EOP
+  POST13B=$(cat docs/plans/case13b.md)
+  process_lifecycle_event "$TMP/docs/plans/case13b.md" "Edit" "$PRE13B" "$POST13B" >/dev/null 2>&1 || true
+  if [ ! -f "$F13" ] || ! grep -q '"plan_slug":"case13b"' "$F13"; then
+    echo "FAIL scenario 13b: expected the placeholder-ask-id plan's task_done event in the SAME unlinked log as scenario 13, not a separate file" >&2
+    exit 1
+  fi
+  if [ -f "$PROGRESS_LOG_STATE_DIR/_id.jsonl" ]; then
+    echo "FAIL scenario 13b: _id.jsonl was created — extract_ask_id is still handing the literal placeholder token to pl_emit" >&2
     exit 1
   fi
 

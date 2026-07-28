@@ -167,6 +167,57 @@ pl_state_dir() {
 }
 
 # ----------------------------------------------------------------------
+# _pl_is_placeholder_ask_id <raw-ask-id> — WRITER-SIDE BUG BACKSTOP
+# (proven bug, 2026-07-27; nl-issue filed; see roadmap-routes.js's
+# deriveUnboundSessionsNode header comment ~line 585 for the operator-
+# visible symptom this closes).
+#
+# adapters/claude-code/templates/plan-template.md's own header line is the
+# LITERAL text `ask-id: <id | none — no linked ask>`. A plan file that never
+# ran through start-plan.sh's `--ask-id` substitution (hand-copied from the
+# template, or created before that substitution existed) keeps that literal
+# text. plan-lifecycle.sh's `extract_ask_id` and workstreams-emit.sh's
+# `_resolve_ask_id_for_plan_slug` both parse the header with
+# `/^ask-id:[[:space:]]*[^[:space:]]+/`, which matches (the first token,
+# `<id`, IS non-whitespace) and then truncate at the first whitespace,
+# handing pl_emit the literal token `<id` as if it were a real ask-id.
+# _pl_sanitize_ask_id then maps the lone `<` to `_`, producing the
+# plausible-looking-but-wrong file `_id.jsonl` — PROVEN against real state:
+# docs/plans/cockpit-roadmap-redesign.md:7 carries this exact literal text,
+# and `~/.claude/state/progress-logs/_id.jsonl` held 1090 real task_started/
+# task_done/merged events for it and 3 other plans in the same shape, every
+# one invisible to eventsForSlug's per-ask lookup.
+#
+# Both known callers are ALSO fixed at the source (they now resolve a
+# placeholder-shaped header to empty, the same "no ask ever linked" case
+# the "unlinked" lane already handles). This predicate is the DEFENSE-IN-
+# DEPTH half of the fix (the "house double-guard pattern"): it lives at the
+# ONE shared writer seam, so ANY caller — including one this lib's author
+# has not audited, or a future splice with the identical extractor bug —
+# still gets caught HERE rather than silently filing under a plausible-
+# looking sanitized name nobody would think to grep for.
+#
+#   - Empty is NOT a placeholder (that is the pre-existing, separately-
+#     documented-and-tested "no ask linked yet" case — pl_path_for("") ->
+#     unlinked.jsonl, UNCHANGED by this fix).
+#   - Non-empty AND (starts with `<`, OR contains a literal `<` or `>`
+#     anywhere) -> placeholder. A real ask-id is always drawn from
+#     ask-registry.sh's own id shape (`ask-<slug>` / `ask-auto-<hash>` /
+#     operator-typed text) and never legitimately contains either character.
+# ----------------------------------------------------------------------
+_pl_is_placeholder_ask_id() {
+  local raw="${1:-}"
+  [[ -z "$raw" ]] && return 1
+  case "$raw" in
+    '<'*) return 0 ;;
+  esac
+  case "$raw" in
+    *'<'*|*'>'*) return 0 ;;
+  esac
+  return 1
+}
+
+# ----------------------------------------------------------------------
 # _pl_sanitize_ask_id <raw-ask-id> — print a filesystem-SAFE single-path-
 # component derived from the raw ask-id. This is the SECURITY BOUNDARY that
 # protects EVERY emitter (plan-lifecycle, workstreams-emit, needs-you,
@@ -220,10 +271,28 @@ _pl_sanitize_ask_id() {
 # no-events-lost stopgap so a splice that cannot yet resolve an ask-id still
 # logs SOMEWHERE deterministic instead of silently no-op-ing (Edge Cases:
 # "estate-growth safe: old plans never break the surface").
+#
+# BUG BACKSTOP (2026-07-27, see _pl_is_placeholder_ask_id above): a
+# placeholder-shaped ask-id is checked BEFORE sanitization and routed to its
+# OWN quarantine file, "unattributed.jsonl" — deliberately NOT the same file
+# as the empty-ask-id "unlinked" lane (that lane means "honestly no ask was
+# ever linked"; this one means "a caller handed us garbage that LOOKS like
+# an unsubstituted template token — investigate the caller"), and
+# deliberately NOT run through _pl_sanitize_ask_id's generic allowlist
+# (which would silently produce a plausible-but-wrong name like `_id.jsonl`
+# — the exact historical bug). The raw value is preserved verbatim in the
+# emitted record's own `ask_id` JSON field regardless of which file it
+# lands in (pl_emit escapes the caller's raw `$ask_id`, not this function's
+# return value) — nothing about this ever drops or mutates the evidence.
 # ----------------------------------------------------------------------
 pl_path_for() {
+  local raw="${1:-}"
+  if _pl_is_placeholder_ask_id "$raw"; then
+    printf '%s/unattributed.jsonl' "$(pl_state_dir)"
+    return 0
+  fi
   local ask_id
-  ask_id="$(_pl_sanitize_ask_id "${1:-}")"
+  ask_id="$(_pl_sanitize_ask_id "$raw")"
   printf '%s/%s.jsonl' "$(pl_state_dir)" "$ask_id"
 }
 
@@ -861,6 +930,47 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     pass "emit('../../evil') created a sanitized log file INSIDE the state dir and NO literal 'evil.jsonl' anywhere (no separator survived to traverse)"
   else
     fail "traversal emit misbehaved: literal-evil.jsonl hits=$escaped_hits (want 0), sanitized-under-state=$under_state (want >=1)"
+  fi
+
+  echo "Scenario 1e: BUG BACKSTOP — a placeholder-shaped ask-id ('<id', the exact truncated token the proven 2026-07-27 emitter bug produces) resolves to unattributed.jsonl, NEVER the plausible-but-wrong sanitized name (_id.jsonl)"
+  p1e="$(pl_path_for "<id")"
+  if [[ "$p1e" == "$PROGRESS_LOG_STATE_DIR/unattributed.jsonl" ]]; then
+    pass "pl_path_for('<id') routes to the quarantine file, not a sanitized garbage name"
+  else
+    fail "expected $PROGRESS_LOG_STATE_DIR/unattributed.jsonl, got $p1e (this is the historical bug: it must NOT be _id.jsonl)"
+  fi
+
+  echo "Scenario 1f: the FULL un-substituted template default ('<id | none — no linked ask>', never truncated by a caller) ALSO quarantines, and is DISTINCT from the empty-ask-id 'unlinked' lane"
+  p1f="$(pl_path_for "<id | none — no linked ask>")"
+  p1f_empty="$(pl_path_for "")"
+  if [[ "$p1f" == "$PROGRESS_LOG_STATE_DIR/unattributed.jsonl" ]] && [[ "$p1f_empty" == "$PROGRESS_LOG_STATE_DIR/unlinked.jsonl" ]] && [[ "$p1f" != "$p1f_empty" ]]; then
+    pass "the full placeholder string quarantines to unattributed.jsonl, distinct from empty-ask-id's unlinked.jsonl"
+  else
+    fail "expected unattributed.jsonl != unlinked.jsonl; got p1f=$p1f p1f_empty=$p1f_empty"
+  fi
+
+  echo "Scenario 1g: a placeholder-shaped ask-id containing a bare '>' (not just a leading '<') also quarantines"
+  p1g="$(pl_path_for "weird>token")"
+  if [[ "$p1g" == "$PROGRESS_LOG_STATE_DIR/unattributed.jsonl" ]]; then
+    pass "an embedded '>' also triggers the quarantine guard"
+  else
+    fail "expected $PROGRESS_LOG_STATE_DIR/unattributed.jsonl, got $p1g"
+  fi
+
+  echo "Scenario 1h: emit-level proof — pl_emit('<id') lands in unattributed.jsonl with the RAW ask_id preserved verbatim in the record (never dropped, never silently mutated)"
+  pl_emit --type merged --ask "<id" --plan-slug "backstop-plan" --sha "backstopsha1" \
+    --summary "quarantine proof" --emitter auditor >/dev/null 2>&1
+  f1h="$PROGRESS_LOG_STATE_DIR/unattributed.jsonl"
+  if [[ -f "$f1h" ]] && grep -qF '"ask_id":"<id"' "$f1h" && grep -qF '"plan_slug":"backstop-plan"' "$f1h"; then
+    pass "pl_emit('<id') wrote into unattributed.jsonl with the raw ask_id preserved in the JSON record"
+  else
+    fail "expected $f1h to contain a record with ask_id=<id and plan_slug=backstop-plan"
+    [[ -f "$f1h" ]] && cat "$f1h" >&2
+  fi
+  if [[ ! -f "$PROGRESS_LOG_STATE_DIR/_id.jsonl" ]]; then
+    pass "no _id.jsonl (the historical garbage filename) was created by this emit"
+  else
+    fail "_id.jsonl was created — the sanitizer path was NOT bypassed for a placeholder-shaped ask-id"
   fi
 
   echo "Scenario 2: pl_emit writes a schema-valid task_done event"

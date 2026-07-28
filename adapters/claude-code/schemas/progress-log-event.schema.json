@@ -28,7 +28,7 @@
     },
     "ask_id": {
       "type": "string",
-      "description": "The ask this event belongs to. Empty string is NOT valid here (an empty ask-id resolves to the literal 'unlinked' orphan-lane file at write time, per pl_path_for — but the event object's own ask_id field carries whatever the caller passed, which may legitimately be empty for genuinely-unresolvable events pending the auditor's retroactive attach)."
+      "description": "The ask this event belongs to. Empty string is NOT valid here (an empty ask-id resolves to the literal 'unlinked' orphan-lane file at write time, per pl_path_for — but the event object's own ask_id field carries whatever the caller passed, which may legitimately be empty for genuinely-unresolvable events pending the auditor's retroactive attach). A value that LOOKS like an unsubstituted template placeholder (starts with '<', or contains '<'/'>' anywhere — proven 2026-07-27 bug: a plan header's un-substituted `ask-id: <id | none — no linked ask>` default reaching a caller as a literal token) resolves to the SEPARATE 'unattributed.jsonl' quarantine file instead, with this field still carrying the raw value verbatim — never the 'unlinked' file, and never a sanitized-but-misleading filename."
     },
     "type": {
       "type": "string",

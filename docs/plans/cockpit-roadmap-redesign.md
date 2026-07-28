@@ -4,7 +4,7 @@ Status: ACTIVE
 Mode: build
 rung: 3
 lifecycle-schema: v2
-ask-id: <id | none — no linked ask>
+ask-id: none — no linked ask (was the literal template placeholder; see progress-log-placeholder-ask-id-fix)
 prd-ref: none
 Architecture-review: DONE 2026-07-18, TWO gate reviews, BOTH folded into the task text below —
 architecture-reviewer (Fable) SOUND-WITH-AMENDMENTS, binding A1-A10
