@@ -64,6 +64,34 @@ impossible; priorities become visible; "what is Claude doing and why" is answera
 runs that didn't come through the queue. (Kanban/WIP-limit logic — the standard cure for exactly
 this failure shape.)
 
+## 3b. DAG scheduling amendment (operator directive 2026-07-27c — max-throughput orchestration)
+
+- **Dependencies are declared once, at plan time, not re-derived by an LLM per dispatch.** Plan
+  template gains `depends-on:` per task (plan-reviewer checks acyclicity); `Files to Modify` is
+  already per-task. Parallelizability then becomes COMPUTABLE, not judged:
+  `dispatchable := deps-done ∧ file-disjoint-with-in-flight ∧ admission-headroom`.
+  The deterministic queue layer computes the ready frontier; orchestrators just pull from it.
+- **Completion-triggered advance:** the closer's done-event recomputes the frontier and dispatches
+  the next item(s) automatically — event-driven, no polling, no idle gap between tasks.
+- **Objective function (binding): verified completions per day — NOT CPU utilization.** Little's
+  law guard: WIP beyond verify+merge capacity produces latency and rework, not throughput; the
+  pile-up just moves to integration. Verify/merge slots are FIRST-CLASS capacity alongside build
+  slots; the queue keeps them balanced (a verify backlog pauses new builds before the ladder does).
+- **Amdahl expectation, stated honestly:** harness-core tasks couple on shared state
+  (settings/manifest/install/doctrine) and are largely SERIAL by nature — that is why this program
+  runs WIP=1 on itself. Width pays on file-disjoint product work; the speedup ceiling comes from
+  the dependency structure, not ambition.
+- **Presence-aware headroom:** interactive-core reservation only matters while the operator is
+  active. Idle detection (no input ≥30 min / overnight) widens the ladder automatically — the
+  day's unused CPU seconds get used when they are genuinely free, and narrow again on return.
+- **Cloud offload is the true 24/7 multiplier:** local CPU-seconds are bounded; parallelizable
+  build slices can run in cloud/scheduled sessions with local reserved for verify+merge (which
+  must stay near the canonical checkout anyway).
+- **Model routing:** mechanical task classes route to cheaper/faster models — more parallel work
+  per rate-limit unit; the LOE class annotation (T7) doubles as the routing key.
+- *(Optional, later)* speculative prep: when capacity idles and the frontier is empty, pre-run the
+  read/research phase of nearly-ready tasks; discard-tolerant by design.
+
 ## 4. Observability: same substrate for human and AI
 
 - **Daily brief** (generated artifact, ≤1 screen): running now / completed yesterday with outcome
