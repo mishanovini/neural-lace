@@ -66,6 +66,25 @@ or claim) as part of its Definition of Done. 4. Observe-first before every enfor
 **Program totals (T1–T9): ~13–17 builder-sessions ≈ 1.5–2.5M tokens; wall-clock ≈ 1–2 weeks of
 part-time autonomous work with review gates. T10 adds 5–10 bs and is separately authorized.**
 
+## Additions 2026-07-28 (operator directives — design §3b.1–3b.3; append-only to avoid collision with in-flight builders)
+- [ ] T11 — Keep-moving watchdog: janitor rule (idle orchestrator ∧ non-empty frontier ∧ no live
+      children ≥N min → resumer-channel nudge) + orchestrator-pattern doctrine edits (background-
+      first dispatch; watchers are Monitors/ticks, never builder sessions). Outcome metric: zero
+      "idle orchestrator + ready work >30 min" events in a 7-day window. LOE: SMALL-MED, 1–2 bs
+      (depends-on: T1, T3). Verification: full.
+- [ ] T12 — Presence-aware headroom: last-input idle capture in janitor → presence.json; admission
+      lib widens/narrows ladder. Outcome metric: idle-hours dispatch width ≥2× active-hours width
+      with zero interactive-use complaints. LOE: SMALL, 0.5–1 bs (depends-on: T3). Verification: full.
+- [ ] T13 — Model-routing enforcement: class→model config table; queue item carries the routing
+      key; dispatch path applies it mechanically; effort-policy-warn flags mismatches
+      (observe-first); brief reports compliance %. Outcome metric: ≥80% of mechanical-class
+      dispatches on the designated tier within 14 days of enforce. LOE: SMALL-MED, 1–2 bs (coarse
+      classes pre-T7, full post-T7). Verification: full.
+- [ ] T14 — Cloud offload path: queue items flagged cloud-ok; dispatcher opens cloud/scheduled
+      sessions for them; results land via git; closers register completion. Outcome metric: ≥1
+      slice built end-to-end in cloud with local verify+merge. LOE: MED, 2–3 bs (depends-on: T1,
+      T4). Verification: full.
+
 ## Files to Modify/Create
 - adapters/claude-code/scripts/estate-janitor.sh (+ installer task) — T1
 - adapters/claude-code/scripts/estate-brief.sh — T1/T2

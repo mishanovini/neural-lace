@@ -92,6 +92,34 @@ this failure shape.)
 - *(Optional, later)* speculative prep: when capacity idles and the frontier is empty, pre-run the
   read/research phase of nearly-ready tasks; discard-tolerant by design.
 
+### 3b.1 Orchestrator liveness (the observed 6-hour-idle failure, 2026-07-28 operator report)
+Mechanics of the failure: sessions are EVENT-driven — they act only on a user message, a returning
+tool result, or a task notification. An orchestrator that blocked on one long synchronous child
+(e.g. a "watcher"), or ended its turn waiting, receives no further events and idles indefinitely
+with a non-empty frontier. Nothing re-invokes it. Three binding rules:
+1. **Never block on a single child.** Dispatch background-first; immediately continue draining the
+   frontier. A synchronous wait on one subtask while dispatchable work exists is an anti-pattern.
+2. **Watcher-type work is never a builder session.** Watching/polling is Monitor/tick territory
+   (deterministic, cheap); an LLM session burning a context window to watch something is waste AND
+   it wedges its parent.
+3. **Keep-moving watchdog (janitor rule):** registered orchestrator ∧ frontier non-empty ∧ no
+   dispatch/completion event ≥N min ∧ no live children → nudge via the resumer channel ("frontier
+   has K ready items, headroom exists — dispatch or record why not"). Idleness becomes a detected
+   anomaly, not a silent state.
+
+### 3b.2 Model routing — why it gets ignored today, and the mechanical fix
+Today model choice is an LLM judgment at dispatch time, guided by doctrine (pattern-rung → skipped
+under load), and the default (omit = inherit the parent's top-tier model) makes the expensive path
+the path of least resistance. Fix: **remove the choice from the moment of dispatch.** The queue
+item CARRIES its routing key (task class → model via one config table, annotated at plan time);
+the dispatch path applies it mechanically. effort-policy-warn observes mismatches (observe-first);
+the brief reports routing-compliance %. Ignoring becomes visible, then impossible.
+
+### 3b.3 Presence implementation note
+Janitor tick captures last-input idle time (Win32 GetLastInputInfo via one PowerShell call) →
+`presence.json`; the admission lib reads it to widen (idle ≥30 min / overnight) or narrow (active)
+the ladder. No new process; two file operations.
+
 ## 4. Observability: same substrate for human and AI
 
 - **Daily brief** (generated artifact, ≤1 screen): running now / completed yesterday with outcome
