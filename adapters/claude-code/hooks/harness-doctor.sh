@@ -161,6 +161,24 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck disable=SC1091
 { source "$SCRIPT_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# The self-test sweep below bounds every child `--self-test` with a wall-clock
+# budget. That bound used to be a bare `timeout`, which is GNU coreutils and
+# absent on stock macOS: rc=127 came back for EVERY hook and the doctor
+# RED-flagged the entire harness with "--self-test exited 127" — the loudest
+# possible false alarm, and one the operator cannot distinguish from a real
+# mass failure. nl_run_bounded keeps the bound on every platform.
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "harness-doctor: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ------------------------------------------------------------
 # resolve_repo_root — echoes the repo root, or empty if unresolvable.
 # Order: git -C <script dir> rev-parse --show-toplevel > $NL_REPO_ROOT
@@ -2498,9 +2516,11 @@ check_master_drift_selftest() {
     return 0
   fi
   local out rc last_line
-  out="$(HARNESS_SELFTEST=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$md_script" --self-test </dev/null 2>&1)"
+  out="$(HARNESS_SELFTEST=1 nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$md_script" --self-test </dev/null 2>&1)"
   rc=$?
-  if [[ "$rc" -ne 0 ]]; then
+  if [[ "$rc" -eq 124 ]]; then
+    _red "master-drift-autocorrect" "master-drift-autocorrect.sh --self-test exceeded the ${DOCTOR_SELFTEST_TIMEOUT:-1500}s bound and was killed"
+  elif [[ "$rc" -ne 0 ]]; then
     last_line="$(printf '%s\n' "$out" | tail -n 1)"
     _red "master-drift-autocorrect" "master-drift-autocorrect.sh --self-test exited ${rc}: ${last_line}"
   fi
@@ -2825,9 +2845,11 @@ check_selftest_sweep() {
     # NL_SELFTEST_SWEEP=1 marks this child as launched by the sanctioned sweep
     # entrypoint (provenance only — child scripts are not required to gate on
     # it; the reentry guard above is what actually blocks unsanctioned fan-out).
-    out="$(HARNESS_SELFTEST=1 NL_SELFTEST_SWEEP=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$hook" --self-test </dev/null 2>&1)"
+    out="$(HARNESS_SELFTEST=1 NL_SELFTEST_SWEEP=1 nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$hook" --self-test </dev/null 2>&1)"
     rc=$?
-    if [[ "$rc" -ne 0 ]]; then
+    if [[ "$rc" -eq 124 ]]; then
+      _red "selftest-sweep" "$(basename "$hook") --self-test exceeded the ${DOCTOR_SELFTEST_TIMEOUT:-1500}s bound and was killed"
+    elif [[ "$rc" -ne 0 ]]; then
       local last_line
       last_line="$(printf '%s\n' "$out" | tail -n 1)"
       _red "selftest-sweep" "$(basename "$hook") --self-test exited ${rc}: ${last_line}"

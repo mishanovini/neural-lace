@@ -81,6 +81,22 @@ SYNC_SUBDIRS="hooks scripts agents rules templates skills doctrine"
 source "$(dirname "${BASH_SOURCE[0]}")/lib/review-record-gate-lib.sh" 2>/dev/null || true
 N_REVIEW_SKIPPED=0
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# nl_run_bounded bounds ensure_fresh_origin_master's network fetch on EVERY
+# platform, including stock macOS where GNU `timeout` does not exist.
+# Defensive source + loud shim: a partial install degrades visibly rather
+# than dropping the bound in silence.
+# shellcheck source=lib/portable-timeout.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/portable-timeout.sh" 2>/dev/null || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "session-start-auto-install: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # Per-subdir canonical file extension: executable (.sh) vs content (.md).
 _subdir_ext() {
   case "$1" in
@@ -188,16 +204,20 @@ discover_nl_checkout() {
   return 0
 }
 
-# Best-effort bounded fetch of origin/master. Never blocks > timeout. Skippable.
+# Best-effort bounded fetch of origin/master. Never blocks > the bound.
+# Skippable.
+#
+# The bound is load-bearing: this is a SessionStart hook, so an unbounded
+# network fetch against a hung remote stalls the start of every session on
+# the machine. The previous `command -v timeout || <fetch anyway>` guard
+# dropped the bound entirely on stock macOS (no GNU coreutils, hence no
+# `timeout`). nl_run_bounded keeps it on every platform — see
+# hooks/lib/portable-timeout.sh, sourced below the function definitions.
 ensure_fresh_origin_master() {
   local nl="$1"
   [ "${AUTO_INSTALL_NO_FETCH:-0}" = "1" ] && return 0
   git -C "$nl" remote 2>/dev/null | grep -q '^origin$' || return 0
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$FETCH_TIMEOUT_SECONDS" git -C "$nl" fetch origin master --quiet >/dev/null 2>&1 || true
-  else
-    git -C "$nl" fetch origin master --quiet >/dev/null 2>&1 || true
-  fi
+  nl_run_bounded "$FETCH_TIMEOUT_SECONDS" git -C "$nl" fetch origin master --quiet >/dev/null 2>&1 || true
   return 0
 }
 

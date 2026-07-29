@@ -103,6 +103,18 @@ CANONICAL_REMOTE="origin"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 SCRIPT_ABS_PATH="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/../hooks/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "master-drift-autocorrect: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ============================================================
 # Path / state resolution helpers
 # ============================================================
@@ -160,14 +172,16 @@ _write_status() {
   fi
 }
 
-# Best-effort bounded run of a network git command.
+# Bounded run of a network git command (fetch/push/clone).
+#
+# Previously this degraded to an UNBOUNDED call when `timeout` was absent.
+# `timeout` is GNU coreutils, so "absent" means every stock Mac — and the
+# calls routed through here are exactly the ones that hang: network git
+# against a remote that never answers. nl_run_bounded
+# (hooks/lib/portable-timeout.sh) keeps the bound on every platform.
+# Plan macos-portability-2026-07, M3.
 _bounded() {
-  local secs="$1"; shift
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$secs" "$@"
-  else
-    "$@"
-  fi
+  nl_run_bounded "$@"
 }
 
 # ============================================================

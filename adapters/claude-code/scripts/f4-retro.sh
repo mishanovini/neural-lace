@@ -137,6 +137,18 @@ fi
 
 _have() { command -v "$1" >/dev/null 2>&1; }
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# shellcheck disable=SC1091
+{ source "$_F4_HOOKS_LIB/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "f4-retro: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ----------------------------------------------------------------------
 # _f4_repo_root — resolve the canonical repo root (git-root of THIS
 # script's location, via nl-paths.sh, never cwd).
@@ -419,12 +431,13 @@ f4_metric2_per_gate_alarm() {
   fi
   local wd_script="$_F4_SELF_DIR/waiver-density.sh"
   [[ -f "$wd_script" ]] || { printf ''; return 0; }
+  # Bounded on every platform (was: unbounded whenever `timeout` was absent,
+  # i.e. on any stock Mac). This one is only supplementary detail rather than
+  # a load-bearing count — but "best-effort" is an argument for tolerating a
+  # FAILED call, not for tolerating one that never returns: an unbounded
+  # waiver-density scan over a large ledger would hang f4-retro itself.
   local out=""
-  if _have timeout; then
-    out="$(timeout 15 bash "$wd_script" --report 2>/dev/null)"
-  else
-    out="$(bash "$wd_script" --report 2>/dev/null)"
-  fi
+  out="$(nl_run_bounded 15 bash "$wd_script" --report 2>/dev/null)"
   printf '%s' "$out" | awk -F'|' '/\| *YES *\|/ { gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $3); print $2, $3 }'
   return 0
 }

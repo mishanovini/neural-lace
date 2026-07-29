@@ -362,6 +362,17 @@ _AR_NLPATHS="$SCRIPT_DIR/../hooks/lib/nl-paths.sh"
 if [[ -f "$_AR_NLPATHS" ]]; then
   source "$_AR_NLPATHS"
 fi
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/../hooks/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "ask-registry: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
 
 _AR_VALID_STATUSES=(active done dismissed merged)
 # Amendment-candidate classification vocabulary (cockpit-roadmap-redesign
@@ -399,8 +410,13 @@ ar_registry_file() { printf '%s/ask-registry.jsonl' "$(ar_state_dir)"; }
 # nothing; workstreams-read.sh now DEFAULTS it on for every operator prompt in
 # an ask-attached session, which turns a dormant unbounded fork into a live
 # one that nothing reaps if it hangs. Async is not the same as bounded.
-# House pattern borrowed from supervisor-tick.sh:228 `_st_run` — use
-# `timeout` when present, degrade to a plain call (documented) when absent.
+# House pattern borrowed from supervisor-tick.sh's `_st_run`. That pattern
+# used to degrade to an UNBOUNDED call when `timeout` was absent — which is
+# every stock Mac, since `timeout` is GNU coreutils. For a fork of a live
+# model that is the worst possible degradation: the one call most likely to
+# hang is the one that loses its bound. Both now route through
+# nl_run_bounded (hooks/lib/portable-timeout.sh), which is bounded on every
+# platform (plan macos-portability-2026-07, M3).
 # `--model haiku -p` is BAKED IN here, not passed by callers (2026-07-22
 # re-review of be037a7, Critical: the first extraction let call sites drop
 # the flags — the lane forked the DEFAULT model with no print flag). This
@@ -413,15 +429,11 @@ ar_registry_file() { printf '%s/ask-registry.jsonl' "$(ar_state_dir)"; }
 _ar_timeout_claude() {
   local secs="$1"; shift
   if [[ "${AR_DRYRUN_ARGV:-0}" == "1" ]]; then
-    printf '%s ' "timeout" "${secs}s" "env" "-u" "CLAUDECODE" "claude" "--model" "haiku" "-p" "$@"
+    printf '%s ' "nl_run_bounded" "${secs}s" "env" "-u" "CLAUDECODE" "claude" "--model" "haiku" "-p" "$@"
     printf '\n'
     return 0
   fi
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "${secs}s" env -u CLAUDECODE claude --model haiku -p "$@"
-  else
-    env -u CLAUDECODE claude --model haiku -p "$@"
-  fi
+  nl_run_bounded "${secs}s" env -u CLAUDECODE claude --model haiku -p "$@"
 }
 
 # ----------------------------------------------------------------------
@@ -2041,10 +2053,21 @@ cmd_selftest() {
   # argv; AR_DRYRUN_ARGV prints it without ever forking a model.
   local v_argv
   v_argv="$(AR_DRYRUN_ARGV=1 _ar_timeout_claude 20 "shape probe prompt")"
-  if [[ "$v_argv" == "timeout 20s env -u CLAUDECODE claude --model haiku -p shape probe prompt " ]]; then
-    pass "model-fork argv carries the full bounded cheap-model shape (timeout Ns env -u CLAUDECODE claude --model haiku -p <prompt>)"
+  # The bound is now nl_run_bounded, not bare `timeout`: `timeout` is GNU
+  # coreutils and absent on stock macOS, where the old fallback dropped the
+  # bound entirely and forked a live model unbounded. The assertion is
+  # unchanged in strictness — it still pins the bound AND every flag.
+  if [[ "$v_argv" == "nl_run_bounded 20s env -u CLAUDECODE claude --model haiku -p shape probe prompt " ]]; then
+    pass "model-fork argv carries the full bounded cheap-model shape (nl_run_bounded Ns env -u CLAUDECODE claude --model haiku -p <prompt>)"
   else
     fail "model-fork argv shape regressed: got '$v_argv'"
+  fi
+  # And the bound must be a REAL one on this platform, not a documented
+  # degradation to unbounded — the whole point of M3.
+  if declare -F nl_run_bounded >/dev/null 2>&1; then
+    pass "nl_run_bounded is resolvable here (the model fork is genuinely bounded, not silently unbounded)"
+  else
+    fail "nl_run_bounded unresolved — the cheap-model fork would run unbounded"
   fi
 
   rm -rf "$TMP" 2>/dev/null || true

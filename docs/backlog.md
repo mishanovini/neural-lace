@@ -1335,3 +1335,55 @@ occurrence on the next model launch.
 branch + regression scenario T17b; self-test 21/0. This closes the instance,
 NOT the class.
 **Filed by:** neural-lace session, 2026-07-28 (operator-reported: "Context is not at 74%").
+
+---
+
+## macOS portability M3 — residuals left alone (deliberate, with reasons)
+
+**Filed by:** plan-phase-builder, task M3 of `docs/plans/macos-portability-2026-07.md`, 2026-07-29.
+Context: all 11 real `timeout` callsites now route through `nl_run_bounded`
+(`adapters/claude-code/hooks/lib/portable-timeout.sh`). These three things were
+noticed during that work and deliberately NOT fixed in M3's scope.
+
+1. **`hooks/lib/*.sh` self-tests are invisible to the doctor's sweep.**
+   `check_selftest_sweep` globs `"$hooks_dir"/*.sh`, which does not descend into
+   `hooks/lib/`. `portable-timeout.sh` ships a 21-assertion `--self-test` that
+   therefore never runs in `harness-doctor --full`, and neither do any other
+   lib self-tests. This is squarely M5's remit (make portability a mechanism);
+   the sweep runner M5 builds should include `hooks/lib/*.sh`.
+
+2. **The GNU `timeout` fast path still has no `-k` escalation.** `nl_run_bounded`'s
+   fallback TERMs then KILLs the process tree; the GNU path sends only SIGTERM,
+   because adding `-k` would change behavior on the Windows machines and the plan
+   puts that out of scope. Consequence: on a GNU box a child that ignores SIGTERM
+   still survives its bound. Worth revisiting as its own change, with the Windows
+   machines in the test matrix.
+
+3. **`propagation-trigger-router.sh` fails 9/14 self-test scenarios on macOS for a
+   reason unrelated to `timeout`.** Measured on both bash 3.2.57 and 5.3.15, with
+   GNU `timeout` present. The failures come from the scenarios' temp-dir fixture:
+   `.../propagation-S10.XXXX.AId1qw7HeJ/build-doctrine/telemetry/propagation.jsonl:
+   No such file or directory` (router line 648) — a BSD-vs-GNU `mktemp` template
+   difference, not a bound. Pre-existing before M3 and unchanged by it. Belongs to
+   the M2/M4 portability sweep or its own entry.
+
+### Two defects hit while landing M3 (found by using the harness, not by reading it)
+
+4. **`scope-enforcement-gate.sh` is not bash-3.2 compatible — it breaks on stock macOS.**
+   PROVEN: `printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m t"}}' |
+   /bin/bash adapters/claude-code/hooks/scope-enforcement-gate.sh` on bash 3.2.57 prints
+   `line 1957: declare: -A: invalid option` then `line 1980: ...: division by 0` and exits 0 —
+   i.e. the gate FAILS OPEN and enforces nothing. Under Homebrew bash 5.3.15 the same input
+   blocks correctly. On a stock Mac `bash` IS 3.2.57, so this blocking gate silently stops
+   blocking. Same class as M3/M4 but a language-feature issue (`declare -A`), not a GNU-tool
+   issue, so it is outside M3's `timeout` remit. Worth its own task in this plan.
+
+5. **The gate's path extractor silently drops a plain path when the same bullet has any
+   backticked prose.** PROVEN: an `## In-flight scope updates` bullet reading
+   ``- 2026-07-29: adapters/.../propagation-trigger-router.sh — bare callsite in `_self_invoke` ``
+   left that file rejected as out-of-scope; backticking the PATH as well made it pass, with no
+   other change. `extract_backtick_paths` loops all backtick pairs (scope-enforcement-gate.sh:1761-1771)
+   and the plain path is never considered. The behavior is documented ("supports backticked
+   paths") but the failure is silent and reads as "the gate ignored my scope update".
+   Cheap fix: when no backticked token resolves to a real path, fall back to scanning the
+   bullet for a plain path.

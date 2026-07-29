@@ -146,6 +146,18 @@ HOOKS_DIR="$SCRIPT_DIR/../hooks"
 # shellcheck disable=SC1091
 [[ -f "$HOOKS_DIR/lib/nl-paths.sh" ]] && source "$HOOKS_DIR/lib/nl-paths.sh" 2>/dev/null || true
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "supervisor-tick: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ----------------------------------------------------------------------
 # Path resolution (mirrors health-tick.sh's _ht_alert_dir convention)
 # ----------------------------------------------------------------------
@@ -223,16 +235,20 @@ _st_log() {
 }
 
 # _st_run <timeout_secs> <cmd...> — bounded fork (timeout-wrap every fork,
-# scope item (c)). Falls back to unbounded exec when `timeout` is
-# unavailable on the platform (never a hard dependency).
+# scope item (c)).
+#
+# This used to fall back to an UNBOUNDED exec when `timeout` was unavailable.
+# `timeout` is GNU coreutils, so that fallback fired on every stock Mac — and
+# it silently voided this tick's whole wall-clock-budget design, whose
+# SWEEP_TIMEOUT anomaly depends on forks actually being killable. It also
+# contradicted the fp_expectation this tick is registered under in
+# manifest.json ("every subprocess timeout-wrapped, so a slow/hung fork WARNS
+# rather than hanging the tick"). nl_run_bounded
+# (hooks/lib/portable-timeout.sh) is bounded on every platform and returns
+# the same 124 on expiry, so the existing rc checks are unchanged.
+# Plan macos-portability-2026-07, M3.
 _st_run() {
-  local secs="$1"; shift
-  if [[ "$secs" -le 0 ]] 2>/dev/null; then secs=1; fi
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "${secs}s" "$@"
-  else
-    "$@"
-  fi
+  nl_run_bounded "$@"
 }
 
 # ----------------------------------------------------------------------
