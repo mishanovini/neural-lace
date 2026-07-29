@@ -1595,3 +1595,49 @@ comparison, or add a forced sleep/nanosecond-mtime read.
 **Fold-in point:** any slice touching workstreams-read.sh's cursor-fast-path
 logic next.
 **Filed by:** plan-phase-builder, problems-persist build, 2026-07-29.
+
+
+## ESTATE-T4-PRE-EXISTING-UNREGISTERED-WORKTREES-01 — 25-27 real worktrees predate the no-orphan mechanism; named, not silently pruned or hidden
+
+**Severity:** P3 (informational debt; the mechanism itself is forward-looking by design).
+**Context:** accountable-estate T4 shipped no-orphan registration (spawn-worktree.sh
+writes an open registration on `--apply` create; close-worktree.sh/`--remove` closes
+it) plus `scripts/estate-attribution-check.sh`, the tool deriving T4's own outcome
+metric: "zero unattributable worktrees/branches older than 48h." Run live against
+this machine's real estate at build time (2026-07-29):
+```
+bash adapters/claude-code/scripts/estate-attribution-check.sh --repo /Users/misha/Claude/neural-lace
+```
+result: **zero** unattributable worktrees older than 48h — but PROVEN this is an
+artifact of freshness, not attribution: `git worktree list` on this repo showed 26
+secondary worktrees (up from the "18 vs a budget of 6" ground truth cited at the
+start of this build — active parallel building continued the whole session), and
+every single one's last commit is under 12 hours old (checked directly: `git log -1
+--format='%ci (%cr)'` on five sampled branches returned "4-6 hours ago"). None of
+them carry a registration (the mechanism did not exist when they were created), so
+as each ages past 48h it WILL start appearing in `estate-attribution-check.sh`'s
+output with no registration to explain it — that is expected, honest pre-existing
+debt, not a regression in the new mechanism. Cross-checked against a DIFFERENT,
+liveness-based tool with no age gate — `worktree-hygiene-sweep.sh --stranded`, run
+the same session — which reported 25 "no live owner" worktrees (up from the "7+"
+figure in the same ground truth), all "last commit 0d ago": that tool answers "is
+anyone actively working on this right now," a different question from T4's
+"do we have an attribution record," and its higher, age-gate-free count is not a
+discrepancy to reconcile — the two tools are deliberately asking different things
+(see estate-attribution-check.sh's own header for the full distinction).
+**Action:** none required by T4 itself — the mechanism is forward-looking per its
+own outcome metric's re-check date below. When re-checking, any UNATTRIBUTABLE row
+whose worktree was created BEFORE the T4 landing commit is this pre-existing debt
+(triage manually via `worktree-hygiene-sweep.sh --stranded` + salvage-or-prune, same
+as before T4 existed); any row for a worktree created AFTER that commit is a REAL
+regression in the no-orphan mechanism and must be investigated as a defect, not
+filed here.
+**Re-check date (program rule 2):** 2026-08-01 (72h out — long enough for today's
+sub-12h-old worktrees to cross the 48h threshold one way or the other, and for at
+least one worktree created AFTER T4 landed to also cross it, which is the first
+point this metric can demonstrate holding at zero for genuinely-covered work
+rather than reading zero merely because nothing was old enough yet to test).
+Re-run: `bash adapters/claude-code/scripts/estate-attribution-check.sh --repo
+/Users/misha/Claude/neural-lace`; recurrence of a POST-T4-created unattributable
+worktree auto-reopens this row per program rule 2.
+**Filed by:** plan-phase-builder, accountable-estate T4 build, 2026-07-29.

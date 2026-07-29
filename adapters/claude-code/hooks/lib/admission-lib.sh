@@ -160,6 +160,19 @@
 #     ledger/<host>.jsonl   the would-block ledger, O_APPEND, one writer
 #   ADM_ESTATE_SNAPSHOT default $HOME/.claude/state/estate/snapshot.json
 #                      T1's janitor output; source of slot occupancy.
+#   ADM_REGISTRATIONS_DIR default $(dirname ADM_ESTATE_SNAPSHOT)/registrations
+#                      T4's no-orphan registration store (hooks/lib/estate-
+#                      registration-lib.sh, written by spawn-worktree.sh at
+#                      create, removed at close). Read-only from here — this
+#                      lib counts, it never writes this directory. Deriving
+#                      the default from ADM_ESTATE_SNAPSHOT's own dirname
+#                      (rather than a second independent default) means every
+#                      self-test in this file that already sandboxes
+#                      ADM_ESTATE_SNAPSHOT sandboxes this count for free.
+#   ADM_WIP_LIMIT      default 6 (T4 -- design §6c "closure gates new work").
+#                      Ground truth 2026-07-29: this machine's doctor reported
+#                      18 registered worktrees against an operator-set budget
+#                      of 6 -- the default is that same number, not invented.
 #
 # WHAT IS HONESTLY NOT BUILT HERE: the Loop-2 pressure tick that writes
 # pressure.json is NOT part of T3. Until it exists, adm_pressure_color returns
@@ -475,6 +488,55 @@ adm_rate_in_window() {
 }
 
 # ---------------------------------------------------------------------------
+# WIP — closure-gates-new-work (T4, design §6c), OBSERVE ONLY
+# ---------------------------------------------------------------------------
+# "Closure gates new work (the enforcement that needs no memory): the
+# admission lib refuses a session's NEXT pull/dispatch while its open-item
+# count exceeds its WIP limit. Closing work is the path to more work --
+# incentive-aligned, deterministic, no reliance on discipline or janitors."
+#
+# SCOPED TO source=worktree, DELIBERATELY (read this before widening it).
+# T4's no-orphan registration (hooks/lib/estate-registration-lib.sh, spliced
+# into spawn-worktree.sh) is the ONLY dispatch path with a real, DERIVED
+# open-item count today -- a worktree create writes a registration, a close
+# removes it, so "how many are open" is a fact on disk, not a guess. The
+# emit-feed and resumer dispatch paths have NO equivalent registration yet
+# (that is T2/T5+ obligation-store territory), so counting "open items" for
+# THEM here would mean inventing a number with nothing backing it -- exactly
+# the DERIVED-NEVER-DECLARED violation this file's own header warns against
+# for every other rung. Scoping to worktree also keeps this off the two
+# highest-volume dispatch paths (emit-feed/resumer measured 15-21/min, F1) --
+# the header's hot-path cost warning applies most sharply there, so this rung
+# adds its glob-count cost ONLY to the comparatively rare worktree-create
+# path, never to the hot one. Widen only when a broader obligation store
+# gives emit-feed/resumer their own derivable open-item count.
+#
+# _adm_wip_open_count -- builtin glob loop, no forks (same idiom as
+# adm_rate_in_window). Reads estate-registration-lib.sh's OWN directory
+# convention directly rather than sourcing that lib a second time -- this
+# lib already has a source-time cost budget (see the header's hot-path
+# note); a second `source` per dispatch would only add to it for a value
+# obtainable by one more glob over an already-resolved directory.
+_adm_registrations_dir_default() {
+  # Derived from ADM_ESTATE_SNAPSHOT's own directory so a caller that
+  # sandboxes the snapshot (every self-test in this file does) sandboxes the
+  # registrations count for free, with no separate env var to remember.
+  local snap="${ADM_ESTATE_SNAPSHOT:-$HOME/.claude/state/estate/snapshot.json}"
+  printf '%s' "$(dirname "$snap")/registrations"
+}
+
+_adm_wip_open_count() {
+  local d="${ADM_REGISTRATIONS_DIR:-$(_adm_registrations_dir_default)}"
+  [[ -d "$d" ]] || { printf '%s' 0; return 0; }
+  local n=0 f
+  for f in "$d"/*.json; do
+    [[ -e "$f" ]] || continue
+    n=$(( n + 1 ))
+  done
+  printf '%s' "$n"
+}
+
+# ---------------------------------------------------------------------------
 # The ladder — what WOULD have happened
 # ---------------------------------------------------------------------------
 # Order matters: operator gestures (HALT, DRAIN) outrank measured pressure,
@@ -491,6 +553,18 @@ adm_rate_in_window() {
 _adm_decide() {
   if adm_halt_active; then printf 'would-block:halt'; return 0; fi
   if adm_drain_active; then printf 'would-block:drain'; return 0; fi
+
+  # WIP rung (T4): scoped to source=worktree only -- see the block comment
+  # above _adm_wip_open_count for why. $_ADM_SOURCE_PRECOMPUTED is set by
+  # adm_admit via a subshell-scoped env assignment, the same idiom
+  # $_ADM_RATE_PRECOMPUTED already uses below to hand this function a value
+  # computed once by the caller.
+  if [[ "${_ADM_SOURCE_PRECOMPUTED:-}" == "worktree" ]]; then
+    local open_n; open_n="$(_adm_wip_open_count)"
+    if (( open_n >= ${ADM_WIP_LIMIT:-6} )); then
+      printf 'would-block:wip-exceeded'; return 0
+    fi
+  fi
 
   local color; color="$(adm_pressure_color)"
   case "$color" in
@@ -574,7 +648,7 @@ adm_admit() {
   # once inside _adm_decide, once for the ledger field — so the value that drove
   # the verdict could differ from the value recorded beside it.
   local rate; rate="$(adm_rate_in_window)"
-  local verdict; verdict="$(_ADM_RATE_PRECOMPUTED="$rate" _adm_decide)"
+  local verdict; verdict="$(_ADM_RATE_PRECOMPUTED="$rate" _ADM_SOURCE_PRECOMPUTED="$source" _adm_decide)"
   _ADM_LAST_VERDICT="$verdict"
 
   # --- assemble the line (labels are enum-keyed and scrubbed) ---
@@ -1007,6 +1081,71 @@ _adm_self_test() {
   [[ "$prod" == "$HOME/.claude/state/governor" ]] && pass "production path unchanged when not self-testing" \
     || fail "production path wrong: '$prod'"
   [[ -n "$saved_dir" ]] && export ADM_STATE_DIR="$saved_dir"
+
+  echo "Scenario 18: WIP rung (T4, design §6c 'closure gates new work') — scoped to source=worktree, OBSERVE ONLY"
+  # Fixture registrations: plain files under a sandboxed ADM_REGISTRATIONS_DIR
+  # (this scenario never touches estate-registration-lib.sh's own writer —
+  # it only needs *.json files to exist for the glob-count under test, the
+  # same "test the reader against fixture files" discipline this file's
+  # occupancy scenarios already use).
+  local wipdir="$T/registrations"
+  mkdir -p "$wipdir"
+  export ADM_REGISTRATIONS_DIR="$wipdir"
+  rm -f "$ADM_ESTATE_SNAPSHOT" 2>/dev/null   # isolate WIP from the occupancy rung
+  # Scenario 15 above leaves the pressure file at "black" and never resets it
+  # (only HALT/DRAIN/snapshot are cleaned up there) -- reset to green here so
+  # this scenario isolates the WIP rung from a stale pressure rung firing
+  # first and masking what WIP itself would have decided.
+  printf '{"color":"green"}\n' > "$ADM_PRESSURE_FILE"
+
+  local i
+  for i in 1 2 3; do : > "$wipdir/open-$i.json"; done
+  v="$(adm_admit worktree)"
+  [[ "$v" == "admit" ]] && pass "3 open registrations, default limit 6 -> admit" || fail "got '$v'"
+
+  for i in 4 5 6; do : > "$wipdir/open-$i.json"; done
+  v="$(adm_admit worktree)"
+  [[ "$v" == "would-block:wip-exceeded" ]] && pass "6 open registrations >= default limit 6 -> would-block:wip-exceeded" \
+    || fail "got '$v'"
+  rc=$?
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"verdict":"would-block:wip-exceeded"'*) pass "ledger line records the wip-exceeded verdict" ;;
+    *) fail "ledger line missing wip-exceeded verdict: $last" ;;
+  esac
+
+  echo "Scenario 18b: OBSERVE MODE — rc still 0 under the WIP rung (never blocks)"
+  v="$(adm_admit worktree)"; rc=$?
+  [[ "$rc" == "0" ]] && pass "rc 0 even at/over the WIP limit — observe mode never blocks" \
+    || fail "OBSERVE-MODE VIOLATION under WIP rung: rc=$rc"
+
+  echo "Scenario 18c: WIP rung is SCOPED to source=worktree — emit-feed/resumer are NOT gated by it"
+  # design rationale (see the block comment above _adm_wip_open_count): only
+  # the worktree dispatch path has a real DERIVED open-item count today: an
+  # emit-feed or resumer dispatch is not a registered work-item at all, so
+  # gating them on this count would be a DECLARED, not DERIVED, block.
+  v="$(adm_admit emit-feed)"
+  [[ "$v" == "admit" ]] && pass "emit-feed admits even with 6 open registrations (scoping deliberate, not an oversight)" \
+    || fail "WIP rung leaked into emit-feed: got '$v'"
+  v="$(adm_admit resumer)"
+  [[ "$v" == "admit" ]] && pass "resumer admits even with 6 open registrations (same scoping)" \
+    || fail "WIP rung leaked into resumer: got '$v'"
+
+  echo "Scenario 18d: ADM_WIP_LIMIT is honored (operator-configurable threshold)"
+  v="$(ADM_WIP_LIMIT=10 adm_admit worktree)"
+  [[ "$v" == "admit" ]] && pass "6 open registrations under a raised limit (10) -> admit" \
+    || fail "got '$v' — ADM_WIP_LIMIT override not honored"
+  v="$(ADM_WIP_LIMIT=2 adm_admit worktree)"
+  [[ "$v" == "would-block:wip-exceeded" ]] && pass "6 open registrations over a lowered limit (2) -> would-block:wip-exceeded" \
+    || fail "got '$v' — ADM_WIP_LIMIT override not honored"
+
+  rm -rf "$wipdir"
+  unset ADM_REGISTRATIONS_DIR
+
+  echo "Scenario 18e: an empty/absent registrations dir counts as 0 open (fail-open, never a false block)"
+  v="$(ADM_REGISTRATIONS_DIR="$T/no-such-dir" adm_admit worktree)"
+  [[ "$v" == "admit" ]] && pass "absent registrations dir -> 0 open -> admit" \
+    || fail "got '$v' — should fail open to admit, not manufacture a block from a missing directory"
 
   rm -rf "$T"
   echo

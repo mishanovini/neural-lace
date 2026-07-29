@@ -342,3 +342,136 @@ Runtime verification: sql SELECT source, verdict, kind FROM ledger — sed 's/.*
 Non-blocking follow-ups filed the same turn: N-1 (16b PASS message says rc=0 while the
 criterion admits rc!=0-with-summary; workstreams-emit returns rc=1) and N-2 (add a
 positive control asserting a row APPEARS under an explicit ADM_STATE_DIR probe).
+
+## Task T4 - Deterministic closers, closure-gates-new-work WIP rule, no-orphan registration
+
+BUILDER CLAIM - NOT VERIFIER-CONFIRMED
+======================================
+Built by a worktree-isolated builder (PARALLEL dispatch mode), branch
+worktree-agent-a5767be8802694747 (worktree
+.claude/worktrees/agent-a5767be8802694747), merged onto the accountable-estate
+line at fa0f490/409ba26 before this build started. The T4 checkbox is
+deliberately LEFT UNCHECKED: task-verifier is the only checkbox flipper; no
+task-verifier has run on this work. Treat everything below as a builder's
+self-report to be independently re-derived. task-verifier verdict: N/A
+(orchestrator runs it sequentially after cherry-picking, per PARALLEL mode).
+
+Claimed at: 2026-07-29T22:10:00Z (approx, this session)
+
+WHAT SHIPPED (the three pieces from the task text)
+---------------------------------------------------
+1. **Deterministic closer generalized to a second work-item type:**
+   `adapters/claude-code/scripts/close-worktree.sh` (NEW). Verify (a
+   `--plan`/`--task` naming a task-verifier PASS evidence block, or an
+   explicit `--verified` vouch — no silent third path) -> integration check
+   (branch already an ancestor of a resolved base, OR an explicit
+   `--keep-branch --reason '<why>'`; refuses otherwise — T5's merge lock is
+   NOT built, so this closer does not merge, only checks-and-refuses or
+   defers to the existing PR flow) -> `spawn-worktree.sh --remove` (worktree
+   remove + safe branch delete/preserve) -> no-orphan de-registration. 17/0
+   self-test on both interpreters, RED-proven by mutating the verify gate to
+   always-pass (drove 2 of 17 to FAIL).
+2. **Closure-gates-new-work WIP rule in the admission lib, OBSERVE MODE
+   ONLY:** `adapters/claude-code/hooks/lib/admission-lib.sh` gained a fifth
+   ladder rung, `would-block:wip-exceeded`, scoped DELIBERATELY to
+   `source=worktree` (see the file's own block comment for the derived-not-
+   declared reasoning: only the worktree path has a real registration-backed
+   open-item count today). Default `ADM_WIP_LIMIT=6` (this machine's own
+   measured budget, not invented). Never blocks — Scenario 18b re-confirms
+   rc 0 even when the rung fires. 57/0 self-test on both interpreters (was
+   48/0 before this task; +9 assertions, 0 regressions), RED-proven by
+   mutation (removing the rung's `if` block drove 3 of the 9 new assertions
+   to FAIL: 54/3).
+3. **No-orphan registration at spawn-worktree:**
+   `adapters/claude-code/hooks/lib/estate-registration-lib.sh` (NEW) — one
+   JSON file per open work-item (`reg_register`/`reg_close`/`reg_is_open`/
+   `reg_open_count`/`reg_has_any_record`), same HARNESS_SELFTEST sandboxing
+   convention as admission-lib.sh. `spawn-worktree.sh` writes an open
+   registration (slug/path/branch/host + optional `--plan`/`--task`/`--who`)
+   immediately after a successful `--apply` create, and closes it (with a
+   disposition) in `remove_worktree()` on `--remove`. 29/0 self-test on both
+   interpreters. `spawn-worktree.sh`'s OWN self-test gained 2 new scenarios
+   (registration on create, incl. zero-attribution; de-registration on
+   remove, incl. an explicit `--disposition` override on a kept-unmerged
+   branch) — both RED-proven by mutation (removing either splice drove the
+   corresponding new assertion to FAIL; restored to green after).
+
+OUTCOME METRIC — DERIVABLE, AND ACTUALLY RUN (constitution s4: exercise the
+real path, cite the output)
+-----------------------------------------------------------------------------
+`adapters/claude-code/scripts/estate-attribution-check.sh` (NEW) derives
+"zero unattributable worktrees/branches older than 48h" by joining
+`git worktree list` + branch-commit age against `estate-registration-lib.sh`'s
+open-OR-closed record for each slug. 9/0 self-test on both interpreters,
+RED-proven by mutation (disabling the registration check drove 3 of 9 to
+FAIL: 6/3).
+
+Command (run live against THIS repo's real estate, not a fixture):
+  bash adapters/claude-code/scripts/estate-attribution-check.sh --repo /Users/misha/Claude/neural-lace
+
+BEFORE result: `zero unattributable worktrees older than 48h`.
+HONEST CAVEAT (PROVEN, not just asserted): this zero is an artifact of
+freshness, not of attribution. `git worktree list` on this repo showed 26
+secondary worktrees at build time (up from "18 vs a budget of 6" in this
+task's own ground truth — active parallel building continued through the
+session); none carry a registration (the mechanism did not exist when they
+were created); and every one's last commit is under 12 hours old (sampled 5
+branches directly via `git log -1 --format='%ci (%cr)'`, all "4-6 hours
+ago"). None have yet crossed the 48h threshold, so none appear in this run
+regardless of attribution. Cross-checked against `worktree-hygiene-sweep.sh
+--stranded` (a DIFFERENT, liveness-based tool with no age gate — see
+estate-attribution-check.sh's header for why the two are not measuring the
+same thing), which reported 25 "no live owner" rows the same session (all
+"last commit 0d ago") — consistent with, and a superset of, this task's
+prompt-cited "7+ stranded" figure from earlier in the session (worktree
+count and staleness both grew during the build, not shrank).
+AFTER disposition: filed as docs/backlog.md's
+ESTATE-T4-PRE-EXISTING-UNREGISTERED-WORKTREES-01 with a 2026-08-01 re-check
+date (program rule 2) — long enough for today's worktrees to cross 48h in
+either direction, and for at least one worktree created AFTER this commit to
+also cross it, which is the first point this metric can demonstrate holding
+zero for genuinely-covered work rather than reading zero merely because
+nothing was old enough to test. Recurrence of a POST-T4 unattributable
+worktree at that re-check auto-reopens the row; a PRE-T4 one is expected
+debt, not a regression.
+
+NOT DONE (deliberately, named rather than hidden)
+--------------------------------------------------
+- No REAL worktree was created against the shared main checkout to
+  end-to-end demonstrate create-via-spawn-worktree.sh -> registered ->
+  close-via-close-worktree.sh -> de-registered against PRODUCTION state: this
+  builder runs isolated in its own worktree and mutating the shared
+  checkout's own worktree list is out of scope for that isolation. The exact
+  same sequence IS demonstrated, mutation-proven, against throwaway fixture
+  repos in all three scripts' own --self-test suites (run twice each, both
+  interpreters, RED/GREEN both directions) — the isolated-worktree
+  equivalent of "exercise the real path."
+- T5 (merge lock) is not built; close-worktree.sh's integration check
+  therefore refuses an unmerged branch rather than merging it, or requires
+  an explicit `--keep-branch --reason`. Named in the script's own header as
+  the exact point T5's merge script should slot in.
+- The WIP rung is scoped to `source=worktree` only, not emit-feed/resumer —
+  named as deliberate (no registration-backed open-item count exists for
+  those paths yet) in both admission-lib.sh's header and this block.
+
+RETIREMENT (program rule 3)
+----------------------------
+docs/conventions/worktree-per-session.md's Cleanup section: the bare,
+memory-reliant "run `spawn-worktree.sh --remove <slug>` ... at session end"
+recommendation is RETIRED as the top-level closer instruction, superseded by
+`close-worktree.sh` (verify + integration-check + remove + de-registration in
+one deterministic call). `spawn-worktree.sh --remove` remains the
+lower-level primitive close-worktree.sh itself calls — not deleted, just no
+longer the recommended entry point.
+
+RE-CHECK DATE (program rule 2)
+--------------------------------
+2026-08-01 — re-run estate-attribution-check.sh against this repo; see the
+docs/backlog.md finding above for the auto-reopen condition.
+
+Runtime verification: test adapters/claude-code/hooks/lib/estate-registration-lib.sh::--self-test (29/0, both interpreters)
+Runtime verification: test adapters/claude-code/scripts/spawn-worktree.sh::--self-test (registration+de-registration scenarios, both interpreters)
+Runtime verification: test adapters/claude-code/hooks/lib/admission-lib.sh::--self-test (57/0, both interpreters, WIP rung Scenario 18/18b/18c/18d/18e)
+Runtime verification: test adapters/claude-code/scripts/close-worktree.sh::--self-test (17/0, both interpreters)
+Runtime verification: test adapters/claude-code/scripts/estate-attribution-check.sh::--self-test (9/0, both interpreters)
+Runtime verification: file adapters/claude-code/scripts/estate-attribution-check.sh::bash adapters/claude-code/scripts/estate-attribution-check.sh --repo /Users/misha/Claude/neural-lace -> zero unattributable worktrees older than 48h (with the freshness caveat above)
