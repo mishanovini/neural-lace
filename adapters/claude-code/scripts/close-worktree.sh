@@ -260,19 +260,19 @@ _cw_self_test() {
   local sw="$SCRIPT_DIR/spawn-worktree.sh"
 
   echo "Scenario 1: closing an unregistered slug is a no-op (rc 0)"
-  bash "${BASH_SOURCE[0]}" close never-created --repo "$R" --verified --quiet
+  "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close never-created --repo "$R" --verified --quiet
   local rc=$?
   [[ "$rc" == "0" ]] && pass "rc 0 for a slug with no registered worktree" || fail "rc $rc"
 
   echo "Scenario 2: no --plan/--task and no --verified -> BLOCKED (exit 2), worktree untouched"
   bash "$sw" wt-a --type commits --repo "$R" --apply --print-cd >/dev/null 2>&1
-  bash "${BASH_SOURCE[0]}" close wt-a --repo "$R" --quiet
+  "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-a --repo "$R" --quiet
   rc=$?
   [[ "$rc" == "2" ]] && pass "unverified close refused (exit 2)" || fail "expected 2, got $rc"
   [[ -d "$R/.claude/worktrees/wt-a" ]] && pass "worktree left in place after the refusal" || fail "worktree removed despite the refusal"
 
   echo "Scenario 3: --verified + already-integrated branch (no new commits) -> closes cleanly, disposition=merged"
-  bash "${BASH_SOURCE[0]}" close wt-a --repo "$R" --verified --quiet
+  "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-a --repo "$R" --verified --quiet
   rc=$?
   [[ "$rc" == "0" ]] && pass "verified + integrated branch closes (exit 0)" || fail "expected 0, got $rc"
   [[ ! -d "$R/.claude/worktrees/wt-a" ]] && pass "worktree removed" || fail "worktree still present"
@@ -285,18 +285,18 @@ _cw_self_test() {
   echo unique > "$R/.claude/worktrees/wt-b/u.txt"
   git -C "$R/.claude/worktrees/wt-b" add u.txt
   git -C "$R/.claude/worktrees/wt-b" -c commit.gpgsign=false commit -qm "unique work"
-  bash "${BASH_SOURCE[0]}" close wt-b --repo "$R" --verified --quiet
+  "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-b --repo "$R" --verified --quiet
   rc=$?
   [[ "$rc" == "2" ]] && pass "unintegrated branch with no --keep-branch refused (exit 2)" || fail "expected 2, got $rc"
   [[ -d "$R/.claude/worktrees/wt-b" ]] && pass "worktree left in place" || fail "worktree removed despite the refusal"
 
   echo "Scenario 5: unintegrated branch + --keep-branch with NO --reason -> BLOCKED (exit 2)"
-  bash "${BASH_SOURCE[0]}" close wt-b --repo "$R" --verified --keep-branch --quiet
+  "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-b --repo "$R" --verified --keep-branch --quiet
   rc=$?
   [[ "$rc" == "2" ]] && pass "--keep-branch with no --reason refused (exit 2)" || fail "expected 2, got $rc"
 
   echo "Scenario 6: unintegrated branch + --keep-branch --reason '<why>' -> closes, branch preserved, disposition names the reason"
-  bash "${BASH_SOURCE[0]}" close wt-b --repo "$R" --verified --keep-branch --reason "operator wants to review this diff" --quiet
+  "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-b --repo "$R" --verified --keep-branch --reason "operator wants to review this diff" --quiet
   rc=$?
   [[ "$rc" == "0" ]] && pass "explicit preserve+reason closes (exit 0)" || fail "expected 0, got $rc"
   [[ ! -d "$R/.claude/worktrees/wt-b" ]] && pass "worktree removed" || fail "worktree still present"
@@ -317,12 +317,12 @@ Task ID: T9
 Verdict: PASS
 EOF
   bash "$sw" wt-c --type commits --repo "$R" --apply --print-cd >/dev/null 2>&1
-  ( cd "$T/planrepo" && bash "${BASH_SOURCE[0]}" close wt-c --repo "$R" --plan demo-plan --task T9 --quiet )
+  ( cd "$T/planrepo" && "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-c --repo "$R" --plan demo-plan --task T9 --quiet )
   rc=$?
   [[ "$rc" == "0" ]] && pass "plan/task PASS evidence accepted, closes cleanly" || fail "expected 0, got $rc"
 
   bash "$sw" wt-d --type commits --repo "$R" --apply --print-cd >/dev/null 2>&1
-  ( cd "$T/planrepo" && bash "${BASH_SOURCE[0]}" close wt-d --repo "$R" --plan demo-plan --task T-NONEXISTENT --quiet )
+  ( cd "$T/planrepo" && "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-d --repo "$R" --plan demo-plan --task T-NONEXISTENT --quiet )
   rc=$?
   [[ "$rc" == "2" ]] && pass "plan/task with NO PASS evidence for that task id refused (exit 2)" || fail "expected 2, got $rc"
   [[ -d "$R/.claude/worktrees/wt-d" ]] && pass "worktree left in place after the unverified plan/task refusal" || fail "worktree removed despite the refusal"
