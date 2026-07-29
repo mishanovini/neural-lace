@@ -1299,3 +1299,39 @@ limit at a 5-minute default cadence — MAY need widening on this specific
 machine until (a) lands).
 **Filed by:** accountable-estate-program-2026-07 T1 build (estate-janitor.sh
 + estate-brief.sh).
+
+## CONTEXT-WATERMARK-WINDOW-TABLE-STALENESS-01 — the model→window allowlist goes stale by default on every model launch
+
+**Severity:** P2 (honesty machinery works; the number is still wrong until a human notices).
+**Finding (PROVEN, 2026-07-28):** `hooks/context-watermark.sh` resolves its
+denominator from a HARDCODED model→window allowlist (`_model_window`). Any model
+not in the table falls through to a conservative 200,000 default. On this
+session (model `claude-opus-5`, real window 1,000,000) the hook reported
+"~74% of 200000" and then "~90% of 200000" while the client's own readout showed
+163.2k / 1.0M = **16%** — a 5x overstatement that pushed the session toward
+premature checkpointing.
+
+**Why this is a class, not an instance:** this is the SECOND occurrence of the
+identical failure. The 2026-07-20 incident
+(`docs/lessons/2026-07-20-context-watermark-window-and-context-pressure.md`)
+was the same bug on `claude-opus-4-8`. That fix added the ASSUMED label and the
+model family to the table — making staleness HONEST but not RARE. The table
+necessarily goes stale every time a model ships, the failure is silent, and the
+detection mechanism is "an operator eventually notices the percentage is
+absurd." Adding one family per incident is symptom treatment; expect a third
+occurrence on the next model launch.
+
+**Fix directions (not yet chosen — needs a real design pass):**
+(a) invert the default — treat an unknown model as UNKNOWN and suppress the
+    percentage entirely rather than printing a confidently-wrong one against an
+    assumed denominator (the message already carries a "never a stop reason"
+    clause, so suppression costs little);
+(b) read the window from the session's own usage payload if the client exposes
+    it, making the table a fallback rather than the authority;
+(c) keep the table but add a doctor check that fails when the CURRENT session's
+    model is absent from it — turning silent staleness into a visible RED.
+
+**Immediate mitigation applied 2026-07-28:** `claude-opus-5*` added to the 1M
+branch + regression scenario T17b; self-test 21/0. This closes the instance,
+NOT the class.
+**Filed by:** neural-lace session, 2026-07-28 (operator-reported: "Context is not at 74%").

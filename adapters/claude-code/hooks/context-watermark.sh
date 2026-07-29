@@ -81,12 +81,30 @@
 #   platform.claude.com/docs/en/about-claude/models/overview on 2026-07-20
 #   (both the "latest models" and "Legacy models" comparison tables), plus
 #   this machine's own transcripts as corroboration where noted:
-#     1,000,000 tokens — claude-fable-5*, claude-mythos-5*,
+#     1,000,000 tokens — claude-opus-5* (ADDED 2026-07-28 after this hook
+#       repeated the 2026-07-20 incident VERBATIM on an Opus 5 session:
+#       reported "~74% of 200000" and then "~90% of 200000" when the client's
+#       own context readout showed 163.2k/1.0M = 16%. The assumed-label
+#       machinery worked exactly as designed — the message did say ASSUMED —
+#       but a 5x overstated percentage still pushed the session toward
+#       premature checkpointing, which is the whole failure this table
+#       exists to prevent. Corroborated by the operator's client UI
+#       screenshot showing "Context window 163.2k / 1.0M (16%)" with model
+#       Opus 5 selected; that is a LIVE observation of the real denominator,
+#       the strongest evidence class this table accepts),
+#       claude-fable-5*, claude-mythos-5*,
 #       claude-mythos-preview* (doc: "Claude Mythos 5 shares Claude Fable
 #       5's specs"), claude-opus-4-8* (doc + this session's own transcript,
 #       model="claude-opus-4-8"), claude-opus-4-7*, claude-opus-4-6*,
 #       claude-sonnet-5* (doc, corroborated by anthropic.com/news/claude-
 #       sonnet-5 via WebSearch), claude-sonnet-4-6*.
+#
+#     MAINTENANCE LESSON (2026-07-28): this table is a hardcoded allowlist, so
+#     it goes stale by DEFAULT every time a model ships — the failure is silent
+#     and recurring, not a one-off. The 2026-07-20 fix made staleness HONEST
+#     ("ASSUMED") but did nothing to make it RARE. Adding one model family per
+#     incident is treating the symptom. Tracked as a real gap in
+#     docs/backlog.md CONTEXT-WATERMARK-WINDOW-TABLE-STALENESS-01.
 #     200,000 tokens — claude-haiku-4-5* (doc; also directly observed in
 #       this machine's transcripts as `claude-haiku-4-5-20251001`),
 #       claude-sonnet-4-5*, claude-opus-4-5*, claude-opus-4-1*. Listed
@@ -223,7 +241,7 @@ _model_window() {
   local model="$1"
   [ -n "$model" ] || return 1
   case "$model" in
-    claude-fable-5|claude-fable-5-*|claude-mythos-5|claude-mythos-5-*|claude-mythos-preview|claude-mythos-preview-*|claude-opus-4-8|claude-opus-4-8-*|claude-opus-4-7|claude-opus-4-7-*|claude-opus-4-6|claude-opus-4-6-*|claude-sonnet-5|claude-sonnet-5-*|claude-sonnet-4-6|claude-sonnet-4-6-*)
+    claude-opus-5|claude-opus-5-*|claude-fable-5|claude-fable-5-*|claude-mythos-5|claude-mythos-5-*|claude-mythos-preview|claude-mythos-preview-*|claude-opus-4-8|claude-opus-4-8-*|claude-opus-4-7|claude-opus-4-7-*|claude-opus-4-6|claude-opus-4-6-*|claude-sonnet-5|claude-sonnet-5-*|claude-sonnet-4-6|claude-sonnet-4-6-*)
       printf '1000000'
       return 0
       ;;
@@ -742,6 +760,20 @@ EOF
     echo "  T17 _model_window table spot-check (sonnet-5=1M, opus-4-1=200k, unknown=empty): PASS"; pass=$((pass+1))
   else
     echo "  T17 _model_window table spot-check (sonnet-5=1M, opus-4-1=200k, unknown=empty): FAIL (w=$w w2=$w2 w3=$w3)"; fail=$((fail+1))
+  fi
+
+  # T17b — REGRESSION for the 2026-07-28 recurrence: claude-opus-5 (bare and
+  # dated-snapshot form) must resolve to the real 1M window, not fall through
+  # to the conservative 200k assumption. This is the exact case that made the
+  # hook report "~74% of 200000" on a session that was 16% full. RED before
+  # the table entry was added: both calls returned empty -> assumed 200000.
+  local o5 o5d
+  o5="$(_model_window "claude-opus-5")"
+  o5d="$(_model_window "claude-opus-5-20260514")"
+  if [ "$o5" = "1000000" ] && [ "$o5d" = "1000000" ]; then
+    echo "  T17b opus-5 window detected as 1M (bare + dated snapshot), not assumed 200k: PASS"; pass=$((pass+1))
+  else
+    echo "  T17b opus-5 window detected as 1M (bare + dated snapshot), not assumed 200k: FAIL (bare=$o5 dated=$o5d)"; fail=$((fail+1))
   fi
 
   # T19 — prefix-collision guard (harness-reviewer finding, 2026-07-20): a
