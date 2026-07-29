@@ -201,11 +201,15 @@ for (const e of manifest.entries || []) {
   else for (const h of e.hooks) {
     // A plain basename is a wired hook; "lib/<name>.sh" is a SOURCED LIBRARY
     // under hooks/lib/ — never wired directly, referenced by other hooks via
-    // `source`. Accept both forms; do not loosen anything else (no other
-    // subdir, no nested lib/ path).
+    // `source`; "../scripts/<name>.sh" is a manual-CLI/writer script under
+    // scripts/ (estate-janitor, estate-brief, loe-backfill — inventory-for-
+    // honesty entries; the fd48741 review found the schema rejecting a form
+    // the existence join already resolves correctly via hooks/../scripts/).
+    // Accept these three forms; do not loosen anything else.
     const isBasename = /^[A-Za-z0-9._-]+\.sh$/.test(h);
     const isLibRef = /^lib\/[A-Za-z0-9._-]+\.sh$/.test(h);
-    if (typeof h !== "string" || !(isBasename || isLibRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename or lib/<name>.sh reference`);
+    const isScriptsRef = /^\.\.\/scripts\/[A-Za-z0-9._-]+\.sh$/.test(h);
+    if (typeof h !== "string" || !(isBasename || isLibRef || isScriptsRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename, lib/<name>.sh, or ../scripts/<name>.sh reference`);
   }
   if (!Array.isArray(e.events)) problems.push(`${id}: events must be an array`);
   else for (const ev of e.events) {

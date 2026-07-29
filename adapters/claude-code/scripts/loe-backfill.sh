@@ -73,8 +73,10 @@
 #                        slug" in an unrelated plan's commit, inflate the
 #                        span) — the file's own commit history is the
 #                        lowest-noise signal actually available.
-#   builder_sessions   — count of DISTINCT `worktree agent-<id>` / "builder
-#                        session, worktree <id>" substrings found in the
+#   builder_sessions   — count of DISTINCT `worktree agent-<id>` markers
+#                        (the exact form the code matches — looser phrasings
+#                        like "worktree fall-back" appear x21 in the real
+#                        corpus as English prose, review PROBE D) found in the
 #                        plan file + its companion prose evidence file (the
 #                        recorded convention, e.g. archive/ask-rooted-
 #                        workstreams-p1-evidence.md:283 "Built at: ...
@@ -117,8 +119,6 @@
 # ============================================================
 
 set -u
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ------------------------------------------------------------
 # lb_repo_root: resolve the repo root without assuming CWD. Read-only
@@ -294,8 +294,15 @@ lb_tokens() {
   if [[ -z "$combined" ]]; then
     return
   fi
+  # HONEST-DATA LAW (review fd48741 Major F-C): only a STRUCTURED anchor may
+  # populate tokens — a "Tokens:"-style key at line start. Free prose ("a
+  # 1,000,000 token context window") must NEVER become a measured actual;
+  # the reviewer proved the unanchored regex mined exactly that from the
+  # real archive. No anchor -> null, per the law.
   local matches
-  matches="$(printf '%s' "$combined" | grep -oiE '[0-9][0-9,.]*k?[[:space:]]*tokens' 2>/dev/null)"
+  matches="$(printf '%s' "$combined" \
+    | grep -iE '^[[:space:]]*\**[[:space:]]*(tokens?( used| cost)?|tokens_used|token_cost)\**[[:space:]]*:' 2>/dev/null \
+    | grep -oiE '[0-9][0-9,.]*k?([[:space:]]*tokens)?' 2>/dev/null)"
   if [[ -z "$matches" ]]; then
     return
   fi
@@ -385,6 +392,10 @@ lb_mine_one() {
 # deliverable) so --self-test and real runs exercise the exact same code.
 # ------------------------------------------------------------
 read -r -d '' LB_JQ_AGG <<'JQEOF'
+# Percentile convention: nearest-rank-LOWER (floor of (n-1)*p). For small n
+# this understates the upper band — n=2 makes P90 collapse onto P50 — which
+# is why every rendered band carries its n beside it (review fd48741 Minor):
+# a P90 backed by 2 plans must be visibly weak, never quietly authoritative.
 def pct(p):
   if length == 0 then null
   else
@@ -452,9 +463,9 @@ lb_render_md() {
   jq -r '.classes[] | [
     .class,
     (.count|tostring),
-    ((.task_count.p50|tostring) + "/" + (.task_count.p90|tostring)),
-    ((.wall_clock_days.p50|tostring) + "/" + (.wall_clock_days.p90|tostring)),
-    ((.builder_sessions.p50|tostring) + "/" + (.builder_sessions.p90|tostring) + " (" + (.builder_sessions.coverage_pct|tostring) + "%)"),
+    ((.task_count.p50|tostring) + "/" + (.task_count.p90|tostring) + " (n=" + (.task_count.n|tostring) + ")"),
+    ((.wall_clock_days.p50|tostring) + "/" + (.wall_clock_days.p90|tostring) + " (n=" + (.wall_clock_days.n|tostring) + ")"),
+    ((.builder_sessions.p50|tostring) + "/" + (.builder_sessions.p90|tostring) + " (n=" + (.builder_sessions.n|tostring) + ", " + (.builder_sessions.coverage_pct|tostring) + "%)"),
     (.concentration_flag|tostring)
   ] | "| " + join(" | ") + " |"' "$json_file"
   echo
@@ -495,9 +506,23 @@ cmd_mine() {
 
   local now
   now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-  mkdir -p "$(dirname "$out_json")"
-  jq -s --arg now "$now" "$LB_JQ_AGG" "$jsonl_tmp" > "$out_json"
-  lb_render_md "$out_json" > "$out_md"
+  mkdir -p "$(dirname "$out_json")" "$(dirname "$out_md")"
+  # ATOMIC WRITE + VALIDATE (review fd48741 Major F-B): a failed aggregation
+  # must exit nonzero and write NOTHING — a 0-byte/empty table reported as a
+  # successful mine is an authoritative-looking lie the reviewer proved live.
+  if ! jq -s --arg now "$now" "$LB_JQ_AGG" "$jsonl_tmp" > "$out_json.tmp" \
+     || ! jq -e '.plans_total > 0' "$out_json.tmp" >/dev/null 2>&1; then
+    rm -f "$out_json.tmp"
+    echo "loe-backfill: aggregation FAILED — no artifact written (jq error or plans_total==0)" >&2
+    return 1
+  fi
+  mv "$out_json.tmp" "$out_json"
+  if ! lb_render_md "$out_json" > "$out_md.tmp"; then
+    rm -f "$out_md.tmp"
+    echo "loe-backfill: render FAILED — JSON kept at $out_json, no .md written" >&2
+    return 1
+  fi
+  mv "$out_md.tmp" "$out_md"
   echo "loe-backfill: mined $(jq -r '.plans_total' "$out_json" 2>/dev/null) plans -> $out_json, $out_md" >&2
 }
 
@@ -745,10 +770,10 @@ fi
 # ============================================================
 # CLI
 # ============================================================
-REPO_ROOT="$(lb_repo_root)"
-ARCHIVE_DIR="${REPO_ROOT}/docs/plans/archive"
-OUT_JSON="${REPO_ROOT}/docs/plans/loe-calibration.json"
-OUT_MD="${REPO_ROOT}/docs/plans/loe-calibration.md"
+REPO_ROOT=""
+ARCHIVE_DIR=""
+OUT_JSON=""
+OUT_MD=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -767,6 +792,18 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+# Dependent defaults derive AFTER the arg loop so --repo-root actually
+# influences them (review fd48741 Minor: the flag was silently ignored for
+# every derived path when defaults were computed above the loop).
+REPO_ROOT="${REPO_ROOT:-$(lb_repo_root)}"
+ARCHIVE_DIR="${ARCHIVE_DIR:-${REPO_ROOT}/docs/plans/archive}"
+# docs/loe/ — deliberately OUTSIDE docs/plans/ (review fd48741 Major F-A):
+# pre-commit-gate step 0b runs the blocking plan-reviewer over
+# ^docs/plans/[^/]+\.md$, which rejects the rendered table as a malformed
+# plan. The calibration artifact is a table, not a plan.
+OUT_JSON="${OUT_JSON:-${REPO_ROOT}/docs/loe/loe-calibration.json}"
+OUT_MD="${OUT_MD:-${REPO_ROOT}/docs/loe/loe-calibration.md}"
 
 cmd_mine "$REPO_ROOT" "$ARCHIVE_DIR" "$OUT_JSON" "$OUT_MD"
 exit $?

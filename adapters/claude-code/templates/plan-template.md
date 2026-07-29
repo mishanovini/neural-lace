@@ -85,6 +85,15 @@ See `~/.claude/doctrine/spec-freeze.md` for the freeze-thaw protocol.
 -->
 
 lifecycle-schema: v2
+loe-class: <schema-migration | ui-feature | harness-mechanism | design-only | general-multi-file>
+<!--
+loe-class — LOE reference class for calibration (accountable-estate T7).
+Pick the closest class; plan-reviewer Check 18 surfaces the mined P50/P90
+bands for it from docs/loe/loe-calibration.json (WARN-only, never blocks).
+Class list MUST stay in sync with loe-backfill.sh's lb_classify. An
+unsubstituted placeholder here draws Check 18's invalid-value nudge —
+that nudge IS the reminder to pick.
+-->
 <!--
 lifecycle-schema marks a plan as governed by the mechanical-closure
 redesign (ADR 036). Its PRESENCE is the grandfather signal: pre-redesign
@@ -158,7 +167,7 @@ extractor resolves both to "no linked ask": `hooks/plan-lifecycle.sh`,
 `scripts/close-plan.sh`, `scripts/remap-placeholder-ask-events.sh`; the
 writer-side map lives in `hooks/lib/progress-log-lib.sh` (`pl_path_for`:
 placeholder-shapes quarantine to unattributed.jsonl, `none`/empty route to
-unlinked.jsonl). If the default spelling on line 144 ever changes, extend the
+unlinked.jsonl). If the ask-id default spelling just above ever changes, extend the
 sentinel class at ALL of those sites in the SAME commit — a new spelling that
 the extractors don't recognize recreates the 2026-07-27 misfiled-events bug
 (1,140 events under `_id.jsonl` + 141 under `none.jsonl`).

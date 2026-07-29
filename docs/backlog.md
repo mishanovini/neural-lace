@@ -1383,7 +1383,7 @@ the four uncovered suites; collapse the dual inventory to one canonical list.
 **Finding (PROVEN at build time, accountable-estate-program-2026-07 T7 build):**
 `adapters/claude-code/scripts/loe-backfill.sh` (new, this build) mines
 `docs/plans/archive/*.md` + companion evidence + git history into a
-calibration table. Correctness is proven two ways: (1) an 11-scenario
+calibration table. Correctness is proven two ways: (1) a 12-scenario
 `--self-test` on a synthetic sandboxed repo, all PASS; (2) a REAL-data
 25-plan subset mine (alphabetically first 25 of 161 archived plans, real
 repo, real git history) completed cleanly with zero errors and plausible
@@ -1393,8 +1393,8 @@ sessions coverage for that specific subset — independently spot-checked:
 correctly with `builder_sessions: 3` when run standalone, confirming the
 extraction logic itself is sound and the 0% was a real property of the
 subset, not a bug).
-The FULL 161-plan mine (`bash adapters/claude-code/scripts/loe-backfill.sh`,
-no args, writes `docs/plans/loe-calibration.json`/`.md`) was attempted 3x in
+The FULL 163-plan mine (`bash adapters/claude-code/scripts/loe-backfill.sh`,
+no args, writes `docs/loe/loe-calibration.json`/`.md`) was attempted 3x in
 this session as a background task and was killed by the environment each
 time (no error output at time of kill — it was mid-run, not crashing) before
 completing. Same root cause as ESTATE-T1-HB-CLASSIFY-PERF-01 above: this
@@ -1411,9 +1411,11 @@ produce the committed artifact.
 to completion — either in a long-lived foreground session, on the other
 (faster) machine, or via a scheduled task with a generous time limit (mirror
 install-estate-janitor-task.ps1's pattern) — then commit the resulting
-`docs/plans/loe-calibration.json`/`.md`. Consider adding a `--resume`/
-`--limit N` flag if this repeats, so a killed run doesn't restart from
-scratch (not added in T7 — no evidence yet that one session will ever need
-it twice).
+`docs/loe/loe-calibration.json`/`.md` (path moved out of docs/plans/ by the
+fd48741 review remediation — the plan gate rejected the rendered table
+there). Consider adding a `--resume`/`--limit N` flag if this repeats, so a
+killed run doesn't restart from scratch (deferred despite 3 kills — the
+artifact is needed ONCE and the next attempt runs on a faster machine or a
+generous scheduled-task limit, either of which removes the need).
 **Filed by:** accountable-estate-program-2026-07 T7 build (loe-backfill.sh
 + plan-reviewer.sh Check 18).

@@ -1653,13 +1653,16 @@ CHECK13_HI4
   # like Check 16.
   # ============================================================
   #
-  # write_loe_plan: minimal Mode: code, Status: ACTIVE plan satisfying
-  # Check 6b/10 with an optional `loe-class:` header line.
+  # write_loe_plan: minimal Mode: code plan satisfying Check 6b/10 with an
+  # optional `loe-class:` header line. Args: out, loe_class_line, status
+  # (default ACTIVE), schema_line (default "lifecycle-schema: v2" — the
+  # missing-field nudge is v2-vintage-gated per the fd48741 review, so the
+  # WARN fixtures must be v2; pass "" to model a grandfathered legacy plan).
   write_loe_plan() {
-    local out="$1" loe_class_line="${2:-}"
+    local out="$1" loe_class_line="${2:-}" status="${3:-ACTIVE}" schema_line="${4:-lifecycle-schema: v2}"
     {
       echo "# Plan: Self-test Check 18 LOE fixture"
-      echo "Status: ACTIVE"
+      echo "Status: $status"
       echo "Mode: code"
       echo "Backlog items absorbed: none"
       echo "tier: 1"
@@ -1667,6 +1670,11 @@ CHECK13_HI4
       echo "architecture: coding-harness"
       echo "frozen: false"
       echo "prd-ref: n/a — harness-development"
+      # v2 plans must satisfy Checks 14/15 (owner + target + Closure
+      # Contract) so the ONLY variable across dd scenarios stays Check 18.
+      echo "owner: SelfTest"
+      echo "target-completion-date: 2026-12-31"
+      [[ -n "$schema_line" ]] && echo "$schema_line"
       [[ -n "$loe_class_line" ]] && echo "$loe_class_line"
       cat <<'LOE_BODY'
 
@@ -1698,6 +1706,12 @@ header field while keeping every other check satisfied.
 
 Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice.
 
+## Closure Contract
+- **Commands that run:** bash hooks/plan-reviewer.sh --self-test
+- **Expected outputs:** exit 0 with all scenarios matched
+- **On-disk artifact location:** docs/plans/loe-fixture-evidence/1.evidence.json
+- **Done when:** the single task is task-verifier PASS and the evidence file exists with verdict PASS.
+
 ## Definition of Done
 - [ ] Self-test reports the expected verdict per scenario.
 LOE_BODY
@@ -1709,7 +1723,7 @@ LOE_BODY
   write_loe_plan "$TMPDIR_SELFTEST/dd1.md" ""
   DD1_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd1.md" 2>&1 >/dev/null)
   DD1_RC=$?
-  if [[ $DD1_RC -eq 0 ]] && printf '%s' "$DD1_OUT" | grep -q "Check 18"; then
+  if [[ $DD1_RC -eq 0 ]] && printf '%s' "$DD1_OUT" | grep -q "lacks a 'loe-class:' header"; then
     echo "self-test (dd1) check18-missing-loe-class-warns-non-blocking: PASS (expected)" >&2
   else
     echo "self-test (dd1) check18-missing-loe-class-warns-non-blocking: FAIL (rc=$DD1_RC)" >&2
@@ -1722,7 +1736,7 @@ LOE_BODY
   write_loe_plan "$TMPDIR_SELFTEST/dd2.md" "loe-class: bogus-value"
   DD2_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd2.md" 2>&1 >/dev/null)
   DD2_RC=$?
-  if [[ $DD2_RC -eq 0 ]] && printf '%s' "$DD2_OUT" | grep -q "Check 18"; then
+  if [[ $DD2_RC -eq 0 ]] && printf '%s' "$DD2_OUT" | grep -q "is not one of the recognized classes"; then
     echo "self-test (dd2) check18-invalid-loe-class-warns-non-blocking: PASS (expected)" >&2
   else
     echo "self-test (dd2) check18-invalid-loe-class-warns-non-blocking: FAIL (rc=$DD2_RC)" >&2
@@ -1731,12 +1745,12 @@ LOE_BODY
   fi
 
   # (dd3) loe-class with a RECOGNIZED value, but no calibration table on
-  # disk (no docs/plans/loe-calibration.json resolvable from this fixture's
+  # disk (no docs/loe/loe-calibration.json resolvable from this fixture's
   # location) → Check 18 WARNs (no-calibration-table branch), exit 0.
   write_loe_plan "$TMPDIR_SELFTEST/dd3.md" "loe-class: harness-mechanism"
   DD3_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd3.md" 2>&1 >/dev/null)
   DD3_RC=$?
-  if [[ $DD3_RC -eq 0 ]] && printf '%s' "$DD3_OUT" | grep -q "Check 18"; then
+  if [[ $DD3_RC -eq 0 ]] && printf '%s' "$DD3_OUT" | grep -q "no calibration table found"; then
     echo "self-test (dd3) check18-valid-class-no-calibration-table-warns: PASS (expected)" >&2
   else
     echo "self-test (dd3) check18-valid-class-no-calibration-table-warns: FAIL (rc=$DD3_RC)" >&2
@@ -1747,10 +1761,10 @@ LOE_BODY
   # (dd4) loe-class with a RECOGNIZED value AND a calibration table present
   # at the fixture-directory-as-repo-root fallback (no .git anywhere above
   # a mktemp dir, so REPO_ROOT_C18 falls back to the plan's own directory —
-  # place docs/plans/loe-calibration.json there) → Check 18 prints the INFO
-  # band line for that class, exit 0.
-  mkdir -p "$TMPDIR_SELFTEST/docs/plans"
-  cat > "$TMPDIR_SELFTEST/docs/plans/loe-calibration.json" <<'CALIB_JSON'
+  # place docs/loe/loe-calibration.json there; docs/loe/ per review fd48741
+  # Major F-A) → Check 18 prints the INFO band line for that class, exit 0.
+  mkdir -p "$TMPDIR_SELFTEST/docs/loe"
+  cat > "$TMPDIR_SELFTEST/docs/loe/loe-calibration.json" <<'CALIB_JSON'
 {
   "generated_at": "2026-07-28T00:00:00Z",
   "plans_total": 1,
@@ -1776,6 +1790,31 @@ CALIB_JSON
   else
     echo "self-test (dd4) check18-valid-class-with-calibration-prints-bands: FAIL (rc=$DD4_RC)" >&2
     printf '%s\n' "$DD4_OUT" >&2
+    FAILED=1
+  fi
+
+  # (dd5) SILENCE scenario (review fd48741 Minor: the Check 16 cc-triple
+  # house template) — a COMPLETED plan must produce ZERO Check 18 lines.
+  write_loe_plan "$TMPDIR_SELFTEST/dd5.md" "" "COMPLETED"
+  DD5_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd5.md" 2>&1 >/dev/null)
+  if ! printf '%s' "$DD5_OUT" | grep -q "Check 18"; then
+    echo "self-test (dd5) check18-completed-status-silent: PASS (expected)" >&2
+  else
+    echo "self-test (dd5) check18-completed-status-silent: FAIL (Check 18 fired on a COMPLETED plan)" >&2
+    printf '%s\n' "$DD5_OUT" >&2
+    FAILED=1
+  fi
+
+  # (dd6) VINTAGE GATE — a grandfathered plan (no lifecycle-schema: v2)
+  # missing loe-class gets NO nudge (review fd48741 Major: the field has no
+  # creation-time writer for legacy plans; only v2 plans are held to it).
+  write_loe_plan "$TMPDIR_SELFTEST/dd6.md" "" "ACTIVE" ""
+  DD6_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd6.md" 2>&1 >/dev/null)
+  if ! printf '%s' "$DD6_OUT" | grep -q "lacks a 'loe-class:' header"; then
+    echo "self-test (dd6) check18-legacy-schema-missing-field-silent: PASS (expected)" >&2
+  else
+    echo "self-test (dd6) check18-legacy-schema-missing-field-silent: FAIL (nudge fired on a pre-v2 plan)" >&2
+    printf '%s\n' "$DD6_OUT" >&2
     FAILED=1
   fi
 
@@ -3224,7 +3263,14 @@ if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
   LOE_CLASS_VALUE=$(awk -F: '/^loe-class:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
 
   if [[ -z "$LOE_CLASS_VALUE" ]]; then
-    echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): this plan lacks a 'loe-class:' header field. Run 'bash adapters/claude-code/scripts/loe-backfill.sh' to (re)generate docs/plans/loe-calibration.md, pick the closest of {${LOE_VALID_CLASSES//|/, }}, and add 'loe-class: <class>' to this plan's header so future calibration includes it. Advisory only — this never blocks the commit." >&2
+    # VINTAGE GATE (review fd48741 Major: unsatisfiable-noise fix): the
+    # missing-field nudge fires only on lifecycle-schema: v2 plans — the
+    # same grandfather boundary Checks 14/15 use — so the ~30 pre-T7
+    # ACTIVE plans are never flagged. New plans are silent by construction:
+    # plan-template.md now carries loe-class:.
+    if [[ "$LIFECYCLE_SCHEMA_VALUE" == "v2" ]]; then
+      echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): this plan lacks a 'loe-class:' header field. Run 'bash adapters/claude-code/scripts/loe-backfill.sh' to (re)generate docs/loe/loe-calibration.md, pick the closest of {${LOE_VALID_CLASSES//|/, }}, and add 'loe-class: <class>' to this plan's header so future calibration includes it. Advisory only — this never blocks the commit." >&2
+    fi
   elif ! [[ "$LOE_CLASS_VALUE" =~ ^(${LOE_VALID_CLASSES})$ ]]; then
     echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): 'loe-class: ${LOE_CLASS_VALUE}' is not one of the recognized classes {${LOE_VALID_CLASSES//|/, }} (must stay in sync with loe-backfill.sh's lb_classify). Advisory only — this never blocks the commit." >&2
   else
@@ -3245,9 +3291,16 @@ if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
     fi
     [[ -z "$REPO_ROOT_C18" ]] && REPO_ROOT_C18="$PLAN_DIR_C18"
 
-    CALIBRATION_JSON_C18="$REPO_ROOT_C18/docs/plans/loe-calibration.json"
+    # docs/loe/ — moved out of docs/plans/ (review fd48741 Major F-A: the
+    # rendered table is not a plan and the plan gate rejected it there).
+    CALIBRATION_JSON_C18="$REPO_ROOT_C18/docs/loe/loe-calibration.json"
     if [[ ! -f "$CALIBRATION_JSON_C18" ]]; then
-      echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): loe-class '${LOE_CLASS_VALUE}' recognized, but no calibration table found at docs/plans/loe-calibration.json yet — run 'bash adapters/claude-code/scripts/loe-backfill.sh' at least once to generate it. Advisory only — this never blocks the commit." >&2
+      echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): loe-class '${LOE_CLASS_VALUE}' recognized, but no calibration table found at docs/loe/loe-calibration.json yet — run 'bash adapters/claude-code/scripts/loe-backfill.sh' at least once to generate it. Advisory only — this never blocks the commit." >&2
+    elif ! jq -e . "$CALIBRATION_JSON_C18" >/dev/null 2>&1; then
+      # UNPARSEABLE != EMPTY (review fd48741 Major F-D): a corrupt table
+      # means REGENERATE, not "mine more plans" — conflating them hides a
+      # silently-failed mine indefinitely.
+      echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): the calibration table at docs/loe/loe-calibration.json is present but NOT valid JSON — regenerate it with 'bash adapters/claude-code/scripts/loe-backfill.sh' (a failed aggregation must never be mistaken for a coverage gap). Advisory only — this never blocks the commit." >&2
     elif command -v jq >/dev/null 2>&1; then
       LOE_BAND_LINE=$(jq -r --arg c "$LOE_CLASS_VALUE" '
         (.classes[]? | select(.class == $c)) as $cls
@@ -3256,7 +3309,7 @@ if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
           end
       ' "$CALIBRATION_JSON_C18" 2>/dev/null)
       if [[ -z "$LOE_BAND_LINE" ]] || [[ "$LOE_BAND_LINE" == "NO_CLASS_DATA" ]]; then
-        echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): loe-class '${LOE_CLASS_VALUE}' recognized, but the calibration table at docs/plans/loe-calibration.json has zero mined plans in that class yet. Advisory only — this never blocks the commit." >&2
+        echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): loe-class '${LOE_CLASS_VALUE}' recognized, but the calibration table at docs/loe/loe-calibration.json has zero mined plans in that class yet. Advisory only — this never blocks the commit." >&2
       else
         echo "[plan-reviewer] INFO Check 18 (LOE class+band, accountable-estate T7): ${LOE_BAND_LINE}" >&2
       fi

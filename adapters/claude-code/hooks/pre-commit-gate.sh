@@ -151,7 +151,11 @@ fi
 # 0b. Plan-reviewer — any staged docs/plans/*.md files must pass mechanical review
 PLAN_REVIEWER="$HOME/.claude/hooks/plan-reviewer.sh"
 if [[ -x "$PLAN_REVIEWER" ]]; then
-  STAGED_PLANS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^docs/plans/[^/]+\.md$' | grep -v -- '-evidence\.md$' || true)
+  # Exclusion covers the whole evidence-file class: -evidence.md AND the
+  # -evidence-t<N>.md / -evidence-<suffix>.md siblings (>=10 in-tree; the
+  # fd48741 review proved the single-suffix exclusion was already
+  # incomplete — plan-reviewer rejects these as malformed plans).
+  STAGED_PLANS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^docs/plans/[^/]+\.md$' | grep -vE -- '-evidence(-[A-Za-z0-9_-]+)?\.md$' || true)
   if [[ -n "$STAGED_PLANS" ]]; then
     echo "[0b/5] Plan-reviewer adversarial check..." >&2
     while IFS= read -r plan; do
