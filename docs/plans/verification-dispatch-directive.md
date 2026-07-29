@@ -88,3 +88,5 @@ bullet as extractable rule-body.
 
 ## In-flight scope updates
 - 2026-07-28: docs/plans/verification-dispatch-directive.md — this plan
+- 2026-07-28: adapters/claude-code/rules/constitution.md — V7: §3 cold-reader bar extended to cover ASKS as well as decisions, and the §2 ask bullet reduced to the genuine delta (harness-reviewer REFORMULATE: two-thirds of the first draft restated §3)
+- 2026-07-28: adapters/claude-code/scripts/needs-you.sh — V8: `_ny_lint_ask_text`, the WARN-ONLY carrier for `--section question` (harness-reviewer: that section was completely unlinted while the decision twin has been linted since 53d3bee)

@@ -510,6 +510,70 @@ _ny_read_ledger() { cat "$(_ny_ledger_file)"; }
 #                    which by the §3 table format's own column 2 IS the
 #                    outcome text).
 # ----------------------------------------------------------------------
+# _ny_lint_ask_text <text> — WARN-ONLY lint for --section question (operator
+# asks), constitution §2 "every ask is a complete instruction, never a label"
+# (2026-07-28). Reuses the decision lint's no-context / no-anchor heuristics and
+# adds ONE narrow new code.
+#
+# WHY IT EXISTS: harness-reviewer found that --section question — the section §2
+# routes every operator ASK to — was completely unlinted, while the decision twin
+# has been linted since 53d3bee. The triggering incident: a session ended several
+# turns with `Blocking: run /grant-local-edit` and nothing else, which was both a
+# bare label AND pointed at a gate that does not cover the file in question.
+#
+# THE FALSE-POSITIVE TRAP (reviewer's mandatory negative case): `Blocking: nothing`
+# and `Blocking: none` are the §2-SANCTIONED empty values and are themselves single
+# bare tokens. If bare-label fired on those it would warn on every clean session and
+# be tuned out within a week — the cry-wolf failure this harness has already paid
+# for. They are whitelisted explicitly and covered by a self-test scenario.
+#
+# WARN-ONLY, deliberately: ships at the warn rung so the false-positive rate is
+# MEASURED before any promotion to a block (constitution §10 — no evidence, no gate).
+# Promotion condition: a bounded FP rate over a real observation window.
+_ny_lint_ask_text() {
+  local text="$1"
+  local -a warnings=()
+
+  # --- (a) bare-label: the entire ask is one token -------------------------
+  # Fires only when the WHOLE non-whitespace content is a single token,
+  # optionally backticked and/or slash-prefixed (/grant-local-edit, `--flag`,
+  # "enable-x"). Anything with a space and a verb is not a bare label.
+  local stripped
+  stripped="$(printf '%s' "$text" | tr -d '[:space:]`"'"'"'')"
+  local wordcount
+  wordcount="$(printf '%s' "$text" | tr -s '[:space:]' '\n' | grep -c '[^[:space:]]' 2>/dev/null || echo 0)"
+  case "$(printf '%s' "$stripped" | tr '[:upper:]' '[:lower:]')" in
+    nothing|none|n/a|na|-|"")
+      : ;;   # §2-sanctioned empty value — MUST NOT fire (negative self-test case)
+    *)
+      if [[ "$wordcount" -le 1 ]]; then
+        warnings+=("bare-label")
+      fi ;;
+  esac
+
+  # --- (b) no-context / (c) no-anchor: reuse the decision heuristics -------
+  # Only meaningful for a non-empty ask; the sanctioned empty values skip both.
+  case "$(printf '%s' "$stripped" | tr '[:upper:]' '[:lower:]')" in
+    nothing|none|n/a|na|-|"") ;;
+    *)
+      local line_count long_line_found=0
+      line_count=$(printf '%s\n' "$text" | wc -l | tr -d ' ')
+      while IFS= read -r _ny_al; do
+        [[ "${#_ny_al}" -ge 40 ]] && long_line_found=1 && break
+      done <<< "$text"
+      if [[ "$line_count" -le 1 && "$long_line_found" -eq 0 ]]; then
+        warnings+=("no-context")
+      fi
+      ;;
+  esac
+
+  local w
+  for w in "${warnings[@]:-}"; do
+    [[ -n "$w" ]] && printf '%s\n' "$w"
+  done
+  return 0
+}
+
 _ny_lint_decision_text() {
   local text="$1"
   local -a warnings=()
@@ -607,6 +671,30 @@ cmd_add() {
         # is written to the ledger (die() exits before _ny_write_ledger).
         die "cold-reader lint BLOCKED this add (interactive path): missing ${lint_warnings[*]}. Add the missing context — background/what-is-this prose, a concrete artifact anchor (a repo path, URL, or id like NL-FINDING-035/NY-123/#456/a SHA), and per-option outcome text — and retry. If this is a scripted/dispatcher caller with no live actor to retry, pass --mechanical instead (that path stores + quarantines rather than blocking). See needs-you.sh header 'LINT PROMOTION' for exactly what each code means."
       fi
+    fi
+  elif [[ "$section" == "question" ]]; then
+    # ASK LINT (constitution §2 "every ask is a complete instruction", 2026-07-28).
+    # --section question is where §2 routes operator ASKS; harness-reviewer found
+    # it completely unlinted while the decision twin has been linted since 53d3bee.
+    #
+    # WARN-ONLY AND STRUCTURALLY SEPARATE FROM THE DECISION PATH ABOVE. It does
+    # NOT reach the die() branch under any caller, interactive or mechanical:
+    # constitution §10 says no gate without measured evidence, and this lint has
+    # none yet. The warnings are recorded on the ledger item (lint_warnings_csv)
+    # so the false-positive rate can be MEASURED before anyone proposes a block.
+    # Promotion condition: a bounded FP rate over a real observation window.
+    # Deliberately NOT written into lint_warnings[]: that array is a
+    # DECISION-ONLY contract (scenario T25 asserts a non-decision section carries
+    # zero lint_warnings, and the progress-log "§3-context present/missing" flag
+    # consumes it downstream). Populating it for asks would silently relabel every
+    # ask as a malformed decision. The ask warning goes to stderr only; the
+    # false-positive rate is measured from that trail, not from the ledger item.
+    local -a _ny_ask_warnings=()
+    while IFS= read -r _ny_lw; do
+      [[ -n "$_ny_lw" ]] && _ny_ask_warnings+=("$_ny_lw")
+    done < <(_ny_lint_ask_text "$text")
+    if [[ "${#_ny_ask_warnings[@]}" -gt 0 ]]; then
+      err "ask lint (constitution §2, WARN-ONLY — entry stored, nothing blocked): this ask looks like ${_ny_ask_warnings[*]}. An ask must say WHAT you want, WHY it is the operator's, and HOW to do it — a bare command or flag name is not an ask. See needs-you.sh _ny_lint_ask_text."
     fi
   fi
 
@@ -1610,6 +1698,40 @@ cmd_selftest() {
   fi
 
   rm -rf "$sandbox7" "$_ny_t4_sandbox"
+
+  echo "Scenario T31: ASK LINT (constitution §2, 2026-07-28) — fires on bare labels, and MUST NOT fire on the sanctioned empty values"
+  # The negative half is the load-bearing half. `Blocking: nothing` / `none` are
+  # the §2-SANCTIONED empty values and are themselves single bare tokens; a
+  # bare-label check that fired on them would warn on every clean session and be
+  # tuned out within a week. harness-reviewer named this the mandatory negative
+  # case when it recommended the lint (2026-07-28).
+  local _ny_t31_fail=0 _ny_t31_out
+  local _ny_t31_neg _ny_t31_pos
+  for _ny_t31_neg in "nothing" "none" "None" "n/a"; do
+    _ny_t31_out="$(_ny_lint_ask_text "$_ny_t31_neg")"
+    if [[ -n "$_ny_t31_out" ]]; then
+      echo "  T31 FAIL: sanctioned empty value '$_ny_t31_neg' fired the lint ($_ny_t31_out) — this is the cry-wolf failure"
+      _ny_t31_fail=1
+    fi
+  done
+  for _ny_t31_pos in "/grant-local-edit" '`/grant-local-edit`' "--no-verify"; do
+    _ny_t31_out="$(_ny_lint_ask_text "$_ny_t31_pos")"
+    case "$_ny_t31_out" in
+      *bare-label*) : ;;
+      *) echo "  T31 FAIL: bare label '$_ny_t31_pos' did NOT fire bare-label (got '$_ny_t31_out')"; _ny_t31_fail=1 ;;
+    esac
+  done
+  # a real, complete ask must stay silent
+  _ny_t31_out="$(_ny_lint_ask_text "Approve me editing your settings file to add an env block that puts Homebrew bash 5 ahead of Apple's bash 3.2 on PATH; reply yes and I will make the edit and show you the diff.")"
+  if [[ -n "$_ny_t31_out" ]]; then
+    echo "  T31 FAIL: a complete, well-formed ask fired the lint ($_ny_t31_out)"
+    _ny_t31_fail=1
+  fi
+  if [[ "$_ny_t31_fail" -eq 0 ]]; then
+    ok "T31: ask lint fires on bare labels, stays silent on 'nothing'/'none'/'n-a' and on complete asks"
+  else
+    fail_ "T31: ask-lint behavior wrong (see T31 FAIL lines above)"
+  fi
 
   echo ""
   echo "RESULT: $pass passed, $fail failed"

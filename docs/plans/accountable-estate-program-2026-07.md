@@ -46,6 +46,15 @@ or claim) as part of its Definition of Done. 4. Observe-first before every enfor
       Verification: full.
 - [ ] T6 — Enforce flip for admission (pressure-ladder thresholds from T3's calibration data).
       GATED: requires ≥7 calendar days of T3 observe data + operator sign-off on thresholds.
+      ADDITIONAL ACCEPTANCE CRITERIA (from T3's review round, 2026-07-28 — the flip MUST NOT
+      happen until all four hold): (a) admission hot path under 5 ms/dispatch — measured
+      70.8 ms with a real janitor snapshot present, 19.0 ms without, so a TTL cache on
+      occupancy is required work here; (b) the four environment bypasses named in
+      admission-lib.sh's header (ADM_ABSURD_SESSION_CAP, ADM_ESTATE_SNAPSHOT, ADM_STATE_DIR
+      which hides HALT, and the caller-declared NL_PROTECTED_ORCHESTRATOR tag) closed or
+      accepted in writing; (c) occupancy real on the collecting machine (needs a darwin
+      janitor schedule — the installer is Windows-only today); (d) the Loop-2 pressure tick
+      emitting, so pressure_src stops reading 'absent' on every line.
       LOE: TRIVIAL, 0.5 bs. Verification: full.
 - [ ] T7 — LOE v1: per-PLAN actuals mining (archived plans + evidence + git history), 3–5 plan
       classes, P50/P90 bands + concentration flag surfaced by plan-reviewer. Outcome metric: every
@@ -145,6 +154,7 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-28: docs/backlog.md — T1 perf finding (ESTATE-T1-HB-CLASSIFY-PERF-01)
 - 2026-07-29: adapters/claude-code/hooks/lib/admission-lib.sh — T3 admission lib (observe mode)
 - 2026-07-29: adapters/claude-code/manifest.json — T3 entry (admission-lib)
+- 2026-07-29: adapters/claude-code/tests/fixtures/admission-lib/janitor-snapshot.golden.json — T3 golden fixture PRODUCED BY estate-janitor.sh (harness-reviewer C2: the author-written fixture masked two Critical parser defects)
 - 2026-07-29: adapters/claude-code/hooks/workstreams-emit.sh — T3 admission splice at the emit-feed registration point (PreToolUse Task|Agent|Workflow)
 - 2026-07-29: adapters/claude-code/scripts/session-resumer.sh — T3 admission splice at the storm-cap commit point (the hookless dispatcher, review F2)
 - 2026-07-29: adapters/claude-code/scripts/spawn-worktree.sh — T3 admission splice after a successful worktree create; otherwise this dispatch path emits nothing into the ledger, the review's named NEEDS-RESHAPING condition

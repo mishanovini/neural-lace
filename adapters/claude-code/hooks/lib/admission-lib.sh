@@ -75,6 +75,19 @@
 #   harness-reviewer: 19.3 ms/dispatch, 30+ command substitutions reachable
 #   task-verifier   : 20.1 ms/call, 2 external execs (date, wc), ~45 subshell
 #                     forks; --on-builder-dispatch 208.0 -> 234.8 ms (+13%)
+#
+# SECOND CORRECTION (same day, after the occupancy fix landed): every number
+# above was measured on a machine where occupancy was DEAD — no snapshot existed,
+# so adm_live_sessions returned -1 immediately without reading anything. With a
+# real 20 KB janitor snapshot present, occupancy actually works and the cost is:
+#   snapshot ABSENT  : 19.0 ms/dispatch
+#   snapshot PRESENT : 70.8 ms/dispatch   <-- the honest production figure
+# The 52 ms delta is reading the 20 KB document into a shell variable and running
+# two O(n) parameter expansions over it. So the real gap to the <5 ms T6 budget
+# is ~14x, not ~4x. The obvious fix is a TTL cache (occupancy only changes when
+# the janitor runs, so caching is correct, not a shortcut) — deliberately NOT
+# added here: it is unreviewed complexity late in a long session, and T6 must
+# re-measure regardless. Named as T6 work, with this measurement as its baseline.
 # Edge 6 says "dispatch-time access must be spawn-free bash builtins or the fix
 # becomes its own overhead." THIS LIB DOES NOT MEET THAT BAR TODAY. The honest
 # statement is: ~20 ms and ~45 forks per dispatch, +13% on the emit-feed path.
@@ -356,12 +369,49 @@ adm_live_sessions() {
   [[ -r "$f" ]] || { printf '%s' -1; return 0; }
   local data; data="$(<"$f")" 2>/dev/null || { printf '%s' -1; return 0; }
   case "$data" in *'"sessions"'*) ;; *) printf '%s' -1; return 0 ;; esac
+
+  # STALENESS (2026-07-28 review C4): this function's contract said "missing or
+  # stale -> -1" while implementing only the missing half. A dead or wedged
+  # janitor would freeze occupancy at its last value forever — at T6 a
+  # frozen-high value blocks every dispatch and a frozen-low admits everything,
+  # with no signal either way. Especially live here: there is NO darwin
+  # scheduler for the janitor (installer is Windows-only), so on macOS the
+  # snapshot is only as fresh as the last manual run.
+  # Age is read from the file's MTIME, not by parsing generated_at into epoch.
+  # task-verifier's round-2 note: an ISO->epoch conversion costs one or two more
+  # `date` execs per dispatch on a hot path whose cost claim was just retired at
+  # ~21 ms — it would move D2 in the wrong direction. mtime is one `stat` and is
+  # a faithful proxy here because estate-janitor.sh writes the snapshot via
+  # tmp+mv (ej_write_snapshot), so mtime IS the write time.
+  local age_max="${ADM_SNAPSHOT_MAX_AGE_SECS:-5400}"
+  local snap_m; snap_m="$(_adm_mtime "$f")"
+  if [[ "$snap_m" != "0" ]]; then
+    local now; now="$(_adm_now)"
+    (( now - snap_m > age_max )) && { printf '%s' -1; return 0; }
+  fi
+
+  # SCOPE THE COUNT TO sessions[] (2026-07-28 review C3): counting the needle
+  # document-wide was wrong because estate-janitor.sh:611-626 embeds
+  # signal_ledger_tail rows VERBATIM ("already-valid JSONL", unescaped). Any raw
+  # region that ever carries the byte sequence would inflate occupancy — latent
+  # today (that tail has zero such rows), active at T6 where over-count means
+  # false blocks. Cut to the sessions array first; if the delimiters do not
+  # parse, fail to UNKNOWN (-1), never to a permissive number.
+  local region="${data#*\"sessions\":[}"
+  [[ "$region" != "$data" ]] || { printf '%s' -1; return 0; }
+  local tail_marker='],"sessions_degraded"'
+  case "$region" in
+    *"$tail_marker"*) region="${region%%"$tail_marker"*}" ;;
+    *) printf '%s' -1; return 0 ;;   # unparseable region -> unknown, not 0
+  esac
+
   local needle='"classify":"live"'
-  local stripped="${data//$needle/}"
-  local delta=$(( ${#data} - ${#stripped} ))
+  local stripped="${region//$needle/}"
+  local delta=$(( ${#region} - ${#stripped} ))
   (( delta >= 0 )) || { printf '%s' -1; return 0; }
   printf '%s' $(( delta / ${#needle} ))
 }
+
 
 # ---------------------------------------------------------------------------
 # Rate — stamp file per dispatch (review F9)
@@ -666,8 +716,48 @@ _adm_self_test() {
     # bug concatenated these into the occupancy value (3 -> 3379)
     [[ -n "$rows" ]] && rows="$rows,"
     rows="$rows{\"session_id\":\"sdead\",\"classify\":\"crashed\",\"cwd\":\"/x\",\"branch\":\"main\",\"pid\":37}"
-    printf '{"schema":1,"generated_at":"2026-07-28T00:00:00Z","machine":"m","sessions":[%s],"sessions_degraded":false,"process_counts":{"bash_count":37,"claude_count":9,"degraded":false},"worktrees":94,"orphaned_worktrees":92,"orphaned_branches":142}\n' "$rows" > "$ADM_ESTATE_SNAPSHOT"
+    # generated_at must be CURRENT: the C4 staleness check correctly rejects an
+    # old snapshot as unknown, so a hard-coded past date would make every
+    # occupancy scenario read -1 (which is exactly what happened when C4 landed).
+    printf '{"schema":1,"generated_at":"%s","machine":"m","sessions":[%s],"sessions_degraded":false,"process_counts":{"bash_count":37,"claude_count":9,"degraded":false},"worktrees":94,"orphaned_worktrees":92,"orphaned_branches":142}\n' \
+      "$(_adm_iso)" "$rows" > "$ADM_ESTATE_SNAPSHOT"
   }
+  # GOLDEN FIXTURE — PRODUCED BY the real estate-janitor.sh, not shaped like it.
+  # 2026-07-28 re-review C2: the first amendment added the rule "no hand-rolled
+  # JSON extractor may be tested against a fixture the author wrote" and then
+  # violated it 350 lines later with _mk_snapshot, an author-written printf that
+  # only MIMICKED the producer — diverging exactly in the raw-embedded regions
+  # where the C3 unscoped-count defect lived, which is why the suite stayed green
+  # over a broken extractor. This fixture is a real `estate-janitor.sh run`
+  # output (13 sessions: 12 crashed, 1 live), scrubbed of machine-identifying
+  # data and kept in the producer's ONE-LINE shape, which is the entire point.
+  local golden="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../../tests/fixtures/admission-lib/janitor-snapshot.golden.json"
+  if [[ -r "$golden" ]]; then
+    cp "$golden" "$ADM_ESTATE_SNAPSHOT"
+    local gocc; gocc="$(ADM_SNAPSHOT_MAX_AGE_SECS=99999999 adm_live_sessions)"
+    [[ "$gocc" == "1" ]] && pass "REAL producer output (13 sessions, 12 crashed/1 live) parses as 1" \
+      || fail "golden-fixture occupancy wrong: expected 1, got '$gocc' — the parser disagrees with the real producer"
+    # C3 regression: the needle must NOT be counted outside sessions[]
+    local poisoned="$T/poisoned.json"
+    sed 's/"signal_ledger_tail":\[/"signal_ledger_tail":["classify":"live" ,/' "$golden" > "$poisoned" 2>/dev/null || cp "$golden" "$poisoned"
+    local pocc; pocc="$(ADM_ESTATE_SNAPSHOT="$poisoned" ADM_SNAPSHOT_MAX_AGE_SECS=99999999 adm_live_sessions)"
+    [[ "$pocc" == "1" ]] && pass "needle outside sessions[] does NOT inflate occupancy (C3 scoped count)" \
+      || fail "C3 regression: raw-embedded needle inflated occupancy to '$pocc'"
+    # C4 regression: a stale snapshot must read UNKNOWN, not a frozen value.
+    # Age is read from MTIME (cheaper than parsing generated_at — see the
+    # function), so the fixture must be BACKDATED, not merely copied: `cp` gives
+    # it a current mtime. `touch -t CCYYMMDDhhmm` is POSIX and identical on GNU
+    # and BSD, unlike `touch -d`, which is the GNU-ism that breaks on macOS.
+    touch -t 202001010000 "$ADM_ESTATE_SNAPSHOT" 2>/dev/null
+    local socc; socc="$(ADM_SNAPSHOT_MAX_AGE_SECS=5400 adm_live_sessions)"
+    [[ "$socc" == "-1" ]] && pass "stale snapshot -> -1 unknown, not a frozen occupancy (C4)" \
+      || fail "C4 regression: stale snapshot returned '$socc' instead of -1"
+    cp "$golden" "$ADM_ESTATE_SNAPSHOT"   # restore freshness for later scenarios
+    rm -f "$ADM_ESTATE_SNAPSHOT"
+  else
+    fail "golden fixture missing at $golden — occupancy is only tested against author-written JSON"
+  fi
+
   _mk_snapshot 3
   local occ; occ="$(adm_live_sessions)"
   [[ "$occ" == "3" ]] && pass "occupancy parses producer-shaped single-line JSON as 3 (was 3379 pre-fix)" \

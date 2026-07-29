@@ -56,6 +56,16 @@ The operator must never have to hunt for the thing you are talking about.
   nothing" — is a §1 honesty violation; a non-blocking ask is still an ask. `NEEDS-YOU.md`
   carries the same split: its operator-action entries are the Blocking / When-you-can
   items; its "not mine to action" FYI entries are the "nothing" case.
+- **Every ask is a complete instruction, never a label** (operator directive 2026-07-28).
+  A bare command, flag, skill, or setting name — `/grant-local-edit`, "enable X" — is not
+  an ask. Every Blocking / When-you-can item adds HOW to the §3 cold-reader bar below: the
+  exact command, click-path, or answer, with anything you want approved quoted inline. Name
+  a mechanism only with the check you ran that it applies (the command, or `file:line`); if
+  you could not verify, name the lever you suspect and say it is unverified — never assert
+  it (2026-07-28: `/grant-local-edit` was cited for a `~/.claude/settings.json` edit that
+  gate never covered). One sentence may carry all three; the bar is the cold-reader test,
+  not length. Exempt: an ask the operator's own last message already framed, and a plain
+  yes/no on content quoted right there.
 
 ## 3. Decisions: decide what you can defend; surface the rest well (Rules 3, 4)
 
@@ -74,13 +84,14 @@ The operator must never have to hunt for the thing you are talking about.
   5. **Reply with:** the exact one-word answers and what each triggers.
 - Batch related decisions. Never bury a decision mid-prose. Never re-ask what the
   operator already answered.
-- **The cold-reader bar (operator directive 2026-07-06).** Write every decision for a
-  reader with ZERO session context. Your session shorthand means nothing to the operator:
-  define any term of art you use, name the concrete system and artifact (which repo, which
-  account, which file — linked per §2), state in each option what will actually happen in
-  plain outcomes, and say why this call is theirs rather than yours. The test: could they
-  answer correctly from the block alone, cold? A structurally-complete block only this
-  session can understand is a §3 violation, not a decision.
+- **The cold-reader bar (operator directive 2026-07-06; extended to asks 2026-07-28).**
+  Write every decision AND every ask for a reader with ZERO session context. Your session
+  shorthand means nothing to the operator: define any term of art you use, name the
+  concrete system and artifact (which repo, which account, which file — linked per §2),
+  state in each option what will actually happen in plain outcomes, and say why this call
+  is theirs rather than yours. The test: could they answer or act correctly from the block
+  alone, cold? A structurally-complete block only this session can understand is a §3
+  violation, not a decision.
 
 
 ## 4. Functionality over components — the only definition of done
