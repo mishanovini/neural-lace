@@ -929,10 +929,25 @@ ok('T3-30 roadmap.js builds interactive controls as real <button>s (the one btn(
   /function btn\([\s\S]{0,120}?createElement\('button'\)/.test(roadmapJs) &&
   (roadmapJs.match(/btn\(/g) || []).length >= 10 &&
   !/[Dd]iv\.addEventListener\('click'/.test(roadmapJs));
-ok('T3-31 CSS pairs every status class with the palette (stalled uses the --interrupt accent; unknown visibly distinct)',
+ok('T3-31 CSS pairs every status class with the palette (stalled uses the --interrupt accent; unknown visibly distinct; complete uses --done, NOT --ok — Round 12 item 5 retires green from the roadmap)',
   /\.rm-status-stalled[^{]*\{[^}]*var\(--interrupt\)/.test(C) &&
   /\.rm-status-unknown[^{]*\{[^}]*var\(--warn\)/.test(C) &&
-  /\.rm-status-complete[^{]*\{[^}]*var\(--ok\)/.test(C));
+  /\.rm-status-complete[^{]*\{[^}]*var\(--done\)/.test(C));
+// Round 12 item 5: --ok (green) is retired from EVERY roadmap fill/status
+// rule — a single static green fill made a 2/14 plan and a 6/6 plan look
+// identical (live-measured: 100% of fill pixels on the page were that one
+// green). Scoped to .rm-* rules only (asks.js/other views keep their own
+// green elsewhere — out of this item's stated scope).
+ok('R12-1 green (--ok) is retired from the roadmap\'s status-complete chip, the default progress fill, and the per-project group fill — each now uses --done/status-specific colors, and the fill VARIES by status (rm-fill-<value> modifier) instead of one static green for every fraction',
+  !/\.chip\.rm-status-complete\s*\{[^}]*var\(--ok\)/.test(C) &&
+  !/\.rm-progress-fill\s*\{[^}]*var\(--ok\)/.test(C) &&
+  !/\.rm-group-progress-fill\s*\{[^}]*var\(--ok/.test(C) &&
+  /\.rm-fill-in-progress\s*\{[^}]*#38bdf8/.test(C) &&
+  /\.rm-fill-complete\s*\{[^}]*var\(--done\)/.test(C) &&
+  /\.rm-fill-stalled\s*\{[^}]*var\(--interrupt\)/.test(C) &&
+  /rm-fill-'\s*\+\s*statusVal/.test(roadmapJsNoComments));
+ok('R12-2 the progress track uses --border (#374151, live-legible) not --panel2 (measured 1.09:1 — effectively invisible, so an empty bar read as "no bar at all")',
+  /\.rm-progress-bar\s*\{[^}]*background:\s*var\(--border\)/.test(C) && !/\.rm-progress-bar\s*\{[^}]*background:\s*var\(--panel2\)/.test(C));
 ok('T3-32 landed items are programmatically focusable (tabindex="-1" set on item containers)',
   /tabindex.*-1|tabIndex = -1/.test(roadmapJs));
 
@@ -1015,7 +1030,7 @@ ok('T3-38 the completed-rollup summary text uses the item\'s (already-distilled)
   / completed ▸ — latest: '\s*\+\s*\(aged\[0\]\.title/.test(roadmapJsNoComments));
 
 // --- gap 6: connected phase series for sibling plan nodes -----------------
-ok('T3-39 isPhaseSeries/buildOrderLabel: sibling PLAN children render as a numbered "#N of M" series (R11 I5: "phases" terminology retired — a bare "#2 of 4", never "Phase 2 of 4"); non-plan children (tasks under a plan, intents at top level) do not',
+ok('T3-39 isPhaseSeries/buildOrderLabel remain correct, EXECUTABLE pure utilities (Round 12 item 3 stopped INVOKING buildOrderLabel from the render path — see T3-40b — but the functions themselves are unchanged and still real)',
   (function () {
     const a = runPure(phaseSeriesSrc, 'isPhaseSeries([{kind:"plan"},{kind:"plan"}])');
     const b = runPure(phaseSeriesSrc, 'isPhaseSeries([{kind:"task"},{kind:"task"}])');
@@ -1023,20 +1038,21 @@ ok('T3-39 isPhaseSeries/buildOrderLabel: sibling PLAN children render as a numbe
     const label = runPure(phaseSeriesSrc, 'buildOrderLabel(1, 4)');
     return a === true && b === false && c === false && label === '#2 of 4';
   })());
-ok('T3-40 renderChildList wraps a phase-series in a text-labeled connector (.rm-phase-step + the R10-1 INLINE .rm-phase-inline label on the title row), never color-only, and CSS draws the connector as an ADDITIVE line (never the only cue)',
+ok('T3-40 renderChildList still wraps a phase-series in the connected .rm-phase-step LINE connector (rm-phase-series/rm-phase-step present, CSS draws the connector as an additive ::before line)',
   /rm-phase-series/.test(roadmapJsNoComments) && /rm-phase-step/.test(roadmapJsNoComments) &&
-  /rm-phase-inline/.test(roadmapJsNoComments) &&
-  /\.rm-phase-step::before\s*\{[^}]*background:/.test(C) && /\.rm-phase-inline\s*\{/.test(C));
+  /\.rm-phase-step::before\s*\{[^}]*background:/.test(C));
+ok('T3-40b Round 12 item 3: the "#N OF 16" ordinal is RETIRED — buildOrderLabel is never called from renderNode/renderTree/renderChildList (PROVEN unstable: filtering renumbers a plan mid-session, e.g. "#12 OF 16" -> "#2 OF 3"), and rm-phase-inline is gone from both the renderer and the stylesheet',
+  !/buildOrderLabel\(/.test(roadmapJsNoComments.replace(/function buildOrderLabel[\s\S]*?\n  \}/, '')) &&
+  !/rm-phase-inline/.test(roadmapJsNoComments) && !/\.rm-phase-inline\s*\{/.test(C));
 
 // --- Round 10 (operator re-walk 2026-07-27) ---
-ok('R10-1 the phase label rides the TITLE ROW (renderNode 4th arg -> rm-phase-inline); the separate rm-phase-label line is gone from the renderers',
-  /renderNode\(it, live\.indexOf\(it\), live\.length,/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')) &&
+ok('R10-1 the separate rm-phase-label line is gone from the renderers (Round 12 retired its successor, rm-phase-inline, too — see T3-40b)',
   !/el\('div', 'rm-phase-label'/.test(roadmapJsNoComments));
 ok('R10-2 every node row carries an explicit disclosure chevron that rotates on open (expandability is visible, not implied)',
   /rm-chevron/.test(roadmapJsNoComments) && /details\[open\] > \.rm-row > \.rm-chevron/.test(C));
-ok('R10-3 the project group header carries the aggregate series progress — bar + ALWAYS the "N/M complete" text (never bar-only)',
-  /rm-group-progress-fill/.test(roadmapJsNoComments) && /rm-group-progress-text/.test(roadmapJsNoComments) &&
-  /complete'/.test(roadmapJsNoComments));
+ok('R10-3b Round 12 item 3: the group-level aggregate bar + "N/M complete" text is RETIRED — it restated the header\'s own "(... complete)" bucket count a THIRD time on the same screen (live-verified). No rm-group-progress-fill/-text calls remain, and the CSS rules are gone too.',
+  !/rm-group-progress-fill/.test(roadmapJsNoComments) && !/rm-group-progress-text/.test(roadmapJsNoComments) &&
+  !/\.rm-group-progress-fill\s*\{/.test(C) && !/\.rm-group-progress-text\s*\{/.test(C));
 ok('R10-4 reorder feedback names WHAT moved, its NEW position, and WHOSE build order — never a bare "Order updated" (R11 I5: "#N of M", never "phase N of M")',
   /now #' \+ \(newIdx \+ 1\)/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')) &&
   /build order/.test(roadmapJsNoComments) && !/say\('Order updated\.'/.test(roadmapJsNoComments) &&
@@ -1076,9 +1092,10 @@ ok('R8-1 the "intent" kind is GONE from roadmap.js entirely — the tree roots o
   !/kind === 'intent'/.test(roadmapJsNoComments) && !/'rm-kind-intent'/.test(roadmapJsNoComments));
 ok('R8-2 the compact edit/rank chrome (drilldown) now gates on kind:"plan" — plans are the new top-level, editable/reorderable object',
   /item\.kind === 'plan'/.test(roadmapJsNoComments));
-ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries/buildOrderLabel connector treatment renderChildList already used one level down — since R9-2, numbered WITHIN the project group (never a flat cross-project series)',
+ok('R8-3 renderTree (the TOP-LEVEL list) applies the SAME isPhaseSeries connector treatment renderChildList already used one level down — the connector groups WITHIN the project group (never a flat cross-project series); Round 12 stopped computing a buildOrderLabel for it (see T3-40b) but the grouping itself is unchanged',
   /isPhaseSeries\(live\)/.test(roadmapJsNoComments) &&
-  /rm-phase-series/.test(roadmapJsNoComments) && /buildOrderLabel\(gi, g\.items\.length\)/.test(roadmapJsNoComments) &&
+  /rm-phase-series/.test(roadmapJsNoComments) &&
+  !/buildOrderLabel\(gi, g\.items\.length\)/.test(roadmapJsNoComments) &&
   !/buildOrderLabel\(i, live\.length\)/.test(roadmapJsNoComments));
 
 // --- R11 (round 11, 2026-07-28) — master-plan hierarchy client render ---
@@ -1090,9 +1107,8 @@ ok('R11-C1 a master renders TWO SEPARATE labeled fractions ("plans done/total", 
   /'plans '\s*\+\s*ms\.plans\.done/.test(roadmapJsNoComments) &&
   /'own tasks '\s*\+\s*ms\.own_tasks\.done/.test(roadmapJsNoComments) &&
   /if \(item\.master_summary\)/.test(roadmapJsNoComments));
-ok('R11-C2 a master SUPPRESSES the plain progress bar in favor of the two labeled fractions (never renders both — that would be the blended-number trap in a different shape)',
-  /if \(item\.master_summary\) \{\s*sum\.appendChild\(masterSummaryNode\(item\)\);\s*\} else \{/.test(roadmapJsNoComments.replace(/\n\s*/g, '\n')) ||
-  /masterSummaryNode\(item\)\);\s*\} else \{\s*var prog = progressNode/.test(roadmapJsNoComments));
+ok('R11-C2 a master SUPPRESSES the plain progress fraction in favor of the two labeled fractions (never renders both — that would be the blended-number trap in a different shape)',
+  /if \(item\.master_summary\) \{[\s\S]{0,200}?masterSummaryNode\(item\)[\s\S]{0,200}?\}\s*else\s*\{[\s\S]{0,200}?fractionCellForRow\(item\)/.test(roadmapJsNoComments));
 ok('R11-C3 dangling parent-plan renders a REAL button badge naming the missing slug ("parent \'<slug>\' not found") — never silently dropped, never a fake master; a broken cycle renders a distinct badge naming the other plan',
   /function referenceLifecycleBadges/.test(roadmapJsNoComments) &&
   /"parent '" \+ item\.parent_plan \+ "' not found"/.test(roadmapJsNoComments) &&
@@ -1158,10 +1174,15 @@ ok('R11-I4 kanban flattens child_plans into cards (masters never cards) and each
 ok('R9-2c renderTree renders the group header element (rm-project-group-head) and scopes phase steps inside the group container',
   /rm-project-group-head/.test(roadmapJsNoComments) && /groupItemsByProject\(live\)/.test(roadmapJsNoComments));
 ok('R9-2d reorder stays GLOBAL: renderNode receives the item\'s index in the full build-order list, never the group-local index',
-  /renderNode\(it, live\.indexOf\(it\), live\.length,/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')));
-// R9-3: per-item project chip on tree rows and kanban cards.
-ok('R9-3 tree rows and kanban cards carry the project tag chip (rm-project-tag)',
-  (roadmapJsNoComments.match(/rm-project-tag/g) || []).length >= 2);
+  /renderNode\(it, live\.indexOf\(it\), live\.length\)/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')));
+// R9-3 (Round 12 item 3 override): the operator named the per-row project
+// chip redundant — "including a NL tag on each item is redundant
+// considering they're all underneath the NL node" — the group header
+// already names the project + count. Kanban cards are NOT grouped by a
+// project header, so they KEEP the chip (a row that "leaves its group").
+ok('R9-3 the TREE row no longer carries a per-item project chip (Round 12: redundant with the group header, operator-named); the KANBAN card still does (it has no group header to inherit the project from)',
+  !/sum\.appendChild\(el\('span', 'chip rm-project-tag'/.test(roadmapJsNoComments) &&
+  /chipRow\.appendChild\(el\('span', 'chip rm-project-tag'/.test(roadmapJsNoComments));
 // R9-5: the provenance line renders ONLY when a real linked request exists.
 ok('R9-5 "from your request(s)" gates on a non-empty link list — the "(no captured request)" filler line is gone',
   !/no captured request/.test(roadmapJsNoComments));
@@ -1628,6 +1649,183 @@ ok('T4-19 "My items" preserves the retired pane\'s FULL interaction set: checkbo
   /e\.key === 'Escape'/.test(inboxJs));
 ok('T4-20 "My items" is loaded ONCE at boot + after every write, deliberately NOT on the Inbox\'s 30s poll (so an in-progress edit is never destroyed by an unrelated tick) — the same load-once-then-reload-on-write discipline the retired pane used',
   /loadMyItems\(\);/.test(inboxJs) && !/setInterval\(function \(\) \{ loadMyItems/.test(inboxJs));
+
+// ============================================================
+// ROUND 12 (2026-07-29) — ux-ia-auditor LIVE AUDIT of the running cockpit
+// (headless Chrome against :7733, geometry/colour measured from computed
+// styles, not read from source). Nine build items; tests below are grouped
+// by item number. Pure logic (deriveTaskSpanLabel, findMatchingDescendant)
+// is REALLY EXECUTED in a vm sandbox (the T3-33+ technique above); DOM-
+// construction and CSS are asserted structurally, the same convention this
+// whole file already uses (a source-regex assertion IS discriminating here
+// — delete the code it names and the regex stops matching; verified by
+// mutation for the highest-value subset, see the build report).
+// ============================================================
+const taskSpanSrc = extractMarkedBlock(roadmapJs, '// TASK-SPAN-BEGIN', '// TASK-SPAN-END');
+const filterMatchSrc = extractMarkedBlock(roadmapJs, '// FILTER-MATCH-BEGIN', '// FILTER-MATCH-END');
+ok('R12-0 selftest can locate the TASK-SPAN/FILTER-MATCH extraction anchors (source-execution harness precondition)',
+  !!taskSpanSrc && !!filterMatchSrc);
+
+// ---- item 1: the row grid --------------------------------------------
+ok('R12-3 the row is a CSS grid with the EXACT 7-column template the audit specified (16px chevron / 56px markers / 1fr title / 190px task-span / 76px fraction / 46px exception-glyph / 132px exception-label), align-items:center, gap:10px — replaces the flex-wrap layout that let optional content shift every later column',
+  /\.rm-node > summary\.rm-row\s*\{[^}]*display:\s*grid/.test(C) &&
+  /grid-template-columns:\s*16px 56px minmax\(0,1fr\) 190px 76px 46px 132px/.test(C) &&
+  /\.rm-node > summary\.rm-row\s*\{[^}]*align-items:\s*center/.test(C) &&
+  /\.rm-node > summary\.rm-row\s*\{[^}]*gap:\s*10px/.test(C));
+ok('R12-4 the fraction text uses tabular-nums so "5/6" and "12/14" align digit-for-digit down a column',
+  /\.rm-progress-text\s*\{[^}]*font-variant-numeric:\s*tabular-nums/.test(C));
+ok('R12-5 the title truncates with CSS ellipsis, and the FULL title (never just the slug) lives in title= for the truncated case',
+  /\.rm-title\s*\{[^}]*text-overflow:\s*ellipsis/.test(C) &&
+  /titleSpan\.title = item\.title/.test(roadmapJsNoComments));
+ok('R12-6 renderNode appends exactly one cell per grid column, in column order, EVERY render — the fix for the flex-wrap bug (a conditionally-skipped child used to shift every later column)',
+  (function () {
+    var m = roadmapJsNoComments.match(/function renderNode[\s\S]*?function renderLabeledSubsection/);
+    var body = m ? m[0] : '';
+    if (!body) return false;
+    var order = ['rm-chevron', 'markerCell(item)', 'titleCell(item)', 'taskSpanCell(item)', 'fractionCellForRow(item)', 'exceptionGlyphCell(item)', 'exceptionLabelCell(item)'];
+    var lastIdx = -1;
+    for (var i = 0; i < order.length; i++) {
+      var idx = body.indexOf(order[i]);
+      if (idx === -1 || idx < lastIdx) return false;
+      lastIdx = idx;
+    }
+    return true;
+  })());
+
+// ---- item 2: the task-span column (real execution) --------------------
+function taskSpan(childrenExpr) { return runPure(taskSpanSrc, 'deriveTaskSpanLabel(' + childrenExpr + ')'); }
+ok('R12-10 deriveTaskSpanLabel: contiguous partial progress reads "<first>–<last> done · <next> next"',
+  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"not-started"}}]') === '1–2 done · 3 next');
+ok('R12-11 deriveTaskSpanLabel: NON-contiguous done set (a done task AFTER an open one) names a COUNT, never a fabricated range — the "future out-of-order plan" the auditor named as not-yet-possible-but-must-be-handled',
+  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"not-started"}},{id:"p/4",status:{value:"complete"}}]') === '3 done · 3 next');
+ok('R12-12 deriveTaskSpanLabel: every task done, contiguous -> a plain range, no dangling "next"',
+  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"complete"}}]') === '1–3 done');
+ok('R12-13 deriveTaskSpanLabel: a single done task never renders a degenerate "1–1 done" range',
+  taskSpan('[{id:"p/1",status:{value:"complete"}}]') === '1 done');
+ok('R12-14 deriveTaskSpanLabel: zero done -> just "<first> next", no "0 done ·" clutter',
+  taskSpan('[{id:"p/1",status:{value:"not-started"}},{id:"p/2",status:{value:"not-started"}}]') === '1 next');
+ok('R12-15 deriveTaskSpanLabel: NEVER says "running" even when the first open task carries live_sessions (a real in-progress task with an attached agent) — the label names a POSITION, never a live state',
+  (function () {
+    var r = taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"in-progress"},live_sessions:[{title:"x"}]}]');
+    return r === '1 done · 2 next' && r.indexOf('running') === -1;
+  })());
+ok('R12-16 deriveTaskSpanLabel: empty/absent children -> empty string (no fake column content)',
+  taskSpan('[]') === '' && runPure(taskSpanSrc, 'deriveTaskSpanLabel(null)') === '');
+ok('R12-17 deriveTaskSpanLabel: task ids strip the plan-slug prefix (server emits "slug/T3"; the column shows only "T3")',
+  taskSpan('[{id:"my-plan-slug/T1",status:{value:"complete"}},{id:"my-plan-slug/T2",status:{value:"not-started"}}]') === 'T1 done · T2 next');
+
+// ---- item 3: redundancy deletions --------------------------------------
+ok('R12-20 the per-row "completed <age>" span (rm-completed-when) is GONE — it duplicated the status chip\'s own text, and the chip is gone for complete/merged-unverified too now (item 4)',
+  !/rm-completed-when/.test(roadmapJsNoComments));
+ok('R12-21 the footer "N items hidden (harness chores) show" duplicate is gone from renderAll (the toolbar\'s OWN chore toggle, syncToolbar(), is always visible already) — the FILTERED/TRUE-empty state\'s own hidden-chores line is UNCHANGED (different purpose: explains an otherwise-confusing zero-item screen)',
+  (function () {
+    var hits = (roadmapJsNoComments.match(/items hidden \(harness chores\)/g) || []).length;
+    return hits === 1 && /pane-empty rm-chore-note.*items hidden \(harness chores\)/.test(roadmapJsNoComments.replace(/\n\s*/g, ' '));
+  })());
+ok('R12-22 "since" no longer renders on a not-started row — DERIVABLE_STATES gates statusChip() to null for not-started BEFORE any age/formatAge text is built (the age was semantically empty per the operator: those timestamps are bulk file-touch clusters, not real transitions)',
+  /if \(DERIVABLE_STATES\[value\]\) return null;/.test(roadmapJsNoComments) &&
+  roadmapJsNoComments.indexOf('if (DERIVABLE_STATES[value]) return null;') < roadmapJsNoComments.indexOf('var ageTs = value ==='));
+
+// ---- item 4: the exception column ---------------------------------------
+ok('R12-25 DERIVABLE_STATES names exactly the three states the fraction/task-span CAN derive (not-started/in-progress/complete) — statusChip() returns null for all three, so an empty column 6/7 means "healthy"',
+  /var DERIVABLE_STATES = \{ 'not-started': true, 'in-progress': true, 'complete': true \};/.test(roadmapJsNoComments));
+ok('R12-26 the three states the fraction CANNOT derive (stalled/merged-unverified/unknown) still get a loud chip in column 7 (exceptionLabelCell) plus a small glyph in column 6 (exceptionGlyphCell)',
+  /var EXCEPTION_GLYPH = \{ stalled: '⚠', 'merged-unverified': '⏳', unknown: '\?' \};/.test(roadmapJsNoComments) &&
+  /function exceptionLabelCell\(item\)/.test(roadmapJsNoComments) && /function exceptionGlyphCell\(item\)/.test(roadmapJsNoComments));
+ok('R12-27 mutation control: DERIVABLE_STATES is REACHED — statusChip is called from exceptionLabelCell for every row (not skipped), so the gate actually executes on the real render path',
+  /var chip = statusChip\(item\);/.test(roadmapJsNoComments) && /function exceptionLabelCell/.test(roadmapJsNoComments));
+
+// ---- item 5: title colour (recession, not emphasis) ----------------------
+ok('R12-30 every one of the six states maps to a title CSS class (rm-title-<value>), matching the operator/auditor-specified colour+weight table exactly',
+  /var TITLE_STATE_CLASS = \{/.test(roadmapJsNoComments) &&
+  ['not-started', 'in-progress', 'complete', 'stalled', 'merged-unverified', 'unknown'].every(function (v) {
+    return roadmapJsNoComments.indexOf("'" + v + "': 'rm-title-" + v + "'") !== -1;
+  }));
+ok('R12-31 CSS pins the exact colour+weight per state: in-progress #f9fafb/600, not-started var(--muted)/400, complete var(--done)/400, stalled var(--interrupt)/600, merged-unverified var(--warn)/600, unknown var(--warn)/400+dashed border',
+  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*#f9fafb;\s*font-weight:\s*600/.test(C) &&
+  /\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--muted\);\s*font-weight:\s*400/.test(C) &&
+  /\.rm-title\.rm-title-complete\s*\{\s*color:\s*var\(--done\);\s*font-weight:\s*400/.test(C) &&
+  /\.rm-title\.rm-title-stalled\s*\{\s*color:\s*var\(--interrupt\);\s*font-weight:\s*600/.test(C) &&
+  /\.rm-title\.rm-title-merged-unverified\s*\{\s*color:\s*var\(--warn\);\s*font-weight:\s*600/.test(C) &&
+  /\.rm-title\.rm-title-unknown\s*\{\s*color:\s*var\(--warn\);\s*font-weight:\s*400;\s*border-bottom:\s*1px dashed/.test(C));
+ok('R12-32 --done is the darkest neutral that still clears WCAG AA 4.5:1 against --panel (measured #87909e = 4.55:1) — the value is pinned exactly, not "rounded to a nicer gray"',
+  /--done:\s*#87909e;/.test(css));
+ok('R12-33 WCAG 1.4.1: every row keeps at least two NON-colour carriers regardless of state — the task-span cell and the fraction cell are appended UNCONDITIONALLY (never gated on item.status), so colour is never the only signal',
+  /sum\.appendChild\(taskSpanCell\(item\)\);/.test(roadmapJsNoComments) && /sum\.appendChild\(fractionCellForRow\(item\)\);/.test(roadmapJsNoComments));
+
+// ---- item 6: Shipped(n) independent of the aging clock -------------------
+ok('R12-40 the top-level Shipped grouping triggers on status===\'complete\' ALONE — never gated on agedOut()/the mtime-reset-prone 7-day clock (ROADMAP-COMPLETED-AGING-MTIME-RESET-01)',
+  /if \(isComplete\) shipped\.push\(it\); else live\.push\(it\);/.test(roadmapJsNoComments) &&
+  !/isComplete && agedOut\(it\.completed_at\)\) aged\.push\(it\)/.test(roadmapJsNoComments));
+ok('R12-41 the group is headed "Shipped (n)" — the operator\'s own word — not a restatement of the nested per-parent "N completed" wording (task 3\'s DIFFERENT, still-aging-gated mechanism, unchanged by this item)',
+  /'Shipped \(' \+ shipped\.length \+ '\)/.test(roadmapJsNoComments) && /rm-shipped-group/.test(roadmapJsNoComments) && /\.rm-shipped-group > summary/.test(C));
+ok('R12-42 opening a Shipped plan still renders ALL its own tasks via the UNCHANGED renderNode/renderChildList path — the operator\'s explicit requirement ("I can open any individual plan and see all the tasks within it")',
+  /shipped\.forEach\(function \(c\) \{ rbody\.appendChild\(renderNode\(c, -1, -1\)\); \}\);/.test(roadmapJsNoComments));
+
+// ---- item 7: pre-existing contrast bugs -----------------------------------
+ok('R12-50 EVERY chip has an explicit transparent background — a chip rendered as a real <button> (rm-project-chip, rm-status-stalled, rm-rollup-badge...) previously fell back to the UA button face (measured live: rgb(239,239,239), a light box in the dark theme)',
+  /\.chip \{[^}]*background:\s*transparent/.test(C));
+ok('R12-51 .rm-plan-link has an explicit color (var(--info)) — previously unstyled, so all 16 plan links rendered at the browser default blue (#0000EE, 1.56:1, a hard WCAG 1.4.3 failure)',
+  /\.rm-plan-link\s*\{[^}]*color:\s*var\(--info\)/.test(C));
+
+// ---- item 8: filter placeholder + surfaced task-id match ------------------
+ok('R12-60 the filter placeholder now NAMES the task-id matching capability (previously announced only to screen readers via aria-label, while sighted users saw a generic "filter the roadmap…")',
+  /placeholder="filter by title or task id/.test(html));
+function findMatch(itemExpr, q) { return runPure(filterMatchSrc, 'findMatchingDescendant(' + itemExpr + ', ' + JSON.stringify(q) + ')'); }
+ok('R12-61 findMatchingDescendant finds a task child by ID substring (case-insensitive query, as filterText() already lowercases)',
+  (function () {
+    var r = findMatch('{children:[{id:"plan/T3",title:"Some task"},{id:"plan/T4",title:"Other"}]}', 't3');
+    return r && r.id === 'plan/T3';
+  })());
+ok('R12-62 findMatchingDescendant finds a task child by TITLE substring when the id does not match',
+  (function () {
+    var r = findMatch('{children:[{id:"plan/T3",title:"fix the accountable estate bug"}]}', 'accountable');
+    return r && r.id === 'plan/T3';
+  })());
+ok('R12-63 findMatchingDescendant NEVER matches the item\'s own title/id — only descendants (the caller only invokes it once the item\'s own fields already failed to match)',
+  findMatch('{title:"T3 fixture", id:"plan/T3", children:[{id:"plan/1",title:"unrelated"}]}', 't3') === null);
+ok('R12-64 findMatchingDescendant recurses into child_plans (a master\'s resolved children), not just children',
+  (function () {
+    var r = findMatch('{child_plans:[{id:"child-plan",title:"x",children:[{id:"child-plan/T5",title:"y"}]}]}', 't5');
+    return r && r.id === 'child-plan/T5';
+  })());
+ok('R12-65 findMatchingDescendant returns null when nothing matches (never a false positive)',
+  findMatch('{children:[{id:"plan/T1",title:"alpha"}]}', 'zzz') === null);
+ok('R12-66 a filter match on a descendant forces the ancestor row OPEN and renders an ALWAYS-VISIBLE "matches: ..." note (a sibling of summary, not inside .rm-drill, which is display:none while collapsed) directly under the matched plan row',
+  /var filterMatch = currentMatchNotes\[item\.id\];/.test(roadmapJsNoComments) &&
+  /if \(defaultOpen\(item\) \|\| filterMatch\) det\.open = true;/.test(roadmapJsNoComments) &&
+  /rm-filter-match-note/.test(roadmapJsNoComments) &&
+  !/\.rm-filter-match-note[^,]*\[open\]/.test(C) && !/\[open\][^,]*\.rm-filter-match-note/.test(C));
+
+// ---- item 9: inbox count honesty (three-state count badges) --------------
+ok('R12-70 setTabCount() takes an explicit error flag and renders "(!)" (never a confident "(—)") when the ledger is confirmed broken',
+  /function setTabCount\(n, isError\)/.test(inboxJs) && /tabCount\.textContent = '\(!\)'/.test(inboxJs) &&
+  /ib-tabcount-error/.test(inboxJs) && /\.ib-tabcount-error\s*\{[^}]*var\(--interrupt\)/.test(C));
+ok('R12-71 BOTH inbox.js load() failure paths (an ok:false response AND a network-level catch) call setTabCount(null, true) — neither leaves the tab silently showing the loading "(—)" forever',
+  (function () {
+    var hits = (inboxJs.match(/setTabCount\(null, true\)/g) || []).length;
+    return hits >= 2;
+  })());
+ok('R12-72 the Roadmap-tab (landing) sidebar mirror no longer treats an /api/inbox failure as a silent zero — inboxFailed is computed explicitly and the confident "nothing on your list" win-line is gated on !inboxFailed',
+  /var inboxFailed = !inbox \|\| inbox\.ok === false;/.test(roadmapJsNoComments) &&
+  /if \(!inboxFailed && !answerable\.length && !ops\.length && !ptrs\.length\)/.test(roadmapJsNoComments) &&
+  /Inbox: could not load — retry on next tick/.test(roadmapJsNoComments));
+ok('R12-73 mutation control: inboxFailed is REACHED on the real fetch path (both is derived from Promise.all([...fetch(\'/api/todo\')..., fetch(\'/api/inbox\')...]) — not a dead branch)',
+  /fetch\('\/api\/todo'\)\.then\(function \(r\) \{ return r\.json\(\); \}\)\.catch\(function \(\) \{ return null; \}\),/.test(roadmapJsNoComments) &&
+  /fetch\('\/api\/inbox'\)\.then\(function \(r\) \{ return r\.json\(\); \}\)\.catch\(function \(\) \{ return null; \}\),/.test(roadmapJsNoComments));
+
+// ---- regression (caught live during Round 12 verification, fixed same
+// commit): statusChip(it) now returns null for the three derivable states
+// (item 4); renderKanban's chipRow.appendChild(statusChip(it)) was NOT
+// null-guarded, so appendChild(null) THREW for every not-started/in-
+// progress/complete card, silently aborting the WHOLE kanban board mid-
+// render (verified live: toggling Kanban rendered an EMPTY board, zero
+// console output, #roadmapBody left with only the unbound-sessions node —
+// the failure was silent because DOM event dispatch swallows exceptions
+// thrown inside a click listener). ----
+ok('R12-80 renderKanban null-guards statusChip(it) before appending — the crash-on-render-for-most-cards regression this build introduced and fixed in the same pass',
+  /var kanbanChip = statusChip\(it\);\s*\n\s*if \(kanbanChip\) chipRow\.appendChild\(kanbanChip\);/.test(roadmapJsNoComments) &&
+  !/chipRow\.appendChild\(statusChip\(it\)\)/.test(roadmapJsNoComments));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

@@ -157,8 +157,20 @@
     ageLabel.textContent = 'derived ' + formatAge(lastDerivedAt) + (lastFetchFailed ? ' — STALE (last refresh failed)' : '');
     ageLabel.classList.toggle('stale', lastFetchFailed);
   }
-  function setTabCount(n) {
+  // Round 12 item 9 (inbox count honesty): a derived count badge needs
+  // THREE visually distinct states — a real number, unknown/loading
+  // ("(—)", before the first response ever lands), and a CONFIRMED error
+  // ("(!)", styled --interrupt). Pre-fix, a broken /api/inbox left the tab
+  // showing the hardcoded loading "(—)" FOREVER — a broken surface reading
+  // as a reassuring "probably fine" rather than "this is broken".
+  function setTabCount(n, isError) {
     if (!tabCount) return;
+    if (isError) {
+      tabCount.textContent = '(!)';
+      tabCount.classList.add('ib-tabcount-error');
+      return;
+    }
+    tabCount.classList.remove('ib-tabcount-error');
     tabCount.textContent = (n === null || n === undefined) ? '(—)' : '(' + n + ')';
   }
 
@@ -740,6 +752,7 @@
         if (!j || j.ok === false) {
           lastFetchFailed = true;
           setAgeLabel();
+          setTabCount(null, true); // Round 12 item 9: never a confident "(—)" on a broken ledger
           if (!lastPayload) renderErrorState(j && j.error);
           return;
         }
@@ -754,6 +767,7 @@
       .catch(function (err) {
         lastFetchFailed = true;
         setAgeLabel();
+        setTabCount(null, true); // Round 12 item 9
         if (!lastPayload) renderErrorState(String(err));
       });
   }

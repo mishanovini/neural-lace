@@ -140,6 +140,7 @@
   var landingId = null;   // the currently-highlighted landed item (survives re-render)
   var pendingEdit = null; // {itemId, value, selStart, selEnd} — uncommitted title edit
   var whenLoadedQueue = [];
+  var currentMatchNotes = {}; // item id -> matched descendant (Round 12 item 8), refreshed each renderAll()
 
   // ============================================================
   // small builders
@@ -203,21 +204,31 @@
     return false;
   }
 
-  // applyFilters(items) -> {visible, hiddenChores, filtered}
+  // applyFilters(items) -> {visible, hiddenChores, filtered, matchNoteById}
   function applyFilters(items) {
     var q = filterText();
     var hiddenChores = 0;
     var visible = [];
+    var matchNoteById = {}; // Round 12 item 8: which descendant matched a task-id/title query
     (items || []).forEach(function (it) {
       if (!showChores && it.provenance === 'machine') { hiddenChores++; return; }
       if (selectedProjects.length && selectedProjects.indexOf(it.project || '') === -1) return;
       if (!itemMatchesText(it, q)) return;
       visible.push(it);
+      if (q) {
+        var ownMatch = (String(it.title || '')).toLowerCase().indexOf(q) !== -1 ||
+          (String(it.id || '')).toLowerCase().indexOf(q) !== -1;
+        if (!ownMatch) {
+          var m = findMatchingDescendant(it, q);
+          if (m) matchNoteById[it.id] = m;
+        }
+      }
     });
     return {
       visible: visible,
       hiddenChores: hiddenChores,
       filtered: !!(q || selectedProjects.length),
+      matchNoteById: matchNoteById,
     };
   }
 
@@ -278,12 +289,15 @@
   // plain flat list indistinguishable from an intent's other child kinds.
   //
   // R11 I5 (terminology sweep — "phases" labeling retired, docs/reviews/
-  // 2026-07-28-roadmap-hierarchy-ux-review.md): the user-facing chip is now
-  // "#k of n" (the Tree anatomy's own literal spec — "▸ #3 of 9 · <title>"),
-  // never "Phase 3 of 9". Internal identifiers (isPhaseSeries, rm-phase-*
-  // CSS classes) are left as-is (I5: internal identifiers rename OR
-  // annotate — annotated here; a pure rename buys nothing user-facing and
-  // widens this diff for no behavioral change).
+  // 2026-07-28-roadmap-hierarchy-ux-review.md) rendered this as a "#k of n"
+  // chip ("▸ #3 of 9 · <title>"). ROUND 12 (ux-ia-auditor live audit, item
+  // 3) RETIRED the chip entirely: live-measured PROOF it is a render-
+  // position artifact, not an identity — filtering to "T3" renumbered
+  // Accountable Estate from "#12 OF 16" to "#2 OF 3" on the same screen.
+  // isPhaseSeries/buildOrderLabel remain as pure, tested utilities (the
+  // connected-sequence CONNECTOR LINE they still drive via rm-phase-series/
+  // rm-phase-step is unaffected — only the unstable NUMBER TEXT is gone);
+  // renderNode/renderTree/renderChildList no longer call buildOrderLabel.
   function isPhaseSeries(children) {
     return !!(children && children.length && children[0] && children[0].kind === 'plan');
   }
@@ -291,6 +305,92 @@
     return '#' + (index + 1) + ' of ' + total;
   }
   // PHASE-SERIES-END
+
+  // TASK-SPAN-BEGIN
+  // Round 12 item 2 (the operator's #1 complaint, ux-ia-auditor live
+  // audit): the task ids that make up a plan's own progress fraction
+  // ALREADY reach the browser (server: roadmap-routes.js's deriveTaskNode
+  // emits `id: slug + '/' + t.id`) but were discarded at render — the
+  // fraction ("5/6") never said WHICH tasks. deriveTaskSpanLabel reads
+  // item.children (already on the wire, no server change needed) and
+  // derives a POSITIONAL span label. Contract:
+  //  - Never say "running" — auditor-verified: all 86 real task nodes on
+  //    this machine are 34 complete / 52 not-started / ZERO in-progress,
+  //    and zero carry live_sessions. "next" names a POSITION in the build
+  //    order, never a live state — this function never reads
+  //    live_sessions and never emits any word but "next" for the first
+  //    not-done task, regardless of that task's own status value.
+  //  - The done-set is a contiguous prefix on every plan TODAY (auditor-
+  //    verified across all 15 plans-with-tasks), but that is not
+  //    guaranteed to hold forever (an operator reopening an earlier task,
+  //    or a resequenced batch). Contiguity is checked explicitly on every
+  //    call; the non-contiguous branch names a COUNT ("3 done") instead of
+  //    a range it cannot honestly claim — never a fabricated span.
+  function shortTaskId(id) {
+    var s = String(id == null ? '' : id);
+    var i = s.lastIndexOf('/');
+    return i === -1 ? s : s.slice(i + 1);
+  }
+  function deriveTaskSpanLabel(children) {
+    var kids = children || [];
+    if (!kids.length) return '';
+    var doneCount = 0;
+    var firstOpenIdx = -1;
+    var contiguous = true;
+    for (var i = 0; i < kids.length; i++) {
+      var isDone = !!(kids[i] && kids[i].status && kids[i].status.value === 'complete');
+      if (isDone) {
+        doneCount++;
+        if (firstOpenIdx !== -1) contiguous = false; // a done task AFTER an open one: not a clean prefix
+      } else if (firstOpenIdx === -1) {
+        firstOpenIdx = i;
+      }
+    }
+    if (firstOpenIdx === -1) {
+      // every task done — no "next" to name.
+      return contiguous
+        ? (kids.length === 1
+            ? shortTaskId(kids[0].id) + ' done'
+            : shortTaskId(kids[0].id) + '–' + shortTaskId(kids[kids.length - 1].id) + ' done')
+        : (doneCount + ' done');
+    }
+    var nextLabel = shortTaskId(kids[firstOpenIdx].id) + ' next';
+    if (doneCount === 0) return nextLabel; // nothing done yet — no "0 done ·" clutter
+    if (contiguous) {
+      var doneRange = firstOpenIdx === 1
+        ? shortTaskId(kids[0].id)
+        : shortTaskId(kids[0].id) + '–' + shortTaskId(kids[firstOpenIdx - 1].id);
+      return doneRange + ' done · ' + nextLabel;
+    }
+    return doneCount + ' done · ' + nextLabel; // non-contiguous: count, never a fabricated range
+  }
+  // TASK-SPAN-END
+
+  // FILTER-MATCH-BEGIN
+  // Round 12 item 8: filtering by a task id (e.g. "T3") already returns the
+  // OWNING plan rows (itemMatchesText recurses into children/child_plans),
+  // but gave no hint WHICH descendant matched — the operator had to open
+  // every returned plan and hand-scan its full task list. findMatchingDescendant
+  // walks children/child_plans (never the item's OWN title/id — the caller
+  // only needs this when the item's own fields did NOT match) and returns
+  // the first id/title hit, or null. Pure (no DOM) — vm-sandbox tested like
+  // visibleFromRequests/isPhaseSeries above.
+  function findMatchingDescendant(item, q) {
+    if (!q) return null;
+    var lists = [(item && item.children) || [], (item && item.child_plans) || []];
+    for (var li = 0; li < lists.length; li++) {
+      var arr = lists[li];
+      for (var i = 0; i < arr.length; i++) {
+        var c = arr[i];
+        if ((String(c.id || '')).toLowerCase().indexOf(q) !== -1 ||
+            (String(c.title || '')).toLowerCase().indexOf(q) !== -1) return c;
+        var nested = findMatchingDescendant(c, q);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
+  // FILTER-MATCH-END
 
   // PROJECT-GROUPING-BEGIN
   // Round 9 gap 2 (R9-2, operator audit): 8A re-rooted the tree on plans,
@@ -360,9 +460,36 @@
   // ============================================================
   // status chip + roll-up badges + markers (shared by tree AND kanban)
   // ============================================================
+  // Round 12 item 4 (operator: the status chip is redundant with the
+  // fraction/progress bar for the states the fraction CAN derive). The
+  // fraction derives not-started (0/N), complete (N/N), and in-progress
+  // (anything in between) by construction — it CANNOT derive stalled,
+  // merged-unverified, or unknown, which is exactly why those three stay
+  // loud. DERIVABLE_STATES gates statusChip() below; EXCEPTION_GLYPH
+  // supplies the small column-6 glyph for the other three.
+  var DERIVABLE_STATES = { 'not-started': true, 'in-progress': true, 'complete': true };
+  var EXCEPTION_GLYPH = { stalled: '⚠', 'merged-unverified': '⏳', unknown: '?' };
+  var TITLE_STATE_CLASS = {
+    'not-started': 'rm-title-not-started',
+    'in-progress': 'rm-title-in-progress',
+    'complete': 'rm-title-complete',
+    'stalled': 'rm-title-stalled',
+    'merged-unverified': 'rm-title-merged-unverified',
+    'unknown': 'rm-title-unknown',
+  };
+  function titleStateClass(item) {
+    var v = (item.status && item.status.value) || '';
+    return TITLE_STATE_CLASS[v] || '';
+  }
+
   function statusChip(item) {
     var st = item.status || {};
     var value = st.value || 'unknown';
+    // Round 12 item 4: no chip at all for the three DERIVABLE states — the
+    // fraction + task-span text already say it; a same-info chip here was
+    // the operator's named redundancy ("showing the 'in progress'/
+    // 'complete' status next to the progress bar is also redundant").
+    if (DERIVABLE_STATES[value]) return null;
     var label = st.label || STATUS_LABEL[value] || value;
     var ageTs = value === 'complete' ? (item.completed_at || st.since) : st.since;
     var text = label + (ageTs ? ', ' + formatAge(ageTs) : '');
@@ -388,11 +515,14 @@
     // bar ALWAYS carries the "n/m" text (never bar-only).
     if (!item.progress || !item.progress.total) return null;
     var p = item.progress;
+    var statusVal = (item.status && item.status.value) || 'not-started';
     var wrap = el('span', 'rm-progress');
     var barOuter = el('span', 'rm-progress-bar');
     barOuter.setAttribute('role', 'img');
     barOuter.setAttribute('aria-label', p.done + ' of ' + p.total + ' tasks done');
-    var fill = el('span', 'rm-progress-fill');
+    // Round 12 item 5: the fill is STATUS-COLORED (rm-fill-<value>), not one
+    // static green for every fraction — retires --ok from the roadmap.
+    var fill = el('span', 'rm-progress-fill rm-fill-' + statusVal);
     fill.style.width = Math.round(100 * p.done / p.total) + '%';
     barOuter.appendChild(fill);
     wrap.appendChild(barOuter);
@@ -467,6 +597,58 @@
       frag.appendChild(el('span', 'rm-new-marker', 'new')); // text marker, never color-only (I1)
     }
     return frag;
+  }
+
+  // ============================================================
+  // Round 12 (ux-ia-auditor live audit) — the row's 7 GRID CELLS. Each
+  // function ALWAYS returns a real element (possibly empty) so every row
+  // appends exactly one child per column, in the same order, every time —
+  // the fix for the flex-wrap misalignment (item 1): a conditionally-
+  // skipped child used to shift every LATER column into the wrong slot.
+  // ============================================================
+  function markerCell(item) { // column 2 (56px)
+    var cell = el('span', 'rm-cell rm-cell-marker');
+    cell.appendChild(markerChips(item));
+    return cell;
+  }
+
+  function titleCell(item) { // column 3 (1fr)
+    var cell = el('span', 'rm-cell rm-cell-title');
+    var titleSpan = el('span', 'rm-title ' + titleStateClass(item), item.title);
+    // Round 12 item 1: ellipsis truncates the title (CSS); the FULL text
+    // lives in title= — R9-1's slug-as-tooltip is folded in after it so
+    // hovering still surfaces the plan slug, not just the title repeated.
+    titleSpan.title = item.title + (item.kind === 'plan' ? ' — ' + item.id : '');
+    cell.appendChild(titleSpan);
+    cell.appendChild(referenceLifecycleBadges(item)); // rare (dangling-parent/cycle); wraps inside this cell
+    return cell;
+  }
+
+  function taskSpanCell(item) { // column 4 (190px)
+    return el('span', 'rm-cell rm-cell-taskspan', deriveTaskSpanLabel(item.children));
+  }
+
+  function fractionCellForRow(item) { // column 5 (76px)
+    var cell = el('span', 'rm-cell rm-cell-fraction');
+    var prog = progressNode(item);
+    if (prog) cell.appendChild(prog);
+    return cell;
+  }
+
+  function exceptionGlyphCell(item) { // column 6 (46px)
+    var v = item.status && item.status.value;
+    var g = EXCEPTION_GLYPH[v];
+    var cell = el('span', 'rm-cell rm-cell-exglyph' + (g ? ' rm-exglyph-' + v : ''), g || '');
+    if (g) cell.setAttribute('aria-hidden', 'true'); // decorative — the adjacent label chip (column 7) carries the real text (WCAG 1.4.1)
+    return cell;
+  }
+
+  function exceptionLabelCell(item) { // column 7 (132px): the loud exception chip + descendant roll-up badges
+    var cell = el('span', 'rm-cell rm-cell-exception');
+    var chip = statusChip(item); // null for the three derivable states — an empty column 7 means "healthy"
+    if (chip) cell.appendChild(chip);
+    cell.appendChild(rollupBadges(item)); // descendant attention (C1) — independent of this item's OWN state
+    return cell;
   }
 
   // taskStructureBlock(item) — round-6 gap 1 + round-7 7A/7B/7B-i: renders
@@ -818,12 +1000,17 @@
     return subtreeHasActive(item);
   }
 
-  function renderNode(item, topLevelIndex, topLevelCount, phaseText) {
+  function renderNode(item, topLevelIndex, topLevelCount) {
     var det = document.createElement('details');
     det.className = 'rm-node rm-kind-' + item.kind;
     det.dataset.itemId = item.id;
     det.tabIndex = -1; // landing target: programmatically focusable (C2)
-    if (defaultOpen(item)) det.open = true;
+    // Round 12 item 8: a filter match living on a DESCENDANT forces this
+    // ancestor open so the match note (appended below) is reachable —
+    // folded into the SAME initial-open decision defaultOpen() makes so the
+    // toggle listener's deviation-tracking baseline stays correct.
+    var filterMatch = currentMatchNotes[item.id];
+    if (defaultOpen(item) || filterMatch) det.open = true;
     // Record only DEVIATIONS from the rendered state: the programmatic
     // default-open above also fires 'toggle', and persisting the default as
     // an explicit choice would freeze the active-path recomputation.
@@ -834,46 +1021,41 @@
       openSet[item.id] = det.open;
     });
 
+    // Round 12 (ux-ia-auditor live audit, item 1): a CSS GRID row — 7 fixed
+    // columns, one cell appended per column, ALWAYS, even when empty (see
+    // the cell builders above). Replaces the flex-wrap layout that let
+    // conditionally-absent content shift every later column (measured live:
+    // a 292px/346px swing in where the status chip/fraction started).
     var sum = document.createElement('summary');
     sum.className = 'rm-row';
-    // R10-2: explicit disclosure chevron (CSS rotates it on open) — the
-    // native marker was suppressed, leaving expandability invisible.
-    sum.appendChild(el('span', 'rm-chevron', '▸'));
-    // R10-1: the phase label lives ON the title row (the separate label
-    // line above each node made the title read as a child item).
-    if (phaseText) sum.appendChild(el('span', 'rm-phase-inline', phaseText));
-    var titleSpan = el('span', 'rm-title', item.title);
-    // R9-1: the slug becomes a tooltip/secondary once the H1 title takes
-    // the primary spot (item.id IS the slug for a plan-kind node — see
-    // roadmap-routes.js's `id: pf.slug`, no separate field needed).
-    if (item.kind === 'plan') titleSpan.title = item.id;
-    sum.appendChild(titleSpan);
-    // R9-3: a subtle per-phase PROJECT chip (text, never color-only) so
-    // every phase row names which project it belongs to, not just the
-    // filter-chip toolbar.
-    if (item.kind === 'plan' && item.project) {
-      sum.appendChild(el('span', 'chip rm-project-tag', item.project));
-    }
-    sum.appendChild(statusChip(item));
+    sum.appendChild(el('span', 'rm-chevron', '▸'));       // column 1 (16px)
+    sum.appendChild(markerCell(item));                     // column 2 (56px)
+    sum.appendChild(titleCell(item));                       // column 3 (1fr)
     // R11 Critical 5: a master shows its TWO labeled fractions instead of
-    // the plain progress bar (never a blended single number); every other
-    // node keeps the existing bar+"n/m" text (C5's pre-existing law).
+    // the plain progress bar (never a blended single number) — spans
+    // columns 4+5 (rm-cell-mastersummary, app.css); every other node keeps
+    // the task-span text (column 4, item 2) + the fraction (column 5).
     if (item.master_summary) {
-      sum.appendChild(masterSummaryNode(item));
+      var msCell = el('span', 'rm-cell rm-cell-mastersummary');
+      msCell.appendChild(masterSummaryNode(item));
+      sum.appendChild(msCell);
     } else {
-      var prog = progressNode(item);
-      if (prog) sum.appendChild(prog);
+      sum.appendChild(taskSpanCell(item));                 // column 4 (190px)
+      sum.appendChild(fractionCellForRow(item));            // column 5 (76px)
     }
-    sum.appendChild(markerChips(item));
-    sum.appendChild(referenceLifecycleBadges(item)); // R11 Critical 4(2)/(4)
-    // a fully-collapsed complete subtree keeps its recency in the headline
-    if ((item.status && item.status.value === 'complete' && item.completed_at) ||
-        (item.status && item.status.value === 'merged-unverified' && item.completed_at)) {
-      sum.appendChild(el('span', 'rm-completed-when',
-        (item.status.value === 'complete' ? 'completed ' : 'merged ') + formatAge(item.completed_at)));
-    }
-    sum.appendChild(rollupBadges(item)); // hidden while open via CSS — never masked while collapsed (C1)
+    sum.appendChild(exceptionGlyphCell(item));              // column 6 (46px)
+    sum.appendChild(exceptionLabelCell(item));              // column 7 (132px)
     det.appendChild(sum);
+
+    // Round 12 item 8: the note is a SIBLING of summary, not inside
+    // .rm-drill — it must stay visible even while the row is collapsed
+    // (rm-filter-match-note is not gated by [open], unlike .rm-drill).
+    if (filterMatch) {
+      var matchText = 'matches: ' + (filterMatch.kind === 'task'
+        ? 'task ' + shortTaskId(filterMatch.id)
+        : (filterMatch.kind || 'item')) + ' — ' + (filterMatch.title || filterMatch.id);
+      det.appendChild(el('div', 'rm-filter-match-note', matchText));
+    }
 
     det.appendChild(drilldown(item, topLevelIndex, topLevelCount));
 
@@ -971,7 +1153,6 @@
     var part = partitionChildren(children, !!parentFullyComplete, agedOut);
     var live = part.live, aged = part.aged;
     var phaseSeries = isPhaseSeries(children);
-    var totalCount = children.length;
     if (phaseSeries) wrap.classList.add('rm-phase-series');
     // R11 Critical 1/2 (anatomy L3): task children carrying a `.batch` label
     // render as grouped batch rows — "batch rows only when the file carries
@@ -982,8 +1163,10 @@
       wrap.appendChild(renderTaskBatches(live));
     } else {
       live.forEach(function (c) {
-        var node = renderNode(c, -1, -1,
-          phaseSeries ? buildOrderLabel(children.indexOf(c), totalCount) : null);
+        // Round 12 item 3: buildOrderLabel is no longer rendered (retired
+        // "#N OF 16" ordinal — proven unstable); the connector line
+        // (rm-phase-step, below) still marks the sibling sequence visually.
+        var node = renderNode(c, -1, -1);
         if (phaseSeries) {
           var step = el('div', 'rm-phase-step');
           step.appendChild(node);
@@ -1017,10 +1200,24 @@
 
   function renderTree(visibleItems) {
     var tree = el('div', 'rm-tree');
-    var live = [], aged = [];
+    var live = [], shipped = [];
+    // Round 12 item 6 (operator: "each bundle of tasks should roll up and
+    // compact when all children tasks are complete... When an entire plan
+    // completes, it rolls up into the completed section"): a fully-complete
+    // PLAN leaves the main list on STATUS ALONE, never gated on the 7-day
+    // aging clock — that clock is fed by completed_at, which falls back to
+    // the plan FILE's mtime when no task_done event exists
+    // (roadmap-routes.js:1001), and this machine's continuous
+    // session-start-auto-install sync keeps touching that mtime, resetting
+    // the 7-day countdown indefinitely (ROADMAP-COMPLETED-AGING-MTIME-
+    // RESET-01 — server-side, out of this task's scope; this fix makes
+    // "Shipped" independent of that clock entirely). Opening a shipped
+    // plan still renders ALL its own tasks via the SAME renderNode/
+    // renderChildList path (unchanged) — only the top-level list membership
+    // changed, never what's visible once you open one.
     visibleItems.forEach(function (it) {
       var isComplete = it.status && it.status.value === 'complete';
-      if (isComplete && agedOut(it.completed_at)) aged.push(it); else live.push(it);
+      if (isComplete) shipped.push(it); else live.push(it);
     });
     // Round 8 (8A): the tree roots on PLANS — the top level is the
     // operator's "series of phases". Round 9 (R9-2): grouped by PROJECT —
@@ -1031,37 +1228,36 @@
     // group-local one).
     var phaseSeries = isPhaseSeries(live);
     if (phaseSeries) tree.classList.add('rm-phase-series');
+    // Round 12 item 6: the per-project header still reports the project's
+    // TRUE overall progress (incl. shipped plans) — "how far through" the
+    // operator asked for — even though shipped rows themselves now live in
+    // the separate Shipped group below, not in this list.
+    var projectTotals = {};
+    groupItemsByProject(visibleItems).forEach(function (g) { projectTotals[g.project] = g.items; });
     var groups = phaseSeries ? groupItemsByProject(live) : [{ project: '', items: live }];
     groups.forEach(function (g) {
       var container = tree;
       if (phaseSeries) {
+        var allForProject = projectTotals[g.project] || g.items;
         var groupEl = el('section', 'rm-project-group');
         groupEl.setAttribute('aria-label', 'project ' + (g.project || '(no project)'));
         var head = el('div', 'rm-project-group-head');
-        head.appendChild(el('span', 'rm-group-head-text', projectGroupHeaderText(g.project, g.items)));
-        // R10-3: the series IS the project's master sequence — an aggregate
-        // bar makes it read as one plan-of-plans ("N of M complete"), with
-        // the "M/N" text always beside the bar (never bar-only).
-        var done = g.items.filter(function (x) { return x.status && x.status.value === 'complete'; }).length;
-        var barWrap = el('span', 'rm-group-progress');
-        var bar = el('span', 'rm-group-progress-bar');
-        bar.setAttribute('role', 'img');
-        bar.setAttribute('aria-label', done + ' of ' + g.items.length + ' plans complete');
-        var fill = el('span', 'rm-group-progress-fill');
-        fill.style.width = (g.items.length ? Math.round((done / g.items.length) * 100) : 0) + '%';
-        bar.appendChild(fill);
-        barWrap.appendChild(bar);
-        barWrap.appendChild(el('span', 'rm-group-progress-text', done + '/' + g.items.length + ' complete'));
-        head.appendChild(barWrap);
+        // Round 12 item 3: R10-3's aggregate bar + "N/M complete" text is
+        // RETIRED — it restated the header's OWN "... complete" bucket
+        // count a third time on the same screen (live-verified:
+        // "neural-lace — 16 plans... (2 complete)" immediately followed by
+        // a separate "2/16 complete" line). projectGroupHeaderText already
+        // carries the complete count; nothing else said it a second way.
+        head.appendChild(el('span', 'rm-group-head-text', projectGroupHeaderText(g.project, allForProject)));
         groupEl.appendChild(head);
         tree.appendChild(groupEl);
         container = groupEl;
       }
-      g.items.forEach(function (it, gi) {
-        // R10-1: phase label rides the title row (renderNode 4th arg) — the
+      g.items.forEach(function (it) {
+        // Round 12 item 3: no ordinal label passed (buildOrderLabel is
+        // retired from rendering — see the PHASE-SERIES-BEGIN note); the
         // rm-phase-step wrapper stays for the series connector line only.
-        var node = renderNode(it, live.indexOf(it), live.length,
-          phaseSeries ? buildOrderLabel(gi, g.items.length) : null);
+        var node = renderNode(it, live.indexOf(it), live.length);
         if (phaseSeries) {
           var step = el('div', 'rm-phase-step');
           step.appendChild(node);
@@ -1071,10 +1267,10 @@
         }
       });
     });
-    if (aged.length) {
-      aged.sort(function (a, b) { return String(b.completed_at).localeCompare(String(a.completed_at)); });
+    if (shipped.length) {
+      shipped.sort(function (a, b) { return String(b.completed_at).localeCompare(String(a.completed_at)); });
       var roll = document.createElement('details');
-      roll.className = 'rm-completed-rollup';
+      roll.className = 'rm-completed-rollup rm-shipped-group';
       roll.dataset.rollupFor = '(top)';
       if (openSet['rollup:(top)']) roll.open = true;
       roll.addEventListener('toggle', function () {
@@ -1082,10 +1278,14 @@
       });
       var rsum = document.createElement('summary');
       rsum.className = 'rm-completed-rollup-summary';
-      rsum.textContent = aged.length + ' completed ▸ — latest: ' + (aged[0].title || aged[0].id);
+      // Round 12 item 6: "Shipped (n)" — the operator's own heading, not a
+      // restatement of the header counts (which now describe the WHOLE
+      // project, shipped included) or the nested per-parent "N completed"
+      // wording (task 3's unchanged, still-aging-gated mechanism).
+      rsum.textContent = 'Shipped (' + shipped.length + ') — latest: ' + (shipped[0].title || shipped[0].id);
       roll.appendChild(rsum);
       var rbody = el('div', 'rm-children');
-      aged.forEach(function (c) { rbody.appendChild(renderNode(c, -1, -1)); });
+      shipped.forEach(function (c) { rbody.appendChild(renderNode(c, -1, -1)); });
       roll.appendChild(rbody);
       tree.appendChild(roll);
     }
@@ -1127,7 +1327,16 @@
         var chipRow = el('div', 'rm-card-chips');
         if (entry.masterTitle) chipRow.appendChild(el('span', 'chip rm-master-tag', entry.masterTitle)); // I4
         if (it.project) chipRow.appendChild(el('span', 'chip rm-project-tag', it.project)); // R9-3
-        chipRow.appendChild(statusChip(it)); // same chips as the tree (I3)
+        // Round 12 item 4 fix: statusChip(it) returns null for the three
+        // DERIVABLE states now (not-started/in-progress/complete) — the
+        // column header itself already names the status ("In progress
+        // (4)"), so this was ALSO redundant there, same as the tree row;
+        // appendChild(null) threw and silently aborted the whole board
+        // render before this guard (regression caught live, fixed same
+        // commit). Exception-state cards (stalled/merged-unverified/
+        // unknown) still show the loud chip — same chips as the tree (I3).
+        var kanbanChip = statusChip(it);
+        if (kanbanChip) chipRow.appendChild(kanbanChip);
         var prog = progressNode(it);
         if (prog) chipRow.appendChild(prog);
         chipRow.appendChild(rollupBadges(it));
@@ -1332,6 +1541,7 @@
     if (!lastPayload) return;
     var st = captureUiState();
     var f = applyFilters(lastPayload.items || []);
+    currentMatchNotes = f.matchNoteById || {}; // Round 12 item 8
     body.innerHTML = '';
     var ub = lastPayload.unbound_sessions;
     if (ub && ub.live_sessions && ub.live_sessions.length) {
@@ -1341,13 +1551,16 @@
       body.appendChild(renderEmptyStates(f));
     } else {
       body.appendChild(viewMode === 'kanban' ? renderKanban(f.visible) : renderTree(f.visible));
-      if (f.hiddenChores > 0 && !showChores) {
-        var note = el('div', 'rm-chore-note', f.hiddenChores + ' items hidden (harness chores) ');
-        note.appendChild(btn('ghost small', 'show', function () {
-          showChores = true; lsSet(LS_SHOW_CHORES, '1'); syncToolbar(); renderAll();
-        }));
-        body.appendChild(note);
-      }
+      // Round 12 item 3: the footer "N items hidden (harness chores) show"
+      // note RETIRED here — it duplicated the toolbar's OWN chore toggle
+      // (roadmapChoreToggle, syncToolbar()), ~700px above this footer on a
+      // populated list, and its copy carried a grammar defect ("1 items
+      // hidden") the toolbar's own text never had. The toolbar control is
+      // ALWAYS visible (static DOM, outside #roadmapBody) so nothing is
+      // lost by removing this duplicate. The FILTERED/TRUE-empty state's
+      // OWN hidden-chores line (renderEmptyStates) is UNCHANGED — that one
+      // explains an otherwise-confusing "0 items" moment, a different
+      // purpose than restating an already-visible toolbar control.
     }
     // Ghost-bounding aggregate (2026-07-21): ask-linked plans whose file
     // could not be found AND whose newest link is older than the aging
@@ -1541,13 +1754,29 @@
       if (!j || j.ok === false) {
         bodyEl.innerHTML = '';
         bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+        if (countEl) countEl.textContent = '(!)';
         return;
       }
-      var answerable = (inbox && inbox.ok !== false && inbox.answerable) || [];
+      // Round 12 item 9 (inbox count honesty): pre-fix, an /api/inbox
+      // failure was silently treated as answerable=[] — an UNREADABLE
+      // ledger and a GENUINELY EMPTY one rendered the identical confident
+      // "nothing on your list" line. An unreadable ledger is UNKNOWN, never
+      // a silent zero — this is the landing surface (the Roadmap tab), so
+      // the error must surface HERE, not only inside the Inbox tab itself.
+      var inboxFailed = !inbox || inbox.ok === false;
+      var answerable = inboxFailed ? [] : (inbox.answerable || []);
       var ops = j.operator_items || [];
       var ptrs = (j.pointer_items || []).filter(function (p) { return !p.checked; });
-      if (countEl) countEl.textContent = '(' + (answerable.length + ops.filter(function (o) { return !o.checked; }).length + ptrs.length) + ' open)';
+      var openOpsCount = ops.filter(function (o) { return !o.checked; }).length;
+      if (countEl) {
+        countEl.textContent = inboxFailed
+          ? '(!)'
+          : '(' + (answerable.length + openOpsCount + ptrs.length) + ' open)';
+      }
       bodyEl.innerHTML = '';
+      if (inboxFailed) {
+        bodyEl.appendChild(el('div', 'rm-side-error', 'Inbox: could not load — retry on next tick'));
+      }
       if (answerable.length) {
         var wlist = el('ul', 'rm-side-list');
         answerable.slice(0, SIDE_LIST_CAP).forEach(function (item) {
@@ -1564,10 +1793,14 @@
         bodyEl.appendChild(el('div', 'rm-side-tiers', answerable.length + ' waiting on you (Inbox):'));
         bodyEl.appendChild(wlist);
       }
-      if (!answerable.length && !ops.length && !ptrs.length) {
+      // The confident "nothing on your list" win-line renders ONLY when
+      // every source actually reported zero — never when the Inbox source
+      // is unknown (inboxFailed).
+      if (!inboxFailed && !answerable.length && !ops.length && !ptrs.length) {
         bodyEl.appendChild(el('div', 'rm-side-empty', 'nothing on your list'));
         return;
       }
+      if (inboxFailed && !ops.length && !ptrs.length) return; // the error note above already said so
       if (!ops.length && !ptrs.length) return;
       var list = el('ul', 'rm-side-list');
       ops.forEach(function (item) {
@@ -1606,6 +1839,7 @@
     }).catch(function () {
       bodyEl.innerHTML = '';
       bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+      if (countEl) countEl.textContent = '(!)'; // Round 12 item 9
     });
   }
 
@@ -1617,6 +1851,7 @@
       if (!j || j.ok === false) {
         bodyEl.innerHTML = '';
         bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+        if (countEl) countEl.textContent = '(!)'; // Round 12 item 9
         return;
       }
       var counts = j.counts || {};
@@ -1648,6 +1883,7 @@
     }).catch(function () {
       bodyEl.innerHTML = '';
       bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+      if (countEl) countEl.textContent = '(!)'; // Round 12 item 9
     });
   }
 

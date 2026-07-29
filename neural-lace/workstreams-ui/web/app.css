@@ -23,6 +23,16 @@
   --err: #f87171;
   --info: #60a5fa;
   --interrupt: #fb7185; /* the ONE accent for interrupt-worthy classes */
+  /* Round 12 (ux-ia-auditor live audit, item 5): --done is the roadmap's
+     "complete" neutral — deliberately the DARKEST gray that still clears
+     WCAG AA 4.5:1 against --panel (#1f2937): measured #87909e = 4.55:1;
+     #6b7280 measures 3.04:1 and #7a8494 measures 3.88:1, both FAIL. Do not
+     round this to a "nicer" gray without re-measuring. --ok (green) is
+     retired from the roadmap entirely (see the .rm-* rules below) — a
+     single static green fill made a 2/14 plan and a 6/6 plan look
+     identical (measured: 100% of fill pixels on the live page were that
+     one green, 0 non-green). */
+  --done: #87909e;
 }
 
 * { box-sizing: border-box; }
@@ -72,6 +82,12 @@ header .spacer { flex: 1; }
 }
 .tab-btn:hover { color: var(--text); }
 .tab-btn[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+/* Round 12 item 9 (inbox count honesty): a derived count badge needs THREE
+   visually distinct states — a real number, unknown/loading ("(—)"), and a
+   CONFIRMED error ("(!)"). Pre-fix, a broken /api/inbox left the tab
+   showing the hardcoded loading "(—)" forever, which read as "probably
+   fine" rather than "this is broken". */
+.ib-tabcount-error { color: var(--interrupt); font-weight: 700; }
 .tab-panel[hidden] { display: none; } /* same [hidden]-override footgun this file already documents below */
 
 /* ---- Harness Health tab's own toolbar (refresh + reconciler badge —
@@ -800,6 +816,14 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   font-weight: 600;
   border: 1px solid var(--border2);
   min-height: 20px;
+  /* Round 12 contrast fix (item 7, live-measured): a chip rendered as a
+     real <button> (rm-project-chip, rm-status-stalled/unknown,
+     rm-rollup-badge, ...) has no explicit background here, so it fell
+     back to the UA default button face — measured live as rgb(239,239,239)
+     ("#efefef"), a light gray box in a dark theme (1.56:1-class failure).
+     A <span>-based chip already looked fine (UA spans have no background) —
+     only the interactive ones needed this. */
+  background: transparent;
 }
 .state-chip.state-working { color: var(--ok); border-color: var(--ok); }
 .state-chip.state-waiting-on-me { color: var(--interrupt); border-color: var(--interrupt); background: color-mix(in srgb, var(--interrupt) 15%, transparent); }
@@ -1030,18 +1054,74 @@ button, a, [role="button"] { min-height: 24px; }
 /* ---- tree nodes ---- */
 .rm-tree { padding: 4px 0; }
 .rm-node { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+/* ---- Round 12 (ux-ia-auditor live audit, item 1/sev 3): the row was
+   `display:flex; flex-wrap:wrap`, so optional content (a project chip here,
+   a marker there) shifted every LATER element — measured live across 16
+   real rows: the status chip started anywhere in x∈[465,757] (292px
+   swing), the fraction in x∈[628,974] (346px swing). A CSS grid with a
+   FIXED column per role fixes this by construction, PROVIDED every row
+   appends exactly one (possibly-empty) cell per column — see roadmap.js's
+   markerCell/titleCell/taskSpanCell/fractionCellForRow/exceptionGlyphCell/
+   exceptionLabelCell, which do exactly that. Columns, left to right:
+     1. 16px  — disclosure chevron
+     2. 56px  — transient marker chips (new / added-mid-build)
+     3. 1fr   — title (state-colored, item 5) + rare reference-lifecycle
+                badges (dangling-parent/cycle)
+     4. 190px — the task-span text (item 2: "T1–T2 done · T3 next") OR a
+                master's two labeled fractions (spans into column 5)
+     5. 76px  — the progress bar + "n/m" fraction text (tabular-nums)
+     6. 46px  — the EXCEPTION glyph (item 4) — empty for the three
+                DERIVABLE states, a small icon for the three the fraction
+                cannot derive (stalled/merged-unverified/unknown)
+     7. 132px — the EXCEPTION label chip (loud, full text) + any collapsed-
+                descendant roll-up badges (C1) ---- */
 .rm-node > summary.rm-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px 56px minmax(0,1fr) 190px 76px 46px 132px;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
   cursor: pointer;
   padding: 3px 4px;
   min-height: 24px;
 }
 .rm-node > summary.rm-row:hover { background: var(--panel2); }
-.rm-title { font-weight: 600; }
+.rm-cell { min-width: 0; }
+.rm-cell-marker, .rm-cell-exglyph { overflow: hidden; }
+.rm-cell-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rm-title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
 .rm-kind-task .rm-title { font-weight: 400; }
+.rm-cell-taskspan {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rm-cell-exglyph { font-size: 13px; text-align: center; }
+.rm-cell-exception { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.rm-cell-mastersummary { grid-column: 4 / 6; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* ---- six states, TITLE-carried (item 5 — recession not emphasis: the
+   eye lands on the title, leftmost + largest, not on an 11px chip at the
+   far right). LUMINANCE for the two common/normal-traffic states + a
+   neutral for complete; HUE reserved for the three exceptions — with 4
+   in-progress / 10 not-started measured live, hue-coding the common case
+   would spend the scarce colour budget on the unremarkable (app.css:7-9's
+   own discipline). Every ratio measured against the REAL row background,
+   --panel #1f2937 (rows are transparent over the pane). ---- */
+.rm-title.rm-title-not-started { color: var(--muted); font-weight: 400; }              /* 5.78:1 */
+.rm-title.rm-title-in-progress { color: #f9fafb; font-weight: 600; }                    /* 14.05:1 */
+.rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note */
+.rm-title.rm-title-stalled { color: var(--interrupt); font-weight: 600; }               /* 5.45:1 */
+.rm-title.rm-title-merged-unverified { color: var(--warn); font-weight: 600; }          /* 8.79:1 */
+.rm-title.rm-title-unknown { color: var(--warn); font-weight: 400; border-bottom: 1px dashed var(--warn); } /* 8.79:1 + dashed, never color-only */
 .rm-children { margin-left: 14px; }
 .rm-drill { display: none; padding: 4px 8px 6px 20px; font-size: 12px; color: var(--muted); }
 .rm-node[open] > .rm-drill { display: block; }
@@ -1113,28 +1193,54 @@ button, a, [role="button"] { min-height: 24px; }
   margin-bottom: 1px;
 }
 
-/* ---- six-value status chips (C5): text + color, never color-only ---- */
+/* ---- six-value status chips (C5): text + color, never color-only.
+   Round 12 item 4 (operator: "showing the 'in progress'/'complete' status
+   next to the progress bar is also redundant"): the chip is now the
+   EXCEPTION column ONLY — roadmap.js's statusChip() returns null for the
+   three DERIVABLE states (not-started/complete/in-progress, which the
+   fraction + task-span text already say), so only stalled/merged-
+   unverified/unknown ever reach these rules. .rm-status-not-started/
+   -in-progress/-complete are dead CSS today (kept, harmless, in case a
+   future caller — e.g. a non-grid surface — reuses the chip builder
+   without the exception gate) but never render inside the tree row. ---- */
 .chip.rm-status { white-space: nowrap; }
 .chip.rm-status-not-started { color: var(--muted); border-color: var(--border2); }
 .chip.rm-status-in-progress { color: var(--info); border-color: var(--info); }
 .chip.rm-status-merged-unverified { color: var(--warn); border-color: var(--warn); }
-.chip.rm-status-complete { color: var(--ok); border-color: var(--ok); }
+.chip.rm-status-complete { color: var(--done); border-color: var(--done); } /* retired --ok (green) — see --done's note */
 .chip.rm-status-stalled { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; cursor: pointer; }
 .chip.rm-status-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; cursor: pointer; }
 
-/* ---- progress: the bar NEVER travels without its "n/m" text ---- */
-.rm-progress { display: inline-flex; align-items: center; gap: 4px; }
+/* ---- progress: the bar NEVER travels without its "n/m" text. Round 12
+   item 1: tabular-nums so "5/6" and "12/14" align digit-for-digit down a
+   column of rows. Round 12 item 5: the track was --panel2 (#182230),
+   measured 1.09:1 against the real --panel background — effectively
+   invisible, so an EMPTY bar read as "no bar at all"; --border (#374151)
+   is the live-legible track. The fill is now STATUS-COLORED via the
+   rm-fill-<value> modifier (roadmap.js's progressNode) instead of one
+   static green for every state — see --done's note for why green is
+   retired from the roadmap entirely; this bar feeds BOTH the tree row
+   (column 5) and the kanban card, so the fix lands in both places at
+   once. ---- */
+.rm-progress { display: inline-flex; align-items: center; gap: 4px; width: 100%; overflow: hidden; }
 .rm-progress-bar {
   display: inline-block;
-  width: 72px;
+  flex: 0 0 28px;
+  width: 28px;
   height: 8px;
   border-radius: 4px;
-  background: var(--panel2);
+  background: var(--border);
   border: 1px solid var(--border2);
   overflow: hidden;
 }
-.rm-progress-fill { display: block; height: 100%; background: var(--ok); }
-.rm-progress-text { font-size: 12px; color: var(--muted); }
+.rm-progress-fill { display: block; height: 100%; background: var(--muted); }
+.rm-fill-not-started { background: var(--border2); }
+.rm-fill-in-progress { background: #38bdf8; } /* sky — 6.85:1, distinct from the retired --ok green */
+.rm-fill-complete { background: var(--done); }
+.rm-fill-stalled { background: var(--interrupt); }
+.rm-fill-merged-unverified { background: var(--warn); }
+.rm-fill-unknown { background: var(--warn); }
+.rm-progress-text { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---- roll-up badges (C1/R4): visible on COLLAPSED ancestors; when a
    branch is open its children's own chips carry the signal, so the
@@ -1150,7 +1256,16 @@ details[open] > summary .rm-rollups { display: none; }
 /* ---- markers (I1/I2): text markers, never color-only ---- */
 .rm-new-marker { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 3px; }
 .chip.rm-marker-midbuild { color: var(--info); border-color: var(--info); font-style: italic; }
-.rm-completed-when { font-size: 11px; color: var(--muted); }
+/* rm-completed-when RETIRED (Round 12 item 3): duplicated the status
+   chip's own "complete, 37h ago" text verbatim; the chip is gone for the
+   complete state too now (item 4), so there is nothing left to duplicate
+   and nothing to replace it with — the task-span text + fraction already
+   carry "how far through" without an age string. */
+/* ---- filter-match note (Round 12 item 8): surfaces WHICH descendant
+   task/plan matched a filter query, directly under the row that matched —
+   ALWAYS visible (not gated by [open], unlike .rm-drill) since the row
+   itself may still be collapsed. ---- */
+.rm-filter-match-note { font-size: 11px; color: var(--info); padding: 0 4px 4px 26px; }
 
 /* ---- completed aging roll-up rows ---- */
 .rm-completed-rollup { margin: 4px 0 4px 4px; border-left: 2px dotted var(--border); padding-left: 6px; }
@@ -1450,16 +1565,33 @@ details[open] > summary .rm-rollups { display: none; }
    slot so the column handle splits a real pair again. */
 .ws-layout .requests-ledger-in-layout { flex: 1 1 0; min-width: 0; margin: 0; }
 .rm-plan-link-row { margin: 2px 0 6px; font-size: 12px; }
-.rm-plan-link { overflow-wrap: anywhere; }
+/* Round 12 item 7 (pre-existing contrast bug, live-measured): rm-plan-link
+   had NO color rule at all, so every one of the 16 plan links rendered at
+   the browser default visited/unvisited blue (#0000EE), 1.56:1 on the
+   dark panel — a hard WCAG 1.4.3 failure. */
+.rm-plan-link { overflow-wrap: anywhere; color: var(--info); }
 /* R10 (operator round 10, 2026-07-27) */
 .rm-chevron { display: inline-block; width: 12px; font-size: 10px; opacity: 0.6; transition: transform 0.12s; }
 details[open] > .rm-row > .rm-chevron { transform: rotate(90deg); }
-.rm-phase-inline { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.65; margin-right: 6px; white-space: nowrap; }
+/* rm-phase-inline RETIRED (Round 12 item 3): rendered the "#N OF 16"
+   ordinal, PROVEN unstable — filtering to "T3" renumbered Accountable
+   Estate from "#12 OF 16" to "#2 OF 3" live. A render-position count is
+   not an identity; roadmap.js no longer computes or appends it. The
+   connected phase-series CONNECTOR LINE (rm-phase-step/rm-phase-series
+   below) is unaffected — the operator's complaint was the unstable
+   NUMBER, not the sibling-sequence visual. */
 .rm-project-group-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.rm-group-progress { display: inline-flex; align-items: center; gap: 6px; }
-.rm-group-progress-bar { display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
-.rm-group-progress-fill { display: block; height: 100%; background: var(--ok, #4a4); }
-.rm-group-progress-text { font-size: 11px; opacity: 0.8; }
+/* rm-group-progress(-bar/-fill/-text) RETIRED (Round 12 item 3, R10-3's
+   aggregate bar): live-verified THIRD restatement of the header's own
+   "... complete" bucket count — "neural-lace — 16 plans... (2 complete)"
+   was immediately followed by a separate "2/16 complete" bar+line saying
+   the identical fact again. */
+/* Round 12 item 6: the top-level "Shipped" group (a fully-complete PLAN
+   leaving the main list) reuses rm-completed-rollup's box styling but
+   gets its own class so it's distinguishable from a nested per-parent
+   "N completed" roll-up (task 3's existing 7-day-window mechanism, which
+   this item does NOT change). */
+.rm-shipped-group > summary { font-weight: 600; }
 
 /* R11 (round 11, 2026-07-28) — master-plan hierarchy: docs/reviews/
    2026-07-28-roadmap-hierarchy-ux-review.md */

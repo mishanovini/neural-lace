@@ -1453,3 +1453,43 @@ fixed in the same commit since without it neither platform's code ever fires).
    (`hooks/lib/portable-timeout.sh`'s header currently lists `declare -A`,
    `${x^^}`, `&>>`, `date -d` — this compound-`local` self-reference belongs
    next to those).
+
+---
+
+## ROADMAP-NARROW-VIEWPORT-COLLAPSE-01 — .roadmap-section collapses to ~2px tall under the .rm-layout column breakpoint
+
+**Severity:** P1 (functional: the entire Roadmap tree becomes invisible, not just mislaid)
+**What:** Live-verified (Round 12 build, 2026-07-29) via the running cockpit at :7733 in the
+Browser pane at viewport widths ≤ ~1100px (the `@media (max-width: 1100px) { .rm-layout {
+flex-direction: column } }` breakpoint, app.css:1560): `#roadmapSection`'s computed height
+collapses to 2px (`getBoundingClientRect().height === 2`), clipping the entire tree — every row
+still exists in the DOM (confirmed via the accessibility tree and `getComputedStyle` on
+`#roadmapBody`, which reports its real, correct height) but is invisible, because `.pane`
+(app.css:754) sets `overflow: hidden` with no explicit height.
+**PROVEN pre-existing, NOT introduced by this session's work:** reproduced identically against
+the UNMODIFIED pre-Round-12 `app.css`/`roadmap.js` (restored via `git show HEAD:...` and
+temporarily swapped into the live server's checkout, then reverted) — same 2px collapse, same
+viewport threshold. Out of this session's scope (the ux-ia-auditor's 9 build items say nothing
+about this) and NOT fixed here per scope discipline.
+**Suspected mechanism (HYPOTHESIZED, not yet fixed/verified):** `.rm-layout > .roadmap-section {
+flex: 1 1 0; min-width: 0; }` (written for the DESKTOP row-direction layout, where `flex: 1 1 0`
+governs WIDTH) is unconditionally reused when the media query flips `.rm-layout` to
+`flex-direction: column` — at that point `flex: 1 1 0` governs HEIGHT instead, and per the
+flexbox spec an item with non-`visible` overflow gets an automatic minimum main-size of 0; with
+no sibling/ancestor supplying extra height for `flex-grow` to distribute, the item collapses
+toward its flex-basis (0) instead of its content's natural height. `roadmapBody`'s own reported
+height (563, at the same time `roadmapSection`'s height read 2) is the smoking gun: the child's
+box is fully computed but the parent's box does not enclose it.
+**Refutation criterion:** set `.rm-layout.column-mode > .roadmap-section` (or an equivalent
+column-specific override) to `flex: 1 1 auto` (or add `min-height: 0` is NOT the fix — that
+would make it worse; the fix direction is `flex-basis: auto` for the column case) and re-measure
+`#roadmapSection`'s height at 800px width; if it now matches content height, the hypothesis is
+CONFIRMED — if it still collapses, a different mechanism is at play and this diagnosis is
+REFUTED.
+**Fix:** scope a column-mode override inside the existing `@media (max-width: 1100px)` block
+(app.css:1560-1563) — e.g. `.rm-layout { flex-direction: column; } .roadmap-section { flex: 1 1
+auto; } .rm-sidebar { flex: none; max-width: none; width: 100%; }` — then re-verify against a
+real narrow viewport (not just the desktop 1600px width this session verified Round 12's actual
+changes at, to sidestep this exact bug).
+**Filed by:** neural-lace Round 12 session, 2026-07-29 (discovered during live verification of
+the ux-ia-auditor cockpit-roadmap-redesign build; not part of that dispatch's 9 items).
