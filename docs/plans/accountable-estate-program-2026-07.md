@@ -21,6 +21,24 @@ metric + re-check date; recurrence auto-reopens. 3. Every slice RETIRES somethin
 or claim) as part of its Definition of Done. 4. Observe-first before every enforcement flip.
 5. Enforcement lives in libs called by every dispatcher (incl. session-resumer), never gates alone.
 
+## Machine claims (cross-machine WIP coordination — added 2026-07-29, operator throughput directive)
+
+Rule 1's honest restatement: never two slices in the SAME FILES at once — file-disjoint slices
+MAY run in parallel across machines (T3∥T7 proved this safe). To prevent overlap without waiting:
+before dispatching a builder for any slice, PULL master, add a claim line here, and push it (or
+include it in the dispatch-adjacent commit); clear the line in the landing commit. A stale claim
+(>24h, no matching worktree commits) may be taken over after a pull confirms no landed work.
+Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
+
+- Standing split (2026-07-29): OTHER machine → T4 then T5 (closer family / merge-lock surfaces),
+  plus the T7 full mine (one command, heavy fork load — the faster machine; see backlog
+  ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01). DESKTOP → T6 prerequisites as file-disjoint
+  micro-slices (occupancy TTL cache in admission-lib; env-bypass closure; Loop-2 pressure tick),
+  then T9 after T4 lands (T9 builds on T4's generalized closers). T8 waits on telemetry accrual.
+- CLAIM: T7 remainder (run `bash adapters/claude-code/scripts/loe-backfill.sh`, commit
+  docs/plans/loe-calibration.json/.md) — UNCLAIMED, either machine — 2026-07-29 —
+  docs/plans/loe-calibration.*
+
 ## Scope / Tasks (LOE: plan-level reference classes per review F11; 1 bs = one builder-session ≈ 80–150k tokens; bands are P50–P90 priors, calibrated as T7 lands)
 
 - [x] T1 — Read-only estate inventory + daily brief. New janitor scheduled task (deterministic bash)
