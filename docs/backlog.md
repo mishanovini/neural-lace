@@ -1493,3 +1493,32 @@ real narrow viewport (not just the desktop 1600px width this session verified Ro
 changes at, to sidestep this exact bug).
 **Filed by:** neural-lace Round 12 session, 2026-07-29 (discovered during live verification of
 the ux-ia-auditor cockpit-roadmap-redesign build; not part of that dispatch's 9 items).
+
+## SELF-SYNC-GUARD-INSTALLSH-RETROFIT-01 — install.sh still carries its own inline copy of the self-sync primitives
+
+**Severity:** P3 (no functional gap; pure drift-prevention follow-up).
+**Context:** `install.sh` (4e29dc6, 2026-07-29) and `session-start-auto-install.sh`
+(same day, follow-on urgent fix) both need SELF-SYNC-01 protection (a sync/prune/merge
+whose target resolves, through a symlinked live path, onto its own source). The shared
+detection primitives (`resolve_real_path`, `_sync_self_check`, `_resolves_into_dir`) now
+live in `adapters/claude-code/hooks/lib/self-sync-guard.sh`, sourced by
+`session-start-auto-install.sh`. `install.sh` still carries its OWN inline copy of the
+same three functions (from 4e29dc6), not yet switched to source the shared lib.
+
+**Why not done together:** see `docs/decisions/065-self-sync-guard-signal-level.md`
+("Related, NOT done here"). `install.sh`'s inline copy was hours-old, proven (12/12 on
+both bash interpreters), and this session was expressly forbidden from running
+`install.sh` itself — the least risky path was to leave it alone and extract the shared
+lib fresh for the new consumer, rather than refactor an already-verified emergency fix
+without the ability to smoke-test the refactor end-to-end.
+
+**Fix:** replace `install.sh`'s inline `resolve_real_path()` / `_sync_self_check()` /
+`_resolves_into_adapter_dir()` (install.sh:290-410ish) with a `source
+"$ADAPTER_DIR/hooks/lib/self-sync-guard.sh"` (keeping `_resolves_into_adapter_dir()` as a
+one-line wrapper around the shared `_resolves_into_dir "$1" "$ADAPTER_DIR"`, so its
+existing call sites need no changes) and re-run
+`tests/install-self-sync-guard-test.sh` (12/12 on both interpreters) to confirm no
+regression — that test extracts real function bodies at run time, so a lib-sourcing
+refactor needs its `FUNCS` extraction taught to also source the lib file, or the test's
+`resolve_real_path` calls will find nothing defined.
+**Filed by:** neural-lace session, 2026-07-29 (session-start-auto-install.sh SELF-SYNC-01 fix).
