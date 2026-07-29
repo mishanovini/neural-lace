@@ -15,6 +15,15 @@ named gap."* The plan that closes it, `docs/plans/verification-dispatch-directiv
 is **0 of 6 tasks done — every task still `not-started`**. I wrote the doctrine and left the
 mechanism unbuilt, which is precisely the theatre constitution §10 calls the cardinal defect.
 
+**UPDATE (same day, task-verifier):** the 0/6 was itself stale — V1–V5 had been BUILT and
+MERGED TO MASTER on 2026-07-28 (84f5a3c, fe78ed3) and simply never verified or flipped.
+task-verifier re-derived each with live probes (V3 proven by before/after differential
+against fe78ed3~1) and flipped all five at conf 8–9 (landed cd1aa93). V6 is deferred by the
+plan's own text. The REMAINING gap is unchanged: the commit-time carrier
+(review-record-commit-gate.sh, fixed today at 9828ea1) goes live only via the
+sweep → records → template-merge chain, which waits on the operator's SWEEP/DESKTOP/HYBRID
+call.
+
 The intended carrier is `hooks/review-record-commit-gate.sh`. It has been **rejected four times**
 by harness-reviewer. Q1 and Q5 are therefore the same blockage.
 
@@ -115,7 +124,7 @@ re-launch.
 
 | # | Concern | Owner | State |
 |---|---|---|---|
-| Q1 | verification-dispatch has no enforcement | plan `verification-dispatch-directive` V1-V6 | **0/6, not started** |
+| Q1 | verification-dispatch has no enforcement | plan `verification-dispatch-directive` V1-V6 | **V1-V5 verified+flipped (cd1aa93); carrier live-wiring waits on the sweep call** |
 | Q2 | surfaced problems can be silently dropped | new build item (3-part design above) | **not started** |
 | Q3 | multi-machine cockpit has no data on this Mac | coord-sync wiring | **not scheduled** |
 | Q4 | harness deletes work (2 carriers) | `4e29dc6` landed; auto-install guard | **1 of 2 fixed** |
