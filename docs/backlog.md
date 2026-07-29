@@ -1376,3 +1376,44 @@ the four uncovered suites; collapse the dual inventory to one canonical list.
 **Fold-in point:** same carrier as [[ASK-SENTINEL-QUARANTINE-SURFACER-01]]
 (any slice touching these files next), or batch both rows as one micro-plan.
 **Filed by:** emitter-fix delta re-review PASS (2026-07-29, Minor advisories 1+2).
+
+## ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01 — full 161-plan LOE mine not yet run to completion on this machine
+
+**Severity:** P2 (tool correctness proven; only the full-corpus artifact is outstanding).
+**Finding (PROVEN at build time, accountable-estate-program-2026-07 T7 build):**
+`adapters/claude-code/scripts/loe-backfill.sh` (new, this build) mines
+`docs/plans/archive/*.md` + companion evidence + git history into a
+calibration table. Correctness is proven two ways: (1) an 11-scenario
+`--self-test` on a synthetic sandboxed repo, all PASS; (2) a REAL-data
+25-plan subset mine (alphabetically first 25 of 161 archived plans, real
+repo, real git history) completed cleanly with zero errors and plausible
+output (3 classes populated, 100% wall-clock coverage, honest 0% builder-
+sessions coverage for that specific subset — independently spot-checked:
+`cockpit-v2-push-materialized-store.md`, NOT in the 25-plan subset, mines
+correctly with `builder_sessions: 3` when run standalone, confirming the
+extraction logic itself is sound and the 0% was a real property of the
+subset, not a bug).
+The FULL 161-plan mine (`bash adapters/claude-code/scripts/loe-backfill.sh`,
+no args, writes `docs/plans/loe-calibration.json`/`.md`) was attempted 3x in
+this session as a background task and was killed by the environment each
+time (no error output at time of kill — it was mid-run, not crashing) before
+completing. Same root cause as ESTATE-T1-HB-CLASSIFY-PERF-01 above: this
+machine's demonstrated fork-tax (~3.4s per `git log --follow` invocation,
+161 invocations ≈ 9 min best-case, longer under real contention) combined
+with this session's tool-level background-process ceiling (empirically
+observed to kill long-running background bash calls after several minutes
+regardless of `run_in_background`).
+**Not fixed in T7** — out of scope for a single builder session's wall-clock
+budget; the tool itself needs no further change, only more wall-clock (or a
+lower-fork-tax machine per docs/runbooks/windows-machine-perf-setup.md) to
+produce the committed artifact.
+**Action (future):** run `bash adapters/claude-code/scripts/loe-backfill.sh`
+to completion — either in a long-lived foreground session, on the other
+(faster) machine, or via a scheduled task with a generous time limit (mirror
+install-estate-janitor-task.ps1's pattern) — then commit the resulting
+`docs/plans/loe-calibration.json`/`.md`. Consider adding a `--resume`/
+`--limit N` flag if this repeats, so a killed run doesn't restart from
+scratch (not added in T7 — no evidence yet that one session will ever need
+it twice).
+**Filed by:** accountable-estate-program-2026-07 T7 build (loe-backfill.sh
++ plan-reviewer.sh Check 18).

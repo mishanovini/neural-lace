@@ -123,7 +123,15 @@ part-time autonomous work with review gates. T10 adds 5–10 bs and is separatel
 - adapters/claude-code/scripts/close-*.sh closer family + spawn-worktree registration — T4
 - adapters/claude-code/scripts/merge-serialized.sh + lock — T5
 - adapters/claude-code/hooks/plan-reviewer.sh (LOE surfacing) — T7
-- adapters/claude-code/scripts/loe-backfill.sh + calibration table — T7
+- adapters/claude-code/scripts/loe-backfill.sh (NEW) — T7 mining half: per-PLAN
+  actuals miner (docs/plans/archive/*.md + companion evidence + git history),
+  5-class deterministic classifier, emits docs/plans/loe-calibration.json (the
+  committed calibration artifact) + docs/plans/loe-calibration.md (rendered
+  summary). Close-side "actuals append" is a documented seam (this file's own
+  header comment names the exact close-plan.sh call site) — not built here,
+  per the WIP-1 directive keeping T7 out of closer/admission/dispatch files.
+- docs/plans/loe-calibration.json + docs/plans/loe-calibration.md (NEW,
+  committed artifacts) — T7 calibration table output
 - anomaly rules + incident capture in janitor — T8
 - manifest.json + settings.json.template wiring throughout; docs/designs + this plan as specs
 
@@ -159,3 +167,9 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-29: adapters/claude-code/scripts/session-resumer.sh — T3 admission splice at the storm-cap commit point (the hookless dispatcher, review F2)
 - 2026-07-29: adapters/claude-code/scripts/spawn-worktree.sh — T3 admission splice after a successful worktree create; otherwise this dispatch path emits nothing into the ledger, the review's named NEEDS-RESHAPING condition
 - 2026-07-29: docs/plans/accountable-estate-program-2026-07-evidence.md — T3 builder-claim evidence block (task-verifier has NOT run; checkbox left unchecked for the desktop machine)
+- 2026-07-28: adapters/claude-code/scripts/loe-backfill.sh (NEW) + adapters/claude-code/hooks/plan-reviewer.sh
+  (Check 18, WARN-only) + adapters/claude-code/manifest.json (loe-backfill entry) — T7 mining +
+  reviewer-surfacing halves; close-side actuals-append shipped as a documented seam in
+  loe-backfill.sh's own header (exact close-plan.sh function + call site named), not built, per
+  the operator's WIP-1 directive keeping this slice out of admission/dispatch/closer files while
+  the other machine owns T3.
