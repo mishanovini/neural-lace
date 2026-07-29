@@ -185,7 +185,8 @@
 #   {"ask_id":"...","record_type":"created|session_attached|plan_linked|
 #    status_change|merged|project_override|summary_updated|
 #    amendment_candidate|candidate_classified|amended|deadline_set|
-#    deadline_cleared|default_action_set",
+#    deadline_cleared|default_action_set|requirement_recorded|
+#    invariant_declared|invariant_verdict",
 #    "ts":"ISO-8601-UTC","user":"...","machine":"...",
 #    "repo":"...","project":"...","summary":"...","verbatim_ref":"...",
 #    "origin_session":"...","status":"active|done|dismissed|merged",
@@ -193,7 +194,59 @@
 #    "merged_into":"...","emitter":"...",
 #    "title_source":"auto|operator|","candidate_id":"cand-...|",
 #    "classification":"pending|amendment|noise|detached|",
-#    "deadline":"ISO-8601-UTC|","default_action":"..."}
+#    "deadline":"ISO-8601-UTC|","default_action":"...",
+#    "requirement_id":"req-...|","verbatim":"...","invariant_id":"inv-N|",
+#    "invariant_text":"...","invariant_verdict":"holds|violated|unverifiable|",
+#    "evidence_ref":"..."}
+#
+# ============================================================
+# OPERATOR-REQUIREMENT LEDGER (requirement_id / verbatim / invariant_* /
+# evidence_ref — BINDING reader contract)
+# ============================================================
+#
+# WHY THIS EXISTS (the golden case, 2026-07-28/29). Every verifier in this
+# harness checks delivered work against a PLAN. Nothing checked it against the
+# operator's actual words. Two real failures followed, both from the same
+# mechanism: the agent treated the operator's sentence as a GOAL TO DISCHARGE
+# rather than a SPECIFICATION WITH INVARIANTS, satisfied the verb, and stopped
+# reading.
+#   (1) "Fable is supposed to always fail back to Opus." -> a gate was built
+#       that BLOCKED the dispatch and told the caller to use Opus. It satisfied
+#       "use Opus" and destroyed "automatically".
+#   (2) "I don't want the agents to pin Opus. Opus is a fallback, not the
+#       primary option." -> 21 agents were permanently repinned to Opus. It
+#       satisfied "use Opus as a fallback" and destroyed "Fable is primary".
+# In both, ONE sentence carried TWO invariants and the build preserved one.
+# The ledger's whole job is to make the second invariant survive as a
+# separately checkable statement that a verifier must return a verdict on.
+#
+# THREE RECORD TYPES:
+#   requirement_recorded — the operator's sentence stored VERBATIM in
+#       `verbatim` (never a paraphrase, never sentence-split, NOT passed
+#       through the 140-char summariser; capped only at _AR_VERBATIM_MAX to
+#       bound a pathological paste). `requirement_id` groups the family.
+#   invariant_declared — ONE separately-checkable statement extracted from
+#       that sentence, in `invariant_text`, addressed by `invariant_id`
+#       (inv-1, inv-2, ... sequential within a requirement).
+#   invariant_verdict — a verifier's per-invariant judgement in
+#       `invariant_verdict` (holds|violated|unverifiable) with its citation in
+#       `evidence_ref`.
+#
+# VERDICT FOLD (BINDING): for each (requirement_id, invariant_id) pair, sort
+# `invariant_verdict` records by [ts, append-index] and take the LAST. `ts`
+# has one-second resolution and a re-verification routinely lands in the same
+# second as the verdict it supersedes, so ts alone is not a total order; the
+# append-index makes the tiebreak EXPLICIT rather than leaning on jq's
+# documented sort stability (measured stable on jq-1.7.1 here, but that is a
+# property of the reader, not of this contract). ABSENCE of any verdict record
+# is NOT a pass — it folds to `unverified`, which is the exact state the two
+# golden-case failures were in.
+#
+# SUMMARY-FIELD ABSTENTION (BINDING): all three record types write an EMPTY
+# `summary` and an EMPTY `title_source`. The ask's displayed title folds as
+# last-non-empty `summary` (with operator-beats-auto precedence), so a
+# requirement or invariant record carrying a non-empty summary would silently
+# rewrite the ask's title in the cockpit. Never populate `summary` here.
 #
 # The title_source/candidate_id/classification fields are the
 # cockpit-roadmap-redesign Task 2 (A2/A3/I6) additions; `deadline` and
@@ -820,10 +873,11 @@ _ar_resolve_project() {
 #   The ONE writer every verb below calls: builds the flat JSON record,
 #   appends it to the primary registry file, and best-effort mirrors it
 #   (constraint 11). Never fails the caller. Prints the registry file path.
-#   The FIVE trailing args are optional (three from cockpit-roadmap-
-#   redesign Task 2, two from accountable-estate-program-2026-07 Task 2):
-#   existing 13-arg call sites keep working; the JSON always emits all 21
-#   fields (empty when not applicable — the flat all-fields convention).
+#   The ELEVEN trailing args are optional (three from cockpit-roadmap-
+#   redesign Task 2, two from accountable-estate-program-2026-07 Task 2, and
+#   SIX from the operator-requirement ledger): existing 13-arg call sites keep
+#   working; the JSON always emits all 27 fields (empty when not applicable —
+#   the flat all-fields convention).
 # ----------------------------------------------------------------------
 _ar_append_record() {
   local record_type="$1" ask_id="$2" status="$3" repo="$4" project="$5" \
@@ -832,6 +886,10 @@ _ar_append_record() {
   local session_id="$1" resumed_from="$2" merged_into="$3" emitter="$4"
   local title_source="${5:-}" candidate_id="${6:-}" classification="${7:-}"
   local deadline="${8:-}" default_action="${9:-}"
+  # operator-requirement-ledger additions (SIX trailing optional args; every
+  # pre-existing 13/18/21-arg call site keeps working unchanged).
+  local requirement_id="${10:-}" verbatim="${11:-}" invariant_id="${12:-}"
+  local invariant_text="${13:-}" invariant_verdict="${14:-}" evidence_ref="${15:-}"
 
   local ts; ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown')"
   local user machine
@@ -840,7 +898,7 @@ _ar_append_record() {
   machine="$(hostname 2>/dev/null || echo unknown)"
 
   local json
-  json="$(printf '{"ask_id":"%s","record_type":"%s","ts":"%s","user":"%s","machine":"%s","repo":"%s","project":"%s","summary":"%s","verbatim_ref":"%s","origin_session":"%s","status":"%s","plan_slug":"%s","session_id":"%s","resumed_from":"%s","merged_into":"%s","emitter":"%s","title_source":"%s","candidate_id":"%s","classification":"%s","deadline":"%s","default_action":"%s"}' \
+  json="$(printf '{"ask_id":"%s","record_type":"%s","ts":"%s","user":"%s","machine":"%s","repo":"%s","project":"%s","summary":"%s","verbatim_ref":"%s","origin_session":"%s","status":"%s","plan_slug":"%s","session_id":"%s","resumed_from":"%s","merged_into":"%s","emitter":"%s","title_source":"%s","candidate_id":"%s","classification":"%s","deadline":"%s","default_action":"%s","requirement_id":"%s","verbatim":"%s","invariant_id":"%s","invariant_text":"%s","invariant_verdict":"%s","evidence_ref":"%s"}' \
     "$(_ar_json_escape "$ask_id")" "$(_ar_json_escape "$record_type")" "$ts" \
     "$(_ar_json_escape "$user")" "$(_ar_json_escape "$machine")" \
     "$(_ar_json_escape "$repo")" "$(_ar_json_escape "$project")" \
@@ -850,7 +908,10 @@ _ar_append_record() {
     "$(_ar_json_escape "$resumed_from")" "$(_ar_json_escape "$merged_into")" \
     "$(_ar_json_escape "$emitter")" "$(_ar_json_escape "$title_source")" \
     "$(_ar_json_escape "$candidate_id")" "$(_ar_json_escape "$classification")" \
-    "$(_ar_json_escape "$deadline")" "$(_ar_json_escape "$default_action")")"
+    "$(_ar_json_escape "$deadline")" "$(_ar_json_escape "$default_action")" \
+    "$(_ar_json_escape "$requirement_id")" "$(_ar_json_escape "$verbatim")" \
+    "$(_ar_json_escape "$invariant_id")" "$(_ar_json_escape "$invariant_text")" \
+    "$(_ar_json_escape "$invariant_verdict")" "$(_ar_json_escape "$evidence_ref")")"
 
   local f dir
   f="$(ar_registry_file)"
@@ -1378,6 +1439,331 @@ cmd_sla() {
     | .[]
     | "\(.ask_id)\t\(.sla_state)\t\(.deadline)\t\(.default_action)\t\(.summary)"
   ' "$f"
+  return 0
+}
+
+# ======================================================================
+# OPERATOR-REQUIREMENT LEDGER — verbs
+# See the SCHEMA header's "OPERATOR-REQUIREMENT LEDGER" block for the golden
+# case, the VERDICT FOLD rule, and the SUMMARY-FIELD ABSTENTION rule.
+# ======================================================================
+
+# Hard cap on a stored verbatim requirement. Deliberately large: the point of
+# the ledger is that the operator's sentence survives UNPARAPHRASED, so this
+# bounds a pathological paste and nothing else. It is NOT _ar_truncate140 —
+# that helper sentence-splits and ellipsises, which is precisely the lossy
+# step the ledger exists to prevent.
+_AR_VERBATIM_MAX=4000
+_AR_INVARIANT_MAX=600
+
+# _ar_truncate_hard <max> <text> — byte-count cap, no sentence logic, no
+# ellipsis-on-word-boundary. Content-preserving by construction.
+_ar_truncate_hard() {
+  local max="$1" s="$2"
+  if [[ "${#s}" -le "$max" ]]; then
+    printf '%s' "$s"
+  else
+    printf '%s' "${s:0:$max}"
+  fi
+}
+
+_ar_gen_requirement_id() {
+  local date_part; date_part="$(date -u '+%Y%m%d' 2>/dev/null || echo 'unknown')"
+  local rand
+  if [[ -r /dev/urandom ]]; then
+    rand="$(head -c 3 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  else
+    rand="$(printf '%06x' "$RANDOM")"
+  fi
+  printf 'req-%s-%s' "$date_part" "$rand"
+}
+
+# _ar_next_invariant_id <requirement_id> — sequential inv-N within a
+# requirement. grep-based so it works with no jq present (declaring an
+# invariant must never depend on the reader toolchain).
+_ar_next_invariant_id() {
+  local rid="$1" f n
+  f="$(ar_registry_file)"
+  n=0
+  if [[ -f "$f" ]]; then
+    n="$(grep -c "\"record_type\":\"invariant_declared\".*\"requirement_id\":\"${rid}\"" "$f" 2>/dev/null || echo 0)"
+    n="$(printf '%s' "$n" | tr -d ' \n')"
+    [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  fi
+  printf 'inv-%s' "$((n + 1))"
+}
+
+# ----------------------------------------------------------------------
+# _ar_invariant_rows <sel_kind> <sel> — THE shared reader. Emits one TSV row
+# per declared invariant:
+#   requirement_id \t invariant_id \t verdict \t evidence_ref \t
+#   invariant_text \t verbatim
+# `verdict` is the VERDICT FOLD result, or the literal `unverified` when no
+# verdict record exists (absence is never a pass).
+# Exit 0 = evaluated (row set may be empty). Exit 4 = CANNOT EVALUATE.
+# Both text columns are scrubbed of tab/newline so the TSV stays line-oriented
+# even when the operator's sentence contains them.
+# ----------------------------------------------------------------------
+_ar_invariant_rows() {
+  local sel_kind="$1" sel="$2"
+  local f; f="$(ar_registry_file)"
+  if [[ ! -f "$f" ]]; then
+    echo "ask-registry.sh: no registry file at $f — cannot evaluate invariants" >&2
+    return 4
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    echo "ask-registry.sh: jq is not available — cannot evaluate invariants" >&2
+    return 4
+  fi
+  jq -s -r --arg selkind "$sel_kind" --arg sel "$sel" '
+    # EVERY emitted cell is scrubbed of tab/newline AND guaranteed non-blank
+    # (blank -> "-"). The non-blank guarantee is load-bearing, not cosmetic:
+    # TAB is an IFS-WHITESPACE character, so bash `read -r a b c` COLLAPSES a
+    # run of tabs into one delimiter and silently shifts every later column.
+    # An empty evidence_ref on an unverified invariant would therefore print
+    # the invariant text in the evidence slot. Emitting "-" keeps the row
+    # parseable by bash read, awk and cut alike.
+    def cell: (. // "") | gsub("[\t\r\n]"; " ")
+              | if test("^ *$") then "-" else . end;
+    (to_entries | map(.value + {_i: .key})) as $all |
+
+    # --- selector resolution -------------------------------------------
+    (if $selkind == "requirement" then [$sel]
+     elif $selkind == "ask" then
+       [ $all[] | select(.record_type == "requirement_recorded" and .ask_id == $sel)
+               | .requirement_id ]
+     elif $selkind == "plan" then
+       ([ $all[] | select(.record_type == "plan_linked" and (.plan_slug // "") == $sel)
+                 | .ask_id ] | unique) as $askids |
+       [ $all[] | select(.record_type == "requirement_recorded"
+                         and ((.ask_id // "") | IN($askids[])))
+               | .requirement_id ]
+     else
+       [ $all[] | select(.record_type == "requirement_recorded") | .requirement_id ]
+     end | map(select(. != null and . != "")) | unique) as $reqids |
+
+    # --- verbatim per requirement (last requirement_recorded wins) ------
+    ( reduce ($all[] | select(.record_type == "requirement_recorded")) as $r
+        ({}; .[$r.requirement_id] = ($r.verbatim // "")) ) as $verbatim |
+
+    # --- declared invariants (last declaration of an id wins its text) --
+    ( reduce ($all[] | select(.record_type == "invariant_declared")
+                     | select((.requirement_id // "") | IN($reqids[]))) as $d
+        ({}; .[$d.requirement_id + " " + $d.invariant_id] = $d) ) as $decl |
+
+    # --- VERDICT FOLD: sort by [ts, append-index], last wins ------------
+    ( reduce ( [ $all[] | select(.record_type == "invariant_verdict") ]
+               | sort_by([.ts, ._i]) | .[] ) as $v
+        ({}; .[$v.requirement_id + " " + $v.invariant_id] = $v) ) as $verd |
+
+    ( $decl | keys_unsorted | sort ) as $ks |
+    $ks[] as $k |
+    $decl[$k] as $d |
+    ($verd[$k] // null) as $v |
+    [ ($d.requirement_id | cell),
+      ($d.invariant_id | cell),
+      (if $v == null or (($v.invariant_verdict // "") == "")
+       then "unverified" else $v.invariant_verdict end),
+      (if $v == null then "-" else ($v.evidence_ref | cell) end),
+      ($d.invariant_text | cell),
+      ($verbatim[$d.requirement_id] | cell)
+    ] | @tsv
+  ' "$f"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_record_requirement — store the operator's sentence VERBATIM.
+# ----------------------------------------------------------------------
+cmd_record_requirement() {
+  local ask_id="" verbatim="" requirement_id="" verbatim_ref="" session_id="" \
+        emitter="model" repo="" project=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --verbatim) verbatim="${2:-}"; shift 2 ;;
+      --requirement-id) requirement_id="${2:-}"; shift 2 ;;
+      --verbatim-ref) verbatim_ref="${2:-}"; shift 2 ;;
+      --session-id) session_id="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ -z "$ask_id" || -z "$verbatim" ]]; then
+    echo "ask-registry.sh record-requirement: --ask-id and --verbatim are required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+
+  verbatim="$(_ar_truncate_hard "$_AR_VERBATIM_MAX" "$verbatim")"
+  [[ -n "$requirement_id" ]] || requirement_id="$(_ar_gen_requirement_id)"
+
+  # summary + title_source deliberately EMPTY (SUMMARY-FIELD ABSTENTION).
+  _ar_append_record "requirement_recorded" "$ask_id" "" "$repo" "$project" \
+    "" "$verbatim_ref" "$session_id" "" "$session_id" "" "" "$emitter" \
+    "" "" "" "" "" "$requirement_id" "$verbatim" "" "" "" "" >/dev/null
+
+  if command -v pl_emit >/dev/null 2>&1; then
+    pl_emit --type requirement_recorded --ask "$ask_id" --session-id "$session_id" \
+      --emitter ask-registry >/dev/null 2>&1 || true
+  fi
+
+  printf '%s' "$requirement_id"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_declare_invariant — one separately-checkable statement.
+# ----------------------------------------------------------------------
+cmd_declare_invariant() {
+  local requirement_id="" text="" invariant_id="" ask_id="" emitter="model"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --requirement-id) requirement_id="${2:-}"; shift 2 ;;
+      --text) text="${2:-}"; shift 2 ;;
+      --invariant-id) invariant_id="${2:-}"; shift 2 ;;
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ -z "$requirement_id" || -z "$text" ]]; then
+    echo "ask-registry.sh declare-invariant: --requirement-id and --text are required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+
+  text="$(_ar_truncate_hard "$_AR_INVARIANT_MAX" "$text")"
+  [[ -n "$invariant_id" ]] || invariant_id="$(_ar_next_invariant_id "$requirement_id")"
+
+  _ar_append_record "invariant_declared" "$ask_id" "" "" "" \
+    "" "" "" "" "" "" "" "$emitter" \
+    "" "" "" "" "" "$requirement_id" "" "$invariant_id" "$text" "" "" >/dev/null
+
+  printf '%s' "$invariant_id"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_invariant_verdict — a verifier's per-invariant judgement.
+# ----------------------------------------------------------------------
+_AR_VALID_INVARIANT_VERDICTS="holds violated unverifiable"
+
+cmd_invariant_verdict() {
+  local requirement_id="" invariant_id="" verdict="" evidence_ref="" \
+        ask_id="" emitter="task-verifier"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --requirement-id) requirement_id="${2:-}"; shift 2 ;;
+      --invariant-id) invariant_id="${2:-}"; shift 2 ;;
+      --verdict) verdict="${2:-}"; shift 2 ;;
+      --evidence) evidence_ref="${2:-}"; shift 2 ;;
+      --ask-id) ask_id="${2:-}"; shift 2 ;;
+      --emitter) emitter="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+
+  if [[ -z "$requirement_id" || -z "$invariant_id" || -z "$verdict" ]]; then
+    echo "ask-registry.sh invariant-verdict: --requirement-id, --invariant-id and --verdict are required (no-op; never blocks caller)" >&2
+    return 0
+  fi
+
+  local ok=0 v
+  for v in $_AR_VALID_INVARIANT_VERDICTS; do
+    [[ "$verdict" == "$v" ]] && ok=1
+  done
+  if [[ "$ok" != "1" ]]; then
+    echo "ask-registry.sh invariant-verdict: invalid --verdict '$verdict' (expected one of: $_AR_VALID_INVARIANT_VERDICTS); no record written" >&2
+    return 0
+  fi
+
+  # A `holds` verdict with no citation is exactly the unevidenced self-report
+  # the ledger exists to catch — refuse it rather than persist a hollow pass.
+  if [[ "$verdict" == "holds" && -z "$evidence_ref" ]]; then
+    echo "ask-registry.sh invariant-verdict: --verdict holds requires --evidence <citation> (file:line, command, or commit SHA); no record written" >&2
+    return 0
+  fi
+
+  evidence_ref="$(_ar_truncate_hard "$_AR_INVARIANT_MAX" "$evidence_ref")"
+
+  _ar_append_record "invariant_verdict" "$ask_id" "" "" "" \
+    "" "" "" "" "" "" "" "$emitter" \
+    "" "" "" "" "" "$requirement_id" "" "$invariant_id" "" "$verdict" "$evidence_ref" >/dev/null
+
+  return 0
+}
+
+# _ar_parse_selector — shared flag parsing for the two read verbs.
+# Sets _AR_SEL_KIND / _AR_SEL.
+_ar_parse_selector() {
+  _AR_SEL_KIND="all"; _AR_SEL=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --requirement-id) _AR_SEL_KIND="requirement"; _AR_SEL="${2:-}"; shift 2 ;;
+      --ask-id)         _AR_SEL_KIND="ask";         _AR_SEL="${2:-}"; shift 2 ;;
+      --plan-slug)      _AR_SEL_KIND="plan";        _AR_SEL="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+}
+
+# ----------------------------------------------------------------------
+# cmd_invariants — read-only listing.
+# ----------------------------------------------------------------------
+cmd_invariants() {
+  _ar_parse_selector "$@"
+  printf 'requirement_id\tinvariant_id\tverdict\tevidence_ref\tinvariant_text\tverbatim\n'
+  _ar_invariant_rows "$_AR_SEL_KIND" "$_AR_SEL"
+  return $?
+}
+
+# ----------------------------------------------------------------------
+# cmd_invariant_check — the checking step.
+#   exit 0 = every declared invariant in scope folds to `holds`
+#   exit 1 = at least one is `violated`, `unverifiable`, or `unverified`
+#   exit 3 = NOTHING REGISTERED in scope (not a pass — nothing to check)
+#   exit 4 = CANNOT EVALUATE (no registry / no jq) — not a pass either
+# The distinct 3/4 codes exist so a degraded environment can never be read as
+# a green check; that silent-pass-on-degrade shape is the failure this whole
+# ledger is a response to.
+# ----------------------------------------------------------------------
+cmd_invariant_check() {
+  _ar_parse_selector "$@"
+
+  local rows rc
+  rows="$(_ar_invariant_rows "$_AR_SEL_KIND" "$_AR_SEL")"; rc=$?
+  if [[ "$rc" == "4" ]]; then
+    echo "invariant-check: CANNOT EVALUATE (see stderr above) — this is NOT a pass"
+    return 4
+  fi
+
+  if [[ -z "$rows" ]]; then
+    echo "invariant-check: no invariants registered for ${_AR_SEL_KIND}=${_AR_SEL:-<all>} — nothing to check (NOT a pass)"
+    return 3
+  fi
+
+  local total=0 held=0 bad=0 line rid iid verdict ev text
+  local IFS_SAVE="$IFS"
+  while IFS=$'\t' read -r rid iid verdict ev text _rest; do
+    [[ -z "$rid" ]] && continue
+    total=$((total + 1))
+    if [[ "$verdict" == "holds" ]]; then
+      held=$((held + 1))
+      echo "  HOLDS       $rid/$iid  $text  [$ev]"
+    else
+      bad=$((bad + 1))
+      echo "  $verdict  $rid/$iid  $text  [$ev]"
+    fi
+  done <<EOF
+$rows
+EOF
+  IFS="$IFS_SAVE"
+
+  echo "invariant-check: $held/$total invariants hold; $bad unmet"
+  if [[ "$bad" -gt 0 ]]; then
+    return 1
+  fi
   return 0
 }
 
@@ -2070,6 +2456,247 @@ cmd_selftest() {
     fail "nl_run_bounded unresolved — the cheap-model fork would run unbounded"
   fi
 
+  # ====================================================================
+  # OPERATOR-REQUIREMENT LEDGER scenarios (RL1..RL15)
+  # Every fixture below is produced by the REAL verbs — no hand-written
+  # JSONL is ever fed to the reader.
+  # ====================================================================
+  local RLREG="$REG"
+
+  echo "Scenario RL1: record-requirement stores the operator's sentence BYTE-EXACT (quotes/backslashes survive)"
+  local rl_verbatim='I do not want the agents to pin Opus. Opus is a "fallback", not the primary option (see \\model-pin).'
+  cmd_register --ask-id "ask-rl" --summary "original title" --project "demo" >/dev/null
+  local rl_rid; rl_rid="$(cmd_record_requirement --ask-id "ask-rl" --verbatim "$rl_verbatim")"
+  if [[ "$rl_rid" == req-* ]]; then
+    pass "record-requirement returned a req- id ($rl_rid)"
+  else
+    fail "expected a req-prefixed requirement id, got '$rl_rid'"
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    local rl_stored
+    rl_stored="$(jq -rs --arg r "$rl_rid" '[.[] | select(.record_type=="requirement_recorded" and .requirement_id==$r)][-1].verbatim' "$RLREG")"
+    if [[ "$rl_stored" == "$rl_verbatim" ]]; then
+      pass "verbatim round-trips byte-exact through JSON escaping"
+    else
+      fail "verbatim was altered in storage: got '$rl_stored'"
+    fi
+  fi
+
+  echo "Scenario RL2: a >140-char requirement is stored WHOLE (never sentence-split or ellipsised like a summary)"
+  local rl_long="" rl_i
+  for rl_i in 1 2 3 4 5 6 7 8; do
+    rl_long="${rl_long}Fable stays primary and Opus is only borrowed while Fable is unavailable. "
+  done
+  rl_long="${rl_long}TAILMARKER-RL2"
+  local rl_rid2; rl_rid2="$(cmd_record_requirement --ask-id "ask-rl" --verbatim "$rl_long")"
+  if command -v jq >/dev/null 2>&1; then
+    local rl_stored2
+    rl_stored2="$(jq -rs --arg r "$rl_rid2" '[.[] | select(.requirement_id==$r and .record_type=="requirement_recorded")][-1].verbatim' "$RLREG")"
+    if [[ "$rl_stored2" == "$rl_long" && "${#rl_long}" -gt 140 ]]; then
+      pass "a ${#rl_long}-char requirement survived intact (tail marker present, no ellipsis)"
+    else
+      fail "long requirement was truncated/paraphrased: stored ${#rl_stored2} of ${#rl_long} chars"
+    fi
+  fi
+
+  echo "Scenario RL3: one sentence -> two SEPARATELY ADDRESSABLE invariants, both listed against the shared verbatim"
+  local rl_a rl_b
+  rl_a="$(cmd_declare_invariant --requirement-id "$rl_rid" --text 'Fable remains the declared primary model')"
+  rl_b="$(cmd_declare_invariant --requirement-id "$rl_rid" --text 'Opus is used only while Fable is unavailable')"
+  if [[ "$rl_a" == "inv-1" && "$rl_b" == "inv-2" ]]; then
+    pass "invariant ids are sequential within the requirement (inv-1, inv-2)"
+  else
+    fail "expected inv-1/inv-2, got '$rl_a'/'$rl_b'"
+  fi
+  local rl_rows; rl_rows="$(_ar_invariant_rows requirement "$rl_rid")"
+  if [[ "$(printf '%s\n' "$rl_rows" | grep -c .)" == "2" ]]; then
+    pass "invariants reader emits exactly one row per declared invariant"
+  else
+    fail "expected 2 invariant rows, got: $rl_rows"
+  fi
+
+  echo "Scenario RL4: ABSENCE of a verdict is NOT a pass — invariant-check exits 1 on an unverified invariant"
+  local rl_out rl_rc
+  rl_out="$(cmd_invariant_check --requirement-id "$rl_rid")"; rl_rc=$?
+  if [[ "$rl_rc" == "1" ]] && printf '%s' "$rl_out" | grep -q '0/2 invariants hold'; then
+    pass "unverified invariants fail the check (exit 1, 0/2 hold)"
+  else
+    fail "expected exit 1 with 0/2 holding, got rc=$rl_rc out=$rl_out"
+  fi
+
+  echo "Scenario RL14: column integrity — an unverified row shows the INVARIANT TEXT in the text column, not the verbatim"
+  # Regression for the tab-collapse defect: TAB is IFS-whitespace, so an empty
+  # evidence cell would silently shift every later column one slot left.
+  # POSITIONAL, not substring: under a column shift the invariant text is still
+  # present in the line — it just moves into the evidence brackets. A bare
+  # `grep -q '<the text>'` is green against the broken code and proves nothing.
+  if printf '%s' "$rl_out" | grep -q "unverified  $rl_rid/$rl_a  Fable remains the declared primary model  \[-\]"; then
+    pass "invariant text is rendered in its own column, with '-' in the evidence slot"
+  else
+    fail "column shift: invariant text missing from its own column: $rl_out"
+  fi
+
+  echo "Scenario RL16: column integrity when a verdict record EXISTS but its evidence cell is blank"
+  # Distinct code path from RL14: RL14 covers the no-verdict-record branch,
+  # this covers the blank-cell guard. Only `holds` requires a citation, so a
+  # `violated`/`unverifiable` verdict can legitimately carry none.
+  local rl_rid_b rl_e rl_rows_b
+  rl_rid_b="$(cmd_record_requirement --ask-id "ask-rl" --verbatim 'the borrow is visible in the dispatch log')"
+  rl_e="$(cmd_declare_invariant --requirement-id "$rl_rid_b" --text 'DISTINCTIVE-RL16-INVARIANT-TEXT')"
+  cmd_invariant_verdict --requirement-id "$rl_rid_b" --invariant-id "$rl_e" --verdict unverifiable
+  rl_rows_b="$(_ar_invariant_rows requirement "$rl_rid_b")"
+  if [[ "$(printf '%s' "$rl_rows_b" | awk -F'\t' '{print NF}')" == "6" ]]; then
+    pass "row keeps all 6 TSV columns with a blank evidence value"
+  else
+    fail "expected 6 TSV columns, got $(printf '%s' "$rl_rows_b" | awk -F'\t' '{print NF}')"
+  fi
+  # The assertion MUST go through cmd_invariant_check's bash `read` consumer.
+  # awk -F'\t' honours empty fields, so an awk-only assertion cannot see the
+  # tab-collapse defect at all — it would be green against the broken code.
+  local rl_rendered
+  rl_rendered="$(cmd_invariant_check --requirement-id "$rl_rid_b")"
+  if printf '%s' "$rl_rendered" | grep -q "unverifiable  $rl_rid_b/$rl_e  DISTINCTIVE-RL16-INVARIANT-TEXT  \[-\]"; then
+    pass "rendered row keeps text in the text slot and '-' in the evidence slot"
+  else
+    fail "column shift on blank evidence: rendered '$rl_rendered'"
+  fi
+
+  echo "Scenario RL5: GOLDEN CASE — sibling invariants from ONE sentence: one holds, one violated => check FAILS"
+  # This is the 2026-07-28/29 failure verbatim: repinning 21 agents to Opus
+  # satisfied "Opus is a fallback" and destroyed "Fable is primary".
+  cmd_invariant_verdict --requirement-id "$rl_rid" --invariant-id "$rl_b" \
+    --verdict holds --evidence 'agents/*.md:model field unset -> Fable default'
+  cmd_invariant_verdict --requirement-id "$rl_rid" --invariant-id "$rl_a" \
+    --verdict violated --evidence '21 agents carry an explicit `model: opus` pin'
+  rl_out="$(cmd_invariant_check --requirement-id "$rl_rid")"; rl_rc=$?
+  if [[ "$rl_rc" == "1" ]] && printf '%s' "$rl_out" | grep -q '1/2 invariants hold'; then
+    pass "one satisfied invariant does NOT discharge its violated sibling (exit 1, 1/2 hold)"
+  else
+    fail "GOLDEN CASE REGRESSION: expected exit 1 with 1/2 holding, got rc=$rl_rc out=$rl_out"
+  fi
+
+  echo "Scenario RL6: check passes ONLY when every invariant holds"
+  cmd_invariant_verdict --requirement-id "$rl_rid" --invariant-id "$rl_a" \
+    --verdict holds --evidence 'model-pin-gate.sh:120 rejects an explicit opus pin'
+  rl_out="$(cmd_invariant_check --requirement-id "$rl_rid")"; rl_rc=$?
+  if [[ "$rl_rc" == "0" ]] && printf '%s' "$rl_out" | grep -q '2/2 invariants hold'; then
+    pass "all-hold yields exit 0 (2/2)"
+  else
+    fail "expected exit 0 with 2/2 holding, got rc=$rl_rc out=$rl_out"
+  fi
+
+  echo "Scenario RL7: VERDICT FOLD — the LAST verdict wins, including within the same one-second ts"
+  local rl_rid3 rl_c rl_n rl_collision=0
+  rl_rid3="$(cmd_record_requirement --ask-id "ask-rl" --verbatim 'the borrow ends without operator action')"
+  rl_c="$(cmd_declare_invariant --requirement-id "$rl_rid3" --text 'the borrow ends without operator action')"
+  for rl_n in 1 2 3 4 5; do
+    cmd_invariant_verdict --requirement-id "$rl_rid3" --invariant-id "$rl_c" --verdict violated --evidence 'still pinned'
+    cmd_invariant_verdict --requirement-id "$rl_rid3" --invariant-id "$rl_c" --verdict holds --evidence 'auto-restore verified'
+  done
+  if command -v jq >/dev/null 2>&1; then
+    rl_collision="$(jq -rs --arg r "$rl_rid3" '
+      [.[] | select(.record_type=="invariant_verdict" and .requirement_id==$r)]
+      | group_by(.ts) | map(select(length > 1)) | length' "$RLREG")"
+  fi
+  rl_out="$(cmd_invariant_check --requirement-id "$rl_rid3")"; rl_rc=$?
+  if [[ "$rl_collision" == "0" ]]; then
+    fail "RL7 could not be exercised: no two verdicts shared a ts, so the append-index tiebreak was never on the hot path"
+  elif [[ "$rl_rc" == "0" ]] && printf '%s' "$rl_out" | grep -q '1/1 invariants hold'; then
+    pass "last-written verdict wins across $rl_collision same-second ts group(s)"
+  else
+    fail "expected the final 'holds' to win (exit 0, 1/1), got rc=$rl_rc out=$rl_out"
+  fi
+
+  echo "Scenario RL8: SUMMARY-FIELD ABSTENTION — recording a requirement never rewrites the ask's cockpit title"
+  if command -v jq >/dev/null 2>&1; then
+    local rl_leak
+    rl_leak="$(jq -rs '[.[] | select(.record_type=="requirement_recorded" or .record_type=="invariant_declared" or .record_type=="invariant_verdict") | select(((.summary // "") != "") or ((.title_source // "") != ""))] | length' "$RLREG")"
+    if [[ "$rl_leak" == "0" ]]; then
+      pass "no ledger record populates summary/title_source"
+    else
+      fail "$rl_leak ledger record(s) leak into the title fold"
+    fi
+    local rl_title
+    rl_title="$(cmd_sla 2>/dev/null | awk -F'\t' '$1=="ask-rl"{print $5}')"
+    if [[ "$rl_title" == "original title" ]]; then
+      pass "the ask's folded title is still 'original title' after 3 requirements + 3 invariants + 12 verdicts"
+    else
+      fail "title fold corrupted: got '$rl_title'"
+    fi
+  fi
+
+  echo "Scenario RL9: a 'holds' verdict with NO citation is refused (an unevidenced pass is the thing we are preventing)"
+  local rl_rid4 rl_d
+  rl_rid4="$(cmd_record_requirement --ask-id "ask-rl" --verbatim 'every claim carries a citation')"
+  rl_d="$(cmd_declare_invariant --requirement-id "$rl_rid4" --text 'every claim carries a citation')"
+  cmd_invariant_verdict --requirement-id "$rl_rid4" --invariant-id "$rl_d" --verdict holds 2>/dev/null
+  rl_out="$(cmd_invariant_check --requirement-id "$rl_rid4")"; rl_rc=$?
+  if [[ "$rl_rc" == "1" ]] && printf '%s' "$rl_out" | grep -q 'unverified'; then
+    pass "evidence-free 'holds' was not persisted; the invariant stays unverified (exit 1)"
+  else
+    fail "an unevidenced 'holds' was accepted: rc=$rl_rc out=$rl_out"
+  fi
+
+  echo "Scenario RL10: invalid verdict vocabulary is rejected"
+  cmd_invariant_verdict --requirement-id "$rl_rid4" --invariant-id "$rl_d" --verdict "probably-fine" --evidence "x" 2>/dev/null
+  if command -v jq >/dev/null 2>&1; then
+    local rl_bad
+    rl_bad="$(jq -rs '[.[] | select(.invariant_verdict=="probably-fine")] | length' "$RLREG")"
+    if [[ "$rl_bad" == "0" ]]; then
+      pass "out-of-vocabulary verdict was not persisted"
+    else
+      fail "invalid verdict 'probably-fine' reached the registry"
+    fi
+  fi
+
+  echo "Scenario RL11: --plan-slug resolves plan -> ask -> requirements through the existing link-plan back-link"
+  cmd_link_plan --ask-id "ask-rl" --plan-slug "operator-requirement-ledger" >/dev/null
+  rl_out="$(cmd_invariant_check --plan-slug "operator-requirement-ledger")"; rl_rc=$?
+  if printf '%s' "$rl_out" | grep -q 'invariants hold' && [[ "$rl_rc" == "1" ]]; then
+    pass "plan-slug selector reaches this ask's invariants (and fails on the unverified one)"
+  else
+    fail "plan-slug selector did not resolve: rc=$rl_rc out=$rl_out"
+  fi
+  rl_out="$(cmd_invariant_check --plan-slug "a-plan-that-was-never-linked")"; rl_rc=$?
+  if [[ "$rl_rc" == "3" ]]; then
+    pass "an unlinked plan yields exit 3 (nothing registered), never a silent 0"
+  else
+    fail "expected exit 3 for an unlinked plan, got rc=$rl_rc"
+  fi
+
+  echo "Scenario RL12: an ask with no registered invariants is exit 3 (NOT a pass) — the opt-in property"
+  cmd_register --ask-id "ask-rl-empty" --summary "no requirements here" --project "demo" >/dev/null
+  rl_out="$(cmd_invariant_check --ask-id "ask-rl-empty")"; rl_rc=$?
+  if [[ "$rl_rc" == "3" ]] && printf '%s' "$rl_out" | grep -q 'NOT a pass'; then
+    pass "no-invariants is reported as nothing-to-check (exit 3), so the ledger never false-fires on an unenrolled ask"
+  else
+    fail "expected exit 3 for an ask with no invariants, got rc=$rl_rc out=$rl_out"
+  fi
+
+  echo "Scenario RL13: a missing registry is CANNOT-EVALUATE (exit 4), never a green check"
+  local rl_savedir="$ASK_REGISTRY_STATE_DIR"
+  export ASK_REGISTRY_STATE_DIR="$TMP/ar-empty"
+  mkdir -p "$ASK_REGISTRY_STATE_DIR"
+  rl_out="$(cmd_invariant_check --ask-id "ask-rl" 2>/dev/null)"; rl_rc=$?
+  export ASK_REGISTRY_STATE_DIR="$rl_savedir"
+  if [[ "$rl_rc" == "4" ]] && printf '%s' "$rl_out" | grep -q 'NOT a pass'; then
+    pass "degraded environment yields exit 4, distinct from both pass (0) and fail (1)"
+  else
+    fail "expected exit 4 on a missing registry, got rc=$rl_rc out=$rl_out"
+  fi
+
+  echo "Scenario RL15: the ROUTER propagates the check's exit code (exit \$?, not the write verbs' exit 0)"
+  # Every scenario above calls cmd_* in-process, so all of them would still
+  # pass if the router swallowed the code. Only a real subprocess proves it.
+  local rl_sub_rc rl_sub_rc0
+  bash "$0" invariant-check --requirement-id "$rl_rid" >/dev/null 2>&1; rl_sub_rc0=$?
+  bash "$0" invariant-check --requirement-id "$rl_rid4" >/dev/null 2>&1; rl_sub_rc=$?
+  if [[ "$rl_sub_rc0" == "0" && "$rl_sub_rc" == "1" ]]; then
+    pass "subprocess exit codes differ by outcome (all-hold=0, unverified=1) — the router does not swallow them"
+  else
+    fail "router exit-code propagation broken: all-hold gave $rl_sub_rc0 (want 0), unverified gave $rl_sub_rc (want 1)"
+  fi
+
   rm -rf "$TMP" 2>/dev/null || true
 
   echo ""
@@ -2160,6 +2787,34 @@ case "${1:-}" in
     cmd_amend "$@"
     exit 0
     ;;
+  record-requirement)
+    shift
+    cmd_record_requirement "$@"
+    exit 0
+    ;;
+  declare-invariant)
+    shift
+    cmd_declare_invariant "$@"
+    exit 0
+    ;;
+  invariant-verdict)
+    shift
+    cmd_invariant_verdict "$@"
+    exit 0
+    ;;
+  invariants)
+    shift
+    cmd_invariants "$@"
+    exit $?
+    ;;
+  # NOTE: `exit $?`, NOT the `exit 0` every write verb uses. invariant-check is
+  # the one verb whose exit code IS its output; routing it through `exit 0`
+  # would make the check structurally incapable of failing.
+  invariant-check)
+    shift
+    cmd_invariant_check "$@"
+    exit $?
+    ;;
   list)
     shift
     cmd_list "$@"
@@ -2226,6 +2881,31 @@ Verbs:
         [--verbatim-ref <ref>] [--emitter <name>]
                           Explicit first-class amendment (model-invoked
                           supplement; labeled memory-dependent).
+
+OPERATOR-REQUIREMENT LEDGER (the operator's words as a checkable artifact):
+  record-requirement --ask-id <id> --verbatim <text> [--requirement-id <id>]
+                     [--verbatim-ref <ref>] [--session-id <id>] [--emitter <n>]
+                          Store the operator's sentence VERBATIM (never
+                          paraphrased, never sentence-split, NOT passed through
+                          the 140-char summariser). Prints the requirement_id.
+  declare-invariant --requirement-id <id> --text <statement>
+                    [--invariant-id <id>] [--ask-id <id>] [--emitter <n>]
+                          Declare ONE separately-checkable statement extracted
+                          from that sentence. One sentence routinely carries
+                          two invariants; declare each. Prints the invariant_id.
+  invariant-verdict --requirement-id <id> --invariant-id <id>
+                    --verdict <holds|violated|unverifiable> [--evidence <ref>]
+                    [--ask-id <id>] [--emitter <n>]
+                          Record a verifier's per-invariant judgement.
+                          `holds` REQUIRES --evidence (a citation).
+  invariants [--requirement-id <id> | --ask-id <id> | --plan-slug <slug>]
+                          Read-only TSV: requirement_id, invariant_id, verdict,
+                          evidence_ref, invariant_text, verbatim.
+  invariant-check [--requirement-id <id> | --ask-id <id> | --plan-slug <slug>]
+                          THE CHECKING STEP. Exit 0 = every invariant in scope
+                          holds; 1 = at least one violated/unverifiable/
+                          unverified; 3 = nothing registered in scope; 4 =
+                          cannot evaluate. 3 and 4 are NOT passes.
   list                    Print the raw registry JSONL (read-only).
   --self-test             Run the self-test suite (sandboxed, incl. a
                           from-worktree in-repo-mirror fixture).
