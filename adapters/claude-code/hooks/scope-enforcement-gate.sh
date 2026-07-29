@@ -212,142 +212,34 @@ _resolve_git_dir_abs() {
 # (`git -C <path> commit`). These helpers extract the effective
 # target directory so the gate evaluates THAT repo, not the hook
 # process's cwd. See the header "Target-repo resolution" section.
+#
+# EXTRACTED TO lib/git-command-parse.sh, 2026-07-29.
+#   _tokenize_segment / _analyze_git_segment / _parse_cd_target (and their
+#   helpers _expand_tilde / _is_abs_path_str / _compose_dir) used to be defined
+#   HERE. review-record-commit-gate.sh — which runs in the SAME PreToolUse Bash
+#   chain — hand-rolled its own second, quote-blind copy of the same logic, and
+#   the two disagreed: every quoted `-C` path was a fail-open in that gate while
+#   this one parsed it correctly. harness-reviewer rejected that gate three times
+#   for shipping the CLASS while fixing instances. The functions now live in
+#   lib/git-command-parse.sh as gcp_* and BOTH gates source them, so the harness
+#   has ONE commit-target resolver.
+#
+#   This gate's behavior is UNCHANGED by the move: the extracted bodies are
+#   verbatim, the added --work-tree/--git-dir capture writes only to NEW globals
+#   (GCP_SEG_WORK_TREE / GCP_SEG_GIT_DIR) that this gate never reads, and this
+#   gate keeps its own segment-splitting driver below. Proven by this file's own
+#   34-scenario self-test, which is the pre-existing oracle for the extraction.
 # ============================================================
-
-# Expand a leading ~ / ~/ to $HOME.
-_expand_tilde() {
-  local p="$1"
-  case "$p" in
-    "~") printf '%s' "$HOME" ;;
-    "~/"*) printf '%s/%s' "$HOME" "${p#\~/}" ;;
-    *) printf '%s' "$p" ;;
-  esac
-}
-
-# Is $1 an absolute path (POSIX or Windows drive-letter)?
-_is_abs_path_str() {
-  case "$1" in
-    /*) return 0 ;;
-    [A-Za-z]:/*|[A-Za-z]:\\*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# Tokenize a command segment respecting single/double quotes.
-# Populates global array SEG_TOKENS.
-_tokenize_segment() {
-  local s="$1" i ch n cur="" in_dq=0 in_sq=0 have=0
-  SEG_TOKENS=()
-  n=${#s}
-  for ((i=0; i<n; i++)); do
-    ch="${s:i:1}"
-    if [[ $in_sq -eq 1 ]]; then
-      if [[ "$ch" == "'" ]]; then in_sq=0; else cur+="$ch"; fi
-      continue
-    fi
-    if [[ $in_dq -eq 1 ]]; then
-      if [[ "$ch" == '"' ]]; then in_dq=0; else cur+="$ch"; fi
-      continue
-    fi
-    case "$ch" in
-      "'") in_sq=1; have=1 ;;
-      '"') in_dq=1; have=1 ;;
-      ' '|$'\t')
-        if [[ -n "$cur" ]] || [[ $have -eq 1 ]]; then
-          SEG_TOKENS+=("$cur"); cur=""; have=0
-        fi
-        ;;
-      *) cur+="$ch"; have=1 ;;
-    esac
-  done
-  if [[ -n "$cur" ]] || [[ $have -eq 1 ]]; then
-    SEG_TOKENS+=("$cur")
-  fi
-}
-
-# Compose a directory path: absolute $3 wins; else resolve $3 against the
-# accumulated target $1; else against the base $2 (git's effective cwd).
-_compose_dir() {
-  local cur="$1" base="$2" p="$3"
-  p=$(_expand_tilde "$p")
-  if _is_abs_path_str "$p"; then
-    printf '%s' "$p"
-  elif [[ -n "$cur" ]]; then
-    printf '%s/%s' "$cur" "$p"
-  elif [[ -n "$base" ]]; then
-    printf '%s/%s' "$base" "$p"
-  else
-    printf '%s' "$p"
-  fi
-}
-
-# Analyze a `git …` segment. Sets globals:
-#   GIT_SEG_IS_COMMIT  — 1 iff the segment's subcommand is `commit`
-#                        (commit-tree / commit-graph excluded by token equality)
-#   GIT_SEG_C_TARGET   — composed `-C` target dir, or "" when no -C present.
-#                        Repeated -C composes per git semantics; relative
-#                        paths resolve against $2 (git's effective cwd base).
-_analyze_git_segment() {
-  local seg="$1" base="$2"
-  GIT_SEG_IS_COMMIT=0
-  GIT_SEG_C_TARGET=""
-  _tokenize_segment "$seg"
-  local n=${#SEG_TOKENS[@]} i tok
-  [[ $n -ge 2 ]] || return 0
-  [[ "${SEG_TOKENS[0]}" == "git" ]] || return 0
-  for ((i=1; i<n; i++)); do
-    tok="${SEG_TOKENS[$i]}"
-    case "$tok" in
-      -C)
-        i=$((i+1))
-        [[ $i -lt $n ]] || break
-        GIT_SEG_C_TARGET=$(_compose_dir "$GIT_SEG_C_TARGET" "$base" "${SEG_TOKENS[$i]}")
-        ;;
-      -C?*)
-        GIT_SEG_C_TARGET=$(_compose_dir "$GIT_SEG_C_TARGET" "$base" "${tok:2}")
-        ;;
-      --git-dir|--work-tree|--namespace|-c)
-        i=$((i+1))   # global flags whose value is a separate token
-        ;;
-      -*)
-        :            # other global flags (boolean, or value glued with =)
-        ;;
-      *)
-        if [[ "$tok" == "commit" ]]; then
-          GIT_SEG_IS_COMMIT=1
-        fi
-        return 0
-        ;;
-    esac
-  done
-  return 0
-}
-
-# Parse a `cd <path>` / `Set-Location <path>` segment; echo the resolved
-# target (relative paths resolve against $2, the accumulated cd target or
-# process cwd). Bare `cd` echoes $HOME.
-_parse_cd_target() {
-  local seg="$1" base="$2"
-  _tokenize_segment "$seg"
-  local n=${#SEG_TOKENS[@]}
-  if [[ $n -lt 2 ]]; then
-    printf '%s' "$HOME"
-    return
-  fi
-  local p="${SEG_TOKENS[1]}"
-  # Skip a leading flag (cd -P/-L, Set-Location -LiteralPath/-Path)
-  if [[ "$p" == -* ]] && [[ $n -ge 3 ]]; then
-    p="${SEG_TOKENS[2]}"
-  fi
-  p=$(_expand_tilde "$p")
-  if _is_abs_path_str "$p"; then
-    printf '%s' "$p"
-  elif [[ -n "$base" ]]; then
-    printf '%s/%s' "$base" "$p"
-  else
-    printf '%s' "$p"
-  fi
-}
+# shellcheck source=/dev/null
+source "$_SEG_SELF_DIR/lib/git-command-parse.sh" 2>/dev/null || true
+if ! command -v gcp_analyze_git_segment >/dev/null 2>&1; then
+  # The parser is load-bearing: without it this gate cannot tell which repo a
+  # commit targets and would scope-check the wrong index. Pass through loudly
+  # rather than silently mis-evaluating (the gate's documented fail-open posture
+  # for unusable inputs).
+  echo "[scope-enforcement-gate] lib/git-command-parse.sh unavailable — scope-check skipped." >&2
+  exit 0
+fi
 
 # ============================================================
 # --self-test handler (thirty-three scenarios)
@@ -1491,15 +1383,15 @@ while IFS= read -r seg; do
   seg="${seg%"${seg##*[![:space:]]}"}"
   [[ -z "$seg" ]] && continue
   if [[ "$seg" =~ ^cd($|[[:space:]]) ]] || [[ "$seg" =~ ^[Ss]et-[Ll]ocation($|[[:space:]]) ]]; then
-    CD_TARGET=$(_parse_cd_target "$seg" "${CD_TARGET:-$PWD}")
+    CD_TARGET=$(gcp_parse_cd_target "$seg" "${CD_TARGET:-$PWD}")
     continue
   fi
   if [[ "$seg" =~ ^git([[:space:]]|$) ]]; then
-    _analyze_git_segment "$seg" "${CD_TARGET:-$PWD}"
-    if [[ "$GIT_SEG_IS_COMMIT" -eq 1 ]]; then
+    gcp_analyze_git_segment "$seg" "${CD_TARGET:-$PWD}"
+    if [[ "$GCP_SEG_IS_COMMIT" -eq 1 ]]; then
       IS_GIT_COMMIT=1
-      if [[ -n "$GIT_SEG_C_TARGET" ]]; then
-        TARGET_DIR="$GIT_SEG_C_TARGET"
+      if [[ -n "$GCP_SEG_C_TARGET" ]]; then
+        TARGET_DIR="$GCP_SEG_C_TARGET"
       elif [[ -n "$CD_TARGET" ]]; then
         TARGET_DIR="$CD_TARGET"
       fi

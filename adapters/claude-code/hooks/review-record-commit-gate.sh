@@ -88,6 +88,26 @@ set -uo pipefail
 
 _RRCG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
+# ============================================================================
+# COMMAND PARSING — DELEGATED, NOT HAND-ROLLED (class fix, 2026-07-29)
+# ============================================================================
+# This hook used to carry its own `git commit` detector: a `${rest//&&/$'\n'}`
+# string substitution over the RAW command, a segment walk that took the first
+# bare token after `-C`, and no quote handling at all. harness-reviewer REJECTED
+# it three times; each round the builder fixed the one shape demonstrated and
+# shipped the CLASS. Seven PROVEN fail-opens remained (quoted -C, single-quoted
+# -C, unexpanded-variable -C, `cd <harness> &&` from a foreign cwd, `pushd`,
+# `--git-dir/--work-tree`, `cd <harness>;`) plus one over-fire (a `;` inside a
+# quoted string manufactured a phantom command segment).
+#
+# All of it was already solved, correctly, in scope-enforcement-gate.sh — which
+# runs in the SAME PreToolUse Bash chain. That parser is now extracted to
+# lib/git-command-parse.sh and BOTH gates use it. There is ONE commit-target
+# resolver in this harness. Do not add a second one here.
+# ============================================================================
+# shellcheck source=/dev/null
+source "$_RRCG_SELF_DIR/lib/git-command-parse.sh" 2>/dev/null || true
+
 _rrcg_log_override() {
   local reason="$1" repo="$2"
   local log="${REVIEW_RECORD_GATE_LOG:-$HOME/.claude/state/review-record-gate-overrides.log}"
@@ -96,85 +116,15 @@ _rrcg_log_override() {
     "${repo:-unknown}" "$reason" >> "$log" 2>/dev/null || true
 }
 
-# _rrcg_targets_commit <command-string> -> 0 if this is a `git commit` in
-# COMMAND POSITION.
-#
-# ANCHORED, not substring (harness-review Major, 2026-07-29). The first version
-# matched the phrase anywhere, so `echo run git commit later` and `man git
-# commit` both returned rc=2 — any Bash call merely MENTIONING the phrase was
-# treated as a commit. `git` must therefore start a command: at the beginning of
-# the string, or after a separator (; && || | newline), with optional leading
-# env assignments.
-#
-# `push` was REMOVED from the verb set (harness-review Major): the push arm
-# checked the INDEX, which is the wrong subject — it blocked pushes over
+# NOTE ON `push`: it was REMOVED from the verb set (harness-review Major). The
+# push arm checked the INDEX, which is the wrong subject — it blocked pushes over
 # unrelated staged work while giving zero protection against pushing
 # already-committed unreviewed changes, which is literally the golden case's
 # final step. A correct push arm must diff @{u}..HEAD; until that is built,
 # matching push is pure cost. Tracked in the manifest honest_status.
-# Implemented as a SEGMENT WALK, not one regex. The first anchored attempt
-# embedded a newline via $'\n' inside a single-quoted ERE and produced
-# "grep: parentheses not balanced" — which fails CLOSED-looking but actually
-# fails OPEN (no match => allow), so every scenario silently passed. A readable
-# loop is worth more than a clever pattern on a gate whose failure mode is
-# "authorizes everything".
-_RRCG_DASH_C=""    # set by _rrcg_targets_commit from the MATCHED segment only
-_rrcg_targets_commit() {
-  local cmd="$1" seg rest tok
-  _RRCG_DASH_C=""
-  # split on command separators; a quoted `git commit` inside an argument is not
-  # in command position and must not match.
-  rest="$cmd"
-  rest="${rest//&&/$'\n'}"
-  rest="${rest//||/$'\n'}"
-  rest="${rest//;/$'\n'}"
-  rest="${rest//|/$'\n'}"
-  while IFS= read -r seg; do
-    # RESET PER SEGMENT. Without this, a `-C <path>` parsed from an EARLIER
-    # segment leaked into the commit segment and repointed the gate at the wrong
-    # repo — rc=0, fail-open. harness-reviewer proved it with the orchestrator's
-    # own cherry-pick shape: `git -C <worktree> log ... && git add -A && git
-    # commit -m x`. Only the segment that actually matches `commit` may
-    # contribute its target, and since we return 0 on match, resetting here
-    # guarantees exactly that.
-    _RRCG_DASH_C=""
-    # trim leading whitespace
-    seg="${seg#"${seg%%[![:space:]]*}"}"
-    # drop leading VAR=value assignments
-    # The stripper must remove the SAME character class the condition tests.
-    # `${seg#* }` removes a literal space only, so `FOO=bar<TAB>git` spun forever
-    # — a PreToolUse hook that never returns hangs the tool call outright.
-    local _guard=0
-    while [[ "$seg" =~ ^[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]] ]]; do
-      seg="${seg#*[[:space:]]}"
-      seg="${seg#"${seg%%[![:space:]]*}"}"
-      _guard=$((_guard+1)); [[ "$_guard" -gt 32 ]] && break
-    done
-    # the segment must START with git
-    case "$seg" in
-      git|git[[:space:]]*) ;;
-      *) continue ;;
-    esac
-    # walk git's own options (-C <path>, -c k=v, --git-dir=...) to the subcommand
-    seg="${seg#git}"
-    seg="${seg#"${seg%%[![:space:]]*}"}"
-    while [[ "$seg" == -* ]]; do
-      tok="${seg%%[[:space:]]*}"
-      seg="${seg#"$tok"}"
-      seg="${seg#"${seg%%[![:space:]]*}"}"
-      case "$tok" in
-        -C) # capture the target from THIS segment — never from a raw-string scan
-            _RRCG_DASH_C="${seg%%[[:space:]]*}"
-            seg="${seg#"$_RRCG_DASH_C"}"; seg="${seg#"${seg%%[![:space:]]*}"}" ;;
-        -c) seg="${seg#*[[:space:]]}"; seg="${seg#"${seg%%[![:space:]]*}"}" ;;
-      esac
-    done
-    case "$seg" in
-      commit|commit[[:space:]]*) return 0 ;;
-    esac
-  done <<< "$rest"
-  return 1
-}
+#
+# Commit detection and target resolution now live entirely in
+# lib/git-command-parse.sh (gcp_resolve_commit_target). See the banner above.
 
 # _rrcg_is_harness_repo <root> — this gate is specific to the harness repo.
 # Without this, ANY repo containing scripts/*.sh plus a docs/reviews/records/
@@ -182,15 +132,34 @@ _rrcg_targets_commit() {
 # hiding it.
 # Is the coverage index staged, or does it exist only in the worktree?
 # Returns 0 (fine) when the file is unmodified vs the index — i.e. nothing new
-# to stage — and 0 when it IS staged. Returns 1 only when the worktree copy
-# differs from the index copy, which is exactly "the record you are relying on
-# is not in this commit".
+# to stage — and 0 when it IS staged. Returns 1 when the worktree copy differs
+# from the index copy, which is exactly "the record you are relying on is not in
+# this commit".
+#
+# CALLER CONTRACT (harness-review Critical, 2026-07-29): only call this when at
+# least one staged in-surface file was ACTUALLY covered by a record. It used to
+# run unconditionally on the uncovered==0 path, so a docs-only commit that
+# consulted ZERO coverage was blocked whenever index.json happened to have local
+# edits — and the block message asserted "coverage is satisfied by ... your
+# WORKING TREE", a reason the code had never established. See covered_count in
+# _rrcg_main.
+#
+# BAILOUTS RESOLVE TOWARD BLOCK (the file's own principle, applied). Both git
+# probes below used to `|| return 0` — i.e. "if I cannot tell whether the record
+# is in the commit, authorize the commit". That is backwards for a gate: an
+# unreadable or untracked index.json means the record demonstrably is NOT in the
+# index, which is the exact condition this check exists to catch.
 _rrcg_record_is_staged() {
   local repo_root="$1" rel="docs/reviews/records/index.json"
-  [[ -f "$repo_root/$rel" ]] || return 0          # no record file at all -> not this check's business
+  # Genuinely not applicable (not a bailout): with no index.json on disk the
+  # coverage that satisfied the gate came from grandfather-manifest.json, which
+  # is committed. There is no working-tree-only record to strand.
+  [[ -f "$repo_root/$rel" ]] || return 0
   local idx wt
-  idx="$(git -C "$repo_root" rev-parse ":$rel" 2>/dev/null)" || return 0
-  wt="$(git -C "$repo_root" hash-object "$repo_root/$rel" 2>/dev/null)" || return 0
+  # Not in the index at all (untracked, or staged-for-deletion) -> it cannot be
+  # part of this commit.
+  idx="$(git -C "$repo_root" rev-parse ":$rel" 2>/dev/null)" || return 1
+  wt="$(git -C "$repo_root" hash-object "$repo_root/$rel" 2>/dev/null)" || return 1
   [[ "$idx" == "$wt" ]]
 }
 
@@ -257,25 +226,66 @@ _rrcg_main() {
 
   local tool cmd
   tool="$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null || true)"
-  [[ "$tool" == "Bash" ]] || return 0
+  # PowerShell runs `git commit` too, and its `cd` is a Set-Location alias — both
+  # of which the shared resolver understands. Gating only Bash left the same
+  # silent bypass HARNESS-GAP-47 closed for scope-enforcement-gate in 2026-06.
+  [[ "$tool" == "Bash" || "$tool" == "PowerShell" ]] || return 0
   cmd="$(printf '%s' "$input" | jq -r '.tool_input.command // .command // ""' 2>/dev/null || true)"
   [[ -n "$cmd" ]] || return 0
-  _rrcg_targets_commit "$cmd" || return 0
+
+  # The shared resolver is load-bearing. If it is missing we cannot tell a commit
+  # from a mention; the gate has nothing to stand on, so pass through (documented
+  # fail-open class 4 — never brick a machine) but say so on stderr rather than
+  # dying silently.
+  if ! command -v gcp_resolve_commit_target >/dev/null 2>&1; then
+    echo "review-record-commit-gate: lib/git-command-parse.sh unavailable — gate skipped." >&2
+    return 0
+  fi
+  gcp_resolve_commit_target "$cmd" "$PWD"
+  if [[ "${GCP_IS_COMMIT:-0}" -ne 1 ]]; then
+    # BAILOUT RESOLVES TOWARD BLOCK: a degraded parse means "I could not tell",
+    # not "it is not a commit". Fall through to the coverage check, which only
+    # blocks if unreviewed harness content is genuinely staged.
+    [[ "${GCP_PARSE_DEGRADED:-0}" -eq 1 ]] || return 0
+    echo "review-record-commit-gate: command parse degraded — checking coverage anyway." >&2
+  fi
 
   command -v git >/dev/null 2>&1 || return 0
-  local repo_root dashc
-  dashc="$_RRCG_DASH_C"
-  if [[ -n "$dashc" ]]; then
-    repo_root="$(git -C "$dashc" rev-parse --show-toplevel 2>/dev/null)" || return 0
+  local repo_root="" target="${GCP_TARGET_DIR:-}"
+  # NOTE: the two bare `git rev-parse` calls below run BEFORE repo_root is known
+  # and deliberately take the process cwd as their subject — that is the thing
+  # being resolved. Every git call AFTER this point takes -C "$repo_root".
+  if [[ -n "$target" ]]; then
+    repo_root="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
+    # BAILOUT RESOLVES TOWARD BLOCK: an unresolvable target (a path that does not
+    # exist, an unexpanded `$REPO`, a non-repo dir) used to `|| return 0` and
+    # authorize the commit outright — PROVEN fail-open for `git -C $REPO commit`.
+    # Falling back to the cwd cannot over-fire: if the cwd is not a harness repo
+    # the identity check below allows anyway.
+    [[ -n "$repo_root" ]] || repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
   else
-    repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
+    repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
   fi
   [[ -n "$repo_root" ]] || return 0
   # Harness-repo identity: this gate governs THIS harness's in-surface files.
   _rrcg_is_harness_repo "$repo_root" || return 0
 
   # Exemption 3: never interrupt an in-progress rebase/merge/cherry-pick.
-  local gitdir; gitdir="$(git rev-parse --git-dir 2>/dev/null)" || gitdir=""
+  # -C "$repo_root", NOT the cwd (harness-review Major, 2026-07-29). Reading the
+  # CWD's git-dir cut both ways: a rebase in some unrelated repo you happened to
+  # be standing in DISARMED the gate for a commit targeting the harness, and a
+  # genuine rebase in the target repo did NOT exempt it, stranding the operator
+  # mid-rebase with no way forward.
+  local gitdir
+  gitdir="$(git -C "$repo_root" rev-parse --absolute-git-dir 2>/dev/null)" || gitdir=""
+  if [[ -z "$gitdir" ]]; then
+    # --absolute-git-dir predates git 2.13; fall back and resolve by hand.
+    gitdir="$(git -C "$repo_root" rev-parse --git-dir 2>/dev/null)" || gitdir=""
+    case "$gitdir" in
+      ""|/*|[A-Za-z]:/*|[A-Za-z]:\\*) ;;
+      *) gitdir="$repo_root/$gitdir" ;;
+    esac
+  fi
   if [[ -n "$gitdir" ]]; then
     for m in REBASE_HEAD MERGE_HEAD CHERRY_PICK_HEAD; do
       [[ -e "$gitdir/$m" ]] && return 0
@@ -314,7 +324,7 @@ _rrcg_main() {
   [[ -n "$staged" ]] || return 0    # exemption 1: nothing staged
 
   local -a uncovered=()
-  local path sha
+  local path sha covered_count=0
   while IFS= read -r path; do
     [[ -n "$path" ]] || continue
     rrg_in_surface "$path" || continue
@@ -338,20 +348,30 @@ _rrcg_main() {
     # lib, that hole is closed explicitly below (_rrcg_record_is_staged).
     if ! rrg_is_covered "$repo_root" "" "$path" "$sha"; then
       uncovered+=("$path")
+    else
+      covered_count=$((covered_count+1))
     fi
   done <<< "$staged"
 
   # The record that satisfies coverage must itself be STAGED, or it is not part
   # of the commit the gate just authorized (harness-reviewer Major, 2026-07-29).
+  #
+  # GATED ON covered_count > 0 (harness-review Critical, 2026-07-29). This ran
+  # unconditionally, so a docs-only commit — which consults no coverage at all —
+  # was blocked whenever index.json merely had unstaged local edits, and was told
+  # "coverage is satisfied by ... your WORKING TREE", a reason that had never been
+  # established. The check is only meaningful when a record actually did the
+  # satisfying.
   if [[ "${#uncovered[@]}" -eq 0 ]]; then
-    if ! _rrcg_record_is_staged "$repo_root"; then
+    if [[ "$covered_count" -gt 0 ]] && ! _rrcg_record_is_staged "$repo_root"; then
       {
         echo "================================================================"
         echo "REVIEW-RECORD GATE — RECORD NOT STAGED"
         echo "================================================================"
-        echo "Coverage is satisfied by docs/reviews/records/index.json in your WORKING"
-        echo "TREE, but that file is not staged, so it will NOT be part of this commit."
-        echo "The change would land with no review record in the tree, and a later"
+        echo "$covered_count staged in-surface file(s) are covered ONLY by"
+        echo "docs/reviews/records/index.json as it exists in your WORKING TREE."
+        echo "That file is not staged, so it will NOT be part of this commit: the"
+        echo "change would land with no review record in the tree, and a later"
         echo "\`git clean -fd\` or worktree teardown would discard the only evidence."
         echo ""
         echo "FIX (separate call): git add docs/reviews/records/"
@@ -555,6 +575,141 @@ _rrcg_self_test() {
   ( cd "$FR" && git add -A ) >/dev/null 2>&1
   rc="$(printf '%s' "$(jq -nc '{tool_name:"Bash",tool_input:{command:"git commit -m x"}}')" | ( cd "$FR" && bash "$SELF" ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "0" ]] && pass "a non-harness repo with scripts/*.sh is NOT gated" || fail "gated a foreign repo (rc=$rc)"
+
+  # ==========================================================================
+  # Scenario 14: THE SEVEN PROVEN FAIL-OPENS (harness-reviewer probe B2-B4, C2-C5)
+  # ==========================================================================
+  # Every shape below reaches a `git commit` that targets THIS harness repo with
+  # an unreviewed in-surface file staged. Each returned rc=0 before the shared
+  # resolver landed — verified by running the probe against the pre-fix gate.
+  # `runfrom` runs the gate from an arbitrary cwd, because the whole point of
+  # four of these shapes is that the commit targets a repo the caller is not in.
+  echo "Scenario 14: the seven PROVEN fail-opens must all BLOCK"
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  # Content must DIFFER from whatever earlier scenarios committed, or `git add`
+  # stages nothing, `git diff --cached` is empty, and every shape below returns
+  # rc=0 via exemption 1 — a green-looking suite that tested nothing.
+  echo '# unreviewed change, scenario 14 marker' > "$R/adapters/claude-code/hooks/lib/admission-lib.sh"
+  ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
+  ( cd "$R" && git diff --cached --quiet ) && fail "scenario 14 fixture staged NOTHING — the shapes below would all pass vacuously"
+  local OUT="$T/outside"; mkdir -p "$OUT"
+  runfrom() { # $1 = cwd, $2 = command string; echoes rc
+    local payload
+    payload="$(jq -nc --arg c "$2" '{tool_name:"Bash",tool_input:{command:$c}}')"
+    printf '%s' "$payload" | ( cd "$1" && bash "$SELF" ) >/dev/null 2>&1
+    echo $?
+  }
+  # `git commit` is assembled at runtime so this suite's own source does not
+  # contain the phrase in command position (the harness gates read hook source).
+  # TWO forms are needed: CV for a segment that starts the command, SUB for the
+  # bare subcommand where `git <flags>` is already written. Splicing CV after
+  # `git -C <path>` yields `git -C <path> git commit`, which is NOT a commit —
+  # the resolver correctly returns 0 and the scenario passes vacuously. That
+  # exact mistake made four of these read as fail-opens during development.
+  local CV SUB; CV="$(printf 'git com''mit')"; SUB="$(printf 'com''mit')"
+  local _lbl _cwd _cmd
+  while IFS='|' read -r _lbl _cwd _cmd; do
+    [[ -n "$_lbl" ]] || continue
+    rc="$(runfrom "$_cwd" "$_cmd")"
+    [[ "$rc" == "2" ]] && pass "BLOCKS: $_lbl" || fail "FAIL-OPEN (rc=$rc): $_lbl"
+  done <<EOF
+B2 git -C "quoted path"|$OUT|git -C "$R" $SUB -m x
+B3 git -C 'single-quoted path'|$OUT|git -C '$R' $SUB -m x
+B4 git -C \$REPO (unexpanded variable)|$R|git -C \$REPO $SUB -m x
+C2 cd <harness> && commit, from a NON-harness cwd|$OUT|cd $R && $CV -m x
+C3 pushd <harness> && commit|$OUT|pushd $R && $CV -m x
+C4 --git-dir/--work-tree from a non-harness cwd|$OUT|git --git-dir=$R/.git --work-tree=$R $SUB -m x
+C5 cd <harness>; commit (semicolon)|$OUT|cd $R; $CV -m x
+EOF
+
+  echo "Scenario 15: over-fire budget — a separator INSIDE a quoted string (F1)"
+  # `echo "step: stage; git commit -m msg" >> notes.md` writes a note. The old
+  # quote-blind `${rest//;/...}` split manufactured a phantom `git commit`
+  # segment from the middle of the string and blocked the echo outright.
+  rc="$(runfrom "$R" "echo \"step: stage; $CV -m msg\" >> notes.md")"
+  [[ "$rc" == "0" ]] && pass "quoted separator does not manufacture a commit" \
+    || fail "OVER-FIRE (rc=$rc): blocked an echo whose STRING contained '; git commit'"
+  rc="$(runfrom "$R" "echo 'stage then $CV -m x'")"
+  [[ "$rc" == "0" ]] && pass "single-quoted mention does not fire" || fail "OVER-FIRE (rc=$rc) on a single-quoted mention"
+
+  echo "Scenario 16: record-staged check is gated on covered_count > 0"
+  # NEGATIVE: a docs-only commit consults ZERO coverage. A dirty index.json in the
+  # working tree is none of its business. This ran unconditionally and blocked,
+  # asserting a "coverage is satisfied by your WORKING TREE" reason the code had
+  # never established.
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  mkdir -p "$R/docs"
+  # UNIQUE content. `echo 'notes'` rewrote the same bytes an earlier scenario had
+  # already committed, so `git add` staged nothing, the empty-index exemption
+  # returned 0 first, and this scenario passed without ever reaching the check it
+  # exists to test. The fixture assertion below makes that failure loud.
+  echo 'notes for the covered_count negative case' > "$R/docs/notes.md"
+  ( cd "$R" && git add docs/notes.md ) >/dev/null 2>&1
+  ( cd "$R" && git diff --cached --quiet ) && fail "scenario 16 negative fixture staged NOTHING — it would pass vacuously"
+  printf '{"entries":[{"path":"unrelated","blob_sha":"deadbeef","kind":"harness-change-review","verdict":"PASS"}]}\n' \
+    > "$R/docs/reviews/records/index.json"        # dirty in the WORKTREE, NOT staged
+  rc="$(run "$CV -m 'docs: notes'")"
+  [[ "$rc" == "0" ]] && pass "docs-only commit + dirty index.json -> allowed (no coverage consulted)" \
+    || fail "blocked a docs-only commit over an unrelated dirty index.json (rc=$rc)"
+  # POSITIVE: when coverage IS what let the change through, the record must be in
+  # the commit. Deleting the covered_count guard must NOT turn this green-by-luck.
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  echo '# reviewed change' > "$R/adapters/claude-code/hooks/lib/covered.sh"
+  local cblob; cblob="$(cd "$R" && git hash-object adapters/claude-code/hooks/lib/covered.sh)"
+  printf '{"entries":[{"path":"adapters/claude-code/hooks/lib/covered.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}]}\n' "$cblob" \
+    > "$R/docs/reviews/records/index.json"
+  ( cd "$R" && git add adapters/claude-code/hooks/lib/covered.sh ) >/dev/null 2>&1   # stage the CHANGE only
+  rc="$(run "$CV -m 'feat: covered but record unstaged'")"
+  [[ "$rc" == "2" ]] && pass "covered-by-an-UNSTAGED-record -> BLOCKED (record must be in the commit)" \
+    || fail "allowed a commit whose only review record is unstaged (rc=$rc)"
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+
+  echo "Scenario 17: the placeholder-waiver case actually fires"
+  # This case was UNTESTED: deleting it left the suite at 30/30. "bypass bypass
+  # bypass bypass" is 27 chars, so it CLEARS the >=20 length check — only the
+  # placeholder case can reject it. Deleting that case turns this RED.
+  echo '# unreviewed' > "$R/adapters/claude-code/hooks/lib/admission-lib.sh"
+  ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
+  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' \
+        | ( cd "$R" && REVIEW_RECORD_GATE_OVERRIDE="bypass bypass bypass bypass" bash "$SELF" ) >/dev/null 2>&1; echo $?)"
+  [[ "$rc" == "2" ]] && pass "a long-but-placeholder waiver ('bypass bypass ...') is REJECTED" \
+    || fail "placeholder waiver of >=20 chars waived the gate (rc=$rc) — the case is dead code"
+  # control: a genuinely substantive reason of similar length still works
+  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' \
+        | ( cd "$R" && REVIEW_RECORD_GATE_OVERRIDE="rollback of a bad deploy, reviewer unavailable" bash "$SELF" ) >/dev/null 2>&1; echo $?)"
+  [[ "$rc" == "0" ]] && pass "a substantive waiver of similar length still allows" \
+    || fail "the placeholder case is over-broad — it rejected a real reason (rc=$rc)"
+
+  echo "Scenario 18: rebase state is read from the TARGET repo, not the cwd"
+  # A rebase in some unrelated repo you happen to be standing in must NOT disarm
+  # the gate for a commit targeting the harness.
+  local RB="$T/rebasing"; mkdir -p "$RB"
+  ( cd "$RB" && git init -q . && git config user.email t@example.com && git config user.name T ) >/dev/null 2>&1
+  local rbgd; rbgd="$(cd "$RB" && git rev-parse --git-dir)"
+  case "$rbgd" in /*) : ;; *) rbgd="$RB/$rbgd" ;; esac
+  : > "$rbgd/REBASE_HEAD"
+  rc="$(runfrom "$RB" "git -C $R $SUB -m x")"
+  [[ "$rc" == "2" ]] && pass "a FOREIGN repo's rebase does not disarm the gate" \
+    || fail "foreign rebase state disarmed the gate (rc=$rc)"
+  # ...and a genuine rebase IN THE TARGET still exempts, from any cwd.
+  local tgd; tgd="$(cd "$R" && git rev-parse --git-dir)"
+  case "$tgd" in /*) : ;; *) tgd="$R/$tgd" ;; esac
+  : > "$tgd/REBASE_HEAD"
+  rc="$(runfrom "$RB" "git -C $R $SUB -m x")"
+  [[ "$rc" == "0" ]] && pass "a rebase IN THE TARGET repo exempts from any cwd" \
+    || fail "genuine target-repo rebase not exempted (rc=$rc) — strands the operator"
+  rm -f "$tgd/REBASE_HEAD" "$rbgd/REBASE_HEAD"
+
+  echo "Scenario 19: PowerShell tool input is gated too"
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  echo '# unreviewed' > "$R/adapters/claude-code/hooks/lib/admission-lib.sh"
+  ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
+  rc="$(printf '%s' "$(jq -nc --arg c "$CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')" \
+        | ( cd "$R" && bash "$SELF" ) >/dev/null 2>&1; echo $?)"
+  [[ "$rc" == "2" ]] && pass "a PowerShell-tool commit is gated" || fail "PowerShell bypass open (rc=$rc)"
+  rc="$(printf '%s' "$(jq -nc --arg c "Set-Location $R; $CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')" \
+        | ( cd "$OUT" && bash "$SELF" ) >/dev/null 2>&1; echo $?)"
+  [[ "$rc" == "2" ]] && pass "PowerShell Set-Location + commit is gated" || fail "PowerShell Set-Location bypass open (rc=$rc)"
 
   rm -rf "$T"
   echo
