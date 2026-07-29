@@ -629,8 +629,24 @@ EOF
   local rec_f
   rec_f="$(ls "$SUPERVISOR_STATE_DIR"/orphans/*.json 2>/dev/null | head -1)"
   if [[ -n "$rec_f" ]]; then
-    # backdate last_alerted well past the default 24h TTL
-    sed -i -E 's/"last_alerted":"[^"]*"/"last_alerted":"2020-01-01T00:00:00Z"/' "$rec_f" 2>/dev/null
+    # backdate last_alerted well past the default 24h TTL.
+    # PORTABLE IN-PLACE EDIT (macos-portability M2, 2026-07-29).
+    # This was `sed -i -E 's/.../' "$rec_f"`, which is GNU-only. BSD sed
+    # REQUIRES a backup-suffix argument after -i, so it silently consumed `-E`
+    # as the suffix: ERE was never enabled (this pattern only kept working by
+    # luck — it is BRE-compatible), and every run littered the ledger with a
+    # backup file. Observed in situ on this Mac:
+    #   sup-state/orphans/2095122814.json-E
+    # which sits inside the directory the tick greps recursively (line ~605).
+    # NOT fixed with `sed -i ''`: that is the macOS-only form and breaks GNU
+    # sed, inverting the bug onto the Windows machines. tmp+mv works on both.
+    # -E is dropped rather than reinstated because the pattern is BRE-safe.
+    local _bk_tmp="${rec_f}.tmp.$$"
+    if sed 's/"last_alerted":"[^"]*"/"last_alerted":"2020-01-01T00:00:00Z"/' "$rec_f" > "$_bk_tmp" 2>/dev/null; then
+      mv -f "$_bk_tmp" "$rec_f" 2>/dev/null || rm -f "$_bk_tmp" 2>/dev/null
+    else
+      rm -f "$_bk_tmp" 2>/dev/null
+    fi
     local out4
     out4="$(bash "$SELF" 2>&1)"
     if echo "$out4" | grep -q '1 orphan(s) found, 1 alerted'; then
