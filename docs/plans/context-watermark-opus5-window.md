@@ -27,13 +27,13 @@ pass and is filed as a backlog row, not smuggled in here.
 
 ## Scope / Tasks
 
-- [ ] W1 — Add `claude-opus-5` / `claude-opus-5-*` to `_model_window`'s 1,000,000 branch,
+- [x] W1 — Add `claude-opus-5` / `claude-opus-5-*` to `_model_window`'s 1,000,000 branch,
       with a header note recording the recurrence and its live evidence. Verification: full
       (`--self-test` green, including a new regression scenario).
-- [ ] W2 — Add regression scenario T17b asserting bare `claude-opus-5` AND the dated
+- [x] W2 — Add regression scenario T17b asserting bare `claude-opus-5` AND the dated
       snapshot form both resolve to 1000000, never the assumed 200000. RED before W1.
       Verification: full.
-- [ ] W3 — File `CONTEXT-WATERMARK-WINDOW-TABLE-STALENESS-01` in `docs/backlog.md` naming
+- [x] W3 — File `CONTEXT-WATERMARK-WINDOW-TABLE-STALENESS-01` in `docs/backlog.md` naming
       the class, why one-family-per-incident is symptom treatment, and three candidate
       structural fixes (suppress the percentage for unknown models / read the window from
       the session's own usage payload / doctor check that REDs when the running model is
