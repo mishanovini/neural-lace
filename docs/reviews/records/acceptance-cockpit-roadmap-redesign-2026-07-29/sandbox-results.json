@@ -1,0 +1,86 @@
+{
+  "base": "http://127.0.0.1:7799",
+  "at": "2026-07-29T23:08:05.567Z",
+  "results": [
+    {
+      "id": "X2-merged-unverified",
+      "verdict": "FAIL",
+      "detail": "fx-deploy-done row not found: root — 5 plans, in build order (1 upcoming, 1 in progress, 1 partially done, 2 status unknown)\n▸\nFixture: migrate the writers\nnew\n2 next\n1/3\nplan: docs/plans/fx-active.md\nfrom your request(s): Fixture: badge storm ask\n✎↑↓\n▸\n✓\ntask 1: Inventory the call sites.\nnew\n▸\ntask 2: Migrate the writers.\nnew\nr"
+    },
+    {
+      "id": "X3a-ghost-unknown",
+      "verdict": "PASS",
+      "detail": "ghost row: \"▸Fixture: ghost plan ask?status unknown — plan file not found (docs/plans/fx-ghost.md)\" distinct-class=true"
+    },
+    {
+      "id": "X3b-group-rollup-unknown",
+      "verdict": "PASS",
+      "detail": "group header: \"root — 5 plans, in build order (1 upcoming, 1 in progress, 1 partially done, 2 status unknown)\""
+    },
+    {
+      "id": "X3c-unreadable-linked",
+      "verdict": "PASS",
+      "detail": "\"▸Fixture: unreadable plan ask?status unknown — plan file unreadable (EACCES: permission denied, open '/private/tmp/claude-501/-Users-misha-C\""
+    },
+    {
+      "id": "X3d-corrupt-content",
+      "verdict": "FAIL",
+      "detail": "fx-corrupt2 renders: \"▸fx-corrupt2new\" (scenario demands unknown, never a confident bucket)"
+    },
+    {
+      "id": "X3e-roadmap-hash-landing",
+      "verdict": "PASS",
+      "detail": "#roadmap/fx-ghost highlight=true (\"▸Fixture: ghost plan ask?status unknown — plan file not found (docs/plans/fx-gho\")"
+    },
+    {
+      "id": "X4-inbox-quarantine",
+      "verdict": "FAIL",
+      "detail": "count=(1) (expect (1): quarantined excluded), quarantine-section=true, defect-link=false, open-source-session=false, dismiss=false, anatomy={\"context\":true,\"pick\":false,\"reply\":false,\"stub\":false}"
+    },
+    {
+      "id": "X5-auditor-defect-once",
+      "verdict": "FAIL",
+      "detail": "nl-issue stub calls=704, for quarantined item=1 (expect exactly 1 across repeated cycles), duplicate-keyed calls=1"
+    },
+    {
+      "id": "X6-title-operator-survives",
+      "verdict": "FAIL",
+      "detail": "edit affordance found=undefined"
+    },
+    {
+      "id": "X7-badge-storm",
+      "verdict": "PASS",
+      "detail": "Requests board: storm ask visible=true, unmatched_dispatch chips on board=false (700 injected; expect ZERO), log_ahead chips=[\"log_ahead_task_not_flipped ×1message: the progress log shows task 3 verified done, but the plan file still shows it open · detail_ref: drift-ask-fx-1-log-ahead-fx-active-3 · plan_slug: fx-active · task_id: 3DoneDismissMerge into…Fixture: badge storm askFixture: unreadable plan askFixture: ghost plan askCancelFixture: unreadable plan asklast activity 3h agoVerbatimno progress events yetno plan linked yetDoneDismissMerge into…Fixture: badge storm askFixture: migrate the writersFixture: ghost plan askCancelFixture: ghost plan asklast activity 22h agoVerbatimno progress events yetno plan linked yetDoneDismissMerge into…Fixture: badge storm askFixture: migrate the writersFixture: unreadable plan askCancelPeers (no data yet)my coord view last refreshed 2m agoNo peer machine state received yet.\"]"
+    },
+    {
+      "id": "X7b-health-bookkeeping-count",
+      "verdict": "PASS",
+      "detail": "Harness Health bookkeeping lines: [\"progress-log bookkeeping divergences: 701 (1 class)\"] contains-count=true"
+    },
+    {
+      "id": "X8-ledger-unreadable",
+      "verdict": "FAIL",
+      "detail": "tab=(0) (expect (!)), pane-error=false, Retry=false, win-state-shown=true (\"Nothing waiting on you — all sessions running free. As of 0s ago. | My items (0 open) | Add | No to-do items yet — add one above. Items also appear automaticall\")"
+    },
+    {
+      "id": "X8b-retry-recovers",
+      "verdict": "FAIL",
+      "detail": "retry clicked=false, tab=(0), error-cleared=true"
+    },
+    {
+      "id": "X9-win-state-scoped",
+      "verdict": "PASS",
+      "detail": "tab=(0), win-state=true (as-of=true), quarantined-still-visible=true"
+    },
+    {
+      "id": "X10-kanban-exceptional-cols",
+      "verdict": "PASS",
+      "detail": "kanban: merged-unverified col=true, unknown col=true"
+    },
+    {
+      "id": "X11-console-network",
+      "verdict": "PASS",
+      "detail": "console errors=0 []; 5xx=0 [] (inbox-error window expected)"
+    }
+  ]
+}
