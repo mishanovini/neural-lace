@@ -75,11 +75,35 @@
 # call by NL-FINDING-016's rule (a fix and its retry are never one compound
 # command), and the block message says so explicitly.
 #
+# ROUND-5 M4 CORRECTION: that paragraph was FALSE as written. The remedy's third
+# step is "stage the record and re-run your commit" — and scope-enforcement-gate
+# then BLOCKED the re-commit, because docs/reviews/records/index.json is never in
+# a plan's Files to Modify/Create. PROVEN on this tree: rc=2, naming
+# `docs/reviews/records/index.json` as out of scope. The operator was handed a
+# remedy that could not be completed. Fixed at the source rather than by
+# softening this claim: docs/reviews/records/* is now in that gate's
+# _is_system_managed_path, alongside archive/deferred/discoveries. Re-verified
+# rc=0. The paragraph above is now true.
+#
 # ESCAPE HATCH (constitution §7 — a gate that cannot be waived gets routed
-# around silently, which is worse): REVIEW_RECORD_GATE_OVERRIDE="<reason>" in the
-# environment allows the commit AND appends the reason to
+# around silently, which is worse): REVIEW_RECORD_GATE_OVERRIDE="<reason>"
+# allows the commit AND appends the reason to
 # ~/.claude/state/review-record-gate-overrides.log for periodic audit. An empty
 # or missing reason does NOT override — the waiver must say why.
+#
+# ROUND-5 C1 CORRECTION: "in the environment" was the whole problem. This is a
+# PreToolUse hook: it runs BEFORE the shell that would apply a command-scoped
+# `VAR=value cmd` assignment, so getenv() can never see the inline form the block
+# message prints. PROVEN before the fix — inline: rc=2, 0 lines logged; exported:
+# rc=0, 1 line logged. The inline form nonetheless appeared to "work", because
+# the quote-blind env stripper desynced the parse on a reason containing spaces
+# and the gate returned not-a-commit: a silent, unvalidated, unlogged bypass,
+# printed verbatim in this gate's own block message. Meanwhile a SHORT reason
+# parsed fine and blocked, so the validation was inverted — the more substantive
+# the waiver, the more silently it passed. BOTH halves are closed: the waiver is
+# now read from the PARSED command when absent from the environment, and either
+# way goes through the same >=20-char check, placeholder rejection, and audit
+# log. Scenario 20 is the regression, including the negative cases.
 #
 # Self-test: bash review-record-commit-gate.sh --self-test
 # ============================================================================
@@ -242,6 +266,14 @@ _rrcg_main() {
     return 0
   fi
   gcp_resolve_commit_target "$cmd" "$PWD"
+
+  # Introspection for the standing CROSS-GATE AGREEMENT test (round 5). Prints
+  # what THIS gate concluded, through the path it really uses, then exits.
+  if [[ "${SCOPE_PRINT_TARGET:-0}" == "1" ]]; then
+    printf '%s|%s\n' "${GCP_IS_COMMIT:-0}" "${GCP_TARGET_DIR:-}"
+    return 0
+  fi
+
   if [[ "${GCP_IS_COMMIT:-0}" -ne 1 ]]; then
     # BAILOUT RESOLVES TOWARD BLOCK: a degraded parse means "I could not tell",
     # not "it is not a commit". Fall through to the coverage check, which only
@@ -257,12 +289,33 @@ _rrcg_main() {
   # being resolved. Every git call AFTER this point takes -C "$repo_root".
   if [[ -n "$target" ]]; then
     repo_root="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
-    # BAILOUT RESOLVES TOWARD BLOCK: an unresolvable target (a path that does not
-    # exist, an unexpanded `$REPO`, a non-repo dir) used to `|| return 0` and
-    # authorize the commit outright — PROVEN fail-open for `git -C $REPO commit`.
-    # Falling back to the cwd cannot over-fire: if the cwd is not a harness repo
-    # the identity check below allows anyway.
-    [[ -n "$repo_root" ]] || repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
+    # BAILOUT RESOLVES TOWARD BLOCK, BUT ONLY WHEN THE TARGET IS GENUINELY
+    # UNKNOWN (round-5 M1).
+    #
+    # Round 4 fell back to the cwd for EVERY unresolvable target, with the
+    # claimed justification "falling back to the cwd cannot over-fire: if the
+    # cwd is not a harness repo the identity check below allows anyway". That
+    # claim is false whenever the cwd IS the harness repo — which is the normal
+    # case. PROVEN over-fire: `W=/other/repo; git -C "$W" commit` blocked a
+    # commit aimed at an unrelated repo, citing whatever harness file happened
+    # to be staged here.
+    #
+    # The distinction that matters is whether we KNOW where the commit is going.
+    # The resolver now substitutes inline assignments, so `$W` above resolves to
+    # /other/repo — a concrete path. A concrete path that is not a repo means the
+    # real `git commit` will fail on its own; there is nothing to scope-check,
+    # and this gate declines (the same posture scope-enforcement-gate has always
+    # taken for a nonexistent target). Only a target still carrying an
+    # UNRESOLVED `$` is genuinely unknown, and only that falls back to the cwd —
+    # which keeps the round-3 fail-open for `git -C $REPO commit` closed.
+    if [[ -z "$repo_root" ]]; then
+      case "$target" in
+        *'$'*)
+          repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root="" ;;
+        *)
+          return 0 ;;
+      esac
+    fi
   else
     repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || repo_root=""
   fi
@@ -294,7 +347,28 @@ _rrcg_main() {
   fi
 
   # Escape hatch — loud and logged, and only with a stated reason.
+  #
+  # ROUND-5 C1, second half. The block message tells the operator to run
+  #   REVIEW_RECORD_GATE_OVERRIDE="why this cannot wait" git commit ...
+  # That is a COMMAND-SCOPED assignment: the shell applies it to the `git`
+  # process, which is started AFTER this PreToolUse hook has already run and
+  # exited. The hook's own environment therefore never contains it, so reading
+  # only getenv() means the documented remedy can never reach this branch.
+  # PROVEN on this tree before the fix: inline form -> rc=2, 0 lines logged;
+  # exported form -> rc=0, 1 line logged.
+  #
+  # Until round 5 that was invisible, because the quote-blind stripper made the
+  # inline form desync the parse and bypass the gate entirely — unvalidated and
+  # unlogged. Fixing the parser turned an accidental silent bypass into a dead
+  # end. Both halves are closed here: the inline assignment is read from the
+  # PARSED command, and it then goes through the same length and placeholder
+  # validation and the same audit log as an exported one.
   local ovr="${REVIEW_RECORD_GATE_OVERRIDE:-}"
+  if [[ -z "$ovr" ]] && command -v gcp_commit_env_value >/dev/null 2>&1; then
+    if gcp_commit_env_value REVIEW_RECORD_GATE_OVERRIDE; then
+      ovr="${GCP_ENV_VALUE:-}"
+    fi
+  fi
   # A one-character reason is not a reason (harness-review Major:
   # silent-self-waiver). Demand something substantive, and reject the obvious
   # placeholders, so a waiver is a statement the operator can audit rather than
@@ -710,6 +784,87 @@ EOF
   rc="$(printf '%s' "$(jq -nc --arg c "Set-Location $R; $CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')" \
         | ( cd "$OUT" && bash "$SELF" ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "2" ]] && pass "PowerShell Set-Location + commit is gated" || fail "PowerShell Set-Location bypass open (rc=$rc)"
+
+  echo "Scenario 20: C1 — the INLINE waiver from the block message must reach the override branch AND log"
+  # This is the NEGATIVE test round 4 was missing. Two defects met here:
+  #  (a) the quote-blind env stripper made
+  #      REVIEW_RECORD_GATE_OVERRIDE="production is down and this cannot wait" git commit
+  #      desync the parse, so the gate returned not-a-commit and the commit landed
+  #      with an unreviewed file staged, NO >=20-char check, NO placeholder check
+  #      and NOTHING in the override log. A SHORT reason (no spaces) parsed fine
+  #      and blocked — the validation was inverted, and the block message printed
+  #      the exact shape that defeated it.
+  #  (b) even with the parse fixed, the waiver STILL could not work: a PreToolUse
+  #      hook runs BEFORE the shell that applies a command-scoped assignment, so
+  #      the hook's environment never contains it. PROVEN on the pre-fix tree:
+  #      inline -> rc=2 and 0 lines logged; exported -> rc=0 and 1 line logged.
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  echo '# unreviewed change, scenario 20 marker' > "$R/adapters/claude-code/hooks/lib/admission-lib.sh"
+  ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
+  ( cd "$R" && git diff --cached --quiet ) && fail "scenario 20 fixture staged NOTHING — every case below would pass vacuously"
+  local OVLOG="$T/overrides.log"
+  runwaiver() { # $1 = command string; echoes "<rc>:<log line count>"
+    local payload rcx
+    rm -f "$OVLOG"
+    payload="$(jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}')"
+    printf '%s' "$payload" | ( cd "$R" && REVIEW_RECORD_GATE_LOG="$OVLOG" bash "$SELF" ) >/dev/null 2>&1
+    rcx=$?
+    printf '%s:%s' "$rcx" "$( [[ -f "$OVLOG" ]] && wc -l < "$OVLOG" | tr -d ' ' || echo 0)"
+  }
+  local wr
+  wr="$(runwaiver "REVIEW_RECORD_GATE_OVERRIDE=\"production is down and this cannot wait\" $CV -m x")"
+  [[ "$wr" == "0:1" ]] && pass "inline waiver allows AND writes exactly one audit line ($wr)" \
+    || fail "inline waiver did not reach the override branch (rc:logged = $wr, want 0:1)"
+  # ...and the validation must still bite on the inline path, or the fix would
+  # have turned a silent bypass into a loud one that anybody can emit in-band.
+  wr="$(runwaiver "REVIEW_RECORD_GATE_OVERRIDE=short $CV -m x")"
+  [[ "$wr" == "2:0" ]] && pass "inline waiver under 20 chars is REJECTED and not logged ($wr)" \
+    || fail "short inline waiver was accepted (rc:logged = $wr, want 2:0)"
+  wr="$(runwaiver "REVIEW_RECORD_GATE_OVERRIDE=\"bypass bypass bypass bypass\" $CV -m x")"
+  [[ "$wr" == "2:0" ]] && pass "inline placeholder waiver is REJECTED and not logged ($wr)" \
+    || fail "placeholder inline waiver was accepted (rc:logged = $wr, want 2:0)"
+  # A quoted env assignment that is NOT a waiver must not disturb the gate.
+  wr="$(runwaiver "GIT_AUTHOR_NAME=\"A B\" $CV -m x")"
+  [[ "$wr" == "2:0" ]] && pass "unrelated quoted env assignment still BLOCKS ($wr)" \
+    || fail "quoted env assignment bypassed the gate (rc:logged = $wr, want 2:0)"
+
+  echo "Scenario 21: C3 — command-position shapes must all BLOCK"
+  # Command position was tested as "the segment starts with the literal string
+  # git". `( cd X && git <verb> )` occurs 210 times in adapters/ on this tree, and
+  # work-integrity-gate.sh:1093 is literally that shape.
+  while IFS='|' read -r _lbl _cwd _cmd; do
+    [[ -n "$_lbl" ]] || continue
+    rc="$(runfrom "$_cwd" "$_cmd")"
+    [[ "$rc" == "2" ]] && pass "BLOCKS: $_lbl" || fail "FAIL-OPEN (rc=$rc): $_lbl"
+  done <<EOF
+subshell with cd|$OUT|( cd $R && $CV -m x )
+subshell glued|$R|($CV -m x)
+brace group|$OUT|{ cd $R && $CV -m x; }
+if/then|$R|if true; then $CV -m x; fi
+for/do|$R|for f in a; do $CV -m x; done
+negation|$R|! $CV -m x
+time keyword|$R|time $CV -m x
+EOF
+  # The backslash-newline shape cannot ride in the line-oriented table above —
+  # the command itself contains a newline, which `read` would split into a
+  # second, malformed row (it did, and read as a fail-open).
+  rc="$(runfrom "$R" "git \\"$'\n'"$SUB -m x")"
+  [[ "$rc" == "2" ]] && pass "BLOCKS: backslash-newline line continuation" \
+    || fail "FAIL-OPEN (rc=$rc): backslash-newline line continuation"
+
+  echo "Scenario 22: M1 — the cwd-fallback must not over-fire on another repo"
+  # Round 4 fell back to the cwd for EVERY unresolvable target, claiming
+  # "falling back to the cwd cannot over-fire". False whenever the cwd IS the
+  # harness repo — the normal case. This blocked a commit aimed elsewhere,
+  # citing whatever harness file happened to be staged here.
+  rc="$(runfrom "$R" "W=$T/elsewhere; git -C \"\$W\" $SUB -m x")"
+  [[ "$rc" == "0" ]] && pass "commit targeting an unrelated repo is NOT blocked by our staged file" \
+    || fail "OVER-FIRE (rc=$rc): blocked a commit aimed at another repo"
+  # ...but a genuinely UNKNOWN target (no visible assignment) must still block,
+  # or the round-3 fail-open reopens.
+  rc="$(runfrom "$R" "git -C \$REPO $SUB -m x")"
+  [[ "$rc" == "2" ]] && pass "unresolvable \$REPO target still blocks (round-3 fail-open stays closed)" \
+    || fail "FAIL-OPEN (rc=$rc): unexpanded variable target waved through"
 
   rm -rf "$T"
   echo

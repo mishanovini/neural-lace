@@ -164,6 +164,16 @@ _is_system_managed_path() {
     # docs/discoveries/*.md as a valid persistence target). Same mechanism
     # as the archive/deferred exemption above.
     docs/discoveries/*) return 0 ;;
+    # Round-5 M4 (2026-07-29). review-record-commit-gate.sh's REMEDY-CHAIN
+    # header claims "the remedy this gate prescribes must not walk the operator
+    # into another gate". PROVEN false: its remedy is "write a review record,
+    # stage docs/reviews/records/, re-commit" — and THIS gate then blocked the
+    # re-commit, because a review record is never in a plan's Files to
+    # Modify/Create. The operator was handed a remedy that could not be
+    # completed. Review records are gate-managed artifacts produced BY the
+    # remedy, off-plan by nature — exactly the archive/deferred/discoveries
+    # case above, and the same mechanism fixes it.
+    docs/reviews/records/*) return 0 ;;
   esac
   if [[ "${IN_MERGE:-0}" == "1" ]]; then
     case "$p" in
@@ -1289,8 +1299,54 @@ Test goal.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 35: review records are system-managed (round-5 M4) ----
+  # review-record-commit-gate.sh's remedy is "write a review record, stage
+  # docs/reviews/records/, re-commit". THIS gate blocked that re-commit, because
+  # a review record is never in a plan's Files to Modify/Create — so its own
+  # REMEDY-CHAIN header's claim that the remedy "must not walk the operator into
+  # another gate" was FALSE, and the operator was handed an uncompletable
+  # remedy. PROVEN rc=2 before the exemption, rc=0 after.
+  RC=$(_run_scenario s35 "$PLAN_NORMAL" "docs/reviews/records/index.json" "" 'git commit -m x')
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (35) review-record-remedy-not-blocked: PASS (docs/reviews/records/* is system-managed)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (35) review-record-remedy-not-blocked: FAIL (rc=$RC, expected 0 — the review-record gate's own remedy is blocked here)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 36: the two PROVEN cross-gate disagreements (round-5 Part 2) ----
+  # Round 3 claimed "ONE commit-target resolver". It shipped one TOKENIZER and
+  # two SPLITTERS. These are the two shapes where this gate disagreed with
+  # review-record-commit-gate, pinned here so a future splitter cannot creep back.
+  RC=$(_run_scenario s36a "$PLAN_NORMAL" "unrelated/file.ts" "" 'echo "stage; git commit -m msg" >> notes.md')
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (36a) quoted-separator-no-phantom-segment: PASS (over-fire closed)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (36a) quoted-separator-no-phantom-segment: FAIL (rc=$RC, expected 0 — a ';' inside a quoted string manufactured a commit)" >&2
+    FAILED=$((FAILED+1))
+  fi
+  # `pushd` must retarget the gate exactly as `cd` does. The discriminator has
+  # to be the TARGET, not merely "is it a commit": the old splitter still saw
+  # the `git commit` segment, it just evaluated it against the wrong repo. So
+  # this pushes to a repo with NO plans (full-skip, rc 0) from a session repo
+  # that HAS an active plan and an out-of-scope staged file (rc 2 if the pushd
+  # is ignored). A first version of this scenario used `pushd .` and passed
+  # under the old splitter too — it discriminated nothing.
+  _build_repo "$TMPROOT/s36b-session" "$PLAN_NORMAL" "unrelated.md"
+  _build_repo "$TMPROOT/s36b-target" "" "state/file.txt"
+  RC=$(_run_hook_cmd "$TMPROOT/s36b-session" "pushd $TMPROOT/s36b-target && git commit -m \"x\"")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (36b) pushd-retargets-like-cd: PASS (evaluated against the pushd TARGET, not session cwd)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (36b) pushd-retargets-like-cd: FAIL (rc=$RC, expected 0 — pushd was invisible to the old splitter)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 34 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 36 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1337,7 +1393,9 @@ if [[ -z "$_SCOPE_PF" ]] && [[ ! -t 0 ]]; then
 fi
 case "$_SCOPE_PF" in
   *commit*) : ;;                 # possible git commit — fall through to full logic
-  *) exit 0 ;;                   # no "commit" substring — cannot be a git commit
+  *)                             # no "commit" substring — cannot be a git commit
+    [[ "${SCOPE_PRINT_TARGET:-0}" == "1" ]] && printf '0|\n'
+    exit 0 ;;
 esac
 export CLAUDE_TOOL_INPUT="$_SCOPE_PF"
 
@@ -1370,35 +1428,51 @@ if [[ -z "$CMD" ]]; then
 fi
 
 # --- Detect git commit + parse the effective commit-target (HARNESS-GAP-47) ---
-# Track `cd` / `Set-Location` segments as they accumulate, then when the
-# git-commit segment is found, extract its `-C` flags. Priority for the
-# effective target dir: -C composition > last cd target > process cwd ("").
-IS_GIT_COMMIT=0
-TARGET_DIR=""
-CD_TARGET=""
-TMP_CMD="$CMD"
-TMP_CMD=$(echo "$TMP_CMD" | sed -e 's/&&/\n/g' -e 's/;/\n/g')
-while IFS= read -r seg; do
-  seg="${seg#"${seg%%[![:space:]]*}"}"
-  seg="${seg%"${seg##*[![:space:]]}"}"
-  [[ -z "$seg" ]] && continue
-  if [[ "$seg" =~ ^cd($|[[:space:]]) ]] || [[ "$seg" =~ ^[Ss]et-[Ll]ocation($|[[:space:]]) ]]; then
-    CD_TARGET=$(gcp_parse_cd_target "$seg" "${CD_TARGET:-$PWD}")
-    continue
+# ROUND 5, 2026-07-29 — ONE RESOLVER, FOR REAL THIS TIME.
+#
+# Round 3 was told to stop hand-rolling shell parsing so the harness would have
+# "ONE commit-target resolver instead of two that disagree". What round 3
+# actually shipped was one shared TOKENIZER and TWO different SPLITTERS: this
+# gate kept its own `sed -e 's/&&/\n/g' -e 's/;/\n/g'`, which is quote-BLIND.
+# The two gates therefore still disagreed. PROVEN pairs, before this change:
+#
+#   echo "stage; git commit -m msg" >> notes.md  -> review-record rc=0, scope rc=2
+#   pushd <plan-repo> && git commit -m x         -> review-record rc=2, scope rc=0
+#
+# The first is this gate OVER-FIRING on a phantom segment manufactured by a
+# semicolon inside a quoted string; the second is this gate FAILING OPEN because
+# its splitter never recognised `pushd`. Both are gone because the splitting,
+# the cd tracking, and the target resolution are now the SAME FUNCTION the other
+# gate calls — not a copy of it, not a shared helper wrapped in local logic.
+#
+# See lib/git-command-parse.sh Group 10 for the standing cross-gate agreement
+# test that keeps them from drifting apart again.
+_scope_resolve_commit() {
+  IS_GIT_COMMIT=0
+  TARGET_DIR=""
+  gcp_resolve_commit_target "$1" "$PWD"
+  IS_GIT_COMMIT="${GCP_IS_COMMIT:-0}"
+  TARGET_DIR="${GCP_TARGET_DIR:-}"
+  # BAILOUTS RESOLVE TOWARD DETECTION. A degraded parse means "I could not
+  # tell", not "it is not a commit" — scope-check it against the cwd rather than
+  # waving it through. Same posture review-record-commit-gate takes.
+  if [[ "$IS_GIT_COMMIT" -ne 1 ]] && [[ "${GCP_PARSE_DEGRADED:-0}" -eq 1 ]]; then
+    echo "[scope-enforcement-gate] command parse degraded — scope-checking anyway." >&2
+    IS_GIT_COMMIT=1
+    TARGET_DIR=""
   fi
-  if [[ "$seg" =~ ^git([[:space:]]|$) ]]; then
-    gcp_analyze_git_segment "$seg" "${CD_TARGET:-$PWD}"
-    if [[ "$GCP_SEG_IS_COMMIT" -eq 1 ]]; then
-      IS_GIT_COMMIT=1
-      if [[ -n "$GCP_SEG_C_TARGET" ]]; then
-        TARGET_DIR="$GCP_SEG_C_TARGET"
-      elif [[ -n "$CD_TARGET" ]]; then
-        TARGET_DIR="$CD_TARGET"
-      fi
-      break
-    fi
-  fi
-done <<< "$TMP_CMD"
+}
+_scope_resolve_commit "$CMD"
+
+# Introspection for the standing CROSS-GATE AGREEMENT test (round 5). Prints
+# what THIS gate concluded, via the code path it really uses, and exits. It is
+# deliberately placed after _scope_resolve_commit rather than calling the lib
+# directly: a test that called the lib would pass even if this gate went back to
+# rolling its own splitter, which is precisely the round-4 failure.
+if [[ "${SCOPE_PRINT_TARGET:-0}" == "1" ]]; then
+  printf '%s|%s\n' "$IS_GIT_COMMIT" "$TARGET_DIR"
+  exit 0
+fi
 
 if [[ "$IS_GIT_COMMIT" -eq 0 ]]; then
   exit 0
