@@ -134,3 +134,6 @@ doctor check so it cannot silently rot.
 - `adapters/claude-code/scripts/worktree-hygiene-sweep.sh` — M4
 - `docs/backlog.md` — M4 (follow-ups: the sibling `touch -d` class, the audit
 - NOT changed by M4, deliberately: `adapters/claude-code/install.sh` and
+- 2026-07-29: `docs/reviews/2026-07-14-mac-setup-incident.md` — the first-install record for this Mac; documents the symlink-based install whose source==target collision destroyed hooks/lib/ today
+- 2026-07-29: `docs/operator-todo.md` — needs-you mirror entries accumulated this session
+
