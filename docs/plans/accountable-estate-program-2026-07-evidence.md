@@ -475,3 +475,47 @@ Runtime verification: test adapters/claude-code/hooks/lib/admission-lib.sh::--se
 Runtime verification: test adapters/claude-code/scripts/close-worktree.sh::--self-test (17/0, both interpreters)
 Runtime verification: test adapters/claude-code/scripts/estate-attribution-check.sh::--self-test (9/0, both interpreters)
 Runtime verification: file adapters/claude-code/scripts/estate-attribution-check.sh::bash adapters/claude-code/scripts/estate-attribution-check.sh --repo /Users/misha/Claude/neural-lace -> zero unattributable worktrees older than 48h (with the freshness caveat above)
+
+## Task T4
+
+EVIDENCE BLOCK
+==============
+Task ID: T4
+Task description: Deterministic closers: generalize close-plan.sh pattern per work-item type + the closure-gates-new-work WIP rule in the admission lib + no-orphan registration at spawn-worktree. Outcome metric: zero unattributable worktrees/branches older than 48 h. Verification: full.
+Verified at: 2026-07-29T22:40:00Z (flip same day)
+Verifier: task-verifier — PASS, confidence 9
+Subject SHAs: 26414fa (build) + fc94550 (orchestrator invocation-independence fix, differentially RED-proven against 26414fa's own 15/2 rc=127)
+
+PROVEN highlights (verifier's own re-derivation, 12 checks):
+- All five suites at claimed counts under BOTH /bin/bash 3.2.57 AND /opt/homebrew/bin/bash
+  5.3.15 by absolute path; close-worktree ALSO by relative path (17/0; pre-fix copy
+  reproduces `bash: ./close-worktree.sh: No such file or directory` x2, 15/2).
+- OBSERVE-ONLY behaviorally, by the verifier's own probe: 7 fixture registrations ->
+  `verdict=would-block:wip-exceeded rc=0`, ledger row `"mode":"observe"`; emit-feed
+  unaffected (scope is worktree-only).
+- T3 survival BY IDENTITY: the pre-T4 48 PASS lines all present in the 57; the +9 are
+  exactly Scenarios 18/18b-18e. 16b still RED-proves (guard arms deleted -> 56/1 naming
+  the host).
+- Mutations at claimed counts: WIP rung removed -> 54/3; verify-gate always-pass -> 15/2.
+- Real state bracket: zero suite-attributable rows; every in-window delta attributed to
+  ambient emit-feed traffic by content AND by continued growth after suites stopped.
+- Outcome metric live: `zero unattributable worktrees older than 48h`; full-population
+  cross-check (26/26 fresh-unregistered via --age-hours 0) proves the zero is a pure
+  age-gate artifact exactly as the builder disclosed; backlog row
+  ESTATE-T4-PRE-EXISTING-UNREGISTERED-WORKTREES-01 with re-check 2026-08-01.
+- Composed e2e in a fixture: spawn(registers, plan/task/who labels) -> orphan flagged ->
+  close(verify->integrate->remove->de-register, disposition:merged) -> attribution sees
+  open AND closed records correctly.
+- Rule-3 retirement real: worktree-per-session.md:238 dated RETIRED block superseding the
+  memory-reliant --remove instruction.
+
+Runtime verification: test adapters/claude-code/hooks/lib/estate-registration-lib.sh::--self-test (29/0 both interpreters)
+Runtime verification: test adapters/claude-code/hooks/lib/admission-lib.sh::--self-test (57/0 both; RED 54/3 on WIP-rung removal, 56/1 on 16b guard deletion)
+Runtime verification: test adapters/claude-code/scripts/spawn-worktree.sh::--self-test (SELFTEST PASS both)
+Runtime verification: test adapters/claude-code/scripts/close-worktree.sh::--self-test (17/0 both, absolute AND relative; RED 15/2 on verify-gate mutation)
+Runtime verification: test adapters/claude-code/scripts/estate-attribution-check.sh::--self-test (9/0 both)
+Runtime verification: file adapters/claude-code/scripts/estate-attribution-check.sh::zero unattributable worktrees older than 48h
+
+Non-blocking observations filed as ledger rows the same turn: branch-without-worktree
+metric gap (HYPOTHESIZED, refuter named); 16b's silent dependency on the untracked nested
+checkout's state.js (environment-dependent-count class, latent on fresh clones).

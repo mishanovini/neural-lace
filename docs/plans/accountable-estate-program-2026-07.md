@@ -36,7 +36,7 @@ or claim) as part of its Definition of Done. 4. Observe-first before every enfor
       dispatch gate AND session-resumer AND emit-feed registration (derived lineage per review F2/F4).
       Outcome metric: 7 days of would-block ledger separating storm vs legitimate load.
       LOE: SMALL-MEDIUM, 2 bs, medium variance (multi-callsite wiring). Verification: full.
-- [ ] T4 — Deterministic closers: generalize close-plan.sh pattern per work-item type + the
+- [x] T4 — Deterministic closers: generalize close-plan.sh pattern per work-item type + the
       closure-gates-new-work WIP rule in the admission lib + no-orphan registration at
       spawn-worktree. Outcome metric: zero unattributable worktrees/branches older than 48 h.
       LOE: MEDIUM, 2–3 bs, medium-high variance (lifecycle semantics). Verification: full.
