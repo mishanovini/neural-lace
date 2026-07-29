@@ -96,3 +96,11 @@ doctor check so it cannot silently rot.
 
 ## In-flight scope updates
 - 2026-07-29: docs/plans/macos-portability-2026-07.md — this plan
+- 2026-07-29: adapters/claude-code/git-hooks/pre-commit — exec bit restored; git silently ignores a non-executable hook, so this gate had never fired on this Mac
+- 2026-07-29: adapters/claude-code/git-hooks/post-commit — same
+- 2026-07-29: adapters/claude-code/git-hooks/pre-push — same
+- 2026-07-29: adapters/claude-code/git-hooks/pre-push-pr-template.sh — same
+- 2026-07-29: adapters/claude-code/scripts/ntfy-push.sh — M2: GNU-only `sed -i` -> tmp+mv (the primary invocation always failed on BSD; a `||` fallback was silently carrying the self-test)
+- 2026-07-29: adapters/claude-code/scripts/supervisor-tick.sh — M2: GNU-only `sed -i -E` -> tmp+mv (BSD bound `-E` as the backup suffix, littering the orphans ledger with `<key>.json-E`)
+- 2026-07-29: adapters/claude-code/hooks/harness-claim-lint.sh — CLASS3 rewritten from a text match to a BEHAVIORAL oracle + discovered host list (1 lib/3 hosts -> 8 libs/33 hosts)
+- 2026-07-29: docs/harness-architecture.md — regenerated for the new manifest entries; closes the doctor's wave-f-f2-docs RED
