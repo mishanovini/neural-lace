@@ -1357,3 +1357,22 @@ the fix itself must not wait on it.
 estate-brief.sh next (T8 consumes T1 data and is the natural carrier), or a
 standalone micro-plan if the estate program closes first.
 **Filed by:** ask-id emitter-fix reformulation (re-review 2026-07-28, Minor-4).
+
+## ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01 — sentinel guard replicated at 6 sites, test-enforced at only 2
+
+**Severity:** P3 (all six sites PROVEN correct today by the delta re-review's isolation tests; this is future-regression hardening).
+**Context:** the `'<'* | none` ask-id sentinel guard (commit 0758232, review
+record hcr-20260729-4586088a) lives at 5 extractors + the writer, but only
+remap (Scenario F) and progress-log-lib (Scenario 1i) carry site-local
+none→empty regression assertions. plan-lifecycle.sh, workstreams-emit.sh,
+merge-scan-lib.sh (incl. its git-fallback branch), and close-plan.sh got
+guard-only edits — a future site-local miss would not fail that site's own
+suite. Second advisory from the same review: the guarded-sites inventory is
+hand-maintained in TWO comments (plan-template.md SENTINEL COUPLING +
+progress-log-lib.sh _pl_is_none_sentinel) — currently consistent, drift is
+silent; prefer one canonical list + reference, or a doctor grep check.
+**Action:** add a none-header→empty (and real→preserved) assertion to each of
+the four uncovered suites; collapse the dual inventory to one canonical list.
+**Fold-in point:** same carrier as [[ASK-SENTINEL-QUARANTINE-SURFACER-01]]
+(any slice touching these files next), or batch both rows as one micro-plan.
+**Filed by:** emitter-fix delta re-review PASS (2026-07-29, Minor advisories 1+2).

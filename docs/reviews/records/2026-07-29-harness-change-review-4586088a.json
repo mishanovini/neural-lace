@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260729-4586088a",
+  "created_at": "2026-07-29T12:09:42Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "ask-id emitter fix (no plan file — REFORMULATE remediation of 216c37d)",
+  "change_ref": {
+    "commit_sha": "0758232",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/plan-lifecycle.sh",
+      "blob_sha": "f6572afefec154ef65f92c86dbb50b1fafd44f32"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit.sh",
+      "blob_sha": "27885c520f27995f975e9ddc4e437e68cf3541b2"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/merge-scan-lib.sh",
+      "blob_sha": "673cebfbbe91d54727646e100879efdcd6bd20fc"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/progress-log-lib.sh",
+      "blob_sha": "e1f189f2e984cf6c1a670945442b5b8ccb569d9d"
+    },
+    {
+      "path": "adapters/claude-code/scripts/close-plan.sh",
+      "blob_sha": "f28ad15219784c75421a7fd3534c68b884777032"
+    },
+    {
+      "path": "adapters/claude-code/scripts/remap-placeholder-ask-events.sh",
+      "blob_sha": "39f7b7b01bab302238e776e8966b96368a803eb4"
+    },
+    {
+      "path": "adapters/claude-code/templates/plan-template.md",
+      "blob_sha": "29e25df2cd927cb906c3a3366e454ace3117fcfa"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — delta 0758232 cleanly closes every item the prior REFORMULATE demanded: '| none' sentinel guard PROVEN-correct at all five extractors + writer-side pl_path_for map; remap drains both _id.jsonl and none.jsonl by default with a reborn-source guard enforcing install-before-remap ordering; template SENTINEL COUPLING note + ASK-SENTINEL-QUARANTINE-SURFACER-01 backlog row present and honest. Reviewer personally observed remap 14/14, progress-log-lib 48/48 (incl. 1i), bash -n clean x6, T3 admission splice intact. Full workstreams-emit suite PENDING gates deploy, not this review.",
+    "findings_summary": "2 Minor advisories, non-blocking: (1) missing-per-site-regression-test — 4 of 6 guarded sites lack a site-local none->empty assertion in their own suite; (2) dual-maintained-inventory — guarded-sites list hand-kept in template + lib comments"
+  },
+  "written_by": "orchestrator session d3059d78 via write-review-record.sh",
+  "payload": {}
+}
