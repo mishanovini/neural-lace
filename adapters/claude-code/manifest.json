@@ -2838,7 +2838,7 @@
       "kind": "writer",
       "doctrine_file": null,
       "hooks": [
-        "../scripts/estate-janitor.sh"
+        "scripts/estate-janitor.sh"
       ],
       "events": [
         "manual"
@@ -2898,7 +2898,7 @@
       "kind": "writer",
       "doctrine_file": null,
       "hooks": [
-        "../scripts/estate-brief.sh"
+        "scripts/estate-brief.sh"
       ],
       "events": [
         "manual"

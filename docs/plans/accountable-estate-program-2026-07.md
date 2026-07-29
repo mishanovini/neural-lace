@@ -170,3 +170,8 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-29: `docs/conventions/worktree-per-session.md` — T4 retirement (program rule 3): the bare "run `spawn-worktree.sh --remove <slug>` at session end" instruction is superseded by `close-worktree.sh` as the recommended per-session closer; Cross-references updated
 - 2026-07-29: `docs/backlog.md` — T4 finding (ESTATE-T4-PRE-EXISTING-UNREGISTERED-WORKTREES-01: 25-27 real worktrees predate the mechanism, named as expected pre-existing debt with a re-check date, not silently pruned or hidden); also fixed two stray unresolved merge-conflict markers left by this session's own earlier reconciliation of this worktree's branch against `wip/harness-hardening-2026-07-29`
 - 2026-07-29: `docs/plans/accountable-estate-program-2026-07-evidence.md` — T4 builder-claim evidence block (task-verifier has NOT run; checkbox left unchecked)
+
+- 2026-07-29: `adapters/claude-code/schemas/manifest.schema.json` — hooks[] accepts scripts/<name>.sh, the form T1 needed and could not express
+- 2026-07-29: `adapters/claude-code/scripts/manifest-check.sh` — scripts/ resolver, rejection scenarios, three jq-fallback defect fixes
+- 2026-07-29: `adapters/claude-code/manifest.json` — estate-janitor and estate-brief moved off the inexpressible ../scripts/ form
+- 2026-07-29: `adapters/claude-code/doctrine/INDEX.md` — regenerated; it carried the now-schema-invalid path string

@@ -64,9 +64,9 @@
             "type": "array",
             "items": {
               "type": "string",
-              "pattern": "^([A-Za-z0-9._-]+\\.sh|lib/[A-Za-z0-9._-]+\\.sh)$"
+              "pattern": "^([A-Za-z0-9._-]+\\.sh|lib/[A-Za-z0-9._-]+\\.sh|scripts/[A-Za-z0-9._-]+\\.sh)$"
             },
-            "description": "Basenames of hook scripts under adapters/claude-code/hooks/ implementing this unit, OR a `lib/<name>.sh` reference to a SOURCED LIBRARY under hooks/lib/ (never wired directly — other hooks `source` it; exempt from the wired_template coverage check). Empty for pattern/convention units. Each disk hook must appear in exactly one entry (coverage checked both ways by manifest-check.sh)."
+            "description": "Implementation files of this unit, in ONE of three forms, each resolved against its own base directory by manifest-check.sh (see its _hook_disk_path):\n  * `<name>.sh`         — a wired hook, resolved against adapters/claude-code/hooks/.\n  * `lib/<name>.sh`     — a SOURCED LIBRARY under hooks/lib/ (never wired directly; other hooks `source` it), resolved against adapters/claude-code/hooks/ and EXEMPT from the wired_template coverage check.\n  * `scripts/<name>.sh` — a script under adapters/claude-code/scripts/, resolved against adapters/claude-code/. NOT exempt from the wired_template check: settings.json.template genuinely wires some scripts/ files (~/.claude/scripts/session-wrap.sh et al), and the scripts/ prefix pins the directory the bare-basename form could not.\nThe `..` character sequence cannot appear as a path component in any form — the pattern admits no `/` inside a name segment, so no value can resolve outside adapters/claude-code/. Empty for pattern/convention units. Every disk hook under hooks/*.sh must appear in exactly one entry (coverage checked BOTH ways by manifest-check.sh); scripts/ has no such reverse disk-coverage sweep, so a scripts/ file may be legitimately unclaimed."
           },
           "events": {
             "type": "array",
