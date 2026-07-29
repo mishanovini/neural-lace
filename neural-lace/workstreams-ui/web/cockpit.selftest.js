@@ -1667,9 +1667,16 @@ ok('R12-0 selftest can locate the TASK-SPAN/FILTER-MATCH extraction anchors (sou
   !!taskSpanSrc && !!filterMatchSrc);
 
 // ---- item 1: the row grid --------------------------------------------
-ok('R12-3 the row is a CSS grid with the EXACT 7-column template the audit specified (16px chevron / 56px markers / 1fr title / 190px task-span / 76px fraction / 46px exception-glyph / 132px exception-label), align-items:center, gap:10px — replaces the flex-wrap layout that let optional content shift every later column',
+// ROUND 13 fix 1 (operator walkthrough, live-measured: title started
+// ~137-163px in on a real row at 1400px viewport, 93.75% of that from a
+// 56px marker column that was EMPTY on 105/112 real rows): the marker
+// column is RETIRED — the grid is now 6 columns, not 7; markerChips folds
+// into the title cell instead. R12-3/R12-6 FLIP here (both pinned the OLD
+// 7-column template/order) — a grid-template-columns assertion that
+// survives retiring a whole column was never proving the column existed.
+ok('R13-1 the row is a CSS grid with the 6-column template (marker column retired — chevron / 1fr title / 190px task-span / 76px fraction / 46px exception-glyph / 132px exception-label), align-items:center, gap:10px',
   /\.rm-node > summary\.rm-row\s*\{[^}]*display:\s*grid/.test(C) &&
-  /grid-template-columns:\s*16px 56px minmax\(0,1fr\) 190px 76px 46px 132px/.test(C) &&
+  /grid-template-columns:\s*16px minmax\(0,1fr\) 190px 76px 46px 132px/.test(C) &&
   /\.rm-node > summary\.rm-row\s*\{[^}]*align-items:\s*center/.test(C) &&
   /\.rm-node > summary\.rm-row\s*\{[^}]*gap:\s*10px/.test(C));
 ok('R12-4 the fraction text uses tabular-nums so "5/6" and "12/14" align digit-for-digit down a column',
@@ -1677,12 +1684,13 @@ ok('R12-4 the fraction text uses tabular-nums so "5/6" and "12/14" align digit-f
 ok('R12-5 the title truncates with CSS ellipsis, and the FULL title (never just the slug) lives in title= for the truncated case',
   /\.rm-title\s*\{[^}]*text-overflow:\s*ellipsis/.test(C) &&
   /titleSpan\.title = item\.title/.test(roadmapJsNoComments));
-ok('R12-6 renderNode appends exactly one cell per grid column, in column order, EVERY render — the fix for the flex-wrap bug (a conditionally-skipped child used to shift every later column)',
+ok('R13-2 renderNode appends exactly one cell per grid column, in column order, EVERY render (markerCell is GONE from the order — R12-6\'s pin) — the fix for the flex-wrap bug still holds for the remaining 6 columns',
   (function () {
     var m = roadmapJsNoComments.match(/function renderNode[\s\S]*?function renderLabeledSubsection/);
     var body = m ? m[0] : '';
     if (!body) return false;
-    var order = ['rm-chevron', 'markerCell(item)', 'titleCell(item)', 'taskSpanCell(item)', 'fractionCellForRow(item)', 'exceptionGlyphCell(item)', 'exceptionLabelCell(item)'];
+    if (/markerCell\(/.test(body)) return false; // the retired column must not still be appended
+    var order = ['rm-chevron', 'titleCell(item)', 'taskSpanCell(item', 'fractionCellForRow(item)', 'exceptionGlyphCell(item)', 'exceptionLabelCell(item)'];
     var lastIdx = -1;
     for (var i = 0; i < order.length; i++) {
       var idx = body.indexOf(order[i]);
@@ -1691,28 +1699,53 @@ ok('R12-6 renderNode appends exactly one cell per grid column, in column order, 
     }
     return true;
   })());
+ok('R13-3 markerCell no longer exists as a function — markerChips(item) is called from inside titleCell instead (folded into the 1fr title column, never a dedicated fixed-width column again)',
+  !/function markerCell/.test(roadmapJsNoComments) &&
+  /function titleCell\(item\)[\s\S]*?markerChips\(item\)[\s\S]*?\n  \}/.test(roadmapJsNoComments));
+ok('R13-4 mutation control: the marker column\'s 56px width is GONE from the grid template, not merely renamed (delete the fix and 56px reappears — this pins the actual retirement, not just a column-count coincidence)',
+  !/56px/.test(C.match(/\.rm-node > summary\.rm-row\s*\{[^}]*\}/)[0]));
 
-// ---- item 2: the task-span column (real execution) --------------------
+// ---- item 2 / ROUND 13 fix 6: the task-span column (real execution) ----
+// Operator (Round 12 walkthrough): "The '1–5 done' text is telling me
+// exactly the same thing as the progress bar sitting right next to it."
+// deriveTaskSpanLabel DROPS the done-half entirely — R12-10/11/12/13/15/17
+// all pinned the OLD "<range> done · <next> next" wording and FLIP here to
+// pin the new next-only contract. R12-14/R12-16 are UNCHANGED (their
+// expected strings/behavior happen to still hold under the new function —
+// zero-done and empty-children were always next-only/empty).
 function taskSpan(childrenExpr) { return runPure(taskSpanSrc, 'deriveTaskSpanLabel(' + childrenExpr + ')'); }
-ok('R12-10 deriveTaskSpanLabel: contiguous partial progress reads "<first>–<last> done · <next> next"',
-  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"not-started"}}]') === '1–2 done · 3 next');
-ok('R12-11 deriveTaskSpanLabel: NON-contiguous done set (a done task AFTER an open one) names a COUNT, never a fabricated range — the "future out-of-order plan" the auditor named as not-yet-possible-but-must-be-handled',
-  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"not-started"}},{id:"p/4",status:{value:"complete"}}]') === '3 done · 3 next');
-ok('R12-12 deriveTaskSpanLabel: every task done, contiguous -> a plain range, no dangling "next"',
-  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"complete"}}]') === '1–3 done');
-ok('R12-13 deriveTaskSpanLabel: a single done task never renders a degenerate "1–1 done" range',
-  taskSpan('[{id:"p/1",status:{value:"complete"}}]') === '1 done');
+ok('R13-10 deriveTaskSpanLabel: partial progress now names ONLY the next task — no done-range, no done-count (the operator\'s "same as the bar" redundancy is gone)',
+  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"not-started"}}]') === '3 next');
+ok('R13-11 deriveTaskSpanLabel: a done task AFTER an open one never confuses which is "next" — still names the FIRST open task, ignoring a later complete one (the contiguity bookkeeping is gone, but the "first, not last" guarantee it protected is still real)',
+  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"not-started"}},{id:"p/4",status:{value:"complete"}}]') === '3 next');
+ok('R13-12 deriveTaskSpanLabel: every task done -> the literal "all done", never a done-range/count — reached in practice only by a plan whose OWN status is already \'complete\' (Round 12 item 6 already routes such plans to the top-level Shipped group, so this string is a Shipped-group fact in practice, not a special-cased one)',
+  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"complete"}}]') === 'all done');
+ok('R13-13 deriveTaskSpanLabel: a SINGLE done task also reads "all done" (no degenerate range possible any more — there is no range left to degenerate)',
+  taskSpan('[{id:"p/1",status:{value:"complete"}}]') === 'all done');
 ok('R12-14 deriveTaskSpanLabel: zero done -> just "<first> next", no "0 done ·" clutter',
   taskSpan('[{id:"p/1",status:{value:"not-started"}},{id:"p/2",status:{value:"not-started"}}]') === '1 next');
-ok('R12-15 deriveTaskSpanLabel: NEVER says "running" even when the first open task carries live_sessions (a real in-progress task with an attached agent) — the label names a POSITION, never a live state',
+ok('R13-15 deriveTaskSpanLabel: NEVER says "running" even when the first open task carries live_sessions (a real in-progress task with an attached agent) — the label names a POSITION, never a live state; taskSpanCell (DOM layer, R13-40 below) is the ONLY place "running" is ever honestly rendered, from the task\'s OWN live_sessions field',
   (function () {
     var r = taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"in-progress"},live_sessions:[{title:"x"}]}]');
-    return r === '1 done · 2 next' && r.indexOf('running') === -1;
+    return r === '2 next' && r.indexOf('running') === -1;
   })());
 ok('R12-16 deriveTaskSpanLabel: empty/absent children -> empty string (no fake column content)',
   taskSpan('[]') === '' && runPure(taskSpanSrc, 'deriveTaskSpanLabel(null)') === '');
-ok('R12-17 deriveTaskSpanLabel: task ids strip the plan-slug prefix (server emits "slug/T3"; the column shows only "T3")',
-  taskSpan('[{id:"my-plan-slug/T1",status:{value:"complete"}},{id:"my-plan-slug/T2",status:{value:"not-started"}}]') === 'T1 done · T2 next');
+ok('R13-17 deriveTaskSpanLabel: task ids strip the plan-slug prefix (server emits "slug/T3"; the column shows only "T3") — next-only wording',
+  taskSpan('[{id:"my-plan-slug/T1",status:{value:"complete"}},{id:"my-plan-slug/T2",status:{value:"not-started"}}]') === 'T2 next');
+
+// ---- ROUND 13 fix 4: firstOpenChildId (real execution, shared helper) --
+function firstOpenId(childrenExpr) { return runPure(taskSpanSrc, 'firstOpenChildId(' + childrenExpr + ')'); }
+ok('R13-20 firstOpenChildId returns the FIRST non-complete child\'s id, skipping done ones',
+  firstOpenId('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"not-started"}}]') === 'p/2');
+ok('R13-21 firstOpenChildId returns null when every child is complete (the "all done" case)',
+  firstOpenId('[{id:"p/1",status:{value:"complete"}}]') === null);
+ok('R13-22 firstOpenChildId is not fooled by a LATER complete task after an open one (same non-contiguous guarantee R13-11 checks at the label level)',
+  firstOpenId('[{id:"p/1",status:{value:"not-started"}},{id:"p/2",status:{value:"complete"}}]') === 'p/1');
+ok('R13-23 firstOpenChildId on empty/absent children -> null (never throws, never fabricates an id)',
+  firstOpenId('[]') === null && runPure(taskSpanSrc, 'firstOpenChildId(null)') === null);
+ok('R13-24 deriveTaskSpanLabel and firstOpenChildId agree by CONSTRUCTION (deriveTaskSpanLabel calls firstOpenChildId internally) — the id renderChildList flags "next" on a child row is always the SAME id the parent\'s own task-span text names, never independently computed',
+  /function deriveTaskSpanLabel\(children\) \{[\s\S]*?firstOpenChildId\(kids\)/.test(roadmapJsNoComments));
 
 // ---- item 3: redundancy deletions --------------------------------------
 ok('R12-20 the per-row "completed <age>" span (rm-completed-when) is GONE — it duplicated the status chip\'s own text, and the chip is gone for complete/merged-unverified too now (item 4)',
@@ -1741,17 +1774,28 @@ ok('R12-30 every one of the six states maps to a title CSS class (rm-title-<valu
   ['not-started', 'in-progress', 'complete', 'stalled', 'merged-unverified', 'unknown'].every(function (v) {
     return roadmapJsNoComments.indexOf("'" + v + "': 'rm-title-" + v + "'") !== -1;
   }));
-ok('R12-31 CSS pins the exact colour+weight per state: in-progress #f9fafb/600, not-started var(--muted)/400, complete var(--done)/400, stalled var(--interrupt)/600, merged-unverified var(--warn)/600, unknown var(--warn)/400+dashed border',
+// ROUND 13 fix 2 (operator, INVERTING Round 12's own ladder: "It's the
+// completed items that should be dimmed gray, not the unstarted items").
+// R12-31 pinned not-started at var(--muted) — FLIPS here to var(--text).
+// complete/in-progress/stalled/merged-unverified/unknown are UNCHANGED (the
+// operator's fix left the loud exceptions and the in-progress bold alone —
+// only the not-started/complete relationship inverted). A palette test
+// that stayed green across this inversion would have been proving nothing;
+// R13-31 pins the NEW not-started rule specifically and R13-31b proves the
+// OLD rule is actually gone (not just an additional rule shadowing it).
+ok('R13-31 CSS pins the INVERTED ladder: not-started is now var(--text)/400 (normal reading colour, the ONLY change from Round 12), in-progress #f9fafb/600 unchanged, complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
   /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*#f9fafb;\s*font-weight:\s*600/.test(C) &&
-  /\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--muted\);\s*font-weight:\s*400/.test(C) &&
+  /\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--text\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-complete\s*\{\s*color:\s*var\(--done\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-stalled\s*\{\s*color:\s*var\(--interrupt\);\s*font-weight:\s*600/.test(C) &&
   /\.rm-title\.rm-title-merged-unverified\s*\{\s*color:\s*var\(--warn\);\s*font-weight:\s*600/.test(C) &&
   /\.rm-title\.rm-title-unknown\s*\{\s*color:\s*var\(--warn\);\s*font-weight:\s*400;\s*border-bottom:\s*1px dashed/.test(C));
+ok('R13-31b mutation control: the Round 12 not-started rule (var(--muted)) is GONE, not merely shadowed by a later rule of equal specificity (a stray leftover .rm-title-not-started{color:var(--muted)} earlier in the file would make the ladder non-deterministic depending on cascade order)',
+  !/\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--muted\)/.test(C));
 ok('R12-32 --done is the darkest neutral that still clears WCAG AA 4.5:1 against --panel (measured #87909e = 4.55:1) — the value is pinned exactly, not "rounded to a nicer gray"',
   /--done:\s*#87909e;/.test(css));
-ok('R12-33 WCAG 1.4.1: every row keeps at least two NON-colour carriers regardless of state — the task-span cell and the fraction cell are appended UNCONDITIONALLY (never gated on item.status), so colour is never the only signal',
-  /sum\.appendChild\(taskSpanCell\(item\)\);/.test(roadmapJsNoComments) && /sum\.appendChild\(fractionCellForRow\(item\)\);/.test(roadmapJsNoComments));
+ok('R13-33 WCAG 1.4.1: every row keeps at least two NON-colour carriers regardless of state — the task-span cell and the fraction cell are appended UNCONDITIONALLY (never gated on item.status), so colour is never the only signal (R12-33 pinned the OLD 1-arg taskSpanCell(item) call — FLIPS to the 2-arg isNextTask signature fix 4 introduced)',
+  /sum\.appendChild\(taskSpanCell\(item, isNextTask\)\);/.test(roadmapJsNoComments) && /sum\.appendChild\(fractionCellForRow\(item\)\);/.test(roadmapJsNoComments));
 
 // ---- item 6: Shipped(n) independent of the aging clock -------------------
 ok('R12-40 the top-level Shipped grouping triggers on status===\'complete\' ALONE — never gated on agedOut()/the mtime-reset-prone 7-day clock (ROADMAP-COMPLETED-AGING-MTIME-RESET-01)',
@@ -1826,6 +1870,79 @@ ok('R12-73 mutation control: inboxFailed is REACHED on the real fetch path (both
 ok('R12-80 renderKanban null-guards statusChip(it) before appending — the crash-on-render-for-most-cards regression this build introduced and fixed in the same pass',
   /var kanbanChip = statusChip\(it\);\s*\n\s*if \(kanbanChip\) chipRow\.appendChild\(kanbanChip\);/.test(roadmapJsNoComments) &&
   !/chipRow\.appendChild\(statusChip\(it\)\)/.test(roadmapJsNoComments));
+
+// ============================================================
+// ROUND 13 (operator walkthrough of the Round 12 surface — 6 named fixes,
+// docs/plans/cockpit-roadmap-redesign.md Round 13 entry + the dispatch
+// prompt's verbatim quotes). Fixes 1/2/6 are covered above (R13-1..R13-33
+// FLIP the R12 pins they superseded); this block covers fix 3 (group
+// containment), fix 4 (per-task done-state), and fix 5 (hierarchy spacing).
+// ============================================================
+
+// ---- fix 3: group containment ------------------------------------------
+ok('R13-50 .rm-project-group is a visible CONTAINER (left rail + background tint), not just a margin — spans every plan row inside it by construction (renderTree appends every group item as a DIRECT child of this element)',
+  /\.rm-project-group\s*\{[^}]*border-left:\s*2px solid var\(--border2\)[^}]*background:\s*rgba\(255, 255, 255, 0\.02\)/.test(C));
+ok('R13-51 .rm-shipped-group gets the SAME containment treatment, at HALF the live group\'s tint opacity (0.01 vs 0.02) — "dimmer", the operator\'s own qualifier, pinned as an actual numeric relationship rather than just "some other color"',
+  (function () {
+    var liveAlpha = (C.match(/\.rm-project-group\s*\{[^}]*background:\s*rgba\(255, 255, 255, ([\d.]+)\)/) || [])[1];
+    var shipAlpha = (C.match(/\.rm-shipped-group\s*\{[^}]*background:\s*rgba\(255, 255, 255, ([\d.]+)\)/) || [])[1];
+    return !!liveAlpha && !!shipAlpha && parseFloat(shipAlpha) > 0 && parseFloat(shipAlpha) < parseFloat(liveAlpha);
+  })());
+ok('R13-52 mutation control: the group container survives FILTERING structurally — renderAll computes the filtered set (applyFilters) BEFORE calling renderTree, and renderTree itself groups that already-filtered `live` array (groupItemsByProject(live)), so .rm-project-group wraps whatever filtering left, never a stale unfiltered set',
+  /var f = applyFilters\(lastPayload\.items \|\| \[\]\);/.test(roadmapJsNoComments) &&
+  /renderTree\(f\.visible\)/.test(roadmapJsNoComments) &&
+  /var groups = phaseSeries \? groupItemsByProject\(live\) : /.test(roadmapJsNoComments));
+
+// ---- fix 4: per-task done-state -----------------------------------------
+ok('R13-60 titleCell prepends a leading "✓" (rm-task-check) on a TASK row that is actually complete — text, not colour-only, and gated on BOTH item.kind===\'task\' AND status.value===\'complete\' (never shown on a complete PLAN row, which already has its own dim title + Shipped grouping)',
+  /function titleCell\(item\) \{[\s\S]{0,300}item\.kind === 'task' && item\.status && item\.status\.value === 'complete'[\s\S]{0,200}rm-task-check/.test(roadmapJsNoComments));
+ok('R13-61 taskSpanCell renders "running" for a TASK row that genuinely carries item.live_sessions, and this check comes BEFORE the isNextTask branch — so a task that is BOTH next AND running truthfully says "running" (the stronger, evidenced claim), never "next" (the weaker positional guess)',
+  (function () {
+    var m = roadmapJsNoComments.match(/function taskSpanCell\(item, isNextTask\) \{([\s\S]*?)\n  \}/);
+    var body = m ? m[1] : ''; // capture group 1 excludes the signature line itself, so 'isNextTask' in the param list can't shadow the real branch check
+    if (!body) return false;
+    var liveIdx = body.indexOf('live_sessions');
+    var nextIdx = body.indexOf('isNextTask');
+    return liveIdx !== -1 && nextIdx !== -1 && liveIdx < nextIdx && /rm-task-running/.test(body) && /rm-task-next/.test(body);
+  })());
+ok('R13-62 taskSpanCell NEVER falls through to deriveTaskSpanLabel for a task-kind item (a leaf task has no children of its own — that branch is PLAN-only) — the function returns early inside the item.kind===\'task\' branch',
+  /function taskSpanCell\(item, isNextTask\) \{[\s\S]*?if \(item\.kind === 'task'\) \{[\s\S]*?return cell;[\s\S]*?\}[\s\S]*?cell\.textContent = deriveTaskSpanLabel\(item\.children\);/.test(roadmapJsNoComments));
+ok('R13-63 renderChildList computes nextId via firstOpenChildId over the FULL unpartitioned children list, but ONLY for a task list — a phase-series (child-PLAN) list gets nextId=null, since "next" is a per-TASK affordance, not a per-plan one (plans get their own "n next" one level up, via the parent\'s own task-span text)',
+  /var nextId = phaseSeries \? null : firstOpenChildId\(children\);/.test(roadmapJsNoComments));
+ok('R13-64 the SAME nextId is threaded into every child render path — the plain loop, renderTaskBatches, AND renderBatchRow — so a "next" task inside a batch run still gets its affordance, not just an un-batched one',
+  /renderNode\(c, -1, -1, c\.id === nextId\)/.test(roadmapJsNoComments) &&
+  /renderTaskBatches\(live, nextId\)/.test(roadmapJsNoComments) &&
+  /renderNode\(c, -1, -1, c\.id === nextId\)/.test(roadmapJsNoComments) && /renderBatchRow\(label, liveChildren\.slice\(i, runEnd\), nextId\)/.test(roadmapJsNoComments) &&
+  /renderNode\(t, -1, -1, t\.id === nextId\)/.test(roadmapJsNoComments));
+ok('R13-65 CSS: .rm-task-check inherits the complete-dim colour (var(--done), reads as PART of the dimmed line); .rm-task-next is weight-only (text emphasis, never the ONLY signal); .rm-task-running earns the one loud colour (var(--info)) because it is a claim backed by real live_sessions evidence, not a position guess',
+  /\.rm-task-check\s*\{\s*color:\s*var\(--done\)/.test(C) &&
+  /\.rm-task-next\s*\{\s*font-weight:\s*600;\s*color:\s*var\(--text\)/.test(C) &&
+  /\.rm-task-running\s*\{\s*font-weight:\s*600;\s*color:\s*var\(--info\)/.test(C));
+
+// ---- fix 5: hierarchy legibility + spacing -------------------------------
+ok('R13-70 tasks render visibly SMALLER than the plan that owns them (12px vs the plan/base 14px) — a size ladder ON TOP of the existing indentation + rail, so "this is a child" is legible before reading a single word',
+  /\.rm-title\s*\{[^}]*font-size:\s*14px/.test(C) &&
+  /\.rm-kind-task \.rm-title\s*\{\s*font-weight:\s*400;\s*font-size:\s*12px/.test(C));
+ok('R13-71 the connecting rail visibly differs for a task node vs a plan node (a distinct border-left-color on .rm-kind-task.rm-node) — "hangs off the parent" instead of reading as one undifferentiated line at every depth',
+  /\.rm-kind-task\.rm-node\s*\{\s*border-left-color:\s*var\(--border2\)/.test(C));
+ok('R13-72 .rm-children carries an ASYMMETRIC spacing ladder: a small top margin (tight parent->first-child) and a LARGER bottom margin (breathing room before the next sibling row) — the operator\'s named inversion (65px parent->child vs 2px subtree->next-plan, live-measured) fixed at the source of the indentation wrapper itself',
+  /\.rm-children\s*\{\s*margin:\s*2px 0 12px 14px;\s*\}/.test(C));
+ok('R13-73 an OPEN node\'s own immediate children get a faint background tint (distinct from, and more subtle than, the .rm-project-group tint) — a "card within a card" visual for the expanded subtree',
+  (function () {
+    var m = C.match(/\.rm-node\[open\] > \.rm-children\s*\{([^}]*)\}/);
+    return !!m && /background:\s*rgba\(255, 255, 255, 0\.025\)/.test(m[1]);
+  })());
+ok('R13-74 the top-level phase-step (one per plan) gets a LARGER bottom margin (30px, up from Round 12\'s 2px) — live-measured root cause of "more space between child tasks and their own parent than between them and the next plan": the gap was backwards (65px parent->child, 2px subtree->next-plan live-measured before ANY fix 5 change) — this fix both widens the inter-plan gap AND (R13-75/76/77 + the trimmed .rm-drill/.rm-plan-link-row padding) shrinks the intra-plan one; live re-measured after both changes together: 28px parent->child vs 30px subtree->next-plan — the inversion is closed, not just narrowed',
+  /\.rm-phase-step\s*\{\s*position:\s*relative;\s*padding-left:\s*16px;\s*margin:\s*2px 0 30px;\s*\}/.test(C));
+ok('R13-75 the previously-invisible-but-space-reserving edit chrome (.rm-title-edit/.rm-item-chrome) now collapses to height:0 while hidden (reclaiming the live-measured 24px .rm-item-chrome was costing on EVERY expanded plan row) and expands back to height:auto on the SAME hover/focus-within/`.rm-editing` triggers that already restore opacity — no new transition, so the WCAG 2.2 2.5.7 instant-reveal-on-focus guarantee from round-6 gap 4 is preserved, not regressed',
+  /\.rm-title-edit, \.rm-item-chrome \{\s*opacity:\s*0;\s*pointer-events:\s*none;\s*height:\s*0;/.test(C) &&
+  /\.rm-item-chrome:focus-within \{\s*opacity:\s*1;\s*pointer-events:\s*auto;\s*height:\s*auto;/.test(C) &&
+  /\.rm-title-edit\.rm-editing \{ opacity: 1; pointer-events: auto; height: auto;/.test(C));
+ok('R13-76 mutation control: deleting the height:0 reclaim leaves opacity:0/pointer-events:none untouched (proving R13-75 is pinning a REAL additive change, not restating the pre-existing round-6 rule the file already had)',
+  /opacity:\s*0;\s*pointer-events:\s*none;\s*height:\s*0;\s*margin:\s*0;\s*overflow:\s*hidden;/.test(C));
+ok('R13-77 the two remaining live-measured contributors to the parent->first-child gap — .rm-drill\'s own padding and .rm-plan-link-row\'s bottom margin — are BOTH trimmed (4/6px -> 2/2px each), not just the edit-chrome reclaim alone',
+  /\.rm-drill\s*\{\s*display:\s*none;\s*padding:\s*2px 8px 2px 20px/.test(C) &&
+  /\.rm-plan-link-row\s*\{\s*margin:\s*2px 0 2px/.test(C));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

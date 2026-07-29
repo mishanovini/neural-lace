@@ -313,56 +313,61 @@
   // emits `id: slug + '/' + t.id`) but were discarded at render — the
   // fraction ("5/6") never said WHICH tasks. deriveTaskSpanLabel reads
   // item.children (already on the wire, no server change needed) and
-  // derives a POSITIONAL span label. Contract:
-  //  - Never say "running" — auditor-verified: all 86 real task nodes on
-  //    this machine are 34 complete / 52 not-started / ZERO in-progress,
-  //    and zero carry live_sessions. "next" names a POSITION in the build
-  //    order, never a live state — this function never reads
-  //    live_sessions and never emits any word but "next" for the first
-  //    not-done task, regardless of that task's own status value.
-  //  - The done-set is a contiguous prefix on every plan TODAY (auditor-
-  //    verified across all 15 plans-with-tasks), but that is not
-  //    guaranteed to hold forever (an operator reopening an earlier task,
-  //    or a resequenced batch). Contiguity is checked explicitly on every
-  //    call; the non-contiguous branch names a COUNT ("3 done") instead of
-  //    a range it cannot honestly claim — never a fabricated span.
+  // derives a POSITIONAL span label.
+  //
+  // ROUND 13 fix 6 (operator, live walkthrough of the Round 12 surface:
+  // "The '1–5 done' text is telling me exactly the same thing as the
+  // progress bar sitting right next to it"): the done-half is DROPPED
+  // entirely — the fraction + bar (fractionCellForRow, column 4) already
+  // carry "how much done"; this column now names ONLY the one fact the bar
+  // cannot carry — WHICH task is next. When every task is done there is no
+  // "next" to name; the literal is "all done", never a done-range/count
+  // (the old "1–8 done" wording this function used to emit for that case is
+  // gone). In practice this branch is only ever reached by a plan whose
+  // OWN status is already 'complete' (item.status is 'complete' only once
+  // every child has shipped), and Round 12 item 6 already routes such
+  // plans to the top-level Shipped group — so "all done" is, as a
+  // structural consequence rather than a special case, only ever seen
+  // there. The contiguity/doneCount bookkeeping the old implementation
+  // needed to safely render a done-RANGE is gone with the range itself;
+  // firstOpenChildId below just finds the first non-complete child,
+  // full stop — still never fooled by a later complete task after an open
+  // one (T13-old-R12-11's non-contiguous case), just no longer needing to
+  // say so out loud.
+  //
+  //  - Never say "running" — this function never reads live_sessions and
+  //    never emits any word but "next"/"all done", regardless of the first
+  //    open task's own status value or live sessions. ROUND 13 fix 4 adds
+  //    an HONEST "running" claim, but that lives in taskSpanCell (the DOM
+  //    layer, below) which checks item.live_sessions directly on the ROW
+  //    being rendered — a live task genuinely carrying a session renders
+  //    "running" instead of "next"/checking this function at all; a task
+  //    that merely SITS NEXT with no live session gets "next", never
+  //    upgraded to a claim this pure function cannot verify.
   function shortTaskId(id) {
     var s = String(id == null ? '' : id);
     var i = s.lastIndexOf('/');
     return i === -1 ? s : s.slice(i + 1);
   }
+  // firstOpenChildId(children) -> id | null. Shared by deriveTaskSpanLabel
+  // (the parent's OWN "<id> next" token) and, at the call sites in
+  // renderChildList/renderTaskBatches below, per-CHILD "is this the row the
+  // parent just called 'next'?" — same function, same answer, by
+  // construction (Round 13 fix 4: the child flagged "next" is always
+  // IDENTICAL to the id named in the parent's own task-span text).
+  function firstOpenChildId(children) {
+    var kids = children || [];
+    for (var i = 0; i < kids.length; i++) {
+      var isDone = !!(kids[i] && kids[i].status && kids[i].status.value === 'complete');
+      if (!isDone) return kids[i].id;
+    }
+    return null;
+  }
   function deriveTaskSpanLabel(children) {
     var kids = children || [];
     if (!kids.length) return '';
-    var doneCount = 0;
-    var firstOpenIdx = -1;
-    var contiguous = true;
-    for (var i = 0; i < kids.length; i++) {
-      var isDone = !!(kids[i] && kids[i].status && kids[i].status.value === 'complete');
-      if (isDone) {
-        doneCount++;
-        if (firstOpenIdx !== -1) contiguous = false; // a done task AFTER an open one: not a clean prefix
-      } else if (firstOpenIdx === -1) {
-        firstOpenIdx = i;
-      }
-    }
-    if (firstOpenIdx === -1) {
-      // every task done — no "next" to name.
-      return contiguous
-        ? (kids.length === 1
-            ? shortTaskId(kids[0].id) + ' done'
-            : shortTaskId(kids[0].id) + '–' + shortTaskId(kids[kids.length - 1].id) + ' done')
-        : (doneCount + ' done');
-    }
-    var nextLabel = shortTaskId(kids[firstOpenIdx].id) + ' next';
-    if (doneCount === 0) return nextLabel; // nothing done yet — no "0 done ·" clutter
-    if (contiguous) {
-      var doneRange = firstOpenIdx === 1
-        ? shortTaskId(kids[0].id)
-        : shortTaskId(kids[0].id) + '–' + shortTaskId(kids[firstOpenIdx - 1].id);
-      return doneRange + ' done · ' + nextLabel;
-    }
-    return doneCount + ' done · ' + nextLabel; // non-contiguous: count, never a fabricated range
+    var openId = firstOpenChildId(kids);
+    return openId === null ? 'all done' : shortTaskId(openId) + ' next';
   }
   // TASK-SPAN-END
 
@@ -600,52 +605,92 @@
   }
 
   // ============================================================
-  // Round 12 (ux-ia-auditor live audit) — the row's 7 GRID CELLS. Each
+  // Round 12 (ux-ia-auditor live audit) — the row's GRID CELLS. Each
   // function ALWAYS returns a real element (possibly empty) so every row
   // appends exactly one child per column, in the same order, every time —
   // the fix for the flex-wrap misalignment (item 1): a conditionally-
   // skipped child used to shift every LATER column into the wrong slot.
+  //
+  // ROUND 13 fix 1 (operator walkthrough, live-measured): the dedicated
+  // 56px marker column (new/added-mid-build chips) was EMPTY on 105/112
+  // real rows (93.75%) — a fixed-width dead zone between the chevron and
+  // the title on nearly every row, live-measured pushing the title text
+  // ~66px (56px column + its own 10px grid gap) further right than
+  // necessary. markerCell/its column are RETIRED; markerChips(item) now
+  // renders INSIDE titleCell (column now 2, was 3) — the same place
+  // referenceLifecycleBadges already lived, appended right after the
+  // title text. The grid goes from 7 columns to 6; every row still
+  // appends exactly one cell per remaining column, always (the R12-6
+  // discipline this fix does not relax).
   // ============================================================
-  function markerCell(item) { // column 2 (56px)
-    var cell = el('span', 'rm-cell rm-cell-marker');
-    cell.appendChild(markerChips(item));
-    return cell;
-  }
-
-  function titleCell(item) { // column 3 (1fr)
+  function titleCell(item) { // column 2 (1fr)
     var cell = el('span', 'rm-cell rm-cell-title');
+    // Round 13 fix 4 (per-task done-state, operator: "why doesn't it show
+    // the progress of each task?"): a leaf task that's actually complete
+    // gets a leading check glyph. Text (not color-only, WCAG 1.4.1) and
+    // NOT aria-hidden — a task-kind row carries no other done/not-done
+    // text signal of its own (the exception chip is suppressed for the
+    // three derivable states, same as everywhere else in this file), so
+    // this glyph is the one place a screen-reader user hears "done" on an
+    // individual task row.
+    if (item.kind === 'task' && item.status && item.status.value === 'complete') {
+      cell.appendChild(el('span', 'rm-task-check', '✓'));
+    }
     var titleSpan = el('span', 'rm-title ' + titleStateClass(item), item.title);
     // Round 12 item 1: ellipsis truncates the title (CSS); the FULL text
     // lives in title= — R9-1's slug-as-tooltip is folded in after it so
     // hovering still surfaces the plan slug, not just the title repeated.
     titleSpan.title = item.title + (item.kind === 'plan' ? ' — ' + item.id : '');
     cell.appendChild(titleSpan);
+    cell.appendChild(markerChips(item)); // Round 13 fix 1: folded in from the retired marker column
     cell.appendChild(referenceLifecycleBadges(item)); // rare (dangling-parent/cycle); wraps inside this cell
     return cell;
   }
 
-  function taskSpanCell(item) { // column 4 (190px)
-    return el('span', 'rm-cell rm-cell-taskspan', deriveTaskSpanLabel(item.children));
+  // taskSpanCell(item, isNextTask) — column 3 (190px). Round 13 fix 4: for a
+  // TASK-kind row (a leaf has no children of its own, so
+  // deriveTaskSpanLabel(item.children) is always '') this column is
+  // otherwise dead space — repurposed to carry the one per-task claim the
+  // rest of the row cannot: "running" when the task genuinely carries a
+  // live session (checked directly on THIS item — never fabricated,
+  // never borrowed from a sibling), else "next" when the caller
+  // (renderChildList/renderTaskBatches) determined this is the first
+  // not-done task in its parent's list — the SAME id the parent's own
+  // task-span text just named "next" (both call firstOpenChildId). A task
+  // that is neither running nor next renders nothing here — no fake
+  // granularity on every row.
+  function taskSpanCell(item, isNextTask) {
+    var cell = el('span', 'rm-cell rm-cell-taskspan');
+    if (item.kind === 'task') {
+      if (item.live_sessions && item.live_sessions.length) {
+        cell.appendChild(el('span', 'rm-task-running', 'running'));
+      } else if (isNextTask) {
+        cell.appendChild(el('span', 'rm-task-next', 'next'));
+      }
+      return cell;
+    }
+    cell.textContent = deriveTaskSpanLabel(item.children);
+    return cell;
   }
 
-  function fractionCellForRow(item) { // column 5 (76px)
+  function fractionCellForRow(item) { // column 4 (76px)
     var cell = el('span', 'rm-cell rm-cell-fraction');
     var prog = progressNode(item);
     if (prog) cell.appendChild(prog);
     return cell;
   }
 
-  function exceptionGlyphCell(item) { // column 6 (46px)
+  function exceptionGlyphCell(item) { // column 5 (46px)
     var v = item.status && item.status.value;
     var g = EXCEPTION_GLYPH[v];
     var cell = el('span', 'rm-cell rm-cell-exglyph' + (g ? ' rm-exglyph-' + v : ''), g || '');
-    if (g) cell.setAttribute('aria-hidden', 'true'); // decorative — the adjacent label chip (column 7) carries the real text (WCAG 1.4.1)
+    if (g) cell.setAttribute('aria-hidden', 'true'); // decorative — the adjacent label chip (column 6) carries the real text (WCAG 1.4.1)
     return cell;
   }
 
-  function exceptionLabelCell(item) { // column 7 (132px): the loud exception chip + descendant roll-up badges
+  function exceptionLabelCell(item) { // column 6 (132px): the loud exception chip + descendant roll-up badges
     var cell = el('span', 'rm-cell rm-cell-exception');
-    var chip = statusChip(item); // null for the three derivable states — an empty column 7 means "healthy"
+    var chip = statusChip(item); // null for the three derivable states — an empty column 6 means "healthy"
     if (chip) cell.appendChild(chip);
     cell.appendChild(rollupBadges(item)); // descendant attention (C1) — independent of this item's OWN state
     return cell;
@@ -1000,7 +1045,7 @@
     return subtreeHasActive(item);
   }
 
-  function renderNode(item, topLevelIndex, topLevelCount) {
+  function renderNode(item, topLevelIndex, topLevelCount, isNextTask) {
     var det = document.createElement('details');
     det.className = 'rm-node rm-kind-' + item.kind;
     det.dataset.itemId = item.id;
@@ -1021,30 +1066,32 @@
       openSet[item.id] = det.open;
     });
 
-    // Round 12 (ux-ia-auditor live audit, item 1): a CSS GRID row — 7 fixed
+    // Round 12 (ux-ia-auditor live audit, item 1): a CSS GRID row — fixed
     // columns, one cell appended per column, ALWAYS, even when empty (see
     // the cell builders above). Replaces the flex-wrap layout that let
     // conditionally-absent content shift every later column (measured live:
     // a 292px/346px swing in where the status chip/fraction started).
+    // ROUND 13 fix 1: the dedicated marker column is RETIRED (live-measured
+    // 93.75% empty — see the cell-builders comment above); markerChips now
+    // renders inside titleCell, so the grid is 6 columns, not 7.
     var sum = document.createElement('summary');
     sum.className = 'rm-row';
     sum.appendChild(el('span', 'rm-chevron', '▸'));       // column 1 (16px)
-    sum.appendChild(markerCell(item));                     // column 2 (56px)
-    sum.appendChild(titleCell(item));                       // column 3 (1fr)
+    sum.appendChild(titleCell(item));                       // column 2 (1fr)
     // R11 Critical 5: a master shows its TWO labeled fractions instead of
     // the plain progress bar (never a blended single number) — spans
-    // columns 4+5 (rm-cell-mastersummary, app.css); every other node keeps
-    // the task-span text (column 4, item 2) + the fraction (column 5).
+    // columns 3+4 (rm-cell-mastersummary, app.css); every other node keeps
+    // the task-span text (column 3, item 2) + the fraction (column 4).
     if (item.master_summary) {
       var msCell = el('span', 'rm-cell rm-cell-mastersummary');
       msCell.appendChild(masterSummaryNode(item));
       sum.appendChild(msCell);
     } else {
-      sum.appendChild(taskSpanCell(item));                 // column 4 (190px)
-      sum.appendChild(fractionCellForRow(item));            // column 5 (76px)
+      sum.appendChild(taskSpanCell(item, isNextTask));      // column 3 (190px)
+      sum.appendChild(fractionCellForRow(item));            // column 4 (76px)
     }
-    sum.appendChild(exceptionGlyphCell(item));              // column 6 (46px)
-    sum.appendChild(exceptionLabelCell(item));              // column 7 (132px)
+    sum.appendChild(exceptionGlyphCell(item));              // column 5 (46px)
+    sum.appendChild(exceptionLabelCell(item));              // column 6 (132px)
     det.appendChild(sum);
 
     // Round 12 item 8: the note is a SIBLING of summary, not inside
@@ -1094,20 +1141,23 @@
     return wrap;
   }
 
-  // renderTaskBatches(liveChildren) — R11 anatomy L3: groups a plan's task
-  // children into CONTIGUOUS runs sharing the same (server-derived) `.batch`
-  // label, file order preserved (never re-sorted); a task with `batch: ''`
-  // renders directly, un-wrapped, exactly as before batching existed.
-  function renderTaskBatches(liveChildren) {
+  // renderTaskBatches(liveChildren, nextId) — R11 anatomy L3: groups a
+  // plan's task children into CONTIGUOUS runs sharing the same
+  // (server-derived) `.batch` label, file order preserved (never
+  // re-sorted); a task with `batch: ''` renders directly, un-wrapped,
+  // exactly as before batching existed. nextId (Round 13 fix 4) threads
+  // through so the "next" task keeps its affordance even when it happens
+  // to fall inside a batch run.
+  function renderTaskBatches(liveChildren, nextId) {
     var frag = document.createDocumentFragment();
     var i = 0;
     while (i < liveChildren.length) {
       var c = liveChildren[i];
       var label = c.batch || '';
-      if (!label) { frag.appendChild(renderNode(c, -1, -1)); i++; continue; }
+      if (!label) { frag.appendChild(renderNode(c, -1, -1, c.id === nextId)); i++; continue; }
       var runEnd = i;
       while (runEnd < liveChildren.length && (liveChildren[runEnd].batch || '') === label) runEnd++;
-      frag.appendChild(renderBatchRow(label, liveChildren.slice(i, runEnd)));
+      frag.appendChild(renderBatchRow(label, liveChildren.slice(i, runEnd), nextId));
       i = runEnd;
     }
     return frag;
@@ -1119,7 +1169,7 @@
   // roll-up law already surfaces attention on the tasks inside); an explicit
   // operator close is remembered for this session (own key namespace, does
   // not collide with the item-id-keyed openSet entries elsewhere).
-  function renderBatchRow(label, tasks) {
+  function renderBatchRow(label, tasks, nextId) {
     var key = 'batch:' + (tasks[0] && tasks[0].id || label);
     var det = document.createElement('details');
     det.className = 'rm-batch';
@@ -1135,7 +1185,7 @@
     sum.appendChild(el('span', 'chip rm-batch-fraction', done + '/' + tasks.length));
     det.appendChild(sum);
     var body = el('div', 'rm-children');
-    tasks.forEach(function (t) { body.appendChild(renderNode(t, -1, -1)); });
+    tasks.forEach(function (t) { body.appendChild(renderNode(t, -1, -1, t.id === nextId)); });
     det.appendChild(body);
     return det;
   }
@@ -1154,19 +1204,27 @@
     var live = part.live, aged = part.aged;
     var phaseSeries = isPhaseSeries(children);
     if (phaseSeries) wrap.classList.add('rm-phase-series');
+    // Round 13 fix 4: the "next" affordance applies to TASK children only
+    // (a phase-series list is child PLANS, which get their own "n next"
+    // via the parent's task-span text one level up, not this per-child
+    // marker) — computed from the SAME firstOpenChildId the parent's own
+    // taskSpanCell(item) already calls via deriveTaskSpanLabel(item.children),
+    // over the full unpartitioned list so the flagged child is always the
+    // identical id the parent's own text names "next".
+    var nextId = phaseSeries ? null : firstOpenChildId(children);
     // R11 Critical 1/2 (anatomy L3): task children carrying a `.batch` label
     // render as grouped batch rows — "batch rows only when the file carries
     // them" (a plan with no batch structure renders its tasks directly,
     // unchanged). Batches never apply to child-PLAN nesting (phaseSeries).
     var hasBatches = !phaseSeries && live.some(function (c) { return c.batch; });
     if (hasBatches) {
-      wrap.appendChild(renderTaskBatches(live));
+      wrap.appendChild(renderTaskBatches(live, nextId));
     } else {
       live.forEach(function (c) {
         // Round 12 item 3: buildOrderLabel is no longer rendered (retired
         // "#N OF 16" ordinal — proven unstable); the connector line
         // (rm-phase-step, below) still marks the sibling sequence visually.
-        var node = renderNode(c, -1, -1);
+        var node = renderNode(c, -1, -1, c.id === nextId);
         if (phaseSeries) {
           var step = el('div', 'rm-phase-step');
           step.appendChild(node);

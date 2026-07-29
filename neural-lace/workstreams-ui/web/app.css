@@ -1053,7 +1053,14 @@ button, a, [role="button"] { min-height: 24px; }
 
 /* ---- tree nodes ---- */
 .rm-tree { padding: 4px 0; }
+/* ROUND 13 fix 5 (operator: "child items are not visibly obvious
+   children... more space between child tasks and their own parent than
+   between them and the next plan"): the connecting rail now READS as
+   hanging off the parent — a touch darker/thicker for a TASK node than a
+   PLAN node, so the eye can tell "this line belongs to what's above it"
+   at a glance, not just "every node has an identical rail". */
 .rm-node { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+.rm-kind-task.rm-node { border-left-color: var(--border2); }
 /* ---- Round 12 (ux-ia-auditor live audit, item 1/sev 3): the row was
    `display:flex; flex-wrap:wrap`, so optional content (a project chip here,
    a marker there) shifted every LATER element — measured live across 16
@@ -1061,23 +1068,30 @@ button, a, [role="button"] { min-height: 24px; }
    swing), the fraction in x∈[628,974] (346px swing). A CSS grid with a
    FIXED column per role fixes this by construction, PROVIDED every row
    appends exactly one (possibly-empty) cell per column — see roadmap.js's
-   markerCell/titleCell/taskSpanCell/fractionCellForRow/exceptionGlyphCell/
-   exceptionLabelCell, which do exactly that. Columns, left to right:
+   titleCell/taskSpanCell/fractionCellForRow/exceptionGlyphCell/
+   exceptionLabelCell, which do exactly that.
+   ROUND 13 fix 1 (operator walkthrough, live-measured): the dedicated
+   marker column (56px + its own 10px gap either side) was EMPTY on
+   105/112 real rows (93.75%) — a pure dead zone between the chevron and
+   the title on nearly every row. RETIRED; markerChips(item) now renders
+   inside the title cell (roadmap.js). Columns, left to right:
      1. 16px  — disclosure chevron
-     2. 56px  — transient marker chips (new / added-mid-build)
-     3. 1fr   — title (state-colored, item 5) + rare reference-lifecycle
-                badges (dangling-parent/cycle)
-     4. 190px — the task-span text (item 2: "T1–T2 done · T3 next") OR a
-                master's two labeled fractions (spans into column 5)
-     5. 76px  — the progress bar + "n/m" fraction text (tabular-nums)
-     6. 46px  — the EXCEPTION glyph (item 4) — empty for the three
+     2. 1fr   — title (state-colored, item 5) + transient marker chips
+                (new / added-mid-build) + rare reference-lifecycle badges
+                (dangling-parent/cycle)
+     3. 190px — the task-span text (item 2 + Round 13 fix 6: "T3 next" /
+                "all done", the done-half retired — the bar already says
+                how much) OR a master's two labeled fractions (spans into
+                column 4) OR, for a TASK row, "next"/"running" (fix 4)
+     4. 76px  — the progress bar + "n/m" fraction text (tabular-nums)
+     5. 46px  — the EXCEPTION glyph (item 4) — empty for the three
                 DERIVABLE states, a small icon for the three the fraction
                 cannot derive (stalled/merged-unverified/unknown)
-     7. 132px — the EXCEPTION label chip (loud, full text) + any collapsed-
+     6. 132px — the EXCEPTION label chip (loud, full text) + any collapsed-
                 descendant roll-up badges (C1) ---- */
 .rm-node > summary.rm-row {
   display: grid;
-  grid-template-columns: 16px 56px minmax(0,1fr) 190px 76px 46px 132px;
+  grid-template-columns: 16px minmax(0,1fr) 190px 76px 46px 132px;
   align-items: center;
   gap: 10px;
   cursor: pointer;
@@ -1086,9 +1100,10 @@ button, a, [role="button"] { min-height: 24px; }
 }
 .rm-node > summary.rm-row:hover { background: var(--panel2); }
 .rm-cell { min-width: 0; }
-.rm-cell-marker, .rm-cell-exglyph { overflow: hidden; }
+.rm-cell-exglyph { overflow: hidden; }
 .rm-cell-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .rm-title {
+  font-size: 14px;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1096,7 +1111,15 @@ button, a, [role="button"] { min-height: 24px; }
   min-width: 0;
   flex: 1 1 auto;
 }
-.rm-kind-task .rm-title { font-weight: 400; }
+/* Round 13 fix 5: tasks read visibly SMALLER than the plan that owns them
+   (12px vs the plan's 14px) — a size ladder on top of the existing
+   indentation + rail, so "this is a child" is legible even before reading
+   a single word of the title. */
+.rm-kind-task .rm-title { font-weight: 400; font-size: 12px; }
+/* Round 13 fix 4: the leading done-glyph on a completed TASK row — text
+   (not color-only, WCAG 1.4.1), inherits the row's rm-title-complete dim
+   colour so it reads as PART of the dimmed line, not a loud accent. */
+.rm-task-check { color: var(--done); }
 .rm-cell-taskspan {
   font-size: 12px;
   color: var(--muted);
@@ -1105,9 +1128,16 @@ button, a, [role="button"] { min-height: 24px; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* Round 13 fix 4: the per-task "next"/"running" affordance — text +
+   weight/colour, never colour-only. "next" is a POSITIONAL claim (weight
+   only, same neutral the column already uses); "running" is a claim
+   backed by a REAL live_sessions entry on this exact task, so it earns the
+   one loud colour (--info, same hue the in-progress fraction fill uses). */
+.rm-task-next { font-weight: 600; color: var(--text); }
+.rm-task-running { font-weight: 600; color: var(--info); }
 .rm-cell-exglyph { font-size: 13px; text-align: center; }
 .rm-cell-exception { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.rm-cell-mastersummary { grid-column: 4 / 6; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+.rm-cell-mastersummary { grid-column: 3 / 5; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 /* ---- six states, TITLE-carried (item 5 — recession not emphasis: the
    eye lands on the title, leftmost + largest, not on an 11px chip at the
    far right). LUMINANCE for the two common/normal-traffic states + a
@@ -1115,18 +1145,44 @@ button, a, [role="button"] { min-height: 24px; }
    in-progress / 10 not-started measured live, hue-coding the common case
    would spend the scarce colour budget on the unremarkable (app.css:7-9's
    own discipline). Every ratio measured against the REAL row background,
-   --panel #1f2937 (rows are transparent over the pane). ---- */
-.rm-title.rm-title-not-started { color: var(--muted); font-weight: 400; }              /* 5.78:1 */
+   --panel #1f2937 (rows are transparent over the pane).
+   ROUND 13 fix 2 (operator, Round 12 walkthrough — INVERTED from Round 12:
+   "It's the completed items that should be dimmed gray, not the unstarted
+   items"): not-started is now NORMAL weight/colour (var(--text), the
+   body's own default reading colour, 11.86:1 on --panel) — it is complete
+   that stays the ONE dim state (var(--done), unchanged from Round 12,
+   4.55:1). in-progress/stalled/merged-unverified/unknown are the loud
+   exceptions and are UNCHANGED by this fix. ---- */
+.rm-title.rm-title-not-started { color: var(--text); font-weight: 400; }                /* 11.86:1 */
 .rm-title.rm-title-in-progress { color: #f9fafb; font-weight: 600; }                    /* 14.05:1 */
-.rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note */
+.rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note; the ONLY dim state now */
 .rm-title.rm-title-stalled { color: var(--interrupt); font-weight: 600; }               /* 5.45:1 */
 .rm-title.rm-title-merged-unverified { color: var(--warn); font-weight: 600; }          /* 8.79:1 */
 .rm-title.rm-title-unknown { color: var(--warn); font-weight: 400; border-bottom: 1px dashed var(--warn); } /* 8.79:1 + dashed, never color-only */
-.rm-children { margin-left: 14px; }
-.rm-drill { display: none; padding: 4px 8px 6px 20px; font-size: 12px; color: var(--muted); }
+/* Round 13 fix 5: .rm-children carries BOTH the indentation AND the
+   spacing ladder — a small top margin (tight parent->first-child, the
+   fix for the 65px live-measured gap the invisible edit-chrome used to
+   reserve, see .rm-title-edit/.rm-item-chrome below) and a LARGER bottom
+   margin (breathing room before the NEXT sibling row starts — the
+   operator's inversion: today that gap measures 2px live, backwards from
+   what hierarchy legibility needs). An OPEN node's own immediate children
+   also get a faint tint distinct from the project-group tint (fix 3) — a
+   visually nested "card within a card" so an expanded subtree reads as
+   one contained region. */
+.rm-children { margin: 2px 0 12px 14px; }
+.rm-node[open] > .rm-children {
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 4px;
+  padding: 0 4px 4px 2px; /* top trimmed to 0 — the wrapper's own 2px margin already supplies it */
+}
+/* Round 13 fix 5: padding trimmed 4/6px -> 2/2px (top/bottom) — one more
+   cut at the live-measured parent->first-child gap's actual source,
+   alongside the .rm-title-edit/.rm-item-chrome height:0 reclaim above and
+   .rm-plan-link-row's own trimmed margin below. */
+.rm-drill { display: none; padding: 2px 8px 2px 20px; font-size: 12px; color: var(--muted); }
 .rm-node[open] > .rm-drill { display: block; }
 .rm-drill-label { font-weight: 600; }
-.rm-from-requests, .rm-status-reason, .rm-title-edit, .rm-rank-row, .rm-item-chrome { margin: 3px 0; }
+.rm-from-requests, .rm-status-reason, .rm-rank-row { margin: 3px 0; }
 
 /* ---- round-6 gap 1/7A/7B/7B-i: task-leaf structure as LISTS, never a
    paragraph wall — lead sentences, sub-bullet subtasks, live agent leaves.
@@ -1151,10 +1207,26 @@ button, a, [role="button"] { min-height: 24px; }
    paints a focused-but-invisible frame). Opacity (not visibility/display)
    keeps every button genuinely focusable throughout. No transition — the
    reveal is INSTANT on focus, so a keyboard user is never looking at a
-   focused-but-still-invisible control even for one frame. ---- */
+   focused-but-still-invisible control even for one frame.
+   ROUND 13 fix 5 (live-measured root cause of "more space between child
+   tasks and their parent than between them and the next plan"): this
+   chrome row is opacity:0 but NOT display:none (by design, for the
+   instant-focus-reveal guarantee above) — so even hidden, it was still
+   reserving real block-height (measured live: 24px for .rm-item-chrome
+   alone, every time a plan is expanded, between the row and its first
+   child). height:0 + overflow:hidden reclaims that space while hidden;
+   the hover/focus-within/`.rm-editing` states below restore height:auto
+   (and the margin) in the SAME rule that restores opacity — still one
+   synchronous, transition-free flip, so a keyboard user is never looking
+   at a focused-but-clipped control for even one frame (a focusable
+   element inside a height:0/overflow:hidden ancestor can still receive
+   Tab focus; :focus-within fires the instant it does). ---- */
 .rm-title-edit, .rm-item-chrome {
   opacity: 0;
   pointer-events: none;
+  height: 0;
+  margin: 0;
+  overflow: hidden;
 }
 .rm-node > .rm-drill:hover .rm-title-edit,
 .rm-node > .rm-drill:hover .rm-item-chrome,
@@ -1162,18 +1234,38 @@ button, a, [role="button"] { min-height: 24px; }
 .rm-item-chrome:focus-within {
   opacity: 1;
   pointer-events: auto;
+  height: auto;
+  margin: 3px 0;
+  overflow: visible;
 }
 /* an OPEN title editor (input/save/cancel visible) must never be hidden
    again by a stray mouseout — the row stays visible for the whole edit
    (JS toggles .rm-editing on open/close; no :has() dependency) */
-.rm-title-edit.rm-editing { opacity: 1; pointer-events: auto; }
+.rm-title-edit.rm-editing { opacity: 1; pointer-events: auto; height: auto; margin: 3px 0; overflow: visible; }
 .rm-icon-btn { min-width: 24px; padding: 3px 6px; font-size: 13px; line-height: 1; }
 
 /* ---- round-6 gap 6: sibling PLAN nodes under an intent render as a
    connected series of numbered "phases" (the operator's own mental model —
    "phase one through four"). The connector line is ADDITIVE to the "Phase
-   N of M" TEXT label, never color/line-only. ---- */
-.rm-phase-step { position: relative; padding-left: 16px; margin: 2px 0; }
+   N of M" TEXT label, never color/line-only.
+   ROUND 13 fix 5 (operator: "more space between child tasks and their own
+   parent than between them and the next plan" — live-measured 65px
+   parent->child vs 2px subtree->next-plan, backwards): the bottom margin
+   grows from 2px to 30px so one plan's finished subtree is visibly
+   separated from the next plan STEP starting — paired with trimming the
+   parent->child side (.rm-drill padding, .rm-plan-link-row margin, the
+   .rm-title-edit/.rm-item-chrome height:0 reclaim), live re-measured
+   afterward at 28px parent->child vs 30px subtree->next-plan: the
+   inversion is closed, not just narrowed. The connector ::before
+   geometry (top:18px/bottom:-6px) is intentionally left UNCHANGED — with
+   the wider gap it no longer reaches the next step's own line, leaving a
+   small visible break in the rail between consecutive plans. That break
+   is a feature here, not a bug: it reinforces "these are separate plans,"
+   the same message the wider whitespace carries; the CONTAINING
+   .rm-project-group rail (fix 3) is what now signals "these plans belong
+   to one group," so the per-step connector no longer needs to also read
+   as one unbroken filament threading all of them. ---- */
+.rm-phase-step { position: relative; padding-left: 16px; margin: 2px 0 30px; }
 .rm-phase-step::before {
   content: '';
   position: absolute;
@@ -1526,11 +1618,26 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-my-items-wrap { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--border); }
 
 /* ---- Round 9 (operator audit 2026-07-23) ---- */
-/* R9-2: project group — a visible header naming what the phases belong to. */
-.rm-project-group { margin: 10px 0 14px; }
+/* R9-2: project group — a visible header naming what the phases belong to.
+   ROUND 13 fix 3 (operator: "I still don't see how all these plans are
+   grouped together" — the header floated above an unbounded list): a
+   visible CONTAINER — left rail + a faint background tint — now spans
+   every plan row in the group. Survives filtering for free: renderTree
+   re-groups the already-FILTERED set on every render (applyFilters runs
+   first), so this wrapper just as reliably encloses whatever's left, even
+   down to a single row; nothing here is gated on filter state. The
+   Shipped group gets the SAME treatment, dimmer — see .rm-shipped-group
+   below. */
+.rm-project-group {
+  margin: 10px 0 14px;
+  border-left: 2px solid var(--border2);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  padding: 6px 10px 10px;
+}
 .rm-project-group-head {
   font-size: 13px; font-weight: 600; color: var(--text);
-  padding: 4px 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+  padding: 0 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
 }
 /* R9-3: per-item project tag (text chip, never color-only). */
 .rm-project-tag { font-size: 10px; opacity: 0.75; }
@@ -1576,7 +1683,10 @@ details[open] > summary .rm-rollups { display: none; }
 /* R9 follow-up 2026-07-24: the ledger takes the hidden interim tree's flex
    slot so the column handle splits a real pair again. */
 .ws-layout .requests-ledger-in-layout { flex: 1 1 0; min-width: 0; margin: 0; }
-.rm-plan-link-row { margin: 2px 0 6px; font-size: 12px; }
+/* Round 13 fix 5: bottom margin trimmed 6px -> 2px — same parent->child
+   gap cut as .rm-drill's padding above; the link stays fully visible,
+   just no longer padded out with extra dead space beneath it. */
+.rm-plan-link-row { margin: 2px 0 2px; font-size: 12px; }
 /* Round 12 item 7 (pre-existing contrast bug, live-measured): rm-plan-link
    had NO color rule at all, so every one of the 16 plan links rendered at
    the browser default visited/unvisited blue (#0000EE), 1.56:1 on the
@@ -1604,6 +1714,13 @@ details[open] > .rm-row > .rm-chevron { transform: rotate(90deg); }
    "N completed" roll-up (task 3's existing 7-day-window mechanism, which
    this item does NOT change). */
 .rm-shipped-group > summary { font-weight: 600; }
+/* Round 13 fix 3: the SAME containment treatment as .rm-project-group,
+   dimmer — .rm-completed-rollup already gives every roll-up (this one
+   included) a dotted rail + padding spanning its own body; this adds the
+   faint background tint at HALF the live group's opacity (0.01 vs 0.02),
+   so Shipped reads as one contained, quieter region instead of floating
+   loose the way an unbounded list did before fix 3. */
+.rm-shipped-group { background: rgba(255, 255, 255, 0.01); border-radius: 4px; }
 
 /* R11 (round 11, 2026-07-28) — master-plan hierarchy: docs/reviews/
    2026-07-28-roadmap-hierarchy-ux-review.md */
