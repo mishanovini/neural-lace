@@ -128,6 +128,12 @@ doctor check so it cannot silently rot.
 - 2026-07-29: `adapters/claude-code/hooks/session-start-auto-install.sh` — M3 callsite
 - 2026-07-29: `adapters/claude-code/scripts/ask-registry.sh` — M3 callsite
 - 2026-07-29: `adapters/claude-code/scripts/master-drift-autocorrect.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/scripts/ensure-coord-sync.sh` — new macOS-native mechanism (launchd LaunchAgent for coord-sync.sh, same StartInterval/no-KeepAlive class of decision as the ensure-cockpit.sh Darwin work already tracked here) closing the "cockpit shows other machines' work" gap on this Mac; same session, same macOS-hardening effort
+- 2026-07-29: `adapters/claude-code/hooks/session-start-digest.sh` — folds the coord-sync ensure call in beside the existing cockpit-ensure splice (not a new hooks[] entry)
+- 2026-07-29: `adapters/claude-code/manifest.json` — registers the new ensure-coord-sync mechanism (mirrors the existing ensure-cockpit entry)
+- 2026-07-29: `docs/runbooks/coord-sync.md` — documents the macOS registration path + the credential-fix mechanism
+- 2026-07-29: `docs/decisions/066-macos-coord-sync-launchagent-and-credential-fix.md` — decision record for the StartInterval-not-KeepAlive choice and the URL-scoped git credential fix
+- 2026-07-29: `docs/backlog.md` — logs the separate "no peer machine has published a plan-export/ file yet" gap found while verifying this machine's coord-sync loop end-to-end
 - 2026-07-29: `adapters/claude-code/scripts/supervisor-tick.sh` — M3 callsite
 - 2026-07-29: `adapters/claude-code/scripts/health-tick.sh` — M3 callsite
 - 2026-07-29: `adapters/claude-code/scripts/f4-retro.sh` — M3 callsite

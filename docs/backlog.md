@@ -1695,3 +1695,30 @@ Re-run: `bash adapters/claude-code/scripts/estate-attribution-check.sh --repo
 /Users/misha/Claude/neural-lace`; recurrence of a POST-T4-created unattributable
 worktree auto-reopens this row per program rule 2.
 **Filed by:** plan-phase-builder, accountable-estate T4 build, 2026-07-29.
+
+---
+
+## COORD-SYNC-NO-PEER-EXPORTS-YET-01 — the shared coord repo has zero `plan-export/*.json` files from any real machine
+
+**Severity:** P2 (blocks the operator-facing outcome — "the cockpit shows other machines'
+work" — even after this machine's own coord-sync loop is fully wired and running).
+**Context:** built while wiring macOS coord-sync (`docs/decisions/066-macos-coord-sync-
+launchagent-and-credential-fix.md`). Inspected the real `mishanovini/workstreams-
+coordination` repo's tree: it has the OLD `tree-state/Office_PC.json` (the superseded
+per-machine-tree-state architecture, cockpit-v2-push-materialized-store's predecessor) but
+**no `plan-export/` directory at all** — meaning no real machine, including the operator's
+own Windows boxes (Office_PC/BOOK), has run the CURRENT `coord-sync.sh` + `export-state.js`
+cadence and published a `plan-export/<hostname>.json` yet. `server/peer-view.js` reads
+ONLY `plan-export/*.json` (excluding self-hostname) — so even once this Mac's export lands
+there, the cockpit's Peers section will show "no peers yet" (has_data reflecting only this
+machine, or possibly none once self is filtered) until at least one OTHER machine ALSO runs
+the new cadence.
+**Action:** get `NL-CoordSync` genuinely registered and firing on at least one Windows
+machine via the ALREADY-DOCUMENTED, operator-applied command in
+`docs/runbooks/coord-sync.md` (`powershell -File adapters\claude-code\scripts\
+install-coord-sync-task.ps1 -RepoPath "<path>"`) — this is explicitly NOT an agent-run step
+per that runbook's own "Registration" section. Once ONE other machine's `plan-export/
+<hostname>.json` exists in the shared repo, this Mac's next `coord-pull` will surface it
+immediately (no further code change needed — the mechanism is generic across N machines
+per the runbook's own "N-machine is the shipped architecture" note).
+**Filed by:** neural-lace session, 2026-07-29 (macOS coord-sync wiring build).

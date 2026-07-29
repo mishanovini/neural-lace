@@ -537,6 +537,28 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - 2026-07-29: `docs/plans/fragments/roadmap-r12-server-fragment.md` — Round 12 coordination
   fragment (web-only builder defers any server change here; existing cross-task convention).
 
+- 2026-07-29: ROUND 13 — OPERATOR WALKTHROUGH FEEDBACK on the Round 12 surface (verbatim; the
+  operator's reading OVERRIDES the R12 auditor palette where they conflict):
+  1. "Why is there so much wasted whitespace at the left of each of the plans?"
+  2. "It's the completed items that should be dimmed gray, not the unstarted items." —
+     DIRECT INVERSION of the shipped ladder: R12 gave not-started `--muted #9ca3af` and
+     complete `#87909e`, so the 12 upcoming plans (the majority) render dim while the page's
+     model should be: dim = done, visible = has work remaining ("everything that still has
+     work to be done should be visible to me at a glance", Round 12 verbatim).
+  3. "I still don't see how all these plans are grouped together. There's nothing making that
+     clear." — the group header exists but no visual container binds its children.
+  4. "Why doesn't it show the progress of each task? Why doesn't it show what's currently in
+     progress?" — task rows render bare text: `t.done` is on the wire and never rendered
+     (no check glyph, no dimming); the in-progress half is the KNOWN server-side
+     session-attribution gap (roadmap-routes.js:676 binds nothing — banner shows
+     "3 running, unattributed to a task").
+  5. "Child items are not visibly obvious children of the parent... There's more space between
+     child tasks and their own parent than between them and the next plan in the list." —
+     Gestalt proximity violation + missing containment (rail/tint/size ladder).
+  6. "The '1–5 done' text is telling me exactly the same thing as the progress bar sitting
+     right next to it." — drop the span's done-half; keep only the NEXT-token ("6 next" /
+     "T3 next"), which is the one fact the bar cannot carry.
+
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
   (Fable proposal §7) — WITH the A3 caveat: the plain last-non-empty-wins fold is insufficient

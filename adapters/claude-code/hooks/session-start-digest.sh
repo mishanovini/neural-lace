@@ -1291,6 +1291,21 @@ run_digest() {
   ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/ensure-cockpit.sh" >/dev/null 2>&1 ) || true
   # ---- END COCKPIT-SESSIONSTART CALLSITE ------------------------------
 
+  # ---- COORD-SYNC-SESSIONSTART CALLSITE: ensure the macOS coordination --
+  # cadence LaunchAgent (operator, 2026-07-29: "the cockpit is also supposed
+  # to show work across multiple machines" -- coord-sync.sh had NO scheduled
+  # runner on macOS at all; Windows drives it via the NL-CoordSync scheduled
+  # task). Folded in here beside the cockpit ensure splice (NOT a new
+  # SessionStart hooks[] entry -- that array is already at its 8/8 cap),
+  # same subshelled/best-effort/never-blocks discipline: ensure-coord-sync.sh
+  # is itself kill-switchable, OS-gated (Darwin only; Windows keeps its own
+  # operator-applied installer), self-test-gated, and tolerate-absent (see
+  # that script's header for the full contract, mirroring ensure-cockpit.sh's
+  # own Darwin LaunchAgent precedent, decision 065). `cd "$cwd"` first for
+  # the same cwd-override-honoring reason as the cockpit splice above.
+  ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/ensure-coord-sync.sh" >/dev/null 2>&1 ) || true
+  # ---- END COORD-SYNC-SESSIONSTART CALLSITE ---------------------------
+
   # ---- ASK-CAPTURE SESSION-ATTACH CALLSITE (Task 9b) ------------------
   # Best-effort session-attach beside the heartbeat/ensure-cockpit splices
   # above (NOT a new SessionStart hooks[] entry — that array is at its 8/8
