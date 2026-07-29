@@ -119,10 +119,22 @@
 #   0 — commit allowed (or non-applicable)
 #   2 — commit blocked (stderr explains why; JSON {decision: block} on stdout)
 
-# NOTE: `set -u` is intentionally NOT enabled. Bash associative arrays
-# under set -u throw "unbound variable" on `${#arr[@]}` and `${!arr[*]}`
-# even when declared (a known quirk). The hook handles its own undefined
-# states explicitly.
+# NOTE: `set -u` is intentionally NOT enabled. Bash 3.2 throws "unbound
+# variable" on `"${arr[@]}"` for an EMPTY indexed array even when it was
+# explicitly declared (a known 3.2 quirk, verified on 3.2.57 — bash 5.3
+# does not). The hook handles its own undefined states explicitly.
+#
+# PORTABILITY (bash 3.2 floor, 2026-07-29): this file MUST run correctly
+# under macOS's stock /bin/bash 3.2.57. It previously used `declare -A`
+# for FINAL_OOS; under 3.2 that is a hard parse-time error
+# ("declare: -A: invalid option"), after which `FINAL_OOS["$sf"]=...`
+# was interpreted as an ARITHMETIC subscript on a plain variable, so the
+# gate fell straight through to `exit 0` — i.e. it AUTHORIZED every
+# out-of-scope commit while appearing to run. There is no environmental
+# precondition here on purpose: a git hook, a scheduled task or a cloud
+# session may not inherit a PATH with Homebrew's bash 5.x first, and a
+# blocking gate must not depend on one. See docs/plans/
+# macos-portability-2026-07.md.
 
 # ============================================================
 # Helper: is this path system-managed (exempt from scope-check)?
@@ -268,6 +280,31 @@ if [[ "${1:-}" == "--self-test" ]]; then
     exit 2
   fi
 
+  # ----------------------------------------------------------------
+  # INTERPRETER FIDELITY (2026-07-29). Every scenario below re-invokes
+  # this script as a child process. That re-invocation used to be a bare
+  # `bash "$SELF_TEST_HOOK"`, which resolves through PATH — on a machine
+  # with Homebrew first that is bash 5.3, NO MATTER which interpreter is
+  # running the suite. The suite therefore reported 35/0 under
+  # /bin/bash 3.2.57 while never once executing the gate under 3.2, and
+  # hid a total gate failure there (`declare: -A: invalid option` ->
+  # fall-through -> exit 0 -> every out-of-scope commit authorized).
+  #
+  # $BASH is the absolute path of the interpreter executing THIS process,
+  # so the child is now guaranteed to be the same one the operator named
+  # on the command line. The banner prints it so a green run can never
+  # again be silently attributed to the wrong interpreter.
+  SELF_TEST_BASH="${BASH:-bash}"
+  if [[ ! -x "$SELF_TEST_BASH" ]]; then
+    SELF_TEST_BASH="$(command -v bash 2>/dev/null)"
+  fi
+  if [[ -z "$SELF_TEST_BASH" ]] || [[ ! -x "$SELF_TEST_BASH" ]]; then
+    echo "self-test: cannot resolve the running bash interpreter" >&2
+    exit 2
+  fi
+  echo "self-test interpreter: $SELF_TEST_BASH (${BASH_VERSION:-unknown})"
+  echo "  (child hook invocations use THIS interpreter, not PATH's \`bash\`)"
+
   PASSED=0
   FAILED=0
   TMPROOT=$(mktemp -d 2>/dev/null || mktemp -d -t scope-enforce)
@@ -278,7 +315,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   trap 'rm -rf "$TMPROOT"' EXIT
 
   # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): every scenario
-  # below re-invokes this script as a REAL child `bash "$SELF_TEST_HOOK"`
+  # below re-invokes this script as a REAL child `"$SELF_TEST_BASH" "$SELF_TEST_HOOK"`
   # subprocess (not passed --self-test, so it runs the real production
   # path, now metered — see the "Main hook logic" section's perf-metering
   # block). Without this export every self-test run would write dozens of
@@ -340,7 +377,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
         # Default path — byte-identical to the original literal (no regression).
         input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
       fi
-      printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+      printf '%s' "$input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
       echo $? > rc.txt
     )
     cat "$repo/rc.txt" 2>/dev/null || echo 99
@@ -565,7 +602,7 @@ Test.
     echo "stub" > "unrelated.md"
     git add "unrelated.md" 2>/dev/null
     s11_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
-    printf '%s' "$s11_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s11_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S11_RC=$(cat "$S11_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -654,7 +691,7 @@ Drive-by hotfix for unrelated.md.
     echo "stub" > "unrelated.md"
     git add "unrelated.md" 2>/dev/null
     s12_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
-    printf '%s' "$s12_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$s12_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   S12_RC=$(cat "$S12_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -703,7 +740,7 @@ Test merge-context allowlist.
     echo "-- migration" > "supabase/migrations/20260514120000_add_index.sql"
     git add "supabase/migrations/20260514120000_add_index.sql" 2>/dev/null
     s13_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
-    printf '%s' "$s13_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$s13_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   S13_RC=$(cat "$S13_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -737,7 +774,7 @@ Test merge-context allowlist.
     echo "-- migration" > "supabase/migrations/20260514120000_add_index.sql"
     git add "supabase/migrations/20260514120000_add_index.sql" 2>/dev/null
     s14_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"normal\""}}'
-    printf '%s' "$s14_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$s14_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   S14_RC=$(cat "$S14_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -778,7 +815,7 @@ Test merge-context allowlist.
     echo "stub" > "src/unrelated.ts"
     git add "supabase/migrations/20260514120000_add_index.sql" "src/unrelated.ts" 2>/dev/null
     s15_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
-    printf '%s' "$s15_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s15_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S15_RC=$(cat "$S15_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -819,7 +856,7 @@ Test merge-context allowlist.
     echo "-- migration" > "prisma/migrations/20260514120000_add_index/migration.sql"
     git add "prisma/migrations/20260514120000_add_index/migration.sql" 2>/dev/null
     s16_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
-    printf '%s' "$s16_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$s16_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   S16_RC=$(cat "$S16_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -855,7 +892,7 @@ Test merge-context allowlist.
     echo "stub" > "src/way-out-of-scope.ts"
     git add "src/way-out-of-scope.ts" 2>/dev/null
     s17_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"replayed commit\""}}'
-    printf '%s' "$s17_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s17_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S17_RC=$(cat "$S17_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -890,7 +927,7 @@ Test merge-context allowlist.
     echo "stub" > "src/another-out-of-scope.ts"
     git add "src/another-out-of-scope.ts" 2>/dev/null
     s18_input='{"tool_name":"Bash","tool_input":{"command":"git commit"}}'
-    printf '%s' "$s18_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s18_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S18_RC=$(cat "$S18_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -925,7 +962,7 @@ Test merge-context allowlist.
     echo "stub" > "src/merged-in.ts"
     git add "src/merged-in.ts" 2>/dev/null
     s19_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"Merge branch '"'"'master'"'"' into feature\""}}'
-    printf '%s' "$s19_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s19_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S19_RC=$(cat "$S19_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -1047,7 +1084,7 @@ Test gitlink-shaped trailing-slash matching.
     echo '{"x":2}' > state/tree-state.json
     git add state/tree-state.json 2>/dev/null
     input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"state: update\""}}'
-    printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   RC=$(cat "$TMPROOT/s25/rc.txt" 2>/dev/null || echo 99)
@@ -1108,7 +1145,7 @@ Test gitlink-shaped trailing-slash matching.
       cd "$cwd" || exit 99
       local input
       input=$(jq -cn --arg t "$tool" --arg c "$cmd" '{tool_name:$t,tool_input:{command:$c}}')
-      printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+      printf '%s' "$input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
       echo $?
     )
   }
@@ -1255,7 +1292,7 @@ Test goal.
     echo "stub" > "unrelated.md"
     git add "unrelated.md" 2>/dev/null
     s33_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
-    printf '%s' "$s33_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>blocked_stderr.txt
+    printf '%s' "$s33_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>blocked_stderr.txt
     echo $? > blocked_rc.txt
 
     # Apply the message's real named remediation: append an In-flight
@@ -1263,7 +1300,7 @@ Test goal.
     # staged; the plan edit is the new staged content) and re-commit.
     printf '\n## In-flight scope updates\n- 2026-07-04: `unrelated.md` — self-test remediation-clears-block proof\n' >> "docs/plans/test-scope-plan.md"
     git add docs/plans/test-scope-plan.md 2>/dev/null
-    printf '%s' "$s33_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>after_stderr.txt
+    printf '%s' "$s33_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>after_stderr.txt
     echo $? > after_rc.txt
   )
   S33_BLOCKED_RC=$(cat "$S33_REPO/blocked_rc.txt" 2>/dev/null || echo 99)
@@ -1351,8 +1388,41 @@ Test goal.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 37 (was bf3aa15's 35): bash-3.2 floor — no bash-4-only construct in this file ----
+  # REGRESSION GUARD (2026-07-29). Scenario 3/4/8/11/14/27/29/31/33 already go
+  # RED under /bin/bash 3.2.57 if `declare -A` comes back (proven by mutation),
+  # but only when someone actually RUNS the suite under 3.2. This static check
+  # fires on EVERY interpreter, so a 5.3-only run still catches a reintroduction
+  # of the exact defect that made this blocking gate exit 0 on stock macOS.
+  # Scoped to the constructs that are hard errors or silent misbehavior on 3.2.
+  S35_HITS=$(grep -nE '(declare|local|typeset)[[:space:]]+-[A-Za-z]*A|^[[:space:]]*mapfile[[:space:]]|^[[:space:]]*readarray[[:space:]]|\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}' "$SELF_TEST_HOOK" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  if [[ -z "$S35_HITS" ]]; then
+    echo "self-test (37) bash32-floor-no-bash4-constructs: PASS (no associative-array declaration, mapfile/readarray, or case-conversion expansion outside comments)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (37) bash32-floor-no-bash4-constructs: FAIL — bash-4-only construct(s) present:" >&2
+    printf '%s\n' "$S35_HITS" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 38 (was bf3aa15's 36): the suite re-invokes the interpreter it CLAIMS to test ----
+  # REGRESSION GUARD (2026-07-29) for the defect that hid all of the above: a
+  # bare `bash "$SELF_TEST_HOOK"` resolves through PATH, so the suite reported
+  # 35/0 under 3.2 while every scenario actually ran under Homebrew's 5.3.
+  S36_BARE=$(grep -nE '\|[[:space:]]*bash[[:space:]]+"\$SELF_TEST_HOOK"' "$SELF_TEST_HOOK" || true)
+  if [[ -z "$S36_BARE" ]] && [[ "${SELF_TEST_BASH:-${BASH:-}}" == "${BASH:-}" ]]; then
+    echo "self-test (38) selftest-interpreter-fidelity: PASS (children run ${SELF_TEST_BASH:-$BASH}, no PATH-resolved \`bash\`)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (38) selftest-interpreter-fidelity: FAIL — suite would test an interpreter it was not run under:" >&2
+    [[ -n "$S36_BARE" ]] && printf '%s\n' "$S36_BARE" >&2
+    [[ "${SELF_TEST_BASH:-}" != "${BASH:-}" ]] && echo "  SELF_TEST_BASH=${SELF_TEST_BASH:-<unset>} but BASH=${BASH:-<unset>}" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 36 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 38 scenarios)" >&2
+  echo "  interpreter exercised: ${SELF_TEST_BASH:-${BASH:-unknown}} (${BASH_VERSION:-unknown})" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1926,7 +1996,21 @@ for plan in "${ACTIVE_PLANS[@]}"; do
 done
 
 # --- Aggregate: a file is out of scope iff EVERY active plan rejects it ---
-declare -A FINAL_OOS
+#
+# STRUCTURE (bash 3.2 floor): two PARALLEL INDEXED ARRAYS, not `declare -A`.
+# Chosen for this site because (a) every consumer below walks the whole map
+# and needs the key AND its value together, so index-parallel iteration is
+# an O(1) value read — there is no lookup-by-key access pattern to make
+# linear at all; (b) keys are staged FILE PATHS, which may legally contain
+# `|`, `:` or any other separator, so the delimited-string form used for
+# `$oos_for_this_plan` above (whose members are compared, never split back
+# out) is not safe as the outer map; (c) insertion order is the staged-file
+# order, which makes the block message deterministic — `${!FINAL_OOS[@]}`
+# on bash 5.3 iterated in arbitrary hash order.
+# Invariant: FINAL_OOS_KEYS[i] pairs with FINAL_OOS_VALS[i]; keys are unique
+# because the enclosing loop visits each STAGED entry exactly once.
+FINAL_OOS_KEYS=()
+FINAL_OOS_VALS=()
 
 NUM_PLANS="${#ACTIVE_PLANS[@]}"
 for sf in "${STAGED[@]}"; do
@@ -1949,12 +2033,13 @@ for sf in "${STAGED[@]}"; do
     esac
   done
   if [[ "$reject_count" -eq "$NUM_PLANS" ]]; then
-    FINAL_OOS["$sf"]="$rejecting_plans"
+    FINAL_OOS_KEYS+=("$sf")
+    FINAL_OOS_VALS+=("$rejecting_plans")
   fi
 done
 
 # --- Decision ---
-if [[ "${#FINAL_OOS[@]}" -eq 0 ]] && [[ "${#PLAN_ERRORS[@]}" -eq 0 ]]; then
+if [[ "${#FINAL_OOS_KEYS[@]}" -eq 0 ]] && [[ "${#PLAN_ERRORS[@]}" -eq 0 ]]; then
   exit 0
 fi
 
@@ -2021,11 +2106,12 @@ fi
     done
     echo ""
   fi
-  if [[ "${#FINAL_OOS[@]}" -gt 0 ]]; then
+  if [[ "${#FINAL_OOS_KEYS[@]}" -gt 0 ]]; then
     echo "Out-of-scope staged files:"
-    for f in "${!FINAL_OOS[@]}"; do
+    for ((_oos_i=0; _oos_i<${#FINAL_OOS_KEYS[@]}; _oos_i++)); do
+      f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "  • $f"
-      rejected_by="${FINAL_OOS[$f]}"
+      rejected_by="${FINAL_OOS_VALS[$_oos_i]}"
       if [[ -n "$rejected_by" ]]; then
         echo "    Rejected by plan(s):${rejected_by}"
       fi
@@ -2042,7 +2128,8 @@ fi
     else
       echo "     Add to <active-plan-path>'s \`## In-flight scope updates\` section:"
     fi
-    for f in "${!FINAL_OOS[@]}"; do
+    for ((_oos_i=0; _oos_i<${#FINAL_OOS_KEYS[@]}; _oos_i++)); do
+      f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "       - ${TODAY}: ${f} — <one-line reason>"
     done
     echo "     Then re-stage and re-commit. The gate will read the updated section"
@@ -2060,7 +2147,8 @@ fi
     echo ""
     echo "  3. DEFER (when this work shouldn't ship at all right now)."
     echo "     Unstage:"
-    for f in "${!FINAL_OOS[@]}"; do
+    for ((_oos_i=0; _oos_i<${#FINAL_OOS_KEYS[@]}; _oos_i++)); do
+      f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "       git restore --staged \"$f\""
     done
     echo "     Add to docs/backlog.md if it should be picked up later, or skip"
@@ -2082,7 +2170,8 @@ fi
     echo ""
     echo "  3. DEFER (when this work shouldn't ship at all right now)."
     echo "     Unstage:"
-    for f in "${!FINAL_OOS[@]}"; do
+    for ((_oos_i=0; _oos_i<${#FINAL_OOS_KEYS[@]}; _oos_i++)); do
+      f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "       git restore --staged \"$f\""
     done
     echo "     Add to docs/backlog.md if it should be picked up later, or skip"

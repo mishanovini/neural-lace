@@ -811,11 +811,26 @@ od_sessions() {
   # of every session_id with an open item.
   local ny_ledger_dir="${NEEDS_YOU_STATE_DIR:-$HOME/.claude/state/needs-you}"
   local ny_ledger_file="$ny_ledger_dir/ledger.json"
-  declare -A _od_waiting_set=()
+  # STRUCTURE (bash 3.2 floor, 2026-07-29): a PIPE-DELIMITED STRING probed
+  # with `case`, not `declare -A`. Chosen because this is a pure MEMBERSHIP
+  # set — there is no value, only "does this session have an open NEEDS-YOU
+  # item" — and because session ids are UUIDs, which cannot contain `|`, so
+  # the `|`-sentinel token match is exact and unambiguous. It also keeps the
+  # O(1)-lookup property this block was written for: `case` on one string is
+  # a single C-level substring search, not a bash-level loop, so the
+  # per-session probe below stays constant-work even though the set is built
+  # from the whole ledger. (`declare -A` here was a hard error on macOS's
+  # stock /bin/bash 3.2.57, after which `_od_waiting_set["$wsid"]=1` became
+  # an ARITHMETIC subscript on a plain variable and every session silently
+  # reported waiting=0.)
+  local _od_waiting_set="|"
   local wsid
   while IFS= read -r wsid; do
     [[ -z "$wsid" ]] && continue
-    _od_waiting_set["$wsid"]=1
+    case "$_od_waiting_set" in
+      *"|$wsid|"*) : ;;
+      *) _od_waiting_set="${_od_waiting_set}${wsid}|" ;;
+    esac
   done < <(_od_waiting_sids "$ny_ledger_file")
 
   local -a out_rows=()
@@ -860,7 +875,7 @@ od_sessions() {
     fi
 
     local waiting=0
-    [[ -n "${_od_waiting_set[$sid]:-}" ]] && waiting=1
+    case "$_od_waiting_set" in *"|$sid|"*) waiting=1 ;; esac
 
     # PERFORMANCE (this task, O.3 hb-perf fix — sibling to the O.3 index
     # fix above): resolve this session's transcript path ONCE via the
@@ -1228,16 +1243,49 @@ od_harness_health() {
   # do the epoch-cutoff filtering INSIDE jq via its builtin
   # `fromdateiso8601` (no subprocess at all), so bash only ever sees
   # already-in-window rows and never calls `date`/`_od_epoch` per line.
-  declare -A gate_block gate_waiver gate_downgrade
+  # STRUCTURE (bash 3.2 floor, 2026-07-29): FOUR PARALLEL INDEXED ARRAYS —
+  # one key array (gate_names) and three count arrays sharing its index —
+  # instead of three `declare -A` maps. Chosen because (a) the key space is
+  # a small CLOSED set (the harness's gate names, ~15), so the linear
+  # index-of scan per ledger line is bounded by a constant that does not
+  # grow with ledger size — measured below at no detectable cost; (b) every
+  # consumer needs all three counts FOR THE SAME key, which is one index
+  # lookup here instead of three hash lookups; and (c) it deletes the
+  # O(n^2) `all_gates` dedupe loop outright — gate_names IS the deduped key
+  # list, in first-seen order, so the JSON and text renderers below now
+  # emit gates deterministically rather than in bash's arbitrary hash order.
+  # Under bash 3.2 `declare -A` was a hard error here and the three
+  # `gate_x["$gate"]=$(( ... ))` assignments then evaluated the GATE NAME as
+  # an arithmetic expression — which is why `od_harness_health` reported an
+  # empty per-gate tally on stock macOS.
+  local -a gate_names=() gate_block=() gate_waiver=() gate_downgrade=()
+  # _od_gh_idx <gate> — set _OD_GH_I to the index of <gate> in gate_names,
+  # appending a fresh zeroed row if absent. The single mutation point for
+  # all four arrays.
+  #
+  # Returns via a VARIABLE, never via stdout: `i=$(_od_gh_idx "$g")` would
+  # run the helper in a command-substitution SUBSHELL and silently discard
+  # the `gate_names+=(...)` append — the same class of bug this file already
+  # documents for _OD_COSTS_CACHE. bash's dynamic scoping lets the helper
+  # see and mutate the caller's `local -a` arrays directly.
+  _OD_GH_I=0
+  _od_gh_idx() {
+    local want="$1" i
+    for ((i=0; i<${#gate_names[@]}; i++)); do
+      if [[ "${gate_names[$i]}" == "$want" ]]; then _OD_GH_I="$i"; return 0; fi
+    done
+    gate_names+=("$want"); gate_block+=(0); gate_waiver+=(0); gate_downgrade+=(0)
+    _OD_GH_I=$(( ${#gate_names[@]} - 1 ))
+  }
   if [[ -f "$ledger" ]] && _od_have jq; then
     local gate ev
     while IFS=$'\t' read -r gate ev; do
       [[ -z "$ev" ]] && continue
       [[ -z "$gate" ]] && gate="unknown"
       case "$ev" in
-        block)      gate_block["$gate"]=$(( ${gate_block["$gate"]:-0} + 1 )) ;;
-        waiver)     gate_waiver["$gate"]=$(( ${gate_waiver["$gate"]:-0} + 1 )) ;;
-        downgrade)  gate_downgrade["$gate"]=$(( ${gate_downgrade["$gate"]:-0} + 1 )) ;;
+        block)      _od_gh_idx "$gate"; gate_block[$_OD_GH_I]=$(( ${gate_block[$_OD_GH_I]:-0} + 1 )) ;;
+        waiver)     _od_gh_idx "$gate"; gate_waiver[$_OD_GH_I]=$(( ${gate_waiver[$_OD_GH_I]:-0} + 1 )) ;;
+        downgrade)  _od_gh_idx "$gate"; gate_downgrade[$_OD_GH_I]=$(( ${gate_downgrade[$_OD_GH_I]:-0} + 1 )) ;;
       esac
     done < <(_od_jq -r --argjson cutoff "$cutoff" '
       select(.event == "block" or .event == "waiver" or .event == "downgrade")
@@ -1258,29 +1306,27 @@ od_harness_health() {
       gate="$(printf '%s' "$line" | sed -nE 's/.*"gate":"([^"]*)".*/\1/p')"
       [[ -z "$gate" ]] && gate="unknown"
       case "$ev" in
-        block)      gate_block["$gate"]=$(( ${gate_block["$gate"]:-0} + 1 )) ;;
-        waiver)     gate_waiver["$gate"]=$(( ${gate_waiver["$gate"]:-0} + 1 )) ;;
-        downgrade)  gate_downgrade["$gate"]=$(( ${gate_downgrade["$gate"]:-0} + 1 )) ;;
+        block)      _od_gh_idx "$gate"; gate_block[$_OD_GH_I]=$(( ${gate_block[$_OD_GH_I]:-0} + 1 )) ;;
+        waiver)     _od_gh_idx "$gate"; gate_waiver[$_OD_GH_I]=$(( ${gate_waiver[$_OD_GH_I]:-0} + 1 )) ;;
+        downgrade)  _od_gh_idx "$gate"; gate_downgrade[$_OD_GH_I]=$(( ${gate_downgrade[$_OD_GH_I]:-0} + 1 )) ;;
       esac
     done < <(grep -E '"event":"(block|waiver|downgrade)"' "$ledger" 2>/dev/null)
   fi
 
-  local -a all_gates=()
-  local g
-  for g in "${!gate_block[@]}" "${!gate_waiver[@]}" "${!gate_downgrade[@]}"; do
-    local seen=0 s
-    for s in "${all_gates[@]}"; do [[ "$s" == "$g" ]] && seen=1 && break; done
-    [[ "$seen" == "0" ]] && all_gates+=("$g")
-  done
+  # gate_names IS the deduped key list (first-seen order) — the O(n^2)
+  # dedupe loop the three separate hash maps used to require is gone.
+  local _gh_n="${#gate_names[@]}"
+  local g _gh_i
 
   if [[ "$json_mode" == "1" ]]; then
     printf '{"schema":1,"oracle":"od_harness_health","doctor":{"verdict":"%s","ts":"%s","exit_code":"%s"},"gates":[' \
       "$(_od_json_escape "$verdict")" "$(_od_json_escape "$ts")" "$(_od_json_escape "$exit_code")"
     local first=1
-    for g in "${all_gates[@]}"; do
+    for ((_gh_i=0; _gh_i<_gh_n; _gh_i++)); do
+      g="${gate_names[$_gh_i]}"
       [[ "$first" == "1" ]] || printf ','
       first=0
-      local b="${gate_block[$g]:-0}" w="${gate_waiver[$g]:-0}" d="${gate_downgrade[$g]:-0}"
+      local b="${gate_block[$_gh_i]:-0}" w="${gate_waiver[$_gh_i]:-0}" d="${gate_downgrade[$_gh_i]:-0}"
       local dominant="block"
       if [[ "$w" -gt "$b" && "$w" -gt "$d" ]]; then dominant="waiver"; fi
       if [[ "$d" -gt "$b" && "$d" -gt "$w" ]]; then dominant="downgrade"; fi
@@ -1293,9 +1339,10 @@ od_harness_health() {
 
   printf 'doctor: %s (oracle: od_harness_health, cached %s)\n' "$verdict" "${ts:-never}"
   printf '%d gate(s) with block/waiver/downgrade activity in trailing %dd (oracle: od_harness_health)\n' \
-    "${#all_gates[@]}" "$window_days"
-  for g in "${all_gates[@]}"; do
-    local b="${gate_block[$g]:-0}" w="${gate_waiver[$g]:-0}" d="${gate_downgrade[$g]:-0}"
+    "$_gh_n" "$window_days"
+  for ((_gh_i=0; _gh_i<_gh_n; _gh_i++)); do
+    g="${gate_names[$_gh_i]}"
+    local b="${gate_block[$_gh_i]:-0}" w="${gate_waiver[$_gh_i]:-0}" d="${gate_downgrade[$_gh_i]:-0}"
     local flag=""
     [[ "$w" -gt "$b" && "$w" -gt 0 ]] && flag=" [waiver-dominant]"
     printf '  %-30s block=%d waiver=%d downgrade=%d%s\n' "$g" "$b" "$w" "$d" "$flag"
@@ -2747,6 +2794,28 @@ EOF
     fail "expected fixture-gate block=1 waiver=2 downgrade=0, got: $out5"
   fi
 
+  echo "Scenario 5b: od_harness_health keys its tallies PER GATE (multi-gate discrimination)"
+  # COVERAGE GAP CLOSED (2026-07-29). Scenario 5's fixture contains exactly
+  # ONE gate name, so it passes even if the tally structure collapses every
+  # gate onto a single bucket — proven by mutation: neutering the key lookup
+  # to always return row 0 left scenario 5 fully GREEN. That is why the
+  # bash-3.2 breakage of these tallies (`declare -A` -> arithmetic subscript
+  # -> every gate evaluated as an expression) produced no failing assertion
+  # here. A SECOND gate with DIFFERENT counts makes the keying observable.
+  {
+    printf '{"ts":"%s","session_id":"s1","gate":"second-gate","event":"block","detail":"y"}\n' "$now_ts"
+    printf '{"ts":"%s","session_id":"s1","gate":"second-gate","event":"block","detail":"y"}\n' "$now_ts"
+    printf '{"ts":"%s","session_id":"s1","gate":"second-gate","event":"block","detail":"y"}\n' "$now_ts"
+    printf '{"ts":"%s","session_id":"s1","gate":"second-gate","event":"downgrade","detail":"z"}\n' "$now_ts"
+  } >> "$SIGNAL_LEDGER_PATH"
+  out5b="$(od_harness_health)"
+  if printf '%s' "$out5b" | grep -qE "fixture-gate.*block=1 waiver=2 downgrade=0" \
+     && printf '%s' "$out5b" | grep -qE "second-gate.*block=3 waiver=0 downgrade=1"; then
+    pass "od_harness_health keeps per-gate tallies separate (fixture-gate 1/2/0 AND second-gate 3/0/1)"
+  else
+    fail "expected BOTH 'fixture-gate block=1 waiver=2 downgrade=0' and 'second-gate block=3 waiver=0 downgrade=1', got: $out5b"
+  fi
+
   echo "Scenario 6: od_costs sums transcript usage blocks, tail-first tolerant of a partial line"
   mkdir -p "$OBS_TRANSCRIPTS_ROOT"
   {
@@ -3154,9 +3223,16 @@ EOF
   fi
 
   echo "Scenario 10: flagless-shape scenario — the REAL invocation shape (no fixture-scoped flags on the command line, only env sandboxing)"
-  FLAGLESS_OUT="$(bash "${BASH_SOURCE[0]}" --self-test 2>&1 | head -1)"
+  # INTERPRETER FIDELITY (2026-07-29): re-invoke with "$BASH" (the absolute
+  # path of the interpreter running THIS process), never a bare `bash`.
+  # A PATH-resolved `bash` picks Homebrew's 5.x regardless of what the
+  # operator actually ran, so this scenario used to report a pass for an
+  # interpreter it never exercised — the same defect that let
+  # scope-enforcement-gate.sh report 35/0 under 3.2 while being inert there.
+  _OD_SELF_BASH="${BASH:-$(command -v bash 2>/dev/null)}"
+  FLAGLESS_OUT="$("$_OD_SELF_BASH" "${BASH_SOURCE[0]}" --self-test 2>&1 | head -1)"
   if [[ -n "$FLAGLESS_OUT" ]]; then
-    pass "the self-test itself IS the flagless-shape scenario: 'bash observability-derive.sh --self-test' with only env-var sandboxing, no extra flags/fixture-scoped CLI args"
+    pass "the self-test itself IS the flagless-shape scenario: '$_OD_SELF_BASH observability-derive.sh --self-test' with only env-var sandboxing, no extra flags/fixture-scoped CLI args"
   else
     fail "flagless self-test invocation produced no output"
   fi
