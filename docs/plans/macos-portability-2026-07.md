@@ -27,6 +27,22 @@ entire LIVE-harness portability class with zero code edits. That change is now d
 `env.PATH` block was added to this machine's `~/.claude/settings.json` (machine-local, not in
 this repo) putting the GNU toolchain ahead of Apple's.
 
+> **CORRECTION (2026-07-29, task M5 — the table above is WRONG and its conclusion does not
+> hold).** M5 recovered the ad-hoc sweep's output files from the session scratchpad
+> (`results-baseline-bash32.tsv`, `results-bash5-gnu.tsv`, 52 rows each) and its script
+> (`sweep.sh`). Both result files end at the SAME row —
+> `adapters/claude-code/hooks/gh-merge-canonical-gate.sh` — i.e. mid-alphabet inside `hooks/`.
+> The script's inventory pathspec `git ls-files 'adapters/claude-code/**/*.sh'` resolves to
+> **245** files in this repo, not 52. The run was TRUNCATED at 52 and its partial output was
+> read as a complete inventory. Of those 52 rows, 24 are `attic/` and 28 are `hooks/a*`
+> through `hooks/g*`; **`scripts/` was never reached at all**, so "all 3 residual failures are
+> attic scripts" was a statement about a sample that could not contain a `scripts/` failure.
+> The first COMPLETE measurement is M5's: 163 self-test-capable scripts (live scope: `hooks`,
+> `hooks/lib`, `scripts` — attic and tests excluded by default), **111 pass / 52 fail** on
+> `/bin/bash` 3.2.57 + BSD. 28 of the 52 failures are in `scripts/`, the directory the
+> original sweep never saw. The `env.PATH` change therefore did NOT close the live-harness
+> portability class; it hid it on this one machine. See `docs/portability-baseline.txt`.
+
 What the environment does NOT fix is harness code that hard-codes GNU-only invocations and
 therefore breaks for any operator on a Mac without that PATH — including a fresh checkout,
 a cloud/scheduled session, or another person's machine. Measured counts in-repo:
@@ -133,6 +149,10 @@ doctor check so it cannot silently rot.
 - `adapters/claude-code/scripts/session-snapshot.sh` — M4
 - `adapters/claude-code/scripts/worktree-hygiene-sweep.sh` — M4
 - `docs/backlog.md` — M4 (follow-ups: the sibling `touch -d` class, the audit
+- 2026-07-29: `adapters/claude-code/scripts/portability-sweep.sh` — M5: NEW. The committed replacement for the lost ad-hoc measurement script. Discovers every script that really dispatches on the self-test flag, runs each under one named interpreter with a bounded per-script and total budget, pins child interpreter resolution so the interpreter it reports is the one that actually ran, and compares the failing set to a committed baseline.
+- 2026-07-29: `docs/portability-baseline.txt` — M5: NEW. The committed known-failing set the doctor compares against. Raising it is a reviewable diff, not a number edited inside a script.
+- 2026-07-29: `adapters/claude-code/hooks/harness-doctor.sh` — M5: new check 9 plus a new portability-only mode; ALSO the check-8 scope fix, whose top-level glob had never matched the hooks lib subdirectory, so 20 libraries' self-test assertions had never run under the doctor.
+- 2026-07-29: `adapters/claude-code/hooks/lib/nl-paths.sh` — M5: added an explicit self-test flag dispatch. It previously ran its suite on any direct execution, which no discovery predicate could safely detect, so it sat outside the sweep.
 - NOT changed by M4, deliberately: `adapters/claude-code/install.sh` and
 - 2026-07-29: `docs/reviews/2026-07-14-mac-setup-incident.md` — the first-install record for this Mac; documents the symlink-based install whose source==target collision destroyed hooks/lib/ today
 - 2026-07-29: `docs/operator-todo.md` — needs-you mirror entries accumulated this session

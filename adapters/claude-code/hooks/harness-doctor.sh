@@ -22,7 +22,13 @@
 #                       and the repo. Never runs self-tests. Fast (<2s
 #                       typical). Exit 0 iff zero RED lines.
 #   --full            : quick + check 8 (self-test sweep across every live
-#                       hook that declares --self-test). Exit 0 iff zero RED.
+#                       hook that declares --self-test) + check 9 (the
+#                       portability sweep vs its committed baseline).
+#                       Exit 0 iff zero RED.
+#   --portability     : check 9 ONLY — run scripts/portability-sweep.sh
+#                       against the repo under the stock system interpreter
+#                       and RED when the failing set grew relative to
+#                       docs/portability-baseline.txt. Minutes, not seconds.
 #   --self-test       : fixture suite in mktemp -d sandboxes
 #                       (HARNESS_SELFTEST=1). One RED-producing fixture AND
 #                       one GREEN fixture per check class (1-7), plus a
@@ -85,7 +91,21 @@
 #                             the string "--self-test" with
 #                             HARNESS_SELFTEST=1 timeout 1500
 #                             bash <hook> --self-test </dev/null; RED per
-#                             non-zero exit.
+#                             non-zero exit. Scope is hooks/*.sh AND
+#                             hooks/lib/*.sh (the lib glob was added by
+#                             macos-portability-2026-07 M5 — a top-level
+#                             glob never matched the subdirectory, so 20
+#                             libraries' assertions had never run here).
+#   9. portability-sweep    : (--full and --portability) run
+#                             scripts/portability-sweep.sh over the REPO
+#                             under the stock system interpreter
+#                             (/bin/bash by default) and RED when a script's
+#                             --self-test FAILS or TIMES OUT while absent
+#                             from the committed baseline
+#                             docs/portability-baseline.txt. A new script
+#                             with a passing suite is not a regression; a
+#                             baseline entry that now passes is a WARN, not
+#                             a RED. See check_portability_sweep's header.
 #
 # WAVE F BUDGET CHECKS (task F.1, specs-f §F.1 — all in --quick)
 # ===============================================================
@@ -2833,8 +2853,16 @@ check_selftest_sweep() {
   local hooks_dir="${live_home}/hooks"
   [[ -d "$hooks_dir" ]] || { _warn "selftest-sweep" "no live hooks directory — nothing to check"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
 
+  # SCOPE FIX (plan docs/plans/macos-portability-2026-07.md, task M5): this
+  # loop used to glob ONLY "$hooks_dir"/*.sh. A top-level glob never matches a
+  # subdirectory, so every hooks/lib/*.sh suite — 20 libraries, including the
+  # ones that carry the harness's shared primitives (admission-lib,
+  # git-command-parse, nl-paths, portable-time, portable-timeout, the
+  # observability derivers) — was INVISIBLE to this sweep. Their assertions
+  # existed and never ran here. Adding the lib glob makes the doctor's
+  # "--full ran every live self-test" claim true instead of nearly true.
   local hook
-  for hook in "$hooks_dir"/*.sh; do
+  for hook in "$hooks_dir"/*.sh "$hooks_dir"/lib/*.sh; do
     [[ -f "$hook" ]] || continue
     grep -q -- '--self-test' "$hook" 2>/dev/null || continue
     local out rc
@@ -2847,14 +2875,179 @@ check_selftest_sweep() {
     # it; the reentry guard above is what actually blocks unsanctioned fan-out).
     out="$(HARNESS_SELFTEST=1 NL_SELFTEST_SWEEP=1 nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$hook" --self-test </dev/null 2>&1)"
     rc=$?
+    # Label with the path relative to hooks/, not the bare basename: now that
+    # lib/ is in scope a bare basename could name two different files.
+    local label="${hook#$hooks_dir/}"
     if [[ "$rc" -eq 124 ]]; then
-      _red "selftest-sweep" "$(basename "$hook") --self-test exceeded the ${DOCTOR_SELFTEST_TIMEOUT:-1500}s bound and was killed"
+      _red "selftest-sweep" "${label} --self-test exceeded the ${DOCTOR_SELFTEST_TIMEOUT:-1500}s bound and was killed"
     elif [[ "$rc" -ne 0 ]]; then
       local last_line
       last_line="$(printf '%s\n' "$out" | tail -n 1)"
-      _red "selftest-sweep" "$(basename "$hook") --self-test exited ${rc}: ${last_line}"
+      _red "selftest-sweep" "${label} --self-test exited ${rc}: ${last_line}"
     fi
   done
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ============================================================
+# Check 9: portability-sweep  (--full and --portability only)
+# ============================================================
+# WHY (plan docs/plans/macos-portability-2026-07.md, task M5)
+# ----------------------------------------------------------
+# check_selftest_sweep above answers "do the live hooks' self-tests pass?"
+# under whatever `bash` happens to be first on PATH. That is NOT the same
+# question as "does this harness still work on a stock Mac", and the harness
+# has already paid for the difference: authored on Windows (Git-bash, bash
+# 5.x, GNU coreutils), it arrived on Apple's bash 3.2.57 + BSD userland with
+# 14 of 52 self-test-capable scripts failing. The plan's M1-M4 fixed the
+# named GNU-isms. Nothing stopped the next one.
+#
+# This check is that stop. It runs scripts/portability-sweep.sh against the
+# REPO (not the live mirror — the repo is what an author edits, and the live
+# mirror lags until install.sh runs) under an explicitly-named interpreter,
+# and compares the failing set to a COMMITTED baseline file.
+#
+# THE RED CONDITION, exactly
+# --------------------------
+#   RED iff some discovered script's --self-test FAILS or TIMES OUT and that
+#   script is NOT listed in docs/portability-baseline.txt.
+#
+# Consequences of stating it that way, all deliberate:
+#   - A newly added script whose self-test FAILS -> RED (it is not in the
+#     baseline). This is the authoring-time catch the plan asked for.
+#   - A newly added script whose self-test PASSES -> not RED. Growth of the
+#     harness is not a regression.
+#   - A baseline entry that now passes -> not RED, but the sweep prints
+#     "baseline STALE" and this check WARNs, so amnesty cannot quietly
+#     outlive the bug it was granted for.
+#   - Raising the bar means editing a committed text file, which shows up in
+#     a diff and in review. There is no number in this script to nudge.
+#
+# Absence handling matches every other tolerant doctor predicate: no runner
+# in the repo -> WARN and skip (a pre-M5 checkout or a bare self-test
+# fixture). Runner present but baseline missing -> RED: a half-installed
+# mechanism is worse than none, because it reads as protection.
+#
+# Recursion: the sweep runs harness-doctor.sh --self-test among its ~163
+# suites, and that suite runs `--full` against fixture repos. The sweep
+# exports NL_PORTABILITY_SWEEP_ACTIVE=1, and this check no-ops when it sees
+# it, so the fan-out is hard-bounded at depth 1.
+#
+# ENV (all optional; defaults are what --full uses)
+#   DOCTOR_PORTABILITY_INTERP        interpreter (default /bin/bash — the
+#                                    stock system one is the portability-
+#                                    relevant one; on Linux it is GNU bash
+#                                    and the check simply reports fewer
+#                                    failures, never a false RED)
+#   DOCTOR_PORTABILITY_ROOTS         roots to sweep (default the runner's own)
+#   DOCTOR_PORTABILITY_PER_TIMEOUT   per-suite bound (default 120)
+#   DOCTOR_PORTABILITY_BUDGET        total bound (default 2400)
+#   DOCTOR_PORTABILITY_BASELINE      baseline path override
+# ============================================================
+check_portability_sweep() {
+  local live_home="$1" repo_root="$2"
+
+  if [[ "${NL_PORTABILITY_SWEEP_ACTIVE:-0}" == "1" ]]; then
+    _warn "portability-sweep" "already running inside a portability sweep — skipping (depth guard)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+    _warn "portability-sweep" "reentrant/automation-spawned invocation — skipping the portability sweep (NL-FINDING-040 guard)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  if [[ -z "${repo_root:-}" ]]; then
+    _warn "portability-sweep" "no repo root resolved — the portability sweep needs the repo (it checks what an author edits, not the live mirror)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local sweep="${repo_root}/adapters/claude-code/scripts/portability-sweep.sh"
+  if [[ ! -f "$sweep" ]]; then
+    _warn "portability-sweep" "scripts/portability-sweep.sh not present in ${repo_root} — mechanism not installed on this checkout/fixture"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local baseline="${DOCTOR_PORTABILITY_BASELINE:-${repo_root}/docs/portability-baseline.txt}"
+  if [[ ! -f "$baseline" ]]; then
+    _red "portability-sweep" "scripts/portability-sweep.sh exists but its baseline is missing (${baseline}) — the regression check cannot run, so the 'portability is protected' claim is currently false; regenerate with: bash adapters/claude-code/scripts/portability-sweep.sh --write-baseline docs/portability-baseline.txt"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local interp="${DOCTOR_PORTABILITY_INTERP:-/bin/bash}"
+  if [[ ! -x "$interp" ]]; then
+    local fallback
+    fallback="$(command -v bash 2>/dev/null)"
+    if [[ -z "$fallback" ]]; then
+      _warn "portability-sweep" "no usable interpreter (${interp} not executable, no bash on PATH) — skipped"
+      CHECKS_RUN=$((CHECKS_RUN + 1))
+      return 0
+    fi
+    _warn "portability-sweep" "${interp} is not executable here — falling back to ${fallback}; the sweep's interpreter claim is only as portable as that binary"
+    interp="$fallback"
+  fi
+
+  local budget="${DOCTOR_PORTABILITY_BUDGET:-2400}"
+  local per="${DOCTOR_PORTABILITY_PER_TIMEOUT:-120}"
+  local out rc
+  # The runner bounds itself; the outer bound is belt-and-braces against a
+  # runner that wedges before its own budget logic engages.
+  local roots_arg=()
+  [[ -n "${DOCTOR_PORTABILITY_ROOTS:-}" ]] && roots_arg=(--roots "${DOCTOR_PORTABILITY_ROOTS}")
+  out="$(nl_run_bounded $(( budget + 120 )) "$interp" "$sweep" \
+           --repo-root "$repo_root" \
+           --interpreter "$interp" \
+           --baseline "$baseline" \
+           --per-script-timeout "$per" \
+           --total-budget "$budget" \
+           ${roots_arg[@]+"${roots_arg[@]}"} </dev/null 2>&1)"
+  rc=$?
+
+  if [[ "$rc" -eq 124 ]]; then
+    _red "portability-sweep" "the sweep itself exceeded $(( budget + 120 ))s and was killed — no portability signal from this run"
+  elif [[ "$rc" -eq 1 ]]; then
+    # Emit one RED per new failure so the operator sees WHAT regressed, not
+    # just that something did.
+    # Match ONLY the runner's dedicated REGRESSION marker.
+    #
+    # The first version of this loop matched '  FAIL  '* — which also matches
+    # every row of the sweep's own report body (`  FAIL    hooks/x.sh  ...`),
+    # so one genuine regression was reported as 54 REDs, 53 of them scripts
+    # already in the baseline, with the real one last. Caught by running the
+    # end-to-end injected-regression demo; a code read had missed it. The
+    # marker is emitted by portability-sweep.sh's baseline-comparison section
+    # and appears nowhere else in its output.
+    local line emitted=0
+    while IFS= read -r line; do
+      case "$line" in
+        '  REGRESSION '*)
+          _red "portability-sweep" "NEW self-test failure under ${interp} (not in ${baseline##*/}): $(printf '%s' "$line" | sed -e 's/^  REGRESSION //')"
+          emitted=$((emitted + 1))
+          ;;
+      esac
+    done <<< "$out"
+    if [[ "$emitted" -eq 0 ]]; then
+      _red "portability-sweep" "the sweep reported new failures under ${interp} but no line could be parsed — full output: $(printf '%s' "$out" | tail -n 20 | tr '\n' ' ')"
+    fi
+  elif [[ "$rc" -ne 0 ]]; then
+    _red "portability-sweep" "portability-sweep.sh exited ${rc} (setup error, not a test result): $(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 3 | tr '\n' ' ')"
+  fi
+
+  # Partial coverage and stale amnesty are WARNs — real information, but not
+  # a regression claim.
+  local skipped
+  skipped="$(printf '%s\n' "$out" | sed -n 's/.*skip=\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
+  if [[ -n "$skipped" && "$skipped" != "0" ]]; then
+    _warn "portability-sweep" "${skipped} suite(s) never ran — the ${budget}s total budget was exhausted, so this run's coverage is partial (raise DOCTOR_PORTABILITY_BUDGET or fix the slow suites)"
+  fi
+  if printf '%s' "$out" | grep -q 'baseline STALE'; then
+    _warn "portability-sweep" "the baseline lists script(s) that now PASS — remove them so the amnesty does not outlive the bug: $(printf '%s\n' "$out" | sed -n '/baseline STALE/,/^$/p' | grep '^  [a-z]' | tr '\n' ' ')"
+  fi
+
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
@@ -5246,6 +5439,37 @@ EOF
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "e1-no-selftest-entrypoint-red" 1 "$RC" "RED wave-e-e1-digest.*no --self-test entrypoint" "$OUT"
 
+  # ---- Check 8 SCOPE (macos-portability-2026-07 M5): the sweep must reach
+  # hooks/lib/*.sh.
+  #
+  # Before this fix the loop globbed only "$hooks_dir"/*.sh. A top-level glob
+  # never matches a subdirectory, so all 20 live hooks/lib/*.sh suites — the
+  # harness's shared primitives — were invisible to --full: their assertions
+  # existed and never ran. Nothing in this suite noticed, because no fixture
+  # had ever put a hook in lib/.
+  #
+  # This fixture's ONLY failing suite is in lib/. Delete the lib glob from
+  # check_selftest_sweep and --full comes back rc 0, so this scenario fails —
+  # which is what makes it a test of the scope rather than a restatement of
+  # it. The expected RED text also pins the LABEL to the hooks-relative path
+  # (lib/failing-lib.sh), since a bare basename can now collide between
+  # hooks/x.sh and hooks/lib/x.sh.
+  D=$(_scenario_dir c8-lib-scope)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/hooks/lib"
+  cat > "$D/live/hooks/lib/failing-lib.sh" <<'EOF'
+#!/bin/bash
+if [ "${BASH_SOURCE[0]:-$0}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
+  echo "self-test: intentional lib failure" >&2
+  exit 1
+fi
+EOF
+  chmod +x "$D/live/hooks/lib/failing-lib.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
+  _assert "8-selftest-sweep-covers-hooks-lib" 1 "$RC" "RED selftest-sweep: lib/failing-lib.sh" "$OUT"
+
   # ---- Check 8 (T2, agent-efficiency-fixes-2026-07): a reentrant/
   # automation-spawned invocation of --full NEVER fans out into the
   # self-test sweep, even against a fixture hook whose --self-test would
@@ -5345,6 +5569,146 @@ EOF
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
   _assert "9-ssf-explicit-invocation-never-suppressed" 0 "$RC" "GREEN" "$OUT"
 
+  # ================================================================
+  # Check 9 (portability-sweep) — macos-portability-2026-07 task M5
+  # ================================================================
+  # These scenarios run the REAL scripts/portability-sweep.sh (copied into a
+  # fixture repo together with the real hooks/lib/portable-timeout.sh it
+  # sources) against tiny stub suites. The runner is genuine; only the
+  # scripts it grades are stubs, which is the only way to make "a NEW failing
+  # script REDs / a NEW passing script does not" deterministic.
+  #
+  # NL_PORTABILITY_SWEEP_ACTIVE=0 is set explicitly on every invocation: this
+  # whole suite is itself one of the ~163 scripts the real sweep runs, so
+  # without the override these scenarios would silently take the depth-guard
+  # skip path (and pass by default) whenever the doctor's own self-test was
+  # launched from a sweep.
+  _PORT_REAL_SWEEP="$(dirname "$SELF_TEST_HOOK")/../scripts/portability-sweep.sh"
+  _PORT_REAL_TIMEOUT="$(dirname "$SELF_TEST_HOOK")/lib/portable-timeout.sh"
+  if [[ -f "$_PORT_REAL_SWEEP" && -f "$_PORT_REAL_TIMEOUT" ]]; then
+    _port_fixture() {
+      local label="$1"
+      local d
+      d=$(_scenario_dir "$label")
+      mkdir -p "$d/repo/adapters/claude-code/hooks/lib" "$d/repo/docs"
+      cp "$_PORT_REAL_SWEEP" "$d/repo/adapters/claude-code/scripts/portability-sweep.sh"
+      cp "$_PORT_REAL_TIMEOUT" "$d/repo/adapters/claude-code/hooks/lib/portable-timeout.sh"
+      printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo ok; exit 0; fi\nexit 0\n' \
+        > "$d/repo/adapters/claude-code/hooks/pp-pass.sh"
+      printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo "summary: 0 passed, 1 failed" >&2; exit 1; fi\nexit 0\n' \
+        > "$d/repo/adapters/claude-code/hooks/pp-known-fail.sh"
+      chmod +x "$d/repo/adapters/claude-code/hooks"/*.sh
+      printf 'FAIL\thooks/pp-known-fail.sh\n' > "$d/repo/docs/portability-baseline.txt"
+      _write_settings "$d/live/settings.json"
+      cp "$d/live/settings.json" "$d/repo/adapters/claude-code/settings.json.template"
+      printf '%s' "$d"
+    }
+    _port_run() {
+      local d="$1"; shift
+      HARNESS_DOCTOR_HOME="$d/live" NL_REPO_ROOT="$d/repo" \
+      NL_PORTABILITY_SWEEP_ACTIVE=0 \
+      DOCTOR_PORTABILITY_ROOTS="hooks" \
+      DOCTOR_PORTABILITY_PER_TIMEOUT=10 \
+      DOCTOR_PORTABILITY_BUDGET=90 \
+      "$@" bash "$SELF_TEST_HOOK" --portability "$d/repo" 2>&1
+    }
+
+    # P1 — a failing suite that IS in the baseline is NOT a regression.
+    D=$(_port_fixture c11-port-baselined)
+    OUT="$(_port_run "$D")"; RC=$?
+    _assert "9c-portability-baselined-failure-is-green" 0 "$RC" "GREEN" "$OUT"
+
+    # P2 — THE RED CONDITION. A newly added script whose --self-test fails and
+    # which is absent from the baseline must RED, and must be NAMED.
+    D=$(_port_fixture c11-port-new-fail)
+    printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo "boom" >&2; exit 1; fi\nexit 0\n' \
+      > "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    chmod +x "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    OUT="$(_port_run "$D")"; RC=$?
+    # The pattern names the REGRESSION branch specifically, not just
+    # "RED portability-sweep". Mutation-verified during this task's build: an
+    # earlier version matched the bare check id, and mutating the rc==1 arm
+    # away still passed — the rc!=0 "setup error" arm emitted a RED with the
+    # same id and echoed the sweep's tail (which contains the script name),
+    # so BOTH this assertion and the naming assertion below passed while the
+    # regression branch was dead. Pinning the branch's own wording is what
+    # makes the mutation bite.
+    _assert "9c-portability-new-failure-reds" 1 "$RC" "RED portability-sweep: NEW self-test failure" "$OUT"
+    if printf '%s\n' "$OUT" | grep 'RED portability-sweep: NEW self-test failure' | grep -q "pp-new-fail.sh"; then
+      echo "self-test (9c-portability-new-failure-is-named): PASS" >&2; PASSED=$((PASSED + 1))
+    else
+      echo "self-test (9c-portability-new-failure-is-named): FAIL (no NEW-failure RED line named the offending script): $OUT" >&2; FAILED=$((FAILED + 1))
+    fi
+    # EXACTLY ONE red. The fixture has three suites: one passing, one failing
+    # AND baselined, one failing and NOT baselined — so precisely one thing
+    # regressed. Asserting the COUNT (not just "a RED appeared") is what
+    # catches an over-broad output parser: the first version of this check
+    # matched the sweep's report body as well as its regression section and
+    # turned one regression into 54 REDs, 53 of them already-baselined
+    # scripts. Nothing in this suite noticed until the end-to-end injected-
+    # regression demo was run by hand.
+    _PORT_REDS="$(printf '%s\n' "$OUT" | grep -c 'RED portability-sweep')"
+    if [ "${_PORT_REDS:-0}" -eq 1 ]; then
+      echo "self-test (9c-portability-one-regression-yields-exactly-one-red): PASS" >&2; PASSED=$((PASSED + 1))
+    else
+      echo "self-test (9c-portability-one-regression-yields-exactly-one-red): FAIL (expected 1 RED, got ${_PORT_REDS} — the output parser is matching more than the regression section): $OUT" >&2; FAILED=$((FAILED + 1))
+    fi
+
+    # P3 — the symmetric half: a newly added script whose --self-test PASSES
+    # must NOT RED. A check that reddened on any new script would be useless.
+    D=$(_port_fixture c11-port-new-pass)
+    printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo fine; exit 0; fi\nexit 0\n' \
+      > "$D/repo/adapters/claude-code/hooks/pp-new-pass.sh"
+    chmod +x "$D/repo/adapters/claude-code/hooks/pp-new-pass.sh"
+    OUT="$(_port_run "$D")"; RC=$?
+    _assert "9c-portability-new-passing-script-is-green" 0 "$RC" "GREEN" "$OUT"
+
+    # P4 — runner present, baseline absent: RED. A half-installed mechanism
+    # reads as protection while providing none.
+    D=$(_port_fixture c11-port-no-baseline)
+    rm -f "$D/repo/docs/portability-baseline.txt"
+    OUT="$(_port_run "$D")"; RC=$?
+    _assert "9c-portability-missing-baseline-reds" 1 "$RC" "RED portability-sweep.*baseline is missing" "$OUT"
+
+    # P5 — depth guard: inside a sweep, the check skips instead of recursing,
+    # even when a real regression is present.
+    D=$(_port_fixture c11-port-depth)
+    printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then exit 1; fi\nexit 0\n' \
+      > "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    chmod +x "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" \
+           NL_PORTABILITY_SWEEP_ACTIVE=1 DOCTOR_PORTABILITY_ROOTS="hooks" \
+           bash "$SELF_TEST_HOOK" --portability "$D/repo" 2>&1)"; RC=$?
+    _assert "9c-portability-depth-guard-skips" 0 "$RC" "WARN portability-sweep.*depth guard" "$OUT"
+
+    # P6 — a baseline entry that now passes is WARNed (stale amnesty), never
+    # REDded. Silence here would let an obsolete exemption live forever.
+    D=$(_port_fixture c11-port-stale)
+    printf 'FAIL\thooks/pp-known-fail.sh\nFAIL\thooks/pp-pass.sh\n' > "$D/repo/docs/portability-baseline.txt"
+    OUT="$(_port_run "$D")"; RC=$?
+    _assert "9c-portability-stale-baseline-warns-not-reds" 0 "$RC" "WARN portability-sweep.*now PASS" "$OUT"
+
+    # P7 — the check is genuinely wired into --full, not only into the new
+    # --portability mode. Asserted on OUTPUT (not rc) because --full also runs
+    # every other check against a bare fixture.
+    D=$(_port_fixture c11-port-full)
+    printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo "boom" >&2; exit 1; fi\nexit 0\n' \
+      > "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    chmod +x "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" \
+           NL_PORTABILITY_SWEEP_ACTIVE=0 DOCTOR_PORTABILITY_ROOTS="hooks" \
+           DOCTOR_PORTABILITY_PER_TIMEOUT=10 DOCTOR_PORTABILITY_BUDGET=90 \
+           bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
+    if printf '%s' "$OUT" | grep -q "RED portability-sweep"; then
+      echo "self-test (9c-portability-wired-into-full): PASS" >&2; PASSED=$((PASSED + 1))
+    else
+      echo "self-test (9c-portability-wired-into-full): FAIL (--full did not run check 9): $OUT" >&2; FAILED=$((FAILED + 1))
+    fi
+  else
+    echo "self-test (9c-portability): FAIL (scripts/portability-sweep.sh or hooks/lib/portable-timeout.sh not found next to this hook — check 9 went UNTESTED)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2
   if [[ "$FAILED" -gt 0 ]]; then
@@ -5374,6 +5738,10 @@ MODE="${1:-quick}"
 case "$MODE" in
   --quick|quick) MODE="quick" ;;
   --full|full) MODE="full" ;;
+  # --portability runs ONLY check 9. `--full` also runs it, but --full is a
+  # multi-minute run of every live self-test; an author who just touched a
+  # shell script wants the portability answer alone.
+  --portability|portability) MODE="portability" ;;
   *) MODE="quick" ;;
 esac
 
@@ -5418,11 +5786,16 @@ if [[ "${NL_SESSIONSTART_ORIGIN:-0}" == "1" ]]; then
   fi
 fi
 
-run_quick_checks "$LIVE_HOME" "$REPO_ROOT"
+if [[ "$MODE" == "portability" ]]; then
+  check_portability_sweep "$LIVE_HOME" "$REPO_ROOT"
+else
+  run_quick_checks "$LIVE_HOME" "$REPO_ROOT"
 
-if [[ "$MODE" == "full" ]]; then
-  check_selftest_sweep "$LIVE_HOME"
-  check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
+  if [[ "$MODE" == "full" ]]; then
+    check_selftest_sweep "$LIVE_HOME"
+    check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
+    check_portability_sweep "$LIVE_HOME" "$REPO_ROOT"
+  fi
 fi
 
 if [[ "$RED_COUNT" -eq 0 ]]; then
