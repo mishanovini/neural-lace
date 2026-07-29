@@ -1341,7 +1341,7 @@ detection mechanism is "an operator eventually notices the percentage is
 absurd." Adding one family per incident is symptom treatment; expect a third
 occurrence on the next model launch.
 
-**Fix directions (not yet chosen — needs a real design pass):**
+**Fix directions (evaluated 2026-07-29 — see RESOLUTION below):**
 (a) invert the default — treat an unknown model as UNKNOWN and suppress the
     percentage entirely rather than printing a confidently-wrong one against an
     assumed denominator (the message already carries a "never a stop reason"
@@ -1354,7 +1354,61 @@ occurrence on the next model launch.
 **Immediate mitigation applied 2026-07-28:** `claude-opus-5*` added to the 1M
 branch + regression scenario T17b; self-test 21/0. This closes the instance,
 NOT the class.
+
+**RESOLUTION 2026-07-29 — option (a), with the detector rebuilt in band.**
+Plan: `docs/plans/context-watermark-window-class-fix.md`.
+
+*(b) RULED OUT with evidence, not assumed.* The real window is NOT reachable from
+a PostToolUse hook on client 2.1.219:
+- the client's own hook-payload schema is `{session_id, transcript_path, cwd,
+  prompt_id?, permission_mode?, agent_id?, agent_type?, effort?}` + `{hook_event_name,
+  tool_name, tool_input, tool_response, tool_use_id, duration_ms?}` — no model, no
+  window;
+- `message.usage` in the transcript carries a numerator only (`input_tokens`,
+  `cache_creation_input_tokens`, `cache_read_input_tokens`, `output_tokens`,
+  `cache_creation`, `server_tool_use`, `service_tier`, `inference_geo`, `iterations`,
+  `speed`). A grep for `context_window` / `contextWindow` / `max_input_tokens` /
+  `window_size` / `context_limit` across all 67 real transcripts on this machine
+  returned ZERO hits;
+- no env var exposes it — `CLAUDE_CODE_MAX_CONTEXT_TOKENS` is an operator-set INPUT
+  that the client itself honors only under `DISABLE_COMPACT` or for non-`claude-`
+  model ids, so trusting it as the denominator would re-create confidently-wrong;
+- no client-written file exposes it — `~/.claude.json`'s `autoCompactWindowsCache`
+  is consulted for `claude-sonnet-4-6` only and is null here; `~/.claude/debug/*.txt`
+  does print `autocompact: … effectiveWindow=N` but those files carry no reference to
+  the session id a hook receives and depend on debug logging being on.
+- THE ONE CHANNEL THAT DOES EXPOSE IT: the StatusLine command input carries
+  `context_window.context_window_size`. This harness configures no `statusLine`, and
+  the desktop entrypoint has never been observed to run one here — wiring it would be
+  claiming a mechanism that has not been seen to fire (constitution §10). **If a status
+  line is ever adopted, that is the path that retires the table entirely** — the
+  status-line script persists `context_window_size` keyed by session id and the hook
+  reads it as the authority. Operator call, not a builder call.
+
+*(c) NOT CHOSEN.* Viable — the running session's model IS readable from the newest
+transcript — but strictly weaker: the wrong percentage is still emitted, and it is
+only caught whenever someone next runs the doctor.
+
+*(a) SHIPPED.* An unknown model now yields NO denominator, so no percentage can be
+printed at all — the harm is structurally impossible, not merely less likely. Because
+suppression alone would have destroyed the only existing detector (the absurd
+percentage), the detector is rebuilt IN BAND: one non-numeric maintenance notice per
+session naming the model, `_model_window`, both candidate readings as an explicit
+either/or, and the `CONTEXT_WATERMARK_WINDOW` escape hatch. Self-test 21/0 -> 28/0 on
+BOTH `/bin/bash` 3.2.57 and `/opt/homebrew/bin/bash` 5.3.15, every new control
+mutation-verified, and demonstrated on this machine's real 8 MB session transcript
+(pre-fix: "~463% of 200000 … AT THE 85% MARK"; post-fix: the UNKNOWN notice).
+
+**Residual risk (honest):** on an unlisted model the watermark goes DARK — no 70%/85%
+nag and no proactive `session-snapshot.sh` run for that session. The PreCompact backstop
+(`pre-compact-continuity.sh`) still covers overflow, and the notice tells the reader how
+to restore the watermark in one edit or one env var, but this is a real trade: a missed
+early nag in exchange for an impossible false alarm. Also unchanged: keeping
+`_model_window` current is still manual — option (a) makes staleness loud and harmless,
+it does not make it self-healing. Only the StatusLine path above would do that.
+
 **Filed by:** neural-lace session, 2026-07-28 (operator-reported: "Context is not at 74%").
+**Class fix by:** builder session, 2026-07-29.
 
 ---
 
