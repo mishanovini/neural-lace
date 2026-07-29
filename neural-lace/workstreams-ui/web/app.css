@@ -1560,6 +1560,18 @@ details[open] > summary .rm-rollups { display: none; }
 @media (max-width: 1100px) {
   .rm-layout { flex-direction: column; }
   .rm-sidebar { flex: none; max-width: none; width: 100%; }
+  /* ROADMAP-NARROW-VIEWPORT-COLLAPSE-01 (P1, live-verified 2026-07-29):
+     `.roadmap-section { flex: 1 1 0 }` is written for the DESKTOP row layout,
+     where the flex main axis is WIDTH. The moment this query flips .rm-layout
+     to column, that same rule governs HEIGHT — and because .pane sets
+     `overflow: hidden`, the flex spec gives the item an automatic minimum
+     main-size of 0. With no ancestor supplying spare height for flex-grow to
+     distribute, the section collapses to its flex-basis (0) instead of its
+     content height: measured `#roadmapSection` height = 2px while its own
+     `#roadmapBody` child reported 563px. Every row stayed in the DOM and the
+     entire tree was invisible. `flex-basis: auto` makes the column case size
+     to content, which is what the row case never needed to say out loud. */
+  .rm-layout > .roadmap-section { flex: 1 1 auto; min-height: 0; }
 }
 /* R9 follow-up 2026-07-24: the ledger takes the hidden interim tree's flex
    slot so the column handle splits a real pair again. */
