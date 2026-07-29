@@ -2767,7 +2767,7 @@ _run_on_builder_dispatch() {
   {
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/admission-lib.sh" 2>/dev/null \
       && declare -F adm_admit >/dev/null 2>&1 \
-      && adm_admit emit-feed kind="$(printf '%s' "${bg:-fg}")" >/dev/null 2>&1
+      && adm_admit emit-feed kind="$([[ "${bg:-0}" == "1" ]] && printf bg || printf fg)" >/dev/null 2>&1
   } || true
 
   # Builder correlation ledger (observability + reconciler hint):

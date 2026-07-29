@@ -230,3 +230,69 @@ PROGRAM RULE COMPLIANCE
   ledger separating storm vs legitimate load". It CANNOT be a present fact at
   build time - day 0 of a 7-day window. Re-check date: 2026-08-05. At that point
   the ledger must be read with the pressure_src=absent caveat above.
+
+### T3 CORRECTION ROUND — 2026-07-28/29 (independent review falsified the builder claim above)
+
+The BUILDER CLAIM block above is SUPERSEDED in several particulars. Both reviewers ran and
+disagreed with it. Their verdicts on commit f6562b2:
+- harness-reviewer: **REJECT (amend forward, do NOT revert)**
+- task-verifier: **FAIL, confidence 9** — checkbox NOT flipped
+
+**Claims of mine that were false, and are now corrected:**
+
+1. "Self-test 38/0" — FALSE as written. Scenario 16 asserted `~/.claude/state/governor` does not
+   exist, conflating "the dir exists" with "my test created it". Once production traffic created
+   that dir, the suite was **37/1, exit 1** — red *because the feature worked*, and the 38/0 claim
+   was reproducible only on a machine where the deliverable did not exist. Now a before/after
+   delta-fingerprint assertion on the real ledger: **44/0 with the production dir present, on both
+   bash 5.3 and bash 3.2.**
+2. "rate- and occupancy-calibrated" — FALSE. `adm_live_sessions` read a `live_sessions` key that
+   `estate-janitor.sh:692` never writes, so occupancy was dead even with a snapshot present. Worse,
+   both extractors stripped to end-of-line while the janitor emits the whole document as ONE line:
+   a true value of 3 parsed as **3379**, which at T6 would have blocked every dispatch. My fixtures
+   were hand-written one-key-per-line JSON, which masked both defects completely. Now counts
+   `"classify":"live"` (hb_classify's own verdict, per F8) with terminator-bounded extraction, and
+   the fixtures are producer-shaped.
+3. "spawn-free hot path / forks at most ONCE / ~0 ms", listed in the commit message under "design
+   constraints honored" — FALSE. Measured independently at **19.3 ms** and **20.1 ms** per dispatch,
+   ~45 forks, 2 execs, +13% on the emit-feed path. Design 6b edge 6 is NOT met. Claim retired and
+   replaced with the measured numbers plus a <5 ms budget that T6 must hit before flipping.
+4. "Nothing here trusts a caller-supplied claim about capacity" — FALSE for the environment. The lib
+   is sourced into the dispatcher's shell, so `ADM_ABSURD_SESSION_CAP=999999` admits past the
+   backstop, `ADM_ESTATE_SNAPSHOT=/dev/null` erases occupancy, and **`ADM_STATE_DIR=<elsewhere>`
+   bypasses the HALT kill switch entirely**. `protected=1` is likewise caller-declared and
+   unverified, so any process can exclude itself from the pathology bucket. Accurate claim: no
+   caller ARGUMENT decides. Scenario 10b now PINS each bypass so T6 cannot flip believing they are closed.
+5. Coverage claimed "session-resumer resume and fresh-spawn flavors" with no carve-out — INCOMPLETE.
+   The resumer returns early on `storm-cap-queued` BEFORE the splice, so storm-deferred resumes
+   emitted nothing — silence precisely during the storms this slice exists to characterize. A second
+   splice now records them as their own class (`reason_hint=stormcapqueued`).
+6. `kind` label was `"0"` on 100% of real lines (`${bg:-fg}` where bg is 0/1). Now `fg`/`bg`.
+
+**Other defects fixed in the same round:** `adm_ledger_rotate` documented a janitor caller that does
+not exist; the sourced lib dispatched on `$1`, so `set -- --self-test; source` ran the whole suite
+(including its `rm -rf`) inside the host shell — now gated on `BASH_SOURCE==$0`; the
+HARNESS_SELFTEST guard ignored the harness-wide `HARNESS_SELFTEST_DIR` convention; ledger retention
+was not derived from the 7-day requirement (5 MiB held 0.69 days at F1's cited peak — now 32 MiB,
+2 generations, with a rotation marker line); the rate window was globbed twice per admit so the
+verdict and the recorded `rate_1m` could disagree.
+
+**Data disposition:** all **14** pre-fix production lines carried `kind:"0"` and `live_sessions:-1`.
+Archived to `~/.claude/state/governor/discarded/prefix-20260729T032844Z.jsonl` (inspected, not
+deleted) and the live ledger emptied. **The >=7-day clock starts from the fixed build, not from
+f6562b2.** Re-check date moves accordingly.
+
+**PROGRAM RULE 3 — NOW SATISFIED, and my earlier disposition was wrong.** I claimed nothing could be
+retired because the hook/store candidates were live enforcement. task-verifier pointed out rule 3
+reads "a hook, store, **or claim**" — and this slice generated two retirable false claims (items 3
+and 4 above). Retiring a claim costs nothing and needs no replacement. I examined only the column
+that was unavailable and declared the rule unsatisfiable. The two claim retirements are this
+slice's rule-3 retirement; the storm-cap hook retirement remains owed at T6.
+
+**Still true and independently re-derived by task-verifier:** the observe-mode invariant holds under
+19 hostile inputs including command-injection attempts; all callsites are live (no dead wiring);
+F9/F10/edge-3/edge-4/edge-5 reproduce; no regressions on either spliced host (resumer 51/31 and emit
+82/1, identical before and after).
+
+**Status: T3 remains UNVERIFIED.** These fixes have not themselves been re-reviewed. Both agents are
+being re-dispatched against the amended build.

@@ -1626,6 +1626,19 @@ perform_resume() {
   # written (this is not a failure, just a deferral).
   if ! storm_cap_has_room; then
     emit_action "$sid" "storm-cap-queued" "resume queued (storm cap)${shadow_tag}; ${reason}"
+    # ---- ADMISSION OBSERVATION SPLICE, deferral arm (accountable-estate T3) --
+    # task-verifier D5 (2026-07-28): this early return sits BEFORE the main
+    # splice below, so storm-deferred resumes emitted NOTHING into the
+    # would-block ledger — exactly during the storms T3 exists to characterize,
+    # while the coverage audit claimed the resumer was covered. A deferral is
+    # real backpressure evidence and the most interesting signal this dispatcher
+    # produces; recording it as its own class (reason_hint=storm-cap-queued)
+    # keeps "deferred" distinguishable from "never happened".
+    {
+      source "${SCRIPT_DIR}/../hooks/lib/admission-lib.sh" 2>/dev/null \
+        && declare -F adm_admit >/dev/null 2>&1 \
+        && adm_admit resumer reason_hint=stormcapqueued session="$(printf '%s' "${sid:-unknown}")" >/dev/null 2>&1
+    } || true
     return 0
   fi
   # Committed to taking an action this pass — record it against the

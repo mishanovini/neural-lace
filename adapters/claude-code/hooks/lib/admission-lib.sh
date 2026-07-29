@@ -46,6 +46,13 @@
 # emitting nothing into the ledger" — so this list is the audit, kept current):
 #   COVERED : Task/Agent/Workflow tool dispatch; session-resumer resume and
 #             fresh-spawn flavors; spawn-worktree builder dispatch.
+#   CARVE-OUT (task-verifier D5, 2026-07-28): session-resumer.sh returns early
+#             on `storm-cap-queued` (:1626-1629) BEFORE reaching the splice, so
+#             a resume DEFERRED by the rolling-hour storm cap emitted nothing —
+#             precisely during the storms this slice exists to characterize.
+#             FIXED by a second splice at that early-return recording
+#             source=resumer with reason_hint=storm-cap-queued, so deferrals are
+#             visible as their own class rather than as silence.
 #   NOT YET : Decision-011 cloud/scheduled sessions (no hooks, and they do not
 #             source this lib — they run on a different machine image); a human
 #             typing `claude` directly; MCP-side agent spawns. These emit
@@ -60,21 +67,47 @@
 # `adm_admit` returning 0 unconditionally in observe mode, and by every helper
 # defaulting to the permissive answer when its input is missing.
 #
-# SPAWN-FREE HOT PATH (design 6b edge 6: "dispatch-time access must be
-# spawn-free bash builtins or the fix becomes its own overhead"). The admit path
-# uses builtins only: `read`, glob expansion, `[[`, printf, and $EPOCHSECONDS.
-# It forks at most ONCE, and only on bash < 5.0, for a `date +%s` fallback.
-# It NEVER calls hb_classify (measured expensive — see backlog
-# ESTATE-T1-HB-CLASSIFY-PERF-01, 12m38s for a full janitor pass); slot occupancy
-# is read from the janitor's already-computed snapshot instead. That is the
-# governor design's rule: "the gate reads the cached pressure snapshot ... the
-# gate never measures anything itself — one file read, ~0 ms".
+# HOT-PATH COST — MEASURED, NOT CLAIMED (design 6b edge 6).
 #
-# DERIVED, NEVER DECLARED (review F4 / THE ONE THING). Nothing here trusts a
-# caller-supplied claim about capacity. Occupancy comes from the janitor
-# snapshot's own hb_classify output; rate comes from stamp files this lib wrote;
-# pressure comes from the tick's file. The caller supplies only labels for
-# attribution (who dispatched, which repo) — never the numbers that decide.
+# RETIRED CLAIM (2026-07-28, this is the slice's program-rule-3 retirement):
+# this header previously asserted "uses builtins only ... forks at most ONCE ...
+# one file read, ~0 ms". Both reviewers refuted it by measurement:
+#   harness-reviewer: 19.3 ms/dispatch, 30+ command substitutions reachable
+#   task-verifier   : 20.1 ms/call, 2 external execs (date, wc), ~45 subshell
+#                     forks; --on-builder-dispatch 208.0 -> 234.8 ms (+13%)
+# Edge 6 says "dispatch-time access must be spawn-free bash builtins or the fix
+# becomes its own overhead." THIS LIB DOES NOT MEET THAT BAR TODAY. The honest
+# statement is: ~20 ms and ~45 forks per dispatch, +13% on the emit-feed path.
+# That is tolerable for an observe-only slice and NOT tolerable at T6, when this
+# moves onto the enforcing path. Retirement condition for the deviation: T6 must
+# either collapse the $(...)-per-helper style into direct assignment (the forks
+# are all command substitution, not real work) or re-measure and re-justify.
+# Budget to hold it to: < 5 ms/dispatch before the enforcement flip.
+#
+# What IS true: this never calls hb_classify (measured expensive — backlog
+# ESTATE-T1-HB-CLASSIFY-PERF-01, 12m38s for a full janitor pass); occupancy is
+# read from the janitor's already-computed snapshot instead.
+#
+# DERIVED, NEVER DECLARED — TRUE FOR ARGUMENTS, FALSE FOR THE ENVIRONMENT.
+#
+# RETIRED CLAIM (2026-07-28, same retirement): this header previously said
+# "Nothing here trusts a caller-supplied claim about capacity." task-verifier
+# falsified it in one command each, because the lib is SOURCED INTO THE
+# DISPATCHER'S OWN SHELL, making that shell's entire environment a declaration
+# channel:
+#   ADM_ABSURD_SESSION_CAP=999999  -> admit where derived state says would-block
+#   ADM_ESTATE_SNAPSHOT=/dev/null  -> admit (occupancy erased)
+#   ADM_STATE_DIR=<elsewhere>      -> BYPASSES THE HALT KILL SWITCH ENTIRELY
+#   NL_PROTECTED_ORCHESTRATOR=1    -> caller-declared, unverified; any process
+#                                     can exclude its own traffic from the
+#                                     "pathology" bucket in the calibration
+#                                     this slice exists to produce
+# The accurate claim: no caller ARGUMENT decides — the key enum drops
+# live_sessions=/verdict=/rate_1m= and the snapshot wins (self-test Scenario 10).
+# The environment channels above are NAMED T6 BYPASSES. They are harmless while
+# nothing blocks; before the enforcement flip T6 must either read this state
+# from a fixed path that ignores the environment, or accept that any dispatcher
+# can opt out of admission control by exporting one variable.
 #
 # ============================================================================
 # API
@@ -91,7 +124,11 @@
 #   adm_halt_active             -> rc 0 if the HALT kill switch is present
 #   adm_drain_active            -> rc 0 if the drain flag is present
 #   adm_ledger_path             -> absolute path of this machine's ledger file
-#   adm_ledger_rotate           -> size-bounded rotation (called by the janitor)
+#   adm_ledger_rotate           -> size-bounded rotation (called on every
+#                                  adm_admit; NO other caller — the previous
+#                                  "(called by the janitor)" annotation was
+#                                  hallucinated infrastructure, 2026-07-28)
+#   _adm_mtime <file>           -> portable mtime (GNU stat -c / BSD stat -f)
 #
 # STATE (all overridable for tests; hostname-scoped per review F10 so there is
 # exactly ONE writer per file and cross-machine merge is append-only):
@@ -156,10 +193,27 @@
 adm_state_dir() {
   if [[ -n "${ADM_STATE_DIR:-}" ]]; then printf '%s' "$ADM_STATE_DIR"; return 0; fi
   if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
-    printf '%s' "${TMPDIR:-/tmp}/adm-selftest-$$"
+    # Honor the harness-wide HARNESS_SELFTEST_DIR convention (doctrine-jit.sh,
+    # context-watermark.sh, pre-compact-continuity.sh all pair the two). The
+    # 2026-07-28 review flagged ignoring it as a convention divergence.
+    local base="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}}"
+    # Leave an OBSERVABLE MARKER when we divert. A silent diversion means a
+    # leaked HARNESS_SELFTEST in a real session would send production dispatches
+    # to a throwaway dir with no trace — undercounting the calibration, which
+    # biases T6 thresholds LOW, the F1 failure direction.
+    printf '%s' "${base%/}/adm-selftest-$$"
     return 0
   fi
   printf '%s' "$HOME/.claude/state/governor"
+}
+
+# Portable mtime — GNU coreutils `stat -c` vs BSD `stat -f`. This estate spans
+# Windows/MSYS (GNU) and macOS (BSD); assuming either one breaks the other.
+_adm_mtime() {
+  local f="$1" m=""
+  m="$(stat -c %Y "$f" 2>/dev/null)" || m=""
+  [[ -n "$m" ]] || m="$(stat -f %m "$f" 2>/dev/null)" || m=""
+  printf '%s' "${m:-0}"
 }
 adm_ledger_dir() { printf '%s' "$(adm_state_dir)/ledger"; }
 adm_rate_dir()   { printf '%s' "$(adm_state_dir)/rate"; }
@@ -238,18 +292,38 @@ adm_drain_active() { [[ -e "$(adm_state_dir)/DRAIN" ]]; }
 # builtin over a tiny flat JSON rather than jq: jq is a fork per dispatch, and
 # edge 6 forbids that on the hot path.
 
+# _adm_json_scalar <file> <key> — extract one scalar value from flat JSON.
+#
+# BOUNDED AT THE VALUE TERMINATOR, not at end-of-line. The 2026-07-28
+# harness-review found the original line-oriented version returned 3379 for a
+# true value of 3: estate-janitor.sh:692 writes the ENTIRE snapshot as a single
+# line, so stripping non-digits "to end of line" concatenated every later number
+# in the document. The self-test fixtures were all one-key-per-line, which masked
+# the defect completely — hence the standing rule in this file's tests: fixtures
+# must be the real producer's byte-for-byte output, never hand-written.
+#
+# Builtin-only: `$(<file)` is a bash read with no fork.
+_adm_json_scalar() {
+  local f="$1" key="$2" data rest val
+  [[ -r "$f" ]] || return 1
+  data="$(<"$f")" 2>/dev/null || return 1
+  case "$data" in *"\"$key\""*) ;; *) return 1 ;; esac
+  rest="${data#*\"$key\"}"
+  rest="${rest#*:}"
+  rest="${rest#"${rest%%[![:space:]]*}"}"   # ltrim
+  val="${rest%%,*}"                          # bound at ,
+  val="${val%%\}*}"                          # bound at }
+  val="${val%%]*}"                           # bound at ]
+  val="${val%%$'\n'*}"                       # bound at newline
+  val="${val//\"/}"                          # unquote
+  val="${val%"${val##*[![:space:]]}"}"       # rtrim
+  printf '%s' "$val"
+}
+
 adm_pressure_color() {
   local f="${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}"
   [[ -r "$f" ]] || { printf 'unknown'; return 0; }
-  local line color=""
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    case "$line" in
-      *'"color"'*)
-        color="${line#*\"color\"}"; color="${color#*:}"
-        color="${color//[^A-Za-z]/}"
-        break ;;
-    esac
-  done < "$f"
+  local color; color="$(_adm_json_scalar "$f" color)" || color=""
   case "$color" in
     green|yellow|red|black) printf '%s' "$color" ;;
     *) printf 'unknown' ;;
@@ -265,20 +339,28 @@ adm_pressure_color() {
 # header); we read the count the janitor already computed with it. If the
 # snapshot is missing or stale we return -1 = unknown, which admits.
 
+# Returns the count of LIVE sessions, or -1 for unknown (which admits).
+#
+# 2026-07-28 review: the original read a "live_sessions" key that
+# estate-janitor.sh:692 NEVER WRITES — occupancy was permanently dead even with
+# a present snapshot, while the manifest claimed the window was
+# occupancy-calibrated. We now count the field the janitor actually emits:
+# each session row carries "classify":"<live|stale|throttled|crashed|missing>"
+# (estate-janitor.sh:436), produced by session-heartbeat-lib.sh's hb_classify —
+# so this IS the shared oracle's verdict (F8: slot liveness derives from
+# heartbeats), just read from the janitor's cached pass instead of recomputed.
+#
+# Counting is builtin-only: strip every occurrence and divide the length delta.
 adm_live_sessions() {
   local f="${ADM_ESTATE_SNAPSHOT:-$HOME/.claude/state/estate/snapshot.json}"
   [[ -r "$f" ]] || { printf '%s' -1; return 0; }
-  local line n=""
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    case "$line" in
-      *'"live_sessions"'*)
-        n="${line#*\"live_sessions\"}"; n="${n#*:}"
-        n="${n//[^0-9]/}"
-        break ;;
-    esac
-  done < "$f"
-  [[ -n "$n" ]] || n=-1
-  printf '%s' "$n"
+  local data; data="$(<"$f")" 2>/dev/null || { printf '%s' -1; return 0; }
+  case "$data" in *'"sessions"'*) ;; *) printf '%s' -1; return 0 ;; esac
+  local needle='"classify":"live"'
+  local stripped="${data//$needle/}"
+  local delta=$(( ${#data} - ${#stripped} ))
+  (( delta >= 0 )) || { printf '%s' -1; return 0; }
+  printf '%s' $(( delta / ${#needle} ))
 }
 
 # ---------------------------------------------------------------------------
@@ -353,7 +435,10 @@ _adm_decide() {
     printf 'would-block:session-backstop'; return 0
   fi
 
-  local rate; rate="$(adm_rate_in_window)"
+  # Reuse the caller's single measurement when it supplied one (adm_admit does),
+  # so the verdict and the recorded rate_1m can never disagree.
+  local rate="${_ADM_RATE_PRECOMPUTED:-}"
+  [[ -n "$rate" ]] || rate="$(adm_rate_in_window)"
   if (( rate >= ${ADM_ABSURD_RATE_PER_MIN:-120} )); then
     printf 'would-block:rate-backstop'; return 0
   fi
@@ -371,16 +456,31 @@ _adm_decide() {
 _ADM_LAST_VERDICT=""
 adm_verdict() { printf '%s' "$_ADM_LAST_VERDICT"; }
 
+# RETENTION ARITHMETIC (2026-07-28 review: retention was not derived from the
+# 7-day requirement). Measured mean line = 252 B. The slice's stated need is a
+# >=7-day window. F1's cited sustained peak is 21 dispatches/min:
+#   21/min * 1440 min * 7 d * 252 B = 53.4 MB  -> so ONE generation must hold
+#   >= ~27 MB for 2 generations to cover the window at peak.
+# The old 5 MiB default held 0.69 days at that rate and kept only ONE prior
+# generation, so a peak week self-destructed inside 1.4 days. Now: 32 MiB per
+# generation, 2 generations retained (.1 and .2), and a rotation marker line so
+# a reader can tell rotation happened rather than silently reading a truncated
+# window.
 adm_ledger_rotate() {
   local f; f="$(adm_ledger_path)"
   [[ -f "$f" ]] || return 0
-  local max="${ADM_LEDGER_MAX_BYTES:-5242880}"
+  local max="${ADM_LEDGER_MAX_BYTES:-33554432}"
   local size=0
   size="$(wc -c < "$f" 2>/dev/null)" || size=0
   size="${size//[^0-9]/}"
   [[ -n "$size" ]] || size=0
   if (( size > max )); then
+    mv -f "$f.1" "$f.2" 2>/dev/null   # keep 2 generations, not 1
     mv -f "$f" "$f.1" 2>/dev/null || return 0
+    # Rotation marker: without this a reader cannot distinguish "the window
+    # starts here" from "the window was truncated here".
+    printf '{"wall":"%s","host":"%s","event":"ledger-rotated","note":"previous generation moved to .1; older to .2"}\n' \
+      "$(_adm_iso)" "$(_adm_host)" >> "$f" 2>/dev/null || true
   fi
   return 0
 }
@@ -402,7 +502,11 @@ adm_admit() {
 
   _adm_rate_record
 
-  local verdict; verdict="$(_adm_decide)"
+  # Compute the rate ONCE. It used to be globbed (and reaped) twice per admit —
+  # once inside _adm_decide, once for the ledger field — so the value that drove
+  # the verdict could differ from the value recorded beside it.
+  local rate; rate="$(adm_rate_in_window)"
+  local verdict; verdict="$(_ADM_RATE_PRECOMPUTED="$rate" _adm_decide)"
   _ADM_LAST_VERDICT="$verdict"
 
   # --- assemble the line (labels are enum-keyed and scrubbed) ---
@@ -416,10 +520,10 @@ adm_admit() {
     labels="$labels,\"$k\":\"$v\""
   done
 
-  local color live rate mono mono_src pressure_src
+  local color live mono mono_src pressure_src
   color="$(adm_pressure_color)"
   live="$(adm_live_sessions)"
-  rate="$(adm_rate_in_window)"
+  # $rate is already computed above and was the value the verdict used.
   read -r mono mono_src <<< "$(_adm_mono)"
   if [[ -r "${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}" ]]; then
     pressure_src="tick"
@@ -545,19 +649,53 @@ _adm_self_test() {
     *) pass "path separators stripped from label values" ;;
   esac
 
-  echo "Scenario 9: absurd-level backstops (design 6b: NOT count caps for normal load)"
-  printf '{"live_sessions": 3}\n' > "$ADM_ESTATE_SNAPSHOT"
+  echo "Scenario 9: absurd-level backstops, against PRODUCER-SHAPED snapshots"
+  # 2026-07-28: these fixtures used to be hand-written one-key-per-line JSON
+  # ({"live_sessions": 3}), which masked TWO Critical defects at once — the key
+  # did not exist in the producer at all, and the parser broke on the producer's
+  # real single-line document. Fixtures below are now shaped like
+  # estate-janitor.sh:692's actual printf: ONE line, many keys, sessions[] rows
+  # carrying "classify" exactly as estate-janitor.sh:436 emits them.
+  _mk_snapshot() { # $1 = number of live sessions; writes producer-shaped JSON
+    local n="$1" rows="" i
+    for (( i=0; i<n; i++ )); do
+      [[ -n "$rows" ]] && rows="$rows,"
+      rows="$rows{\"session_id\":\"s$i\",\"classify\":\"live\",\"cwd\":\"/x\",\"branch\":\"master\",\"pid\":$((1000+i))}"
+    done
+    # include a non-live row and trailing numeric keys — the end-of-line-strip
+    # bug concatenated these into the occupancy value (3 -> 3379)
+    [[ -n "$rows" ]] && rows="$rows,"
+    rows="$rows{\"session_id\":\"sdead\",\"classify\":\"crashed\",\"cwd\":\"/x\",\"branch\":\"main\",\"pid\":37}"
+    printf '{"schema":1,"generated_at":"2026-07-28T00:00:00Z","machine":"m","sessions":[%s],"sessions_degraded":false,"process_counts":{"bash_count":37,"claude_count":9,"degraded":false},"worktrees":94,"orphaned_worktrees":92,"orphaned_branches":142}\n' "$rows" > "$ADM_ESTATE_SNAPSHOT"
+  }
+  _mk_snapshot 3
+  local occ; occ="$(adm_live_sessions)"
+  [[ "$occ" == "3" ]] && pass "occupancy parses producer-shaped single-line JSON as 3 (was 3379 pre-fix)" \
+    || fail "occupancy misparse: expected 3, got '$occ' — the end-of-line-strip defect is back"
   v="$(adm_admit emit-feed)"
   [[ "$v" == "admit" ]] && pass "3 live sessions admits (legitimate load is 15-21/min per F1)" || fail "got '$v'"
-  printf '{"live_sessions": 77}\n' > "$ADM_ESTATE_SNAPSHOT"
+  _mk_snapshot 77
+  occ="$(adm_live_sessions)"
+  [[ "$occ" == "77" ]] && pass "occupancy counts 77 live rows, ignoring the crashed row" || fail "expected 77, got '$occ'"
   v="$(adm_admit emit-feed)"
   [[ "$v" == "would-block:session-backstop" ]] && pass "77 sessions trips the ~50 absurd backstop" || fail "got '$v'"
   rm -f "$ADM_ESTATE_SNAPSHOT"
   v="$(adm_admit emit-feed)"
   [[ "$v" == "admit" ]] && pass "absent snapshot -> unknown occupancy -> admit (fail-open)" || fail "got '$v'"
 
-  echo "Scenario 10: derived-not-declared (F4) — a caller cannot assert its way in or out"
-  printf '{"live_sessions": 77}\n' > "$ADM_ESTATE_SNAPSHOT"
+  echo "Scenario 9b: pressure parses a MULTI-KEY single-line document (the same defect class)"
+  printf '{"schema":1,"color":"red","cpu":0.9,"src":"tick","bash":61}\n' > "$ADM_PRESSURE_FILE"
+  local pc; pc="$(adm_pressure_color)"
+  [[ "$pc" == "red" ]] && pass "multi-key single-line pressure parses as red (was 'unknown' pre-fix)" \
+    || fail "pressure misparse: expected red, got '$pc'"
+  printf '{"color":"green","note":"all clear, black is not the colour here"}\n' > "$ADM_PRESSURE_FILE"
+  pc="$(adm_pressure_color)"
+  [[ "$pc" == "green" ]] && pass "value bounded at the terminator, not confused by later text" \
+    || fail "expected green, got '$pc'"
+  rm -f "$ADM_PRESSURE_FILE"
+
+  echo "Scenario 10: derived-not-declared (F4) — no caller ARGUMENT decides"
+  _mk_snapshot 77
   v="$(adm_admit emit-feed live_sessions=1 verdict=admit rate_1m=0)"
   [[ "$v" == "would-block:session-backstop" ]] && pass "caller-declared live_sessions/verdict ignored; snapshot wins" || fail "caller overrode derived state: '$v'"
   last="$(tail -1 "$led")"
@@ -565,6 +703,31 @@ _adm_self_test() {
     *'"live_sessions":77'*) pass "ledger records the DERIVED 77, not the declared 1" ;;
     *) fail "derived occupancy not recorded: $last" ;;
   esac
+  rm -f "$ADM_ESTATE_SNAPSHOT"
+
+  echo "Scenario 10b: the ENVIRONMENT channel is a KNOWN T6 BYPASS — assert it, don't pretend"
+  # task-verifier D5/D3 (2026-07-28) falsified the absolute "nothing here trusts
+  # a caller-supplied claim" header. The lib is SOURCED into the dispatcher's
+  # shell, so its environment decides. These assertions PIN the current honest
+  # behavior so T6 cannot flip enforcement while believing the bypass is closed.
+  _mk_snapshot 77
+  local bypass; bypass="$(ADM_ABSURD_SESSION_CAP=999999 adm_admit emit-feed)"
+  if [[ "$bypass" == "admit" ]]; then
+    pass "KNOWN BYPASS pinned: ADM_ABSURD_SESSION_CAP from the environment overrides derived occupancy (must be closed at T6)"
+  else
+    fail "behavior changed: env cap no longer bypasses ('$bypass') — update the header's named-bypass list and this test"
+  fi
+  rm -f "$ADM_ESTATE_SNAPSHOT"   # isolate HALT as the only signal in play
+  : > "$ADM_STATE_DIR/HALT"
+  local halt_seen halt_bypassed
+  halt_seen="$(adm_admit emit-feed)"
+  halt_bypassed="$(ADM_STATE_DIR="$T/elsewhere" adm_admit emit-feed)"
+  if [[ "$halt_seen" == "would-block:halt" && "$halt_bypassed" != "would-block:halt" ]]; then
+    pass "KNOWN BYPASS pinned: ADM_STATE_DIR redirection hides the HALT kill switch (must be closed at T6)"
+  else
+    fail "HALT bypass behavior changed (seen='$halt_seen' redirected='$halt_bypassed') — re-derive the T6 bypass list"
+  fi
+  rm -f "$ADM_STATE_DIR/HALT"
   rm -f "$ADM_ESTATE_SNAPSHOT"
 
   echo "Scenario 11: calibration-pollution tag (edge 3)"
@@ -621,12 +784,31 @@ _adm_self_test() {
     || fail "OBSERVE-MODE VIOLATION: rc=$worst_rc — this lib must never block in T3"
   rm -f "$ADM_STATE_DIR/HALT" "$ADM_STATE_DIR/DRAIN" "$ADM_ESTATE_SNAPSHOT"
 
-  echo "Scenario 16: sandbox integrity — nothing written outside the temp dir"
-  local real="$HOME/.claude/state/governor"
-  if [[ -e "$real" ]]; then
-    fail "real governor state dir exists at $real — self-test may have escaped its sandbox"
+  echo "Scenario 16: sandbox integrity — DELTA on the real ledger, not its absence"
+  # 2026-07-28: this scenario used to assert $HOME/.claude/state/governor does
+  # NOT EXIST. That conflated "the dir exists" with "my self-test created it" —
+  # so the moment the production splices worked, the lib's own regression test
+  # went permanently red (37/1) on every machine it had ever run on, and the
+  # "38/0" claimed in the commit message became reproducible only where the
+  # deliverable does not exist. Both reviewers flagged it Critical.
+  # The correct assertion is a BEFORE/AFTER DELTA on the real artifact.
+  local real_led="$HOME/.claude/state/governor/ledger/$(_adm_host).jsonl"
+  local before_n=0 before_m=0
+  if [[ -f "$real_led" ]]; then
+    before_n="$(wc -l < "$real_led" 2>/dev/null | tr -d ' ')"
+    before_m="$(_adm_mtime "$real_led")"
+  fi
+  # drive a full admit cycle with the sandbox active
+  adm_admit selftest >/dev/null 2>&1
+  local after_n=0 after_m=0
+  if [[ -f "$real_led" ]]; then
+    after_n="$(wc -l < "$real_led" 2>/dev/null | tr -d ' ')"
+    after_m="$(_adm_mtime "$real_led")"
+  fi
+  if [[ "$before_n" == "$after_n" && "$before_m" == "$after_m" ]]; then
+    pass "real ledger unchanged by this self-test (lines $before_n->$after_n, mtime identical)"
   else
-    pass "no real ~/.claude/state/governor created by this self-test"
+    fail "SANDBOX ESCAPE: real ledger changed (lines $before_n->$after_n, mtime $before_m->$after_m)"
   fi
 
   echo "Scenario 17: HOST self-test pollution guard (the defect Scenario 16 caught)"
@@ -659,6 +841,15 @@ _adm_self_test() {
   return 1
 }
 
-case "${1:-}" in
-  --self-test) _adm_self_test ;;
-esac
+# GATED ON BEING EXECUTED, NOT SOURCED (2026-07-28 harness-review, Major).
+# A sourced lib that dispatches on "$1" inherits the CALLER's positionals:
+# `set -- --self-test; source admission-lib.sh` ran the entire self-test inside
+# the host shell — including its `rm -rf "$T"` and its export of ADM_STATE_DIR.
+# Not triggerable at any current callsite (all three splices sit where $1 is
+# either unset or a session id), but this file is spliced into dispatch paths
+# and the next splice author should not have to know that.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  case "${1:-}" in
+    --self-test) _adm_self_test ;;
+  esac
+fi
