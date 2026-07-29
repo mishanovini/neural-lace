@@ -136,4 +136,5 @@ doctor check so it cannot silently rot.
 - NOT changed by M4, deliberately: `adapters/claude-code/install.sh` and
 - 2026-07-29: `docs/reviews/2026-07-14-mac-setup-incident.md` — the first-install record for this Mac; documents the symlink-based install whose source==target collision destroyed hooks/lib/ today
 - 2026-07-29: `docs/operator-todo.md` — needs-you mirror entries accumulated this session
-
+- 2026-07-29: `adapters/claude-code/install.sh` — SELF-SYNC-01 guard, the fix for the collision recorded in the incident file above. Detection only; no redesign. Path resolution is cd + pwd -P because stock macOS has no realpath and no readlink -f, so this is portability work in the same class as M2/M3/M4.
+- 2026-07-29: `adapters/claude-code/tests/install-self-sync-guard-test.sh` — NEW. Twelve scenarios pinning SELF-SYNC-01: six same-path topologies that must skip, five different-path topologies that must behave exactly as before, one path-resolution unit check. Verified on bash 3.2.57 and 5.3.15.
