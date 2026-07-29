@@ -125,7 +125,7 @@ re-launch.
 | # | Concern | Owner | State |
 |---|---|---|---|
 | Q1 | verification-dispatch has no enforcement | plan `verification-dispatch-directive` V1-V6 | **V1-V5 verified+flipped (cd1aa93); carrier live-wiring waits on the sweep call** |
-| Q2 | surfaced problems can be silently dropped | new build item (3-part design above) | **not started** |
-| Q3 | multi-machine cockpit has no data on this Mac | coord-sync wiring | **not scheduled** |
-| Q4 | harness deletes work (2 carriers) | `4e29dc6` landed; auto-install guard | **1 of 2 fixed** |
-| Q5 | 110 in-surface files unreviewed | review sweep | **relaunch pending** |
+| Q2 | surfaced problems can be silently dropped | problems-persist mechanism | **BUILT+LANDED** ecbc6dd — inline IDs + Stop-WARN (83/0) + operator auto-file (32/0); plan closed |
+| Q3 | multi-machine cockpit has no data on this Mac | coord-sync LaunchAgent | **WIRED** a8ce622 — 60s cadence live (cycles.log ticking); 2 operator commands remain: coord-repo-url.txt here + install-coord-sync-task.ps1 on Windows |
+| Q4 | harness deletes work (2 carriers) | both carriers guarded | **2 of 2 FIXED** — 4e29dc6 + b8dd674, proven end-to-end (54 updated -> 0 updated, 326 self-sync-skipped) + kill-switch ~/.claude/local/no-auto-install |
+| Q5 | in-surface files unreviewed (now 123+ at HEAD) | review sweep | **PARKED on operator word** — safety classifier requires explicit authorization of self-review; Inbox NY-1785357818-7d3f (SWEEP/DESKTOP/HYBRID) |
