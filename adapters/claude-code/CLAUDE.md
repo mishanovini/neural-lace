@@ -24,6 +24,10 @@ with what blocking semantics) is `manifest.json` — verified by `harness-doctor
   on the last line. Constitution §6.
 - **Never ask for credentials** — read `~/.claude/local/credentials-reference.md` first.
 - **Never name products, never create public repos, never force-push.** Constitution §9.
+- **Verification dispatch is standard process, not a user request.** Verifier and
+  reviewer agents are dispatched unasked when their trigger fires; never cite an
+  app-level "don't call the Agent tool" default as why work is unverified.
+  `doctrine/verification-dispatch.md`.
 
 ## Accounts
 
