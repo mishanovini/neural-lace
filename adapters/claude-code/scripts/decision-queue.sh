@@ -55,6 +55,21 @@ DQ_AUDIT_LOG="$DQ_STATE_DIR/queue.audit.jsonl"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DQ_SCHEMA="$SCRIPT_DIR/../schemas/decision-queue.schema.json"
 
+# state-json-init.sh: shared VALIDITY-guarded JSON state-file initializer
+# (2026-07-29 harness-wide sweep of the needs-you.sh ledger-corruption
+# incident — see that file's header for the full incident + contract). This
+# script's own queue.json init used the exact same existence-only-guard
+# shape needs-you.sh's ledger.json init had; same class of latent bug, same
+# fix.
+DQ_STATE_JSON_INIT="$SCRIPT_DIR/lib/state-json-init.sh"
+if [[ -f "$DQ_STATE_JSON_INIT" ]]; then
+  # shellcheck disable=SC1090
+  source "$DQ_STATE_JSON_INIT"
+else
+  echo "decision-queue.sh: required library missing: $DQ_STATE_JSON_INIT" >&2
+  exit 1
+fi
+
 # Priority-score weights (v1 per ADR-043).
 HIGHLIGHT_WEIGHT_SUBTLE=2
 HIGHLIGHT_WEIGHT_STRONG=5
@@ -88,9 +103,16 @@ gen_uuid() {
   fi
 }
 
+# 2026-07-29: was an EXISTENCE-only guard ([[ -f ]] || echo ... > file) — the
+# exact shape that let needs-you.sh's ledger.json sit corrupt for ~2 days
+# (see state-json-init.sh's header for the full incident). Delegates to the
+# shared validity-guarded initializer: re-inits on ABSENT *or* INVALID
+# content, salvaging any pre-existing bytes to a `.corrupt-<date>.bak` file
+# first (constitution §9) rather than silently discarding them.
 ensure_state_dir() {
   mkdir -p "$DQ_STATE_DIR" 2>/dev/null || die "cannot create $DQ_STATE_DIR"
-  [[ -f "$DQ_QUEUE_FILE" ]] || echo '{"schema_version":1,"items":[]}' > "$DQ_QUEUE_FILE"
+  nl_state_json_ensure "$DQ_QUEUE_FILE" '{"schema_version":1,"items":[]}' \
+    || die "cannot initialize queue (see state-json-init error above): $DQ_QUEUE_FILE"
   touch "$DQ_AUDIT_LOG"
 }
 
@@ -104,8 +126,20 @@ audit() {
 }
 
 # Atomic write: jq → tmpfile → mv.
+#
+# WRITE SAFETY (2026-07-29, same backstop needs-you.sh's _ny_write_ledger
+# gained during the ledger-corruption incident sweep): refuses to ever
+# commit empty/non-JSON content over the real queue.json. `jq -e 'type'`,
+# NOT `jq empty` — `jq empty` treats whitespace-only/absent input as a
+# vacuous success, which would defeat this exact guard against the
+# incident's own corruption shape (a lone-newline file). die() here (unlike
+# needs-you.sh's `return 1`) matches this function's pre-existing contract:
+# every other failure branch in write_queue already calls die().
 write_queue() {
   local new_content="$1"
+  if [[ -z "$new_content" ]] || ! printf '%s' "$new_content" | jq -e 'type' >/dev/null 2>&1; then
+    die "REFUSING to write queue: computed content is empty or not valid JSON — this would have silently wiped $DQ_QUEUE_FILE. Queue left untouched."
+  fi
   local tmp
   tmp=$(mktemp "$DQ_QUEUE_FILE.XXXXXX") || die "mktemp failed"
   printf '%s\n' "$new_content" > "$tmp" || { rm -f "$tmp"; die "write to tmpfile failed"; }
@@ -650,17 +684,105 @@ cmd_selftest() {
     || fail "T16 audit log has only $audit_n entries"
 
   # T17: invalid mode rejected
-  set +e
-  local id_bad
+  #
+  # 2026-07-29 fix: this used to be `set +e; ...; set -e` around the
+  # assignment below. That `set -e` was a bug, not a restore — this script
+  # never sets `-e` anywhere else (only `-uo pipefail` at the top), so it
+  # PERMANENTLY enabled errexit for every scenario after T17. Under `set -e`,
+  # an ordinary non-zero exit NOT inside an if/while/&&/|| condition (e.g.
+  # `x=$(grep -c pattern file)` when grep finds zero matches — an expected
+  # result, not an error) aborts the whole self-test with no FAIL message at
+  # all — exactly the failure mode this fix's own new T21 scenario surfaced
+  # during mutation testing. Simply not touching `-e` at all (it was never
+  # on to begin with) is the correct fix — a plain assignment capturing $?
+  # already does not abort under `-uo pipefail` alone.
+  local id_bad rc
   id_bad=$(cmd_add --question "bad" --project "x" --mode BOGUS 2>/dev/null)
-  local rc=$?
-  set -e
+  rc=$?
   [[ "$rc" != "0" && -z "$id_bad" ]] && ok "T17 invalid mode rejected (exit non-zero)" \
     || fail "T17 invalid mode accepted (rc=$rc id=$id_bad)"
 
   # T18: table format works
   local table_out; table_out=$(cmd_list --state all --format table | wc -l | tr -d ' ')
   [[ "$table_out" -ge "1" ]] && ok "T18 table format produces output" || fail "T18 table format produced $table_out lines"
+
+  # ------------------------------------------------------------------
+  # T19-T21: 2026-07-29 harness-wide sweep of the needs-you.sh ledger-
+  # corruption incident (see needs-you.sh's T32-T35 for the original golden
+  # scenario; this is the same class of fixture applied to this script's
+  # own queue.json init, which had the identical existence-only-guard bug).
+  # ------------------------------------------------------------------
+
+  # T19: golden fixture — a 1-byte "\n" queue.json (the exact incident byte
+  # sequence) recovers on the next state-touching call, with the original
+  # bytes salvaged (constitution §9), not silently discarded.
+  local dq_sandbox2; dq_sandbox2=$(mktemp -d)
+  (
+    export DQ_STATE_DIR="$dq_sandbox2/state"
+    DQ_QUEUE_FILE="$DQ_STATE_DIR/queue.json"
+    DQ_AUDIT_LOG="$DQ_STATE_DIR/queue.audit.jsonl"
+    mkdir -p "$DQ_STATE_DIR"
+    printf '\n' > "$DQ_QUEUE_FILE"
+    ensure_state_dir 2>"$dq_sandbox2/ensure-stderr.log"
+  )
+  local dq_t19_queue="$dq_sandbox2/state/queue.json"
+  if jq -e 'type' "$dq_t19_queue" >/dev/null 2>&1; then
+    ok "T19a corrupt (1-byte newline) queue.json is valid JSON after ensure_state_dir"
+  else
+    fail "T19a queue.json is STILL invalid after ensure_state_dir — corruption recovery did not fire"
+  fi
+  local dq_t19_bak; dq_t19_bak=$(find "$dq_sandbox2/state" -maxdepth 1 -name 'queue.json.corrupt-*.bak' 2>/dev/null | head -1)
+  if [[ -n "$dq_t19_bak" ]]; then
+    local dq_t19_bak_bytes; dq_t19_bak_bytes=$(wc -c < "$dq_t19_bak" 2>/dev/null | tr -d ' ')
+    [[ "$dq_t19_bak_bytes" == "1" ]] && ok "T19b original corrupt byte preserved verbatim at $(basename "$dq_t19_bak")" \
+      || fail "T19b backup exists but wrong size ($dq_t19_bak_bytes bytes, expected 1)"
+  else
+    fail "T19b no queue.json.corrupt-*.bak backup created — corrupt bytes were DISCARDED"
+  fi
+  grep -qi "RECOVERED corrupt state file" "$dq_sandbox2/ensure-stderr.log" 2>/dev/null \
+    && ok "T19c recovery logged loudly to stderr" || fail "T19c no stderr notice found for the corruption recovery"
+  rm -rf "$dq_sandbox2"
+
+  # T20: a healthy pre-existing queue.json is never touched by the recovery
+  # path (no spurious backup on the common/valid case).
+  local dq_sandbox3; dq_sandbox3=$(mktemp -d)
+  (
+    export DQ_STATE_DIR="$dq_sandbox3/state"
+    DQ_QUEUE_FILE="$DQ_STATE_DIR/queue.json"
+    mkdir -p "$DQ_STATE_DIR"
+    printf '{"schema_version":1,"items":[]}\n' > "$DQ_QUEUE_FILE"
+    ensure_state_dir >/dev/null 2>&1
+  )
+  local dq_t20_bak_count; dq_t20_bak_count=$(find "$dq_sandbox3/state" -maxdepth 1 -name 'queue.json.corrupt-*.bak' 2>/dev/null | wc -l | tr -d ' ')
+  [[ "$dq_t20_bak_count" == "0" ]] && ok "T20 a healthy pre-existing queue.json is never touched by the recovery path" \
+    || fail "T20 recovery fired on a VALID queue.json — created $dq_t20_bak_count spurious backup(s)"
+  rm -rf "$dq_sandbox3"
+
+  # T21: write_queue WRITE-SAFETY backstop — refuses empty content, leaves
+  # the real queue.json untouched (defense in depth, independent of why a
+  # caller ended up with bad content).
+  local dq_sandbox4; dq_sandbox4=$(mktemp -d)
+  local dq_t21_rc="unexpected-success"
+  (
+    export DQ_STATE_DIR="$dq_sandbox4/state"
+    DQ_QUEUE_FILE="$DQ_STATE_DIR/queue.json"
+    mkdir -p "$DQ_STATE_DIR"
+    printf '{"schema_version":1,"items":[{"id":"DQ-keepme"}]}\n' > "$DQ_QUEUE_FILE"
+    if (write_queue "" 2>"$dq_sandbox4/t21-stderr.log"); then
+      echo "unexpected-success" > "$dq_sandbox4/t21-rc"
+    else
+      echo "rejected" > "$dq_sandbox4/t21-rc"
+    fi
+  )
+  dq_t21_rc=$(cat "$dq_sandbox4/t21-rc" 2>/dev/null)
+  local dq_t21_kept; dq_t21_kept=$(grep -c "DQ-keepme" "$dq_sandbox4/state/queue.json" 2>/dev/null || true)
+  dq_t21_kept="${dq_t21_kept:-0}"
+  if [[ "$dq_t21_rc" == "rejected" && "$dq_t21_kept" -ge "1" ]]; then
+    ok "T21 write_queue refuses empty content and leaves the real queue.json untouched"
+  else
+    fail "T21 write_queue accepted empty content or clobbered the existing queue (rc=$dq_t21_rc, kept=$dq_t21_kept)"
+  fi
+  rm -rf "$dq_sandbox4"
 
   # Cleanup.
   rm -rf "$sandbox"

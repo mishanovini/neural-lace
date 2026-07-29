@@ -112,12 +112,68 @@ function needsYouStateDir() {
 function needsYouLedgerFile() {
   return path.join(needsYouStateDir(), 'ledger.json');
 }
+
+// ----------------------------------------------------------------------
+// LedgerUnavailableError — thrown by readNeedsYouLedgerItems() for every
+// "the file is present but we cannot trust it" case. A distinct type (not
+// a bare Error) so buildInboxPayload() can tell "ledger genuinely broken"
+// apart from any other unexpected exception without string-sniffing a
+// message.
+// ----------------------------------------------------------------------
+class LedgerUnavailableError extends Error {}
+
+// readNeedsYouLedgerItems() — THREE-STATE read contract (2026-07-29
+// hardening, incident: ~/.claude/state/needs-you/ledger.json sat as a
+// 1-byte "\n" file for ~2 days; GET /api/inbox returned
+// {"ok":false,"error":"...Unexpected end of JSON input"} the whole time
+// while the cockpit rendered a confident "nothing on your list" beside the
+// count badge — the renderer had no explicit signal distinguishing "we
+// checked, there is truly nothing" from "we could not check at all").
+//
+// Return contract:
+//   - Returns `null`                         -> file ABSENT (never created;
+//     needs-you.sh has never run on this machine). Not an error.
+//   - Returns an array (possibly empty)       -> file PRESENT, VALID, and
+//     shaped as expected. An empty array here is a GENUINE, trustworthy
+//     zero — the ledger was actually read and confirmed to have no items.
+//   - THROWS LedgerUnavailableError            -> file PRESENT but
+//     UNTRUSTWORTHY: empty/whitespace-only, truncated, malformed JSON, OR
+//     valid JSON in the wrong shape (not an object, or `.items` missing/
+//     not an array). This must NEVER be silently coerced into an empty
+//     array — a caller cannot tell "confirmed zero" from "have no idea"
+//     that way, which is exactly the incident's blind spot.
+//
+// NOTE on the 0-byte/1-byte-newline shape specifically (the incident's
+// exact fixture): unlike bash's `jq empty` (which treats whitespace-only
+// input as a VACUOUS SUCCESS — the blind spot the sibling bash fix in
+// needs-you.sh/state-json-init.sh had to work around with `jq -e 'type'`),
+// JS's JSON.parse has NO such trap — `JSON.parse('')` and `JSON.parse('\n')`
+// both throw "Unexpected end of JSON input" natively, every engine, always.
+// So the empty/whitespace case is already caught below by the JSON.parse
+// try/catch with no extra check needed; the check that's actually NEW here
+// is the shape validation after a successful parse (a valid-JSON-but-wrong-
+// shape document like `null`/`{}` used to silently coerce to `[]`).
 function readNeedsYouLedgerItems() {
   let raw;
   try { raw = fs.readFileSync(needsYouLedgerFile(), 'utf8'); } catch (_) { return null; } // absent — TRUE-empty, not an error
+
   let parsed;
-  try { parsed = JSON.parse(raw); } catch (e) { throw new Error('ledger.json is not valid JSON: ' + (e && e.message || e)); }
-  return (parsed && Array.isArray(parsed.items)) ? parsed.items : [];
+  try { parsed = JSON.parse(raw); }
+  catch (e) { throw new LedgerUnavailableError('ledger.json is not valid JSON: ' + (e && e.message || e)); }
+
+  // Shape validation: a valid JSON document that ISN'T our expected
+  // {items: [...]} object (e.g. `null`, `{}`, `{"items":"oops"}`) used to
+  // silently fall through to `[]` — indistinguishable from "confirmed
+  // zero". That is the same class of blind spot as the empty-file case:
+  // the ledger is technically parseable but not trustworthy, so it must
+  // raise the SAME unavailable signal, not a quiet empty array.
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new LedgerUnavailableError('ledger.json parsed but is not an object (got ' + (parsed === null ? 'null' : Array.isArray(parsed) ? 'array' : typeof parsed) + ')');
+  }
+  if (!Array.isArray(parsed.items)) {
+    throw new LedgerUnavailableError('ledger.json parsed but .items is missing or not an array (got ' + typeof parsed.items + ')');
+  }
+  return parsed.items;
 }
 
 // auditorNlIssueStatePath — MIRRORS auditor.js's own resolver exactly (same
@@ -286,13 +342,59 @@ function buildQuarantineItem(item, filedIds) {
 
 // ----------------------------------------------------------------------
 // buildInboxPayload() — the CONTEXT CONTRACT split (I4/A8). See file header.
+//
+// THREE-STATE CONTRACT (2026-07-29 hardening — see readNeedsYouLedgerItems'
+// own header for the incident this closes). Every response carries a
+// `status` field the renderer can switch on WITHOUT having to reconstruct
+// the distinction from `ok` + `error` + array-emptiness:
+//
+//   status: 'ok'              — the ledger was read and TRUSTED. answerable/
+//     quarantined are the real truth, including the case where both are
+//     empty (a GENUINE, confirmed zero — "you're caught up", not "unknown").
+//     ok: true, ledger_present: true, error: null.
+//
+//   status: 'not_yet_derived' — ledger.json has never been created (needs-
+//     you.sh has never run on this machine). Distinct from a confirmed
+//     zero: nothing has been DERIVED at all yet, so this should read as
+//     "not set up" rather than "you're caught up". ok: true (this is not a
+//     failure), ledger_present: false, error: null, arrays empty.
+//
+//   status: 'unavailable'     — ledger.json EXISTS but could not be
+//     trusted (empty/whitespace-only, truncated, malformed JSON, or valid-
+//     JSON-wrong-shape — see readNeedsYouLedgerItems). The renderer MUST
+//     NOT show a confident "nothing on your list" here — genuine zero
+//     cannot be asserted. ok: false, ledger_present: true, error: a plain-
+//     language reason, arrays empty (never fabricated).
 // ----------------------------------------------------------------------
 function buildInboxPayload() {
-  const items = readNeedsYouLedgerItems();
+  const generatedAt = new Date().toISOString();
+  let items;
+  try {
+    items = readNeedsYouLedgerItems();
+  } catch (e) {
+    return {
+      ok: false,
+      status: 'unavailable',
+      generated_at: generatedAt,
+      answerable: [],
+      quarantined: [],
+      ledger_present: true,   // the file exists — it's just untrustworthy, never confused with "never created"
+      error: String(e && e.message || e),
+    };
+  }
   if (items === null) {
-    // No ledger file yet — a TRUE-empty state (nothing has ever landed),
-    // never an error (C4: never mistake absence-of-file for a failure).
-    return { ok: true, generated_at: new Date().toISOString(), answerable: [], quarantined: [], ledger_present: false };
+    // No ledger file yet — needs-you.sh has never run on this machine.
+    // Distinct from a CONFIRMED zero (status 'ok' with empty arrays): this
+    // is "nothing has been derived", not "we checked and there is nothing".
+    return {
+      ok: true,
+      status: 'not_yet_derived',
+      generated_at: generatedAt,
+      answerable: [],
+      quarantined: [],
+      ledger_present: false,
+      error: null,
+    };
   }
   const filedIds = readAuditorFiledIds();
   const answerable = [];
@@ -313,7 +415,15 @@ function buildInboxPayload() {
   const byAge = (a, b) => String(a.created_at).localeCompare(String(b.created_at));
   answerable.sort(byAge);
   quarantined.sort(byAge);
-  return { ok: true, generated_at: new Date().toISOString(), answerable: answerable, quarantined: quarantined, ledger_present: true };
+  return {
+    ok: true,
+    status: 'ok',
+    generated_at: generatedAt,
+    answerable: answerable,
+    quarantined: quarantined,
+    ledger_present: true,
+    error: null,
+  };
 }
 
 // ----------------------------------------------------------------------
@@ -349,9 +459,12 @@ function handle(req, res) {
     try {
       sendJson(res, 200, buildInboxPayload());
     } catch (e) {
-      // rc-style honesty: the client renders pane-error + Retry from
-      // ok:false — NEVER the win state on failure (C4).
-      sendJson(res, 200, { ok: false, error: String(e && e.message || e), answerable: [], quarantined: [] });
+      // Last-resort net: buildInboxPayload() itself already catches every
+      // ledger-read failure into a well-formed {status:'unavailable', ...}
+      // payload, so reaching here means something OTHER than the ledger
+      // read blew up (a genuine bug). Same three-state shape regardless,
+      // so the renderer never has to special-case this path.
+      sendJson(res, 200, { ok: false, status: 'unavailable', generated_at: new Date().toISOString(), error: String(e && e.message || e), answerable: [], quarantined: [], ledger_present: true });
     }
     return true;
   }
@@ -393,4 +506,5 @@ module.exports = {
   needsYouLedgerFile,
   auditorNlIssueStatePath,
   readAuditorFiledIds,
+  LedgerUnavailableError,
 };

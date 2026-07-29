@@ -194,6 +194,9 @@ async function main() {
     const r2 = await httpGet(PORT, '/api/inbox');
     ok('S8 corrupt ledger.json degrades to ok:false, never a 500 crash',
       r2.status === 200 && r2.json && r2.json.ok === false && typeof r2.json.error === 'string');
+    ok('S8b corrupt ledger.json reports status:"unavailable" (three-state contract) with ledger_present:true (file DOES exist, just untrusted)',
+      r2.json && r2.json.status === 'unavailable' && r2.json.ledger_present === true,
+      JSON.stringify(r2.json));
 
     // ---- S9: absent ledger.json -- TRUE-empty (C4), never an error ----
     fs.rmSync(path.join(nyStateDir, 'ledger.json'), { force: true });
@@ -201,6 +204,85 @@ async function main() {
     ok('S9 an absent ledger.json is an honest TRUE-empty state (ok:true, ledger_present:false), never an error',
       r3.status === 200 && r3.json && r3.json.ok === true && r3.json.ledger_present === false &&
       r3.json.answerable.length === 0 && r3.json.quarantined.length === 0);
+    ok('S9b absent ledger.json reports status:"not_yet_derived" -- DISTINCT from a confirmed zero (S11), so the renderer can say "not set up" rather than "you\'re caught up"',
+      r3.json && r3.json.status === 'not_yet_derived', JSON.stringify(r3.json));
+
+    // ------------------------------------------------------------------
+    // S11-S14: 2026-07-29 THREE-STATE CONTRACT hardening (incident:
+    // ledger.json sat as a 1-byte "\n" for ~2 days; GET /api/inbox returned
+    // ok:false the whole time but nothing distinguished that from "we
+    // checked and there's nothing" -- see inbox-routes.js's
+    // readNeedsYouLedgerItems/buildInboxPayload header comments for the
+    // full contract these scenarios pin down).
+    // ------------------------------------------------------------------
+
+    // S11: GENUINE ZERO -- a valid, present ledger with zero open
+    // answerable/quarantined items (everything resolved or inflight) must
+    // report status:'ok' -- a CONFIRMED zero, distinct from S9b's
+    // not_yet_derived (nothing was ever derived) and from S12's unavailable
+    // (couldn't tell). This is the exact discrimination the incident's
+    // renderer lacked: "Inbox (0)" must mean something different from
+    // "Inbox (--)" or "Inbox (setup pending)".
+    fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), JSON.stringify({
+      schema_version: 1,
+      items: [
+        { id: 'NY-done', section: 'decision', state: 'resolved', created_at: '2026-07-01T00:00:00Z', lint_warnings: [], text: 'Old resolved thing.' },
+        { id: 'NY-fyi', section: 'inflight', state: 'open', created_at: '2026-07-01T00:00:00Z', lint_warnings: [], text: 'Some status narrative.' },
+      ],
+    }));
+    const r4 = await httpGet(PORT, '/api/inbox');
+    ok('S11 a valid ledger with zero open decision/question items is a CONFIRMED zero: status:"ok", ok:true, ledger_present:true, empty arrays',
+      r4.status === 200 && r4.json && r4.json.ok === true && r4.json.status === 'ok' &&
+      r4.json.ledger_present === true && r4.json.answerable.length === 0 && r4.json.quarantined.length === 0,
+      JSON.stringify(r4.json));
+
+    // S12: THE GOLDEN INCIDENT FIXTURE -- ledger.json is EXACTLY the
+    // observed corruption (a 1-byte file containing a single newline).
+    // Must be classified status:'unavailable' (present-but-untrusted), the
+    // SAME bucket as S8's malformed-JSON case, NEVER as a confirmed zero.
+    fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), '\n');
+    const r5 = await httpGet(PORT, '/api/inbox');
+    ok('S12 the exact incident fixture (1-byte newline ledger.json) is classified status:"unavailable", ok:false -- never silently "0 items"',
+      r5.status === 200 && r5.json && r5.json.ok === false && r5.json.status === 'unavailable' &&
+      r5.json.ledger_present === true && r5.json.answerable.length === 0 && r5.json.quarantined.length === 0 &&
+      typeof r5.json.error === 'string' && /ledger\.json/.test(r5.json.error),
+      JSON.stringify(r5.json));
+
+    // S12b: a genuinely 0-byte file (not even a newline) -- same bucket.
+    fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), '');
+    const r6 = await httpGet(PORT, '/api/inbox');
+    ok('S12b a 0-byte ledger.json is ALSO classified status:"unavailable" (same incident shape, different exact byte count)',
+      r6.status === 200 && r6.json && r6.json.ok === false && r6.json.status === 'unavailable' && r6.json.ledger_present === true,
+      JSON.stringify(r6.json));
+
+    // S13: VALID JSON, WRONG SHAPE -- before this hardening, a top-level
+    // `null`/`{}`/`{"items":"nope"}` silently fell through to `[]`,
+    // indistinguishable from a confirmed zero. Must now ALSO be
+    // 'unavailable': the ledger is technically parseable but not the
+    // trustworthy shape this reader depends on.
+    fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), 'null');
+    const r7 = await httpGet(PORT, '/api/inbox');
+    ok('S13 a valid-JSON-but-wrong-shape ledger (top-level null) is "unavailable", not a silent confirmed zero',
+      r7.json && r7.json.ok === false && r7.json.status === 'unavailable', JSON.stringify(r7.json));
+
+    fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), '{}');
+    const r8 = await httpGet(PORT, '/api/inbox');
+    ok('S13b a valid JSON object missing `.items` entirely is "unavailable", not a silent confirmed zero',
+      r8.json && r8.json.ok === false && r8.json.status === 'unavailable', JSON.stringify(r8.json));
+
+    fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), JSON.stringify({ schema_version: 1, items: 'not-an-array' }));
+    const r9 = await httpGet(PORT, '/api/inbox');
+    ok('S13c a valid JSON object whose `.items` is not an array is "unavailable", not a silent confirmed zero',
+      r9.json && r9.json.ok === false && r9.json.status === 'unavailable', JSON.stringify(r9.json));
+
+    // S14: recovery -- once the ledger is restored to a real, valid shape
+    // (as needs-you.sh's own state-json-init.sh recovery would do), the
+    // route immediately goes back to status:'ok' with no persistent taint.
+    fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), JSON.stringify({ schema_version: 1, items: [] }));
+    const r10 = await httpGet(PORT, '/api/inbox');
+    ok('S14 once the ledger is restored to a valid shape, the route reports status:"ok" again (no persistent taint from the prior corruption)',
+      r10.json && r10.json.ok === true && r10.json.status === 'ok' && r10.json.ledger_present === true,
+      JSON.stringify(r10.json));
 
     // ---- S10: /inbox.js is served by this handler (single mount line) ----
     const asset = await httpGet(PORT, '/inbox.js');
