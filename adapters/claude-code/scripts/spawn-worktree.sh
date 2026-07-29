@@ -113,7 +113,16 @@ while [ $# -gt 0 ]; do
     --quiet) QUIET=1 ;;
     --remove) shift; [ $# -gt 0 ] || die_usage "--remove needs a slug"; REMOVE_SLUG="$1" ;;
     --force) FORCE=1 ;;
-    --self-test) RUN_SELF_TEST=1 ;;
+    # HARNESS_SELFTEST=1 is exported here because this script carries an
+    # adm_admit splice (see the ADMISSION OBSERVATION SPLICE below). Without it,
+    # admission-lib's sandbox guard is INERT for this host and every --self-test
+    # run appends fabricated `source=worktree` rows to the operator's REAL
+    # would-block ledger — the exact artifact T3's outcome metric is defined
+    # over, and indistinguishable from genuine builder load once written.
+    # PROVEN by task-verifier 2026-07-29: 32 -> 34 lines per run without this,
+    # 34 -> 34 with it. workstreams-emit.sh:120 and session-resumer.sh:385
+    # already do this; this host was the one that did not.
+    --self-test) RUN_SELF_TEST=1; export HARNESS_SELFTEST=1 ;;
     -h|--help) sed -n '2,75p' "$0"; exit 0 ;;
     -*) die_usage "unknown argument: $1" ;;
     *) [ -z "$SLUG" ] && SLUG="$1" || die_usage "unexpected argument: $1" ;;

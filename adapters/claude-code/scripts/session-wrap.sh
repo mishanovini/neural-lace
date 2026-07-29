@@ -316,7 +316,22 @@ cmd_refresh() {
     local stamp="<!-- session-wrap.sh: handoff verified $(date -u +%Y-%m-%dT%H:%M:%SZ) -->"
     # If a session-wrap stamp already exists, replace it; else append
     if grep -q '^<!-- session-wrap.sh:' "$scratchpad"; then
-      sed -i "s|^<!-- session-wrap.sh:.*|$stamp|" "$scratchpad"
+      # PORTABLE IN-PLACE EDIT (macos-portability M1, 2026-07-29).
+      # `sed -i "s|...|"` is GNU-only. BSD sed REQUIRES a backup-suffix argument
+      # after -i, so on macOS it consumed the script as the suffix and treated
+      # the PATH as the sed command:
+      #   sed: 1: "/Users/.../SCRATCHPAD.md": invalid command code m
+      # The stamp then never refreshed, so the Stop hook reported
+      # "SCRATCHPAD.md is N min stale" forever and no agent could clear it —
+      # it fired 3+ times in a single session and had to be hand-patched.
+      # NOT fixed with `sed -i ''`: that is the macOS-only form and breaks GNU
+      # sed, inverting the bug onto the Windows machines. tmp+mv works on both.
+      local _sw_tmp="${scratchpad}.tmp.$$"
+      if sed "s|^<!-- session-wrap.sh:.*|$stamp|" "$scratchpad" > "$_sw_tmp" 2>/dev/null; then
+        mv -f "$_sw_tmp" "$scratchpad" 2>/dev/null || rm -f "$_sw_tmp" 2>/dev/null
+      else
+        rm -f "$_sw_tmp" 2>/dev/null
+      fi
     else
       echo "" >> "$scratchpad"
       echo "$stamp" >> "$scratchpad"

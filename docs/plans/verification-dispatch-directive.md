@@ -90,3 +90,6 @@ bullet as extractable rule-body.
 - 2026-07-28: docs/plans/verification-dispatch-directive.md — this plan
 - 2026-07-28: adapters/claude-code/rules/constitution.md — V7: §3 cold-reader bar extended to cover ASKS as well as decisions, and the §2 ask bullet reduced to the genuine delta (harness-reviewer REFORMULATE: two-thirds of the first draft restated §3)
 - 2026-07-28: adapters/claude-code/scripts/needs-you.sh — V8: `_ny_lint_ask_text`, the WARN-ONLY carrier for `--section question` (harness-reviewer: that section was completely unlinted while the decision twin has been linted since 53d3bee)
+- 2026-07-29: adapters/claude-code/hooks/review-record-commit-gate.sh — V6 LANDED (was deferred): the commit-time carrier harness-reviewer called "the single most important thing to fix". Blocking, at operator direction 2026-07-29 ("If it's valuable, then build and deploy it").
+- 2026-07-29: adapters/claude-code/scripts/measure-review-gate-fp.sh — V6's section-10 evidence instrument: replays the gate predicate over real history so the FP rate is measured retroactively instead of via a warn period.
+- 2026-07-29: adapters/claude-code/hooks/harness-claim-lint.sh — V6 adjunct: warn-only lint for the three defect classes that recurred within one session (self-invalidating sandbox tests, unmeasured absolute claims, guards their callers do not arm).

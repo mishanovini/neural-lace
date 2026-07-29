@@ -203,6 +203,19 @@
 # redirects to a throwaway per-process dir instead of real state. An explicit
 # ADM_STATE_DIR always wins, so this lib's own self-test still controls its
 # sandbox precisely.
+#
+# CORRECTION (2026-07-29, task-verifier): the sentence above overstated it, and
+# the overstatement cost real data. The guard KEYS ON HARNESS_SELFTEST=1, so it
+# is only in force for a host that SETS that variable — it is not, as claimed,
+# independent of the callers. spawn-worktree.sh did not set it, so its
+# --self-test appended 2 fabricated `source=worktree` rows to the operator's
+# REAL ledger on every run (32 -> 34 reproduced in isolation) for four review
+# rounds, undetected. The honest statement: the lib provides the MECHANISM and each
+# spliced host must arm it. Scenario 16b checks this BEHAVIORALLY — it runs each
+# host's own --self-test in a throwaway HOME with the guard unset and asserts no
+# ledger appears. An earlier version of that scenario grepped for the variable
+# name and was inert (it matched comments); do not regress it to a text match.
+# A guard is only as good as its weakest caller.
 adm_state_dir() {
   if [[ -n "${ADM_STATE_DIR:-}" ]]; then printf '%s' "$ADM_STATE_DIR"; return 0; fi
   if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
@@ -899,6 +912,40 @@ _adm_self_test() {
     pass "real ledger unchanged by this self-test (lines $before_n->$after_n, mtime identical)"
   else
     fail "SANDBOX ESCAPE: real ledger changed (lines $before_n->$after_n, mtime $before_m->$after_m)"
+  fi
+
+  echo "Scenario 16b: EVERY SPLICED HOST is BEHAVIORALLY sandboxed (not merely mentions the var)"
+  # v1 of this scenario grepped each host for the string HARNESS_SELFTEST=1 and
+  # was INERT: the pattern matched COMMENTS, so a host with the fix reverted but
+  # the explanatory comment intact still passed. My "RED proof" was fake — I had
+  # stashed the whole file, comment included. task-verifier falsified it three
+  # ways, including deleting every real `export` from all three hosts while
+  # leaving comments, which still reported PASS.
+  #
+  # Text presence is not behavior. This now runs each host's OWN --self-test in
+  # a throwaway HOME with HARNESS_SELFTEST and ADM_STATE_DIR explicitly UNSET,
+  # and asserts no ledger appears under that HOME. That is the true oracle: it
+  # fails if and only if the host actually writes to real operator state.
+  local _hosts_root; _hosts_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  local _h _hp _sbhome _leddir _badhosts=""
+  for _h in "hooks/workstreams-emit.sh" "scripts/session-resumer.sh" "scripts/spawn-worktree.sh"; do
+    _hp="$_hosts_root/$_h"
+    [[ -f "$_hp" ]] || continue
+    grep -q 'adm_admit' "$_hp" 2>/dev/null || continue
+    grep -q -- '--self-test' "$_hp" 2>/dev/null || continue
+    _sbhome="$T/hostsb/$(basename "$_h")"
+    mkdir -p "$_sbhome"
+    ( cd "$_hosts_root/.." 2>/dev/null || cd "$_hosts_root"
+      env -u HARNESS_SELFTEST -u ADM_STATE_DIR HOME="$_sbhome" bash "$_hp" --self-test ) >/dev/null 2>&1
+    _leddir="$_sbhome/.claude/state/governor/ledger"
+    if [[ -d "$_leddir" ]] && [[ -n "$(ls -A "$_leddir" 2>/dev/null)" ]]; then
+      _badhosts="$_badhosts $_h"
+    fi
+  done
+  if [[ -z "$_badhosts" ]]; then
+    pass "no spliced host's --self-test wrote a ledger into a clean HOME (behavioral, not textual)"
+  else
+    fail "HOST(S) WRITING TO REAL STATE:$_badhosts — their --self-test creates a governor ledger with the guard unset"
   fi
 
   echo "Scenario 17: HOST self-test pollution guard (the defect Scenario 16 caught)"

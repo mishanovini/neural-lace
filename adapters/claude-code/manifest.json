@@ -2820,6 +2820,65 @@
       "fp_expectation": "None expected -- pure renderer, never a gate. A missing snapshot, invalid JSON, or absent jq each render an honest one-line placeholder (asserted by dedicated self-test scenarios) rather than crashing or fabricating a brief.",
       "retirement_condition": "Retire/replace once a later slice re-points a real UI (design's own 'Workstreams UI is kept, not rebuilt -- re-pointed at the estate ledger') at the same snapshot -- this text renderer remains the zero-dependency fallback surface for a terminal/file-only read.",
       "honesty_rationale": "Pure read + render; the only write is its own optional brief.txt artifact (--write), never a mutation of any source it reads. No enforce mode exists to graduate into."
+    },
+    {
+      "id": "review-record-commit-gate",
+      "kind": "gate",
+      "doctrine_file": "doctrine/review-before-deploy.md",
+      "hooks": [
+        "review-record-commit-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/hooks/",
+          "adapters/claude-code/scripts/",
+          "adapters/claude-code/agents/",
+          "adapters/claude-code/rules/",
+          "adapters/claude-code/manifest.json"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "Commit f6562b2 (2026-07-28): a session wrote hooks/lib/admission-lib.sh -- 664 lines spliced into three live dispatch paths -- committed it and pushed to master with NO harness-reviewer and NO task-verifier. Run afterwards, they returned REJECT and FAIL on a deliverable already on master: a parser returning 3379 for a true value of 3, a self-test whose headline 38/0 was only reproducible where the feature did not work, a 'spawn-free ~0 ms' claim that measured 70.8 ms, and an ADM_STATE_DIR channel that silently bypassed the HALT kill switch. review-before-deploy already REQUIRED a harness-reviewer PASS; both its carriers (install.sh hard-block, session-start-auto-install.sh warn) run at DEPLOY time, so the commit sailed through. This gate is the commit-time carrier harness-reviewer named on 2026-07-28 as 'the single most important thing to fix'. Self-test scenario 1 replays that exact shape and asserts rc=2.",
+      "fp_expectation": "MEASURED, and stated with its POPULATION rather than as a headline percentage. harness-reviewer 2026-07-29 refuted the first version of this field: it claimed a '0% true-false-positive rate', but all four of that script's true-FP classes were structurally incapable of being non-zero -- merge commits produce an empty --diff-filter=ACMR list and exit the loop before classification, the deletion-only counter was dead code that was never incremented, and the window contained no revert commits and no bot authors. Zero over an empty numerator is not evidence. WHAT IS ACTUALLY MEASURED (scripts/measure-review-gate-fp.sh, last 300 commits, 2026-07-29): 77 commits touched in-surface files; 47 would have blocked. The gap is NOT 30 commits that legitimately carried review records -- 86 of the 300 predate docs/reviews/records/ entirely and are counted covered by rrg_is_covered's bootstrap fail-open. The honest figure is therefore that essentially every in-surface-touching commit in the post-bootstrap window would block: ~47 of 214 post-bootstrap commits, about 22% of all commits. That is the real cost of this gate and it is a defensible one for its purpose; stating it plainly is stronger than a 0% that cannot vary. The script now prints its own population-validity warning and the bootstrap split so the number cannot be quoted out of context again. LIVE FALSE-POSITIVE CLASSES the historical replay cannot see (the gate matches command strings in a live session, not past commits) -- each found by harness-reviewer and each now closed and regression-tested: a commit whose staged blob differs from the worktree (was a HOLE, not an FP: the gate hashed the filesystem while git commits the index, so unreviewed staged bytes committed cleanly -- now reads `git rev-parse :path`, scenario 11); a command merely MENTIONING the phrase (`echo run git commit later`, `man git commit`) -- now anchored to command position, scenario 12; a foreign repo containing scripts/*.sh (any repo was gated once it had a records dir) -- now requires adapters/claude-code/manifest.json at the repo root, scenario 13; `git -C <other-repo> commit` inspecting the CWD's index -- now honors -C. `git push` was REMOVED from the trigger entirely rather than left half-right (see honest_status).",
+      "honest_status": "BLOCKING (exit 2) from day one, at the operator's explicit direction 2026-07-29: 'Why are you suggesting warn mode? If it's valuable, then build and deploy it.' harness-reviewer had recommended warn-mode first; the retroactive measurement supplies the section 10 evidence instead, with its population stated (see fp_expectation). Self-test 25/25 on BOTH bash 5.3 and bash 3.2, including a scenario per live false-positive class. REVIEW HISTORY, recorded because the defects were severe: harness-reviewer returned REJECT on the first version with two Criticals. (1) The gate hashed the WORKING TREE while git commits the INDEX -- the reviewer staged unreviewed content, restored the worktree to a covered blob, and the commit sailed through rc=0. The gate was attesting to bytes it never read. Fixed to read the index; scenario 11 is the regression. (2) The fp_expectation was arithmetically vacuous, as described above. Seven Majors were also fixed: substring-as-intent command matching, unscoped repo identity, `ledger_emit` guarded on a symbol the hook never sourced (so no block was ever recorded), the missing NL-FINDING-016 whole-command-discarded banner, an unvalidated one-character waiver reason, and a --self-test flag on the measurement script that did not exist. SCOPE, honestly: this gate matches `git commit` ONLY. `git push` was deliberately removed -- the push arm checked the INDEX, which is the wrong subject: it blocked pushes over unrelated staged work while giving zero protection against pushing already-committed unreviewed changes, which is literally the golden case's final step. A correct push arm must diff @{u}..HEAD against the records; until that is built, matching push would be pure cost. That is an OPEN GAP, not a closed one. ESCAPE HATCH: REVIEW_RECORD_GATE_OVERRIDE='<reason>' requires a substantive reason (>=20 chars, placeholders rejected) and appends to ~/.claude/state/review-record-gate-overrides.log. HONEST RESIDUAL: nothing yet READS that log -- a self-waiver is recorded but not surfaced to the operator in-session. Also uncovered: commits made outside a harnessed session (another machine, CI, a Decision-011 cloud session with no hooks) and merges from the GitHub web UI. Those remain the deploy-time carriers' job.",
+      "retirement_condition": "Retire when review-before-deploy's deploy-time carriers become redundant (a single continuously-reconciling sync path), or when a native review gate ships upstream, or if a re-run of measure-review-gate-fp.sh shows the true-FP rate rising above the operator's tolerance. The measurement script is the retirement instrument -- it is committed alongside the gate precisely so retirement is a measured decision rather than an argument.",
+      "honesty_rationale": "blocking:true is literal and armed in settings.json.template on the PreToolUse Bash matcher. The section 10 bar is met with real evidence rather than a promise: golden scenario is a real commit SHA, fp_expectation is a number produced by a committed script anyone can re-run, and the retirement condition names that same script as its instrument. The gate was dogfooded on its own commit -- it blocked the commit that introduced it until a harness-reviewer record covered it."
+    },
+    {
+      "id": "model-availability",
+      "kind": "gate",
+      "doctrine_file": "doctrine/model-selection.md",
+      "hooks": [
+        "model-pin-gate.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/config/model-policy.json",
+          "adapters/claude-code/agents/"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "added_after": "2026-07",
+      "golden_scenario": "2026-07-28: the operator's weekly Fable budget was exhausted. config/model-policy.json declares every reviewer as chain ['fable','opus'], and 21 of 25 agents pin model: fable. BOTH verifier dispatches (task-verifier, harness-reviewer) died instantly with 'You have hit your monthly spend limit ... to keep using Fable 5', and only ran when the caller manually passed model: opus. A verifier that dies on arrival is a verification that silently did not happen -- the same failure class that let f6562b2 reach master unreviewed. Operator: 'Fable is supposed to always fail back to Opus. That's supposed to be built in. If it's not, then fix it.' With fable marked exhausted, model-pin-gate.sh now BLOCKS a fable-pinned dispatch and names the exact override (model: opus, chain[1] from the policy file); proven end-to-end 8/8 including that an explicit opus dispatch still passes and a haiku-pinned agent is unaffected.",
+      "fp_expectation": "Near-zero by construction: the block fires ONLY while a tier is explicitly marked exhausted on this machine, and markers are self-expiring (default 24h TTL, and is-exhausted deletes an expired marker on read, asserted by self-test scenario 4). With no marker set the gate's behavior is byte-identical to before -- model-pin-gate's own suite is 13/13 before AND after the splice. The realistic over-fire is an operator marking a tier exhausted and forgetting; the TTL bounds that to 24h and `model-availability.sh clear <tier>` is a one-liner named in the block message itself.",
+      "honest_status": "HONEST SCOPE -- this is a REROUTE, not an automatic fallback, and must not be described as one. A PreToolUse hook cannot rewrite tool input and cannot catch an API error raised after the call is admitted, so no harness-side code can transparently retry a dead Fable dispatch on Opus. What this does is convert a SILENT 100%-reproducible death into a LOUD block naming the override, which is the strongest rung actually available. The tier's unavailability must still be OBSERVED and marked by whoever sees the spend-limit error (`model-availability.sh mark-exhausted fable --reason ...`); there is no API to query budget, so this is not self-detecting. That is a real residual, stated rather than hidden. NOT COVERED, same as model-pin-gate's pre-existing residual: Workflow-inline agent() model:, spawn_task, and cron/remote dispatch surfaces a PreToolUse hook never sees.",
+      "retirement_condition": "Retire when the runtime performs the model-policy fallback chain itself -- i.e. when a dispatch pinned to an unavailable tier transparently runs on chain[1] instead of erroring. At that point config/model-policy.json's chains become executable rather than documentary and this reroute is redundant. Also retire if agent frontmatter gains multi-value model support, since the chain could then be pinned directly.",
+      "honesty_rationale": "blocking:true is literal: the splice returns 2. The entry deliberately does NOT claim to implement the fallback chain -- constitution section 1 forbids claiming behavior without a mechanism that triggers it, and there is no mechanism that can retry an API error from inside a PreToolUse hook. It claims exactly what it does: block-and-instruct while a tier is marked exhausted. The marking step is manual and is named as a residual rather than papered over."
     }
   ]
 }

@@ -17,13 +17,38 @@ or an explicit `model` argument on the spawn call.
 
 ## Fallback mechanics
 
-`agents/*.md` frontmatter pins the PRIMARY model (chain[0] in `config/model-policy.json`).
-The fallback (chain[1]) is a documented preference, not a second frontmatter field — the
-frontmatter `model:` key holds exactly one value (the primary). The runtime/orchestrator
-is responsible for applying the fallback chain if the primary model is unavailable
-(rate-limited, down, etc). This means the frontmatter alone does not encode the full
-policy — `config/model-policy.json` is the actual source of truth for the chain, and the
-frontmatter is a derived/pinned snapshot of chain[0].
+**CORRECTED 2026-07-29 — the previous text here was FALSE and cost a day.** It said "the
+runtime/orchestrator is responsible for applying the fallback chain if the primary model
+is unavailable", which reads as though something applies it. Nothing does. Three facts,
+each independently verified:
+
+1. **The platform never falls back.** `docs/lessons/2026-07-24-fable-is-most-powerful-and-
+   separately-budgeted.md:82-89`: "Sub-agent model is fixed at dispatch — exhaustion kills,
+   never downgrades." On budget exhaustion the agent's next request hits the limit error and
+   the agent terminates.
+2. **No hook can re-point a dispatch.** `docs/decisions/063-model-pin-gate-blocks-not-
+   injects.md`: `updatedInput` does not apply to Task/Agent spawns, and SubagentStart has no
+   decision control. A hook can DENY; it can never redirect.
+3. **`config/model-policy.json` is inert.** Its `chain` key is read by NO executing code
+   (only `.model_ids` is, by a doctor check), and `install.sh` does not sync `config/` to
+   `~/.claude` at all — so on a live machine the policy file is not even present.
+
+**What actually decides the model:** the `model:` line in `agents/<slug>.md`. That is the
+single executing decision point. Therefore a real fallback must REWRITE THAT LINE:
+
+    scripts/model-availability.sh mark-exhausted fable --reason "..."   # record
+    scripts/model-availability.sh apply fable                           # repin -> opus
+    scripts/model-availability.sh restore fable                         # undo
+
+`apply` reads the chain from `config/model-policy.json`, repins every agent pinned to the
+exhausted tier, and records the originals so `restore` is exact. Because `~/.claude/agents`
+is the live surface, this dirties the working tree by design — it is an operational flip,
+not a commit. `model-pin-gate.sh` additionally BLOCKS a dispatch still pinned to a tier
+marked exhausted, as a backstop for the case where `apply` was never run.
+
+GOLDEN CASE: 2026-07-28, Fable weekly budget exhausted. 21 of 25 agents pinned Fable; both
+task-verifier and harness-reviewer died on arrival, and a verification that dies is a
+verification that silently did not happen.
 
 ## Gate agent-matching detail
 

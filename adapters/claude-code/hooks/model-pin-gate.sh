@@ -40,6 +40,31 @@ _frontmatter_name() {
 }
 
 # Return 0 iff the frontmatter carries a `model:` line.
+# Echo the frontmatter `model:` VALUE (empty if none). Same fence-scoped,
+# CRLF-safe walk as _frontmatter_pins_model — a body line starting `model:`
+# must not count. Added 2026-07-29 for the exhausted-tier reroute, which needs
+# to know WHICH tier is pinned, not merely that one is.
+_mpg_frontmatter_model() {
+  local f="$1" in_fm=0 line v
+  [ -f "$f" ] || return 0
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [ "$line" = "---" ]; then
+      if [ "$in_fm" -eq 0 ]; then in_fm=1; continue; else break; fi
+    fi
+    if [ "$in_fm" -eq 1 ]; then
+      case "$line" in
+        model:*)
+          v="${line#model:}"
+          v="${v#"${v%%[![:space:]]*}"}"       # ltrim
+          v="${v%"${v##*[![:space:]]}"}"       # rtrim
+          printf '%s' "$v"; return 0 ;;
+      esac
+    fi
+  done < "$f"
+  return 0
+}
+
 _frontmatter_pins_model() {
   local f="$1" in_fm=0 line
   [ -f "$f" ] || return 1
@@ -105,6 +130,58 @@ run_gate() {
   [ -d "$agents_dir" ] || agents_dir="$(dirname "$0")/../agents"
   def="$(_resolve_agent_def "$atype" "$agents_dir")"
   if [ -n "$def" ] && _frontmatter_pins_model "$def"; then
+    # ---- EXHAUSTED-TIER REROUTE (operator directive 2026-07-29) --------------
+    # "Fable is supposed to always fail back to Opus. That's supposed to be built
+    # in. If it's not, then fix it."
+    #
+    # config/model-policy.json declares ["fable","opus"] chains and its own note
+    # concedes the fallback is "a documented preference" — nothing applied it. On
+    # 2026-07-28 Fable was budget-exhausted and BOTH verifier dispatches died on
+    # arrival with a spend-limit error. A dead verifier is a SKIPPED
+    # verification, which is how f6562b2 reached master unreviewed.
+    #
+    # A PreToolUse hook cannot rewrite tool input and cannot retry an API error,
+    # so it cannot perform the fallback itself. What it CAN do is refuse to let
+    # the dispatch die silently: if the pinned tier is currently marked
+    # exhausted, BLOCK here and name the exact override. Loud reroute beats
+    # silent non-verification.
+    local pinned_tier
+    pinned_tier="$(_mpg_frontmatter_model "$def")"
+    if [ -n "$pinned_tier" ]; then
+      local ma="$(dirname "$0")/../scripts/model-availability.sh"
+      [ -f "$ma" ] || ma="$HOME/.claude/scripts/model-availability.sh"
+      if [ -f "$ma" ] && bash "$ma" is-exhausted "$pinned_tier" 2>/dev/null; then
+        local fb reason
+        fb="$(bash "$ma" fallback-for "$pinned_tier" 2>/dev/null)"
+        reason="$(bash "$ma" reason "$pinned_tier" 2>/dev/null)"
+        {
+          echo "================================================================"
+          echo "MODEL-PIN GATE — PINNED TIER IS EXHAUSTED, REROUTE REQUIRED"
+          echo "================================================================"
+          echo "agents/${atype}.md pins model: ${pinned_tier}, but '${pinned_tier}' is currently"
+          echo "marked UNAVAILABLE on this machine (reason: ${reason:-unspecified})."
+          echo ""
+          echo "Dispatching anyway does not fail safely — it dies at the API with a"
+          echo "spend-limit error, and a verifier that dies on arrival is a"
+          echo "verification that silently did not happen (2026-07-28: this is how"
+          echo "commit f6562b2 reached master with no harness-reviewer)."
+          echo ""
+          if [ -n "$fb" ]; then
+            echo "FIX: re-dispatch this agent with an explicit model:"
+            echo "     model: ${fb}"
+            echo "     (chain[1] for this agent in config/model-policy.json — the"
+            echo "      fallback the policy already documents.)"
+          else
+            echo "FIX: re-dispatch with an explicit model that is available."
+          fi
+          echo ""
+          echo "If '${pinned_tier}' is available again:"
+          echo "     bash ~/.claude/scripts/model-availability.sh clear ${pinned_tier}"
+          echo "================================================================"
+        } >&2
+        return 2
+      fi
+    fi
     return 0                                         # frontmatter pins it → allow
   fi
 
@@ -134,6 +211,16 @@ run_self_test() {
   local pass=0 fail=0
   local fix; fix="$(mktemp -d 2>/dev/null)" || { echo "mktemp FAIL"; exit 1; }
   mkdir -p "$fix/agents"
+  # SANDBOX EVERY STATE DIR THIS HOOK'S TRANSITIVE CALLEES READ.
+  # The exhausted-tier reroute splice shells out to model-availability.sh, which
+  # reads ~/.claude/state/model-availability. Without this export the suite
+  # inherits the OPERATOR'S LIVE MARKERS and goes RED (10/13 observed) purely
+  # because a tier happens to be marked exhausted — a test whose outcome depends
+  # on live machine state, which is the same self-invalidating class this repo
+  # has now hit four times in two days. A hook that shells out to another harness
+  # script inherits that script's entire state surface and must pin it.
+  export MODEL_AVAIL_STATE_DIR="$fix/model-availability"
+  mkdir -p "$MODEL_AVAIL_STATE_DIR"
   printf -- '---\nname: pinned-agent\nmodel: fable\n---\nbody\n' > "$fix/agents/pinned-agent.md"
   printf -- '---\nname: unpinned-agent\ntools: Read\n---\nbody\n' > "$fix/agents/unpinned-agent.md"
   # M1: display name differs from filename slug (real FP surface).

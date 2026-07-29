@@ -1242,6 +1242,21 @@ run_digest() {
   # Best-effort, never-blocks (session-heartbeat.sh touch always exits 0).
   # Per specs-o §O.2 fragment callsite-wiring.md item 1 (orchestrator splice).
   bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start >/dev/null 2>&1 || true
+
+  # ---- MODEL-AVAILABILITY RECONCILE (operator directive 2026-07-29) --------
+  # "Opus is a fallback, not the primary option ... I want agents to use Fable
+  # when it's available." Fable stays the declared primary in every agent's
+  # frontmatter; Opus is BORROWED only while Fable is unavailable, and the
+  # borrow must end BY ITSELF when the budget resets.
+  #
+  # reconcile is the self-healing step and is idempotent, so running it on every
+  # session start is safe: it borrows when a tier is marked exhausted, gives the
+  # borrow back the moment the marker expires, and is a silent no-op otherwise.
+  # Without this callsite the fallback would be a manual flip that a human has to
+  # remember to undo — which is how a temporary fallback silently becomes the
+  # permanent primary (it did, for ~20 minutes, before the operator caught it).
+  # Best-effort: never blocks a session start.
+  bash "$HOOKS_DIR/../scripts/model-availability.sh" reconcile --quiet >/dev/null 2>&1 || true
   # Reap splice (review fix 2026-07-09): the reaper existed and was
   # self-tested but had NO production call-site, so stale heartbeats
   # accumulated unbounded (55 deep at audit). Reap is idempotent,
