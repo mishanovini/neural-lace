@@ -394,6 +394,70 @@ _ask_capture_on_prompt() {
 }
 # ---- END ASK-CAPTURE SPLICE -------------------------------------------------
 
+# ============================================================================
+# PROBLEM-CAPTURE SPLICE (operator directive 2026-07-29, ledger row
+# SURFACED-PROBLEMS-CAN-BE-DROPPED-01, design doc docs/reviews/2026-07-29-
+# operator-five-questions.md Q2 part 3; docs/decisions/065-problems-persist-
+# warn-consolidation.md covers part 2's WARN-vs-block choice) — same
+# never-blocks, zero-new-settings.json-entries shape as the ASK-CAPTURE
+# SPLICE immediately above, and reuses its exact _ask_capture_prompt_text
+# extractor. When the OPERATOR's OWN prompt text names a problem, file it
+# into the nl-issue.sh ledger immediately, tagged source=operator-verbatim,
+# so an operator complaint is captured even if the session that reads it
+# never gets around to filing it itself — the exact discretion gap
+# SURFACED-PROBLEMS-CAN-BE-DROPPED-01 names ("filing is entirely my
+# discretion, so the ledger reflects what I remembered to file, not what I
+# found").
+#
+# Heuristic (start narrow, precision over recall — same posture as the
+# Stop-time problems-persist check in stop-verdict-dispatcher.sh): a
+# case-insensitive match anywhere in the prompt for "why is"/"why are"/
+# "broken"/"failing"/"critical problem" — the exact vocabulary named in the
+# operator directive. A false positive (operator prose that merely CONTAINS
+# one of these words without naming a real problem) still only produces one
+# harmless extra ledger row — nl-issue.sh's own `--triage <n> wontfix
+# <reason>` path exists for exactly this.
+#
+# "never deduped away silently" (operator directive's own words): nl-
+# issue.sh's normal 24h dedup folds a repeat into an existing untriaged
+# row's count instead of appending a new line. An operator-named problem
+# must never vanish into someone else's count bump — this splice sets
+# NLI_SOURCE=operator-verbatim, and nl-issue.sh's own nli_append (a) never
+# selects an operator-verbatim row as a merge TARGET and (b) never runs its
+# dedup scan AT ALL for an operator-verbatim SOURCE append — every operator
+# naming gets its own fresh, fully-visible row (enforced in nl-issue.sh
+# itself; this splice only sets the env var).
+# ============================================================================
+_nli_capture_cli_path() {
+  if [[ -n "${NL_ISSUE_CLI_OVERRIDE:-}" ]]; then printf '%s' "$NL_ISSUE_CLI_OVERRIDE"; return 0; fi
+  printf '%s/../scripts/nl-issue.sh' "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+}
+
+# _problem_capture_is_operator_named <prompt-text> — true (0) iff the
+# operator's own prompt names a problem via the directive's own vocabulary.
+_problem_capture_is_operator_named() {
+  local text="$1"
+  printf '%s' "$text" | grep -qiE '\bwhy (is|are)\b|\bbroken\b|\bfailing\b|\bcritical problem\b'
+}
+
+# _problem_capture_on_prompt <input-json> <session-id>
+_problem_capture_on_prompt() {
+  local input="$1" sid="$2"
+  local prompt; prompt="$(_ask_capture_prompt_text "$input")"
+  [[ -n "$prompt" ]] || return 0   # no text -> no capture, never fabricate
+  _problem_capture_is_operator_named "$prompt" || return 0
+
+  local nli_cli; nli_cli="$(_nli_capture_cli_path)"
+  [[ -f "$nli_cli" ]] || return 0
+
+  local snippet
+  snippet="$(printf '%s' "$prompt" | tr '\n' ' ' | cut -c1-300)"
+  NLI_SOURCE="operator-verbatim" CLAUDE_SESSION_ID="$sid" \
+    bash "$nli_cli" "operator-verbatim: ${snippet}" >/dev/null 2>>"$LOG_FILE" || true
+  return 0
+}
+# ---- END PROBLEM-CAPTURE SPLICE ---------------------------------------------
+
 # ---- the reader program ----------------------------------------------------
 # One node invocation does everything: read state via the FROZEN facade, read
 # the per-session cursor, select new actor=="gui" response-allowlist events,
@@ -609,6 +673,12 @@ _run_read() {
   # exit-0 contract (constraint 5: never blocks the operator's prompt).
   ( _ask_capture_on_prompt "$input" "$sid" ) >/dev/null 2>&1 || true
   # ---- END ASK-CAPTURE SPLICE call site ----------------------------------
+
+  # ---- PROBLEM-CAPTURE SPLICE call site (problems-persist part 3) -------
+  # Same subshelled, never-blocks contract as ASK-CAPTURE immediately
+  # above; unrelated to node/GUI availability.
+  ( _problem_capture_on_prompt "$input" "$sid" ) >/dev/null 2>&1 || true
+  # ---- END PROBLEM-CAPTURE SPLICE call site ------------------------------
 
   _have node || { _log "node unavailable — no-op"; exit 0; }
   local statef; statef=$(_resolve_gui_state_path)
@@ -1004,6 +1074,85 @@ _self_test() {
         bash "$SELF" >/dev/null 2>/dev/null
   ac11_out="$(cat "$AC11_LOG" 2>/dev/null)"
   _ck "AC11 with HARNESS_SELFTEST inherited (=1, the normal self-test condition), ASK_SUMMARIZER is NEVER defaulted — stays <unset>, so this suite never risks a live model call" "$ac11_out" "ASK_SUMMARIZER=<unset>"
+
+  # ==========================================================================
+  # PC1-PC4 (problems-persist part 3, operator directive 2026-07-29): the
+  # PROBLEM-CAPTURE splice fires nl-issue.sh (stubbed here so no real ledger
+  # is touched) with NLI_SOURCE=operator-verbatim exactly when the OPERATOR's
+  # own prompt text names a problem, and never otherwise.
+  # ==========================================================================
+  echo "PC1: operator prompt naming a problem ('why is X broken') fires the stub nl-issue.sh CLI with NLI_SOURCE=operator-verbatim"
+  PC1_LOG="$tmp/pc1.log"
+  PC_STUB="$tmp/pc-fake-nl-issue.sh"
+  {
+    printf '#!/bin/bash\n'
+    printf 'printf "NLI_SOURCE=%%s ARG=%%s\\n" "${NLI_SOURCE:-<unset>}" "$1" >> %s\n' "$(printf '%q' "$PC1_LOG")"
+    printf 'exit 0\n'
+  } > "$PC_STUB"
+  chmod +x "$PC_STUB"
+  printf '{"prompt":"why is the deploy pipeline broken again","session_id":"sess-pc1","cwd":"%s","hook_event_name":"UserPromptSubmit"}' "$tmp/ordinary/repo-pc1" \
+    | NL_ISSUE_CLI_OVERRIDE="$PC_STUB" ASK_CAPTURE_MARKER_DIR="$AC_MARKER_DIR" ASK_REGISTRY_STATE_DIR="$AC_AR_DIR" \
+        PROGRESS_LOG_STATE_DIR="$AC_PL_DIR" ASK_REGISTRY_MIRROR_PATH="$AC_MIRROR" \
+        DISPATCH_PROVENANCE_STATE_DIR="$AC_DP_DIR" ASK_REGISTRY_CLI_OVERRIDE="$AC11_STUB" \
+        CONV_TREE_STATE_PATH="$tmp/pc-unused-state.json" CONV_TREE_READ_CURSOR_DIR="$CDIR" \
+        CLAUDE_SESSION_ID="sess-pc1" \
+        bash "$SELF" >/dev/null 2>/dev/null
+  pc1_out="$(cat "$PC1_LOG" 2>/dev/null)"
+  _ck_has "PC1 stub fired with NLI_SOURCE=operator-verbatim" "$pc1_out" "NLI_SOURCE=operator-verbatim"
+  _ck_has "PC1 stub received the operator-verbatim-tagged prompt text" "$pc1_out" "why is the deploy pipeline broken"
+
+  echo "PC2: ordinary prompt with none of the named vocabulary never fires the stub"
+  PC2_LOG="$tmp/pc2.log"
+  printf '{"prompt":"please rebuild the workstreams view for me","session_id":"sess-pc2","cwd":"%s","hook_event_name":"UserPromptSubmit"}' "$tmp/ordinary/repo-pc2" \
+    | NL_ISSUE_CLI_OVERRIDE="$tmp/pc-fake-nl-issue-pc2.sh" ASK_CAPTURE_MARKER_DIR="$AC_MARKER_DIR" ASK_REGISTRY_STATE_DIR="$AC_AR_DIR" \
+        PROGRESS_LOG_STATE_DIR="$AC_PL_DIR" ASK_REGISTRY_MIRROR_PATH="$AC_MIRROR" \
+        DISPATCH_PROVENANCE_STATE_DIR="$AC_DP_DIR" ASK_REGISTRY_CLI_OVERRIDE="$AC11_STUB" \
+        CONV_TREE_STATE_PATH="$tmp/pc-unused-state2.json" CONV_TREE_READ_CURSOR_DIR="$CDIR" \
+        CLAUDE_SESSION_ID="sess-pc2" \
+        bash "$SELF" >/dev/null 2>/dev/null
+  if [[ -f "$PC2_LOG" ]]; then
+    echo "FAIL: PC2 ordinary prompt should never invoke nl-issue.sh"; fail=$((fail+1))
+  else
+    echo "PASS: PC2 ordinary prompt never invoked nl-issue.sh (no log written)"; pass=$((pass+1))
+  fi
+
+  echo "PC3: 'critical problem' vocabulary fires the stub"
+  PC3_LOG="$tmp/pc3.log"
+  PC3_STUB="$tmp/pc3-fake-nl-issue.sh"
+  {
+    printf '#!/bin/bash\n'
+    printf 'printf "NLI_SOURCE=%%s ARG=%%s\\n" "${NLI_SOURCE:-<unset>}" "$1" >> %s\n' "$(printf '%q' "$PC3_LOG")"
+    printf 'exit 0\n'
+  } > "$PC3_STUB"
+  chmod +x "$PC3_STUB"
+  printf '{"prompt":"we have a critical problem in prod right now","session_id":"sess-pc3","cwd":"%s","hook_event_name":"UserPromptSubmit"}' "$tmp/ordinary/repo-pc3" \
+    | NL_ISSUE_CLI_OVERRIDE="$PC3_STUB" ASK_CAPTURE_MARKER_DIR="$AC_MARKER_DIR" ASK_REGISTRY_STATE_DIR="$AC_AR_DIR" \
+        PROGRESS_LOG_STATE_DIR="$AC_PL_DIR" ASK_REGISTRY_MIRROR_PATH="$AC_MIRROR" \
+        DISPATCH_PROVENANCE_STATE_DIR="$AC_DP_DIR" ASK_REGISTRY_CLI_OVERRIDE="$AC11_STUB" \
+        CONV_TREE_STATE_PATH="$tmp/pc-unused-state3.json" CONV_TREE_READ_CURSOR_DIR="$CDIR" \
+        CLAUDE_SESSION_ID="sess-pc3" \
+        bash "$SELF" >/dev/null 2>/dev/null
+  pc3_out="$(cat "$PC3_LOG" 2>/dev/null)"
+  _ck_has "PC3 'critical problem' vocabulary fires the stub with NLI_SOURCE=operator-verbatim" "$pc3_out" "NLI_SOURCE=operator-verbatim"
+
+  echo "PC4: 'failing' vocabulary fires the stub"
+  PC4_LOG="$tmp/pc4.log"
+  PC4_STUB="$tmp/pc4-fake-nl-issue.sh"
+  {
+    printf '#!/bin/bash\n'
+    printf 'printf "NLI_SOURCE=%%s ARG=%%s\\n" "${NLI_SOURCE:-<unset>}" "$1" >> %s\n' "$(printf '%q' "$PC4_LOG")"
+    printf 'exit 0\n'
+  } > "$PC4_STUB"
+  chmod +x "$PC4_STUB"
+  printf '{"prompt":"the checkout button is failing intermittently","session_id":"sess-pc4","cwd":"%s","hook_event_name":"UserPromptSubmit"}' "$tmp/ordinary/repo-pc4" \
+    | NL_ISSUE_CLI_OVERRIDE="$PC4_STUB" ASK_CAPTURE_MARKER_DIR="$AC_MARKER_DIR" ASK_REGISTRY_STATE_DIR="$AC_AR_DIR" \
+        PROGRESS_LOG_STATE_DIR="$AC_PL_DIR" ASK_REGISTRY_MIRROR_PATH="$AC_MIRROR" \
+        DISPATCH_PROVENANCE_STATE_DIR="$AC_DP_DIR" ASK_REGISTRY_CLI_OVERRIDE="$AC11_STUB" \
+        CONV_TREE_STATE_PATH="$tmp/pc-unused-state4.json" CONV_TREE_READ_CURSOR_DIR="$CDIR" \
+        CLAUDE_SESSION_ID="sess-pc4" \
+        bash "$SELF" >/dev/null 2>/dev/null
+  pc4_out="$(cat "$PC4_LOG" 2>/dev/null)"
+  _ck_has "PC4 'failing' vocabulary fires the stub with NLI_SOURCE=operator-verbatim" "$pc4_out" "NLI_SOURCE=operator-verbatim"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"

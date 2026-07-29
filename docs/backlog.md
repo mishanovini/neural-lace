@@ -1534,3 +1534,64 @@ regression — that test extracts real function bodies at run time, so a lib-sou
 refactor needs its `FUNCS` extraction taught to also source the lib file, or the test's
 `resolve_real_path` calls will find nothing defined.
 **Filed by:** neural-lace session, 2026-07-29 (session-start-auto-install.sh SELF-SYNC-01 fix).
+
+**Severity:** P3 (all six sites PROVEN correct today by the delta re-review's isolation tests; this is future-regression hardening).
+**Context:** the `'<'* | none` ask-id sentinel guard (commit 0758232, review
+record hcr-20260729-4586088a) lives at 5 extractors + the writer, but only
+remap (Scenario F) and progress-log-lib (Scenario 1i) carry site-local
+none→empty regression assertions. plan-lifecycle.sh, workstreams-emit.sh,
+merge-scan-lib.sh (incl. its git-fallback branch), and close-plan.sh got
+guard-only edits — a future site-local miss would not fail that site's own
+suite. Second advisory from the same review: the guarded-sites inventory is
+hand-maintained in TWO comments (plan-template.md SENTINEL COUPLING +
+progress-log-lib.sh _pl_is_none_sentinel) — currently consistent, drift is
+silent; prefer one canonical list + reference, or a doctor grep check.
+**Action:** add a none-header→empty (and real→preserved) assertion to each of
+the four uncovered suites; collapse the dual inventory to one canonical list.
+**Fold-in point:** same carrier as [[ASK-SENTINEL-QUARANTINE-SURFACER-01]]
+(any slice touching these files next), or batch both rows as one micro-plan.
+**Filed by:** emitter-fix delta re-review PASS (2026-07-29, Minor advisories 1+2).
+
+## NL-ISSUE-JSON-FIELD-BSD-SED-ALTERNATION-BUG-01 — FIXED: `_nli_json_field`'s `\|` alternation silently matched nothing under BSD sed
+
+**Severity:** was `error` (silent, total breakage of a load-bearing helper on
+every macOS machine); **RESOLVED** in the problems-persist build, commit
+in this PR.
+**Context:** discovered while adding new self-test scenarios to
+`adapters/claude-code/scripts/nl-issue.sh` for the problems-persist
+mechanism's `source` field (`docs/decisions/065-problems-persist-warn-
+consolidation.md`). `_nli_json_field`'s extraction regex used BRE `\|` for
+alternation (`\(\([^\"\\]\|\\.\)*\)`) — a GNU sed extension. BSD sed (macOS
+default `/usr/bin/sed`, confirmed this is what every Bash invocation on this
+machine resolves to) does not support `\|` in basic-regex mode and silently
+matches nothing (no error, empty capture group) rather than failing loud.
+Confirmed PRE-EXISTING and NOT introduced by this build: `git show
+HEAD:adapters/claude-code/scripts/nl-issue.sh --self-test` (pristine)
+already gave 13 passed / 11 failed on this machine — Scenario 1 (--list
+round-trip), Scenario 2 (24h dedup: 3 identical appends produced 3 lines
+instead of folding to 1 with count:3), and Scenarios 9-10 (escalation
+fixtures) were ALL failing for this ONE root cause, not four separate bugs.
+**Fix:** switched `_nli_json_field` to `sed -nE` (extended regex, where bare
+`|` alternation is supported identically by BSD sed 2.6.0-FreeBSD and GNU
+sed 4.10 — verified against both via `gsed`) — a portable fix, not a
+platform-specific workaround. Full self-test suite (now 32 scenarios) is
+32/0 PASS under both `/opt/homebrew/bin/bash` (5.3) and `/bin/bash` (3.2.57)
+post-fix; RED-GREEN proven by reverting the one line back to the `\|` form
+(13 failures reproduce exactly) then restoring the `-E` fix (32/0 again).
+**Filed by:** plan-phase-builder, problems-persist build, 2026-07-29.
+
+## WORKSTREAMS-READ-R20-CURSOR-MTIME-FLAKE-01 — self-test Scenario R20 fails intermittently, pre-existing, unrelated to the problems-persist build
+
+**Severity:** P3 (self-test signal only).
+**Context:** discovered while adding the PROBLEM-CAPTURE splice to
+`adapters/claude-code/hooks/workstreams-read.sh` (problems-persist part 3).
+Confirmed PRE-EXISTING via an in-place `git stash` A/B (same machine, same
+directory, only this one file reverted): the UNMODIFIED file also gives
+57 passed / 1 failed, same R20 assertion ("cursor mtime advanced") failing.
+Likely an mtime-resolution race (two cursor writes within the same
+filesystem timestamp granularity), not something this build touched.
+**Action:** replace the mtime-inequality check with a content/event-id
+comparison, or add a forced sleep/nanosecond-mtime read.
+**Fold-in point:** any slice touching workstreams-read.sh's cursor-fast-path
+logic next.
+**Filed by:** plan-phase-builder, problems-persist build, 2026-07-29.
