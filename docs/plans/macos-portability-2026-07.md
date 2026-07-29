@@ -104,3 +104,15 @@ doctor check so it cannot silently rot.
 - 2026-07-29: adapters/claude-code/scripts/supervisor-tick.sh — M2: GNU-only `sed -i -E` -> tmp+mv (BSD bound `-E` as the backup suffix, littering the orphans ledger with `<key>.json-E`)
 - 2026-07-29: adapters/claude-code/hooks/harness-claim-lint.sh — CLASS3 rewritten from a text match to a BEHAVIORAL oracle + discovered host list (1 lib/3 hosts -> 8 libs/33 hosts)
 - 2026-07-29: docs/harness-architecture.md — regenerated for the new manifest entries; closes the doctor's wave-f-f2-docs RED
+- 2026-07-29: `adapters/claude-code/hooks/lib/portable-timeout.sh` — M3: shared `nl_run_bounded` primitive (GNU timeout when present, else background+bounded-spin+process-tree kill; returns 124 like GNU)
+- 2026-07-29: `adapters/claude-code/hooks/harness-doctor.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/hooks/runtime-verification-executor.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/hooks/propagation-trigger-router.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/hooks/session-start-git-freshness.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/hooks/session-start-auto-install.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/scripts/ask-registry.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/scripts/master-drift-autocorrect.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/scripts/supervisor-tick.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/scripts/health-tick.sh` — M3 callsite
+- 2026-07-29: `adapters/claude-code/scripts/f4-retro.sh` — M3 callsite
+
