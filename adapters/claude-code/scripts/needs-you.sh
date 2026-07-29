@@ -798,6 +798,15 @@ cmd_add() {
   # the portable idiom: it distinguishes "array is unset" from "array is set
   # but has zero elements" and expands to nothing (not an error) in the
   # latter case, on both bash 3.2 and modern bash.
+  #
+  # CONVERGENT FIX NOTE (2026-07-29): the operator-spawned bootstrap-migrate
+  # session (7cd2074) found the SAME root cause independently, plus its
+  # downstream recursion: cmd_bootstrap_migrate's own cmd_add emptied the
+  # ledger, so _ny_ledger_has_legacy_migration_marker could never see the
+  # marker it had just written, and add -> render -> bootstrap-migrate
+  # recursed until killed. Its explicit emptiness guard is kept below as a
+  # third, cheapest layer in front of the write.
+  [[ -n "$new" ]] || die "add: failed to build the updated ledger (jq produced no output); refusing to write an empty ledger.json"
   _ny_write_ledger "$new" || die "cmd_add: refusing to continue — ledger write was rejected (see previous error); nothing was corrupted, but this entry was NOT recorded"
 
   cmd_render >/dev/null
@@ -1074,8 +1083,24 @@ cmd_bootstrap_migrate() {
   # pipeline's `head -1` of --text) is the real first content line — e.g.
   # "## [2026-07-05] Activate auto-resume daemon (E.7) ..." — rather than
   # this boilerplate banner line collapsing to "(untitled decision)".
-  local stripped
-  stripped="$(printf '%s\n' "$body" | sed -E '1{/^# NEEDS-YOU/d}' | sed -E '/./,$!d')"
+  #
+  # PORTABILITY (fixed 2026-07-29): the address-block form MUST be written
+  # `1{...;}` with the trailing semicolon. BSD/macOS sed rejects `1{/re/d}`
+  # with "extra characters at the end of d command" and emits NOTHING, which
+  # silently collapsed `stripped` to empty and made this function return
+  # early — losing every legacy operator item on macOS while passing on GNU
+  # sed (self-test T18b/T18c/T19). `d;}` is the POSIX-portable spelling and
+  # is accepted by both BSD sed and GNU sed. Each strip step is therefore
+  # also FAILURE-CHECKED below rather than piped blind: if a strip step ever
+  # errors again, we fall back to the un-stripped text, because migrating a
+  # slightly-uglier title is strictly better than discarding operator content.
+  local stripped="$body" _ny_trimmed
+  if _ny_trimmed="$(printf '%s\n' "$body" | sed -E '1{/^# NEEDS-YOU/d;}')"; then
+    stripped="$_ny_trimmed"
+  fi
+  if _ny_trimmed="$(printf '%s\n' "$stripped" | sed -E '/./,$!d')"; then
+    stripped="$_ny_trimmed"
+  fi
   if [[ -z "$(printf '%s\n' "$stripped" | grep -vE '^[[:space:]]*$')" ]]; then
     return 0
   fi
