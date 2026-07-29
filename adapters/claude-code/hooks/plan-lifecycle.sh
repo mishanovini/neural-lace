@@ -287,7 +287,10 @@ extract_ask_id() {
     }
   ')"
   case "$raw" in
-    '<'*) printf ''; return 0 ;;
+    # '<'* = template placeholder; none = the documented no-ask header
+    # spelling — BOTH are sentinels, never real ask ids (re-review
+    # Critical 2026-07-28: none.jsonl held 141 misfiled live events).
+    '<'* | none) printf ''; return 0 ;;
   esac
   printf '%s' "$raw"
 }

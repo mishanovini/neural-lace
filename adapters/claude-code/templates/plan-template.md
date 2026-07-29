@@ -151,6 +151,18 @@ creation via `start-plan.sh --ask-id <id>`, which calls `ask-registry.sh
 link-plan --ask-id <id> --plan-slug <slug>` for you; a plan with no
 originating ask may state `ask-id: none — no linked ask`.
 
+SENTINEL COUPLING (2026-07-28): the literal token `none` and any `<`-prefixed
+token on this line are RESERVED sentinels, never real ask-ids. Every ask-id
+extractor resolves both to "no linked ask": `hooks/plan-lifecycle.sh`,
+`hooks/workstreams-emit.sh`, `hooks/lib/merge-scan-lib.sh`,
+`scripts/close-plan.sh`, `scripts/remap-placeholder-ask-events.sh`; the
+writer-side map lives in `hooks/lib/progress-log-lib.sh` (`pl_path_for`:
+placeholder-shapes quarantine to unattributed.jsonl, `none`/empty route to
+unlinked.jsonl). If the default spelling on line 144 ever changes, extend the
+sentinel class at ALL of those sites in the SAME commit — a new spelling that
+the extractors don't recognize recreates the 2026-07-27 misfiled-events bug
+(1,140 events under `_id.jsonl` + 141 under `none.jsonl`).
+
 `plan-reviewer.sh` WARNS (never blocks) when an ACTIVE `lifecycle-schema: v2`
 plan lacks a populated value here — advisory only, since grandfathered plans
 predate this field and not every plan is asked for through a captured

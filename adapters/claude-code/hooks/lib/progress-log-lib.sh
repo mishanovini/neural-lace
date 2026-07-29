@@ -217,6 +217,24 @@ _pl_is_placeholder_ask_id() {
   return 1
 }
 
+# _pl_is_none_sentinel <raw-ask-id> — the OTHER documented sentinel
+# (re-review 2026-07-28, Critical): `ask-id: none — no linked ask` is the
+# template's sanctioned no-ask spelling; extractors resolve it to empty,
+# and this writer-side twin maps a literal `none` that slips through any
+# future un-guarded extractor to the UNLINKED lane ('' semantics — the
+# honest "no linked ask" home), NEVER a none.jsonl file (141 real events
+# were found misfiled there, invisible to eventsForSlug). Distinct from
+# _pl_is_placeholder_ask_id because the destinations differ: placeholder
+# shapes quarantine to unattributed.jsonl (bug signature — investigate
+# the caller); `none` is a VALID header value that simply means unlinked.
+# Guarded sibling extractor sites (keep this list current):
+#   plan-lifecycle.sh extract_ask_id · workstreams-emit.sh
+#   _resolve_ask_id_for_plan_slug · merge-scan-lib.sh _ms_resolve_ask_id ·
+#   close-plan.sh extract_ask_id_cp · remap-placeholder-ask-events.sh
+_pl_is_none_sentinel() {
+  [[ "${1:-}" == "none" ]]
+}
+
 # ----------------------------------------------------------------------
 # _pl_sanitize_ask_id <raw-ask-id> — print a filesystem-SAFE single-path-
 # component derived from the raw ask-id. This is the SECURITY BOUNDARY that
@@ -290,6 +308,11 @@ pl_path_for() {
   if _pl_is_placeholder_ask_id "$raw"; then
     printf '%s/unattributed.jsonl' "$(pl_state_dir)"
     return 0
+  fi
+  # `none` sentinel → the UNLINKED lane, exactly as an empty ask-id would
+  # route (it IS "no linked ask", just spelled out — see _pl_is_none_sentinel).
+  if _pl_is_none_sentinel "$raw"; then
+    raw=""
   fi
   local ask_id
   ask_id="$(_pl_sanitize_ask_id "$raw")"
@@ -971,6 +994,22 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     pass "no _id.jsonl (the historical garbage filename) was created by this emit"
   else
     fail "_id.jsonl was created — the sanitizer path was NOT bypassed for a placeholder-shaped ask-id"
+  fi
+
+  echo "Scenario 1i: the documented no-ask spelling 'none' routes to the UNLINKED lane (sentinel class, re-review 2026-07-28) — never a real file named none.jsonl"
+  p1i="$(pl_path_for "none")"
+  if [[ "$p1i" == "$PROGRESS_LOG_STATE_DIR/unlinked.jsonl" ]]; then
+    pass "pl_path_for('none') resolves to unlinked.jsonl (sentinel, not a sanitized real name)"
+  else
+    fail "expected $PROGRESS_LOG_STATE_DIR/unlinked.jsonl, got $p1i (141 live events were misfiled to none.jsonl by exactly this path)"
+  fi
+  pl_emit --type task_done --ask "none" --plan-slug "none-sentinel-plan" --task-id "1" \
+    --sha "nonesha1" --summary "none sentinel proof" --emitter plan-lifecycle >/dev/null 2>&1
+  f1i="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+  if [[ -f "$f1i" ]] && grep -qF '"plan_slug":"none-sentinel-plan"' "$f1i" && [[ ! -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]]; then
+    pass "pl_emit(--ask none) wrote into unlinked.jsonl and created NO none.jsonl"
+  else
+    fail "expected the none-sentinel emit in $f1i with no none.jsonl created"
   fi
 
   echo "Scenario 2: pl_emit writes a schema-valid task_done event"

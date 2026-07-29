@@ -1335,3 +1335,25 @@ occurrence on the next model launch.
 branch + regression scenario T17b; self-test 21/0. This closes the instance,
 NOT the class.
 **Filed by:** neural-lace session, 2026-07-28 (operator-reported: "Context is not at 74%").
+
+## ASK-SENTINEL-QUARANTINE-SURFACER-01 — unattributed.jsonl / unlinked.jsonl growth is invisible
+
+**Severity:** P3 (observability only; no data loss — quarantine/unlinked lanes preserve events).
+**Context:** the 2026-07-27/28 ask-id sentinel fixes route placeholder-shaped
+ask-ids (`<id`…) to `~/.claude/state/progress-logs/unattributed.jsonl`
+(quarantine — indicates a live emitter bug) and no-ask events (`none`/empty)
+to `unlinked.jsonl` (legitimate lane). Nothing surfaces either file's growth:
+a REGROWING quarantine file after the remap means a pre-fix emitter is still
+live somewhere, and today only the remap script's reborn-source guard would
+notice — and only when manually run.
+**Action:** add a quarantine/unlinked line to the estate snapshot
+(`estate-janitor.sh`) and the brief (`estate-brief.sh`) — counts + growth
+since last tick; WARN in the brief when unattributed.jsonl grows at all.
+Ship WITH self-test scenarios (both artifacts have suites; extend, don't
+bypass). Deferred from the emitter-fix delta commit by the harness
+re-review's own severity call (Minor-4): surfacing is follow-up scope,
+the fix itself must not wait on it.
+**Fold-in point:** any estate-program slice touching estate-janitor.sh or
+estate-brief.sh next (T8 consumes T1 data and is the natural carrier), or a
+standalone micro-plan if the estate program closes first.
+**Filed by:** ask-id emitter-fix reformulation (re-review 2026-07-28, Minor-4).
