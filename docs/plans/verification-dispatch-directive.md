@@ -93,3 +93,6 @@ bullet as extractable rule-body.
 - 2026-07-29: adapters/claude-code/hooks/review-record-commit-gate.sh — V6 LANDED (was deferred): the commit-time carrier harness-reviewer called "the single most important thing to fix". Blocking, at operator direction 2026-07-29 ("If it's valuable, then build and deploy it").
 - 2026-07-29: adapters/claude-code/scripts/measure-review-gate-fp.sh — V6's section-10 evidence instrument: replays the gate predicate over real history so the FP rate is measured retroactively instead of via a warn period.
 - 2026-07-29: adapters/claude-code/hooks/harness-claim-lint.sh — V6 adjunct: warn-only lint for the three defect classes that recurred within one session (self-invalidating sandbox tests, unmeasured absolute claims, guards their callers do not arm).
+- 2026-07-29: `adapters/claude-code/hooks/lib/git-command-parse.sh` — the shared commit-target resolver. harness-reviewer REJECTED the gate three times for the SAME class (wrong-subject-resolution); the fix had existed since 2026-06-10 inside scope-enforcement-gate (HARNESS-GAP-47). Extracted so the harness has ONE parser instead of two that disagree.
+- 2026-07-29: `adapters/claude-code/hooks/scope-enforcement-gate.sh` — re-pointed at the shared lib; byte-equivalence proven by a 120/120 differential (exit code AND stderr) over 40 commands x 3 cwds on both interpreters.
+
