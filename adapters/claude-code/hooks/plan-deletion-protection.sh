@@ -95,6 +95,13 @@ _pdp_has_fresh_waiver() {
 # Self-test entry point (handled BEFORE input parsing)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (perf-ledger, signal-ledger) for
+  # this whole run and EXPORT it so the child scenarios spawned below inherit
+  # it. Without it those libs resolve their PRODUCTION paths and this self-test
+  # appends to the operator's real ~/.claude/state/signal-ledger.jsonl. PROVEN
+  # behaviorally: clean-HOME probe created .claude/state/signal-ledger.jsonl
+  # without it, nothing under .claude/ with it.
+  export HARNESS_SELFTEST=1
   # Defined further down; jump to it
   SELF_TEST=1
 fi

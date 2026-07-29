@@ -373,6 +373,12 @@ _glob_match() {
 # --self-test handler (seven scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (signal-ledger.sh) for this run and
+  # EXPORT it so the re-invocations below inherit it. Without it the lib resolves
+  # its PRODUCTION path and this self-test appends to the operator's real
+  # ~/.claude/state/signal-ledger.jsonl. PROVEN behaviorally: clean-HOME probe
+  # created .claude/state/signal-ledger.jsonl without it, nothing with it.
+  export HARNESS_SELFTEST=1
   SELF_TEST_HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
   if [[ ! -f "$SELF_TEST_HOOK" ]]; then
     echo "self-test: cannot resolve own path" >&2

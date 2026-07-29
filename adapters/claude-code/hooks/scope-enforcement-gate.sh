@@ -255,6 +255,12 @@ fi
 # --self-test handler (thirty-three scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm this file's OWN sandbox guard (the EXEMPT_LOG branch at ~line 1500) and
+  # perf-ledger.sh's, and EXPORT it so every re-invocation of $SELF_TEST_HOOK
+  # below inherits it. The guard already existed — it was simply never armed by
+  # this host, so it was INERT. PROVEN behaviorally: clean-HOME probe created
+  # .claude/state/scope-gate-exemptions.log without this line, nothing with it.
+  export HARNESS_SELFTEST=1
   # We need this script's path for re-invocation under different cwds
   SELF_TEST_HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
   if [[ ! -f "$SELF_TEST_HOOK" ]]; then

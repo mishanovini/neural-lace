@@ -108,6 +108,12 @@ _hhs_waived_files() {
 # ---------- self-test ----------------------------------------------------
 
 if [ "${1:-}" = "--self-test" ]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (signal-ledger.sh) for this run and
+  # EXPORT it so re-invocations inherit it. Without it the lib resolves its
+  # PRODUCTION path and this self-test appends to the operator's real
+  # ~/.claude/state/signal-ledger.jsonl. PROVEN behaviorally: clean-HOME probe
+  # created .claude/state/signal-ledger.jsonl without it, nothing with it.
+  export HARNESS_SELFTEST=1
   TMPDIR_ST=$(mktemp -d)
   trap 'rm -rf "$TMPDIR_ST"' EXIT
 

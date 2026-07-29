@@ -132,9 +132,23 @@ _RRCG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=/dev/null
 source "$_RRCG_SELF_DIR/lib/git-command-parse.sh" 2>/dev/null || true
 
+# This writer is HOST-LOCAL — it is not one of the shared libs, so it carried no
+# sandbox guard of its own and `export HARNESS_SELFTEST=1` alone would not have
+# stopped it. Resolution order matches the shared libs (signal-ledger.sh:116):
+#   1. explicit REVIEW_RECORD_GATE_LOG  2. HARNESS_SELFTEST=1 -> tmp sandbox
+#   3. the real ~/.claude/state/review-record-gate-overrides.log
+# PROVEN: without arm 2, a --self-test scenario that trips the override arm
+# appended real rows to the operator's audit log (clean-HOME probe, 2026-07-29).
 _rrcg_log_override() {
   local reason="$1" repo="$2"
-  local log="${REVIEW_RECORD_GATE_LOG:-$HOME/.claude/state/review-record-gate-overrides.log}"
+  local log="${REVIEW_RECORD_GATE_LOG:-}"
+  if [[ -z "$log" ]]; then
+    if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+      log="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/review-record-commit-gate-selftest/$$}/review-record-gate-overrides.log"
+    else
+      log="$HOME/.claude/state/review-record-gate-overrides.log"
+    fi
+  fi
   mkdir -p "$(dirname "$log")" 2>/dev/null || return 0
   printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)" \
     "${repo:-unknown}" "$reason" >> "$log" 2>/dev/null || true
@@ -875,7 +889,13 @@ EOF
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "${1:-}" in
-    --self-test) _rrcg_self_test; exit $? ;;
+    # `export HARNESS_SELFTEST=1` arms the sandbox guard in signal-ledger.sh
+    # (and in _rrcg_log_override above) for the whole run and for every
+    # re-invocation the self-test spawns. Without it this self-test wrote the
+    # operator's real ~/.claude/state/signal-ledger.jsonl AND
+    # ~/.claude/state/review-record-gate-overrides.log. PROVEN behaviorally:
+    # clean-HOME probe created both without it, nothing under .claude/ with it.
+    --self-test) export HARNESS_SELFTEST=1; _rrcg_self_test; exit $? ;;
     *) _rrcg_main; exit $? ;;
   esac
 fi

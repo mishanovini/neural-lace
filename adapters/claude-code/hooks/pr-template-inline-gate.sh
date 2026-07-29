@@ -344,6 +344,13 @@ extract_body_from_command() {
 # ============================================================
 
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (perf-ledger, signal-ledger) for
+  # this whole run and EXPORT it so re-invocations of $SCRIPT inherit it.
+  # Without it those libs resolve their PRODUCTION paths and this self-test
+  # appends to the operator's real ~/.claude/state/signal-ledger.jsonl. PROVEN
+  # behaviorally: clean-HOME probe created .claude/state/signal-ledger.jsonl
+  # without it, nothing under .claude/ with it.
+  export HARNESS_SELFTEST=1
   SCRIPT="${BASH_SOURCE[0]}"
 
   # Resolve validator library (used by all self-test cases). Mirrors the

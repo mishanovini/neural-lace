@@ -1020,7 +1020,13 @@ insert a duplicate row.' \
 source "$SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
 
 case "${1:-}" in
-  --self-test) run_self_test; exit $? ;;
+  # `export HARNESS_SELFTEST=1` arms the sandbox guard in every lib this host
+  # sources (perf-ledger.sh, signal-ledger.sh) for the whole self-test run and
+  # for any re-invocation it spawns. Without it those libs resolve their
+  # PRODUCTION paths and the self-test writes the operator's real
+  # ~/.claude/state/signal-ledger.jsonl. PROVEN behaviorally: clean-HOME probe
+  # created .claude/state/signal-ledger.jsonl without it, nothing with it.
+  --self-test) export HARNESS_SELFTEST=1; run_self_test; exit $? ;;
   *)
     if declare -F pl_meter_begin >/dev/null 2>&1; then
       pl_meter_begin

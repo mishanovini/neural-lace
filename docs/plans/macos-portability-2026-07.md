@@ -153,6 +153,31 @@ doctor check so it cannot silently rot.
 - 2026-07-29: `docs/portability-baseline.txt` — M5: NEW. The committed known-failing set the doctor compares against. Raising it is a reviewable diff, not a number edited inside a script.
 - 2026-07-29: `adapters/claude-code/hooks/harness-doctor.sh` — M5: new check 9 plus a new portability-only mode; ALSO the check-8 scope fix, whose top-level glob had never matched the hooks lib subdirectory, so 20 libraries' self-test assertions had never run under the doctor.
 - 2026-07-29: `adapters/claude-code/hooks/lib/nl-paths.sh` — M5: added an explicit self-test flag dispatch. It previously ran its suite on any direct execution, which no discovery predicate could safely detect, so it sat outside the sweep.
+
+- M7 — CLASS3 sweep: stop harness self-tests writing the operator's REAL state.
+  Decomposed per-target below. The behavioral CLASS3 oracle surfaced 15 hosts
+  whose --self-test materialised state under a clean HOME; 13 wrote the shared
+  cross-project signal ledger. Each fix is proven by a delete/restore mutation
+  round-trip on both interpreters, never by a text match.
+- `adapters/claude-code/hooks/doc-gate.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/evidence-before-fix-gate.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/find-disk-scan-gate.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/harness-hygiene-scan.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/plan-deletion-protection.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/pr-template-inline-gate.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/prd-validity-gate.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/review-record-commit-gate.sh` — M7 arms the guard AND adds the missing sandbox arm to its own host-local override-audit-log writer
+- `adapters/claude-code/hooks/scope-enforcement-gate.sh` — M7 arms the guard its own exemption-log branch already keyed on but no caller ever set
+- `adapters/claude-code/hooks/spec-freeze-gate.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/task-completed-evidence-gate.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/task-created-validator.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/teammate-spawn-validator.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/hooks/wire-check-gate.sh` — M7 arms the shared sandbox guard in its self-test branch
+- `adapters/claude-code/scripts/ask-registry.sh` — M7 different cause: it already armed the guard, but two scenarios disarm it deliberately and omitted the coord-sync marker override from their isolation set
+- NOT changed by M7: no shared lib needed a new guard. Every lib the 15 hosts
+  source already had a working sandbox arm; the defect was hosts not arming it.
+  The single missing guard was host-local, in the review-record gate's own
+  override-audit writer, and was added there.
 - NOT changed by M4, deliberately: `adapters/claude-code/install.sh` and
 - 2026-07-29: `docs/reviews/2026-07-14-mac-setup-incident.md` — the first-install record for this Mac; documents the symlink-based install whose source==target collision destroyed hooks/lib/ today
 - 2026-07-29: `docs/operator-todo.md` — needs-you mirror entries accumulated this session

@@ -2215,6 +2215,16 @@ cmd_selftest() {
     # Isolate registry/progress-log state from the real machine WITHOUT
     # using HARNESS_SELFTEST's mirror short-circuit (that would skip the
     # real nl_main_checkout_root resolution this scenario exists to prove).
+    #
+    # COORD_DIRTY_MARKER_FILE is part of that isolation and was MISSING (CLASS3,
+    # 2026-07-29). Because this subprocess sets HARNESS_SELFTEST=0 on purpose,
+    # progress-log-lib's guard arm is deliberately off, so its coord-sync marker
+    # fell through to arm 3 — the operator's REAL ~/.claude/state/coord-sync/dirty,
+    # the flag scripts/coord-sync.sh consumes. Arm 1 (this explicit override) is
+    # the right isolation here: it does not re-enable the short-circuit the
+    # scenario exists to bypass. PROVEN: with the guard vars unset and HOME
+    # pointed at an empty dir, this suite created .claude/state/coord-sync/dirty
+    # before this line and creates nothing under .claude/ after it.
     local wt_ar_state="$TMP/l-ar-state" wt_pl_state="$TMP/l-pl-state"
     mkdir -p "$wt_ar_state" "$wt_pl_state"
 
@@ -2222,6 +2232,7 @@ cmd_selftest() {
         && HARNESS_SELFTEST=0 \
            ASK_REGISTRY_STATE_DIR="$wt_ar_state" \
            PROGRESS_LOG_STATE_DIR="$wt_pl_state" \
+           COORD_DIRTY_MARKER_FILE="$TMP/l-coord/dirty" \
            ASK_REGISTRY_MIRROR_PATH="" \
            bash "$SCRIPT_DIR/ask-registry.sh" register --ask-id "ask-selftest-wt" \
              --summary "from worktree" --repo "$wt_dir" >/dev/null 2>&1 )
@@ -2640,7 +2651,14 @@ cmd_selftest() {
   local V_DIR="$TMP/prod-shape"
   mkdir -p "$V_DIR/ar" "$V_DIR/pl"
   local V_REG="$V_DIR/ar/ask-registry.jsonl"
+  # COORD_DIRTY_MARKER_FILE belongs in this isolation set for the same reason as
+  # Scenario L1: HARNESS_SELFTEST=0 is deliberate here (the point is the real
+  # flagless production shape), so progress-log-lib's guard arm is off and its
+  # coord-sync marker otherwise falls through to the operator's REAL
+  # ~/.claude/state/coord-sync/dirty. Arm 1 (explicit path) isolates it without
+  # re-enabling the short-circuit this scenario exists to avoid.
   local V_ENV=(ASK_REGISTRY_STATE_DIR="$V_DIR/ar" PROGRESS_LOG_STATE_DIR="$V_DIR/pl" \
+               COORD_DIRTY_MARKER_FILE="$V_DIR/coord/dirty" \
                ASK_REGISTRY_MIRROR_PATH="$V_DIR/mirror.jsonl" HARNESS_SELFTEST=0)
   env "${V_ENV[@]}" bash "$SCRIPT_DIR/ask-registry.sh" register --ask-id "ask-prod-1" \
     --text "Please rebuild the roadmap view. It must show statuses." --session-id "sess-prod" >/dev/null 2>&1
@@ -3345,6 +3363,11 @@ case "${1:-}" in
     exit 0
     ;;
   --self-test|--selftest|selftest|self-test)
+    # NOTE: this host does NOT need `export HARNESS_SELFTEST=1` here — cmd_selftest
+    # already exports it as its first act (see the export beside the tempdir
+    # setup). Adding a second one here would be inert decoration. Its clean-HOME
+    # leak had a different cause; see the COORD_DIRTY_MARKER_FILE note in
+    # Scenario L1 / Scenario V.
     cmd_selftest
     exit $?
     ;;
