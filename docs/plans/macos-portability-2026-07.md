@@ -174,3 +174,18 @@ doctor check so it cannot silently rot.
 - 2026-07-29: `adapters/claude-code/hooks/harness-doctor.sh` — M6 ENFORCEMENT. check_selftest_exclusions_wiring on every --quick (zero-subprocess) plus a --full companion running the reader's own controls; 4 new self-test scenarios. Suite 128/1 -> 132/1 on bash 5.3.15 and 126/3 -> 130/3 on bash 3.2.57, pre-existing failures identical in count AND identity
 - 2026-07-29: `adapters/claude-code/manifest.json` — M6 manifest entry selftest-sweep-exclusions with golden scenario, false-positive expectation and retirement condition per constitution §10
 - 2026-07-29: `docs/backlog.md` — M6 follow-ups (reconcile the CI basename allowlist onto the ledger; make the two excluded self-tests self-contained)
+
+- M5 — PORTABILITY-TOUCH-D-SWEEP-01, decomposed per-target
+- `adapters/claude-code/attic/product-acceptance-gate.sh` — M5
+- `adapters/claude-code/hooks/cross-repo-nl-touch-warn.sh` — M5
+- `adapters/claude-code/hooks/lib/observability-derive.sh` — M5
+- `adapters/claude-code/hooks/lib/session-heartbeat-lib.sh` — M5
+- `adapters/claude-code/hooks/local-edit-gate.sh` — M5
+- `adapters/claude-code/hooks/session-start-digest.sh` — M5
+- `adapters/claude-code/hooks/stale-active-plan-surfacer.sh` — M5
+- `adapters/claude-code/scripts/agent-heartbeat.sh` — M5
+- `adapters/claude-code/scripts/f4-retro.sh` — M5
+- `adapters/claude-code/scripts/session-resumer.sh` — M5
+- `adapters/claude-code/scripts/session-wrap.sh` — M5
+- `adapters/claude-code/scripts/worktree-hygiene-sweep.sh` — M5
+- `adapters/claude-code/tests/fixtures/wave-e/E.6/doctor-predicate.md` — M5

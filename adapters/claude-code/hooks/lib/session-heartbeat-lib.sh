@@ -732,6 +732,11 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   pass() { PASSED=$((PASSED+1)); echo "  PASS: $1"; }
   fail() { FAILED=$((FAILED+1)); echo "  FAIL: $1" >&2; }
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=portable-time.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source portable-time.sh" >&2; exit 2; }
+
   TMP=$(mktemp -d 2>/dev/null || mktemp -d -t 'hblst')
   if [[ -z "$TMP" ]] || [[ ! -d "$TMP" ]]; then
     echo "self-test: could not create tempdir" >&2
@@ -1041,10 +1046,14 @@ EOF
   (
     export OBS_TRANSCRIPTS_ROOT="$TMP/transcripts-throttle"
     mkdir -p "$OBS_TRANSCRIPTS_ROOT"
-    backdate() { # <file> <seconds-ago> — best-effort GNU/BSD touch
-      local target=$(( $(date -u +%s) - $2 ))
-      touch -d "@${target}" "$1" 2>/dev/null \
-        || touch -t "$(date -u -v-"$2"S +%Y%m%d%H%M.%S 2>/dev/null)" "$1" 2>/dev/null || true
+    backdate() { # <file> <seconds-ago> — portable, and NEVER best-effort.
+      # Pre-sweep this was `touch -d "@epoch" || touch -t "$(date -u -v-NS)"
+      # || true`. On macOS `touch -d` is unavailable AND the fallback rendered
+      # the stamp in UTC while `touch -t` reads LOCAL time, so on a UTC-7 box
+      # the transcript landed 7h in the FUTURE — the opposite of "stale" —
+      # and `|| true` hid it. Every case below asserts staleness, so an
+      # un-aged fixture must abort the scenario, not soften it.
+      nl_touch_age "$1" "$2" || exit 6
     }
     mk_hb() { # <sid> <pid> — old heartbeat (2020 ts)
       cat > "$HEARTBEAT_STATE_DIR/$1.json" <<EOF
@@ -1108,7 +1117,7 @@ EOF
   if [[ "$rc_thr" -eq 0 ]]; then
     pass "hb_classify: throttled for both REAL api-error shapes (explicit path + find-resolved); 529-in-UUID stays stale (field-aware, no substring); dead pid stays crashed; empty path stays stale"
   else
-    fail "hb_classify throttled scenario failed (rc=$rc_thr: 1=shape-a 2=shape-b 3=uuid-negative 4=dead-pid 5=empty-path)"
+    fail "hb_classify throttled scenario failed (rc=$rc_thr: 1=shape-a 2=shape-b 3=uuid-negative 4=dead-pid 5=empty-path 6=fixture-could-not-be-aged)"
   fi
 
   echo "Scenario 6h: hb_write --session <sid> overrides the CLAUDE_CODE_SESSION_ID fallback (ADR-061 D2 — fixes the resumer's 'unknown' attribution)"

@@ -1386,6 +1386,11 @@ run_self_test() {
   mkdir -p "$tmp"
   export HARNESS_SELFTEST=1
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=lib/portable-time.sh
+  . "$HOOKS_DIR/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source lib/portable-time.sh" >&2; return 1; }
+
   _ck_contains() {
     local label="$1" haystack="$2" needle="$3"
     if [[ "$haystack" == *"$needle"* ]]; then
@@ -1454,7 +1459,12 @@ EOF
 Status: ACTIVE
 EOF
   local old_ts=$(($(date +%s) - 200000))
-  touch -d "@$old_ts" "$s1/docs/plans/old-plan.md" 2>/dev/null || true
+  # feed_stale_plans prefers the git commit timestamp and only falls back to
+  # mtime, so this backdating is the belt to the commit-date braces below —
+  # but it must still WORK, or the fallback arm is silently never exercised.
+  # (Pre-sweep: `touch -d "@$old_ts" ... || true`, a no-op on macOS.)
+  nl_touch_age "$s1/docs/plans/old-plan.md" 200000 || {
+    echo "FAIL: S1 fixture could not be aged (nl_touch_age)" >&2; fail=$((fail + 1)); }
   ( cd "$s1" && git add docs/plans/old-plan.md docs/discoveries >/dev/null 2>&1 && \
     GIT_AUTHOR_DATE="@$old_ts" GIT_COMMITTER_DATE="@$old_ts" git commit --quiet -m "old plan" >/dev/null 2>&1 ) || true
   local alert1="$tmp/s1-alerts"

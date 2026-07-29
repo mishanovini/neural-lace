@@ -360,6 +360,13 @@ cmd_self_test() {
   trap 'rm -rf "$TMPROOT"' EXIT
   local PASSED=0 FAILED=0
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  local _sw_pt
+  _sw_pt="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks/lib/portable-time.sh"
+  # shellcheck source=../hooks/lib/portable-time.sh
+  . "$_sw_pt" 2>/dev/null || {
+    echo "self-test: cannot source hooks/lib/portable-time.sh ($_sw_pt)" >&2; return 1; }
+
   # Setup synthetic repo
   cd "$TMPROOT"
   git init -q .
@@ -399,8 +406,14 @@ cmd_self_test() {
   rm -f SCRATCHPAD.md
   echo "# SCRATCHPAD" > SCRATCHPAD.md
   echo "test-plan-1" >> SCRATCHPAD.md
-  # Force ancient mtime
-  touch -d "2 hours ago" SCRATCHPAD.md 2>/dev/null || touch -t "200001010000" SCRATCHPAD.md
+  # Age SCRATCHPAD past the 30-minute freshness window (cmd_verify's `age >
+  # 1800`). Pre-sweep the GNU-only `touch -d "2 hours ago"` failed on macOS
+  # and the fallback stamped the year 2000 — still stale, so S3 passed, but it
+  # proved only "a 26-year-old file is stale", which no wrong threshold
+  # constant could ever fail. 2h is a real probe of the 30m contract.
+  nl_touch_age SCRATCHPAD.md 7200 || {
+    echo "self-test (S3) stale-mtime: FAIL (could not age SCRATCHPAD.md)"
+    FAILED=$((FAILED + 1)); }
   if cmd_verify "$TMPROOT" >/dev/null 2>&1; then
     echo "self-test (S3) stale-mtime: FAIL (should have detected stale)"
     FAILED=$((FAILED + 1))
@@ -503,9 +516,11 @@ EOF
     echo "self-test (S8) non-git-exits-zero: SKIP (could not resolve script path: '$SELF_SCRIPT_PATH')"
   else
     VERIFY_EXIT=0
-    bash "$SELF_SCRIPT_PATH" verify >/dev/null 2>&1 || VERIFY_EXIT=$?
+    # "${BASH:-bash}", never bare `bash`: re-invoking under whichever bash
+    # leads PATH means a 3.2 run can report 5.x results (SWEEP-01).
+    "${BASH:-bash}" "$SELF_SCRIPT_PATH" verify >/dev/null 2>&1 || VERIFY_EXIT=$?
     REFRESH_EXIT=0
-    bash "$SELF_SCRIPT_PATH" refresh >/dev/null 2>&1 || REFRESH_EXIT=$?
+    "${BASH:-bash}" "$SELF_SCRIPT_PATH" refresh >/dev/null 2>&1 || REFRESH_EXIT=$?
     if [ "$VERIFY_EXIT" -eq 0 ] && [ "$REFRESH_EXIT" -eq 0 ]; then
       echo "self-test (S8) non-git-exits-zero: PASS"
       PASSED=$((PASSED + 1))
@@ -546,7 +561,9 @@ EOF
     # Parent backlog STALE (pre-fix this is what Signal 5 wrongly read).
     mkdir -p docs
     echo "# Backlog (parent, stale)" > docs/backlog.md
-    touch -d "3 hours ago" docs/backlog.md 2>/dev/null || touch -t "200001010000" docs/backlog.md
+    nl_touch_age docs/backlog.md 10800 || {
+      echo "self-test (S9a) worktree-backlog-fresh: FAIL (could not age the parent backlog)"
+      FAILED=$((FAILED + 1)); }
 
     # Post-fix: cmd_verify(parent, wt) reads the worktree's FRESH backlog → PASS.
     if cmd_verify "$TMPROOT" "$WT9" >/dev/null 2>&1; then
@@ -559,7 +576,9 @@ EOF
 
     # Negative control: make the WORKTREE backlog genuinely stale → must STALE.
     # Proves the fix did NOT mask real staleness; it just reads the right copy.
-    touch -d "3 hours ago" "$WT9/docs/backlog.md" 2>/dev/null || touch -t "200001010000" "$WT9/docs/backlog.md"
+    nl_touch_age "$WT9/docs/backlog.md" 10800 || {
+      echo "self-test (S9b) worktree-backlog-stale: FAIL (could not age the worktree backlog)"
+      FAILED=$((FAILED + 1)); }
     if cmd_verify "$TMPROOT" "$WT9" >/dev/null 2>&1; then
       echo "self-test (S9b) worktree-backlog-stale: FAIL (should STALE on a genuinely stale worktree backlog)"
       FAILED=$((FAILED + 1))

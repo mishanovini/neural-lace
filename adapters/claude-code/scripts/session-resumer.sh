@@ -2076,6 +2076,11 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   TMP=$(mktemp -d 2>/dev/null || mktemp -d -t 'srst')
   trap 'rm -rf "$TMP"' EXIT
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=../hooks/lib/portable-time.sh
+  . "$SCRIPT_DIR/../hooks/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source hooks/lib/portable-time.sh" >&2; exit 2; }
+
   export HARNESS_SELFTEST=1
   export SIGNAL_LEDGER_PATH="$TMP/ledger.jsonl"
   export RESUMER_STATE_DIR="$TMP/resumer-state"
@@ -2142,12 +2147,19 @@ NYSTUB
   # backdate_mtime <file> <seconds-ago> — portable mtime backdating with a
   # HARD assertion the backdate actually took (a silently-failed backdate
   # would make the staleness scenarios pass or fail for the wrong reason).
+  # Pre-sweep this used `touch -d "@epoch" || touch -t "$(date -u -v-NS ...)"
+  # || true`. On macOS `touch -d` does not exist AND the fallback rendered the
+  # stamp in UTC while `touch -t` reads LOCAL time, so on a UTC-7 box every
+  # fixture landed 7h in the FUTURE. The hard assertion below is what turned
+  # that into 13 loud failures instead of silent wrong-reason passes — keep it.
   backdate_mtime() {
     local f="$1" secs_ago="$2" target
     target=$(( $(date -u +%s) - secs_ago ))
-    touch -d "@${target}" "$f" 2>/dev/null \
-      || touch -t "$(date -u -v-"${secs_ago}"S +%Y%m%d%H%M.%S 2>/dev/null)" "$f" 2>/dev/null \
-      || true
+    if ! nl_touch_age "$f" "$secs_ago"; then
+      echo "  FAIL: backdate_mtime: nl_touch_age refused to age $f (${secs_ago}s)" >&2
+      FAILED=$((FAILED+1))
+      return 1
+    fi
     local got
     got=$(mtime_epoch "$f")
     local diff=$(( got - target ))
@@ -3098,10 +3110,18 @@ EOF
     s25_stale_files="$s25_stale_files $S25_PR/proj/stale-${s25_i}.jsonl"
     s25_i=$((s25_i + 1))
   done
-  # Backdate all 50 stale transcripts in ONE touch call.
+  # Backdate all 50 stale transcripts in ONE touch call. `touch -t` is the
+  # one spelling BOTH GNU and BSD accept, and nl_epoch_to_touch_ts is the
+  # helper that renders it (LOCAL time, matching how touch -t reads it) — so
+  # this keeps the single-fork property while staying portable. Pre-sweep:
+  # `touch -d "@epoch" ... || true`, which aged nothing at all on macOS and
+  # made "candidates_seen=50" unreachable.
   s25_target=$(( $(date -u +%s) - 7200 ))
+  s25_ts="$(nl_epoch_to_touch_ts "$s25_target")" || s25_ts=""
   # shellcheck disable=SC2086
-  touch -d "@${s25_target}" $s25_stale_files 2>/dev/null || true
+  if [[ -z "$s25_ts" ]] || ! touch -t "$s25_ts" $s25_stale_files 2>/dev/null; then
+    no "could not backdate the 50 stale live-scale transcripts — scenario 25 cannot be trusted"
+  fi
   # Run A pins an EXPLICIT generous budget (240s) rather than the default
   # 60s: the contract under test is BOUNDEDNESS (the pass terminates, the
   # candidate ceiling holds, one supervisor-pass record is emitted) — not
@@ -3187,8 +3207,14 @@ EOF
     s26_old_files="$s26_old_files $S26_PR/proj/throt-old-${s26_i}.jsonl"
     s26_i=$((s26_i + 1))
   done
+  # Same single-touch shape as scenario 25; see the note there. Pre-sweep
+  # `touch -d "@epoch" ... || true` left all 12 fixtures FRESH on macOS, so
+  # "12 deferred sids ahead of it" was never actually the state under test.
+  s26_ts="$(nl_epoch_to_touch_ts $((s26_now - 14400)))" || s26_ts=""
   # shellcheck disable=SC2086
-  touch -d "@$((s26_now - 14400))" $s26_old_files 2>/dev/null || true
+  if [[ -z "$s26_ts" ]] || ! touch -t "$s26_ts" $s26_old_files 2>/dev/null; then
+    no "could not backdate the 12 deferred-throttled transcripts — scenario 26 cannot be trusted"
+  fi
   {
     printf '{"type":"user","message":{"role":"user","content":[{"type":"text","text":"go"}]}}\n'
     printf '{"type":"system","subtype":"api_error","retryAttempt":9,"maxRetries":10,"retryInMs":16000,"message":"Retrying after API error"}\n'

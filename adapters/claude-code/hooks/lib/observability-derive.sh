@@ -2369,6 +2369,11 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   pass() { PASSED=$((PASSED+1)); echo "  PASS: $1"; }
   fail() { FAILED=$((FAILED+1)); echo "  FAIL: $1" >&2; }
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=portable-time.sh
+  . "$_OD_SELF_DIR/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source portable-time.sh" >&2; exit 2; }
+
   TMP=$(mktemp -d 2>/dev/null || mktemp -d -t 'odst')
   if [[ -z "$TMP" ]] || [[ ! -d "$TMP" ]]; then
     echo "self-test: could not create tempdir" >&2
@@ -2426,8 +2431,14 @@ EOF
 {"schema":1,"session_id":"sess-throttle-tail","pid":$$,"cwd":"/x","repo_root":"/x","worktree_root":"/x","branch":"main","model":"sonnet","last_activity_ts":"2020-01-01T00:00:00Z","last_event":"turn-end","marker_state":"none"}
 EOF
   printf '{"type":"system","subtype":"api_error","retryAttempt":3,"maxRetries":10,"retryInMs":8000}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-throttle-tail.jsonl"
-  touch -d "@$(( $(date -u +%s) - 3600 ))" "$OBS_TRANSCRIPTS_ROOT/sess-throttle-tail.jsonl" 2>/dev/null \
-    || touch -t "$(date -u -v-3600S +%Y%m%d%H%M.%S 2>/dev/null)" "$OBS_TRANSCRIPTS_ROOT/sess-throttle-tail.jsonl" 2>/dev/null || true
+  # The transcript MUST really be an hour old: hb_classify only returns
+  # `throttled` for a STALE transcript whose tail is api-error-shaped, so a
+  # fresh fixture classifies `working` and the assertion below tests nothing
+  # it claims to. Pre-sweep both arms were wrong on macOS (`touch -d` is
+  # GNU-only; the `date -u` fallback rendered UTC into a LOCAL-time `touch
+  # -t`, landing the file in the FUTURE) and `|| true` swallowed it.
+  nl_touch_age "$OBS_TRANSCRIPTS_ROOT/sess-throttle-tail.jsonl" 3600 || {
+    fail "could not age sess-throttle-tail.jsonl — the throttled-state scenario cannot be trusted"; }
   out1="$(od_sessions)"
   if printf '%s' "$out1" | grep -q "oracle: od_sessions"; then
     pass "od_sessions names its oracle inline"

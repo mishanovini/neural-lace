@@ -97,9 +97,15 @@ check_wave_e_e6_needs_you() {
   cat > "$tmp/state/ledger.json" <<'JSON'
   {"schema_version":1,"items":[{"id":"NY-fixture","section":"decision","state":"open","text":"fixture decision","session":null,"links":[],"tier":null,"created_at":"2026-06-01T00:00:00Z","updated_at":"2026-06-01T00:00:00Z","resolved_at":null,"resolution_note":null}]}
   JSON
-  touch -d "10 days ago" "$tmp/NEEDS-YOU.md" 2>/dev/null || touch -t 200001010000 "$tmp/NEEDS-YOU.md"
   echo "# stale fixture" > "$tmp/NEEDS-YOU.md"
-  touch -d "10 days ago" "$tmp/NEEDS-YOU.md" 2>/dev/null || touch -t 200001010000 "$tmp/NEEDS-YOU.md"
+  # Portable aging. `touch -d "<relative time>"` is GNU-only and fails on
+  # BSD/macOS; the year-2000 `-t` fallback this recipe used to carry aged the
+  # file but no longer expressed "10 days", so it could not exercise the 7-day
+  # boundary the predicate is about. nl_touch_age does exactly 10 days on both
+  # platforms (PORTABILITY-TOUCH-D-SWEEP-01).
+  . "$HOME/.claude/hooks/lib/portable-time.sh"
+  nl_touch_age "$tmp/NEEDS-YOU.md" $(( 10 * 86400 )) || {
+    echo "fixture could not be aged — the synthetic RED is not valid" >&2; exit 1; }
   # Running check_wave_e_e6_needs_you against HOME=$tmp, main_root=$tmp must RED.
   ```
 

@@ -331,6 +331,11 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   pass() { PASSED=$((PASSED+1)); echo "  PASS: $1"; }
   fail() { FAILED=$((FAILED+1)); echo "  FAIL: $1" >&2; }
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=lib/portable-time.sh
+  . "$_CRNTW_SELF_DIR/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source lib/portable-time.sh" >&2; exit 2; }
+
   TMP="$(mktemp -d 2>/dev/null || mktemp -d -t 'crntwst')"
   if [[ -z "$TMP" || ! -d "$TMP" ]]; then
     echo "self-test: could not create tempdir" >&2
@@ -459,8 +464,13 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   echo "Scenario (g): stale (>1h) silence marker does NOT suppress the WARN"
   STALE_MARKER="$CRNTW_STATE_DIR_OVERRIDE/cross-repo-nl-touch-ok-sess-g.txt"
   echo "stale" > "$STALE_MARKER"
-  OLD_TS=$(( $(date -u +%s 2>/dev/null || echo 0) - 7200 ))
-  touch -d "@$OLD_TS" "$STALE_MARKER" 2>/dev/null || touch -t "$(date -u -r "$OLD_TS" '+%Y%m%d%H%M.%S' 2>/dev/null)" "$STALE_MARKER" 2>/dev/null || true
+  # Pre-sweep this was `touch -d "@$OLD_TS" || touch -t "$(date -u -r ...)"`.
+  # BOTH halves were wrong on macOS: `touch -d` is GNU-only, and the fallback
+  # rendered the stamp in UTC while `touch -t` reads it as LOCAL time — so on
+  # a UTC-7 box the marker landed 7h in the FUTURE, i.e. maximally FRESH, the
+  # exact inverse of the scenario's name. `|| true` then swallowed it.
+  nl_touch_age "$STALE_MARKER" 7200 || {
+    fail "could not age the stale silence-marker fixture — scenario (g) cannot be trusted"; }
   OUT_G="$(_crntw_check "$NL_MAIN/adapters/claude-code/README.md" "$UNRELATED" "sess-g")"
   if printf '%s' "$OUT_G" | grep -q "WARN \[cross-repo-nl-touch\]"; then
     pass "stale marker does not suppress the WARN"
@@ -475,7 +485,10 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # ------------------------------------------------------------
   echo "Scenario (h): real PreToolUse JSON round-trip always exits 0"
   JSON_INPUT="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$NL_MAIN/adapters/claude-code/README.md")"
-  ( cd "$UNRELATED" && CLAUDE_TOOL_INPUT="$JSON_INPUT" CLAUDE_CODE_SESSION_ID="sess-h" bash "$SELF_ABS" >/tmp/crntw-h-stdout 2>/tmp/crntw-h-stderr )
+  # "${BASH:-bash}", not bare `bash`: re-invoking the hook under whichever
+  # bash happens to lead PATH means a suite run under /bin/bash 3.2 can report
+  # results produced by bash 5.x (PORTABILITY-TOUCH-D-SWEEP-01).
+  ( cd "$UNRELATED" && CLAUDE_TOOL_INPUT="$JSON_INPUT" CLAUDE_CODE_SESSION_ID="sess-h" "${BASH:-bash}" "$SELF_ABS" >/tmp/crntw-h-stdout 2>/tmp/crntw-h-stderr )
   RC_H=$?
   if [[ "$RC_H" -eq 0 ]]; then
     pass "real hook invocation (cross-repo case) exits 0 (WARN, never block)"
@@ -495,7 +508,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # ------------------------------------------------------------
   echo "Scenario (i): real PreToolUse JSON round-trip for the FP case is silent"
   JSON_INPUT_I="$(printf '{"tool_name":"Write","tool_input":{"file_path":"%s"}}' "$NL_MAIN/adapters/claude-code/README.md")"
-  ( cd "$NL_MAIN" && CLAUDE_TOOL_INPUT="$JSON_INPUT_I" CLAUDE_CODE_SESSION_ID="sess-i" bash "$SELF_ABS" >/tmp/crntw-i-stdout 2>/tmp/crntw-i-stderr )
+  ( cd "$NL_MAIN" && CLAUDE_TOOL_INPUT="$JSON_INPUT_I" CLAUDE_CODE_SESSION_ID="sess-i" "${BASH:-bash}" "$SELF_ABS" >/tmp/crntw-i-stdout 2>/tmp/crntw-i-stderr )
   RC_I=$?
   if [[ "$RC_I" -eq 0 ]] && [[ ! -s /tmp/crntw-i-stderr ]]; then
     pass "real hook invocation (FP case) exits 0 with empty stderr"

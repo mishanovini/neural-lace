@@ -239,6 +239,15 @@ run_self_test() {
   mkdir -p "$tmp"
   local failures=0
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only,
+  # never the hook path. `touch -d` is GNU-only, so the previous callsites
+  # aged nothing on macOS and their `|| true` hid it.
+  local _sap_pt
+  _sap_pt="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/portable-time.sh"
+  # shellcheck source=lib/portable-time.sh
+  . "$_sap_pt" 2>/dev/null || {
+    echo "self-test: cannot source lib/portable-time.sh ($_sap_pt)" >&2; return 1; }
+
   run_scenario() {
     local name="$1"
     local expect_output="$2"  # "yes" or "no"
@@ -247,7 +256,11 @@ run_self_test() {
     local override_hours="${5:-}"
     local out
     if [ -n "$override_hours" ]; then
-      out=$(STALE_ACTIVE_PLAN_HOURS="$override_hours" bash "$0" </dev/null 2>&1 <<<"" )
+      # Re-invoke under the SAME interpreter that is running this suite.
+      # A bare `bash` here would silently test whichever bash is first on
+      # PATH, so a run under /bin/bash 3.2 could report results produced by
+      # /opt/homebrew/bin/bash 5.x (PORTABILITY-TOUCH-D-SWEEP-01).
+      out=$(STALE_ACTIVE_PLAN_HOURS="$override_hours" "${BASH:-bash}" "$0" </dev/null 2>&1 <<<"" )
     else
       out=$(surface_stale_plans "$cwd" 2>&1)
     fi
@@ -334,11 +347,9 @@ Status: ACTIVE
 been ACTIVE for too long
 EOF
   # Set mtime to 48h ago (older than the default 24h threshold)
-  local old_ts
-  old_ts=$(($(date +%s) - 172800))
-  touch -d "@$old_ts" "$s4/docs/plans/old-stuck.md" 2>/dev/null \
-    || touch -t "$(date -r "$old_ts" '+%Y%m%d%H%M.%S' 2>/dev/null)" "$s4/docs/plans/old-stuck.md" 2>/dev/null \
-    || true
+  nl_touch_age "$s4/docs/plans/old-stuck.md" 172800 || {
+    echo "  FAIL stale-active-surfaces: could not age the fixture — scenario cannot be trusted" >&2
+    failures=$((failures + 1)); }
   local out4
   out4=$(surface_stale_plans "$s4" 2>&1)
   if echo "$out4" | grep -q "old-stuck"; then
@@ -358,8 +369,14 @@ Status: ACTIVE
 ## Goal
 should not surface — in archive/
 EOF
-  old_ts=$(($(date +%s) - 172800))
-  touch -d "@$old_ts" "$s5/docs/plans/archive/old-archived.md" 2>/dev/null || true
+  # The fixture MUST actually be 48h old, or this scenario is vacuous: an
+  # un-aged plan is silent because it is FRESH, not because it is archived,
+  # so the archive exclusion would never be exercised. (Pre-sweep this line
+  # was `touch -d "@$old_ts" ... || true`, which aged nothing on macOS —
+  # PORTABILITY-TOUCH-D-SWEEP-01.)
+  nl_touch_age "$s5/docs/plans/archive/old-archived.md" 172800 || {
+    echo "  FAIL archive-excluded: could not age the fixture — scenario would be vacuous" >&2
+    failures=$((failures + 1)); }
   local out5
   out5=$(surface_stale_plans "$s5" 2>&1)
   if [ -z "$out5" ]; then
