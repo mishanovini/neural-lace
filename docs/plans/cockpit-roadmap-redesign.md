@@ -492,6 +492,51 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 
 - 2026-07-28: `docs/reviews/2026-07-28-operator-requests-ledger.md` — operator-requested request→disposition index for the round-10/11 work (gate input).
 
+- 2026-07-29: ROUND 12 — LABEL-CORRELATION + ROW-COMPOSITION ROUND. Operator verbatim
+  (these outrank any inference; the sit-down record convention applies):
+  · "Including a NL tag on each item is redundant considering they're all underneath the NL
+    node. And showing the 'in progress'/'complete' status next to the progress bar is also
+    redundant."
+  · "each bundle of tasks should roll up and compact when all children tasks are complete,
+    but tasks should not disappear when they finish. I want to be able to easily see what has
+    been done and what has not for each plan/bundle. It helps me understand how far through
+    each group is instead of just telling me what's left."
+  · "everything that still has work to be done should be visible to me at a glance. I can open
+    any individual plan and see all the tasks within it (both completed and not yet
+    completed). When an entire plan completes, it rolls up into the completed section."
+  · "We need consistency in labeling between the plans themselves, how you report here, and
+    what's in the cockpit. I want you and I to always see the same thing."
+  BINDING SPEC: the ux-ia-auditor LIVE audit (headless Chrome vs :7733; all geometry/colour
+  measured from computed styles). Files: `neural-lace/workstreams-ui/web/*` (roadmap.js,
+  app.css, index.html, inbox.js, cockpit.selftest.js).
+  KEY FINDINGS carried into the build: the row is `flex-wrap` with no columns (status chip x
+  swings 292px, fraction 346px across the 16 live rows) — costs more legibility than either
+  redundancy the operator named; `--ok #34d399` is BOTH the complete-status colour and the
+  progress-fill colour, so 100% of fill pixels are one green and a 2/14 plan looks like a 6/6
+  (salience inverted — the two rows needing nothing are the loudest); and the task IDs the
+  operator cannot correlate are ALREADY on the wire (`roadmap-routes.js:689/691`,
+  `deriveTaskBatches` :841-869 even emits "Tasks T1–T14") and discarded at
+  `roadmap.js:864` — a VIEW change, zero parser work.
+  LABEL COLLISION, mechanically proven: `T#` is used by THREE live plans and bare numerics by
+  EIGHT — filtering "T3" returns 3 plans, "M4"/"P1" return 1. The operator's complaint is
+  literally true for 11 of 17 plans / 61 of 86 tasks. Convention adopted: a unique `Key:`
+  header per plan, task ids `<KEY><n>`, new plans immediately + lazy backfill, slug stem as
+  the fallback renderer so no row is ever key-less. The agent-side half is binding on ME and
+  ships with it: never a bare `T3`/`M2`, always the qualified token identical to the cockpit's
+  key column. Both halves or neither — a bright new ID column correlated against prose
+  invented fresh each session fixes nothing.
+- 2026-07-29: `~/.claude/state/needs-you/ledger.json` — SEV-4 LIVE INCIDENT, repaired this
+  session. The canonical waiting-on-operator ledger was a 1-byte file (a bare newline) from
+  2026-07-27 20:46, so `/api/inbox` returned `ok:false` for ~2 days while the landing surface
+  rendered `Inbox (—)` beside "nothing on your list" — a broken surface reading as a
+  reassuring zero. Root cause `needs-you.sh:436` (and :1344): the init guard tests EXISTENCE,
+  not VALIDITY, so a truncated file is never re-initialized. Corrupt byte preserved at
+  `ledger.json.corrupt-2026-07-29.bak`. Class fix (validity-guard sweep + write-to-tmp-then-mv
+  so a failed producer cannot truncate) covers `adapters/claude-code/scripts/needs-you.sh` and
+  `neural-lace/workstreams-ui/server/inbox-routes.js` + its selftest.
+- 2026-07-29: `docs/plans/fragments/roadmap-r12-server-fragment.md` — Round 12 coordination
+  fragment (web-only builder defers any server change here; existing cross-task convention).
+
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
   (Fable proposal §7) — WITH the A3 caveat: the plain last-non-empty-wins fold is insufficient
