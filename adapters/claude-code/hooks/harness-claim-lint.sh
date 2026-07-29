@@ -40,6 +40,10 @@
 #   so the protection is silently inert for that host. Occurred once, costing
 #   real data: spawn-worktree.sh --self-test wrote fabricated rows into the
 #   operator's live would-block ledger for four review rounds.
+#   This check is BEHAVIORAL (it runs each host and looks at what it wrote) and
+#   DISCOVERED (it finds the guarded libs and their hosts from the tree). Its
+#   first version was neither, and had the very defect it exists to catch — see
+#   the long note above _hcl_check_unarmed_guard.
 #
 # ============================================================================
 # POSTURE
@@ -52,8 +56,14 @@
 # Promotion condition: a measured FP rate over a real observation window, the
 # same bar review-record-commit-gate.sh met retroactively.
 #
-# Usage:  harness-claim-lint.sh [--staged | <file>...]
+# Usage:  harness-claim-lint.sh [--staged | <file>...]   scoped: CLASS3 probes
+#                                                        only hosts in scope
+#         harness-claim-lint.sh --all-hosts              full CLASS3 sweep of
+#                                                        every discovered host
+#                                                        (an AUDIT: ~110s here)
 #         harness-claim-lint.sh --self-test
+#
+# With no arguments at all, CLASS3 sweeps every discovered host (--all-hosts).
 # ============================================================================
 
 set -uo pipefail
@@ -116,33 +126,204 @@ _hcl_check_unmeasured_claim() {
   done < "$f"
 }
 
-# --- CLASS 3: a guard whose callers do not arm it ---------------------------
-# If a lib keys behavior on HARNESS_SELFTEST, every script that CALLS that lib's
-# entry points must set it in its own --self-test branch.
-_hcl_check_unarmed_guard() {
-  local root="$1"
-  local lib_fns="adm_admit"     # extend as new guarded libs land
-  local fn f
-  for fn in $lib_fns; do
-    for f in "$root"/hooks/*.sh "$root"/scripts/*.sh; do
-      [[ -f "$f" ]] || continue
-      grep -q "$fn" "$f" 2>/dev/null || continue
-      grep -q -- '--self-test' "$f" 2>/dev/null || continue
-      if ! grep -q 'HARNESS_SELFTEST' "$f" 2>/dev/null; then
-        _hcl_report "CLASS3 unarmed-guard" "$f" "-" \
-          "calls $fn and has a --self-test, but never sets HARNESS_SELFTEST — the lib's sandbox guard is INERT for this host, so its self-test writes to REAL operator state."
-      fi
-    done
+# --- CLASS 3: a guard whose HOSTS do not arm it -----------------------------
+# ============================================================================
+# BEHAVIORAL, NOT TEXTUAL — AND DISCOVERED, NOT HARDCODED.
+# ============================================================================
+# v1 of this check had the exact defect it exists to catch. It decided whether
+# a host armed the guard with:   grep -q 'HARNESS_SELFTEST' "$f"
+# grep matches COMMENTS. task-verifier falsified it on 2026-07-29 by deleting
+# every real `export HARNESS_SELFTEST=1` from all three hosts while leaving the
+# explanatory comments intact — the check still reported PASS. Text presence is
+# not behavior: "the variable is mentioned" is not "the guard is armed", and a
+# `grep` for a name cannot tell a live export from a paragraph about one.
+#
+# The oracle is now the one admission-lib.sh Scenario 16b uses (read it as the
+# reference): run the host's OWN --self-test in a THROWAWAY HOME with the guard
+# vars UNSET, then look at what materialised under that HOME's .claude/. The
+# sandbox HOME starts empty, so anything found there is state the host would
+# have written into the operator's REAL ~/.claude for real. That fails if and
+# only if the host actually pollutes — which no comment can fake.
+#
+# v1 was also HARDCODED (`lib_fns="adm_admit"` plus a fixed hooks/scripts glob),
+# so a newly-spliced host was silently unchecked and only ONE of the tree's
+# guarded libs was covered at all. Discovery now derives both the guarded libs
+# and their hosts from the tree itself. Measured on this tree 2026-07-29, that
+# widened coverage from 3 hosts of 1 lib to 33 hosts of 7 libs and surfaced 15
+# real instances — 13 of them writing the operator's REAL
+# $HOME/.claude/state/signal-ledger.jsonl from a --self-test (same guard shape,
+# same defect, 13x the scale of the incident that prompted this file).
+#
+# SCOPE. With a file scope (--staged / explicit paths) only hosts inside that
+# scope are probed. That is what keeps the check cheap AND keeps the promise:
+# splicing a lib into a host means EDITING that host, so a new splice is always
+# in scope and can never be silently unchecked. `--all-hosts` (or no args at
+# all) sweeps every discovered host — that is an audit, and it costs ~110s here.
+
+# Strip shell comments. EVERY discovery and decision below reads STRIPPED text,
+# so no comment can satisfy any of them. This is the single line whose absence
+# caused the v1 defect.
+# NOTE: callers capture this into a variable and then match with `case` or a
+# HERE-STRING — never `_hcl_strip f | grep -q ...`. Under `set -o pipefail`,
+# grep -q exits at the first match, sed takes SIGPIPE (141), and pipefail makes
+# the whole pipeline "fail", so the match is silently discarded. That bug made
+# discovery see 2 of 7 guarded libs on the first run of this rewrite.
+_hcl_strip() { sed -e 's/[[:space:]]*#.*$//' "$1" 2>/dev/null; }
+
+# DISCOVERY 1 — guarded libs. A lib qualifies when it gates on
+# ${HARNESS_SELFTEST...} in CODE *and* names a .claude/ production path, i.e.
+# the guard exists precisely to keep self-tests off real operator state.
+#
+# The path test deliberately matches only `.claude/` and NOT `$HOME/.claude/`.
+# Libs write that path several ways — `"$HOME/.claude/state/governor"` but also
+# `"${HOME:-$PWD}/.claude/state/perf"` and `printf '%s/.claude/state/...' "$HOME"`
+# — and an over-tight pattern silently dropped perf-ledger.sh and
+# progress-log-lib.sh (8 hosts) on the first run of this rewrite. The two error
+# directions are NOT symmetric: over-including a lib costs one sandboxed probe
+# that finds nothing, while under-including one recreates exactly the silent
+# hole this rewrite exists to close. So this biases toward including.
+_hcl_guarded_libs() {
+  local root="$1" L txt
+  for L in "$root"/hooks/lib/*.sh; do
+    [[ -f "$L" ]] || continue
+    txt="$(_hcl_strip "$L")"
+    case "$txt" in *'${HARNESS_SELFTEST'*) ;; *) continue ;; esac
+    case "$txt" in *'.claude/'*) ;; *) continue ;; esac
+    printf '%s\n' "$L"
   done
+}
+
+# DISCOVERY 2 — the override vars the guarded libs honour (ADM_STATE_DIR,
+# SIGNAL_LEDGER_PATH, HARNESS_SELFTEST_DIR, ...). The sandbox unsets them so an
+# ambient value inherited from the operator's shell (or from an enclosing
+# self-test) cannot mask a host's failure to arm the guard.
+_hcl_guard_vars() {
+  local root="$1" L
+  printf '%s\n' 'HARNESS_SELFTEST' 'HARNESS_SELFTEST_DIR'
+  while IFS= read -r L; do
+    [[ -n "$L" ]] || continue
+    grep -oE '\$\{[A-Z][A-Z0-9_]*(_DIR|_PATH)' <<< "$(_hcl_strip "$L")" | sed -e 's/^\${//'
+  done <<< "$(_hcl_guarded_libs "$root")"
+  return 0
+}
+
+# DISCOVERY 3 — hosts of a lib: a REAL `source`/`.` line (not a comment, not a
+# passing mention in prose) plus a --self-test branch of the host's own.
+_hcl_lib_hosts() {
+  local root="$1" L="$2" base self H txt
+  base="$(basename "$L")"
+  self="$(basename "${BASH_SOURCE[0]}")"
+  for H in "$root"/hooks/*.sh "$root"/hooks/lib/*.sh "$root"/scripts/*.sh; do
+    [[ -f "$H" ]] || continue
+    [[ "$H" == "$L" ]] && continue
+    [[ "$(basename "$H")" == "$self" ]] && continue
+    txt="$(_hcl_strip "$H")"
+    case "$txt" in *--self-test*) ;; *) continue ;; esac
+    grep -qE "^[[:space:]]*(source|\.)[[:space:]]+.*$base" <<< "$txt" || continue
+    printf '%s\n' "$H"
+  done
+}
+
+# Portable per-host time cap. A lint that can hang a commit is worse than the
+# defect it catches. No `timeout` (absent on stock macOS), no `date -d`.
+_hcl_run_capped() { # <seconds> <cmd...>
+  local secs="$1"; shift
+  "$@" &
+  local pid=$! ticks=0 max=$((secs * 5))
+  while [ "$ticks" -lt "$max" ]; do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 0.2 2>/dev/null || sleep 1
+    ticks=$((ticks + 1))
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -9 "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; return 124
+  fi
+  wait "$pid" 2>/dev/null
+  return 0
+}
+
+# THE ORACLE — run <host> --self-test in a throwaway HOME with the guard vars
+# unset, then print whatever it created under that HOME's .claude/ (empty means
+# the host is clean). Nothing here reads the host's text.
+_hcl_probe_host() { # <host> <sandbox-home> <cwd> <var>...
+  local H="$1" sb="$2" cwd="$3"; shift 3
+  local v; local -a ev=()
+  for v in "$@"; do ev[${#ev[@]}]="-u"; ev[${#ev[@]}]="$v"; done
+  [[ "${#ev[@]}" -gt 0 ]] || return 0
+  mkdir -p "$sb" 2>/dev/null
+  ( cd "$cwd" 2>/dev/null || cd /
+    _hcl_run_capped "${HCL_HOST_TIMEOUT:-45}" \
+      env "${ev[@]}" HOME="$sb" bash "$H" --self-test ) >/dev/null 2>&1
+  [[ -d "$sb/.claude" ]] || return 0
+  ( cd "$sb" 2>/dev/null && find .claude -mindepth 1 2>/dev/null | sort | head -6 | tr '\n' ' ' )
+}
+
+_hcl_check_unarmed_guard() { # <root> <scoped:0|1> [scope-file...]
+  local root="$1" scoped="$2"; shift 2
+  root="$(cd "$root" 2>/dev/null && pwd)" || return 0
+  [[ -n "$root" ]] || return 0
+
+  # normalise the scope to absolute paths so discovery paths compare equal
+  local scope_list="" s
+  for s in "$@"; do
+    [[ -f "$s" ]] || continue
+    scope_list="$scope_list
+$(cd "$(dirname "$s")" 2>/dev/null && pwd)/$(basename "$s")"
+  done
+
+  local libs; libs="$(_hcl_guarded_libs "$root")"
+  [[ -n "$libs" ]] || return 0
+  local vars; vars="$(_hcl_guard_vars "$root" | sort -u | tr '\n' ' ')"
+
+  # host -> which guarded libs it sources (used only for the message)
+  local pairs="" L H
+  while IFS= read -r L; do
+    [[ -n "$L" ]] || continue
+    while IFS= read -r H; do
+      [[ -n "$H" ]] || continue
+      pairs="$pairs
+$H|$(basename "$L")"
+    done <<< "$(_hcl_lib_hosts "$root" "$L")"
+  done <<< "$libs"
+
+  local hosts; hosts="$(printf '%s\n' "$pairs" | grep -v '^$' | cut -d'|' -f1 | sort -u)"
+  [[ -n "$hosts" ]] || return 0
+
+  # Probe from the lint's OWN repo root: some hosts' self-tests need to run
+  # inside a git work tree, and the scanned root may be a mirror in /tmp.
+  local cwd="${HCL_PROBE_CWD:-}"
+  [[ -n "$cwd" ]] || cwd="$(git -C "$_HCL_SELF_DIR" rev-parse --show-toplevel 2>/dev/null)"
+  [[ -n "$cwd" ]] || cwd="$root"
+
+  local T; T="$(mktemp -d)" || return 0
+  local made whichlibs
+  while IFS= read -r H; do
+    [[ -n "$H" ]] || continue
+    if [[ "$scoped" == "1" ]]; then
+      grep -qxF "$H" <<< "$scope_list" || continue
+    fi
+    made="$(_hcl_probe_host "$H" "$T/$(printf '%s' "$H" | tr '/' '_')" "$cwd" $vars)"
+    [[ -n "$made" ]] || continue
+    whichlibs="$(grep -F "$H|" <<< "$pairs" | cut -d'|' -f2 | sort -u | tr '\n' ' ')"
+    _hcl_report "CLASS3 unarmed-guard" "$H" "-" \
+      "its --self-test WROTE REAL OPERATOR STATE into a clean HOME: $made(host sources guarded lib(s): $whichlibs). The lib's sandbox guard is INERT for this host because the host never arms it. Fix: export HARNESS_SELFTEST=1 in this script's own --self-test branch."
+  done <<< "$hosts"
+  rm -rf "$T"
+  return 0
 }
 
 _hcl_main() {
   local -a files=()
+  local scoped=1
   if [[ "${1:-}" == "--staged" ]]; then
     local root; root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
     while IFS= read -r p; do
       [[ -n "$p" ]] && [[ -f "$root/$p" ]] && files+=("$root/$p")
     done < <(git -C "$root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep '\.sh$')
+  elif [[ "${1:-}" == "--all-hosts" ]]; then
+    scoped=0                       # full CLASS3 audit sweep
+  elif [[ "$#" -eq 0 ]]; then
+    scoped=0                       # no argument at all == whole-tree audit
   else
     files=("$@")
   fi
@@ -155,7 +336,13 @@ _hcl_main() {
   done
 
   local hroot="$_HCL_SELF_DIR/.."
-  [[ -d "$hroot/hooks" ]] && _hcl_check_unarmed_guard "$hroot"
+  if [[ -d "$hroot/hooks" ]]; then
+    if [[ "$scoped" == "1" ]]; then
+      _hcl_check_unarmed_guard "$hroot" 1 ${files[@]+"${files[@]}"}
+    else
+      _hcl_check_unarmed_guard "$hroot" 0
+    fi
+  fi
 
   if [[ "$_HCL_FINDINGS" -gt 0 ]]; then
     {
@@ -204,11 +391,85 @@ EOF
   case "$out" in *CLASS2*) fail "CLASS2 false positive on a measured, retired claim" ;;
     *) pass "CLASS2 stays silent when a measurement is cited (FP control)" ;; esac
 
-  # CLASS 3 against the REAL tree — spawn-worktree.sh was the real offender and
-  # is now fixed, so this must be silent.
-  out="$(_HCL_FINDINGS=0; _hcl_check_unarmed_guard "$_HCL_SELF_DIR/.." 2>&1)"
-  case "$out" in *CLASS3*) fail "CLASS3 fires on the real tree — a host still does not arm the guard: $out" ;;
-    *) pass "CLASS3 silent on the real tree (all adm_admit hosts arm HARNESS_SELFTEST)" ;; esac
+  # ---- CLASS 3 -------------------------------------------------------------
+  # NOTE ON METHOD: no hand-written host fixture is used anywhere below. The
+  # artifact of the proven 2026-07-29 defect (scripts/spawn-worktree.sh) exists,
+  # so IT is the oracle; the mutation runs against a byte-for-byte MIRROR of the
+  # real tree so the repo is never touched. A fixture would only prove that the
+  # matcher matches the fixture.
+  local RT; RT="$(cd "$_HCL_SELF_DIR/.." 2>/dev/null && pwd)"
+
+  # (a) DISCOVERY is real — no hardcoded list. v1 covered exactly one lib
+  #     (`lib_fns="adm_admit"`); this must find several.
+  local dlibs; dlibs="$(_hcl_guarded_libs "$RT")"
+  local nlibs; nlibs="$(printf '%s\n' "$dlibs" | grep -c . | tr -d ' ')"
+  if [[ "$nlibs" -ge 2 ]]; then
+    pass "CLASS3 discovery finds $nlibs guarded libs (v1 hardcoded exactly 1)"
+  else
+    fail "CLASS3 discovery found only $nlibs guarded lib(s) — discovery is not working"
+  fi
+
+  # REGRESSION GUARD: these two resolve production state as ${HOME:-$PWD}/.claude
+  # rather than $HOME/.claude, and an over-tight path pattern dropped both (8
+  # hosts) during this rewrite. Silent under-discovery is the failure mode here.
+  local missed=""
+  case "$dlibs" in *perf-ledger.sh*) ;; *) missed="$missed perf-ledger.sh" ;; esac
+  case "$dlibs" in *progress-log-lib.sh*) ;; *) missed="$missed progress-log-lib.sh" ;; esac
+  [[ -z "$missed" ]] \
+    && pass "CLASS3 discovery covers \${HOME:-\$PWD}-style libs too (perf-ledger, progress-log-lib)" \
+    || fail "CLASS3 discovery silently dropped guarded lib(s):$missed — their hosts would go unchecked"
+
+  # (b) DISCOVERY reaches the known host without being told about it.
+  local sw_found=no L lhosts
+  while IFS= read -r L; do
+    [[ -n "$L" ]] || continue
+    lhosts="$(_hcl_lib_hosts "$RT" "$L")"     # capture first: see _hcl_strip note
+    case "$lhosts" in *scripts/spawn-worktree.sh*) sw_found=yes ;; esac
+  done <<< "$(_hcl_guarded_libs "$RT")"
+  [[ "$sw_found" == "yes" ]] \
+    && pass "CLASS3 discovery reaches scripts/spawn-worktree.sh with no hardcoded host list" \
+    || fail "CLASS3 discovery did NOT find scripts/spawn-worktree.sh — a spliced host would go unchecked"
+
+  # (c) THE DISCRIMINATING TEST. Mirror the real tree; revert ONLY the code line
+  #     in the real host and KEEP its comment. v1's "RED proof" was fake because
+  #     it stashed the whole file, comment included — a red produced by removing
+  #     the comment too proves nothing about a comment-blind matcher.
+  local MT="$T/mirror"
+  mkdir -p "$MT"
+  cp -R "$RT/hooks" "$MT/hooks" 2>/dev/null
+  cp -R "$RT/scripts" "$MT/scripts" 2>/dev/null
+  local MH="$MT/scripts/spawn-worktree.sh"
+  if [[ ! -f "$MH" ]]; then
+    fail "mirror is missing scripts/spawn-worktree.sh — cannot run the discriminating test"
+  else
+    # GREEN first: the pristine real host must NOT be flagged.
+    out="$(_HCL_FINDINGS=0; _hcl_check_unarmed_guard "$MT" 1 "$MH" 2>&1)"
+    case "$out" in
+      *CLASS3*) fail "CLASS3 false positive — pristine spawn-worktree.sh flagged: $out" ;;
+      *) pass "CLASS3 GREEN on the pristine real host (armed guard leaves the sandbox HOME clean)" ;;
+    esac
+
+    # revert ONLY the export; the explanatory comment block stays untouched.
+    sed -e 's/; export HARNESS_SELFTEST=1 ;;/; ;;/' "$MH" > "$MH.mut" && mv "$MH.mut" "$MH"
+    chmod +x "$MH" 2>/dev/null
+
+    # Verify the mutation is TRUE-RED-shaped BEFORE trusting the red it produces:
+    # the code must be gone while the comment still mentions the variable, so a
+    # textual grep would still (wrongly) call this host armed.
+    if _hcl_strip "$MH" | grep -q 'HARNESS_SELFTEST'; then
+      fail "mutation did not remove the CODE (stripped text still has it) — mutation is wrong"
+    elif grep -q 'HARNESS_SELFTEST' "$MH"; then
+      pass "mutation is TRUE-RED-shaped: code gone, COMMENT intact (a textual grep still reports 'armed')"
+    else
+      fail "mutation removed the comment too — that red would be a FALSE red, exactly v1's mistake"
+    fi
+
+    out="$(_HCL_FINDINGS=0; _hcl_check_unarmed_guard "$MT" 1 "$MH" 2>&1)"
+    case "$out" in
+      *CLASS3*) pass "CLASS3 RED when only the code is reverted — the behavioral oracle is not fooled by the comment" ;;
+      *) fail "CLASS3 MISSED the reverted host — the check is INERT (this is the v1 defect): $out" ;;
+    esac
+  fi
 
   # warn-only invariant
   _hcl_main "$T/bad1.sh" >/dev/null 2>&1; local rc=$?
