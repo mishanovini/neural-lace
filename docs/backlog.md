@@ -1395,3 +1395,61 @@ noticed during that work and deliberately NOT fixed in M3's scope.
    paths") but the failure is silent and reads as "the gate ignored my scope update".
    Cheap fix: when no backticked token resolves to a real path, fall back to scanning the
    bullet for a plain path.
+
+---
+
+## ENSURE-COCKPIT-DARWIN-2026-07-29 — two pre-existing gaps found while adding the macOS LaunchAgent path
+
+**Context:** building the macOS auto-start for `scripts/ensure-cockpit.sh`
+(docs/decisions/065-macos-cockpit-launchagent.md). Both items below pre-date this
+change and were found by using the harness, not by reading it — filed rather than
+fixed beyond the one item that blocked this task's own deliverable (the exec bit,
+fixed in the same commit since without it neither platform's code ever fires).
+
+1. **`scripts/ensure-cockpit.sh` was tracked as git mode `100644` (non-executable)
+   since its original introduction.** `session-start-digest.sh`'s splice invokes it
+   by DIRECT exec (`"$HOOKS_DIR/../scripts/ensure-cockpit.sh"`, not
+   `bash .../ensure-cockpit.sh`), so on any checkout that respects POSIX exec bits
+   this silently made the ENTIRE mechanism — Windows path included, not just the
+   new Darwin one — inert. Same defect class as the 2026-07-14 incident's I3
+   (`needs-you.sh`, `session-resumer.sh`; docs/reviews/2026-07-14-mac-setup-
+   incident.md). **Fixed in the ensure-cockpit darwin-support commit**
+   (`chmod +x` + `git add`), since it directly blocked this task's own
+   deliverable. Worth a repo-wide sweep: `git ls-files -s | grep '^100644.*\.sh$'`
+   cross-referenced against every direct-exec (non-`bash `-prefixed) hook callsite,
+   to find any OTHER scripts with the same latent gap.
+
+2. **Four Windows self-test scenarios in `ensure-cockpit.sh` (`S4`, `S6`, `S10a`,
+   `S10b`) fail on a stock Mac with no `powershell`/`powershell.exe` on PATH.**
+   PROVEN: confirmed on the pre-Darwin script (commit 417c434), unrelated to this
+   session's changes — `--self-test` reports `17 passed, 6 failed` on that
+   unmodified file on this machine (S5 also touches the same resolution but
+   happens to pass because it explicitly forces the "not found" branch it's
+   testing). Each of the four asserts on the HARNESS_SELFTEST stub's SHAPE, which
+   is only reached after `_ec_resolve_powershell` succeeds — and on a Mac with no
+   real `powershell` install, that resolution fails first, so the scenario never
+   reaches the code path it means to test. Cheap fix: add
+   `ENSURE_COCKPIT_PS_OVERRIDE` to those four scenarios' env (exactly the fixture
+   fix already applied to the NEW `D5` Windows-regression scenario in the same
+   commit), making the suite fully portable to a Mac dev machine instead of only
+   fully green on an actual Windows/MSYS host or one with a `powershell` shim
+   installed.
+
+3. **New bash-3.2 portability gotcha, not yet documented anywhere in the repo:
+   `local a="$1" b="$a"` (a compound `local` where a LATER name references an
+   EARLIER one declared in the SAME statement) is `unbound variable` under
+   `set -u`.** PROVEN empirically on this machine (`/bin/bash` 3.2.57):
+   ```
+   f() { local a="$1" b="$a"; echo "$b"; }; set -u; f x
+   # bash: line N: a: unbound variable
+   ```
+   Splitting into two separate `local` statements (`local a="$1"; local b="$a"`)
+   fixes it. Caught while writing this task's self-test fixtures (a
+   `_fake_launchctl` helper crashed this exact way and, worse, the crash left
+   `ENSURE_COCKPIT_LAUNCHCTL_OVERRIDE` empty, which fell through to the REAL
+   `launchctl` and bootstrapped a real — if harmlessly labeled — LaunchAgent on
+   this machine; cleaned up by hand, see docs/decisions/065's Evidence section).
+   Worth adding to whatever doc enumerates the bash-3.2 portability floor
+   (`hooks/lib/portable-timeout.sh`'s header currently lists `declare -A`,
+   `${x^^}`, `&>>`, `date -d` — this compound-`local` self-reference belongs
+   next to those).
