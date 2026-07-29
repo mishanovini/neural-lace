@@ -36,8 +36,13 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
   micro-slices (occupancy TTL cache in admission-lib; env-bypass closure; Loop-2 pressure tick),
   then T9 after T4 lands (T9 builds on T4's generalized closers). T8 waits on telemetry accrual.
 - CLAIM: T7 remainder (run `bash adapters/claude-code/scripts/loe-backfill.sh`, commit
-  docs/plans/loe-calibration.json/.md) — UNCLAIMED, either machine — 2026-07-29 —
-  docs/plans/loe-calibration.*
+  docs/loe/loe-calibration.json/.md — path per the fd48741 review remediation b5dfaf1) —
+  UNCLAIMED, either machine — 2026-07-29 — docs/loe/loe-calibration.*
+- CLAIM: T6 prerequisites (a) occupancy TTL cache + (b) env-bypass closure/acceptance —
+  desktop — 2026-07-29 — adapters/claude-code/hooks/lib/admission-lib.sh (NOTE for the other
+  machine: T4's closure-gates-new-work splice also touches this file — pull and rebase small;
+  the TTL cache is confined to the occupancy read path) + (d) Loop-2 pressure tick —
+  surface per docs/designs/estate-performance-governor-2026-07-27.md (tick writer + pressure_src)
 
 ## Scope / Tasks (LOE: plan-level reference classes per review F11; 1 bs = one builder-session ≈ 80–150k tokens; bands are P50–P90 priors, calibrated as T7 lands)
 
