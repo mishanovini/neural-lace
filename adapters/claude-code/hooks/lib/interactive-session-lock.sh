@@ -151,6 +151,14 @@ isl_refuse_log() {
 # ============================ SELF-TEST ======================================
 _isl_self_test() {
   local tmp pass=0 fail=0
+  # Portable fixture aging (macos-portability-2026-07 M4). Sibling lib, so
+  # no path traversal needed; sourced in the self-test only.
+  local _isl_pt
+  _isl_pt="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/portable-time.sh"
+  if ! . "$_isl_pt" 2>/dev/null; then
+    echo "self-test: cannot source $_isl_pt (needed to backdate fixtures portably)" >&2
+    return 1
+  fi
   tmp="$(mktemp -d)" || { echo "self-test: mktemp failed"; return 1; }
 
   export HARNESS_SELFTEST=1
@@ -167,9 +175,12 @@ _isl_self_test() {
   mkdir -p "$tdir"
 
   _isl_age() { # $1=file $2=minutes-ago
-    local secs=$(( $2 * 60 ))
-    touch -d "@$(( $(date +%s) - secs ))" "$1" 2>/dev/null \
-      || touch -t "$(date -d "@$(( $(date +%s) - secs ))" +%Y%m%d%H%M.%S 2>/dev/null)" "$1" 2>/dev/null || true
+    # No `|| true`: T2/T4 assert "stale transcript -> UNLOCKED", which is
+    # only a real assertion if the transcript was actually backdated.
+    if ! nl_touch_age "$1" $(( $2 * 60 )); then
+      echo "self-test: could not backdate $1" >&2
+      return 1
+    fi
   }
 
   # T1 fresh transcript -> locked

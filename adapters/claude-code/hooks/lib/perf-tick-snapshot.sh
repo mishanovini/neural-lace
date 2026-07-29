@@ -148,14 +148,26 @@ _pts_json_escape() {
 }
 
 # _pts_wmi_date_to_epoch <wmidatetime> — "20260723000320.118071-420" ->
-# epoch seconds (via `date -d`, a fork — acceptable, not hot-path). Prints
+# epoch seconds (one `date` fork — acceptable, not hot-path). Prints
 # empty on any parse failure (caller treats empty as "unknown age").
+#
+# PORTABILITY (macos-portability-2026-07 M4): the GNU-only `date -d`
+# spelling is tried first, then the BSD `date -j -f` equivalent — the
+# same two-spelling shape this repo's `_hb_epoch` (session-heartbeat-lib)
+# and `_od_epoch` (observability-derive) already use. Kept inline rather
+# than sourcing hooks/lib/portable-time.sh because this lib is sourced by
+# hooks on a metered path and, like its siblings, is deliberately
+# self-contained so it works when shipped alone into a fixture tree.
+# Local time on both branches, matching the previous behavior (the WMI
+# string's trailing UTC-offset field was ignored before and still is).
 _pts_wmi_date_to_epoch() {
   local w="$1"
   [[ "$w" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2}) ]] || { printf ''; return 0; }
   local y="${BASH_REMATCH[1]}" mo="${BASH_REMATCH[2]}" d="${BASH_REMATCH[3]}"
   local h="${BASH_REMATCH[4]}" mi="${BASH_REMATCH[5]}" s="${BASH_REMATCH[6]}"
-  date -d "${y}-${mo}-${d} ${h}:${mi}:${s}" +%s 2>/dev/null
+  date -d "${y}-${mo}-${d} ${h}:${mi}:${s}" +%s 2>/dev/null && return 0
+  date -j -f '%Y-%m-%d %H:%M:%S' "${y}-${mo}-${d} ${h}:${mi}:${s}" +%s 2>/dev/null && return 0
+  printf ''
 }
 
 # ---- process snapshot ----------------------------------------------------
@@ -434,8 +446,17 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" && "${1:-}" == "--self-test" ]]; then
 
   # Timestamps relative to "now" so the fixture is deterministic regardless
   # of when the self-test runs (avoids hardcoding a date that ages out).
-  _pts_old_ts="$(date -d '-30 minutes' +%Y%m%d%H%M%S 2>/dev/null)"
-  _pts_young_ts="$(date -d '-2 minutes' +%Y%m%d%H%M%S 2>/dev/null)"
+  # Portable relative timestamps (macos-portability M4). GNU-only
+  # `date -d '-30 minutes'` produced EMPTY strings on macOS, which then
+  # flowed into the WMI-datetime fixtures below as unparseable garbage.
+  _pts_old_ts="$(date -d '-30 minutes' +%Y%m%d%H%M%S 2>/dev/null \
+                 || date -v-30M +%Y%m%d%H%M%S 2>/dev/null)"
+  _pts_young_ts="$(date -d '-2 minutes' +%Y%m%d%H%M%S 2>/dev/null \
+                 || date -v-2M +%Y%m%d%H%M%S 2>/dev/null)"
+  if [[ -z "$_pts_old_ts" || -z "$_pts_young_ts" ]]; then
+    echo "  FAIL: could not build relative fixture timestamps on this platform" >&2
+    return 1
+  fi
 
   echo "Scenario 0: CRLF-doubling regression — caught live at build time against REAL wmic output"
   # PROVEN bug (build-time, via `xxd`): captured `wmic ... /format:csv`

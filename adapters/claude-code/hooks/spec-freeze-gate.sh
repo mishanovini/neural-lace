@@ -379,6 +379,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
     exit 2
   fi
 
+  # Portable fixture aging (macos-portability-2026-07 M4) — sourced inside
+  # the self-test branch so the gate's production path is unaffected.
+  _SFG_PT="$(dirname "${BASH_SOURCE[0]}")/lib/portable-time.sh"
+  if ! . "$_SFG_PT" 2>/dev/null; then
+    echo "self-test: cannot source $_SFG_PT (needed to backdate fixtures portably)" >&2
+    exit 2
+  fi
+
   PASSED=0
   FAILED=0
   TMPROOT=$(mktemp -d 2>/dev/null || mktemp -d -t spec-freeze)
@@ -620,9 +628,12 @@ PLANEOF
     if [[ -n "$waiver_body" ]]; then
       printf '%s' "$waiver_body" > "$repo/.claude/state/spec-freeze-waiver-alpha-selftest.txt"
       if [[ "$backdate" == "1" ]]; then
-        touch -d '2 hours ago' "$repo/.claude/state/spec-freeze-waiver-alpha-selftest.txt" 2>/dev/null \
-          || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" "$repo/.claude/state/spec-freeze-waiver-alpha-selftest.txt" 2>/dev/null \
-          || true
+        # No `|| true`: an un-aged waiver silently turns the
+        # "stale waiver is rejected" scenario into a fresh-waiver one.
+        if ! nl_touch_age "$repo/.claude/state/spec-freeze-waiver-alpha-selftest.txt" 7200; then
+          echo "self-test: could not backdate the stale-waiver fixture" >&2
+          exit 2
+        fi
       fi
     fi
 

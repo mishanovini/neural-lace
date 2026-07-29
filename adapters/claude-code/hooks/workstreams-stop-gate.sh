@@ -137,6 +137,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
   SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
   if [[ ! -f "$SELF" ]]; then echo "self-test: cannot resolve own path" >&2; exit 2; fi
 
+  # Portable fixture aging (macos-portability-2026-07 M4), self-test only.
+  _WSG_PT="$(dirname "$SELF")/lib/portable-time.sh"
+  if ! . "$_WSG_PT" 2>/dev/null; then
+    echo "self-test: cannot source $_WSG_PT (needed to backdate fixtures portably)" >&2
+    exit 2
+  fi
+
   # Locate the real state library for fixture generation. Delegates to the
   # SAME _resolve_state_lib() the production runtime path uses (pin repo
   # root via nl-paths.sh's nl_repo_root/nl_workstreams_ui, not an ambient
@@ -220,7 +227,14 @@ JSONL
       local wf="$work/.claude/state/conv-tree-stop-waiver-test.txt"
       printf '%s\n' "$wv" > "$wf"
       if [[ "$wage" == "stale" ]]; then
-        touch -d '2 hours ago' "$wf" 2>/dev/null || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M 2>/dev/null || echo 197001010000)" "$wf" 2>/dev/null || true
+        # Previously fell back to a hardcoded `197001010000`, which made
+        # this scenario pass on macOS for the WRONG reason (1970, not the
+        # 2-hours-ago the label claims) whenever both GNU spellings
+        # failed. Age it truthfully or fail loudly.
+        if ! nl_touch_age "$wf" 7200; then
+          echo "self-test: could not backdate the stale-waiver fixture" >&2
+          exit 2
+        fi
       fi
     fi
     local input

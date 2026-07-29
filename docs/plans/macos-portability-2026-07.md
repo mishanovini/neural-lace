@@ -115,4 +115,22 @@ doctor check so it cannot silently rot.
 - 2026-07-29: `adapters/claude-code/scripts/supervisor-tick.sh` — M3 callsite
 - 2026-07-29: `adapters/claude-code/scripts/health-tick.sh` — M3 callsite
 - 2026-07-29: `adapters/claude-code/scripts/f4-retro.sh` — M3 callsite
-
+- M4 — decomposed per-target (planning doctrine: sweep tasks decompose before
+- `adapters/claude-code/hooks/lib/portable-time.sh` — M4 (NEW: the one portable helper)
+- `adapters/claude-code/hooks/concurrent-ownership-gate.sh` — M4
+- `adapters/claude-code/hooks/harness-hygiene-scan.sh` — M4
+- `adapters/claude-code/hooks/lib/interactive-session-lock.sh` — M4
+- `adapters/claude-code/hooks/lib/perf-tick-snapshot.sh` — M4
+- `adapters/claude-code/hooks/plan-deletion-protection.sh` — M4
+- `adapters/claude-code/hooks/spec-freeze-gate.sh` — M4
+- `adapters/claude-code/hooks/stalled-work-surfacer.sh` — M4
+- `adapters/claude-code/hooks/task-created-validator.sh` — M4
+- `adapters/claude-code/hooks/wire-check-gate.sh` — M4
+- `adapters/claude-code/hooks/workstreams-stop-gate.sh` — M4
+- `adapters/claude-code/scripts/broadcast-active-session.sh` — M4
+- `adapters/claude-code/scripts/measure-claim-reviewer-rate.sh` — M4
+- `adapters/claude-code/scripts/mine-misha-asked.sh` — M4
+- `adapters/claude-code/scripts/session-snapshot.sh` — M4
+- `adapters/claude-code/scripts/worktree-hygiene-sweep.sh` — M4
+- `docs/backlog.md` — M4 (follow-ups: the sibling `touch -d` class, the audit
+- NOT changed by M4, deliberately: `adapters/claude-code/install.sh` and

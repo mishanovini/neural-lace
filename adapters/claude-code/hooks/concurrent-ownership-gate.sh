@@ -339,11 +339,18 @@ _load_fresh_claims() {
   CLAIM_BRANCHES=()
   CLAIM_WORKTREES=()
   [[ -d "$COG_CLAIMS_DIR" ]] || return 0
-  local root_norm cutoff f br wt rid cur_repo_id
+  local root_norm fresh_min f br wt rid cur_repo_id
   root_norm=$(_norm_path "$REPO_ROOT")
   cur_repo_id=$(_repo_identity "$REPO_ROOT")
-  cutoff=$(date -d "-${COG_CLAIM_FRESH_SECONDS} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "")
-  [[ -z "$cutoff" ]] && return 0
+  # FRESHNESS WINDOW via `find -mmin` — NOT a `date -d`-built cutoff,
+  # which is GNU-only and left this scan silently disabled (fail-OPEN) on
+  # macOS. Window rounds UP to the whole minute: exact at the 7200s
+  # default, and <60s wider for odd overrides — i.e. fail-SAFE for an
+  # ownership gate. Full rationale: hooks/lib/portable-time.sh.
+  # (Comments here are kept short on purpose: this file is re-parsed on
+  # every PreToolUse call and ~2 KB of prose measured ~1 ms/call.)
+  fresh_min=$(( (COG_CLAIM_FRESH_SECONDS + 59) / 60 ))
+  [[ "$fresh_min" -gt 0 ]] || fresh_min=1
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
     br=$(sed -nE 's/.*"branch"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
@@ -366,7 +373,7 @@ _load_fresh_claims() {
     fi
     CLAIM_BRANCHES+=("$br")
     CLAIM_WORKTREES+=("${wt:-unknown}")
-  done < <(find "$COG_CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -newermt "$cutoff" 2>/dev/null)
+  done < <(find "$COG_CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -mmin "-${fresh_min}" 2>/dev/null)
 }
 
 # Is plan slug $1 owned by another live session? Returns 0 and sets
@@ -559,6 +566,11 @@ _guard_branch() {
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
   export HARNESS_SELFTEST=1
+
+  # Portable fixture aging (M4); self-test only, never the hook path.
+  . "$_COG_SELF_DIR/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source lib/portable-time.sh" >&2; exit 2; }
+
   SELF_HOOK="$_COG_SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
   if [[ ! -f "$SELF_HOOK" ]]; then
     echo "self-test: cannot resolve own path" >&2
@@ -666,7 +678,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _report "3 waiver-honored-and-ledger-logged" "$OK" "(rc=$RC, expected 0 + waiver ledger entry)"
 
   # ---- 4: stale waiver (>1h) rejected → BLOCK ----
-  touch -d '2 hours ago' "$MAIN/.claude/state/concurrent-ownership-waiver-selftest.txt" 2>/dev/null
+  # Was GNU-only `touch -d`, no fallback: on macOS the waiver stayed
+  # fresh and this scenario silently tested the fresh-waiver path.
+  nl_touch_age "$MAIN/.claude/state/concurrent-ownership-waiver-selftest.txt" 7200 \
+    || { echo "self-test: could not backdate stale-waiver fixture" >&2; exit 2; }
   RC=$(_run_cmd "$MAIN" "$BULK_CMD")
   OK=0; [[ "$RC" == "2" ]] && OK=1
   _report "4 stale-waiver-rejected" "$OK" "(rc=$RC, expected 2)"
@@ -727,7 +742,11 @@ CLAIMJSON
   _report "11 fresh-claim-ownership-blocks" "$OK" "(rc=$RC, expected 2 naming claimed branch)"
 
   # ---- 12: STALE claim (backdated mtime) does NOT block → ALLOW ----
-  touch -d '3 hours ago' "$COG_CLAIMS_DIR/feat-claimed-plan.json" 2>/dev/null
+  # Was GNU-only `touch -d`: on macOS the claim stayed FRESH and this
+  # scenario only reported PASS because the sibling `date -d` bug had
+  # disabled the scan entirely — two failures cancelling into a green.
+  nl_touch_age "$COG_CLAIMS_DIR/feat-claimed-plan.json" 10800 \
+    || { echo "self-test: could not backdate stale-claim fixture" >&2; exit 2; }
   RC=$(_run_cmd "$MAIN" 'sed -i "s/^Status: ACTIVE/Status: DEFERRED/" docs/plans/claimed-plan-2026-07-09.md')
   OK=0; [[ "$RC" == "0" ]] && OK=1
   _report "12 stale-claim-ignored" "$OK" "(rc=$RC, expected 0)"

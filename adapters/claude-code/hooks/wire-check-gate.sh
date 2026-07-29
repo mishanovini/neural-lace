@@ -116,6 +116,15 @@ if [[ "${1:-}" == "--self-test" ]]; then
   SCRIPT="${BASH_SOURCE[0]}"
   FAILED=0
 
+  # Portable fixture aging (macos-portability-2026-07 M4). Sourced HERE,
+  # inside the self-test branch, so the gate's production path pays
+  # nothing for a helper only its fixtures need.
+  _WCG_PT="$(dirname "${BASH_SOURCE[0]}")/lib/portable-time.sh"
+  if ! . "$_WCG_PT" 2>/dev/null; then
+    echo "self-test: cannot source $_WCG_PT (needed to backdate fixtures portably)" >&2
+    exit 1
+  fi
+
   # Helper: initialize a git repo at $1 so `git rev-parse --show-toplevel`
   # works inside the fixture. Static trace needs a repo root to anchor
   # backtick-quoted relative paths.
@@ -399,9 +408,13 @@ JSON_EOF
     echo "Purpose: this gate exists to prevent shipping a broken code chain"
     echo "Because: this is a self-test scenario exercising the waiver valve"
   } > "$W10_STATE/wire-check-waiver-foo-1-stale.txt"
-  touch -d '2 hours ago' "$W10_STATE/wire-check-waiver-foo-1-stale.txt" 2>/dev/null \
-    || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" "$W10_STATE/wire-check-waiver-foo-1-stale.txt" 2>/dev/null \
-    || true
+  # No `|| true` here: an un-aged waiver makes this scenario assert the
+  # opposite of its own name (a FRESH waiver, which is correctly honored)
+  # while still printing a verdict. Fail loudly instead.
+  if ! nl_touch_age "$W10_STATE/wire-check-waiver-foo-1-stale.txt" 7200; then
+    echo "self-test (w12): could not backdate the stale-waiver fixture" >&2
+    exit 1
+  fi
   W12_OUT=$(echo "$INPUT_W2" | CLAUDE_TOOL_NAME=Edit CLAUDE_STATE_DIR="$W10_STATE" bash "$SCRIPT" 2>&1)
   W12_EXIT=$?
   if [[ $W12_EXIT -ne 0 ]]; then

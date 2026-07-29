@@ -344,6 +344,15 @@ Hatch (cost: bypasses ALL three checks in this hook, ledger-logged):
 run_self_test() {
   local total=0 passed=0 failed_names=""
 
+  # Portable fixture aging (macos-portability-2026-07 M4), sourced inside
+  # the self-test so the validator's hook path is unaffected.
+  local _tcv_pt
+  _tcv_pt="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/portable-time.sh"
+  if ! . "$_tcv_pt" 2>/dev/null; then
+    echo "self-test: cannot source $_tcv_pt (needed to backdate fixtures portably)" >&2
+    exit 1
+  fi
+
   # Scratch dir for synthetic plan files
   local scratch
   scratch=$(mktemp -d -t taskcreate-XXXXXX) || { echo "mktemp FAIL"; exit 1; }
@@ -446,10 +455,11 @@ PLAN
     echo "Because: this is a self-test scenario exercising the waiver valve"
   } > "$w_stale_dir/task-created-waiver-selftest.txt"
   # Backdate mtime to 2 hours ago so the <1h freshness window rejects it.
-  if command -v touch >/dev/null 2>&1; then
-    touch -d '2 hours ago' "$w_stale_dir/task-created-waiver-selftest.txt" 2>/dev/null \
-      || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" "$w_stale_dir/task-created-waiver-selftest.txt" 2>/dev/null \
-      || true
+  # No `|| true`: if the fixture is not actually aged this scenario tests
+  # a FRESH waiver while still calling itself "waiver-stale".
+  if ! nl_touch_age "$w_stale_dir/task-created-waiver-selftest.txt" 7200; then
+    echo "self-test: could not backdate the stale-waiver fixture" >&2
+    exit 1
   fi
   run_scenario "W3. waiver-stale (purpose-clauses but >1h old) → BLOCK" \
     2 \

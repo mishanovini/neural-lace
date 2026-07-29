@@ -349,6 +349,13 @@ _run_live() {
 _self_test() {
   local pass=0 fail=0
   local tmp
+  # Portable fixture aging (macos-portability-2026-07 M4), self-test only.
+  local _ss_pt
+  _ss_pt="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks/lib/portable-time.sh"
+  if ! . "$_ss_pt" 2>/dev/null; then
+    echo "self-test: cannot source $_ss_pt (needed to backdate fixtures portably)" >&2
+    return 1
+  fi
   tmp="$(mktemp -d 2>/dev/null || mktemp -d -t sessionsnap)"
 
   export HARNESS_SELFTEST=1
@@ -445,10 +452,11 @@ SP
   fi
 
   # T7 — SCRATCHPAD staleness: backdate mtime >30min -> full content copied in.
-  local old_epoch
-  old_epoch=$(( $(date +%s) - 3600 ))
-  if command -v touch >/dev/null 2>&1; then
-    touch -d "@${old_epoch}" "$repo/SCRATCHPAD.md" 2>/dev/null || touch -t "$(date -d "@${old_epoch}" +%Y%m%d%H%M.%S 2>/dev/null)" "$repo/SCRATCHPAD.md" 2>/dev/null || true
+  # No `|| true`: without a real backdate T7 asserts the FRESH behavior
+  # under the stale scenario's name.
+  if ! nl_touch_age "$repo/SCRATCHPAD.md" 3600; then
+    echo "  T7 setup: could not backdate SCRATCHPAD.md" >&2
+    fail=$((fail+1))
   fi
   local out2="$HARNESS_SELFTEST_DIR/state/session-handoff/sess-stale.md"
   _build_snapshot "$transcript" "sess-stale" "$repo" "$out2"

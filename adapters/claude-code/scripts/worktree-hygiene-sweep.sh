@@ -433,10 +433,17 @@ _live_owner() {
   fi
 
   if [ -d "$COG_CLAIMS_DIR" ]; then
-    local repo_id cutoff f wt rid
+    local repo_id fresh_min f wt rid
     repo_id="$(_whs_repo_identity "$repo")"
-    cutoff="$(date -d "-${COG_CLAIM_FRESH_SECONDS} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || true)"
-    if [ -n "$cutoff" ]; then
+    # `find -mmin`, not a `date -d`-built cutoff (macos-portability M4).
+    # GNU-only `date -d` left $cutoff empty on stock macOS, so this
+    # claim scan was skipped and a worktree owned by a LIVE session
+    # could be classified as unowned — the input to a --prune decision.
+    # See concurrent-ownership-gate.sh:_load_fresh_claims for the full
+    # note. `-mmin` works on both GNU and BSD find with no date fork.
+    fresh_min=$(( (COG_CLAIM_FRESH_SECONDS + 59) / 60 ))
+    [ "$fresh_min" -gt 0 ] || fresh_min=1
+    if [ -n "$fresh_min" ]; then
       while IFS= read -r f; do
         [ -f "$f" ] || continue
         wt="$(sed -nE 's/.*"worktree"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)"
@@ -447,7 +454,7 @@ _live_owner() {
         [ "$(_norm_path "$wt")" = "$wt_norm" ] || continue
         LIVE_OWNER_VERDICT="claim"
         return 0
-      done < <(find "$COG_CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -newermt "$cutoff" 2>/dev/null)
+      done < <(find "$COG_CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -mmin "-${fresh_min}" 2>/dev/null)
     fi
   fi
 
