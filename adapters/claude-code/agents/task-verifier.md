@@ -319,8 +319,12 @@ Route on the exit code — **3 and 4 are not passes**:
   verdict at all. Read the printed rows. For each non-holding invariant, decide
   it yourself from the diff and record a verdict with a citation:
   `ask-registry.sh invariant-verdict --requirement-id <r> --invariant-id <i>
-  --verdict holds|violated|unverifiable --evidence <file:line|command|SHA>`
-  (`holds` is refused without `--evidence`). Re-run the check. If any invariant
+  --verdict holds|violated|unverifiable --evidence <file:line|path|command|SHA>`
+  (`holds` is refused without `--evidence`, and also when the evidence is blank
+  after trimming or could not be a citation in any reading — `x`, `.`, `-`,
+  `trust me`. The shape test wants a `:`+digit, a 7+ char hex SHA, or a `/`; it
+  makes no judgement about the citation's quality. Do not pass `--ask-id`: it is
+  resolved from the requirement.) Re-run the check. If any invariant
   is still `violated` after your own adjudication → **return FAIL**, quoting the
   invariant text and the operator's verbatim sentence. A task cannot be PASSed
   while it violates a recorded operator invariant, even if every `Done when:`

@@ -242,11 +242,36 @@
 # is NOT a pass — it folds to `unverified`, which is the exact state the two
 # golden-case failures were in.
 #
-# SUMMARY-FIELD ABSTENTION (BINDING): all three record types write an EMPTY
-# `summary` and an EMPTY `title_source`. The ask's displayed title folds as
-# last-non-empty `summary` (with operator-beats-auto precedence), so a
-# requirement or invariant record carrying a non-empty summary would silently
-# rewrite the ask's title in the cockpit. Never populate `summary` here.
+# FOLD-FIELD ABSTENTION (BINDING — formerly "SUMMARY-FIELD ABSTENTION",
+# widened 2026-07-29 after harness-reviewer Major 6): all three ledger record
+# types write an EMPTY value for EVERY field that ANY reader folds
+# last-non-empty-wins. Not just `summary`. The rule is stated over the FOLD
+# LIST, not over a hand-maintained field-by-field list, because the original
+# per-field phrasing is what let the bug in: the author guarded `summary` and
+# `title_source` and missed `verbatim_ref`, a sibling in the very same fold
+# array — so `record-requirement --verbatim-ref X` silently REPLACED the ask's
+# pointer to the original operator prompt.
+#
+# THE FOLD LIST, enumerated FROM THE READERS (re-derive it from these three
+# call sites, never from memory, whenever a reader changes):
+#     repo, project, verbatim_ref, status   -- server/derive-lib.js:110
+#                                              server/auditor.js:302
+#                                              (literal `['repo','project',
+#                                               'verbatim_ref','status']`)
+#     summary, title_source                 -- the TITLE PRECEDENCE fold below
+#                                              (derive-lib.js / auditor.js /
+#                                               server/requests-routes.js:147)
+#     verbatim_ref                          -- server/requests-routes.js:148
+# => { repo, project, verbatim_ref, status, summary, title_source }
+#
+# A ledger record's ONLY job is to carry the ledger fields (requirement_id,
+# verbatim, invariant_*, evidence_ref) plus the `ask_id` that files it. It
+# describes the OPERATOR'S WORDS; it is not an assertion about the ask's repo,
+# project, lifecycle status, title, or transcript pointer, so writing any of
+# those would be a claim the verb never had grounds to make. Enforced two ways:
+# every ledger verb passes "" positionally, AND self-test Scenario RL8 asserts
+# the whole list generically (add a field to the fold list -> add it to RL8's
+# list, not to six separate assertions).
 #
 # The title_source/candidate_id/classification fields are the
 # cockpit-roadmap-redesign Task 2 (A2/A3/I6) additions; `deadline` and
@@ -891,6 +916,35 @@ _ar_append_record() {
   local requirement_id="${10:-}" verbatim="${11:-}" invariant_id="${12:-}"
   local invariant_text="${13:-}" invariant_verdict="${14:-}" evidence_ref="${15:-}"
 
+  # ------------------------------------------------------------------
+  # NON-EMPTY ask_id IS A STORE INVARIANT (harness-reviewer Critical 1,
+  # 2026-07-29). `ask_id` is the GROUPING KEY of this store, not a field:
+  # every reader groups by it. A record with ask_id "" does not describe a
+  # missing ask — it silently JOINS a phantom one. PROVEN blast radius:
+  # estate-janitor.sh's _ej_collect_asks does `group_by(.ask_id)` with no
+  # guard, so all empty-id records across all time collapse into ONE
+  # "active" ask that (a) can never be closed, because `set-status` itself
+  # requires a non-empty --ask-id, and (b) never ages out, because its
+  # folded last_ts refreshes on every subsequent empty-id write. It then
+  # renders as a blank row in `estate-brief` and in `sla` forever. Sixteen
+  # such records reached the shared store before this guard existed.
+  #
+  # The guard lives HERE, at the ONE writer every verb calls, and not in
+  # the verbs: twelve verbs guarded `-z "$ask_id"` correctly and the two
+  # newest did not, which is the recurring shape of a per-caller
+  # convention. A writer-side invariant cannot be reintroduced by a
+  # future verb author who simply does not know the convention exists.
+  #
+  # Honouring the never-blocks-caller contract: this refuses the WRITE and
+  # returns 0 while printing NOTHING on stdout (callers capture the
+  # registry path from stdout, so an empty capture is the in-band signal)
+  # and a loud, actionable line on stderr.
+  # ------------------------------------------------------------------
+  if [[ -z "$ask_id" ]]; then
+    echo "ask-registry.sh: REFUSING to append a '$record_type' record with an empty ask_id — ask_id is this store's grouping key and an empty one collapses into an uncloseable phantom ask in every reader (estate-janitor/estate-brief/sla). No record written; caller not blocked." >&2
+    return 0
+  fi
+
   local ts; ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown')"
   local user machine
   user="$(git config user.name 2>/dev/null || true)"
@@ -1406,7 +1460,17 @@ cmd_sla() {
   fi
 
   printf 'ask_id\tsla_state\tdeadline\tdefault_action\tsummary\n'
-  jq -s -r --argjson now "$now_epoch" --argjson duesoon "$due_soon_hours" '
+  # Same failed-read-is-not-an-empty-read guard as _ar_invariant_rows
+  # (harness-reviewer Critical 2 sweep — "apply to any other jq reader over
+  # this store"). A torn line here used to render as a header with no rows,
+  # i.e. "nothing is overdue" — the SLA read-out's worst possible lie. The two
+  # pre-existing degrade paths above (no registry / no jq) keep their
+  # documented exit 0 because those are KNOWN-EMPTY states; an unparseable
+  # store is a different thing and gets the same CANNOT-EVALUATE 4 the ledger
+  # uses. No caller reads this exit code programmatically (estate-janitor
+  # folds the JSONL itself), so this only ever adds signal.
+  local _sla _slarc
+  _sla="$(jq -s -r --argjson now "$now_epoch" --argjson duesoon "$due_soon_hours" '
     group_by(.ask_id) | map(
       (map(select(.ts != null and .ts != "")) | sort_by(.ts)) as $s |
       {
@@ -1438,7 +1502,12 @@ cmd_sla() {
     | sort_by([(if ._epoch == null then 1 else 0 end), (._epoch // 0)])
     | .[]
     | "\(.ask_id)\t\(.sla_state)\t\(.deadline)\t\(.default_action)\t\(.summary)"
-  ' "$f"
+  ' "$f")"; _slarc=$?
+  if [[ "$_slarc" != "0" ]]; then
+    echo "ask-registry.sh sla: jq exited $_slarc reading $f — the SLA table CANNOT be computed (a torn/truncated JSONL line does this). An empty table here would read as 'nothing is overdue'; it is not. NOT a pass." >&2
+    return 4
+  fi
+  [[ -n "$_sla" ]] && printf '%s\n' "$_sla"
   return 0
 }
 
@@ -1456,15 +1525,40 @@ cmd_sla() {
 _AR_VERBATIM_MAX=4000
 _AR_INVARIANT_MAX=600
 
-# _ar_truncate_hard <max> <text> — byte-count cap, no sentence logic, no
+# _ar_truncate_hard <max> <text> — CHARACTER-count cap, no sentence logic, no
 # ellipsis-on-word-boundary. Content-preserving by construction.
+#
+# CHARACTERS, NOT BYTES (comment corrected 2026-07-29, harness-reviewer
+# Major 5): `${#s}` and `${s:0:$max}` count CHARACTERS under a UTF-8 locale
+# (bytes only under LC_ALL=C). The header used to call this a "byte-count cap",
+# which understates the real ceiling by up to 4x on multibyte input — a 4000-
+# character cap admits ~16000 bytes of emoji. The bound is therefore stated in
+# characters and the store must be assumed to hold up to 4x that in bytes.
+#
+# THE CAP LEAVES A MARK (harness-reviewer Major 5). This used to clip
+# VERBATIM with no marker, so a 10240-char requirement, a 4001-char one, and a
+# genuine 4000-char one were byte-identical in the store — silent loss on a
+# field whose entire contract is losslessness, and long multi-clause pastes are
+# precisely the highest-invariant-density inputs. A reader (human or agent) now
+# always knows it is looking at a fragment, and knows exactly how much is gone.
+# The sentinel is appended AFTER the clipped content rather than inside the cap
+# so that "the first <max> characters are preserved exactly" stays a clean,
+# testable contract; the stored value's real ceiling is max + ~34 chars.
 _ar_truncate_hard() {
   local max="$1" s="$2"
   if [[ "${#s}" -le "$max" ]]; then
     printf '%s' "$s"
   else
-    printf '%s' "${s:0:$max}"
+    printf '%s [TRUNCATED: %s chars omitted]' "${s:0:$max}" "$(( ${#s} - max ))"
   fi
+}
+
+# _ar_repeat_char <n> — emit exactly <n> 'A' characters. Self-test helper for
+# the truncation-boundary scenarios (RL22). `printf '%*s'` + tr is used rather
+# than brace expansion ({1..4001} is unavailable with a variable bound in bash
+# 3.2) or `seq` (not guaranteed present) — identical output on 3.2 and 5.x.
+_ar_repeat_char() {
+  printf '%*s' "$1" '' | tr ' ' 'A'
 }
 
 _ar_gen_requirement_id() {
@@ -1486,11 +1580,68 @@ _ar_next_invariant_id() {
   f="$(ar_registry_file)"
   n=0
   if [[ -f "$f" ]]; then
-    n="$(grep -c "\"record_type\":\"invariant_declared\".*\"requirement_id\":\"${rid}\"" "$f" 2>/dev/null || echo 0)"
+    n="$(grep -ac "\"record_type\":\"invariant_declared\".*\"requirement_id\":\"${rid}\"" "$f" 2>/dev/null || echo 0)"
     n="$(printf '%s' "$n" | tr -d ' \n')"
     [[ "$n" =~ ^[0-9]+$ ]] || n=0
   fi
   printf 'inv-%s' "$((n + 1))"
+}
+
+# ----------------------------------------------------------------------
+# _ar_requirement_ask_id <requirement_id> — REFERENTIAL INTEGRITY + ask_id
+# resolution in ONE lookup (harness-reviewer Critical 3 + Critical 1,
+# 2026-07-29).
+#
+# Prints the ask_id of the newest `requirement_recorded` record bearing this
+# requirement_id and returns 0. Returns 1 (printing nothing) when no such
+# requirement exists — which is the caller's cue to no-op.
+#
+# WHY THIS IS THE LEDGER'S OWN GOLDEN CASE. `declare-invariant` used to accept
+# ANY --requirement-id. A typo'd id was written happily, printed `inv-1` — a
+# SUCCESS CONFIRMATION — and was then invisible to BOTH selectors task-verifier
+# actually uses (`--plan-slug` and `--ask-id`, which reach invariants only by
+# resolving requirement_recorded -> ask). `invariant-check` therefore reported
+# exit 3 "nothing registered", which task-verifier Step 1.6 routes to "the
+# common case and NOT a failure signal ... proceed". A clause was silently
+# dropped and the checker faithfully reported green: EXACTLY the failure class
+# this ledger was built to prevent, reproduced inside the ledger itself.
+#
+# WHY RESOLVE ask_id HERE RATHER THAN REQUIRE --ask-id (Critical 1, the
+# writer-side half). The requirement_id already DETERMINES the ask, so making
+# callers repeat it is connascence of value between two arguments: two ways to
+# say one thing, and nothing forces them to agree. Requiring `--ask-id` would
+# have stopped the EMPTY id but still admitted a WRONG one — filing an
+# invariant under an unrelated ask, which is harder to see than a blank row.
+# Resolving from the requirement record makes both states unrepresentable, and
+# is free: the Critical-3 existence check must perform this exact lookup
+# anyway. It is also the strictly kinder calling convention for the agents that
+# use these verbs, which is the operator's stated preference.
+#
+# grep-based, deliberately: declaring an invariant must never depend on the
+# READER toolchain (same rule as _ar_next_invariant_id above — jq is required
+# to READ the ledger, never to WRITE it). `grep -a` because a stored verbatim
+# is arbitrary operator text and a lone control byte must not make grep treat
+# the store as binary and silently report nothing.
+#
+# The field-order assumption (`record_type` precedes `requirement_id`, and
+# `ask_id` is the FIRST key) is the same one _ar_next_invariant_id already
+# relies on, and it is guaranteed by the single printf in _ar_append_record.
+# ----------------------------------------------------------------------
+_ar_requirement_ask_id() {
+  local rid="$1" f line aid
+  [[ -n "$rid" ]] || return 1
+  f="$(ar_registry_file)"
+  [[ -f "$f" ]] || return 1
+  line="$(grep -a "\"record_type\":\"requirement_recorded\".*\"requirement_id\":\"${rid}\"" "$f" 2>/dev/null | tail -1)"
+  [[ -n "$line" ]] || return 1
+  # `{"ask_id":"<escaped>","record_type":...` — strip to the first value.
+  # %% (longest suffix) yields the SHORTEST prefix, so an ask_id that somehow
+  # contained the delimiter text cannot over-consume.
+  aid="${line#*\"ask_id\":\"}"
+  aid="${aid%%\",\"record_type\":\"*}"
+  [[ -n "$aid" ]] || return 1
+  printf '%s' "$aid"
+  return 0
 }
 
 # ----------------------------------------------------------------------
@@ -1515,7 +1666,21 @@ _ar_invariant_rows() {
     echo "ask-registry.sh: jq is not available — cannot evaluate invariants" >&2
     return 4
   fi
-  jq -s -r --arg selkind "$sel_kind" --arg sel "$sel" '
+  # A FAILED READ IS NOT AN EMPTY READ (harness-reviewer Critical 2,
+  # 2026-07-29). jq's exit status used to be discarded by an unconditional
+  # `return 0` after this pipeline. One torn or truncated JSONL line — the
+  # normal outcome of an interrupted append to an append-only store — makes jq
+  # exit non-zero having emitted nothing, so the row set came back EMPTY and
+  # cmd_invariant_check read that as "no invariants registered" => exit 3.
+  # task-verifier Step 1.6 routes exit 3 to "the common case and NOT a failure
+  # signal ... proceed". Net effect, reproduced by the reviewer with a single
+  # appended `{"ask_id":"truncated-partial-write` line: a `violated` invariant
+  # became a silent PASS. That is the degrade-reads-as-green shape this whole
+  # ledger exists to answer, so the status is captured and mapped to 4
+  # (CANNOT EVALUATE), which no caller may treat as a pass. jq's own parse
+  # error is left on stderr, unswallowed, because it names the bad line.
+  local _rows _rc
+  _rows="$(jq -s -r --arg selkind "$sel_kind" --arg sel "$sel" '
     # EVERY emitted cell is scrubbed of tab/newline AND guaranteed non-blank
     # (blank -> "-"). The non-blank guarantee is load-bearing, not cosmetic:
     # TAB is an IFS-WHITESPACE character, so bash `read -r a b c` COLLAPSES a
@@ -1568,7 +1733,12 @@ _ar_invariant_rows() {
       ($d.invariant_text | cell),
       ($verbatim[$d.requirement_id] | cell)
     ] | @tsv
-  ' "$f"
+  ' "$f")"; _rc=$?
+  if [[ "$_rc" != "0" ]]; then
+    echo "ask-registry.sh: jq exited $_rc reading $f — the ledger CANNOT be evaluated (a torn/truncated JSONL line does this; see jq's parse error above). This is NOT 'no invariants registered' and NOT a pass." >&2
+    return 4
+  fi
+  [[ -n "$_rows" ]] && printf '%s\n' "$_rows"
   return 0
 }
 
@@ -1576,14 +1746,25 @@ _ar_invariant_rows() {
 # cmd_record_requirement — store the operator's sentence VERBATIM.
 # ----------------------------------------------------------------------
 cmd_record_requirement() {
-  local ask_id="" verbatim="" requirement_id="" verbatim_ref="" session_id="" \
+  local ask_id="" verbatim="" requirement_id="" session_id="" \
         emitter="model" repo="" project=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ask-id) ask_id="${2:-}"; shift 2 ;;
       --verbatim) verbatim="${2:-}"; shift 2 ;;
       --requirement-id) requirement_id="${2:-}"; shift 2 ;;
-      --verbatim-ref) verbatim_ref="${2:-}"; shift 2 ;;
+      # --verbatim-ref REMOVED (harness-reviewer Major 6, 2026-07-29).
+      # `verbatim_ref` is a FOLD-LIST field (derive-lib.js:110,
+      # auditor.js:302, requests-routes.js:148 fold it last-non-empty-wins),
+      # so accepting it here let `record-requirement` silently REPLACE the
+      # ask's pointer to the original operator prompt — the one artifact this
+      # ledger exists to keep reachable. It is kept as an EXPLICIT rejected
+      # case rather than deleted so that (a) the `shift 2` stays correct and
+      # later flags still parse, and (b) a caller carrying the old flag is
+      # TOLD, instead of having it silently eaten by the `*)` arm.
+      --verbatim-ref)
+        echo "ask-registry.sh record-requirement: --verbatim-ref is not accepted here (it is a fold-list field; writing it would overwrite the ask's pointer to the ORIGINAL operator prompt — see FOLD-FIELD ABSTENTION in the schema header). Flag ignored; the requirement itself is still recorded. Use \`register --verbatim-ref\` to set an ask's pointer." >&2
+        shift 2 ;;
       --session-id) session_id="${2:-}"; shift 2 ;;
       --emitter) emitter="${2:-}"; shift 2 ;;
       *) shift ;;
@@ -1598,9 +1779,10 @@ cmd_record_requirement() {
   verbatim="$(_ar_truncate_hard "$_AR_VERBATIM_MAX" "$verbatim")"
   [[ -n "$requirement_id" ]] || requirement_id="$(_ar_gen_requirement_id)"
 
-  # summary + title_source deliberately EMPTY (SUMMARY-FIELD ABSTENTION).
+  # EVERY fold-list field is deliberately EMPTY here: status, repo, project,
+  # verbatim_ref, summary, title_source (FOLD-FIELD ABSTENTION, schema header).
   _ar_append_record "requirement_recorded" "$ask_id" "" "$repo" "$project" \
-    "" "$verbatim_ref" "$session_id" "" "$session_id" "" "" "$emitter" \
+    "" "" "$session_id" "" "$session_id" "" "" "$emitter" \
     "" "" "" "" "" "$requirement_id" "$verbatim" "" "" "" "" >/dev/null
 
   if command -v pl_emit >/dev/null 2>&1; then
@@ -1632,6 +1814,23 @@ cmd_declare_invariant() {
     echo "ask-registry.sh declare-invariant: --requirement-id and --text are required (no-op; never blocks caller)" >&2
     return 0
   fi
+
+  # REFERENTIAL INTEGRITY + ask_id RESOLUTION (Critical 3 + Critical 1).
+  # A requirement_id that names no requirement_recorded is refused OUTRIGHT:
+  # it would print `inv-1` — a success confirmation — while being unreachable
+  # from both selectors task-verifier uses, so the clause silently vanishes
+  # and invariant-check reports exit 3 "nothing registered" => proceed.
+  # The same lookup yields the authoritative ask_id, which is why --ask-id is
+  # no longer read from the caller (see _ar_requirement_ask_id's header).
+  local resolved_ask
+  if ! resolved_ask="$(_ar_requirement_ask_id "$requirement_id")"; then
+    echo "ask-registry.sh declare-invariant: no requirement_recorded exists with --requirement-id '$requirement_id' — refusing to declare an invariant against a requirement that was never recorded (it would be unreachable from --ask-id/--plan-slug and would make invariant-check report 'nothing registered'). Record the requirement first: record-requirement --ask-id <id> --verbatim '<exact words>'. No record written; caller not blocked." >&2
+    return 0
+  fi
+  if [[ -n "$ask_id" && "$ask_id" != "$resolved_ask" ]]; then
+    echo "ask-registry.sh declare-invariant: --ask-id '$ask_id' disagrees with the requirement's own ask '$resolved_ask'; using the requirement's ask (the requirement record is authoritative)." >&2
+  fi
+  ask_id="$resolved_ask"
 
   text="$(_ar_truncate_hard "$_AR_INVARIANT_MAX" "$text")"
   [[ -n "$invariant_id" ]] || invariant_id="$(_ar_next_invariant_id "$requirement_id")"
@@ -1680,12 +1879,51 @@ cmd_invariant_verdict() {
 
   # A `holds` verdict with no citation is exactly the unevidenced self-report
   # the ledger exists to catch — refuse it rather than persist a hollow pass.
-  if [[ "$verdict" == "holds" && -z "$evidence_ref" ]]; then
-    echo "ask-registry.sh invariant-verdict: --verdict holds requires --evidence <citation> (file:line, command, or commit SHA); no record written" >&2
-    return 0
+  #
+  # BLANK-AFTER-TRIM, NOT MERELY EMPTY (harness-reviewer Major 4, 2026-07-29).
+  # The guard used to be `-z`, but the READER's `cell` normalises `^ *$` to
+  # `-`, so `--evidence '   '` was accepted AND then rendered BYTE-IDENTICAL to
+  # a row that carries no verdict at all. An operator auditing the TSV could
+  # not distinguish "nobody has checked this" from "someone passed it with
+  # whitespace". Trim first, then require non-empty.
+  #
+  # Plus a MINIMAL NON-SEMANTIC SHAPE CHECK. `x`, `.`, `0`, `-` and `trust me`
+  # all satisfied "non-empty" while citing nothing. A citation in this harness
+  # is a file:line, a command, a path, or a commit SHA, so the shape test is:
+  #   a ':' followed by a digit  (file:line, cmd:exit)  OR
+  #   a run of 7+ hex characters (a commit SHA)         OR
+  #   a '/'                      (a path or a URL)
+  # This is deliberately SYNTACTIC. It cannot tell a true citation from a
+  # false one and does not try: the reviewer's explicit finding is that
+  # semantic quality-checking here would over-fire and erode trust in the
+  # gate. It rejects only strings that could not be a citation in any reading.
+  if [[ "$verdict" == "holds" ]]; then
+    local ev_trimmed="${evidence_ref//[[:space:]]/}"
+    if [[ -z "$ev_trimmed" ]]; then
+      echo "ask-registry.sh invariant-verdict: --verdict holds requires --evidence <citation> (file:line, command, path, or commit SHA). A blank or whitespace-only value renders identically to an UNVERIFIED row, so it is refused; no record written." >&2
+      return 0
+    fi
+    if ! [[ "$evidence_ref" == */* || "$evidence_ref" =~ :[0-9] || "$evidence_ref" =~ [0-9a-fA-F]{7,} ]]; then
+      echo "ask-registry.sh invariant-verdict: --evidence '$evidence_ref' does not look like a citation — expected a file:line (path:120), a path (dir/file.sh), a command, or a 7+ char commit SHA. This is a SHAPE check only, not a judgement of the evidence's quality; no record written." >&2
+      return 0
+    fi
   fi
 
   evidence_ref="$(_ar_truncate_hard "$_AR_INVARIANT_MAX" "$evidence_ref")"
+
+  # REFERENTIAL INTEGRITY + ask_id RESOLUTION — identical contract to
+  # declare-invariant above. A verdict against a requirement that was never
+  # recorded is as unreachable, and as silently green, as a declaration
+  # against one.
+  local resolved_ask
+  if ! resolved_ask="$(_ar_requirement_ask_id "$requirement_id")"; then
+    echo "ask-registry.sh invariant-verdict: no requirement_recorded exists with --requirement-id '$requirement_id' — refusing to file a verdict against a requirement that was never recorded (it would be unreachable from --ask-id/--plan-slug). No record written; caller not blocked." >&2
+    return 0
+  fi
+  if [[ -n "$ask_id" && "$ask_id" != "$resolved_ask" ]]; then
+    echo "ask-registry.sh invariant-verdict: --ask-id '$ask_id' disagrees with the requirement's own ask '$resolved_ask'; using the requirement's ask (the requirement record is authoritative)." >&2
+  fi
+  ask_id="$resolved_ask"
 
   _ar_append_record "invariant_verdict" "$ask_id" "" "" "" \
     "" "" "" "" "" "" "" "$emitter" \
@@ -2591,7 +2829,9 @@ cmd_selftest() {
   rl_c="$(cmd_declare_invariant --requirement-id "$rl_rid3" --text 'the borrow ends without operator action')"
   for rl_n in 1 2 3 4 5; do
     cmd_invariant_verdict --requirement-id "$rl_rid3" --invariant-id "$rl_c" --verdict violated --evidence 'still pinned'
-    cmd_invariant_verdict --requirement-id "$rl_rid3" --invariant-id "$rl_c" --verdict holds --evidence 'auto-restore verified'
+    # NOTE: a `holds` evidence value must satisfy the Major-4 shape check
+    # (file:line / path / 7+ hex SHA) — 'auto-restore verified' no longer does.
+    cmd_invariant_verdict --requirement-id "$rl_rid3" --invariant-id "$rl_c" --verdict holds --evidence 'model-restore.sh:44 auto-restore verified'
   done
   if command -v jq >/dev/null 2>&1; then
     rl_collision="$(jq -rs --arg r "$rl_rid3" '
@@ -2607,14 +2847,42 @@ cmd_selftest() {
     fail "expected the final 'holds' to win (exit 0, 1/1), got rc=$rl_rc out=$rl_out"
   fi
 
-  echo "Scenario RL8: SUMMARY-FIELD ABSTENTION — recording a requirement never rewrites the ask's cockpit title"
+  echo "Scenario RL8: FOLD-FIELD ABSTENTION — no ledger record writes ANY field a reader folds last-non-empty-wins"
+  # Stated over the WHOLE fold list, not per-field (harness-reviewer Major 6).
+  # The original assertion checked summary/title_source by hand and therefore
+  # could not see that `verbatim_ref` — a sibling in the SAME reader fold array
+  # — was writable via `record-requirement --verbatim-ref`, silently replacing
+  # the ask's pointer to the original operator prompt. The list below is the
+  # union of every reader's last-non-empty-wins fields:
+  #   repo, project, verbatim_ref, status  -> derive-lib.js:110, auditor.js:302
+  #   summary, title_source                -> the title-precedence fold
+  #   verbatim_ref                         -> requests-routes.js:148
+  # When a reader gains a folded field, ADD IT HERE — one line, not a new
+  # assertion block. That is the whole point of stating the rule this way.
+  local RL_FOLD_FIELDS="repo project verbatim_ref status summary title_source"
   if command -v jq >/dev/null 2>&1; then
-    local rl_leak
-    rl_leak="$(jq -rs '[.[] | select(.record_type=="requirement_recorded" or .record_type=="invariant_declared" or .record_type=="invariant_verdict") | select(((.summary // "") != "") or ((.title_source // "") != ""))] | length' "$RLREG")"
-    if [[ "$rl_leak" == "0" ]]; then
-      pass "no ledger record populates summary/title_source"
+    # ORDER MATTERS: the adversarial write happens FIRST, so the generic sweep
+    # below is evaluated against a store that a defeated guard would have
+    # polluted. Sweeping before the attack would leave the generic assertion
+    # green under the very mutation it is supposed to catch.
+    local rl_vr_rid rl_vr_stored
+    rl_vr_rid="$(cmd_record_requirement --ask-id "ask-rl" --verbatim 'pointer must not move' --verbatim-ref '/tmp/HIJACKED-TRANSCRIPT.jsonl#999' 2>/dev/null)"
+    rl_vr_stored="$(jq -rs --arg r "$rl_vr_rid" '[.[] | select(.requirement_id==$r and .record_type=="requirement_recorded")][-1].verbatim_ref' "$RLREG")"
+    if [[ "$rl_vr_stored" == "" ]]; then
+      pass "record-requirement --verbatim-ref is refused at the writer (stored verbatim_ref empty; the ask's prompt pointer survives)"
     else
-      fail "$rl_leak ledger record(s) leak into the title fold"
+      fail "--verbatim-ref reached the store as '$rl_vr_stored' — it would replace the ask's pointer to the original operator prompt"
+    fi
+
+    local rl_leak rl_fld rl_leakfields=""
+    for rl_fld in $RL_FOLD_FIELDS; do
+      rl_leak="$(jq -rs --arg f "$rl_fld" '[.[] | select(.record_type=="requirement_recorded" or .record_type=="invariant_declared" or .record_type=="invariant_verdict") | select(((.[$f] // "") != ""))] | length' "$RLREG")"
+      [[ "$rl_leak" == "0" ]] || rl_leakfields="$rl_leakfields $rl_fld($rl_leak)"
+    done
+    if [[ -z "$rl_leakfields" ]]; then
+      pass "no ledger record populates ANY fold-list field ($RL_FOLD_FIELDS)"
+    else
+      fail "ledger records leak into reader folds:$rl_leakfields"
     fi
     local rl_title
     rl_title="$(cmd_sla 2>/dev/null | awk -F'\t' '$1=="ask-rl"{print $5}')"
@@ -2697,6 +2965,256 @@ cmd_selftest() {
     fail "router exit-code propagation broken: all-hold gave $rl_sub_rc0 (want 0), unverified gave $rl_sub_rc (want 1)"
   fi
 
+  # ====================================================================
+  # harness-reviewer REJECT round (2026-07-29): one scenario per defect.
+  # Each is written to go RED against the pre-fix code — see the fix's own
+  # comment block for the mechanism it regresses.
+  # ====================================================================
+
+  echo "Scenario RL17 (Critical 1): the ONE writer refuses an empty ask_id, so no verb can create the uncloseable phantom ask"
+  # Called at the WRITER, not through a verb: the point of the fix is that a
+  # FUTURE verb which forgets the -z guard still cannot poison the store.
+  local rl_before rl_after rl_wrc rl_wout
+  rl_before="$(grep -ac . "$RLREG" 2>/dev/null || echo 0)"
+  rl_wout="$(_ar_append_record "invariant_declared" "" "" "" "" "" "" "" "" "" "" "" "future-verb" \
+    "" "" "" "" "" "req-does-not-matter" "" "inv-9" "phantom" "" "" 2>/dev/null)"; rl_wrc=$?
+  rl_after="$(grep -ac . "$RLREG" 2>/dev/null || echo 0)"
+  if [[ "$rl_before" == "$rl_after" ]]; then
+    pass "empty-ask_id append was refused at the writer (line count unchanged at $rl_after)"
+  else
+    fail "an empty-ask_id record reached the store ($rl_before -> $rl_after lines)"
+  fi
+  if [[ "$rl_wrc" == "0" && -z "$rl_wout" ]]; then
+    pass "writer honoured never-blocks-caller (exit 0) while signalling refusal in-band (empty path on stdout)"
+  else
+    fail "expected exit 0 + empty stdout on refusal, got rc=$rl_wrc out='$rl_wout'"
+  fi
+  # The blast radius, asserted directly: readers group by ask_id.
+  if command -v jq >/dev/null 2>&1; then
+    local rl_phantom
+    rl_phantom="$(jq -rs '[.[] | select((.ask_id // "") == "")] | length' "$RLREG")"
+    if [[ "$rl_phantom" == "0" ]]; then
+      pass "zero empty-ask_id records exist in the whole store — group_by(.ask_id) cannot synthesise a phantom ask"
+    else
+      fail "$rl_phantom empty-ask_id record(s) present; estate-janitor would render an uncloseable blank ask"
+    fi
+  fi
+
+  echo "Scenario RL18 (Critical 1): declare-invariant/invariant-verdict file under the requirement's OWN ask without being told it"
+  local rl_r18 rl_i18 rl_ask18 rl_vask18
+  rl_r18="$(cmd_record_requirement --ask-id "ask-rl-resolve" --verbatim 'the ask id must be derivable')"
+  rl_i18="$(cmd_declare_invariant --requirement-id "$rl_r18" --text 'RL18-RESOLVED-INVARIANT')"
+  cmd_invariant_verdict --requirement-id "$rl_r18" --invariant-id "$rl_i18" \
+    --verdict holds --evidence 'ask-registry.sh:1 resolver returns the requirement ask'
+  if command -v jq >/dev/null 2>&1; then
+    rl_ask18="$(jq -rs --arg r "$rl_r18" '[.[] | select(.record_type=="invariant_declared" and .requirement_id==$r)][-1].ask_id' "$RLREG")"
+    rl_vask18="$(jq -rs --arg r "$rl_r18" '[.[] | select(.record_type=="invariant_verdict" and .requirement_id==$r)][-1].ask_id' "$RLREG")"
+    if [[ "$rl_ask18" == "ask-rl-resolve" && "$rl_vask18" == "ask-rl-resolve" ]]; then
+      pass "both records carry the resolved ask_id 'ask-rl-resolve' (no --ask-id was passed)"
+    else
+      fail "ask_id not resolved: declared='$rl_ask18' verdict='$rl_vask18' (want ask-rl-resolve)"
+    fi
+  fi
+  # And the user-visible consequence: the --ask-id selector now reaches them.
+  rl_out="$(cmd_invariant_check --ask-id "ask-rl-resolve")"; rl_rc=$?
+  if [[ "$rl_rc" == "0" ]] && printf '%s' "$rl_out" | grep -q '1/1 invariants hold'; then
+    pass "--ask-id selector reaches the invariant purely via the resolved id (exit 0, 1/1)"
+  else
+    fail "resolved invariant unreachable by --ask-id: rc=$rl_rc out=$rl_out"
+  fi
+
+  echo "Scenario RL19 (Critical 2): a torn JSONL line is CANNOT-EVALUATE (4), never 'nothing registered' (3)"
+  # The exact silent-pass the reviewer reproduced: with a `violated` invariant
+  # present, one truncated line made the row set empty -> exit 3 -> task-verifier
+  # Step 1.6 treats 3 as "not a failure signal ... proceed".
+  local rl_r19 rl_i19 rl_torn_rc rl_torn_out
+  rl_r19="$(cmd_record_requirement --ask-id "ask-rl-torn" --verbatim 'a torn line must not read as a pass')"
+  rl_i19="$(cmd_declare_invariant --requirement-id "$rl_r19" --text 'RL19-VIOLATED-INVARIANT')"
+  cmd_invariant_verdict --requirement-id "$rl_r19" --invariant-id "$rl_i19" \
+    --verdict violated --evidence 'docs/plans/x.md:7 still broken'
+  # Pre-condition: the violation IS visible while the store is intact.
+  rl_out="$(cmd_invariant_check --ask-id "ask-rl-torn")"; rl_rc=$?
+  if [[ "$rl_rc" == "1" ]]; then
+    pass "pre-condition: the violated invariant is detected (exit 1) on an intact store"
+  else
+    fail "pre-condition failed: expected exit 1 on the intact store, got $rl_rc"
+  fi
+  printf '%s' '{"ask_id":"truncated-partial-write' >> "$RLREG"
+  rl_torn_out="$(cmd_invariant_check --ask-id "ask-rl-torn" 2>/dev/null)"; rl_torn_rc=$?
+  if [[ "$rl_torn_rc" == "4" ]]; then
+    pass "torn line yields exit 4 CANNOT-EVALUATE (pre-fix this was 3 = 'nothing registered' = proceed)"
+  else
+    fail "SILENT-PASS REGRESSION: a torn line gave exit $rl_torn_rc (want 4); at 3 a verifier proceeds past a violated invariant"
+  fi
+  if printf '%s' "$rl_torn_out" | grep -q 'NOT a pass'; then
+    pass "the degraded read says so in-band"
+  else
+    fail "degraded read did not announce itself: '$rl_torn_out'"
+  fi
+  # `invariants` (the other reader over this store) must degrade identically.
+  cmd_invariants --ask-id "ask-rl-torn" >/dev/null 2>&1; rl_rc=$?
+  if [[ "$rl_rc" == "4" ]]; then
+    pass "cmd_invariants propagates the same CANNOT-EVALUATE 4"
+  else
+    fail "cmd_invariants returned $rl_rc on a torn store (want 4)"
+  fi
+  # `sla` is the third jq reader over this store — an empty table there reads
+  # as "nothing is overdue".
+  cmd_sla >/dev/null 2>&1; rl_rc=$?
+  if [[ "$rl_rc" == "4" ]]; then
+    pass "cmd_sla also refuses to render an empty (= 'nothing overdue') table on a torn store"
+  else
+    fail "cmd_sla returned $rl_rc on a torn store (want 4)"
+  fi
+  # THROUGH THE ROUTER, in a real subprocess. The in-process assertion above
+  # cannot see a router that swallows the code — and it did: `sla` was routed
+  # `exit 0` like a write verb, so the guard above was green while the CLI
+  # (the only way anything actually calls this) still reported success on an
+  # unparseable store. Assert the surface the caller observes, not the
+  # intermediate return value.
+  bash "$0" sla >/dev/null 2>&1; rl_rc=$?
+  if [[ "$rl_rc" == "4" ]]; then
+    pass "the ROUTER propagates sla's CANNOT-EVALUATE 4 to the CLI exit code"
+  else
+    fail "router swallowed sla's degrade signal: CLI exit $rl_rc on a torn store (want 4)"
+  fi
+  bash "$0" invariants --ask-id "ask-rl-torn" >/dev/null 2>&1; rl_rc=$?
+  if [[ "$rl_rc" == "4" ]]; then
+    pass "the ROUTER propagates invariants' CANNOT-EVALUATE 4 too"
+  else
+    fail "router swallowed invariants' degrade signal: CLI exit $rl_rc (want 4)"
+  fi
+  # Repair the fixture store for the scenarios that follow.
+  local rl_repair="$TMP/repaired.jsonl"
+  grep -a '"record_type"' "$RLREG" | grep -a '}$' > "$rl_repair" 2>/dev/null
+  mv "$rl_repair" "$RLREG"
+  cmd_invariant_check --ask-id "ask-rl-torn" >/dev/null 2>&1; rl_rc=$?
+  if [[ "$rl_rc" == "1" ]]; then
+    pass "store repaired; the violated invariant is visible again (exit 1)"
+  else
+    fail "fixture repair failed: rc=$rl_rc"
+  fi
+
+  echo "Scenario RL20 (Critical 3): THE LEDGER'S OWN GOLDEN CASE — a typo'd requirement-id is refused, not silently dropped"
+  # Pre-fix: this printed 'inv-1' (a success confirmation), wrote a record
+  # invisible to BOTH task-verifier selectors, and invariant-check then said
+  # exit 3 'nothing registered' => proceed. A clause vanishes; the checker
+  # reports green. That is the exact failure class the ledger exists to stop.
+  local rl_r20 rl_typo_out rl_typo_id
+  rl_r20="$(cmd_record_requirement --ask-id "ask-rl-typo" --verbatim 'Fable stays primary; Opus only while it is unavailable')"
+  rl_typo_id="$(cmd_declare_invariant --requirement-id "${rl_r20}X" --text 'FABLE IS PRIMARY -- THE LOST INVARIANT' 2>/dev/null)"
+  if [[ -z "$rl_typo_id" ]]; then
+    pass "a typo'd --requirement-id returns NOTHING (pre-fix it returned 'inv-1', a success confirmation)"
+  else
+    fail "typo'd requirement-id was accepted and confirmed as '$rl_typo_id'"
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    local rl_orphans
+    rl_orphans="$(jq -rs '
+      ([.[] | select(.record_type=="requirement_recorded") | .requirement_id] | unique) as $known |
+      [.[] | select(.record_type=="invariant_declared" or .record_type=="invariant_verdict")
+           | select((.requirement_id // "") | IN($known[]) | not)] | length' "$RLREG")"
+    if [[ "$rl_orphans" == "0" ]]; then
+      pass "the store holds ZERO invariant/verdict records orphaned from a requirement_recorded"
+    else
+      fail "$rl_orphans orphaned ledger record(s) — each is a clause that invariant-check will report as 'nothing registered'"
+    fi
+  fi
+  # A verdict against a phantom requirement is refused on the same contract.
+  cmd_invariant_verdict --requirement-id "${rl_r20}X" --invariant-id "inv-1" \
+    --verdict holds --evidence 'some/path.sh:12' 2>/dev/null
+  if command -v jq >/dev/null 2>&1; then
+    local rl_ghostv
+    rl_ghostv="$(jq -rs --arg r "${rl_r20}X" '[.[] | select(.requirement_id==$r)] | length' "$RLREG")"
+    if [[ "$rl_ghostv" == "0" ]]; then
+      pass "a verdict against a non-existent requirement is refused too (0 records under the typo'd id)"
+    else
+      fail "$rl_ghostv record(s) written under the typo'd requirement id"
+    fi
+  fi
+
+  echo "Scenario RL21 (Major 4): a 'holds' citation must survive trimming AND look like a citation"
+  local rl_r21 rl_i21 rl_ev rl_acc
+  rl_r21="$(cmd_record_requirement --ask-id "ask-rl-ev" --verbatim 'every claim carries a real citation')"
+  rl_i21="$(cmd_declare_invariant --requirement-id "$rl_r21" --text 'RL21-EVIDENCE-INVARIANT')"
+  # The reviewer's full defeat set. '   ' is the load-bearing one: the reader's
+  # `cell` maps ^ *$ to '-', so it rendered IDENTICALLY to an unverified row.
+  for rl_ev in '   ' '	' 'x' '.' '0' '-' 'trust me' 'verified'; do
+    cmd_invariant_verdict --requirement-id "$rl_r21" --invariant-id "$rl_i21" \
+      --verdict holds --evidence "$rl_ev" 2>/dev/null
+  done
+  rl_out="$(cmd_invariant_check --requirement-id "$rl_r21")"; rl_rc=$?
+  if [[ "$rl_rc" == "1" ]] && printf '%s' "$rl_out" | grep -q 'unverified'; then
+    pass "all 8 non-citations were refused; the invariant stays unverified (exit 1)"
+  else
+    fail "a non-citation was accepted as a pass: rc=$rl_rc out=$rl_out"
+  fi
+  # Positive control — the guard must not eat real citations (over-fire check).
+  rl_acc=0
+  for rl_ev in 'ask-registry.sh:1683' 'docs/plans/p.md' '417c4344d3c7aa8' 'agents/*.md:12 unset'; do
+    cmd_invariant_verdict --requirement-id "$rl_r21" --invariant-id "$rl_i21" \
+      --verdict holds --evidence "$rl_ev" 2>/dev/null
+    cmd_invariant_check --requirement-id "$rl_r21" >/dev/null 2>&1 && rl_acc=$((rl_acc + 1))
+  done
+  if [[ "$rl_acc" == "4" ]]; then
+    pass "all 4 genuine citation shapes (file:line, path, SHA, glob:line) are accepted — the guard does not over-fire"
+  else
+    fail "the shape check rejected a real citation ($rl_acc/4 accepted)"
+  fi
+
+  echo "Scenario RL22 (Major 5): the verbatim cap LEAVES A MARK — 4001 chars is distinguishable from a genuine 4000"
+  local rl_4001 rl_4000 rl_r22a rl_r22b rl_s22a rl_s22b
+  rl_4001="$(_ar_repeat_char 4001)"
+  rl_4000="$(_ar_repeat_char 4000)"
+  if [[ "${#rl_4001}" == "4001" && "${#rl_4000}" == "4000" ]]; then
+    pass "fixture lengths are exact (4001 / 4000 chars)"
+  else
+    fail "fixture generation wrong: ${#rl_4001} / ${#rl_4000}"
+  fi
+  rl_r22a="$(cmd_record_requirement --ask-id "ask-rl-cap" --verbatim "$rl_4001")"
+  rl_r22b="$(cmd_record_requirement --ask-id "ask-rl-cap" --verbatim "$rl_4000")"
+  if command -v jq >/dev/null 2>&1; then
+    rl_s22a="$(jq -rs --arg r "$rl_r22a" '[.[] | select(.requirement_id==$r and .record_type=="requirement_recorded")][-1].verbatim' "$RLREG")"
+    rl_s22b="$(jq -rs --arg r "$rl_r22b" '[.[] | select(.requirement_id==$r and .record_type=="requirement_recorded")][-1].verbatim' "$RLREG")"
+    # POSITIVE: the cap fired and said so, with the exact loss quantified.
+    if printf '%s' "$rl_s22a" | grep -q '\[TRUNCATED: 1 chars omitted\]$'; then
+      pass "4001-char requirement is stored with an explicit '[TRUNCATED: 1 chars omitted]' marker"
+    else
+      fail "SILENT LOSS: 4001-char requirement carries no truncation marker (tail: '$(printf '%s' "$rl_s22a" | tail -c 40)')"
+    fi
+    # NEGATIVE: the boundary case must NOT be marked (no false 'lossy' claim).
+    if printf '%s' "$rl_s22b" | grep -q 'TRUNCATED'; then
+      fail "FALSE MARKER: a genuine 4000-char requirement was labelled truncated"
+    else
+      pass "a genuine 4000-char requirement carries NO marker (boundary, cap did not fire)"
+    fi
+    # The two are now distinguishable — the whole point of the finding.
+    if [[ "$rl_s22a" != "$rl_s22b" ]]; then
+      pass "an over-cap paste and a genuine at-cap requirement are no longer byte-identical in the store"
+    else
+      fail "4001-char and 4000-char requirements are indistinguishable once stored"
+    fi
+    # And the preserved prefix is still EXACT (content-preserving contract).
+    if [[ "${rl_s22a:0:4000}" == "$rl_4000" ]]; then
+      pass "the first 4000 characters are preserved byte-exact ahead of the marker"
+    else
+      fail "the preserved prefix was altered by the truncation path"
+    fi
+  fi
+
+  echo "Scenario RL23 (Major 5): \${#s} counts CHARACTERS, not bytes — the header comment claim is testable"
+  # The old header called this a 'byte-count cap'. Under a UTF-8 locale a
+  # 3-byte character counts as ONE, so the real byte ceiling is up to 4x the
+  # stated number. Assert the semantics the comment now claims.
+  local rl_multi; rl_multi='日本語'
+  if [[ "${#rl_multi}" == "3" ]]; then
+    pass "\${#s} is character-counting under this locale (3 chars for a 9-byte string) — 'byte-count cap' was wrong by 3x here"
+  elif [[ "${#rl_multi}" == "9" ]]; then
+    pass "\${#s} is byte-counting under this C locale (9) — cap is a byte cap here; the header documents both readings"
+  else
+    fail "unexpected length semantics: ${#rl_multi}"
+  fi
+
   rm -rf "$TMP" 2>/dev/null || true
 
   echo ""
@@ -2757,10 +3275,16 @@ case "${1:-}" in
     cmd_set_default_action "$@"
     exit 0
     ;;
+  # `exit $?`, NOT the write verbs' `exit 0`: since the Critical-2 sweep, sla
+  # returns 4 when jq cannot parse the store, and an empty SLA table reads as
+  # "nothing is overdue". Routed through `exit 0` that signal died at the CLI
+  # — which is the ONLY way anything calls this verb — so the guard would have
+  # been documented-but-inert. Its two other degrade paths (no registry, no jq)
+  # still return 0, so this changes nothing for a healthy store.
   sla)
     shift
     cmd_sla "$@"
-    exit 0
+    exit $?
     ;;
   set-title)
     shift
