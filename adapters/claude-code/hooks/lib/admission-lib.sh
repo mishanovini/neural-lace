@@ -112,6 +112,11 @@
 #   ADM_ESTATE_SNAPSHOT=/dev/null  -> admit (occupancy erased)
 #   ADM_STATE_DIR=<elsewhere>      -> BYPASSES THE HALT KILL SWITCH ENTIRELY
 #   NL_PROTECTED_ORCHESTRATOR=1    -> caller-declared, unverified; any process
+#       HONEST STATUS (2026-07-29, task-verifier pass 4 D-4): NO producer sets
+#       this variable anywhere in the repo today -- all 888 live ledger rows
+#       carry protected:0, so the protected/storm discriminator is INERT until
+#       a dispatcher exports it. This header is a contract awaiting its first
+#       caller, not a description of current traffic.
 #                                     can exclude its own traffic from the
 #                                     "pathology" bucket in the calibration
 #                                     this slice exists to produce
@@ -926,8 +931,24 @@ _adm_self_test() {
   # a throwaway HOME with HARNESS_SELFTEST and ADM_STATE_DIR explicitly UNSET,
   # and asserts no ledger appears under that HOME. That is the true oracle: it
   # fails if and only if the host actually writes to real operator state.
+  # task-verifier pass 4 (2026-07-29) proved v2 of this scenario VACUOUS for one
+  # host: the rc of each host's self-test was discarded (`) >/dev/null 2>&1`), so
+  # a host that CRASHED before reaching the splice (workstreams-emit.sh aborts in
+  # a sandbox HOME because its state library resolves under $HOME) read as
+  # "no ledger appeared" = PASS. Mutation proof: deleting BOTH of that host's
+  # guard arms left the suite 48/0 while the same mutation on either other host
+  # went 47/1. Two fixes, both from that verdict (D-1/D-2):
+  #   - the host's rc is CAPTURED; a host that did not RUN is a FAIL naming it —
+  #     a scenario must assert its subject actually executed, or it proves nothing;
+  #   - CONV_TREE_STATE_LIB hands workstreams-emit its state library explicitly
+  #     (its documented first-precedence resolution), so it genuinely runs under
+  #     the sandbox HOME instead of dying at its lib check;
+  #   - hosts run under "$BASH" (the interpreter THIS suite runs under), never a
+  #     PATH-resolved `bash` that silently retests Homebrew 5.3 from a 3.2 run.
   local _hosts_root; _hosts_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-  local _h _hp _sbhome _leddir _badhosts=""
+  local _repo_root; _repo_root="$(cd "$_hosts_root/../.." 2>/dev/null && pwd)"
+  local _statelib="$_repo_root/neural-lace/workstreams-ui/state/state.js"
+  local _h _hp _sbhome _leddir _badhosts="" _deadhosts="" _hrc
   for _h in "hooks/workstreams-emit.sh" "scripts/session-resumer.sh" "scripts/spawn-worktree.sh"; do
     _hp="$_hosts_root/$_h"
     [[ -f "$_hp" ]] || continue
@@ -936,16 +957,32 @@ _adm_self_test() {
     _sbhome="$T/hostsb/$(basename "$_h")"
     mkdir -p "$_sbhome"
     ( cd "$_hosts_root/.." 2>/dev/null || cd "$_hosts_root"
-      env -u HARNESS_SELFTEST -u ADM_STATE_DIR HOME="$_sbhome" bash "$_hp" --self-test ) >/dev/null 2>&1
+      env -u HARNESS_SELFTEST -u ADM_STATE_DIR \
+        HOME="$_sbhome" CONV_TREE_STATE_LIB="$_statelib" \
+        "${BASH:-bash}" "$_hp" --self-test ) >"$_sbhome/host-run.out" 2>&1
+    _hrc=$?
+    # "Did the host actually run?" — rc alone is the WRONG test: it conflates
+    # "crashed at startup, exercised nothing" (the vacuity pass 4 caught) with
+    # "ran its whole suite, one unrelated assertion red" (workstreams-emit.sh
+    # carries a pre-existing ST11 red identical under real HOME — filed, not
+    # this scenario's business). The discriminator is the suite's own
+    # completion summary: a host that printed "N passed" / SELFTEST PASS ran
+    # to completion and exercised its splice; a host with rc!=0 AND no summary
+    # never started, and reading that as PASS is exactly the vacuity.
+    if [[ "$_hrc" -ne 0 ]] && ! grep -Eq '[0-9]+ passed|SELFTEST PASS' "$_sbhome/host-run.out" 2>/dev/null; then
+      _deadhosts="$_deadhosts $_h(rc=$_hrc,no-summary)"
+    fi
     _leddir="$_sbhome/.claude/state/governor/ledger"
     if [[ -d "$_leddir" ]] && [[ -n "$(ls -A "$_leddir" 2>/dev/null)" ]]; then
       _badhosts="$_badhosts $_h"
     fi
   done
-  if [[ -z "$_badhosts" ]]; then
-    pass "no spliced host's --self-test wrote a ledger into a clean HOME (behavioral, not textual)"
-  else
+  if [[ -n "$_badhosts" ]]; then
     fail "HOST(S) WRITING TO REAL STATE:$_badhosts — their --self-test creates a governor ledger with the guard unset"
+  elif [[ -n "$_deadhosts" ]]; then
+    fail "HOST(S) NEVER RAN — oracle vacuous for:$_deadhosts (a crashed host proves nothing about its guard; fix the fixture)"
+  else
+    pass "every spliced host's --self-test RAN (rc=0) and wrote no ledger into a clean HOME (behavioral, not textual)"
   fi
 
   echo "Scenario 17: HOST self-test pollution guard (the defect Scenario 16 caught)"

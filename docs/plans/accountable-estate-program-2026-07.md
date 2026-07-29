@@ -46,6 +46,8 @@ or claim) as part of its Definition of Done. 4. Observe-first before every enfor
       Verification: full.
 - [ ] T6 — Enforce flip for admission (pressure-ladder thresholds from T3's calibration data).
       GATED: requires ≥7 calendar days of T3 observe data + operator sign-off on thresholds.
+      Clock start (task-verifier pass 4 D-5): the ledger's first row is 2026-07-29T03:33:44Z,
+      so the ≥7-day gate opens 2026-08-05T03:33Z — that date IS the T6 re-check trigger.
       ADDITIONAL ACCEPTANCE CRITERIA (from T3's review round, 2026-07-28 — the flip MUST NOT
       happen until all four hold): (a) admission hot path under 5 ms/dispatch — measured
       70.8 ms with a real janitor snapshot present, 19.0 ms without, so a TTL cache on
