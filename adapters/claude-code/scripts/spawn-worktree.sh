@@ -345,6 +345,20 @@ if ! git -C "$MAIN" worktree list --porcelain | grep -qxF "worktree $WT"; then
   echo "spawn-worktree.sh: failed to create worktree at $WT (base=$BASE_REF, branch=$BRANCH)" >&2
   exit 1
 fi
+
+# ---- ADMISSION OBSERVATION SPLICE (accountable-estate T3) -------------------
+# Third dispatch path: a worktree created here is a builder about to run, so it
+# is real estate load and belongs in the same would-block ledger as tool
+# dispatches and resumer spawns. Placed AFTER the create succeeds so the ledger
+# counts worktrees that actually exist, not attempts. OBSERVE MODE: never
+# blocks, never changes this script's exit code — a broken lib leaves
+# spawn-worktree byte-identical in behavior.
+{
+  _sw_hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks"
+  source "$_sw_hooks_dir/lib/admission-lib.sh" 2>/dev/null \
+    && declare -F adm_admit >/dev/null 2>&1 \
+    && adm_admit worktree kind=builder >/dev/null 2>&1
+} || true
 log "  CREATED: $WT  (branch $BRANCH from $BASE_REF)"
 log "  cd into it: cd \"$WT\""
 log "  at session end, tear down: spawn-worktree.sh --remove $SLUG   (or rely on worktree-prune.sh)"

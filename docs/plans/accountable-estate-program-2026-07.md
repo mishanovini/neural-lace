@@ -99,6 +99,18 @@ part-time autonomous work with review gates. T10 adds 5–10 bs and is separatel
 - adapters/claude-code/scripts/ask-registry.sh (extend: deadline/SLA/default-action verbs) — T2
 - adapters/claude-code/hooks/lib/admission-lib.sh — T3/T4/T6
 - adapters/claude-code/scripts/session-resumer.sh (call admission lib) — T3
+- adapters/claude-code/hooks/workstreams-emit.sh (call admission lib at
+  `--on-builder-dispatch`) — T3. NOT in the original table, but named by T3's own
+  task text ("called from the dispatch gate AND session-resumer AND emit-feed
+  registration"): this hook IS the emit-feed registration point and sits on the
+  PreToolUse `Task|Agent|Workflow` matcher, so it is also the dispatch-gate
+  surface. Same class of table-vs-task-text gap T2 recorded for estate-brief.sh.
+- adapters/claude-code/scripts/spawn-worktree.sh (call admission lib after a
+  successful worktree create) — T3 for the OBSERVE call; T4 still owns the
+  no-orphan ledger REGISTRATION at this same site (design §6c). Listed here
+  because a worktree create is a real dispatch and would otherwise be a
+  substantial dispatch path emitting nothing into the ledger — the review's
+  named NEEDS-RESHAPING condition.
 - adapters/claude-code/scripts/close-*.sh closer family + spawn-worktree registration — T4
 - adapters/claude-code/scripts/merge-serialized.sh + lock — T5
 - adapters/claude-code/hooks/plan-reviewer.sh (LOE surfacing) — T7
@@ -131,3 +143,9 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-27: docs/plans/accountable-estate-program-2026-07.md — this plan
 - 2026-07-28: adapters/claude-code/manifest.json — T1 entries (estate-janitor, estate-brief)
 - 2026-07-28: docs/backlog.md — T1 perf finding (ESTATE-T1-HB-CLASSIFY-PERF-01)
+- 2026-07-29: adapters/claude-code/hooks/lib/admission-lib.sh — T3 admission lib (observe mode)
+- 2026-07-29: adapters/claude-code/manifest.json — T3 entry (admission-lib)
+- 2026-07-29: adapters/claude-code/hooks/workstreams-emit.sh — T3 admission splice at the emit-feed registration point (PreToolUse Task|Agent|Workflow)
+- 2026-07-29: adapters/claude-code/scripts/session-resumer.sh — T3 admission splice at the storm-cap commit point (the hookless dispatcher, review F2)
+- 2026-07-29: adapters/claude-code/scripts/spawn-worktree.sh — T3 admission splice after a successful worktree create; otherwise this dispatch path emits nothing into the ledger, the review's named NEEDS-RESHAPING condition
+- 2026-07-29: docs/plans/accountable-estate-program-2026-07-evidence.md — T3 builder-claim evidence block (task-verifier has NOT run; checkbox left unchecked for the desktop machine)

@@ -2704,6 +2704,35 @@
       "honest_status": "Dispatched via session-start-surfacer-pack.sh since D.5 (one SessionStart entry); E.1 digest replaces the pack."
     },
     {
+      "id": "admission-lib",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "lib/admission-lib.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "hooks/lib/admission-lib.sh",
+          "docs/plans/accountable-estate-program-2026-07.md",
+          "docs/designs/estate-performance-governor-2026-07-27.md"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "Accountable Estate program T3 (docs/plans/accountable-estate-program-2026-07.md lines 35-38), OBSERVE MODE ONLY. Golden case: a dispatch arrives while the estate is under a condition an ENFORCING governor would refuse -- HALT kill switch present, drain flag set, cached pressure BLACK, or 77 live sessions past the ~50 absurd backstop -- and admission-lib records the would-be verdict to the hostname-scoped would-block ledger while STILL ADMITTING (rc 0). Self-test Scenario 15 asserts exactly this invariant across all five dispatch sources with HALT+DRAIN+BLACK+999-sessions applied simultaneously; a non-zero rc from any of them fails the suite. Wired at three dispatch paths and PROVEN end-to-end at each: workstreams-emit.sh --on-builder-dispatch (PreToolUse Task|Agent|Workflow), session-resumer.sh at the storm-cap commit point (the hookless scheduled dispatcher -- review F2's coverage gap; proven by 6 source=resumer ledger lines emitted during the resumer's own self-test), and spawn-worktree.sh after a successful worktree create.",
+      "fp_expectation": "Zero false positives possible in this slice BY CONSTRUCTION: the lib never blocks, so there is no decision a caller can be wrongly denied by. adm_admit returns 0 on every path including its own internal error paths (fail-open), verified by Scenario 13 (unwritable state dir) and Scenario 15. The RISK this slice actually carries is the opposite one -- a would-block ledger whose rates are miscalibrated because the baseline is being recorded DURING the chronic-storm period (design 6b edge 3). Mitigated by the protected=1 tag (NL_PROTECTED_ORCHESTRATOR=1) so the protected downstream orchestrator's 15-21 dispatches/min are separable from pathology, and by pressure_src=absent on every line until the Loop-2 pressure tick exists, so a reader cannot mistake 'we never observed pressure' for 'pressure was fine'.",
+      "honest_status": "OBSERVE MODE ONLY -- this is NOT an enforcement mechanism and must not be described as one. blocking:false is literal: adm_admit's final statement is an unconditional `return 0` with the comment naming T6 as the flip. Program rule 4 (observe-first before every enforcement flip) and review F1 make this binding, not a shortcut: F1 PROVED by measurement that the originally proposed caps (4/min, burst 6, cap 5) are contradicted by legitimate measured load of 15-21 dispatches/min, so shipping enforcement now would throttle the operator's most-valued work and get the governor disabled outright. WHAT IS HONESTLY NOT BUILT HERE: (1) the Loop-2 pressure tick that writes pressure.json is NOT part of T3 -- until it exists adm_pressure_color returns 'unknown', the pressure rung never fires, and every line records pressure_src=absent; (2) slot occupancy is READ from T1's janitor snapshot rather than computed, because hb_classify is measured-expensive (backlog ESTATE-T1-HB-CLASSIFY-PERF-01) and design 6b edge 6 forbids forks on the dispatch hot path -- so occupancy is exactly as fresh as the last janitor pass, and is -1/unknown when the snapshot is absent; (3) the F7 deny-message-with-retry-after and denial-rate alarm are not implemented, because in observe mode nothing is ever denied -- they belong to T6. COVERAGE (the review's verdict-change condition is NEEDS-RESHAPING if a substantial dispatch path emits nothing, so this list is the standing audit): COVERED = Task/Agent/Workflow tool dispatch, session-resumer resume and fresh-spawn flavors, spawn-worktree builder dispatch. NOT COVERED = Decision-011 cloud/scheduled sessions (no hooks, different machine image; closing this is T14), a human running `claude` directly, MCP-side agent spawns. Those emit nothing and MUST be read as unmeasured load when the 7-day calibration window is analyzed. Not event-wired in settings.json.template -- it is a sourced lib with three one-line splice callsites inside already-wired scripts, the same convention as session-heartbeat/ensure-cockpit; manifest-check's disk-coverage scan only walks top-level hooks/*.sh, never hooks/lib/, so this entry is inventory-for-honesty, not enforcement.",
+      "retirement_condition": "Retire or supersede when T6 flips admission to enforcing (this file becomes the enforcement path rather than an observer, and its manifest entry must be rewritten with blocking:true, a real fp_expectation, and the calibration data attached). Program rule 3 (every slice RETIRES something) disposition for T3: EVALUATED, NOTHING RETIRED THIS SLICE, stated honestly rather than performed -- the retirement candidates in this area are the storm-cap in session-resumer.sh and the tool-call-budget hook, and BOTH are live enforcement that this observe-only lib cannot yet replace. Retiring either now would delete real backpressure and leave nothing in its place, which is the exact F1 failure the program is built to avoid. Named condition: the storm-cap becomes redundant at T6 when the admission ladder subsumes rate limiting with calibrated thresholds; that is the retirement to make then, in the same commit as the flip.",
+      "honesty_rationale": "blocking:false is the LITERAL runtime truth, not a designed end-state hidden behind a default: adm_admit's final statement is an unconditional `return 0`, and self-test Scenario 15 fails the suite if ANY input combination (HALT + DRAIN + pressure BLACK + 999 live sessions, across all five dispatch sources) produces a non-zero rc. There is no env var that turns enforcement on in this slice; the flip is T6 and requires >=7 days of this lib's own ledger plus operator sign-off on thresholds. Constitution section 10 calls documented-but-unwired enforcement THEATER -- so to be explicit: this entry claims ONLY that the lib OBSERVES and RECORDS, and the golden_scenario asserts the observation actually reaches disk at three proven callsites. It claims no blocking behavior whatsoever, and the three splice sites are wrapped in `|| true` with a declare -F guard so a missing or broken lib leaves every caller byte-identical in behavior."
+    },
+    {
       "id": "estate-janitor",
       "kind": "writer",
       "doctrine_file": null,

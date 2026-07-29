@@ -123,3 +123,110 @@ Outcome-metric re-check date: 2026-08-11 (14 days from close). Re-check: run ask
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the verifier round-tripped all four verbs itself on a sandboxed fixture registry (normalization, all four sla states, overdue-first sort, clear-wins-over-set carve-out, re-set after clear, unparseable rejection, sandbox integrity fingerprint-proven), replayed both self-tests green (janitor 16/0 incl. fold Scenario 7b; brief 25/0 incl. SLA text/sort/cap), resolved the ask-registry suite's pending final line (55 passed, 0 failed on file), rendered the REAL brief showing a REAL overdue ask first with "overdue 2d" text, and confirmed the production demo + cleanup trail on-disk in the real registry. Adversarial probes that did not break it: unparseable-deadline injection, clear-vs-set fold ordering probe in both directions, real-registry fingerprint diff, FAIL-string audit of the suite output.
+
+## Task T3 - Admission lib (slots + rate + HALT + drain), OBSERVE MODE ONLY
+
+BUILDER CLAIM - NOT VERIFIER-CONFIRMED
+======================================
+Built by: the operator's Mac (first-class harness-dev machine as of 2026-07-28),
+NOT the plan's originally-designated build machine. Per the operator's dispatch
+instruction, the DESKTOP machine handles verification and merges. The T3
+checkbox is deliberately LEFT UNCHECKED: task-verifier is the only checkbox
+flipper (planning doctrine), and no task-verifier has run on this work. Treat
+everything below as a builder's self-report to be independently re-derived.
+
+Claimed at: 2026-07-29T01:20:00Z
+Commits: see the two SHAs in the session report (pushed to master).
+
+WHAT SHIPPED
+------------
+- NEW adapters/claude-code/hooks/hooks/lib/admission-lib.sh (see actual path
+  adapters/claude-code/hooks/lib/admission-lib.sh) - the admission lib, observe
+  mode only. 38-scenario --self-test, 38 passed / 0 failed.
+- Three splice callsites, each a guarded one-liner wrapped in `|| true`:
+  1. hooks/workstreams-emit.sh  _run_on_builder_dispatch (PreToolUse
+     Task|Agent|Workflow - the emit-feed registration AND the dispatch-gate
+     surface)
+  2. scripts/session-resumer.sh immediately after storm_cap_record_action (the
+     hookless scheduled dispatcher - review F2's proven coverage gap)
+  3. scripts/spawn-worktree.sh after a successful worktree create
+- manifest.json entry `admission-lib` with golden_scenario / fp_expectation /
+  honest_status / retirement_condition / honesty_rationale.
+
+EVIDENCE (what was actually run, and what it showed)
+----------------------------------------------------
+1. Lib self-test: 38 passed, 0 failed. Covers the observe-mode invariant
+   (Scenario 15: HALT + DRAIN + pressure BLACK + 999 live sessions applied
+   simultaneously across all five dispatch sources still returns rc 0 for every
+   one), derived-not-declared (Scenario 10: caller-supplied live_sessions=1 and
+   verdict=admit are IGNORED; the snapshot's 77 wins and is what lands in the
+   ledger), F9 stamp-file rate accounting, F10 hostname-scoped O_APPEND under 8
+   concurrent writers with zero torn lines, scrub-at-write, fail-open on an
+   unwritable state dir, and size-bounded rotation.
+2. INTEGRATION PROOF (constitution section 4 - exercised the real path, not just
+   components): each callsite driven as a real subprocess, asserting a ledger
+   line actually reaches disk. 10 passed / 0 failed.
+   - emit-feed: real `--on-builder-dispatch` invocation -> 1 line, source=emit-feed
+   - worktree : real `spawn-worktree.sh <slug> --apply` -> 1 line, source=worktree
+   - resumer  : the resumer's OWN --self-test drove the spliced dispatch path ->
+     6 lines, source=resumer, carrying real fixture session ids
+     (dead-429-sess, backoff-sess, unresumable-sess). This is the callsite the
+     lib-not-gate design exists for, so proving it end-to-end mattered most.
+3. NON-REGRESSION on every spliced host, same interpreter, HEAD vs working tree:
+   - session-resumer.sh : 31 failures BEFORE, 31 failures AFTER (identical count;
+     class is backdate_mtime, a BSD-vs-GNU `touch` incompatibility - pre-existing
+     macOS breakage on this machine, NOT caused by this change and NOT fixed by it)
+   - workstreams-emit.sh: 82 passed / 1 failed BEFORE and AFTER (identical)
+   - spawn-worktree.sh, admission-lib.sh: `bash -n` clean
+4. DEFECT FOUND AND FIXED BY THIS SLICE'S OWN TEST: Scenario 16 caught the lib
+   polluting the operator's REAL would-block ledger whenever a HOST script's
+   self-test ran the spliced path - 20 junk fixture lines written to
+   ~/.claude/state/governor before it was noticed. Since that ledger IS the
+   deliverable (the 7-day calibration window), poisoning it with fixture traffic
+   would have silently corrupted T6's thresholds. Fixed in the LIB, not
+   per-caller (the repo has the per-caller version of this fix in
+   pr-template-inline-gate.sh and it relies on every future caller remembering):
+   under HARNESS_SELFTEST=1 with no explicit ADM_STATE_DIR, state redirects to a
+   throwaway per-process dir. New Scenario 17 regression-tests all three
+   branches. The 20 polluted lines were inspected (all self-test fixture session
+   ids), then removed; no real observations were lost because the observation
+   period had not started.
+
+HONEST GAPS - READ BEFORE TRUSTING THE CALIBRATION DATA
+--------------------------------------------------------
+- The Loop-2 pressure tick that writes pressure.json is NOT built (not in T3
+  scope). Until it exists the pressure rung NEVER fires and every ledger line
+  records pressure_src=absent. A 7-day window collected now is rate- and
+  occupancy-calibrated ONLY; it is not pressure-calibrated. T6 must not read
+  "no pressure blocks observed" as "pressure was fine".
+- Slot occupancy is read from T1's janitor snapshot, so it is exactly as fresh
+  as the last janitor pass, and -1/unknown when that snapshot is absent
+  (hb_classify is deliberately NOT called on the dispatch path - it is
+  measured-expensive per backlog ESTATE-T1-HB-CLASSIFY-PERF-01, and design 6b
+  edge 6 forbids forks in the hot path).
+- COVERAGE AUDIT (the review's verdict-change condition is NEEDS-RESHAPING if a
+  substantial dispatch path emits nothing): NOT COVERED are Decision-011
+  cloud/scheduled sessions, a human running `claude` directly, and MCP-side
+  agent spawns. These produce zero ledger lines and are unmeasured load.
+- The F7 deny-message-with-retry-after and denial-rate alarm are absent by
+  design: in observe mode nothing is ever denied. They belong to T6.
+- No task-verifier, no functionality-verifier, no harness-reviewer has reviewed
+  this. Harness doctrine requires harness-reviewer before a harness change lands;
+  that has NOT happened and is owed on the desktop machine.
+
+PROGRAM RULE COMPLIANCE
+-----------------------
+- Rule 1 (WIP-1): T3 was the only slice in flight; T1/T2 verified complete first.
+- Rule 4 (observe-first): satisfied by construction - the lib cannot block.
+- Rule 3 (every slice RETIRES something): NOT SATISFIED. Nothing was retired.
+  Honest disposition rather than a ritual retirement: the candidates here are
+  session-resumer's storm-cap and the tool-call-budget hook, and both are LIVE
+  enforcement that an observe-only lib cannot replace. Retiring either now would
+  delete real backpressure and put nothing in its place - the exact F1 failure
+  the program exists to prevent. Named condition recorded in the manifest
+  retirement_condition: the storm-cap becomes redundant at T6, and should be
+  retired in the same commit as the enforcement flip.
+- Rule 2 (outcome metric + re-check date): the metric is "7 days of would-block
+  ledger separating storm vs legitimate load". It CANNOT be a present fact at
+  build time - day 0 of a 7-day window. Re-check date: 2026-08-05. At that point
+  the ledger must be read with the pressure_src=absent caveat above.

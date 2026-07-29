@@ -1634,6 +1634,27 @@ perform_resume() {
   # scope's cap).
   storm_cap_record_action
 
+  # ---- ADMISSION OBSERVATION SPLICE (accountable-estate T3) -----------------
+  # THIS is the callsite the whole lib-not-gate design exists for. This script
+  # dispatches `claude -p --resume` from a SCHEDULED TASK with zero hooks — no
+  # PreToolUse gate can see it. Architecture review F2 (CRITICAL, PROVEN):
+  # "PreToolUse gate does not cover all dispatchers (resumer, cloud/scheduled —
+  # Decision-011 sessions have no hooks) -> Admission = ONE lib sourced by every
+  # dispatch path; the gate is a convenience surface, never the guarantee."
+  #
+  # Placed immediately after storm_cap_record_action so it observes EVERY
+  # dispatch flavor identically (shadow, self-test dryrun, live) — the same
+  # placement rationale as the rolling-hour cap directly above. OBSERVE MODE:
+  # records the would-be verdict, never blocks, never alters this function's
+  # control flow. When T6 flips enforcement, the drain flag must be honored
+  # HERE (design 6b edge 1: the janitor-vs-resumer fight — janitor stops a
+  # session, resumer resurrects it, unless both read the same drain flag).
+  {
+    source "${SCRIPT_DIR}/../hooks/lib/admission-lib.sh" 2>/dev/null \
+      && declare -F adm_admit >/dev/null 2>&1 \
+      && adm_admit resumer session="$(printf '%s' "${sid:-unknown}")" >/dev/null 2>&1
+  } || true
+
   # Guardrail 4 (REWORKED, ADR-061 D5): SHADOW MODE dispatches a
   # would-have-resumed line instead of a spawn, but ADVANCES the full
   # backoff/escalation state machine in the shadow-scoped state dir —

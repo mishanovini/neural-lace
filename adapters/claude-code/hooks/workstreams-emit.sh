@@ -2755,6 +2755,21 @@ _run_on_builder_dispatch() {
   _emit_dual "$lib" "$ef"
   rm -f "$ef" 2>/dev/null || true
 
+  # ---- ADMISSION OBSERVATION SPLICE (accountable-estate T3) -----------------
+  # OBSERVE MODE ONLY: records what estate admission WOULD have decided for this
+  # dispatch; never blocks, never changes this hook's exit code. This is the
+  # emit-feed registration callsite named by the T3 task text — it sits on the
+  # PreToolUse Task|Agent|Workflow matcher, so it is also the "dispatch gate"
+  # surface. Per review F2 the lib, not this gate, is the guarantee: the same
+  # lib is called by session-resumer.sh (hookless scheduled dispatcher) and
+  # spawn-worktree.sh. Best-effort by construction — a missing or broken lib
+  # leaves this hook's behavior byte-identical. See hooks/lib/admission-lib.sh.
+  {
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/admission-lib.sh" 2>/dev/null \
+      && declare -F adm_admit >/dev/null 2>&1 \
+      && adm_admit emit-feed kind="$(printf '%s' "${bg:-fg}")" >/dev/null 2>&1
+  } || true
+
   # Builder correlation ledger (observability + reconciler hint):
   # item_id \t child_id \t tool \t bg \t title \t ts — append once per item.
   mkdir -p "$LEDGER_DIR" 2>/dev/null || true
