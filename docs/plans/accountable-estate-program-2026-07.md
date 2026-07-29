@@ -32,7 +32,7 @@ or claim) as part of its Definition of Done. 4. Observe-first before every enfor
 - [x] T2 — Ask SLAs: deadline/default-action/SLA verbs on ask-registry + the brief's ≤5-asks panel.
       Outcome metric: zero operator-asks silently older than their deadline in a 14-day window.
       LOE: SMALL, 1 bs (class: lib-extension+view). Verification: full.
-- [ ] T3 — Admission lib (slots + rate + HALT + drain flag), OBSERVE MODE ONLY, called from the
+- [x] T3 — Admission lib (slots + rate + HALT + drain flag), OBSERVE MODE ONLY, called from the
       dispatch gate AND session-resumer AND emit-feed registration (derived lineage per review F2/F4).
       Outcome metric: 7 days of would-block ledger separating storm vs legitimate load.
       LOE: SMALL-MEDIUM, 2 bs, medium variance (multi-callsite wiring). Verification: full.

@@ -296,3 +296,49 @@ F9/F10/edge-3/edge-4/edge-5 reproduce; no regressions on either spliced host (re
 
 **Status: T3 remains UNVERIFIED.** These fixes have not themselves been re-reviewed. Both agents are
 being re-dispatched against the amended build.
+
+## Task T3
+
+```
+EVIDENCE BLOCK
+==============
+Task ID: T3
+Task description: Admission lib (slots + rate + HALT + drain flag), OBSERVE MODE ONLY.
+Verified at: 2026-07-29T21:40Z
+Verifier: task-verifier (pass 4 FAIL conf 9 -> D-1..D-5 fixed at 5f0eb73 -> targeted 16b
+  re-verification -> PASS conf 9). Verdict text follows, verbatim from the verifier.
+Subject SHA: 5f0eb73
+Verdict: PASS
+Confidence: 9
+```
+
+verify(accountable-estate): T3 flipped by task-verifier — PASS conf 9 · Scenario 16b
+re-verified at 5f0eb73 with BOTH failure branches RED-proven: mut2 (both
+workstreams-emit.sh guard arms deleted, 6 comments intact so a text match still passes)
+-> `FAIL: HOST(S) WRITING TO REAL STATE: hooks/workstreams-emit.sh`, 47/1 exit 1 on both
+interpreters, restore cmp-identical -> 48/0; and an unrunnable host -> `FAIL: HOST(S)
+NEVER RAN — oracle vacuous for: ...(rc=1,no-summary)`, the condition that read 48/0 PASS
+pre-fix · hosts run under "${BASH:-bash}", verified to resolve to /bin/bash and
+/opt/homebrew/bin/bash respectively (D-2) · CONV_TREE_STATE_LIB is the host's documented
+first-precedence resolution (workstreams-emit.sh:193) at the real 6412-byte state.js,
+not a bypass · suite 48/0 exit 0 on /bin/bash 3.2.57 AND /opt/homebrew/bin/bash 5.3.15
+by absolute path · observe-mode invariant independently re-derived: 6 would-block rungs
+each rc 0 under set -e with the LEDGER ROW asserting the would-block verdict, 7/7 both
+interpreters, RED proven by mutating admission-lib.sh:610 to enforcing (verifier oracle
+dies at rung 1; builder suite 42/4) · zero rows into real operator state: find
+~/.claude/state/governor -newer <marker> = 0 across all suite runs; apparent ledger
+growth proven concurrent live traffic by isolated repeat + 40s idle baseline · 4 splices
+live: 1008 real production source=emit-feed rows through live PreToolUse
+Task|Agent|Workflow, plus source=worktree kind=builder and source=resumer incl.
+reason_hint=stormcapqueued · ledger clean (0 fixture ids, 0 kind:"0") · no doctor
+regression (13 pre-existing branch REDs, none naming admission) · D-3/D-4/D-5 verified
+landed · outcome-metric re-check 2026-08-05T03:33Z.
+
+Runtime verification: test adapters/claude-code/hooks/lib/admission-lib.sh::--self-test (48/0, exit 0, /bin/bash 3.2.57 and /opt/homebrew/bin/bash 5.3.15, absolute path)
+Runtime verification: file adapters/claude-code/hooks/lib/admission-lib.sh::"${BASH:-bash}" "$_hp" --self-test
+Runtime verification: file adapters/claude-code/hooks/lib/admission-lib.sh::HOST(S) NEVER RAN — oracle vacuous for:
+Runtime verification: sql SELECT source, verdict, kind FROM ledger — sed 's/.*"source":"\([^"]*\)".*/\1/' ~/.claude/state/governor/ledger/Mishas-Mac-mini.jsonl | sort | uniq -c -> 1008 emit-feed; 0 fixture ids; 0 kind:"0"
+
+Non-blocking follow-ups filed the same turn: N-1 (16b PASS message says rc=0 while the
+criterion admits rc!=0-with-summary; workstreams-emit returns rc=1) and N-2 (add a
+positive control asserting a row APPEARS under an explicit ADM_STATE_DIR probe).
