@@ -2121,6 +2121,27 @@
       "honesty_rationale": "GitHub Actions required-status-check, not a session-time hook; a waiver here is a GitHub branch-protection admin override, outside this manifest's waiver-file scope by construction (same rationale as synthetic-runner-ci)."
     },
     {
+      "id": "selftest-sweep-exclusions",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "docs/plans/macos-portability-2026-07.md M6. Two retired attic/ scripts fail their own --self-test for reasons that are not portability and not fixable in place (attic/decision-context-gate.sh needs the uninstalled zod npm dep; attic/workstreams-extract-pending.sh resolves a sibling emit hook that was never retired). M6 forbids silence, so the skip lives in config/selftest-sweep-exclusions.txt with a stated root cause per entry. The golden case the mechanism catches: the attic README's one-release hard-delete removes one of those files and the ledger line is forgotten — `selftest-sweep-exclusions.sh --check` REDs C1 (excluded path does not exist) and the doctor fails, instead of a sweep quietly skipping a path that is no longer there. Second golden case: someone adds a LIVE hooks/ or scripts/ path to the ledger to make a red sweep green — C3 REDs.",
+      "fp_expectation": "very low, and bounded by construction. The quick predicate is structural only (ledger present -> reader must exist and declare --self-test) and is silent when the ledger is absent, so bare fixture repos and fresh checkouts never fire it. C1/C2/C3 run in --full and only inspect the repo's own committed ledger. C4 (excluded script still fails) is deliberately WARN, not RED: installing neural-lace/workstreams-ui node_modules would legitimately make attic/decision-context-gate.sh pass, and that must read as 'stale exclusion, delete the line', not as a broken harness. Self-test 22/22 on both /bin/bash 3.2.57 and /opt/homebrew/bin/bash 5.3.15.",
+      "retirement_condition": "delete this entry, the ledger, and the reader when the ledger reaches zero entries — i.e. once both Wave-D/Wave-O retirees are hard-deleted per the attic README's one-release rule (C1 forces that cleanup) or their self-tests are made self-contained (the NL-FINDING-018 / HARNESS-GAP-42 follow-up already owed). The mechanism exists only to keep two known skips honest; with nothing to skip it is dead weight.",
+      "honest_status": "config/selftest-sweep-exclusions.txt (the ledger) + scripts/selftest-sweep-exclusions.sh (--list is the sweep-runner API; --check runs C1/C2/C3; --verify runs C4). Enforced by harness-doctor.sh: check_selftest_exclusions_wiring on every --quick (zero-subprocess structural predicate, 3 self-test scenarios) and check_selftest_exclusions_selftest on --full (runs --check and --self-test bounded by nl_run_bounded). NOT event-wired as its own settings.json entry — it is a doctor predicate over repo state, same class as gate-demotion and waiver-density. The M5 sweep runner of docs/plans/macos-portability-2026-07.md did not exist when this landed, so this entry DEFINES the exclusion format M5 must consume rather than adopting one; M5 is expected to call `--list`. Prior art .github/workflows/hooks-selftest.yml KNOWN_FAILING_HOOKS is NOT reconciled onto this ledger (basename-keyed, YAML-embedded, and per docs/findings.md NL-FINDING-018 already vestigial for these entries since CI never sweeps attic/) — that reconciliation is logged in docs/backlog.md.",
+      "honesty_rationale": "Repo-state predicate invoked by the doctor, not a session-time gate; nothing it does can refuse an operator action. It exists specifically to stop an exclusion from degrading into an unenforced comment, which is the constitution §10 theater class."
+    },
+    {
       "id": "session-heartbeat",
       "kind": "writer",
       "doctrine_file": null,

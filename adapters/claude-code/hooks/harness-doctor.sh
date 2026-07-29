@@ -2547,6 +2547,82 @@ check_master_drift_selftest() {
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
+# ------------------------------------------------------------
+# Check: selftest-sweep-exclusions (docs/plans/macos-portability-2026-07.md
+# M6). M6 disposed of the 3 residual attic/ self-test failures: one FIXED
+# (attic/workstreams-state-gate.sh), two formally EXCLUDED via the ledger
+# adapters/claude-code/config/selftest-sweep-exclusions.txt. M6's own wording
+# is "silence is not" an acceptable outcome, and constitution §10 calls
+# documented-enforcement-that-never-fires the cardinal harness defect — so the
+# ledger gets a doctor predicate rather than a comment.
+#
+# QUICK half (here): zero-subprocess structural predicate only, matching the
+# doctor's quick<2s contract and the fork-storm discipline of the 07-20
+# lesson. It asserts the MECHANISM exists — a ledger with no reader is a
+# ledger nothing enforces:
+#   - ledger absent            -> silent (nothing excluded; also the bare
+#                                 fixture-repo case, tolerate-absent like the
+#                                 E.6/E.7/E.8 and master-drift predicates)
+#   - ledger present, reader missing / no --self-test entrypoint -> RED
+# The CONTENT predicates (C1 path exists / C2 reason states a root cause /
+# C3 no live surface silenced) and C4 (each excluded script still fails) run
+# in --full via check_selftest_exclusions_selftest below, because they need
+# the reader's parser and, for C4, real child processes.
+# ------------------------------------------------------------
+check_selftest_exclusions_wiring() {
+  local repo_root="$1"
+  [[ -z "$repo_root" ]] && { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local ledger="${repo_root}/adapters/claude-code/config/selftest-sweep-exclusions.txt"
+  local reader="${repo_root}/adapters/claude-code/scripts/selftest-sweep-exclusions.sh"
+
+  if [[ ! -f "$ledger" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if [[ ! -f "$reader" ]]; then
+    _red "selftest-exclusions" "${ledger} exists but its reader scripts/selftest-sweep-exclusions.sh does not — the exclusion ledger is unenforced text"
+  elif ! grep -q -- '--self-test' "$reader" 2>/dev/null; then
+    _red "selftest-exclusions" "scripts/selftest-sweep-exclusions.sh has no --self-test entrypoint — its C1/C2/C3/C4 controls are unverified"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# --full companion: run the reader's own controls. `--check` covers C1/C2/C3
+# against the shipped ledger; `--self-test` re-runs those against RED/GREEN
+# fixtures AND covers C4 (every excluded script still fails, the fixed one
+# still passes) against the REAL scripts. Absence-tolerant; bounded exactly
+# like check_selftest_sweep. Runs the child under THIS interpreter ("$BASH"),
+# never a bare `bash` — a bare `bash` would silently report a verdict for
+# whichever interpreter happens to be first on PATH.
+check_selftest_exclusions_selftest() {
+  local repo_root="$1"
+  [[ -z "$repo_root" ]] && { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  local reader="${repo_root}/adapters/claude-code/scripts/selftest-sweep-exclusions.sh"
+  if [[ ! -f "$reader" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local out rc last_line
+  out="$(NL_REPO_ROOT="$repo_root" nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" "$BASH" "$reader" --check </dev/null 2>&1)"
+  rc=$?
+  if [[ "$rc" -ne 0 ]]; then
+    last_line="$(printf '%s\n' "$out" | tail -n 1)"
+    _red "selftest-exclusions" "selftest-sweep-exclusions.sh --check exited ${rc}: ${last_line}"
+  fi
+
+  out="$(HARNESS_SELFTEST=1 NL_REPO_ROOT="$repo_root" nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" "$BASH" "$reader" --self-test </dev/null 2>&1)"
+  rc=$?
+  if [[ "$rc" -eq 124 ]]; then
+    _red "selftest-exclusions" "selftest-sweep-exclusions.sh --self-test exceeded the ${DOCTOR_SELFTEST_TIMEOUT:-1500}s bound and was killed"
+  elif [[ "$rc" -ne 0 ]]; then
+    last_line="$(printf '%s\n' "$out" | tail -n 1)"
+    _red "selftest-exclusions" "selftest-sweep-exclusions.sh --self-test exited ${rc}: ${last_line}"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
 # _agent_frontmatter_model <file> — echo the `model:` value from a file's
 # FIRST YAML frontmatter block (first ---…--- fence). Empty if none. Pure
 # bash + CRLF-safe (strips \r); fence-scoped so a body line starting `model:`
@@ -3087,6 +3163,7 @@ run_quick_checks() {
   check_orphaned_worktree_work "$live_home" "$repo_root"
   check_new_gate_evidence_bar "$live_home" "$repo_root"
   check_master_drift_autocorrect "$live_home" "$repo_root"
+  check_selftest_exclusions_wiring "$repo_root"
   check_model_pins "$live_home" "$repo_root"
   check_review_surface_cross_check "$live_home" "$repo_root"
   check_review_index_consistency "$live_home" "$repo_root"
@@ -5709,6 +5786,49 @@ EOF
     FAILED=$((FAILED + 1))
   fi
 
+  # ---- selftest-exclusions (macos-portability M6): the exclusion ledger must
+  # never become unenforced text. Three scenarios; all use "$BASH" rather than
+  # a bare `bash` so the verdict is for the interpreter actually under test.
+  # RED: a ledger with no reader — the exact "comment a future sweep ignores"
+  # failure M6 was written to prevent.
+  D=$(_scenario_dir m6-excl-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '%s\n' "adapters/claude-code/attic/x.sh  a reason long enough to clear the minimum bar" \
+    > "$D/repo/adapters/claude-code/config/selftest-sweep-exclusions.txt"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" "$BASH" "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "m6-exclusions-ledger-without-reader-red" 1 "$RC" "RED selftest-exclusions" "$OUT"
+
+  # RED: a reader that carries no --self-test entrypoint — its C1/C2/C3/C4
+  # controls would be unverifiable, which is the same theater one level down.
+  D=$(_scenario_dir m6-excl-red2)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '%s\n' "adapters/claude-code/attic/x.sh  a reason long enough to clear the minimum bar" \
+    > "$D/repo/adapters/claude-code/config/selftest-sweep-exclusions.txt"
+  printf '%s\n' '#!/bin/bash' 'exit 0' \
+    > "$D/repo/adapters/claude-code/scripts/selftest-sweep-exclusions.sh"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" "$BASH" "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "m6-exclusions-reader-without-selftest-red" 1 "$RC" "RED selftest-exclusions" "$OUT"
+
+  # GREEN: ledger + reader declaring --self-test.
+  D=$(_scenario_dir m6-excl-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '%s\n' "adapters/claude-code/attic/x.sh  a reason long enough to clear the minimum bar" \
+    > "$D/repo/adapters/claude-code/config/selftest-sweep-exclusions.txt"
+  printf '%s\n' '#!/bin/bash' 'case "${1:-}" in --self-test) exit 0 ;; esac' 'exit 0' \
+    > "$D/repo/adapters/claude-code/scripts/selftest-sweep-exclusions.sh"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" "$BASH" "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "m6-exclusions-wired-green" 0 "$RC" "" "$OUT"
+  if printf '%s' "$OUT" | grep -q "selftest-exclusions"; then
+    echo "self-test (m6-exclusions-green-is-silent): FAIL (green fixture still mentioned selftest-exclusions)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (m6-exclusions-green-is-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2
   if [[ "$FAILED" -gt 0 ]]; then
@@ -5796,6 +5916,12 @@ else
     check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
     check_portability_sweep "$LIVE_HOME" "$REPO_ROOT"
   fi
+  fi
+
+if [[ "$MODE" == "full" ]]; then
+  check_selftest_sweep "$LIVE_HOME"
+  check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
+  check_selftest_exclusions_selftest "$REPO_ROOT"
 fi
 
 if [[ "$RED_COUNT" -eq 0 ]]; then
