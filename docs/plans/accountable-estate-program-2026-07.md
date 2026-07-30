@@ -201,3 +201,8 @@ flips (T6) additionally require the calibration data attached to the evidence fi
   stays open by design; the other three (ADM_ABSURD_SESSION_CAP, ADM_ESTATE_SNAPSHOT,
   ADM_STATE_DIR) are closed mechanically in admission-lib.sh itself (already in scope, T3/T4/T6 row
   above). Desktop machine, per the CLAIM line in Machine claims above.
+- 2026-07-29: `adapters/claude-code/hooks/lib/perf-tick-snapshot.sh` — T6-PREREQUISITES (d) Loop-2
+  pressure tick (pts_write_pressure_tick, wired into pts_run_tick, therefore into health-tick.sh's
+  existing hourly cadence — no new scheduled task; NL-estate-janitor is not installed on this
+  machine per Get-ScheduledTask, so health-tick's already-active cadence is the honest carrier).
+  Desktop machine, per the CLAIM line in Machine claims above.

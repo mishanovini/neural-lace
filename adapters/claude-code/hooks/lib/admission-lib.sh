@@ -168,20 +168,32 @@
 #   ADM_STATE_DIR      default $HOME/.claude/state/governor
 #     HALT             kill switch      (one `touch` stops the estate — T6)
 #     DRAIN            drain flag       (deny-new at safe boundaries — T4/T6)
-#     pressure.json    written by the Loop-2 pressure tick (NOT BUILT YET —
-#                      absent means pressure=unknown, which admits; see below)
+#     pressure.json    written by the Loop-2 pressure tick (T6-PREREQUISITES
+#                      (d), 2026-07-29 — hooks/lib/perf-tick-snapshot.sh's
+#                      pts_write_pressure_tick, wired into pts_run_tick and
+#                      therefore into health-tick.sh's existing hourly
+#                      cadence; absent still means pressure=unknown, which
+#                      admits; see below)
 #     rate/            stamp file per dispatch (review F9: never a
 #                      read-modify-write token bucket — those lose updates)
 #     ledger/<host>.jsonl   the would-block ledger, O_APPEND, one writer
 #   ADM_ESTATE_SNAPSHOT default $HOME/.claude/state/estate/snapshot.json
 #                      T1's janitor output; source of slot occupancy.
 #
-# WHAT IS HONESTLY NOT BUILT HERE: the Loop-2 pressure tick that writes
-# pressure.json is NOT part of T3. Until it exists, adm_pressure_color returns
-# "unknown" and the pressure rung of the ladder never fires. The ledger records
-# pressure_src=absent on those lines so calibration cannot mistake "we never saw
-# pressure" for "pressure was fine". Do not read a 7-day window as
-# pressure-calibrated until that file starts appearing.
+# LOOP-2 PRESSURE TICK — WHAT IS BUILT AND WHAT IS STILL PARTIAL
+# (T6-PREREQUISITES (d), 2026-07-29, replacing the prior "NOT BUILT HERE"
+# claim): perf-tick-snapshot.sh's pts_write_pressure_tick now writes
+# pressure.json every tick, so adm_pressure_color reads a real "tick" source
+# instead of permanently "unknown", and the ledger's pressure_src field
+# reads "tick" once a tick has run (self-test Scenario 18) rather than
+# permanently "absent" (Scenario 19 still proves the honest fallback when it
+# has not). The color ladder implemented there is PARTIAL: only the
+# bash-count leg of the design's "CPU>75%/90% OR bash>60/90 OR RAM<15%"
+# ladder is built (no CPU%/RAM% sampler exists anywhere in this repo to
+# reuse, and building one is out of scope for this prerequisite slice); it
+# never emits "black" (needs cross-tick persistence tracking, also not
+# built). Do not read a 7-day window as FULLY pressure-calibrated on the
+# CPU/RAM axes until those are built — the bash-count axis is real today.
 #
 # SCRUB-AT-WRITE (design 6b edge 4 — occurred 2x this week). This lib is
 # machine-wide and its ledger is committed for cross-machine visibility, so it
@@ -1092,6 +1104,53 @@ _adm_self_test() {
   [[ "$prod" == "$HOME/.claude/state/governor" ]] && pass "production path unchanged when not self-testing" \
     || fail "production path wrong: '$prod'"
   [[ -n "$saved_dir" ]] && export ADM_STATE_DIR="$saved_dir"
+
+  echo "Scenario 18: pressure_src populated end-to-end from the Loop-2 tick (T6-PREREQUISITES (d))"
+  # Wires perf-tick-snapshot.sh's pts_write_pressure_tick (the Loop-2 writer)
+  # straight into this lib's own adm_pressure_color/adm_admit reader, proving
+  # pressure_src stops being permanently "absent" once the tick has run --
+  # the exact gap this header used to document as "NOT BUILT YET".
+  local pts_lib; pts_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/perf-tick-snapshot.sh"
+  if [[ -r "$pts_lib" ]]; then
+    (
+      # subshell: PTS_* globals and PERF_TICK_* overrides never leak into
+      # the rest of this suite; ADM_PRESSURE_FILE is inherited (not
+      # re-exported) so the write lands exactly where adm_pressure_color
+      # will look.
+      source "$pts_lib"
+      export PERF_TICK_PRESSURE_FILE="$ADM_PRESSURE_FILE"
+      export PERF_TICK_PROCESS_LIST_CMD="printf 'Node,CreationDate,Name,ParentProcessId,ProcessId\nOFFICE_PC,20260101000000.000000-420,node.exe,0,1\n'"
+      export PERF_TICK_DEFENDER_CMD="true"
+      pts_collect_processes
+      pts_write_pressure_tick
+    )
+    if [[ -r "$ADM_PRESSURE_FILE" ]]; then
+      pass "Loop-2 tick wrote a real pressure.json (was 'NOT BUILT YET' per this file's own header)"
+    else
+      fail "pts_write_pressure_tick did not create $ADM_PRESSURE_FILE"
+    fi
+    local pc_after; pc_after="$(adm_pressure_color)"
+    [[ "$pc_after" == "green" ]] && pass "adm_pressure_color reads the tick's output (0 bash rows -> green, the design's own bash>60/90 ladder)" \
+      || fail "expected green from the tick-written file, got '$pc_after'"
+    v="$(adm_admit emit-feed)"
+    last="$(tail -1 "$led")"
+    case "$last" in
+      *'"pressure_src":"tick"'*) pass "ledger records pressure_src=tick once the Loop-2 tick has run (was permanently 'absent' before this slice)" ;;
+      *) fail "pressure_src still absent after a real tick ran: $last" ;;
+    esac
+    rm -f "$ADM_PRESSURE_FILE"
+  else
+    fail "perf-tick-snapshot.sh not found at $pts_lib -- cannot prove the Loop-2 wiring"
+  fi
+
+  echo "Scenario 19: pressure_src stays absent when no tick has ever run (unchanged honesty contract)"
+  rm -f "$ADM_PRESSURE_FILE"
+  v="$(adm_admit emit-feed)"
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"pressure_src":"absent"'*) pass "pressure_src=absent when the tick file is genuinely missing (fail-open, never silently defaulted to a color)" ;;
+    *) fail "pressure_src not absent with no pressure file: $last" ;;
+  esac
 
   rm -rf "$T"
   echo
