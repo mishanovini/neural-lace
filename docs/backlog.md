@@ -2044,11 +2044,42 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
   sweep, the Inbox links, and the requests pipeline all passed in sandbox and were broken live.
   A UI round's acceptance must require evidence from the real deployed app.
 
-## ROADMAP-FALSE-ETERNAL-RUNNING-01 — green "running" chips no longer mean a session merely touched the task once (FIXED); root architectural gap named for follow-up
+## ROADMAP-FALSE-ETERNAL-RUNNING-01 — NOT FIXED: one dispatch fans out into many spurious task_started events (refuted 2026-07-30, see CORRECTION below)
 
-**Severity:** was HIGH (operator-reported: "The green items are supposed to indicate something
-is actively running. I see several green plans that aren't running."); the reported instance is
-FIXED this build.
+**Severity:** HIGH, OPEN (operator-reported: "The green items are supposed to indicate something
+is actively running. I see several green plans that aren't running.").
+
+**CORRECTION 2026-07-30 (adversarial refutation, agent a7b621c3, verdict PARTIAL — the earlier
+"FIXED this build" claim in this entry was FALSE and is retracted):**
+- The live app STILL renders all three operator-reported tasks green (verified 22:24:52Z against
+  the shipped 60-min default, server PID started after the commit) — including
+  `cockpit-roadmap-redesign/9`, an Acceptance task requiring the OPERATOR'S OWN walkthrough,
+  which no agent can ever be running.
+- REAL ROOT CAUSE (PROVEN, and NOT what this entry originally claimed): `task_started` is
+  emitted per MENTION, not per DISPATCH. `workstreams-emit.sh --on-builder-dispatch` scrapes
+  plan slugs and task ids out of the dispatch PROMPT TEXT, so an orchestration prompt that
+  merely NAMES a task marks it started. Measured: ONE dispatch at 22:17 produced 42 provenance
+  markers across 15 distinct (plan,task) pairs and 20 task_started events, all sharing
+  child_id ss-69752570c1d6 — ~14 of the 15 tasks were never dispatched at all.
+- THEREFORE NO TIME WINDOW CAN WORK: spurious and genuine events are literally the same events
+  fanned out from one dispatch. Quantified over the operator's waking window (16:00-22:17Z):
+  72.7% green WITH the fix vs 100% without, and the entire suppression is the single 163-min
+  gap that was the reported incident; every other gap all day is under 60 min.
+- THE PREVIOUSLY-FILED REFUTER ("record the dispatched CHILD's session id") ALSO FAILS by
+  construction: all 15 pairs share one child_id, so it would attach one child session to
+  fifteen unrelated tasks.
+- CORRECT FIX (upstream, not downstream): `--on-builder-dispatch` must emit exactly ONE
+  task_started for the task actually dispatched — the `NL-ATTRIBUTION` header already carries
+  it (workstreams-emit.sh:2001) — instead of one per prompt-text mention.
+- WHAT DID LAND AND IS KEPT: the rollup gate (`live_sessions.length` -> `hasRunningLeaf`) is an
+  unambiguous correctness improvement independent of the window, mutation-proven (3 disjoint
+  mutations each kill the correct disjoint test subset), and demonstrably fires in production.
+- ALSO CORRECTED: the commit trailer's `Live-demonstrated:` line was produced with
+  COCKPIT_TASK_STARTED_IDLE_MIN=5, a 12x tighter window than ships — disclosed in this entry,
+  not in the trailer where the claim was made.
+- Threshold evidence understated: the 60-min bound was justified from a cherry-picked 50-min
+  stretch (max gap 12 min); over the full active window real gaps reach 41.1 min, so the true
+  margin is 1.46x, not 5x.
 **Root cause, PROVEN against real deployed data (2026-07-30):** `roadmap-routes.js`'s
 `absorbOneChildRollUp` rolled a task up as `running` whenever `child.live_sessions.length` was
 merely non-empty — independent of whether the attached session's heartbeat was actually fresh.
