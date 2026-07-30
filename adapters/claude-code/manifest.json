@@ -2838,8 +2838,8 @@
           "scripts/loe-backfill.sh",
           "hooks/plan-reviewer.sh",
           "docs/plans/accountable-estate-program-2026-07.md",
-          "docs/plans/loe-calibration.json",
-          "docs/plans/loe-calibration.md"
+          "docs/loe/loe-calibration.json",
+          "docs/loe/loe-calibration.md"
         ],
         "keywords": []
       },

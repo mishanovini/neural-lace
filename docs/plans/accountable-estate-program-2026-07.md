@@ -38,11 +38,10 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
 - CLEARED 2026-07-29: T7 remainder — full 163-plan mine completed on the DESKTOP post-purge
   (the purge collapsed the fork tax that killed it 3x); docs/loe/loe-calibration.json/.md
   committed. T7 awaits task-verifier only.
-- CLAIM: T6 prerequisites (a) occupancy TTL cache + (b) env-bypass closure/acceptance —
-  desktop — 2026-07-29 — adapters/claude-code/hooks/lib/admission-lib.sh (NOTE for the other
-  machine: T4's closure-gates-new-work splice also touches this file — pull and rebase small;
-  the TTL cache is confined to the occupancy read path) + (d) Loop-2 pressure tick —
-  surface per docs/designs/estate-performance-governor-2026-07-27.md (tick writer + pressure_src)
+- CLEARED 2026-07-29: T6 prerequisites (a)(b)(d) — landed on desktop master as 5ee67c2 (TTL
+  cache) + 1cdef7f (bypass closure, decision 065) + 4fdfc83 (Loop-2 pressure tick); suites
+  55/55 + 26/26 re-run by the orchestrator post-cherry-pick. T6 flip still gated on the 7-day
+  clock + operator thresholds + criterion (c) darwin janitor schedule (darwin-machine work).
 
 ## Scope / Tasks (LOE: plan-level reference classes per review F11; 1 bs = one builder-session ≈ 80–150k tokens; bands are P50–P90 priors, calibrated as T7 lands)
 
@@ -61,7 +60,13 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
       LOE: SMALL-MEDIUM, 2 bs, medium variance (multi-callsite wiring). Verification: full.
 - [ ] T4 — Deterministic closers: generalize close-plan.sh pattern per work-item type + the
       closure-gates-new-work WIP rule in the admission lib + no-orphan registration at
-      spawn-worktree. Outcome metric: zero unattributable worktrees/branches older than 48 h.
+      spawn-worktree. ALSO OWNS (T7 verifier residual #1, 2026-07-29): the LOE
+      actuals-append-at-close seam — T7's outcome-metric clause 2 ("actuals append at close")
+      has a documented-but-unbuilt splice (loe-backfill.sh header lines ~96–114 names the exact
+      site: close-plan.sh cmd_close, before emit_plan_completed_progress_log_event ~:1293);
+      wire it here so every closure appends the plan's actuals and docs/loe/ stays fresh —
+      without this the calibration table silently goes stale until a manual re-mine.
+      Outcome metric: zero unattributable worktrees/branches older than 48 h.
       LOE: MEDIUM, 2–3 bs, medium-high variance (lifecycle semantics). Verification: full.
 - [ ] T5 — Estate merge lock + single deterministic merge script (coord-sync single-writer idiom);
       closers call it; nothing else merges. Outcome metric: zero master divergence events while
@@ -79,7 +84,7 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
       janitor schedule — the installer is Windows-only today); (d) the Loop-2 pressure tick
       emitting, so pressure_src stops reading 'absent' on every line.
       LOE: TRIVIAL, 0.5 bs. Verification: full.
-- [ ] T7 — LOE v1: per-PLAN actuals mining (archived plans + evidence + git history), 3–5 plan
+- [x] T7 — LOE v1: per-PLAN actuals mining (archived plans + evidence + git history), 3–5 plan
       classes, P50/P90 bands + concentration flag surfaced by plan-reviewer. Outcome metric: every
       new plan carries class+band annotations; actuals append at close.
       LOE: MEDIUM, 2 bs. Verification: full.

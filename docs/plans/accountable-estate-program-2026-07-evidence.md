@@ -365,3 +365,116 @@ Confidence: 8
 Reason: PROVEN — the harness-internal oracle (the lib's --self-test) was run TWICE with an identical, stable 46/1 result; the SOLE failure (Scenario 6, F9 rate window) was falsified to ground and shown to be a fork-tax wall-clock artifact of this ~24x-taxed machine (stamps 32 wall-seconds apart vs 2.5s user+sys; 2 stamp files correctly on disk = the F9 property holds), not a defect. T3's central safety claim — OBSERVE MODE never blocks — is triply re-derived (unconditional return 0 at :597, Scenario 15 PASS in both runs, isolated worst-case probe returning rc 0 under HALT+DRAIN+BLACK+999). All four splice sites are live at file:line and observe-only by construction (`|| true` after real work). The C2/C3/C4 occupancy fixes pass against the producer-shaped golden fixture (occupancy=1, scoped count, staleness, single-line multi-key extraction). The local 0758232 sentinel edit is isolated 200+ lines from the splice and does not interact. Confidence 8 (not 9) honestly discounts that a fully-green self-test was unattainable on this hardware — one red assertion had to be reasoned through and independently re-derived rather than observed green. Adversarial probes that did not break it: isolated rate metamorphic check (proved the mechanism, not the test's timing assumption), isolated worst-case observe-mode probe, splice-region diff against the unrelated sentinel commit, golden-fixture producer-shape audit.
 
 Outcome-metric note (Program rule 2): the metric "7 days of would-block ledger separating storm vs legitimate load" is forward-looking and cannot be a present fact at build time. Per the builder's disposition (honored): the >=7-day clock starts from the fixed build; the 14 pre-fix lines were archived to state/governor/discarded/. Re-check when reading calibration must apply the named caveats — pressure_src=absent on every line (Loop-2 tick unbuilt), occupancy -1 on any machine without a janitor snapshot, and the four environment bypasses — all of which are T6 acceptance criteria already recorded in the plan (lines 47-58) and the manifest retirement_condition. This verdict certifies the OBSERVE-MODE MECHANISM is built, wired, and safe; it does not and cannot certify the 7-day dataset, which accrues after close.
+
+## Task T7 - LOE v1: per-PLAN actuals mining + plan-reviewer band surfacing
+
+### T7 TASK-VERIFIER VERDICT — 2026-07-30 (desktop machine, the designated verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: T7
+Task description: LOE v1: per-PLAN actuals mining (archived plans + evidence + git history), 3–5 plan classes, P50/P90 bands + concentration flag surfaced by plan-reviewer. Outcome metric: every new plan carries class+band annotations; actuals append at close. LOE: MEDIUM, 2 bs. Verification: full.
+Verified at: 2026-07-30T01:37:11Z
+Verifier: task-verifier agent (desktop machine; master tip 6ffe534; landing commits fd48741 + b5dfaf1 + 6ffe534)
+
+Oracle: derived (pre-existing, primary) — this repo's REAL archived-plan corpus + its own git history: 163 non-evidence `docs/plans/archive/*.md` files on disk (`ls docs/plans/archive/*.md | grep -vc -- '-evidence\.md$'` = 163) and `git log --follow` timestamps, both of which existed before the miner and neither of which the builder authored. Supporting oracles: derived-metamorphic (the published `.classes` bands recomputed independently from `.per_plan` by the verifier's own jq; a tokens positive/negative control fixture) + specified (the plan task text + outcome metric) + implicit (bash -n, exit codes).
+
+Comprehension-gate: not applicable (rung < 2) — plan header carries no `rung:` field; treated as rung 0 per Decision 020a, same disposition recorded for T1/T2/T3.
+
+Checks run:
+1. Task-text match: caller description vs plan lines 82-85 — matches verbatim (incl. the outcome metric's two clauses). Result: PASS
+2. Git presence of every claimed file: loe-backfill.sh (fd48741, b5dfaf1), plan-reviewer.sh (fd48741, b5dfaf1), templates/plan-template.md (b5dfaf1), manifest.json + manifest-check.sh + pre-commit-gate.sh (b5dfaf1), docs/loe/loe-calibration.json + .md (6ffe534). All present on master, all within the plan's execution window. Result: PASS
+3. Miner self-test (the harness-internal functional oracle), executed by the verifier:
+   Command: bash adapters/claude-code/scripts/loe-backfill.sh --self-test
+   Output: 12 assertions across 11 numbered scenarios — (1) plans_total==4, (1b) zero-checkbox regression fixture, (2) class+task_count, (3) builder_sessions==2, (4) wall_clock_days==3, (5) honest-null path, (6) design-only class, (7) coverage arithmetic 25.0, (8) 4 distinct classes, (9) read-only over the mined repo, (10) markdown honest-data note, (11) missing-archive-dir error — every one "PASS (expected)"; "all scenarios matched expectations"; real 19.2s / user 4.1s.
+   Result: PASS
+4. Committed artifact validity + shape:
+   Command: jq 'keys' / jq '.plans_total' / jq '.classes' / jq '.coverage' docs/loe/loe-calibration.json
+   Output: valid JSON; keys [classes, coverage, generated_at, per_plan, plans_total]; plans_total 163; per_plan length 163; generated_at 2026-07-30T00:55:25Z; 4 populated classes each carrying count + task_count{p50,p90,n} + wall_clock_days{p50,p90,n} + builder_sessions{p50,p90,n,coverage_pct} + concentration_flag: design-only n=5 (conc true), general-multi-file n=64 (false), harness-mechanism n=90 (false), schema-migration n=4 (true). 5+64+90+4 = 163 = plans_total.
+   Result: PASS (3–5 classes satisfied: 5-class classifier, 4 populated by this corpus; ui-feature legitimately empty in a harness repo)
+5. CORPUS-COMPLETENESS falsification (is 163 the whole archive or a silent subset?):
+   Command: ls docs/plans/archive/*.md | grep -vc -- "-evidence.md$"
+   Output: 163 (and 66 companion evidence files, correctly skipped by cmd_mine's *-evidence.md arm). The mine covers 100% of the corpus — no subsetting.
+   Result: PASS
+6. AGGREGATE RECOMPUTE (metamorphic — the published table must be reproducible from its own per-plan rows, i.e. not hand-tuned or stale):
+   Command: verifier-authored jq re-implementing nearest-rank-lower pct(p) over .per_plan, grouped by class, incl. the concentration rule (max > 50% of sum, n>=2)
+   Output: RECOMPUTED == PUBLISHED on all four classes for count, task_count P50/P90, wall_clock_days P50/P90, builder_sessions n, and concentration_flag (design-only 2/4 · 0.48/2.34 · true; general-multi-file 4/13 · 0.03/8.31 · false; harness-mechanism 4/13 · 0.04/6.90 · false; schema-migration 0/0 · 0.24/13.52 · true).
+   Result: PASS
+7. PER-ROW ground-truth cross-check against git (independent of the miner), plan `cockpit-v2-push-materialized-store`:
+   Command: git log --follow --format=%aI -- docs/plans/archive/cockpit-v2-push-materialized-store.md (head/tail) ; grep -cE checked-checkbox ; grep -oE 'worktree +agent-[A-Za-z0-9]+' | sort -u
+   Output: first 2026-07-14T07:27:13-07:00, last 2026-07-17T15:22:58-07:00 (= 3.3304 d), 8 checked boxes, 3 distinct agent markers — the artifact row says first/last identical, wall_clock_days 3.33, task_count 8, builder_sessions 3. Exact match on all four fields.
+   Result: PASS
+8. HONEST-DATA property: tokens_pct == 0 is a measurement, not a dead code path.
+   (a) NEGATIVE (corpus): the anchored Tokens-key regex run over `cat docs/plans/archive/*.md` returns 0 hits — the pattern genuinely matches nothing in the real corpus.
+   (b) POSITIVE CONTROL (verifier-built fixture repo carrying `Tokens: 120k` in evidence plus the decoy prose "a 1,000,000 token context window"): the miner returned tokens 120000 and tokens_pct 100 — the extractor WORKS, and the free-prose decoy was NOT promoted to an actual (the fd48741 Major F-C honest-data law holds under adversarial input; a leak would have produced 1000000).
+   Result: PASS — 0% is truthful.
+9. HONEST-DATA property: builder_sessions coverage 1.2% with nulls, never imputed.
+   Command: cat docs/plans/archive/*.md | grep -oE 'worktree +agent-[A-Za-z0-9]+' | sort -u | wc -l
+   Output: 4 distinct markers corpus-wide; the artifact attributes exactly 3 + 1 = 4 to the only two plans that carry them (2/163 = 1.2%; harness-mechanism 2/90 = 2.2%); every other class publishes p50/p90 null (NOT 0) with coverage_pct 0. The rendered .md repeats the null-means-unrecorded note.
+   Result: PASS
+10. SURFACING END-TO-END (the user-facing exercise; verifier-built fixture, NOT the builder's self-test): fixture plan `verifier-fixture-plan.md` in a git-less temp dir with `loe-class: harness-mechanism` + a byte-identical copy of the REAL docs/loe/loe-calibration.json (md5 a4b7c0dd4accdd71fac202a6bcf6018a on both sides) at `<fixture>/docs/loe/`.
+    Command: bash adapters/claude-code/hooks/plan-reviewer.sh <fixture>/verifier-fixture-plan.md
+    Output (stderr, rc=0): "[plan-reviewer] INFO Check 18 (LOE class+band, accountable-estate T7): class harness-mechanism: n=90 task_count P50/P90 4/13 — wall_clock_days P50/P90 0.04/6.90 — builder_sessions P50/P90 1/1 (coverage 2.2%) — concentration_flag false"
+    REAL mined numbers (n=90), identical to the committed artifact. Result: PASS
+11. BEHAVIOR-DIFFERENTIAL probes on Check 18 (wired != reached != behaving — the output must CHANGE across values, and the band must disappear when its input does). All 8 branches executed by the verifier against the same fixture:
+    (a) loe-class: design-only -> INFO band "n=5 task_count 2/4 — wall_clock 0.48/2.34 — builder_sessions null/null (coverage 0%) — concentration_flag true" (DIFFERENT real numbers, matching the artifact's design-only row -> the line is read from the table per class, not hardcoded), rc=0
+    (b) loe-class: ui-feature (valid class, zero mined plans) -> WARN "has zero mined plans in that class yet", rc=0
+    (c) artifact ABSENT (RED for the band line) -> WARN "no calibration table found at docs/loe/loe-calibration.json yet"; the INFO band line does NOT render, rc=0
+    (d) artifact CORRUPT -> WARN "present but NOT valid JSON — regenerate it" (distinct from (c): the fd48741 Major F-D corrupt-vs-empty split, verified live), rc=0
+    (e) no loe-class + lifecycle-schema: v2 -> WARN "this plan lacks a 'loe-class:' header field" (the creation-time nudge), rc=0
+    (f) no loe-class + NO lifecycle-schema (legacy vintage) -> SILENT (the v2 vintage gate that makes the nudge satisfiable; ~30 pre-T7 ACTIVE plans never flagged), rc=0
+    (g) Status: COMPLETED -> SILENT, rc=0
+    (h) baseline re-run after restoring the artifact -> INFO band renders again unchanged.
+    Every branch exit 0 — Check 18 never blocks. Result: PASS
+12. REGRESSION probe (does inserting Check 18 disturb checks 1-17 on real input?):
+    Command: bash adapters/claude-code/hooks/plan-reviewer.sh docs/plans/accountable-estate-program-2026-07.md
+    Output: RC=1 with 13 pre-existing findings from Checks 3/4/5/6b/10/13 rendering normally, and ZERO Check 18 lines (correct — this legacy plan has no lifecycle-schema, branch (f)). The surrounding machinery is intact. Result: PASS
+13. Manifest + template wiring: `bash adapters/claude-code/scripts/manifest-check.sh` -> "[manifest-check] GREEN — 137 entries, 116 hooks covered, 0 warn" (the b5dfaf1 schema fix for ../scripts/ refs holds); templates/plan-template.md:88 carries `loe-class: <schema-migration | ui-feature | harness-mechanism | design-only | general-multi-file>` with an explanatory comment block — the creation-time writer half of "every new plan carries class annotations". Result: PASS
+14. LIVE-INSTALL check (the maintainer is the user; does the mechanism actually reach them?): md5sum ~/.claude/hooks/plan-reviewer.sh == repo source (017cb7d37ee4840d1907798cb1de43f7) and ~/.claude/scripts/loe-backfill.sh == repo source (a3b0467a1d50eddcd0f9174c3a7b0d94); ~/.claude/templates/plan-template.md carries loe-class. The shipped surfaces are installed and live, not repo-only. Result: PASS
+15. Review record: docs/reviews/records/2026-07-29-harness-change-review-302003c9.json exists, record_id hcr-20260729-302003c9, verdict PASS, plan_ref names T7, change_ref b5dfaf1. Its 5 covered_files blob SHAs were compared by the verifier against `git rev-parse HEAD:<path>` — ALL FIVE MATCH EXACTLY (loe-backfill.sh 3c46197, plan-reviewer.sh 117c1a7, pre-commit-gate.sh d22a497, manifest.json 80bd7c7, manifest-check.sh 72feeff), i.e. the record covers the bytes that actually shipped, not a stale draft. Result: PASS
+16. Syntax floor: bash -n on plan-reviewer.sh and loe-backfill.sh — both clean. Result: PASS
+
+Runtime verification: test adapters/claude-code/scripts/loe-backfill.sh::--self-test
+Runtime verification: test adapters/claude-code/hooks/plan-reviewer.sh::check18-real-artifact-band-harness-mechanism-n90
+Runtime verification: test adapters/claude-code/scripts/loe-backfill.sh::verifier-tokens-anchor-positive-control-120k
+Runtime verification: test adapters/claude-code/scripts/manifest-check.sh::manifest-check-green-137-entries-0-warn
+Runtime verification: file docs/loe/loe-calibration.json::"plans_total": 163
+Runtime verification: file adapters/claude-code/hooks/plan-reviewer.sh::INFO Check 18 (LOE class+band
+Runtime verification: file adapters/claude-code/templates/plan-template.md::loe-class:
+Runtime verification: functionality-verifier T7::SKIP (rationale: no Task tool in this verifier environment; the user-shaped exercise — a maintainer authoring a v2 plan with a loe-class and seeing its mined band at review time — was executed inline by the verifier against the REAL committed artifact, plus 8 branch-differential probes and a tokens positive/negative control; plan is acceptance-exempt harness-internal, maintainer-is-user per constitution §4)
+
+DEPENDENCY TRACE
+================
+Step 1: the maintainer creates a plan from the house template, which now carries a `loe-class:` field
+  Verified at: adapters/claude-code/templates/plan-template.md:88 (+ comment block :89-95); live copy at ~/.claude/templates/plan-template.md confirmed carrying it
+Step 2: plan-reviewer.sh runs on that plan (pre-commit-gate step 0b / PreToolUse on docs/plans/*.md) and reaches Check 18
+  Verified at: plan-reviewer.sh:3262 (ACTIVE-or-unset status arm), :3263 (loe-class awk extraction); check 12 proves the surrounding 1-17 machinery still runs on a real plan
+Step 3: Check 18 resolves the repo root and reads docs/loe/loe-calibration.json
+  Verified at: plan-reviewer.sh:3277-3296; probes (c)/(d) prove the absent and corrupt inputs take distinct, non-blocking branches
+Step 4: the mined P50/P90 bands + per-band n + concentration flag for THAT class render as an INFO line the maintainer reads
+  Verified at: check 10 (harness-mechanism n=90 real numbers) and probe (a) (design-only n=5 — different real numbers, proving a per-class table read)
+Step 5: the numbers themselves derive from the real archive + git history, honestly, with nulls where the signal is absent
+  Verified at: checks 5-9 (163/163 corpus, recompute match, per-row git cross-check, tokens positive+negative control, builder_sessions marker count)
+
+Git evidence:
+  Files modified in recent history (all on master, tip 6ffe534):
+    - adapters/claude-code/scripts/loe-backfill.sh (NEW; fd48741, b5dfaf1)
+    - adapters/claude-code/hooks/plan-reviewer.sh (Check 18; fd48741, b5dfaf1)
+    - adapters/claude-code/templates/plan-template.md (loe-class writer; b5dfaf1)
+    - adapters/claude-code/manifest.json + scripts/manifest-check.sh + hooks/pre-commit-gate.sh (b5dfaf1)
+    - docs/loe/loe-calibration.json + docs/loe/loe-calibration.md (6ffe534, 163 plans mined 2026-07-30T00:55:25Z)
+    - docs/reviews/records/2026-07-29-harness-change-review-302003c9.json + records/index.json (9708ced)
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN — the mining half is correct against a pre-existing oracle the builder did not author: the artifact's 163 rows equal 100% of the on-disk archive corpus, its published class bands recompute exactly from its own per-plan rows, and one row (cockpit-v2-push-materialized-store) matches an independent `git log --follow` + checkbox-count + marker-count derivation on all four fields. The honest-data claims survived adversarial falsification rather than being taken on faith: a verifier-built positive control proved the token extractor WORKS (mined `Tokens: 120k` -> 120000) while REJECTING the decoy prose "1,000,000 token context window", so the corpus's tokens_pct 0 is a measurement (corpus grep for the anchored pattern = 0 hits), and builder_sessions 1.2% matches the 4 distinct `worktree agent-` markers that exist corpus-wide, published as nulls rather than imputed zeros. The surfacing half was exercised end-to-end against the REAL committed artifact (not the builder's synthetic self-test fixture): a maintainer-shaped v2 plan with `loe-class: harness-mechanism` renders "n=90 task_count P50/P90 4/13 — wall_clock_days 0.04/6.90 — builder_sessions 1/1 (coverage 2.2%) — concentration_flag false", and the output CHANGES to the design-only row's real numbers when the class changes, DISAPPEARS when the table is removed, and splits corrupt-from-empty when the table is broken — wired, reached, and behaving, across all 8 branches, every one exit 0 (never blocks). The whole mechanism is byte-identical in the live ~/.claude install, so it reaches the maintainer today. Confidence 8, not 9: (i) the ~100-scenario plan-reviewer suite still has not run end-to-end on this machine (characterized fork-tax class — one plan-reviewer invocation costs ~60-70 wall-seconds here; mitigated, not eliminated, by the verifier's own 8-branch Check 18 harness plus a real-plan regression probe showing checks 1-17 firing normally with zero Check 18 interference), and (ii) the outcome metric's second clause is an unbuilt seam, recorded below.
+
+Residuals (weighed into the verdict, none of them refuting the delivered mechanism):
+  - **Outcome-metric clause 2 ("actuals append at close") has NO mechanism and NO tracked owner.** The one-line splice is documented at an exact call site (loe-backfill.sh header :96-114 -> close-plan.sh cmd_close(), immediately before `emit_plan_completed_progress_log_event` at ~:1293) and is honestly named as unbuilt in the plan's own Files section (:149-155), the In-flight scope updates (:193-198), and the manifest's honesty_rationale — so nothing false is claimed anywhere. But T4's task text (the closer family that owns close-plan.sh) does not mention it, and no backlog row carries it: on this checkbox flip the obligation exists only in a code comment. THIS VERDICT CERTIFIES THE MINING + SURFACING MECHANISM ONLY; it does not certify that the calibration table refreshes at plan closure — today it does not, and it will silently go stale until someone re-runs the miner. Required follow-up (orchestrator, same turn as the commit): amend T4's task text to carry the splice, or file a backlog row for it.
+  - Manifest `loe-backfill.jit_triggers.paths` (manifest.json:2841-2842) still lists `docs/plans/loe-calibration.json/.md` — stale after the fd48741 F-A move to `docs/loe/`. Harmless today (`doctrine_file` is null, so the trigger injects nothing), but it is a wrong path in a live manifest entry; the same stale spelling appears in that entry's `fp_expectation` and `honesty_rationale` prose while `golden_scenario` has the correct `docs/loe/`. One-line fix, not a mechanism defect.
+  - Backlog row ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01 (docs/backlog.md:1380) is now SATISFIED by 6ffe534 and should be closed; it still reads "not yet run to completion on this machine".
+  - The review record's `covered_files` lists 5 of the 7 files b5dfaf1 touched — `templates/plan-template.md` (the creation-time writer, one of the 6 Majors) and `docs/backlog.md` carry no blob SHA, though the verdict_quote explicitly describes the template change as reviewed. Record-completeness nit; the 5 listed SHAs all match HEAD exactly.
+  - P50/P90 use nearest-rank-LOWER, so at n=2 P90 collapses onto P50 (harness-mechanism builder_sessions publishes 1/1 while the underlying values are {1,3}). This is DOCUMENTED in the jq program's own header with exactly that n=2 example and mitigated by rendering n beside every band — a known, disclosed convention, not a hidden defect.
+  - Check 18 resolves the table per-repo, so plans in downstream product repos (no docs/loe/) get the "run loe-backfill.sh" nudge rather than bands. Correct by design (calibration is per-corpus), noted so it is not later mistaken for a bug.
+
+Outcome-metric note (Program rule 2): clause 1 ("every new plan carries class+band annotations") is forward-looking and cannot be a present fact at build time; what IS demonstrated present-tense is the full causal chain that produces it — the template writes the field, the v2-vintage-gated nudge catches plans that lack it, and a plan that has it renders real mined bands (checks 10/11/13/14). Clause 2 is the unbuilt seam above. Re-check date: at the next plan creation from the template (the nudge/band render is observable immediately) and at the next plan closure (which will demonstrate the staleness the missing splice implies).
