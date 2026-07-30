@@ -453,19 +453,25 @@ _amendment_state_dir() {
 #
 # The first fire for a given (slug, delta_hash) records `<epoch> <token>`
 # and returns that token; any re-fire within
-# AMENDMENT_REPLAY_DEBOUNCE_SECONDS (default 30) returns the SAME token (a
+# AMENDMENT_REPLAY_DEBOUNCE_SECONDS (default 120) returns the SAME token (a
 # replay of one edit -> deduped). A later edit that happens to reproduce the
 # same delta mints a NEW token -> a genuinely distinct amendment. Never
 # blocks: an unwritable state dir or missing `date` degrades to a
 # conservative constant, never a crash.
 #
-# SIZING THE WINDOW (30s): it must exceed the wall-clock gap between two
-# fires of ONE edit -- and that gap is NOT sub-second, because each fire
-# forks progress-log.sh (bash + git + sha1sum), which costs SECONDS on the
-# Windows/Git-Bash target (a 5s window was measurably too tight and let a
-# replay mint a fresh token). Two genuinely-distinct scope edits that revert
-# and reproduce the exact same state inside 30s are implausible, so the
-# window stays far from the other bound.
+# SIZING THE WINDOW (120s, not 30 -- 2026-07-30, mirrors workstreams-emit's
+# PROVEN fix e64441d for its sibling `_dispatch_replay_token`). It must
+# exceed the wall-clock gap between two fires of ONE edit -- and that gap is
+# NOT sub-second, and, as of 2026-07-30, NOT "tens of seconds" either: each
+# fire forks progress-log.sh (bash + git + sha1sum), and on this machine's
+# Windows/Git-Bash fork-taxed target that measurably costs multiple tens of
+# seconds under load. The PREVIOUS 30s default was PROVEN too tight here,
+# not just theorized: Scenario 20d (below) reproduced the exact same class
+# of failure this mechanism's sibling hit in workstreams-emit.sh -- a
+# genuine single-edit re-fire landing outside the window and minting a
+# spurious second token. Two genuinely-distinct scope edits that revert and
+# reproduce the exact same state inside 120s are still implausible, so the
+# window keeps large real margin on both sides even after the correction.
 # NOTE: every variable below is `local`. Bash uses DYNAMIC scoping, so a
 # bare assignment here would reach up and clobber the CALLER's same-named
 # local -- and this function is called from
