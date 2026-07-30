@@ -441,9 +441,18 @@ pts_append_tick_line() {
 # "color", never the fields feeding it).
 #
 # STALENESS: written once per pts_run_tick call (hourly, via health-tick.sh).
-# admission-lib.sh's own pressure_src field (tick|absent) is the honest
-# staleness signal a calibration reader should use, exactly as its header
-# already documents — this tick does not add a second staleness contract.
+# THE READER OWNS THE AGE BOUND (review REJECT C2, 2026-07-30):
+# admission-lib.sh's adm_pressure_color enforces ADM_PRESSURE_MAX_AGE_SECS
+# (default 7200s = 2x this carrier's cadence) and reads 'unknown' past it;
+# its ledger field is tick | tick-stale | absent. File EXISTENCE alone was
+# never a staleness signal — the earlier claim here that pressure_src
+# (tick|absent) was "the honest staleness signal" was wrong: it carried no
+# age information, and a stopped tick would have frozen the last color into
+# authority forever. CADENCE CAVEAT (same review, Major): the governor
+# design (estate-performance-governor-2026-07-27.md:57) specifies a 2-5 min
+# Loop-2 cadence; this carrier is HOURLY — 12-30x coarser. T6 calibration
+# must treat the pressure axis as hourly-sampled (standing caveat beside
+# the CPU/RAM partial-ladder caveat) until a faster carrier exists.
 
 pts_pressure_file() {
   if [[ -n "${PERF_TICK_PRESSURE_FILE:-}" ]]; then

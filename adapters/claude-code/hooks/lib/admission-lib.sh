@@ -387,6 +387,21 @@ _adm_json_scalar() {
 adm_pressure_color() {
   local f="${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}"
   [[ -r "$f" ]] || { printf 'unknown'; return 0; }
+  # READER-SIDE AGE BOUND (review REJECT C2, 2026-07-30): without this, a
+  # stopped tick freezes the last color into authority FOREVER — at T6 a
+  # frozen red would block every dispatch, a frozen green would admit
+  # through a real storm (the exact frozen-occupancy class the 2026-07-28
+  # review fixed one axis over). Default 7200s = 2x the hourly carrier
+  # cadence (health-tick). Stale -> 'unknown' (which admits, fail-open).
+  local max_age="${ADM_PRESSURE_MAX_AGE_SECS:-7200}"
+  if (( max_age > 0 )); then
+    local p_m now_p
+    p_m="$(stat -c %Y "$f" 2>/dev/null)" || p_m=""
+    now_p="$(_adm_now)"
+    if [[ ! "$p_m" =~ ^[0-9]+$ ]] || (( now_p < p_m )) || (( now_p - p_m > max_age )); then
+      printf 'unknown'; return 0
+    fi
+  fi
   local color; color="$(_adm_json_scalar "$f" color)" || color=""
   case "$color" in
     green|yellow|red|black) printf '%s' "$color" ;;
@@ -493,9 +508,15 @@ adm_live_sessions() {
     if [[ -r "$cache_f" ]]; then
       local c_mtime="" c_size="" c_count="" c_at="" c_path=""
       IFS=$'\t' read -r c_mtime c_size c_count c_at c_path < "$cache_f" 2>/dev/null
-      if [[ "$c_path" == "$f" && "$c_mtime" == "$snap_m" && "$c_size" == "$snap_sz" && -n "$c_at" ]]; then
+      # READ-BOUNDARY VALIDATION (review REJECT C1, 2026-07-30): c_count and
+      # c_at come from a FILE and feed a bash arithmetic sink + an unquoted
+      # JSON numeric field — the reviewer EXECUTED code through the
+      # unvalidated path (array-subscript command substitution) and wrote
+      # invalid JSON into the ledger. Anything non-numeric = cache miss.
+      if [[ "$c_path" == "$f" && "$c_mtime" == "$snap_m" && "$c_size" == "$snap_sz" ]] \
+         && [[ "$c_count" =~ ^-?[0-9]+$ ]] && [[ "$c_at" =~ ^[0-9]+$ ]]; then
         local now; now="$(_adm_now)"
-        if (( now - c_at < ttl )); then
+        if (( now >= c_at && now - c_at < ttl )); then
           printf '%s' "$c_count"
           return 0
         fi
@@ -730,10 +751,23 @@ adm_admit() {
   local color live mono mono_src pressure_src
   color="$(adm_pressure_color)"
   live="$(adm_live_sessions)"
+  # LEDGER NUMERIC CLAMP (review REJECT C1): live/rate land in unquoted JSON
+  # numeric positions — a non-numeric value would corrupt the 7-day
+  # calibration ledger this program exists to produce. Unknown -> -1.
+  [[ "$live" =~ ^-?[0-9]+$ ]] || live=-1
+  [[ "$rate" =~ ^-?[0-9]+$ ]] || rate=-1
   # $rate is already computed above and was the value the verdict used.
   read -r mono mono_src <<< "$(_adm_mono)"
-  if [[ -r "${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}" ]]; then
-    pressure_src="tick"
+  # pressure_src is tick | tick-stale | absent (review REJECT C2): existence
+  # alone is NOT a staleness signal; a calibration reader must be able to
+  # discount lines whose color outlived the reader-side age bound.
+  local p_f="${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}"
+  if [[ -r "$p_f" ]]; then
+    if [[ "$color" == "unknown" ]]; then
+      pressure_src="tick-stale"
+    else
+      pressure_src="tick"
+    fi
   else
     pressure_src="absent"
   fi
@@ -1151,6 +1185,44 @@ _adm_self_test() {
     *'"pressure_src":"absent"'*) pass "pressure_src=absent when the tick file is genuinely missing (fail-open, never silently defaulted to a color)" ;;
     *) fail "pressure_src not absent with no pressure file: $last" ;;
   esac
+
+  echo "Scenario 20: CORRUPT OCCUPANCY CACHE is a MISS, never an arithmetic sink (review REJECT C1 — the reviewer executed code through the unvalidated path)"
+  # Poison the cache with the reviewer's own injection payload shape; the
+  # snapshot identity fields are made to MATCH so only the numeric guard
+  # stands between the payload and the (( )) sink.
+  snap20="$T/snap20.json"
+  printf '{"generated_at":"x","sessions":[{"classify":"live"},{"classify":"live"}]}\n' > "$snap20"
+  s20_m="$(stat -c %Y "$snap20" 2>/dev/null)"; s20_sz="$(stat -c %s "$snap20" 2>/dev/null)"
+  inj_marker="$T/injected-by-scenario-20"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$s20_m" "$s20_sz" 'x[$(touch '"$inj_marker"')]' "$(date -u +%s)" "$snap20" > "$(adm_occ_cache_path)"
+  occ20_err="$T/occ20.stderr"
+  occ20="$(ADM_ESTATE_SNAPSHOT="$snap20" adm_live_sessions 2>"$occ20_err")"
+  if [[ ! -e "$inj_marker" ]]; then
+    pass "injection payload in the cache did NOT execute (numeric gate holds)"
+  else
+    fail "COMMAND INJECTION: the cache payload created $inj_marker"
+  fi
+  [[ "$occ20" == "2" ]] && pass "corrupt cache degraded to a MISS and the real snapshot was re-parsed (count=2)" \
+    || fail "expected recount 2 after corrupt-cache miss, got '$occ20'"
+  [[ -s "$occ20_err" ]] && fail "corrupt cache leaked bash diagnostics to stderr: $(head -1 "$occ20_err")" \
+    || pass "fail-open path stayed silent on stderr under a poisoned cache"
+
+  echo "Scenario 21: STALE pressure file -> color unknown + pressure_src tick-stale (review REJECT C2 — existence is not a staleness signal)"
+  printf '{"color":"red"}\n' > "$ADM_PRESSURE_FILE"
+  pc21="$(ADM_PRESSURE_MAX_AGE_SECS=0 ADM_PRESSURE_FILE="$ADM_PRESSURE_FILE" adm_pressure_color)"
+  # max_age=0 disables the bound (matches the ttl>0 idiom); use a 1-second
+  # bound against a backdated file instead.
+  touch -d '2000-01-01' "$ADM_PRESSURE_FILE" 2>/dev/null || touch -t 200001010000 "$ADM_PRESSURE_FILE" 2>/dev/null
+  pc21="$(ADM_PRESSURE_MAX_AGE_SECS=1 ADM_PRESSURE_FILE="$ADM_PRESSURE_FILE" adm_pressure_color)"
+  [[ "$pc21" == "unknown" ]] && pass "a color older than the reader-side age bound reads unknown (a frozen red can never become permanently authoritative)" \
+    || fail "expected unknown from a stale pressure file, got '$pc21'"
+  v="$(ADM_PRESSURE_MAX_AGE_SECS=1 adm_admit emit-feed)"
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"pressure_src":"tick-stale"'*) pass "ledger records pressure_src=tick-stale for an outlived color (calibration readers can discount it)" ;;
+    *) fail "expected pressure_src=tick-stale for a stale file: $last" ;;
+  esac
+  rm -f "$ADM_PRESSURE_FILE"
 
   rm -rf "$T"
   echo

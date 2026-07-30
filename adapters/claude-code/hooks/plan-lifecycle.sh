@@ -475,7 +475,11 @@ _amendment_replay_token() {
   local now; now=$(date -u +%s 2>/dev/null)
   [ -n "$now" ] || { printf 'noclock'; return 0; }
 
-  local debounce="${AMENDMENT_REPLAY_DEBOUNCE_SECONDS:-30}"
+  # 120 not 30 (2026-07-30, mirrors workstreams-emit's PROVEN fix e64441d):
+  # per-fire wall cost on the Windows fork-taxed target exceeds 30s under
+  # load — Scenario 20d reproduced the same class here. Genuine amendment
+  # re-submissions are minutes apart; 120s keeps margin both ways.
+  local debounce="${AMENDMENT_REPLAY_DEBOUNCE_SECONDS:-120}"
   local adir; adir="$(_amendment_state_dir)"
   mkdir -p "$adir" 2>/dev/null || { printf '%s' "$now"; return 0; }
 
