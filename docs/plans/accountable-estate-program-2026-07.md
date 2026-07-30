@@ -67,6 +67,19 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
       closers call it; nothing else merges. Outcome metric: zero master divergence events while
       active (re-check 14 d). LOE: SMALL-MEDIUM, 1–2 bs, medium variance (git edge cases).
       Verification: full.
+      Clock start (this worktree, 2026-07-30T05:56:59Z — the first real, non-fixture
+      `estate-merge.sh --check --into master` run against this machine's actual checkout, which
+      wrote the tracking-since marker and PROVED the live detection: `master` was BEHIND
+      `origin/master` by 6 commits at that moment): the 14-day re-check window opens
+      2026-08-13T05:56Z. Re-check command (safe, read-only, no fixtures):
+      `bash adapters/claude-code/scripts/estate-merge.sh --check --into master --repo <main-checkout>`
+      — exit 0 + no "RED: merge commit ... bypassed the estate-merge lock" line across the window
+      is the metric; a WARN-only "BEHIND" finding is expected/healthy staleness, not a divergence
+      event. Today's real integration target is wip/harness-hardening-2026-07-29 (master cannot
+      take merges — see this plan's LIVE CONTEXT note in T5's own build session), so until that
+      clears the operationally-relevant re-check is
+      `--into wip/harness-hardening-2026-07-29` (that branch has no configured upstream today, so
+      its own freshness axis reads INFO/no-upstream — only the lock-bypass axis applies there).
 - [ ] T6 — Enforce flip for admission (pressure-ladder thresholds from T3's calibration data).
       GATED: requires ≥7 calendar days of T3 observe data + operator sign-off on thresholds.
       Clock start (task-verifier pass 4 D-5): the ledger's first row is 2026-07-29T03:33:44Z,
@@ -218,3 +231,68 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-29: `adapters/claude-code/doctrine/orchestrator-pattern.md` — attribution-pipeline task: NL-ATTRIBUTION header made MANDATORY in dispatch prompts, WARN-only enforcement rung named per constitution §10
 - 2026-07-29: `adapters/claude-code/doctrine/orchestrator-pattern-full.md` — attribution-pipeline task: full NL-ATTRIBUTION section (format, wiring, honest gap, enforcement rung, retirement condition)
 - 2026-07-29: `docs/plans/fragments/attribution-server-fragment.md` — NEW, attribution-pipeline task: consumer contract for the workstreams-ui builder (different file owner) — how `deriveLiveAgentLeaves` should join the new START/END attribution rows to a `<plan>/<task>` id
+
+- 2026-07-30: `adapters/claude-code/scripts/manifest-check.sh` — synced from
+  wip/harness-hardening-2026-07-29@a41b0e1 (post-merge repair commit 51ef97a: apostrophe bug in
+  the embedded Node program fixed, `scripts/<name>.sh` AND legacy `../scripts/<name>.sh` both
+  accepted at the schema rung via a shared `_hook_disk_path` resolver, harness-claim-lint
+  registered). This worktree's prior copy predated that fix and RED-failed on the
+  `scripts/estate-janitor.sh` / `scripts/estate-brief.sh` / `scripts/loe-backfill.sh` form its own
+  T1/T7 siblings already use — not a T5 defect, but T5's own new `estate-merge` entry needed a
+  working validator to check itself against, so this dependency is synced rather than worked
+  around. Manifest-check now shows 4 pre-existing REDs unrelated to T5 (harness-claim-lint.sh,
+  review-record-commit-gate.sh, operator-requirement-ledger.md doctrine file — all referenced by
+  manifest entries this worktree inherited from the a41b0e1 sync but whose actual hook files were
+  never pulled into this worktree, since they belong to other, unrelated slices) — named here as
+  pre-existing debt out of T5's scope, not silently hidden; T5's own `estate-merge` entry causes
+  zero new REDs.
+- 2026-07-29: `adapters/claude-code/scripts/estate-merge.sh` — NEW, T5's single deterministic merge
+  path: estate-wide mkdir-atomic lock (coord-sync.sh single-writer idiom) → preflight (target
+  branch exists + is checked out clean in `--repo`'s main checkout + freshness/divergence vs its
+  configured upstream, when one exists) → merge (ff-only preferred; else an explicit `--no-ff`
+  merge commit whose message records the rationale — never a rebase, never a force, never history
+  rewrite) → best-effort dual-remote push per Decision-064 when `--into` resolves to a canonical
+  branch and a second mirror remote is discovered → one log line per invocation
+  (`state/estate-merge/merges.log`, coord-sync `cycles.log` idiom). `--check` is the standalone
+  divergence detector (deliverable 3): REDs on target-vs-upstream true divergence, WARNs on
+  target-strictly-behind-upstream (the live class proven against this machine's real `master`
+  vs `origin/master`, 6 commits behind at the moment this ran for real), and REDs on any merge
+  commit in the target's recent history whose SHA is absent from merges.log (a merge that
+  bypassed the lock) — bounded by a PER-TARGET tracking-since marker
+  (`tracking-since-sha.<target>`) so pre-existing history is never false-flagged. That per-target
+  scoping is itself a bug this session found by running `--check` for real against BOTH `master`
+  AND `wip/harness-hardening-2026-07-29` from the same STATE_DIR: the marker was originally one
+  file per STATE_DIR, so checking `master` first left its marker in place and the
+  wip/harness-hardening check reused it as a baseline, false-flagging that branch's own genuinely
+  pre-existing merge commit (`9037ed3`) as a lock bypass. Fixed same-session; Scenario 19 pins the
+  isolation; re-ran clean against both real branches after the fix.
+- 2026-07-29: `adapters/claude-code/scripts/close-worktree.sh` — T5 graduation: the previously-hard
+  BLOCKED path for an unintegrated branch now calls `estate-merge.sh merge <branch> --into <base>`
+  before falling back to the ancestor check; a successful merge sets disposition=merged exactly
+  like the already-integrated path. The `--keep-branch --reason` escape valve and the no-plan/task
+  verification gate are unchanged. Doc comment updated to drop the "T5 not yet built" honest-gap
+  note (T5 is this commit).
+- 2026-07-29: `adapters/claude-code/manifest.json` — estate-merge entry (writer, OBSERVE-adjacent:
+  the lock is real but nothing enforces "closers must call this" yet — see estate-merge.sh's own
+  honest_status)
+- 2026-07-30: `docs/runbooks/master-reconcile-and-estate-cleanup.md` — T5 retirement (program rule
+  3, partial — not a deletion, an honest scope narrowing): step 6's manual post-merge VERIFY
+  checklist exists to catch a MANUAL conflict-resolution mistake (a human/agent UNION-resolving a
+  conflict and silently dropping one side's real change). estate-merge.sh never does manual
+  conflict resolution — it fast-forwards (lossless) or lets git's own automatic merge succeed
+  cleanly, and ABORTS ENTIRELY on any conflict (proven: `--self-test` Scenario 4) — so the
+  dropped-side failure mode step 6 defends against cannot occur for anything merged through it.
+  Step 6 is retired AS A REQUIRED STEP only for that class of merge; it remains fully required for
+  this runbook's own Part A (the origin/pt two-master reconcile), which still does manual UNION
+  resolution and is NOT what estate-merge.sh replaces. The runbook's opening + step 6 are both
+  edited to state this scope explicitly, so a future reader does not wrongly assume the whole
+  runbook — or the full step-6 checklist (manifest id-set union, generated-doc check, doctor
+  self-test greens) — is now automated; only the dropped-side-sweep's FAILURE MODE is retired for
+  the estate-merge.sh class, not the checklist's other checks, which estate-merge.sh does not run.
+- 2026-07-29: this worktree's copy of this plan file was rebuilt from
+  `wip/harness-hardening-2026-07-29@db280f2` (this worktree's own branch predates T3/T4 and lacked
+  their files entirely — close-worktree.sh, estate-registration-lib.sh, spawn-worktree.sh's
+  registration splices — so they were synced in as a prerequisite, non-T5 commit before this
+  session's own T5 commits; see that commit's message for the full file list) with this worktree's
+  own T7-only additions (the Machine-claims section, the richer T7 Files-to-Modify entry, and the
+  2026-07-28 T7 in-flight-scope line above) re-applied on top so neither side's honest record is lost.

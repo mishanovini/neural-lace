@@ -5,6 +5,13 @@
 pt/master by N (and ahead by M) — diverged," run this. It recurs until the never-diverge design
 fix lands (see the harness-governance-batch plan); keep this runbook until then.
 
+**Scope vs `estate-merge.sh` (accountable-estate T5):** this runbook is for reconciling the two
+independently-writable REMOTES (Part A) and sweeping the branch/worktree estate (Part B) — a
+different problem from "merge one branch into the current integration target," which now has a
+deterministic, lock-serialized path: `bash adapters/claude-code/scripts/estate-merge.sh merge
+<branch> --into <target>` (closers call it; see step 6's scope note below for exactly which
+manual verification it retires and which it does not).
+
 ## Preconditions
 
 - Run from the **main checkout** on `master` with **NO worktree** — the merge + dual-remote push
@@ -34,7 +41,23 @@ fix lands (see the harness-governance-batch plan); keep this runbook until then.
    `check_model_pins` REDs. In particular pin `agents/architecture-reviewer.md` `model: fable` and
    add it to `config/model-policy.json` (design category).
 6. VERIFY — against the COMMITTED merge, not the working tree (added 2026-07-16 after a
-   reviewer-caught dropped-side merge; a dirty worktree can mask a broken commit):
+   reviewer-caught dropped-side merge; a dirty worktree can mask a broken commit).
+   **SCOPE NOTE (accountable-estate T5, 2026-07-30 — partial retirement, not a deletion):** this
+   checklist defends against a MANUAL conflict-resolution mistake — a human (or agent) picking
+   "ours"/"theirs" during a UNION resolve and silently dropping one side's real change. Step 4
+   above still does exactly that kind of manual resolution for the origin/pt two-master reconcile,
+   so step 6 remains FULLY REQUIRED for Part A. It is retired ONLY for the other class of merge
+   this repo now has a deterministic path for: `adapters/claude-code/scripts/estate-merge.sh`
+   (accountable-estate T5 — closers call it to merge a worktree/feature branch into the current
+   integration target). That script never performs manual conflict resolution: it fast-forwards
+   (mathematically lossless — nothing to drop) or lets git's own automatic three-way merge
+   succeed with a clean tree, and ABORTS ENTIRELY the moment git reports any conflict (proven by
+   `estate-merge.sh --self-test` Scenario 4: a real conflicting edit on both sides aborts cleanly,
+   no partial/manual-resolved state ever lands). The dropped-side failure mode this checklist
+   exists to catch is therefore structurally impossible for anything that landed via
+   estate-merge.sh — do not re-run this checklist for those merges. It stays load-bearing for
+   Part A until Decision-064's branch-protection removes manual reconciles from this repo
+   entirely.
    a. **Dropped-side sweep, both directions, must be EMPTY** (proves neither side's
       modifications-to-existing-files were silently reverted to base):
       `MB=$(git merge-base <local-parent> <pt-parent>)`; for each file in

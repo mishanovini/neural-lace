@@ -14,14 +14,21 @@
 # HONEST SCOPE NARROWING vs the design paragraph above (state this, don't
 # hide it — same discipline admission-lib.sh's header uses for T3):
 #   - "through the merge lock" names T5 (estate merge lock + single
-#     deterministic merge script), which is NOT YET BUILT. This closer does
-#     NOT invent T5's job. It checks whether the branch is ALREADY integrated
-#     (ancestor of a resolved base ref) — if not, it refuses and requires
-#     either an out-of-band merge (today's PR flow) first, or an EXPLICIT
-#     --keep-branch --reason (the design's own "or explicit preserve+reason"
-#     escape valve). When T5 lands, its merge script is the thing this
-#     closer's integration check should call BEFORE the ancestor check,
-#     in the same commit that closes T5.
+#     deterministic merge script), which GRADUATED in the same commit that
+#     added this note: the integration check now (1) accepts an
+#     already-integrated branch as before, (2) honors an explicit
+#     --keep-branch --reason preserve, and only then (3) calls
+#     `estate-merge.sh merge <branch> --into <target>` — the estate-wide
+#     mkdir-atomic-locked, single deterministic merge path (accountable-estate
+#     T5). estate-merge.sh's own preflight (target checked out + clean in
+#     `--repo`, fresh vs its upstream, no true divergence) and its
+#     ff-only-preferred / explicit-`--no-ff`-with-rationale merge policy are
+#     NOT duplicated here — this closer is a thin caller. A branch
+#     estate-merge.sh cannot cleanly merge (a real conflict, a dirty or
+#     wrong-branch target checkout, target behind/diverged its upstream)
+#     still falls through to the BLOCKED refusal below, same as before this
+#     graduation — the difference is CLOSE-WORKTREE NO LONGER REQUIRES A
+#     HUMAN TO HAVE ALREADY MERGED IT OUT OF BAND.
 #   - "ledger transition to done(outcome-link)" names the full obligation
 #     store from T2/P1, which is also not built. The closed REGISTRATION
 #     record (estate-registration-lib.sh's reg_close, called via
@@ -45,8 +52,20 @@
 #
 # Options:
 #   --repo <path>          main checkout to operate on (default: cwd)
+#   --into <target>        merge target branch for the estate-merge.sh call
+#                          (default: whatever branch --repo's main checkout
+#                          currently has checked out — estate-merge.sh itself
+#                          requires the target already be checked out there,
+#                          so this default is always the correct one when a
+#                          caller has nothing more specific to say). This is
+#                          CONFIGURATION, not hardcoded — the program's
+#                          current real integration target is
+#                          wip/harness-hardening-2026-07-29, not master.
 #   --keep-branch          explicit preserve — required alongside --reason
-#                          when the branch is not yet integrated
+#                          when the branch is not yet integrated. Takes
+#                          priority over attempting an estate-merge — an
+#                          operator asking to keep a branch unmerged is never
+#                          second-guessed by an automatic merge attempt.
 #   --reason <text>        required with --keep-branch (the design's "explicit
 #                          preserve+reason"); recorded as the disposition
 #   --force                pass through to spawn-worktree.sh --remove for an
@@ -130,6 +149,35 @@ _cw_is_integrated() {
   return 1
 }
 
+# ---------------------------------------------------------------------------
+# Estate-merge graduation (T5): calls THE single deterministic merge path
+# instead of refusing-and-deferring to an out-of-band PR merge. Thin caller —
+# every preflight/policy decision (clean+correct-branch target checkout,
+# fresh-vs-upstream, ff-only-preferred else --no-ff-with-rationale, never
+# force/rewrite) lives in estate-merge.sh itself, not duplicated here.
+# Returns estate-merge.sh's own exit code; its own stderr already explains
+# any refusal, so this helper adds no narration beyond the DONE/BLOCKED line.
+# ---------------------------------------------------------------------------
+_cw_estate_merge() {
+  local main="$1" branch="$2" target="$3" slug="$4"
+  local em="$SCRIPT_DIR/estate-merge.sh"
+  [[ -f "$em" ]] || { echo "$SCRIPT_NAME: estate-merge.sh not found at $em" >&2; return 1; }
+  local em_args=(merge "$branch" --into "$target" --repo "$main" --slug "$slug")
+  [[ "${QUIET:-0}" == "1" ]] && em_args+=(--quiet)
+  bash "$em" "${em_args[@]}"
+}
+
+# _cw_default_merge_target <main> — the branch --repo's main checkout
+# currently has checked out. estate-merge.sh REQUIRES the target already be
+# checked out there (it never switches a live checkout's branch), so "main's
+# current branch" is always the one correct default when the caller gives no
+# --into — it is CONFIGURATION read from the checkout, never hardcoded to
+# master/main (today's real integration target is
+# wip/harness-hardening-2026-07-29, not master).
+_cw_default_merge_target() {
+  git -C "$1" symbolic-ref --short HEAD 2>/dev/null || echo ""
+}
+
 _cw_scrub_reason() {
   # Same conservative whitelist as estate-registration-lib.sh's _reg_scrub —
   # a --reason ends up inside the closed registration's disposition field.
@@ -143,11 +191,12 @@ _cw_scrub_reason() {
 # close subcommand
 # ---------------------------------------------------------------------------
 cmd_close() {
-  local slug="" repo="" plan="" task="" verified=0 keep_branch=0 reason="" force=0
+  local slug="" repo="" plan="" task="" verified=0 keep_branch=0 reason="" force=0 into=""
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --repo) shift; repo="${1:-}" ;;
+      --into) shift; into="${1:-}" ;;
       --plan) shift; plan="${1:-}" ;;
       --task) shift; task="${1:-}" ;;
       --verified) verified=1 ;;
@@ -191,7 +240,7 @@ cmd_close() {
     return 2
   fi
 
-  # --- 2. INTEGRATION (merge, or explicit preserve+reason) ---
+  # --- 2. INTEGRATION (merge via estate-merge.sh's lock, or explicit preserve+reason) ---
   local branch; branch="$(git -C "$wt" symbolic-ref --short HEAD 2>/dev/null || echo "")"
   local disposition=""
   if [[ -n "$branch" ]] && _cw_is_integrated "$main" "$branch"; then
@@ -209,11 +258,14 @@ cmd_close() {
     # self-test, not assumed) — use a hyphen join instead, which survives.
     disposition="preserved-$(_cw_scrub_reason "$reason")"
     log "$SCRIPT_NAME: integration EXPLICITLY WAIVED — branch $branch kept, reason: $reason"
+  elif [[ -n "$branch" ]] && _cw_estate_merge "$main" "$branch" "${into:-$(_cw_default_merge_target "$main")}" "$slug"; then
+    disposition="merged"
+    log "$SCRIPT_NAME: integration OK — estate-merge.sh merged $branch into ${into:-$(_cw_default_merge_target "$main")}"
   else
-    echo "$SCRIPT_NAME: BLOCKED — branch '$branch' is not yet integrated into master/main." >&2
-    echo "  This closer does not merge (T5's merge lock owns that; not yet built)." >&2
-    echo "  Either merge it first (existing PR flow) and re-run, or re-run with" >&2
-    echo "  --keep-branch --reason '<why>' to explicitly preserve it unmerged." >&2
+    echo "$SCRIPT_NAME: BLOCKED — branch '$branch' is not yet integrated into '${into:-$(_cw_default_merge_target "$main")}', and estate-merge.sh could not merge it (see its output above)." >&2
+    echo "  Resolve what it reported (dirty/wrong-branch target checkout, target behind/diverged its" >&2
+    echo "  upstream, a real merge conflict) and re-run, or re-run with --keep-branch --reason '<why>'" >&2
+    echo "  to explicitly preserve it unmerged." >&2
     return 2
   fi
 
@@ -255,6 +307,13 @@ _cw_self_test() {
   git -C "$R" config user.email t@example.com
   git -C "$R" config user.name t
   echo base > "$R/f.txt"; git -C "$R" add f.txt
+  # Mirrors the real repo's own .gitignore (.claude/worktrees/ is ignored
+  # there): without this, this fixture's OWN linked-worktree directories
+  # show up as untracked noise in `git status --porcelain` of $R itself,
+  # which would make estate-merge.sh's "worktree clean" preflight (Scenario
+  # 8 below) spuriously see $R as dirty — a fixture gap, not a production
+  # one, found by wiring the real estate-merge.sh call in T5's graduation.
+  printf '.claude/worktrees/\n' > "$R/.gitignore"; git -C "$R" add .gitignore
   git -C "$R" -c commit.gpgsign=false commit -qm base
 
   local sw="$SCRIPT_DIR/spawn-worktree.sh"
@@ -280,15 +339,25 @@ _cw_self_test() {
   [[ -f "$closedf" ]] && pass "registration closed" || fail "no closed registration at $closedf"
   grep -q '"disposition":"merged"' "$closedf" 2>/dev/null && pass "disposition recorded as merged" || fail "disposition wrong: $(cat "$closedf" 2>/dev/null)"
 
-  echo "Scenario 4: unintegrated branch, no --keep-branch -> BLOCKED (exit 2), branch+worktree untouched"
+  echo "Scenario 4: unintegrated branch estate-merge.sh CANNOT cleanly merge (real conflict) -> BLOCKED (exit 2), branch+worktree untouched"
   bash "$sw" wt-b --type commits --repo "$R" --apply --print-cd >/dev/null 2>&1
-  echo unique > "$R/.claude/worktrees/wt-b/u.txt"
-  git -C "$R/.claude/worktrees/wt-b" add u.txt
-  git -C "$R/.claude/worktrees/wt-b" -c commit.gpgsign=false commit -qm "unique work"
+  echo "wt-b conflicting edit" > "$R/.claude/worktrees/wt-b/f.txt"
+  git -C "$R/.claude/worktrees/wt-b" add f.txt
+  git -C "$R/.claude/worktrees/wt-b" -c commit.gpgsign=false commit -qm "wt-b: edits f.txt"
+  # master ALSO diverges on the SAME file after the branch point, so
+  # estate-merge.sh's --no-ff attempt hits a real conflict (T5 graduation
+  # means "unintegrated" alone no longer blocks — this scenario now proves
+  # the refusal path with a merge that genuinely CANNOT be resolved
+  # automatically, not one that merely wasn't tried).
+  echo "master conflicting edit" > "$R/f.txt"
+  git -C "$R" add f.txt
+  git -C "$R" -c commit.gpgsign=false commit -qm "master: edits f.txt (conflicts with wt-b)"
   "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-b --repo "$R" --verified --quiet
   rc=$?
-  [[ "$rc" == "2" ]] && pass "unintegrated branch with no --keep-branch refused (exit 2)" || fail "expected 2, got $rc"
+  [[ "$rc" == "2" ]] && pass "unmergeable branch (real conflict) refused (exit 2)" || fail "expected 2, got $rc"
   [[ -d "$R/.claude/worktrees/wt-b" ]] && pass "worktree left in place" || fail "worktree removed despite the refusal"
+  [[ -z "$(git -C "$R" status --porcelain 2>/dev/null)" ]] && pass "main checkout clean after the aborted merge attempt" \
+    || fail "main checkout left dirty: $(git -C "$R" status --porcelain)"
 
   echo "Scenario 5: unintegrated branch + --keep-branch with NO --reason -> BLOCKED (exit 2)"
   "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-b --repo "$R" --verified --keep-branch --quiet
@@ -326,6 +395,35 @@ EOF
   rc=$?
   [[ "$rc" == "2" ]] && pass "plan/task with NO PASS evidence for that task id refused (exit 2)" || fail "expected 2, got $rc"
   [[ -d "$R/.claude/worktrees/wt-d" ]] && pass "worktree left in place after the unverified plan/task refusal" || fail "worktree removed despite the refusal"
+
+  echo "Scenario 8: T5 GRADUATION — unintegrated branch -> estate-merge.sh merges it -> closes with disposition=merged"
+  bash "$sw" wt-e --type commits --repo "$R" --apply --print-cd >/dev/null 2>&1
+  echo "new work from wt-e" > "$R/.claude/worktrees/wt-e/e.txt"
+  git -C "$R/.claude/worktrees/wt-e" add e.txt
+  git -C "$R/.claude/worktrees/wt-e" -c commit.gpgsign=false commit -qm "wt-e: genuinely new, unintegrated commit"
+  local wte_sha; wte_sha="$(git -C "$R/.claude/worktrees/wt-e" rev-parse HEAD)"
+  git -C "$R" rev-parse --verify --quiet "$wte_sha" >/dev/null 2>&1 \
+    && ! git -C "$R" merge-base --is-ancestor "$wte_sha" master \
+    && pass "setup: wt-e's commit exists and is genuinely NOT yet an ancestor of master" \
+    || fail "setup: wt-e's commit is already reachable from master (test would prove nothing)"
+  "${BASH:-bash}" "$SCRIPT_DIR/close-worktree.sh" close wt-e --repo "$R" --verified --quiet
+  rc=$?
+  [[ "$rc" == "0" ]] && pass "T5 graduation: close succeeds via estate-merge.sh (exit 0, no manual pre-merge needed)" \
+    || fail "T5 graduation: expected 0, got $rc"
+  [[ ! -d "$R/.claude/worktrees/wt-e" ]] && pass "T5 graduation: worktree removed" || fail "T5 graduation: worktree still present"
+  git -C "$R" merge-base --is-ancestor "$wte_sha" master 2>/dev/null \
+    && pass "T5 graduation: wt-e's commit is NOW an ancestor of master (the merge actually happened, not faked)" \
+    || fail "T5 graduation: wt-e's commit never made it into master"
+  git -C "$R" show "master:e.txt" 2>/dev/null | grep -q "new work from wt-e" \
+    && pass "T5 graduation: master's tree contains wt-e's actual file content (e.txt)" \
+    || fail "T5 graduation: master:e.txt missing or wrong content: $(git -C "$R" show master:e.txt 2>&1)"
+  local closede="$REG_STATE_DIR/registrations/closed/wt-e.json"
+  [[ -f "$closede" ]] && pass "T5 graduation: registration closed" || fail "T5 graduation: no closed registration at $closede"
+  grep -q '"disposition":"merged"' "$closede" 2>/dev/null && pass "T5 graduation: disposition recorded as merged" \
+    || fail "T5 graduation: disposition wrong: $(cat "$closede" 2>/dev/null)"
+  grep -q "outcome=merged-ff" "$HOME/.claude/state/estate-merge/merges.log" 2>/dev/null \
+    && fail "T5 graduation: leaked into the REAL ~/.claude/state/estate-merge/merges.log (sandbox escape)" \
+    || pass "T5 graduation: estate-merge.sh's own HARNESS_SELFTEST sandboxing kept merges.log out of real state"
 
   rm -rf "$T"
   echo

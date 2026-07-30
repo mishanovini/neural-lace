@@ -25,4 +25,6 @@ _(add your own free-form to-do items in this section — never overwritten)_
 - [x] AUTO: decision waiting on operator — "Pick a database" (needs-you `NY-1785366310-867a`, tier untiered, session `unknown`) — see NEEDS-YOU.md
 - [x] AUTO: decision waiting on operator — "### Decision needed: which storage backend does the fx-active migration (docs/plans/fx-active.md) write to first." (needs-you `NY-1785366327-adde`, tier untiered, session `unknown`) — see NEEDS-YOU.md
 - [x] AUTO: decision waiting on operator — "Decision needed: how to process the 123-file review backlog once the review-independence pipeline lands (building now, plan review-independence RI1-RI4)." (needs-you `NY-1785369704-ecbf`, tier untiered, session `a3fcb6ea`) — see NEEDS-YOU.md
+- [x] AUTO: decision waiting on operator — "Decision needed: how to process the 123-file review backlog once the review-independence pipeline lands (building now, plan review-independence RI1-RI4)." (needs-you `NY-1785390332-316c`, tier untiered, session `unknown`) — see NEEDS-YOU.md
+- [x] AUTO: decision waiting on operator — "### Decision needed: false-positive probe — does a bogus task reference fabricate a correlation (docs/plans/fx-active.md)." (needs-you `NY-1785390341-e54e`, tier untiered, session `unknown`) — see NEEDS-YOU.md
 <!-- AUTO:END -->

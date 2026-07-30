@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-038045c5",
+  "created_at": "2026-07-30T06:01:27Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group scripts-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "e1fc56050726987bb140a77018750f04ee0182ad",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/selftest-sweep-exclusions.sh",
+      "blob_sha": "ce7e0d51f867eab3825fc864c687adf4dcae215c"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — 22/0 on both interpreters; ledger exists with root-cause reasons and harness-doctor wiring verified at line 2576; one unreproduced 21/1 flake noted as HYPOTHESIZED child-suite nondeterminism.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer agent (scripts-2 sweep) via write-review-record.sh",
+  "payload": {}
+}

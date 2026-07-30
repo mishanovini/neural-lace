@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-3de76764",
+  "created_at": "2026-07-30T05:58:01Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group agents-manifest-config (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "b93a7d5ea3fd8fbd7a5b6b5b1fb9ed6169ba7244",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/agents/task-verifier.md",
+      "blob_sha": "c9d7fa39bc8c652c5862bc7d4e244aad326c407e"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — Step 1.6 operator-invariant check verified end-to-end against ask-registry.sh: invariant-check --plan-slug selector (line 1943), exit contract 0/1/3/4 (cmd_invariant_check), holds-requires-citation shape test (line 1899ff) all match the documented protocol verbatim; evidence-block addition consistent with Step 7; suite reproduced 97/5 under /bin/bash 3.2.57 with the 5 fails pre-existing BSD-date as documented.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer via write-review-record.sh",
+  "payload": {}
+}
