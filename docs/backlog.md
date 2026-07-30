@@ -2154,3 +2154,20 @@ requested alongside the roadmap rollup fix).
   where the ORCHESTRATOR — which does have dispatch capability — is the actor, so the
   remedy is reachable from the layer that enforces it. Keep the commit-time gate as
   advisory-only early feedback so builders are informed without being deadlocked.
+- **REVIEWED-BYTES-ARE-NOT-COMMITTED-BYTES-01** (HIGH, class confirmed by 2 independent
+  occurrences 2026-07-30): a reviewer verifies the WORKING TREE while the INDEX still holds
+  the version it rejected — so a commit ships bytes no review ever covered, and the PASS is
+  an unfalsifiable claim. Occurrence 1: the cockpit review-surface builder (`MM` on both
+  doctrine files + manifest, `AM` on the plan, `??` on the proposal doc; committing would
+  have shipped the carrier-parity theatre the reviewer had just removed). Occurrence 2: the
+  IF-statement builder (`git show :.../if-statement-check.sh | grep -c perception` = 0 while
+  the worktree had the fix; the index held the draft with the `I see ` escape).
+  Note only manifest.json is blob-checked by the review gate — doctrine/, plans/ and
+  docs/harness-improvements/ are OUTSIDE the surface, so stale staged copies of those ship
+  with NO mechanical complaint.
+  FIX DIRECTION: (a) any request for review of "staged" work must assert staged-ness
+  mechanically (`git diff --stat` empty) IN the request; (b) the reviewer verifies
+  index-vs-worktree parity BEFORE issuing a verdict; (c) a review record's blob_shas should
+  be taken from the INDEX, and the record capture should refuse when worktree != index.
+  This belongs in deterministic-process.md: a gate that verifies bytes other than the ones
+  that ship is enforcing nothing.
