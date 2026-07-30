@@ -1093,7 +1093,19 @@ const server = http.createServer((req, res) => {
   if (url === '/asks.js') return serveStatic(res, 'asks.js');
   if (url === '/todo.js') return serveStatic(res, 'todo.js');
   if (url === '/backlog.js') return serveStatic(res, 'backlog.js');
-  if (url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+  // R17 deliverable 1 (audit F7): the tab used to carry NO icon at all (a
+  // deliberate 204) — an inline SVG (an emoji glyph, no external asset,
+  // no build step) is the simplest fix; browsers happily render an SVG
+  // response at /favicon.ico regardless of the URL's own extension, keyed
+  // off the Content-Type below, not the path.
+  if (url === '/favicon.ico') {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+      '<text x="32" y="46" font-size="44" text-anchor="middle">🛩️</text></svg>';
+    const h = {}; h[CT] = 'image/svg+xml'; h['Cache-Control'] = 'public, max-age=86400';
+    res.writeHead(200, h);
+    res.end(svg);
+    return;
+  }
 
   // ---- /api/asks — ask-rooted-workstreams-p1 Task 11 landing payload
   // (project groups + a collapsed `completed` group; `?status=` filter,

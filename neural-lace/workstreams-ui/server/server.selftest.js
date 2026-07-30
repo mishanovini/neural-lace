@@ -45,7 +45,7 @@ function httpGet(port, urlPath) {
       res.on('end', () => {
         let parsed = null;
         try { parsed = JSON.parse(body); } catch (_) { /* left null */ }
-        resolve({ status: res.statusCode, body: body, json: parsed });
+        resolve({ status: res.statusCode, body: body, json: parsed, headers: res.headers });
       });
     }).on('error', reject);
   });
@@ -237,6 +237,13 @@ async function main() {
 
   try {
     // ---- Scenario 1-6: each pane endpoint returns derived JSON from the stub.
+    // ---- R17 deliverable 1 (audit F7): favicon is no longer a bare 204 --
+    const favicon = await httpGet(PORT, '/favicon.ico');
+    ok('R17-FAV1 GET /favicon.ico returns 200 with an inline SVG body (never the prior bare 204 — a browser tab now shows an icon)',
+      favicon.status === 200 && /^image\/svg\+xml/.test((favicon.headers && favicon.headers['content-type']) || '') &&
+      /<svg[\s\S]*<\/svg>/.test(favicon.body),
+      JSON.stringify({ status: favicon.status, ct: favicon.headers && favicon.headers['content-type'] }));
+
     const status = await httpGet(PORT, '/api/pane/status');
     ok('S1 /api/pane/status returns rc=0 + fixture session', status.json && status.json.rc === 0 &&
       JSON.stringify(status.json.data).includes('sess-fixture'), JSON.stringify(status.json));

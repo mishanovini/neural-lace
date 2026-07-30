@@ -36,6 +36,18 @@ function ok(name, cond) {
 const C = css.replace(/\s+/g, ' ');
 
 // --- six-question surfaces present -----------------------------------------
+// --- R17 deliverable 1 (audit F7 / ledger row 80): "Cockpit" everywhere
+// user-visible — <title>, <h1>, aria-label. "Workstreams" (the losing
+// name) must be GONE from every one of those three surfaces; internal
+// identifiers (WorkstreamsShell, localStorage keys, the workstreams-ui
+// package/dir name) are explicitly OUT of scope this round and unchanged. --
+ok('R17-N1 <title> reads "Cockpit", never "Workstreams"', /<title>Cockpit<\/title>/.test(html) && !/<title>Workstreams<\/title>/.test(html));
+ok('R17-N2 the header <h1> reads "Cockpit", never "Workstreams"', /<h1>Cockpit<\/h1>/.test(html) && !/<h1>Workstreams<\/h1>/.test(html));
+ok('R17-N3 the tab-nav aria-label reads "cockpit views", never "workstreams views"',
+  /aria-label="cockpit views"/.test(html) && !/aria-label="workstreams views"/.test(html));
+ok('R17-N4 WorkstreamsShell (the internal global namespace) is UNCHANGED this round — the rename is scoped to user-visible strings only, per the operator\'s own "Do NOT rename file paths/module names/internal ids"',
+  /WorkstreamsShell/.test(js));
+
 ok('R1 all six panes present (needsMe/status/health/costs/shipped/backlog)',
   /id="paneNeedsMe"/.test(html) && /id="paneStatus"/.test(html) && /id="paneHealth"/.test(html) &&
   /id="paneCosts"/.test(html) && /id="paneShipped"/.test(html) && /id="paneBacklog"/.test(html));
