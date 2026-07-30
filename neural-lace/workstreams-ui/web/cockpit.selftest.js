@@ -2464,6 +2464,51 @@ ok('R17-DRAG-1 (operator 2026-07-30 "I didn\'t ask you to make the whole row the
 ok('R17-DRAG-2 (operator 2026-07-30 "it actually takes several seconds for the GUI to actually update after dropping the item"): performDrop moves the dragged row in the DOM OPTIMISTICALLY — an insertBefore against the target row BEFORE sequentialMove fires its N sequential /api/roadmap/rank round-trips — so a drop renders instantly instead of waiting on the network; the failure path still calls load() to reconcile',
   /performDrop[\s\S]{0,2000}?insertBefore\(draggedRow, targetRow\)[\s\S]{0,400}?sequentialMove\(/.test(roadmapJsNoComments));
 
+// R17-DRAG-3: REAL-EXECUTION behavioural proof, not a source-shape check.
+// The shape-only assertion above passed while the feature was BROKEN in the
+// live app (performDrop used planRowContainer() for BOTH dragged and target,
+// which returns the GROUP — so both resolved to the same element and the
+// insertBefore never ran; caught by hand at :7733). This executes the real
+// movableRowEl + the real insertBefore semantics against a synthetic DOM and
+// asserts the ORDER ACTUALLY CHANGES.
+(function () {
+  var src = roadmapJs;
+  var m = src.match(/function movableRowEl\(el, container\) \{[\s\S]*?\n  \}/);
+  var moved = false, sameParentGuardHeld = false;
+  if (m) {
+    // Minimal DOM stand-ins: parent with three row children, each holding a leaf.
+    function mkNode(name) {
+      return { name: name, parentNode: null, childNodes: [],
+        get nextSibling() {
+          if (!this.parentNode) return null;
+          var i = this.parentNode.childNodes.indexOf(this);
+          return this.parentNode.childNodes[i + 1] || null;
+        },
+        insertBefore: function (node, ref) {
+          var cn = this.childNodes, from = cn.indexOf(node);
+          if (from !== -1) cn.splice(from, 1);
+          var at = ref ? cn.indexOf(ref) : cn.length;
+          if (at === -1) at = cn.length;
+          cn.splice(at, 0, node); node.parentNode = this; return node;
+        } };
+    }
+    var container = mkNode('container');
+    var rows = ['r0', 'r1', 'r2'].map(function (n) { var r = mkNode(n); container.insertBefore(r, null); return r; });
+    var leaf = mkNode('leaf-in-r0'); rows[0].insertBefore(leaf, null);
+    var fn = new Function('document', 'return (' + m[0].replace(/^function /, 'function ') + ')')({ body: mkNode('body') });
+    var draggedRow = fn(leaf, container);      // leaf is NESTED — must resolve to r0, not the container
+    var targetRow = fn(rows[1], container);
+    if (draggedRow === rows[0] && targetRow === rows[1] &&
+        draggedRow !== targetRow && draggedRow.parentNode === targetRow.parentNode) {
+      sameParentGuardHeld = true;
+      targetRow.parentNode.insertBefore(draggedRow, targetRow.nextSibling); // before=false path
+      moved = container.childNodes.map(function (n) { return n.name; }).join(',') === 'r1,r0,r2';
+    }
+  }
+  ok('R17-DRAG-3 real-execution: movableRowEl resolves a NESTED element to the row that is the container\'s direct child (never the container itself — the bug that made the optimistic move a silent no-op live), the same-parent guard holds, and the resulting insertBefore genuinely reorders r0,r1,r2 -> r1,r0,r2',
+    sameParentGuardHeld && moved);
+})();
+
 ok('R16-9 ROUND 16: the hover-reveal height:0 chrome mechanism (.rm-title-edit, .rm-item-chrome and its :focus-within/.rm-editing companion rules) is completely gone from the stylesheet — replaced by .rm-drag-handle (always-rendered, no layout-jumping reveal/hide)',
   !/\.rm-title-edit,\s*\.rm-item-chrome/.test(C) &&
   !/\.rm-item-chrome:focus-within/.test(C) &&

@@ -1102,6 +1102,24 @@
   function planRowContainer(rowEl) {
     return rowEl.closest('.rm-project-group, .rm-children.rm-phase-series, .rm-tree');
   }
+  // movableRowEl(el, container) -> the element that is the DIRECT CHILD of
+  // `container` on `el`'s ancestor chain — i.e. the unit the optimistic
+  // reorder must move. NOT planRowContainer(): that returns the GROUP
+  // (.rm-project-group / .rm-tree), so using it for both dragged and
+  // target resolved BOTH to the same element and the optimistic move
+  // silently no-op'd (caught live at :7733, 2026-07-30 — the drop's rank
+  // POST fired while the DOM never changed). Depending on layout the unit
+  // is either the .rm-phase-step wrapper or the bare .rm-node.rm-kind-plan,
+  // exactly matching siblingPlanRows' own two selectors below.
+  function movableRowEl(el, container) {
+    if (!el || !container) return null;
+    var cur = el;
+    while (cur && cur.parentNode && cur.parentNode !== container) {
+      cur = cur.parentNode;
+      if (cur === document.body) return null;
+    }
+    return (cur && cur.parentNode === container) ? cur : null;
+  }
   function siblingPlanRows(container) {
     if (!container) return [];
     return Array.prototype.slice.call(
@@ -1185,9 +1203,10 @@
     // failure), so a successful drop looks instant and a failed one is
     // corrected rather than silently wrong.
     var draggedEl = document.querySelector('[data-item-id="' + cssEscape(draggedId) + '"]');
-    var draggedRow = draggedEl && planRowContainer(draggedEl);
-    var targetRow = targetEl && planRowContainer(targetEl);
-    if (draggedRow && targetRow && draggedRow.parentNode && draggedRow !== targetRow) {
+    var draggedRow = movableRowEl(draggedEl, container);
+    var targetRow = movableRowEl(targetEl, container);
+    if (draggedRow && targetRow && draggedRow !== targetRow &&
+        draggedRow.parentNode && draggedRow.parentNode === targetRow.parentNode) {
       if (before) targetRow.parentNode.insertBefore(draggedRow, targetRow);
       else targetRow.parentNode.insertBefore(draggedRow, targetRow.nextSibling);
     }
