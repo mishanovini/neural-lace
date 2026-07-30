@@ -337,7 +337,7 @@ constructed as fixtures and shown to report the wrong fields.
   the old one.** This is the load-bearing assumption behind the last-match fix's entire
   premise (and behind F18's fixture): if a re-verification instead overwrote/truncated the
   prior block, first-match and last-match would coincide and 930a369's original bug would
-  never have manifested. Grounded in the real 3404be2 T7 FLIP history the harness-review cited
+  never have manifested. Grounded in the real 3404bd1 T7 FLIP history the harness-review cited
   as precedent, not invented for this fix.
 - **`VERIFICATION_LEVEL` is always a valid non-empty value (`mechanical`/`contract`/`full`) by
   the time either call site (`:1946`, `:1954`) is reached.** Both call sites are inside

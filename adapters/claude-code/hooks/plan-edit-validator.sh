@@ -1164,7 +1164,7 @@ JSON
   # ---- F18 (harness-review REFORMULATE finding 1(a)) — a FAIL->fix->PASS
   # re-verification: the SAME evidence.md accumulates TWO blocks for the
   # SAME task_id (an earlier FAIL, then a later PASS conf 8 after the fix
-  # landed -- the real 3404be2 T7 FLIP shape). The ledger must report the
+  # landed -- the real 3404bd1 T7 FLIP shape). The ledger must report the
   # LAST block's fields (PASS/8), never the first (FAIL) -- proving the
   # awk's early-exit-on-first-match bug is closed.
   #
@@ -1721,7 +1721,7 @@ WARNMSG
 # HARNESS-REVIEW FIX (2026-07-30, REFORMULATE finding 1): the awk below
 # used to `exit 0` the moment it hit the block matching wanted_id, emitting
 # THAT block's fields immediately. On a FAIL->fix->PASS re-verification (a
-# real, recurring pattern in this repo -- see 3404be2's T7 FLIP history --
+# real, recurring pattern in this repo -- see 3404bd1's T7 FLIP history --
 # task-verifier appends a NEW evidence block for the SAME task_id after a
 # fix, rather than replacing the old one) the evidence file accumulates
 # multiple same-id blocks in file order, and the early exit reported the
