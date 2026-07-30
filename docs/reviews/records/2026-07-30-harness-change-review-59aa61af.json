@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-59aa61af",
+  "created_at": "2026-07-30T07:01:23Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group delta-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "3404bd1e92a1c4836d32fe8cee6dbef2d1e88f98",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit.sh",
+      "blob_sha": "e36a925d3fef982516a50cc355a5ce84e062e50c"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — NL-ATTRIBUTION additions are additive: header authoritative only when both plan and task present, free-text heuristic fallback byte-identical otherwise, WARN-only unattributed counter, closed role enum; 10 new scenarios all pass. Suite 92/1 at HEAD vs master's 82/1 with the IDENTICAL pre-existing ST11 red (proven by running master's blob in a temp worktree; filed as WORKSTREAMS-EMIT-ST11-RED-01) — this diff introduces no regression. Doctrine and fragment references verified on-branch.",
+    "findings_summary": "Pre-existing, not this diff: ST11 title-fallback red (82/1 on master, identical at HEAD); filed WORKSTREAMS-EMIT-ST11-RED-01 2026-07-29."
+  },
+  "written_by": "harness-reviewer via write-review-record.sh (delta-2 sweep)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-0ff10e71",
+  "created_at": "2026-07-30T07:05:47Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "operator-authorized adversarial review sweep 2026-07-29, group delta-1 (review-before-deploy backlog)",
+  "change_ref": {
+    "commit_sha": "3404bd1e92a1c4836d32fe8cee6dbef2d1e88f98",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/config-control-producer-scan.sh",
+      "blob_sha": "d0222bfa2bdf4fa14187816473539f21a749ef1a"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — producer-side vaporware scan with real RED->GREEN fixture pairs, marker-proximity FP mitigation, and constitution-§10 fields; 7/7 scenarios including the live-repo zero-FLAGGED assertion, verified under /bin/bash 3.2.57.",
+    "findings_summary": "Minor: header claims exit 2 for self-test failure but scenario failures exit 1 (colliding with the FLAGGED exit code)."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

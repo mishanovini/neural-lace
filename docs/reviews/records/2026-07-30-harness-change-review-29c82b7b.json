@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-29c82b7b",
+  "created_at": "2026-07-30T07:06:36Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group delta-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "3404bd1e92a1c4836d32fe8cee6dbef2d1e88f98",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/review-queue.sh",
+      "blob_sha": "416fbd1940d3277ac01c236819841db17c386d0c"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — review queue with a mechanical self-claim refusal (session-id equality, deliberately no override flag), content-key dedupe while an item is open, atomic tmp-then-mv item writes, and a HARNESS_SELFTEST sandbox default; 13/0 verified first-hand under /bin/bash 3.2.57. Minor noted: jq is an unguarded hard dependency (absent jq would produce a malformed item rather than a refusal); unknown-session collisions fail toward refusal, the safe direction for an independence guard.",
+    "findings_summary": "Minor: guard jq availability at entry (absent jq currently degrades to a malformed item file); not blocking on this estate where jq is a standing dependency of the hook chain."
+  },
+  "written_by": "harness-reviewer via write-review-record.sh (delta-2 sweep)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}
