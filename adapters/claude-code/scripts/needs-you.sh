@@ -925,21 +925,27 @@ _ny_tsv_unescape() {
 
 # _ny_local_path_candidates_from_text <text>
 #   Extract local-path-shaped tokens embedded in free text: (a) Windows
-#   absolute paths (C:\...), unquoted or quoted, terminated at whitespace or
-#   a closing quote/paren; (b) POSIX absolute paths, but ONLY inside double
-#   quotes. Deliberately narrow: a broader unquoted slash-based scan risks
-#   matching inside a URL (https://host/path/file.md) or ordinary unquoted
+#   absolute paths (C:\...) and (b) POSIX absolute paths, BOTH only inside
+#   double quotes. Deliberately narrow: an unquoted scan risks matching
+#   inside a URL (https://host/path/file.md), inside ordinary unquoted
 #   repo-relative prose (which should use the structured links[] field
-#   instead) and mislabeling either a dead local path. Every real "run this
-#   file" pointer actually seen in this ledger is double-quoted
-#   (`bash "C:\...\foo.sh"` / `bash "/tmp/.../foo.sh"`), so scoping the POSIX
-#   half to quotes matches the real shape without widening the net. A single
-#   leading slash (not "//") also keeps it from matching a scheme-relative
-#   URL fragment.
+#   instead), or -- the false-positive this comment used to not warn about,
+#   caught live in the real machine ledger the first time this rendered
+#   against production data -- truncating an unquoted Windows path at the
+#   first SPACE in a directory name ("C:\Users\misha\dev\Pocket Technician\..."
+#   has a space in "Pocket Technician"; an unquoted, whitespace-terminated
+#   match produced the truncated fragment "C:\Users\misha\dev\Pocket", which
+#   isn't a real path at all and got wrongly flagged dead). Every real "run
+#   this file" pointer actually seen in this ledger is double-quoted
+#   (`bash "C:\...\foo.sh"` / `bash "/tmp/.../foo.sh"`), so scoping BOTH
+#   halves to quotes matches the real shape without widening the net or
+#   truncating on an embedded space. A single leading slash (not "//") on
+#   the POSIX half also keeps it from matching a scheme-relative URL
+#   fragment.
 _ny_local_path_candidates_from_text() {
   local text="$1"
   {
-    printf '%s' "$text" | grep -oE '[A-Za-z]:\\[^ "'"'"')]+' 2>/dev/null
+    printf '%s' "$text" | grep -oE '"[A-Za-z]:\\[^"]+"' 2>/dev/null | sed -E 's/^"//; s/"$//'
     printf '%s' "$text" | grep -oE '"/[^/"][^"]*"' 2>/dev/null | sed -E 's/^"//; s/"$//'
   } | sort -u
 }
