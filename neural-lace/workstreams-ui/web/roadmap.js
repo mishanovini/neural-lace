@@ -1174,6 +1174,23 @@
     var move = computeReorderSteps(ids, draggedId, targetId, before);
     if (!move) return;
     var draggedItem = findItemData(draggedId) || { id: draggedId };
+    // OPTIMISTIC MOVE (operator, 2026-07-30: "it actually takes several
+    // seconds for the GUI to actually update after dropping the item").
+    // ROOT CAUSE: a drop of N positions fires N SEQUENTIAL round-trips
+    // (sequentialMove recurses one /api/roadmap/rank POST per position,
+    // each awaiting the last) and only then re-renders — so the row sat
+    // visibly un-moved for seconds and the drag read as broken.
+    // The DOM now moves IMMEDIATELY, before any network call; the
+    // persistence still runs (and still reconciles/repairs via load() on
+    // failure), so a successful drop looks instant and a failed one is
+    // corrected rather than silently wrong.
+    var draggedEl = document.querySelector('[data-item-id="' + cssEscape(draggedId) + '"]');
+    var draggedRow = draggedEl && planRowContainer(draggedEl);
+    var targetRow = targetEl && planRowContainer(targetEl);
+    if (draggedRow && targetRow && draggedRow.parentNode && draggedRow !== targetRow) {
+      if (before) targetRow.parentNode.insertBefore(draggedRow, targetRow);
+      else targetRow.parentNode.insertBefore(draggedRow, targetRow.nextSibling);
+    }
     sequentialMove(draggedItem, move.direction, move.count, say);
   }
   // wirePlanRowReorder(det, sum, item) — called from renderNode for every
@@ -1188,27 +1205,32 @@
       handle.title = 'drag to reorder';
       titleCellEl.insertBefore(handle, titleCellEl.firstChild);
     }
-    // Live fix (operator, 2026-07-30): the WHOLE row is the drag surface.
-    // The grip alone was a ~14px target — a real mouse drag anywhere else
-    // on the row did nothing (grip-only dragstart), which read as "drag and
-    // drop doesn't work". The grip stays as the visual affordance; its own
-    // dragstart bubbles here. Drags beginning on links/buttons are not
-    // hijacked — those keep native behavior.
-    sum.draggable = true;
-    sum.addEventListener('dragstart', function (e) {
-      if (e.target && e.target.closest && e.target.closest('a, button, input, textarea')) { e.preventDefault(); return; }
-      dragState = { itemId: item.id };
-      det.classList.add('rm-dragging');
-      if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = 'move';
-        try { e.dataTransfer.setData('text/plain', item.id); } catch (_) {}
+    // REVERTED (operator, 2026-07-30): the whole-row drag surface was my
+    // own inference, not an ask — "I didn't ask you to make the whole row
+    // the drag surface. Please undo that." The grip is the ONLY drag
+    // handle, as Round 16 shipped it. The real defect the operator then
+    // identified was latency, not hit-area: the drop fired N sequential
+    // /api/roadmap/rank round-trips followed by a full roadmap re-render,
+    // so the row visibly snapped back and only reordered seconds later.
+    // That is fixed in performDrop (optimistic DOM move), not here.
+    if (titleCellEl) {
+      var gripEl = titleCellEl.querySelector('.rm-drag-handle');
+      if (gripEl) {
+        gripEl.addEventListener('dragstart', function (e) {
+          dragState = { itemId: item.id };
+          det.classList.add('rm-dragging');
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            try { e.dataTransfer.setData('text/plain', item.id); } catch (_) {}
+          }
+        });
+        gripEl.addEventListener('dragend', function () {
+          det.classList.remove('rm-dragging');
+          clearDropIndicators();
+          dragState = null;
+        });
       }
-    });
-    sum.addEventListener('dragend', function () {
-      det.classList.remove('rm-dragging');
-      clearDropIndicators();
-      dragState = null;
-    });
+    }
 
     sum.addEventListener('dragover', function (e) {
       if (!dragState || dragState.itemId === item.id) return;

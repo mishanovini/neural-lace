@@ -2457,6 +2457,13 @@ ok('R16-8 mutation control: the Round 13 30px margin and the -6px break-leaving 
 // 3/4/5) — restated as R16-9 (proof of absence; T3-42/T3-42b above already
 // cover the same retirement from a different angle, kept here so the
 // R13-7x numbering isn't silently orphaned without an explicit successor).
+ok('R17-DRAG-1 (operator 2026-07-30 "I didn\'t ask you to make the whole row the drag surface. Please undo that."): the grip handle .rm-drag-handle is the ONLY dragstart source — the summary row itself is NOT made draggable (no `sum.draggable = true`), so the Round-16 hit-area contract is restored exactly',
+  /gripEl\.addEventListener\('dragstart'/.test(roadmapJsNoComments) &&
+  !/sum\.draggable\s*=\s*true/.test(roadmapJsNoComments));
+
+ok('R17-DRAG-2 (operator 2026-07-30 "it actually takes several seconds for the GUI to actually update after dropping the item"): performDrop moves the dragged row in the DOM OPTIMISTICALLY — an insertBefore against the target row BEFORE sequentialMove fires its N sequential /api/roadmap/rank round-trips — so a drop renders instantly instead of waiting on the network; the failure path still calls load() to reconcile',
+  /performDrop[\s\S]{0,2000}?insertBefore\(draggedRow, targetRow\)[\s\S]{0,400}?sequentialMove\(/.test(roadmapJsNoComments));
+
 ok('R16-9 ROUND 16: the hover-reveal height:0 chrome mechanism (.rm-title-edit, .rm-item-chrome and its :focus-within/.rm-editing companion rules) is completely gone from the stylesheet — replaced by .rm-drag-handle (always-rendered, no layout-jumping reveal/hide)',
   !/\.rm-title-edit,\s*\.rm-item-chrome/.test(C) &&
   !/\.rm-item-chrome:focus-within/.test(C) &&
