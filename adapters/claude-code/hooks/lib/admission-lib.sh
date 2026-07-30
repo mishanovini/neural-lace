@@ -1371,9 +1371,63 @@ _adm_self_test() {
   v="$(ADM_PRESSURE_MAX_AGE_SECS=1 adm_admit emit-feed)"
   last="$(tail -1 "$led")"
   case "$last" in
-    *'"pressure_src":"tick-stale"'*) pass "ledger records pressure_src=tick-stale for an outlived color (calibration readers can discount it)" ;;
+    *'"pressure_src":"tick-stale"'*) pass "ledger records pressure_src=tick-stale specifically for the AGE cause (calibration readers can discount it)" ;;
     *) fail "expected pressure_src=tick-stale for a stale file: $last" ;;
   esac
+  rm -f "$ADM_PRESSURE_FILE"
+
+  # tick-unreadable (2026-07-30 delta re-review finding 4): a FRESH file
+  # (age bound satisfied) whose color value is garbage is a DIFFERENT cause
+  # than staleness -- content is unreadable, not old. Before this fix both
+  # collapsed into the same "tick-stale" label; distinguishing them lets a
+  # calibration reader tell "the tick is dead" (age) apart from "the tick
+  # wrote something broken" (content).
+  printf '{"color":"not-a-real-color"}\n' > "$ADM_PRESSURE_FILE"
+  pc21="$(adm_pressure_color)"
+  [[ "$pc21" == "unknown" ]] && pass "a fresh file with a garbage color value still reads unknown" \
+    || fail "expected unknown from a garbage color value, got '$pc21'"
+  adm_admit emit-feed >/dev/null
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"pressure_src":"tick-unreadable"'*) pass "ledger records pressure_src=tick-unreadable for a fresh-but-garbled color (distinct from tick-stale)" ;;
+    *) fail "expected pressure_src=tick-unreadable for a fresh garbage-color file: $last" ;;
+  esac
+  rm -f "$ADM_PRESSURE_FILE"
+
+  echo "Scenario 22: BSD-only stat() shim -- adm_pressure_color must still read a fresh file's real color (2026-07-30 delta re-review finding 1, CRITICAL)"
+  # THE BUG: adm_pressure_color's C2 age bound called `stat -c %Y` directly
+  # instead of this file's own portable _adm_mtime helper. GNU `stat`
+  # supports -c; BSD/macOS `stat` does NOT -- it prints nothing and exits
+  # nonzero -- so on a real BSD/macOS box p_m was permanently empty and
+  # every FRESH pressure file read as stale ("unknown") forever, regardless
+  # of how recently the tick actually ran. Reproduce that machine here,
+  # without a Mac, by shimming a BSD-shaped `stat` earlier on PATH: reject
+  # -c (GNU), accept -f FORMAT (BSD) -- the exact contract split _adm_mtime
+  # already codes against. Built-in `printf '%(%s)T'` avoids any recursive
+  # subprocess call back into `stat` (a naive shim shelling out to `stat`
+  # for the "real" mtime would just re-invoke itself via PATH).
+  bshim_dir="$T/bsd-stat-shim"
+  mkdir -p "$bshim_dir"
+  cat > "$bshim_dir/stat" <<'BSDSTAT'
+#!/bin/bash
+# Minimal BSD/macOS-shaped `stat` shim, self-test only.
+case "$1" in
+  -c) exit 1 ;;
+  -f)
+    fmt="$2"
+    case "$fmt" in
+      %m) printf '%(%s)T\n' -1 ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
+BSDSTAT
+  chmod +x "$bshim_dir/stat"
+  printf '{"color":"green"}\n' > "$ADM_PRESSURE_FILE"
+  pc22="$(PATH="$bshim_dir:$PATH" ADM_PRESSURE_MAX_AGE_SECS=7200 adm_pressure_color)"
+  [[ "$pc22" == "green" ]] && pass "fresh pressure file still reads its real color through a BSD-only stat (was permanently 'unknown' pre-fix)" \
+    || fail "BSD-stat regression: expected green through the BSD-shaped stat shim, got '$pc22'"
   rm -f "$ADM_PRESSURE_FILE"
 
   rm -rf "$T"
