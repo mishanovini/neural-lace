@@ -393,6 +393,8 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   `server/auditor.js` / `server/payload-schema.js` remain unreconciled for
   whichever task next stages those two.
 - 2026-07-19: `neural-lace/workstreams-ui/web/asks.js` — task 6 badge-law renderer fix (already covered by task 3's `web/*` glob entry above; named explicitly here so task 6's commit is unambiguously attributed and doesn't depend on a different task's entry)
+- 2026-07-29: `docs/reviews/2026-07-29-cockpit-roadmap-redesign-advocate-runtime.md` — task 9 end-user-advocate runtime artifact (first-pass verdict + the Round-14 re-run section appended 2026-07-29; append-only, original kept intact per the re-run brief).
+- 2026-07-29: `docs/reviews/records/acceptance-cockpit-roadmap-redesign-2026-07-29/*` — task 9 acceptance evidence (screenshots + per-probe results JSONs for both passes; non-fakeable gate input backing the artifact's per-scenario grounds).
 - 2026-07-19: `neural-lace/workstreams-ui/web/cockpit.selftest.js` — task 6 badge-multiplicity fixture tests (T6-0..T6-5), same attribution note as the asks.js entry above
 - 2026-07-19: `neural-lace/workstreams-ui/server/requests-routes.js` — task 5 NEW route module (Requests ledger payload/title/amend-detach; task 1 owns server.js, task 2 owns ask-registry.sh — mount line + verb seams ship as fragments)
 - 2026-07-19: `neural-lace/workstreams-ui/server/requests-routes.selftest.js` — task 5 NEW sandboxed selftest (own file so task 1's server.selftest.js is never raced)

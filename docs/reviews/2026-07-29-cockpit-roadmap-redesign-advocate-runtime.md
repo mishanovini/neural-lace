@@ -132,3 +132,85 @@ Machine-readable summary:
   "verdict": "FAIL"
 }
 ```
+
+---
+
+# RE-RUN 2026-07-29 (Round 14, commit 2d48b71) — end-user-advocate runtime, session a3fcb6ea
+
+Target: LIVE cockpit http://127.0.0.1:7733 + fixture-seeded SANDBOX :7799 (same code,
+env-redirected state). The six R14-touched files verified byte-identical between 2d48b71,
+the post-merge branch HEAD, and the disk the LaunchAgent serves. **Deploy note:** the live
+LaunchAgent process predated R14 (started 10:34, R14 landed 17:25) and was still serving
+pre-R14 in-memory server code — the exact merged-undeployed class this cockpit's own chip
+names. Restarted via `launchctl kickstart -k gui/501/local.neurallace.workstreams-cockpit`
+(17:31) before probing; all live probes below ran against R14 code. Method: headless Chrome
+via puppeteer-core, per-probe assertions; zero-fixture-leak verified after the run (real
+ledger untouched incl. mtime/perms, no fixture ids in real ask-registry/needs-you/NEEDS-YOU.md,
+no fx-* files in the real plans dir). Evidence: `R2-*`/`R2L-*` files + three `*-rerun*-results.json`
+in `docs/reviews/records/acceptance-cockpit-roadmap-redesign-2026-07-29/`.
+
+## RE-RUN VERDICT: FAIL on exactly ONE residual leg — 8 of 9 scenarios green, S9 pending-operator
+
+Five of the six Round-14 fixes verify end-to-end against the running product. The sixth
+(corrupt-bucket) closes 2 of its 3 corruption shapes; the third shape (Status-header-destroyed)
+still vanishes silently — R14's commit declares it deliberately out of scope, the re-run brief
+declared it in scope. That single conflict is the only thing between this re-run and green.
+
+| # | Scenario | Was | Now | Ground (probe ids in the results JSONs) |
+|---|---|---|---|---|
+| 1 | Archived complete never ACTIVE | PASS | **PASS** (regression spot-check) | R2L-S1: payload sweep — 0 all-done plans outside complete/merged-unverified; 5 archived complete plans render complete (archive fact = plan_path). |
+| 2 | Merged-undeployed labeled | PASS | **PASS** (regression spot-check) | R2-S2: fx-deploy-done payload `merged-unverified` + "merged — deploy unverified" chip rendered. |
+| 3 | Context contract / quarantine | PASS | **PASS** (regression spot-check) | R2L-S3: live payload shape intact (links/blocks_roadmap_id/reply_stub on every item), tab count == answerable count. Sandbox quarantine leg re-exercised incidentally (867a renders quarantined). |
+| 4 | Badge-storm cap | PASS | **PASS** (surface spot-check) | R2L-S4: Harness Health Diagnostics (bookkeeping divergences row) renders post-R14-app.js; requests-routes untouched by R14 (selftest 173/25 unchanged per commit). |
+| 5 | Peer view surface | **FAIL** | **PASS (surface) — timing leg HYPOTHESIZED** | PEERS-SURFACE-RETIRED-01 closed: live Harness Health renders the new "Machines" section; empty state names the exact tracked reason ("no peer exports received — … COORD-SYNC-NO-PEER-EXPORTS-YET-01 (docs/backlog.md)") — R2L-S5 + screenshot R2L-S5-machines-empty.png; double-click idempotent. Non-empty path proven in sandbox: seeded peer export renders "peer-laptop (fresh, Xm ago)" chip (R2-S5, R2-S5-machines-sandbox.png). The scenario's cross-machine ≤2min flip→update leg remains HYPOTHESIZED, not proven: zero real peers have ever exported (the named backlog row); refuter = first real peer export not appearing within ~2min. Not fakeable from one machine — saying so per the brief. |
+| 6 | Waiting-on-you roll-up (C1/C2) | **FAIL** | **PASS — full leg, end to end** | Producer exists and fires: answerable ledger item naming docs/plans/fx-active.md + "task 3" → fx-active/3 derives `stalled — waiting-on-you` with `unblock {label:"open in Inbox", hash:"#inbox/NY-…-f68a"}` (R2-S6-producer-payload); plan roll_up counts it (R2-S6-plan-rollup). DOM, tree fully collapsed: counted labeled badge "1 stalled — waiting on you" VISIBLE on the collapsed plan row (row 174→36px summary-only; badge 132×30, hit-test confirmed; project groups are non-collapsible sections — no ancestor can hide the badge); badge click expands the path to the stalled task; "open in Inbox" lands `#inbox/<id>` focused + `.landing-highlight`; Back restores roadmap with expansion intact and row position delta 0px (R2-S6-* probes + 3 screenshots). Reverse chip: Inbox item shows "blocks: fx-active/3". CONSERVATIVE-matcher probes: an item naming a nonexistent "task 99" fabricates nothing (no node, no chip); a RESOLVED item referencing task 2 stalls nothing. Note the derivation precondition: only a STARTED task can stall (not-started stays not-started even when referenced) — matches the scenario's "stall one deep descendant", worth knowing for operator expectations. |
+| 7 | Corrupt inputs (C5/C4) | **FAIL** | **FAIL (1 of 6 legs residual)** | FIXED legs: scan-path corrupt plan with surviving-but-bogus `Status: WHAT` → unknown("plan parse failed (unrecognized Status: …)"), never not-started (R2-S7a; INBOX defect 2's shape (a)); scan-path unreadable (chmod-000) plan → unknown("plan file unreadable (EACCES)") (shape (c)); both roll up ("3 status unknown"); chmod-000 LEDGER → `/api/inbox {ok:false, status:"unavailable", ledger_present:true}` AND pane renders `(!)` + pane-error + Retry, NEVER the win state; Retry after restore recovers to the true count (R2-S7c ×3 — defect 1 closed, both halves). RESIDUAL FAIL: a scanned plan whose Status: header was itself destroyed by corruption (binary body, no header — fx-corrupt3) still VANISHES silently (shape (b)); R14 declares header-less files deliberately excluded (anti-flooding rationale vs evidence.md stubs), but the re-run brief's bar is "a Status-less corrupt plan must NOT vanish", and the narrow fix (apply the existing PLAN_BODY_CORRUPTION_RE signature to header-less files too) would not flood clean stubs. Filed: ROADMAP-STATUSLESS-CORRUPT-VANISH-01 (nl-issues ledger). Orchestrator call: fix the narrow leg, or move it to `## Out-of-scope scenarios` with the R14 rationale — either unblocks S7. |
+| 8 | Operator title survives distiller | PASS | **PASS** (regression re-run) | R2-S8: POST title → newer auto summary_updated appended → after cache expiry title_source=operator, operator text wins. |
+| 9 | Operator cold-start <60s | PENDING | **PENDING-OPERATOR** | Unchanged — the operator's own timed walkthrough. |
+
+**Mid-round scope addition (live operator complaint) — VERIFIED:** the multi-line §3 anatomy
+contract. The real production item NY-1785369704-ecbf was RESOLVED (live inbox empty) during
+the run gap, so its exact raw text (7-line, "Option NAME -> effect -> outcome" arrow grammar,
+inline repo-path anchor, no producer links) was replayed VERBATIM into the sandbox ledger:
+renders FULL anatomy expanded — title label-stripped (no "Decision needed: Decision needed:"
+doubling), BOTH arrow-options with their complete outcome text in the trade-offs structure,
+My pick, Reply-with, and a "Links:" section carrying the extracted `docs/plans/review-independence.md`
+anchor as text + copy button — zero `<a>` elements with fabricated/relative hrefs (dead-link
+sweep: 0) (R2-INBOX-arrow-anatomy-full + screenshot). SUPERSEDED placement (defect 6): live
+cockpit-ui-polish renders inside Shipped with the distinct "superseded" terminal chip
+(`rm-status-terminal-superseded`), zero instances outside Shipped, plain complete siblings
+chipless — R2L-superseded-shipped-chip + screenshot.
+
+Console errors: 0 across both instances and all probe passes. Non-2xx responses: 0.
+Probe-harness corrections during the run (recorded honestly in the results JSONs, superseded
+probes kept): the first ancestor-badge/back-restore probes used slug-text row matching and the
+`offsetParent` oracle — both invalid (rows are titled via the R14 title fold; Chrome implements
+closed `<details>` with content-visibility, so descendants keep measurement boxes). Corrected
+oracles: `data-item-id` selectors, geometry (row height 174→36px) + `elementFromPoint` hit-test.
+
+```json
+{
+  "rerun_of": "2026-07-29 first pass (5/9)",
+  "fix_commit": "2d48b712967998f7bd3434868342413d23aa1120",
+  "verified_against": "live :7733 (post-restart, R14 in memory) + sandbox :7799 (R14 code)",
+  "scenarios": {
+    "s1_archived_complete": "PASS", "s2_merged_unverified": "PASS", "s3_context_contract": "PASS",
+    "s4_badge_storm": "PASS",
+    "s5_peer_view": "PASS_SURFACE_TIMING_LEG_HYPOTHESIZED",
+    "s6_waiting_on_you_rollup": "PASS",
+    "s7_corrupt_inputs": "FAIL_RESIDUAL_1_OF_6_LEGS",
+    "s8_title_fold": "PASS", "s9_operator_walkthrough": "PENDING_OPERATOR"
+  },
+  "defect_closure": {
+    "INBOX-UNREADABLE-LEDGER-WIN-STATE-01": "CLOSED-VERIFIED",
+    "ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01": "PARTIALLY-CLOSED (shapes a+c verified; shape b residual -> ROADMAP-STATUSLESS-CORRUPT-VANISH-01)",
+    "ROADMAP-WAITING-ON-YOU-SIGNAL-01": "CLOSED-VERIFIED",
+    "PEERS-SURFACE-RETIRED-01": "CLOSED-VERIFIED",
+    "ROADMAP-SUPERSEDED-RENDERS-PENDING-01": "CLOSED-VERIFIED",
+    "INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01": "CLOSED-VERIFIED",
+    "AUDITOR-NL-ISSUE-STORM-AMPLIFICATION-01": "advisory, unchanged (not in R14 scope)"
+  },
+  "console_errors": 0, "non_2xx_responses": 0,
+  "verdict": "FAIL (single residual leg: Status-less corrupt plan vanishes; orchestrator: fix or de-scope with rationale)"
+}
+```
