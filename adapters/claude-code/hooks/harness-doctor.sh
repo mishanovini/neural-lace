@@ -5676,13 +5676,17 @@ EOF
 
   # ---- review-reviewer-independence: PRE-CUTOVER GRANDFATHER fixture --
   # the exact self-approval shape (same author on both the reviewed commit
-  # and the record's commit), but using the REAL production
-  # _RRI_CUTOVER_COMMIT default (no override) -- which cannot exist in a
-  # from-scratch fixture repo, so the record correctly reads as PRE-cutover.
-  # Must WARN, never RED: this is the 2026-07-29 sweep's exact shape
-  # (docs/plans/review-independence.md Decisions Log) -- a deliberate,
-  # operator-authorized stopgap predating the mechanism, not a violation to
-  # flag retroactively. ----
+  # and the record's commit), but using the REAL production default
+  # _RRI_CUTOVER_ISO (2026-07-30T09:00:00Z, no override -- unlike the RED/
+  # GREEN twins above, which must override it since a from-scratch fixture
+  # repo has no way to predate a real production timestamp otherwise). The
+  # record's own `created_at` (2026-07-29T00:00:00Z, below) string-compares
+  # as EARLIER than that default, so check_review_reviewer_independence's
+  # ISO-date comparison classifies it PRE-cutover on its own -- no test-seam
+  # override needed for this one. Must WARN, never RED: this is the
+  # 2026-07-29 sweep's exact shape (docs/plans/review-independence.md
+  # Decisions Log) -- a deliberate, operator-authorized stopgap predating
+  # the mechanism, not a violation to flag retroactively. ----
   D=$(_scenario_dir review-reviewer-independence-pre-cutover-warn)
   _stamp_claim_honesty_green "$D"
   ( cd "$D/repo" && git init -q -b main )
@@ -5708,6 +5712,27 @@ EOF
     PASSED=$((PASSED + 1))
   else
     echo "self-test (review-reviewer-independence-pre-cutover-warn): FAIL (expected the grandfather WARN line, got: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- B3 (delta-sweep reviewer 2026-07-30): the RI deep-walk's PRODUCTION
+  # trigger (`[[ "${MODE:-}" == "--full" || "${MODE:-}" == "full" ...`,
+  # ~check_review_reviewer_independence) has zero fixture coverage above --
+  # all four RI fixtures reach the walk via the RRI_FORCE_DEEP test seam,
+  # never by actually setting MODE=full. A cheap structural (grep-shaped)
+  # self-test is the pragmatic middle ground: proving MODE==full genuinely
+  # drives the walk at runtime would mean running a real multi-minute
+  # --full sweep per fixture, which the --quick-cost fix earlier in this
+  # same check exists specifically to avoid paying on every self-test run.
+  # This instead pins the SOURCE shape of the gating line itself, so a
+  # future edit that silently drops the production MODE check (leaving only
+  # the test seam) fails loudly here instead of only in an untested
+  # production --full run. ----
+  if grep -q '"\${MODE:-}" == "--full" || "\${MODE:-}" == "full" || "\${RRI_FORCE_DEEP:-0}" == "1"' "$SELF_TEST_HOOK"; then
+    echo "self-test (review-reviewer-independence-mode-full-gating-present): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (review-reviewer-independence-mode-full-gating-present): FAIL (the RI deep-walk's _rri_deep gating line no longer matches the expected MODE==full || RRI_FORCE_DEEP shape -- verify the production trigger, not only the test seam, still gates the authorship walk)" >&2
     FAILED=$((FAILED + 1))
   fi
 
@@ -5739,7 +5764,10 @@ EOF
   # whether the line appears once or twice. This counts it: ONE failing
   # fixture hook must yield EXACTLY ONE "RED selftest-sweep ... failing.sh"
   # line, never two. ----
-  local dup_count
+  # (B1, delta-sweep reviewer 2026-07-30: this whole --self-test handler is
+  # top-level script code guarded by `if [[ "${1:-}" == "--self-test" ]]`,
+  # not a shell function -- `local` here errors "local: can only be used in
+  # a function" on both interpreters, once per run. No `local` keyword.)
   dup_count=$(printf '%s\n' "$OUT" | grep -c "RED selftest-sweep.*failing\.sh")
   if [[ "$dup_count" -eq 1 ]]; then
     echo "self-test (8-selftest-sweep-not-duplicated): PASS" >&2

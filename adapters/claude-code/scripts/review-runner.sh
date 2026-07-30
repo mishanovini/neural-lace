@@ -311,6 +311,7 @@ cmd_finalize() {
   if [[ -n "$_stray" ]]; then
     echo "$SCRIPT_NAME: REFUSING finalize — the index holds staged content outside docs/reviews/records/ (a record commit must contain ONLY the record):" >&2
     printf '%s\n' "$_stray" | head -5 >&2
+    echo "$SCRIPT_NAME: stash or unstage these, then re-run finalize." >&2
     return 2
   fi
 
@@ -334,9 +335,16 @@ cmd_finalize() {
 
   # THE runner commits the record itself, under ITS OWN git identity --
   # never handed back to the authoring session to commit on the reviewer's
-  # behalf. Whatever git user.name/user.email this process's environment
-  # resolves to IS the reviewing principal's committer identity; this
-  # script does not override it.
+  # behalf. A1 (delta-sweep reviewer 2026-07-30, docs/plans/review-
+  # independence.md D8): the runner now STAMPS a principal-derived identity
+  # for this commit rather than trusting whatever git user.name/user.email
+  # the process's ambient environment happens to resolve to -- on this
+  # machine EVERY commit currently falls back to the identical default
+  # identity (user.email unset at both repo and global scope), so an
+  # un-stamped record commit would be authorship-indistinguishable from the
+  # reviewed commit it approves, which is exactly the shape harness-
+  # doctor's review-reviewer-independence RED (author-email equality)
+  # exists to catch. See below.
   local index_file="$repo_root/docs/reviews/records/index.json"
   git -C "$repo_root" add "$record_file" "$index_file" >/dev/null 2>&1
   # Defense-in-depth re-check (primary check hoisted above the writer per the
@@ -352,11 +360,35 @@ cmd_finalize() {
   if [[ -n "$_stray" ]]; then
     echo "$SCRIPT_NAME: REFUSING finalize — the index holds staged content outside docs/reviews/records/ (a record commit must contain ONLY the record):" >&2
     printf '%s\n' "$_stray" | head -5 >&2
+    echo "$SCRIPT_NAME: stash or unstage these, then re-run finalize." >&2
     return 2
   fi
+  # A1: the claimant principal was already re-read from the queue item
+  # above (never re-trusted from fresh CLI flags) -- reviewer+<claimant
+  # session_id>@<hostname> is therefore durable, per-review, and genuinely
+  # distinct from whatever identity authored the reviewed content, without
+  # inventing a new trust source.
+  local claimant_session_id
+  claimant_session_id=$(printf '%s' "$claimant_json" | jq -r '.session_id // empty')
+  [[ -z "$claimant_session_id" ]] && claimant_session_id="unknown-session"
+  local _rr_host; _rr_host=$(hostname -s 2>/dev/null || echo "unknown-host")
+  local _rr_commit_email="reviewer+${claimant_session_id}@${_rr_host}"
+
   local commit_msg="review-record(${item_id}): ${verdict} on ${n} file(s) by ${reviewer} (independence: ${independence})"
-  if ! git -C "$repo_root" commit -q -m "$commit_msg" -- "$record_file" "$index_file" >/dev/null 2>&1; then
-    echo "$SCRIPT_NAME: git commit of the review record failed (nothing to commit, or no git identity configured)" >&2
+  # A2 (delta-sweep reviewer 2026-07-30): capture the child's REAL
+  # stdout+stderr rather than discarding it -- the global hooksPath
+  # pre-commit scanner can veto this commit for a reason that has nothing
+  # to do with "nothing to commit, or no git identity configured" (the old
+  # hardcoded guess), so the failure message must show what the commit
+  # actually said.
+  local commit_out commit_rc
+  commit_out=$(GIT_AUTHOR_NAME="review-runner" GIT_AUTHOR_EMAIL="$_rr_commit_email" \
+    GIT_COMMITTER_NAME="review-runner" GIT_COMMITTER_EMAIL="$_rr_commit_email" \
+    git -C "$repo_root" commit -q -m "$commit_msg" -- "$record_file" "$index_file" 2>&1)
+  commit_rc=$?
+  if [[ "$commit_rc" -ne 0 ]]; then
+    echo "$SCRIPT_NAME: git commit of the review record failed (rc=$commit_rc):" >&2
+    printf '%s\n' "$commit_out" | tail -10 >&2
     return 2
   fi
   local record_commit_sha; record_commit_sha=$(git -C "$repo_root" rev-parse HEAD 2>/dev/null)
@@ -459,8 +491,9 @@ run_self_test() {
   fi
 
   # ---- S5: finalize writes + COMMITS the record under the RUNNER's own
-  # git identity (currently configured as "Runner Process"), links it to
-  # the queue item, and defaults independence to "pathway" (same hostname,
+  # STAMPED identity ("review-runner", A1 -- never the ambient git config
+  # this fixture set to "Runner Process" above), links it to the queue
+  # item, and defaults independence to "pathway" (same hostname,
   # same-session-pathway design) ----
   out=$("$SELF_PATH" finalize --item-id "$item_id" --repo-root "$REPO" --verdict PASS \
     --quote "PASS -- looks correct." --plan-ref "docs/plans/review-independence.md#RI2" \
@@ -469,7 +502,7 @@ run_self_test() {
   local record_commit_author
   record_commit_author=$(git -C "$REPO" log -1 --format=%an 2>/dev/null)
   if [[ "$rc" -eq 0 ]] \
-     && [[ "$record_commit_author" == "Runner Process" ]] \
+     && [[ "$record_commit_author" == "review-runner" ]] \
      && [[ "$(bash "$SCRIPT_DIR/review-queue.sh" get --item-id "$item_id" --state-dir "$QD" 2>/dev/null | jq -r .status)" == "completed" ]]; then
     echo "self-test (S5) finalize-commits-under-runner-identity-and-completes: PASS" >&2
     PASSED=$((PASSED+1))
@@ -582,6 +615,28 @@ run_self_test() {
     PASSED=$((PASSED+1))
   else
     echo "self-test (S9b) record-commit-contains-only-record-paths: FAIL (rc=$rc non-record-files=$rec_files)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S10: the record commit's git identity is the RUNNER's OWN
+  # principal-derived stamp (A1, docs/plans/review-independence.md D8) --
+  # pins "reviewer+<claimant session_id>@<hostname>" exactly, and proves it
+  # OVERRIDES the ambient git config (this fixture repo's ambient identity
+  # is still "Runner Process"/"runner@example.com" from S1 above; the
+  # record commit from S9b (item_id4, claimant "session-reviewer-4") must
+  # NOT carry that identity). This is the mechanism that makes harness-
+  # doctor's review-reviewer-independence RED (author-email equality)
+  # structurally unable to fire on a same-machine pathway review. ----
+  local rec_author_name rec_author_email expected_host
+  rec_author_name=$(git -C "$REPO" log -1 --format=%an HEAD 2>/dev/null)
+  rec_author_email=$(git -C "$REPO" log -1 --format=%ae HEAD 2>/dev/null)
+  expected_host=$(hostname -s 2>/dev/null || echo "unknown-host")
+  if [[ "$rec_author_name" == "review-runner" ]] \
+     && [[ "$rec_author_email" == "reviewer+session-reviewer-4@${expected_host}" ]]; then
+    echo "self-test (S10) record-commit-uses-principal-derived-identity: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S10) record-commit-uses-principal-derived-identity: FAIL (author_name=$rec_author_name author_email=$rec_author_email expected_email=reviewer+session-reviewer-4@${expected_host})" >&2
     FAILED=$((FAILED+1))
   fi
 

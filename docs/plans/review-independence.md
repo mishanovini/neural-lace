@@ -1008,6 +1008,59 @@ two new fields entirely on every row, which is exactly the divergence
 `review-index-consistency` exists to catch; confirmed RED before the rebuild, GREEN
 after).
 
+**D8 — the D7 cutover was redesigned from a pinned commit SHA to an ISO-date
+comparison, and this session closed the resulting self-approval gap at the source
+(delta-sweep + adversarial-review remediation, 2026-07-30, Tier 1, reversible).**
+D7's original `_RRI_CUTOVER_COMMIT` (a pinned SHA tested via `merge-base
+--is-ancestor`) was PROVEN dead (delta-sweep reviewer, by reproduction): the pinned
+SHA existed only on the builder worktree branch that introduced RI3, and RI3 was
+rebased onto master as different SHAs, so the ancestry test could never succeed on a
+real checkout — every self-approval would read as grandfathered WARN forever
+(constitution §10 theatre). Landed in `517fa36` (`fix(final-3 findings): finalize
+ordering ... + the RI doctor fixtures were dead three ways`): the cutover is now
+`REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO` (default `2026-07-30T09:00:00Z`), string-
+compared against each record's own `created_at` — durable across rebases and cherry-
+picks, since records are append-only with `created_at` stamped at write time. The
+same commit also gated the expensive authorship walk itself: measured at ~0.077s ×
+93 records, a full git-log walk on every `--quick` run would cost ~25.7s against
+`--quick`'s <2s contract and grow linearly forever, so the walk now runs only under
+`--full` (production: `MODE == full`); a `RRI_FORCE_DEEP=1` test seam lets self-test
+fixtures reach the walk without paying for a real multi-minute `--full` sweep per
+fixture. (This session added the one piece of fixture coverage `517fa36` left gapped
+— see below — plus fixed the fixture-comment drift D7 left pointing at the retired
+SHA mechanism, both in `adapters/claude-code/hooks/harness-doctor.sh`.)
+
+**This session's decision (adversarial-review remediation, 2026-07-30, Tier 1,
+reversible): the runner-side principal-derived identity stamp is how ADR 067's
+"unforgeable authorship" materializes on a same-machine pathway review, not a
+weakening of the RED.** An adversarial harness-change-review found that
+`review-runner.sh`'s `finalize` committed the review record under whatever ambient
+git identity the process's environment resolved to — and on this machine, EVERY
+commit currently resolves to the identical fallback identity (`user.email` unset at
+both repo and global scope), so a same-machine pathway review's record commit would
+be authorship-indistinguishable from the commit it approves, tripping
+`check_review_reviewer_independence`'s author-email-equality RED (line ~3048) on
+100% of legitimate same-machine reviews once `--full`'s authorship walk actually
+runs. Three options were on the table: (1) demote the RED to WARN, (2) special-case
+fallback-shaped emails (e.g. treat `user@host.local` as "unverifiable, skip"), or (3)
+make the runner's record commit carry a genuinely distinct identity. (1) and (2) both
+weaken the discriminator the whole RI3 mechanism exists to enforce — (1) drops the
+enforcement entirely for the dominant same-machine case, and (2) creates an
+exploitable shape (author a commit under a fallback-looking email on purpose).
+Option (3) was chosen: `review-runner.sh`'s `cmd_finalize` now stamps
+`GIT_AUTHOR_NAME`/`GIT_COMMITTER_NAME` = `review-runner` and
+`GIT_AUTHOR_EMAIL`/`GIT_COMMITTER_EMAIL` = `reviewer+<claimant session_id>@<hostname
+-s>` on the record commit only (env-var override, not a persistent git-config
+change) — the claimant principal was already re-read from the queue item at finalize
+time (D1's point 3; never re-trusted from fresh CLI flags), so the stamped identity
+is durable, per-review, and genuinely distinct from whatever identity authored the
+reviewed content, without inventing a new trust source or touching the doctor's
+check logic at all. Verified: a fixture finalize's record commit now shows
+`author=reviewer+<session>@<host> committer=reviewer+<session>@<host>
+name=review-runner` via `git log --format=%ae`, distinct from the reviewed commit's
+`author@example.com`; pinned by a new self-test scenario (S10,
+`record-commit-uses-principal-derived-identity`) in `review-runner.sh --self-test`.
+
 ## Behavioral Contracts
 <!-- rung: 5 requires this section per plan-reviewer.sh Check 11. -->
 - **Idempotency:** `review-queue.sh enqueue` is idempotent for identical
