@@ -30,7 +30,7 @@ include it in the dispatch-adjacent commit); clear the line in the landing commi
 (>24h, no matching worktree commits) may be taken over after a pull confirms no landed work.
 Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
 
-- Standing split (2026-07-29): OTHER machine → T4 then T5 (closer family / merge-lock surfaces),
+- Standing split (2026-07-29): OTHER machine → T4 then T5 — **CLEARED 2026-07-30: both landed + verified conf 9 (T4 336162c, T5 8be2e3d)** (closer family / merge-lock surfaces),
   plus the T7 full mine (one command, heavy fork load — the faster machine; see backlog
   ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01). DESKTOP → T6 prerequisites as file-disjoint
   micro-slices (occupancy TTL cache in admission-lib; env-bypass closure; Loop-2 pressure tick),
@@ -63,7 +63,7 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
       closure-gates-new-work WIP rule in the admission lib + no-orphan registration at
       spawn-worktree. Outcome metric: zero unattributable worktrees/branches older than 48 h.
       LOE: MEDIUM, 2–3 bs, medium-high variance (lifecycle semantics). Verification: full.
-- [ ] T5 — Estate merge lock + single deterministic merge script (coord-sync single-writer idiom);
+- [x] T5 — Estate merge lock + single deterministic merge script (coord-sync single-writer idiom);
       closers call it; nothing else merges. Outcome metric: zero master divergence events while
       active (re-check 14 d). LOE: SMALL-MEDIUM, 1–2 bs, medium variance (git edge cases).
       Verification: full.

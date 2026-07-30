@@ -588,3 +588,37 @@ Confidence: 8
 Reason: PROVEN — the harness-internal oracle (the lib's --self-test) was run TWICE with an identical, stable 46/1 result; the SOLE failure (Scenario 6, F9 rate window) was falsified to ground and shown to be a fork-tax wall-clock artifact of this ~24x-taxed machine (stamps 32 wall-seconds apart vs 2.5s user+sys; 2 stamp files correctly on disk = the F9 property holds), not a defect. T3's central safety claim — OBSERVE MODE never blocks — is triply re-derived (unconditional return 0 at :597, Scenario 15 PASS in both runs, isolated worst-case probe returning rc 0 under HALT+DRAIN+BLACK+999). All four splice sites are live at file:line and observe-only by construction (`|| true` after real work). The C2/C3/C4 occupancy fixes pass against the producer-shaped golden fixture (occupancy=1, scoped count, staleness, single-line multi-key extraction). The local 0758232 sentinel edit is isolated 200+ lines from the splice and does not interact. Confidence 8 (not 9) honestly discounts that a fully-green self-test was unattainable on this hardware — one red assertion had to be reasoned through and independently re-derived rather than observed green. Adversarial probes that did not break it: isolated rate metamorphic check (proved the mechanism, not the test's timing assumption), isolated worst-case observe-mode probe, splice-region diff against the unrelated sentinel commit, golden-fixture producer-shape audit.
 
 Outcome-metric note (Program rule 2): the metric "7 days of would-block ledger separating storm vs legitimate load" is forward-looking and cannot be a present fact at build time. Per the builder's disposition (honored): the >=7-day clock starts from the fixed build; the 14 pre-fix lines were archived to state/governor/discarded/. Re-check when reading calibration must apply the named caveats — pressure_src=absent on every line (Loop-2 tick unbuilt), occupancy -1 on any machine without a janitor snapshot, and the four environment bypasses — all of which are T6 acceptance criteria already recorded in the plan (lines 47-58) and the manifest retirement_condition. This verdict certifies the OBSERVE-MODE MECHANISM is built, wired, and safe; it does not and cannot certify the 7-day dataset, which accrues after close.
+
+## Task T5
+
+EVIDENCE BLOCK
+==============
+Task ID: T5
+Task description: Estate merge lock + single deterministic merge script (coord-sync single-writer idiom); closers call it; nothing else merges. Outcome metric: zero master divergence events while active (re-check 14 d). Verification: full.
+Verified at: 2026-07-30T06:20Z (flip same day)
+Verifier: task-verifier — PASS, confidence 9
+Subject SHA: 8be2e3d
+
+PROVEN (verifier's own re-derivation, 14 checks): estate-merge 52/0 and close-worktree 26/0
+reproduced on BOTH /bin/bash 3.2.57 AND /opt/homebrew/bin/bash 5.3.15 by BOTH absolute and
+relative invocation (8 suite runs); force-push mutation from a scratch copy against a
+first-proven-green baseline -> 51/1 caught by the STATIC guarantee (constitution §9
+load-bearing); graduation-disabled mutation -> 20/6 with exactly the claimed failure set;
+composed e2e on the REAL scripts in a sandboxed fixture: spawn(register, plan/task/who) ->
+genuinely-unintegrated commit -> close --verified -> estate-merge fast-forward under the mkdir
+lock -> master tree contains the change + registration closed disposition=merged + one
+merges.log row; MUTUAL EXCLUSION proven by a genuine two-process race (A merged under a
+4s-held lock, B refused rc=2, one winner, one log row, no-ff rationale recorded); real repo
+refs and real estate-merge state untouched by every run (movements attributed to concurrent
+sessions via reflog); runbook step-6 retirement is a real dated, honestly-scoped supersession
+(kept fully required for the Part-A union reconcile); live outcome metric CLEAN against both
+real targets; clock start 2026-07-30T05:56:59Z, re-check 2026-08-13T05:56Z.
+
+Runtime verification: test adapters/claude-code/scripts/estate-merge.sh::--self-test (52/0, both interpreters, both invocation styles)
+Runtime verification: test adapters/claude-code/scripts/close-worktree.sh::--self-test (26/0, both interpreters, both invocation styles)
+Runtime verification: file adapters/claude-code/scripts/close-worktree.sh::_cw_estate_merge
+Runtime verification: file docs/runbooks/master-reconcile-and-estate-cleanup.md::SCOPE NOTE (accountable-estate T5
+
+Two verifier-filed follow-ups (nl-issues, non-gating): exit-code doc says 3, suite exits 1
+(cosmetic); close-worktree Scenario 8's real-log absence assertion will false-FAIL after the
+first production merge — needs the before/after-delta idiom.
