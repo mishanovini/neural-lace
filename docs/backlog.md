@@ -1744,3 +1744,10 @@ to find the emitter using an abbreviated id, then either pass the FULL session i
 call site or (if `claude --resume` genuinely supports prefix matching) confirm that and close
 this as a non-issue.
 **Filed by:** plan-phase-builder, cockpit-roadmap-redesign round-14 build, 2026-07-29.
+
+## NL-ISSUES-TRIAGE-20260730 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 60 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 2d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).

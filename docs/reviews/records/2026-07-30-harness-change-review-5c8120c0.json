@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-5c8120c0",
+  "created_at": "2026-07-30T00:30:37Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 operator-authorized adversarial review sweep (group hooks-2)",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/doc-gate.sh",
+      "blob_sha": "e98443ee7be7f5c28d57b6b85b6864ea518024ca"
+    },
+    {
+      "path": "adapters/claude-code/hooks/task-completed-evidence-gate.sh",
+      "blob_sha": "e1bc2a5681af8aee85410d79904bacd5bceedec9"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Self-test-scoped export HARNESS_SELFTEST=1 arming signal-ledger.sh's sandbox; verified by clean-HOME probe (no .claude/state files created) and green suites under /bin/bash 3.2.57 (doc-gate 8/0, task-completed-evidence-gate 10/10) — PASS.",
+    "findings_summary": "Change is inside the --self-test branch only; production path untouched. signal-ledger.sh honors HARNESS_SELFTEST (lib lines 66-116, verified). Clean-HOME probes under /bin/bash left no files under $HOME/.claude for either hook, confirming the PROVEN-behaviorally claim in the diff comments."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

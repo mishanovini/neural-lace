@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-1c961017",
+  "created_at": "2026-07-30T00:30:49Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/plans/macos-portability-2026-07.md (M4 / PORTABILITY-TOUCH-D-SWEEP-01) via wip/harness-hardening-2026-07-29 review sweep hooks-2",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/stale-active-plan-surfacer.sh",
+      "blob_sha": "bc27299a190fd1b05f9c7fad73046554dff23cc0"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-stop-gate.sh",
+      "blob_sha": "08485ec24ae77c6a25b60de0848c59c20795308b"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Self-test fixture aging moved from GNU-only touch -d (silently aging nothing on macOS behind || true) to nl_touch_age with loud failure, plus same-interpreter re-invocation; suites verified green under /bin/bash 3.2.57 (stale-active-plan-surfacer 8/8, workstreams-stop-gate 10/10) — PASS.",
+    "findings_summary": "hooks/lib/portable-time.sh exists and defines nl_touch_age with its own self-test (T3 asserts real mtime movement, T4 loud-fails missing files). Changes are self-test-only; production hook paths untouched. The vacuous-scenario fix (un-aged fixture silently fresh) removes a false-green class. Verified suites pass under the stock interpreter."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-4616467c",
+  "created_at": "2026-07-30T00:31:09Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/plans/macos-portability-2026-07.md",
+  "change_ref": {
+    "commit_sha": "7886762216a669bfd9f68f92e936278878a32423",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/session-start-git-freshness.sh",
+      "blob_sha": "07e87d16c029c57937f0c6428c8e636a8e0b5d49"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "nl_run_bounded keeps the SessionStart fetch bound on every platform; T9/T14 self-test failures are pre-existing (master blob fails identically) and environmental, not introduced by this diff",
+    "findings_summary": "Change verified: _safe_fetch_all now bounded on stock macOS (was silently UNBOUNDED without GNU timeout); inline fallback warns loudly and never mis-reports. T9/T14 (13/2, exit 2) reproduce byte-for-byte on the master blob under /bin/bash 3.2 — fixture 'git push HEAD:master' to bare-md-mirror fails on this machine; filed to nl-issues ledger. The suite is honest-RED, not false-green; the diff strictly improves the deployed state."
+  },
+  "written_by": "orchestrated adversarial review sweep (operator-authorized 2026-07-29), hooks-3 group",
+  "payload": {}
+}

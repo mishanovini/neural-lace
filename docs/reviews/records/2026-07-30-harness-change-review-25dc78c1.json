@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-25dc78c1",
+  "created_at": "2026-07-30T00:31:08Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/plans/macos-portability-2026-07.md",
+  "change_ref": {
+    "commit_sha": "7886762216a669bfd9f68f92e936278878a32423",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/scope-enforcement-gate.sh",
+      "blob_sha": "e448f8d917ba0f2ee8f7cd858f0cf4d6c27c704b"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "declare -A replaced by parallel indexed arrays, shared gcp_ resolver closes the proven over-fire and pushd fail-open, SELF_TEST_BASH interpreter fidelity; 40 asserts green under both 3.2.57 and 5.3.15 and mutation goes RED 11 failures exit 1",
+    "findings_summary": "Mechanism rewrite verified adversarially: (1) suite run under BOTH /bin/bash 3.2.57 and Homebrew 5.3.15, 40 asserts 0 fail, banner names the interpreter; (2) mutation test (aggregation disabled) -> 11 scenarios RED, exit 1 — the suite has teeth; (3) remedy-chain: docs/reviews/records/* exemption fixes the proven two-gate trap with review-record-commit-gate (scenario 35), in-flight-scope-update remedy proven to clear the block (scenario 33); (4) FP surface: quoted-separator phantom-segment over-fire CLOSED (36a); degraded-parse resolves toward detection, consistent with sibling gate, loud on stderr. Minor residual: with lib/git-command-parse.sh deleted, --self-test exits 0 after printing the skip notice (false-green in isolation; system-level detection intact — harness-doctor check 2 lib-deps goes RED, verified at harness-doctor.sh:324-352). Recommend exit 2 under --self-test when the lib is missing."
+  },
+  "written_by": "orchestrated adversarial review sweep (operator-authorized 2026-07-29), hooks-3 group",
+  "payload": {}
+}
