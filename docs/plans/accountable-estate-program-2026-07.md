@@ -195,6 +195,7 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-29: adapters/claude-code/scripts/session-resumer.sh — T3 admission splice at the storm-cap commit point (the hookless dispatcher, review F2)
 - 2026-07-29: adapters/claude-code/scripts/spawn-worktree.sh — T3 admission splice after a successful worktree create; otherwise this dispatch path emits nothing into the ledger, the review's named NEEDS-RESHAPING condition
 - 2026-07-29: docs/plans/accountable-estate-program-2026-07-evidence.md — T3 builder-claim evidence block (task-verifier has NOT run; checkbox left unchecked for the desktop machine)
+- 2026-07-30: `docs/reviews/records/grandfather-manifest.json` — deploy-gate cutover re-bootstrap at 6ffe534 (operator-authorized GRANDFATHER; unblocks the T3-lib live install → starts the T6 observe clock)
 - 2026-07-28: adapters/claude-code/scripts/loe-backfill.sh (NEW) + adapters/claude-code/hooks/plan-reviewer.sh
   (Check 18, WARN-only) + adapters/claude-code/manifest.json (loe-backfill entry) — T7 mining +
   reviewer-surfacing halves; close-side actuals-append shipped as a documented seam in
