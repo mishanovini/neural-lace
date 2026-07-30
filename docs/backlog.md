@@ -1419,3 +1419,26 @@ artifact is needed ONCE and the next attempt runs on a faster machine or a
 generous scheduled-task limit, either of which removes the need).
 **Filed by:** accountable-estate-program-2026-07 T7 build (loe-backfill.sh
 + plan-reviewer.sh Check 18).
+
+## ESTATE-T6-ADM-RATE-CAP-BYPASS-UNCLOSED-01 — ADM_ABSURD_RATE_PER_MIN left open (sibling of the closed session-cap bypass)
+
+**Severity:** P3 (cosmetic inconsistency; zero production callsites today, same as the three
+closed bypasses).
+**Finding:** T6-PREREQUISITES (b) (accountable-estate-program-2026-07 T6, desktop build,
+2026-07-29) closed three of the four T6-named env bypasses in
+`adapters/claude-code/hooks/lib/admission-lib.sh` (`ADM_ABSURD_SESSION_CAP`,
+`ADM_ESTATE_SNAPSHOT`, `ADM_STATE_DIR` — see `docs/decisions/065-admission-lib-env-bypass-closure.md`)
+by gating them behind `HARNESS_SELFTEST=1`. `ADM_ABSURD_RATE_PER_MIN` (`_adm_decide`'s rate-backstop
+threshold, same code shape as the now-closed `ADM_ABSURD_SESSION_CAP`) was NOT one of the four
+bypasses the 2026-07-28 review named, so it was deliberately left out of that slice's scope — but
+it is the identical failure class (an unauthenticated environment override of an absurd-level
+backstop) sitting right next to the closed one, and a reviewer comparing the two will find the
+asymmetry confusing.
+**Not fixed here** — out of the T6-PREREQUISITES (b) task's explicitly-scoped four bypasses;
+closing a fifth, un-named item risked scope creep in a slice whose acceptance criterion counts
+exactly four.
+**Action (future):** apply the same `_adm_session_cap`-style closure to the rate backstop (a
+`_adm_rate_cap()` resolver honoring `ADM_ABSURD_RATE_PER_MIN` only under `HARNESS_SELFTEST=1`),
+with a matching self-test scenario pair (closed in production / still available under
+HARNESS_SELFTEST=1), for consistency — low effort, same pattern already proven in this build.
+**Filed by:** accountable-estate-program-2026-07 T6-PREREQUISITES (b) build (desktop, 2026-07-29).
