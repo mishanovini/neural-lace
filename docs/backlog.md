@@ -2171,3 +2171,15 @@ requested alongside the roadmap rollup fix).
   be taken from the INDEX, and the record capture should refuse when worktree != index.
   This belongs in deterministic-process.md: a gate that verifies bytes other than the ones
   that ship is enforcing nothing.
+- **DETERMINISM-PROOF-OBLIGATION-UNBUILT-01** (HIGH, self-caught 2026-07-30):
+  `doctrine/deterministic-process.md` shipped with an Enforcement header claiming
+  manifest units carry `chokepoint`/`bypass_paths` and that harness-doctor REDs without
+  them. MEASURED, all three halves false: 39 blocking units, **0** with `chokepoint`;
+  `determinism-chokepoint-declared` has 0 occurrences in harness-doctor.sh;
+  `manifest.schema.json` is `additionalProperties: false` and would REJECT both keys.
+  Caught by a builder within hours — the file whose thesis is that unbuilt enforcement
+  claims are the cardinal defect shipped an unbuilt enforcement claim. Header corrected
+  to PATTERN + a named correction rather than silently edited.
+  TO CLOSE: (1) schema gains both properties; (2) a real doctor check; (3) backfill the
+  39 blocking units (dated grandfather acceptable, per the review-record precedent);
+  only then does the Enforcement line come back.

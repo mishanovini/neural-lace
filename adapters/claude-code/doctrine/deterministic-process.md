@@ -1,7 +1,19 @@
 # Deterministic process — compact
 
-> Enforcement: `manifest.json` carries `chokepoint` + `bypass_paths` on every
-> `"blocking": true` unit; `harness-doctor.sh` REDs on one declaring neither.
+> Enforcement: **NONE YET — this file is currently PATTERN, not Mechanism.**
+> CORRECTION 2026-07-30 (caught by a builder within hours of this file landing,
+> and it is the exact defect this file names): the first version of this header
+> claimed "`manifest.json` carries `chokepoint` + `bypass_paths` on every
+> `"blocking": true` unit; `harness-doctor.sh` REDs on one declaring neither."
+> All three halves were false. MEASURED: 39 blocking units, **0** carry
+> `chokepoint`; the doctor check `determinism-chokepoint-declared` does not
+> exist (0 occurrences); and `manifest.schema.json` is `additionalProperties:
+> false`, so it would REJECT both keys today. Writing an unbuilt enforcement
+> claim into the file whose thesis is that unbuilt enforcement claims are the
+> cardinal defect is the sharpest available proof of the thesis. Tracked as
+> `DETERMINISM-PROOF-OBLIGATION-UNBUILT-01` (docs/backlog.md); the header
+> becomes an Enforcement line again only when the schema, the check and a
+> backfill actually exist.
 > Applies: every required step — reviews, verifications, gates, emits.
 > Operator directive 2026-07-30: "We should never need to review whether the
 > reviewers fired. Make them a deterministic part of the process."
@@ -43,6 +55,11 @@ watchdog's marker — consumed by a script, written by nobody; `/calibrate` —
 zero entries ever.)
 
 ## The proof obligation
+
+**STATUS: SPECIFIED, NOT BUILT** (see the corrected Enforcement note above —
+0 of 39 blocking units carry these fields; the schema rejects them; no doctor
+check exists). This is the obligation the standard *requires*, written down so
+the gap is visible and closable, NOT a description of what runs today.
 
 Every `"blocking": true` manifest unit declares:
 - `chokepoint` — the firing event, in verifiable form (`pre-push`, `Stop`, …).
