@@ -104,10 +104,14 @@ iso_timestamp() {
 # mirrors plan-lifecycle.sh's extract_ask_id).
 extract_ask_id_cp() {
   local plan_file="$1"
+  # Final awk stage doubles as the sentinel guard (re-review 2026-07-28,
+  # Major: un-guarded sibling extractor): the template placeholder ('<'*)
+  # and the documented no-ask spelling (none) resolve to empty, matching
+  # plan-lifecycle.sh's extract_ask_id.
   grep -E '^ask-id:[[:space:]]*[^[:space:]]+' "$plan_file" 2>/dev/null \
     | head -1 \
     | sed -E 's/^ask-id:[[:space:]]*//' \
-    | awk '{print $1}'
+    | awk '{ if ($1 == "none" || $1 ~ /^</) exit; print $1 }'
 }
 
 # cp_compute_content_hash <string> -- portable best-effort content hash for

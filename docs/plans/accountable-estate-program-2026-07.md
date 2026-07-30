@@ -21,6 +21,29 @@ metric + re-check date; recurrence auto-reopens. 3. Every slice RETIRES somethin
 or claim) as part of its Definition of Done. 4. Observe-first before every enforcement flip.
 5. Enforcement lives in libs called by every dispatcher (incl. session-resumer), never gates alone.
 
+## Machine claims (cross-machine WIP coordination — added 2026-07-29, operator throughput directive)
+
+Rule 1's honest restatement: never two slices in the SAME FILES at once — file-disjoint slices
+MAY run in parallel across machines (T3∥T7 proved this safe). To prevent overlap without waiting:
+before dispatching a builder for any slice, PULL master, add a claim line here, and push it (or
+include it in the dispatch-adjacent commit); clear the line in the landing commit. A stale claim
+(>24h, no matching worktree commits) may be taken over after a pull confirms no landed work.
+Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
+
+- Standing split (2026-07-29): OTHER machine → T4 then T5 (closer family / merge-lock surfaces),
+  plus the T7 full mine (one command, heavy fork load — the faster machine; see backlog
+  ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01). DESKTOP → T6 prerequisites as file-disjoint
+  micro-slices (occupancy TTL cache in admission-lib; env-bypass closure; Loop-2 pressure tick),
+  then T9 after T4 lands (T9 builds on T4's generalized closers). T8 waits on telemetry accrual.
+- CLEARED 2026-07-29: T7 remainder — full 163-plan mine completed on the DESKTOP post-purge
+  (the purge collapsed the fork tax that killed it 3x); docs/loe/loe-calibration.json/.md
+  committed. T7 awaits task-verifier only.
+- CLAIM: T6 prerequisites (a) occupancy TTL cache + (b) env-bypass closure/acceptance —
+  desktop — 2026-07-29 — adapters/claude-code/hooks/lib/admission-lib.sh (NOTE for the other
+  machine: T4's closure-gates-new-work splice also touches this file — pull and rebase small;
+  the TTL cache is confined to the occupancy read path) + (d) Loop-2 pressure tick —
+  surface per docs/designs/estate-performance-governor-2026-07-27.md (tick writer + pressure_src)
+
 ## Scope / Tasks (LOE: plan-level reference classes per review F11; 1 bs = one builder-session ≈ 80–150k tokens; bands are P50–P90 priors, calibrated as T7 lands)
 
 - [x] T1 — Read-only estate inventory + daily brief. New janitor scheduled task (deterministic bash)
@@ -125,7 +148,15 @@ part-time autonomous work with review gates. T10 adds 5–10 bs and is separatel
 - adapters/claude-code/scripts/close-*.sh closer family + spawn-worktree registration — T4
 - adapters/claude-code/scripts/merge-serialized.sh + lock — T5
 - adapters/claude-code/hooks/plan-reviewer.sh (LOE surfacing) — T7
-- adapters/claude-code/scripts/loe-backfill.sh + calibration table — T7
+- adapters/claude-code/scripts/loe-backfill.sh (NEW) — T7 mining half: per-PLAN
+  actuals miner (docs/plans/archive/*.md + companion evidence + git history),
+  5-class deterministic classifier, emits docs/plans/loe-calibration.json (the
+  committed calibration artifact) + docs/plans/loe-calibration.md (rendered
+  summary). Close-side "actuals append" is a documented seam (this file's own
+  header comment names the exact close-plan.sh call site) — not built here,
+  per the WIP-1 directive keeping T7 out of closer/admission/dispatch files.
+- docs/plans/loe-calibration.json + docs/plans/loe-calibration.md (NEW,
+  committed artifacts) — T7 calibration table output
 - anomaly rules + incident capture in janitor — T8
 - manifest.json + settings.json.template wiring throughout; docs/designs + this plan as specs
 
@@ -175,3 +206,10 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-29: `adapters/claude-code/scripts/manifest-check.sh` — scripts/ resolver, rejection scenarios, three jq-fallback defect fixes
 - 2026-07-29: `adapters/claude-code/manifest.json` — estate-janitor and estate-brief moved off the inexpressible ../scripts/ form
 - 2026-07-29: `adapters/claude-code/doctrine/INDEX.md` — regenerated; it carried the now-schema-invalid path string
+
+- 2026-07-28: adapters/claude-code/scripts/loe-backfill.sh (NEW) + adapters/claude-code/hooks/plan-reviewer.sh
+  (Check 18, WARN-only) + adapters/claude-code/manifest.json (loe-backfill entry) — T7 mining +
+  reviewer-surfacing halves; close-side actuals-append shipped as a documented seam in
+  loe-backfill.sh's own header (exact close-plan.sh function + call site named), not built, per
+  the operator's WIP-1 directive keeping this slice out of admission/dispatch/closer files while
+  the other machine owns T3.

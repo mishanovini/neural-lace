@@ -126,7 +126,10 @@ _remap_extract_ask_id_from_file() {
     }
   ' "$planfile" 2>/dev/null)"
   case "$raw" in
-    '<'*) printf ''; return 0 ;;
+    # '<'* = template placeholder; none = the documented no-ask spelling —
+    # both sentinels resolve to empty so remapped events land in the
+    # UNLINKED lane, never none.jsonl (re-review Critical, 2026-07-28).
+    '<'* | none) printf ''; return 0 ;;
   esac
   printf '%s' "$raw"
 }
@@ -154,15 +157,37 @@ _remap_find_planfile() {
 # cmd_run [--dry-run] — the one-shot remap.
 # ----------------------------------------------------------------------
 cmd_run() {
-  local dry_run=0
-  [[ "${1:-}" == "--dry-run" ]] && dry_run=1
+  # --source <basename> (re-review 2026-07-28, Critical generalization):
+  # the sentinel CLASS has two live instances — `_id.jsonl` (template
+  # placeholder) and `none.jsonl` (the documented no-ask spelling, 141
+  # live events) — the run path processes BOTH by default (see main).
+  local dry_run=0 src_base="_id.jsonl"
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --dry-run) dry_run=1 ;;
+      --source) shift; src_base="${1:-_id.jsonl}" ;;
+    esac
+    shift
+  done
 
   local state_dir src marker
   state_dir="$(pl_state_dir)"
-  src="$state_dir/_id.jsonl"
-  marker="$state_dir/_id.jsonl.migrated"
+  src="$state_dir/$src_base"
+  marker="$src.migrated"
 
   if [[ -f "$marker" ]]; then
+    # REBORN-SOURCE GUARD (re-review 2026-07-28, Major): if the source
+    # exists AGAIN after a completed migration, a pre-fix emitter is
+    # still live somewhere (deploy the fixed hooks first — the marker
+    # must NEVER silently strand a reborn file's events). Loud warning,
+    # nonzero exit; delete the marker to force reprocessing once the
+    # fixed hooks are actually installed. ORDERING LAW: install the
+    # fixed hooks live BEFORE the real remap run.
+    if [[ -f "$src" ]]; then
+      echo "remap-placeholder-ask-events.sh: WARNING — $src EXISTS AGAIN after a completed migration (a pre-fix emitter is still live; install the fixed hooks, then delete $marker to reprocess). Receipt of the earlier run:" >&2
+      cat "$marker" >&2
+      return 1
+    fi
     echo "remap-placeholder-ask-events.sh: already migrated — receipt at $marker:"
     cat "$marker"
     return 0
@@ -395,6 +420,64 @@ EOP
     fail "expected a nothing-to-remap message; got: $OUT_E"
   fi
 
+  echo "Scenario F: a plan whose header is the documented no-ask spelling ('ask-id: none — ...') routes its events to unlinked.jsonl — 'none' is a sentinel, NEVER a real ask-id (re-review 2026-07-28)"
+  cat >"$TMP/repo/docs/plans/none-header.md" <<'EOP'
+# Plan: Cleaned header using the documented no-ask spelling
+Status: ACTIVE
+ask-id: none — no linked ask (was the literal template placeholder)
+EOP
+  rm -f "$PROGRESS_LOG_STATE_DIR/_id.jsonl.migrated" "$PROGRESS_LOG_STATE_DIR"/_id.jsonl.migrated-* 2>/dev/null
+  cat >"$PROGRESS_LOG_STATE_DIR/_id.jsonl" <<EOP
+{"v":1,"event_id":"evt-6","ts":"2026-07-14T00:05:00Z","ask_id":"<id","type":"task_done","plan_slug":"none-header","task_id":"1","sha":"sha6","needs_you_id":"","session_id":"","summary":"s6","evidence_link":"","emitter":"plan-lifecycle","provenance":"known","user":"u","machine":"m","repo":"r"}
+EOP
+  bash "$SCRIPT_DIR/remap-placeholder-ask-events.sh" >/dev/null 2>&1
+  if grep -qF '"event_id":"evt-6"' "$UNL" 2>/dev/null; then
+    pass "a 'none —' header plan's event landed in unlinked.jsonl (extractor resolved the sentinel to empty)"
+  else
+    fail "expected evt-6 in $UNL (the 'none' sentinel must not resolve as a real ask-id)"
+  fi
+  if [[ ! -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]]; then
+    pass "no none.jsonl was created by the remap (the sentinel never becomes a destination file)"
+  else
+    fail "none.jsonl was created — the 'none' spelling leaked through as a real ask-id"
+  fi
+
+  echo "Scenario G: the default run ALSO drains none.jsonl (dual-source) — events misfiled under the sanitized 'none' name are re-homed by plan_slug"
+  rm -f "$PROGRESS_LOG_STATE_DIR"/_id.jsonl.migrated "$PROGRESS_LOG_STATE_DIR"/_id.jsonl.migrated-* \
+        "$PROGRESS_LOG_STATE_DIR"/none.jsonl.migrated "$PROGRESS_LOG_STATE_DIR"/none.jsonl.migrated-* 2>/dev/null
+  cat >"$PROGRESS_LOG_STATE_DIR/none.jsonl" <<EOP
+{"v":1,"event_id":"evt-7","ts":"2026-07-14T00:06:00Z","ask_id":"none","type":"merged","plan_slug":"has-real-ask","task_id":"","sha":"sha7","needs_you_id":"","session_id":"","summary":"s7","evidence_link":"","emitter":"workstreams-emit","provenance":"known","user":"u","machine":"m","repo":"r"}
+EOP
+  bash "$SCRIPT_DIR/remap-placeholder-ask-events.sh" >/dev/null 2>&1
+  if grep -qF '"event_id":"evt-7"' "$PROGRESS_LOG_STATE_DIR/ask-real-123.jsonl" 2>/dev/null; then
+    pass "a none.jsonl event whose plan has a real ask-id was re-homed to that ask's file by the default run"
+  else
+    fail "expected evt-7 in ask-real-123.jsonl — the default run did not drain none.jsonl"
+  fi
+  if [[ ! -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]] && [[ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl.migrated" ]]; then
+    pass "none.jsonl was renamed away with its own receipt marker (none.jsonl.migrated)"
+  else
+    fail "none.jsonl not cleanly migrated (file present: $([[ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]] && echo yes || echo no); marker present: $([[ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl.migrated" ]] && echo yes || echo no))"
+  fi
+
+  echo "Scenario H: REBORN-SOURCE GUARD — a source file that exists AGAIN after its migration completed warns loudly, exits nonzero, and leaves the file untouched (a pre-fix emitter is still live)"
+  cat >"$PROGRESS_LOG_STATE_DIR/none.jsonl" <<EOP
+{"v":1,"event_id":"evt-8","ts":"2026-07-14T00:07:00Z","ask_id":"none","type":"task_started","plan_slug":"has-real-ask","task_id":"","sha":"","needs_you_id":"","session_id":"sid8","summary":"s8","evidence_link":"","emitter":"workstreams-emit","provenance":"known","user":"u","machine":"m","repo":"r"}
+EOP
+  OUT_H_RC=0
+  OUT_H="$(bash "$SCRIPT_DIR/remap-placeholder-ask-events.sh" 2>&1)" || OUT_H_RC=$?
+  if [[ "$OUT_H_RC" != "0" ]] && printf '%s' "$OUT_H" | grep -q "EXISTS AGAIN"; then
+    pass "reborn none.jsonl after a completed migration produced the loud warning and a nonzero exit"
+  else
+    fail "expected 'EXISTS AGAIN' warning + nonzero exit (got rc=$OUT_H_RC); output: $OUT_H"
+  fi
+  if [[ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]] && grep -qF '"event_id":"evt-8"' "$PROGRESS_LOG_STATE_DIR/none.jsonl"; then
+    pass "the reborn source file was left untouched (no stranded/lost events)"
+  else
+    fail "the reborn none.jsonl was modified or removed — the guard must never touch a reborn source"
+  fi
+  rm -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" 2>/dev/null
+
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed"
   if [[ "$FAILED" == "0" ]]; then
@@ -413,7 +496,12 @@ case "${1:-}" in
     exit $?
     ;;
   --dry-run)
-    cmd_run --dry-run
+    # Dual-source default (re-review 2026-07-28): the sentinel class has
+    # two live misfiled targets — _id.jsonl (truncated '<id' placeholder)
+    # and none.jsonl (the documented 'none — no linked ask' spelling,
+    # sanitized into a real-looking filename by pre-fix hooks).
+    cmd_run --dry-run --source _id.jsonl
+    cmd_run --dry-run --source none.jsonl
     exit 0
     ;;
   -h|--help)
@@ -423,17 +511,27 @@ remap-placeholder-ask-events.sh — one-shot, idempotent repair for the
 placeholder ask-id "<id" in _id.jsonl).
 
 Usage:
-  remap-placeholder-ask-events.sh             Run the migration for real.
+  remap-placeholder-ask-events.sh             Run the migration for real
+                                              (both sources: _id.jsonl AND none.jsonl).
   remap-placeholder-ask-events.sh --dry-run    Report projected moves; no changes.
   remap-placeholder-ask-events.sh --self-test  Run the sandboxed self-test suite.
+
+Ordering law: install the FIXED hooks live before the real run — a still-live
+pre-fix emitter regrows the source file; the reborn-source guard detects this
+(warns + exits nonzero) rather than stranding the new events behind the
+already-migrated receipt marker.
 
 See this file's own header comment for the full bug story and repair logic.
 USAGE
     exit 0
     ;;
   "")
-    cmd_run
-    exit 0
+    # Nonzero if EITHER source hits the reborn-source guard (a pre-fix
+    # emitter is still live) — honest exit for a manually-run repair tool.
+    rc=0
+    cmd_run --source _id.jsonl || rc=$?
+    cmd_run --source none.jsonl || rc=$?
+    exit "$rc"
     ;;
   *)
     echo "remap-placeholder-ask-events.sh: unknown argument '$1' (run --help for usage; never blocks a caller)" >&2

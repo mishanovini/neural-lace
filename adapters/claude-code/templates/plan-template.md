@@ -85,6 +85,15 @@ See `~/.claude/doctrine/spec-freeze.md` for the freeze-thaw protocol.
 -->
 
 lifecycle-schema: v2
+loe-class: <schema-migration | ui-feature | harness-mechanism | design-only | general-multi-file>
+<!--
+loe-class — LOE reference class for calibration (accountable-estate T7).
+Pick the closest class; plan-reviewer Check 18 surfaces the mined P50/P90
+bands for it from docs/loe/loe-calibration.json (WARN-only, never blocks).
+Class list MUST stay in sync with loe-backfill.sh's lb_classify. An
+unsubstituted placeholder here draws Check 18's invalid-value nudge —
+that nudge IS the reminder to pick.
+-->
 <!--
 lifecycle-schema marks a plan as governed by the mechanical-closure
 redesign (ADR 036). Its PRESENCE is the grandfather signal: pre-redesign
@@ -150,6 +159,18 @@ this plan's slug) — see `adapters/claude-code/doctrine/planning.md`. Pass at
 creation via `start-plan.sh --ask-id <id>`, which calls `ask-registry.sh
 link-plan --ask-id <id> --plan-slug <slug>` for you; a plan with no
 originating ask may state `ask-id: none — no linked ask`.
+
+SENTINEL COUPLING (2026-07-28): the literal token `none` and any `<`-prefixed
+token on this line are RESERVED sentinels, never real ask-ids. Every ask-id
+extractor resolves both to "no linked ask": `hooks/plan-lifecycle.sh`,
+`hooks/workstreams-emit.sh`, `hooks/lib/merge-scan-lib.sh`,
+`scripts/close-plan.sh`, `scripts/remap-placeholder-ask-events.sh`; the
+writer-side map lives in `hooks/lib/progress-log-lib.sh` (`pl_path_for`:
+placeholder-shapes quarantine to unattributed.jsonl, `none`/empty route to
+unlinked.jsonl). If the ask-id default spelling just above ever changes, extend the
+sentinel class at ALL of those sites in the SAME commit — a new spelling that
+the extractors don't recognize recreates the 2026-07-27 misfiled-events bug
+(1,140 events under `_id.jsonl` + 141 under `none.jsonl`).
 
 `plan-reviewer.sh` WARNS (never blocks) when an ACTIVE `lifecycle-schema: v2`
 plan lacks a populated value here — advisory only, since grandfathered plans

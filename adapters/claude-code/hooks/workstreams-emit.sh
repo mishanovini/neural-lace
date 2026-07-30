@@ -2553,7 +2553,9 @@ _resolve_ask_id_for_plan_slug() {
     }
   ' "$planfile" 2>/dev/null)"
   case "$raw" in
-    '<'*) printf ''; return 0 ;;
+    # '<'* = template placeholder; none = the documented no-ask spelling —
+    # both sentinels resolve to empty (re-review Critical, 2026-07-28).
+    '<'* | none) printf ''; return 0 ;;
   esac
   printf '%s' "$raw"
 }

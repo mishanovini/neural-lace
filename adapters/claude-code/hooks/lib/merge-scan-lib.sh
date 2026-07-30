@@ -308,28 +308,37 @@ _ms_commit_plan_slugs() {
 # ----------------------------------------------------------------------
 _ms_resolve_ask_id() {
   local repo_root="$1" slug="$2" sha="$3"
-  local f
+  # Sentinel guard (re-review 2026-07-28, Major: this was an un-guarded
+  # sibling extractor — 76 of the 1140 misfiled `<id` events came from
+  # this path via auditor merged-events): the template placeholder ('<'*)
+  # and the documented no-ask spelling (none) are sentinels, never real
+  # ask ids — resolved to empty, matching plan-lifecycle.sh extract_ask_id.
+  local raw="" f
   for f in "$repo_root/docs/plans/$slug.md" "$repo_root/docs/plans/archive/$slug.md"; do
     if [[ -f "$f" ]]; then
-      awk '
+      raw="$(awk '
         /^ask-id:[[:space:]]*[^[:space:]]+/ {
           sub(/^ask-id:[[:space:]]*/, "", $0)
           sub(/[[:space:]].*$/, "", $0)
           print $0
           exit
         }
-      ' "$f" 2>/dev/null
+      ' "$f" 2>/dev/null)"
+      case "$raw" in '<'* | none) raw="" ;; esac
+      printf '%s\n' "$raw"
       return 0
     fi
   done
-  git -C "$repo_root" show "$sha:docs/plans/$slug.md" 2>/dev/null | awk '
+  raw="$(git -C "$repo_root" show "$sha:docs/plans/$slug.md" 2>/dev/null | awk '
     /^ask-id:[[:space:]]*[^[:space:]]+/ {
       sub(/^ask-id:[[:space:]]*/, "", $0)
       sub(/[[:space:]].*$/, "", $0)
       print $0
       exit
     }
-  '
+  ')"
+  case "$raw" in '<'* | none) raw="" ;; esac
+  printf '%s\n' "$raw"
   return 0
 }
 

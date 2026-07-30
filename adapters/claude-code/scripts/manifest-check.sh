@@ -258,14 +258,17 @@ for (const e of manifest.entries || []) {
     //   <name>.sh          wired hook          -> hooks/<name>.sh
     //   lib/<name>.sh      SOURCED library     -> hooks/lib/<name>.sh
     //   scripts/<name>.sh  adapter script      -> scripts/<name>.sh
-    // Nothing else. No nested subdir, no leading "../" (the old contorted
-    // form two real entries were forced into), no absolute path. Each name
-    // segment forbids "/", so NO value can name a path component ".." and
-    // no value can resolve outside adapters/claude-code/.
+    // MERGE NOTE 2026-07-30: the legacy spelling "../scripts/<name>.sh" is
+    // ALSO accepted — the desktop's fd48741 remediation standardized on it
+    // while this branch standardized on the clean form; both resolve to the
+    // same file and both machines' manifest entries must validate. Converge
+    // on "scripts/<name>.sh" when entries are next touched. Name segments
+    // still forbid "/" so nothing can escape adapters/claude-code/.
     const isBasename = /^[A-Za-z0-9._-]+\.sh$/.test(h);
     const isLibRef = /^lib\/[A-Za-z0-9._-]+\.sh$/.test(h);
     const isScriptRef = /^scripts\/[A-Za-z0-9._-]+\.sh$/.test(h);
-    if (typeof h !== "string" || !(isBasename || isLibRef || isScriptRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename, lib/<name>.sh, or scripts/<name>.sh reference`);
+    const isLegacyScriptsRef = /^\.\.\/scripts\/[A-Za-z0-9._-]+\.sh$/.test(h);
+    if (typeof h !== "string" || !(isBasename || isLibRef || isScriptRef || isLegacyScriptsRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename, lib/<name>.sh, scripts/<name>.sh, or ../scripts/<name>.sh reference`);
   }
   if (!Array.isArray(e.events)) problems.push(`${id}: events must be an array`);
   else for (const ev of e.events) {

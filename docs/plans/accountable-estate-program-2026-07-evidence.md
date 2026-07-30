@@ -519,3 +519,72 @@ Runtime verification: file adapters/claude-code/scripts/estate-attribution-check
 Non-blocking observations filed as ledger rows the same turn: branch-without-worktree
 metric gap (HYPOTHESIZED, refuter named); 16b's silent dependency on the untracked nested
 checkout's state.js (environment-dependent-count class, latent on fresh clones).
+
+### T3 TASK-VERIFIER VERDICT — 2026-07-29 (desktop machine, the designated verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: T3
+Task description: Admission lib (slots + rate + HALT + drain flag), OBSERVE MODE ONLY, called from the dispatch gate AND session-resumer AND emit-feed registration (derived lineage per review F2/F4). Outcome metric: 7 days of would-block ledger separating storm vs legitimate load. Verification: full.
+Verified at: 2026-07-29T00:00:00Z
+Verifier: task-verifier agent (desktop machine; the amended build across f6562b2 + fe78ed3 + b4f9916)
+
+Oracle: harness-internal functional demonstration — the lib's own `bash admission-lib.sh --self-test`, run TWICE by the verifier, plus two isolated verifier-authored metamorphic probes (rate stamp-per-dispatch; observe-mode invariant under a worst-case hostile estate). Supporting derived oracle: the golden fixture PRODUCED BY estate-janitor.sh (harness-reviewer C2), against which the occupancy parser is exercised.
+
+Comprehension-gate: not applicable (rung < 2) — plan header carries no `rung:` field; treated as rung 0 per Decision 020a, same disposition recorded for T1/T2.
+
+Checks run:
+1. Task-text match: plan lines 35-38 match the invocation description verbatim. Result: PASS
+2. Git presence: f6562b2 (T3 lib) + fe78ed3 (amendments) both in master history; b4f9916 additionally landed the C1-C4 round-3 fixes to admission-lib.sh. admission-lib.sh (945 lines) + golden fixture + all four splice hosts + manifest all touched. Result: PASS
+3. Lib self-test (oracle), run #1 (tail-captured): scenarios 8-17 all PASS; summary "46 passed, 1 failed"; wall 26m31s, user+sys 64.7s (~24x fork-tax multiplier). Result: PASS-with-one-explained-failure
+   Command: bash adapters/claude-code/hooks/lib/admission-lib.sh --self-test
+4. Lib self-test, run #2 (clean, line-buffered to file): IDENTICAL result — "46 passed, 1 failed", the sole failure STABLE at Scenario 6 (`FAIL: rate 1 -> 1`), EXIT=1. Not roaming flakiness — the same single assertion both times. Result: confirms stability
+5. FALSIFICATION of the one failure (Scenario 6, F9 rate window): isolated verifier probe fired two adm_admit dispatches into a sandbox and inspected disk. Observed stamp files timestamped 1785319861 and 1785319893 — 32 WALL-seconds apart — while user+sys totalled 2.5s. `stamp_files_on_disk=2` (both dispatches recorded, distinct RANDOM suffixes, zero lost updates). adm_rate_in_window counted 1 because the first stamp legitimately aged past the 60-wall-second window between `before` and `after`. Conclusion: PROVEN a fork-tax wall-clock artifact of this machine, NOT a defect — the F9 stamp-per-dispatch property the scenario tests is independently demonstrated to hold (2 dispatches -> 2 stamps on disk). Result: PASS (failure is environmental, mechanism correct)
+6. OBSERVE-MODE INVARIANT (T3's central safety claim), triply re-derived by the verifier:
+   (a) Code: adm_admit's final statement is unconditional `return 0` (admission-lib.sh:597); every splice wraps the call in `{ source && declare -F adm_admit && adm_admit ... } || true` placed AFTER the host's real work, so a non-zero return cannot propagate to the host dispatch.
+   (b) Scenario 15 PASS in BOTH full runs: all five sources admit (rc 0) under HALT+DRAIN+BLACK+999-sessions simultaneously.
+   (c) Isolated worst-case probe: HALT+DRAIN+BLACK+999 live sessions -> emit-feed verdict=would-block:halt rc=0, resumer verdict=would-block:halt rc=0 (records the would-be block, still admits).
+   Result: PASS
+7. Occupancy parser (C2/C3/C4 fixes) against the golden producer fixture: Scenario 9 golden branch PASS — "REAL producer output (13 sessions, 12 crashed/1 live) parses as 1", "needle outside sessions[] does NOT inflate (C3 scoped count)", "stale snapshot -> -1 (C4)", "producer single-line parses as 3 (was 3379 pre-fix)", "77 live counts ignoring crashed", "absent snapshot -> admit (fail-open)". Golden fixture verified producer-shaped: one line, real janitor structure (sessions[], process_counts, worktrees[], signal_ledger_tail with verbatim-embedded rows), 13 sessions, sess-007 the sole "classify":"live". Result: PASS
+8. Four splice sites verified at file:line, each OBSERVE-only (guarded, after real work, `|| true`):
+   - workstreams-emit.sh:2769-2773 — _run_on_builder_dispatch (PreToolUse Task|Agent|Workflow; emit-feed registration = dispatch-gate surface), adm_admit emit-feed kind=fg|bg
+   - session-resumer.sh:1665-1669 — after storm_cap_record_action (the hookless scheduled dispatcher, review F2), adm_admit resumer
+   - session-resumer.sh:1637-1641 — storm-cap-queued deferral early-return arm (task-verifier D5 carve-out fix), adm_admit resumer reason_hint=stormcapqueued — deferrals now visible as their own class rather than silence
+   - spawn-worktree.sh:356-361 — after a successful worktree create, adm_admit worktree kind=builder
+   Result: PASS (four callsites, the extra one is the D5 fix, not dead wiring)
+9. Local 0758232 ask-id sentinel guard edit did NOT break the admission splice: 0758232's only workstreams-emit.sh change is a case-guard extension in _resolve_ask_id_for_plan_slug at line ~2553 (`'<'* | none`), 200+ lines above the admission splice at 2760; splice region byte-identical. Result: PASS (isolated, no interaction)
+10. Manifest honesty: admission-lib entry kind:writer, blocking:false (literal — matches the unconditional return 0), honest_status documents the review round, the two retired claims (spawn-free perf; "no caller trusts declaration"), the four named T6 bypasses, coverage carve-outs (Decision-011/human-claude/MCP NOT covered), and the 70.8ms measured hot-path cost. Result: PASS
+11. Pass-count discrepancy, disclosed honestly: this machine reports 46/1, vs manifest "44/0" and commit b4f9916 "47/0". The PASS-total delta across machines is inherent to Scenario 16 (before/after DELTA on the REAL ledger — count depends on whether the production ledger exists) and Scenario 9's golden branch (depends on fixture presence). The one non-green line is the Scenario 6 timing artifact of check 5. Result: PASS (discrepancy explained, no hidden defect)
+
+Runtime verification: test adapters/claude-code/hooks/lib/admission-lib.sh::--self-test
+Runtime verification: file adapters/claude-code/hooks/workstreams-emit.sh::adm_admit emit-feed
+Runtime verification: file adapters/claude-code/scripts/session-resumer.sh::adm_admit resumer
+Runtime verification: file adapters/claude-code/scripts/spawn-worktree.sh::adm_admit worktree
+Runtime verification: file adapters/claude-code/tests/fixtures/admission-lib/janitor-snapshot.golden.json::classify":"live
+Runtime verification: functionality-verifier T3::SKIP (rationale: no Task tool in this verifier environment; the user-shaped exercise — the harness maintainer's `--self-test` demonstration — was executed inline by the verifier, twice, plus two isolated metamorphic probes; plan is acceptance-exempt harness-internal, maintainer-is-user per constitution §4)
+
+DEPENDENCY TRACE
+================
+Step 1: a dispatch fires on one of four paths (Task/Agent/Workflow tool, resumer spawn, resumer storm-cap deferral, worktree create)
+  Verified at: workstreams-emit.sh:2769, session-resumer.sh:1665 + :1637, spawn-worktree.sh:356 (all four splices present, guarded)
+Step 2: the spliced call sources admission-lib.sh and invokes adm_admit <source>, which derives occupancy from the janitor snapshot (never trusts caller args) and records the would-be verdict
+  Verified at: adm_admit (admission-lib.sh:548-598); Scenario 10 PASS (caller-declared live_sessions/verdict IGNORED, snapshot's 77 wins); Scenario 9 golden occupancy=1
+Step 3: exactly one JSONL line lands in the hostname-scoped would-block ledger, and the dispatch is ADMITTED (rc 0) regardless of the verdict
+  Verified at: Scenario 1 (one line, rc 0), Scenario 15 (rc 0 under worst case, both runs), isolated worst-case probe (emit-feed/resumer rc 0 under HALT+DRAIN+BLACK+999), code return 0 at :597 + `|| true` splice guards
+Step 4: host self-tests do not poison the operator's real 7-day calibration ledger
+  Verified at: Scenario 16 (before/after delta on real ledger: 0->0, mtime identical) + Scenario 17 (HARNESS_SELFTEST=1 redirects away from real state), both PASS
+
+Git evidence:
+  Files modified in recent history (all on master):
+    - adapters/claude-code/hooks/lib/admission-lib.sh (f6562b2, fe78ed3, b4f9916)
+    - adapters/claude-code/tests/fixtures/admission-lib/janitor-snapshot.golden.json (fe78ed3/b4f9916 era; generated_at 2026-07-29T03:45:43Z)
+    - adapters/claude-code/hooks/workstreams-emit.sh (f6562b2 splice; 0758232 unrelated sentinel edit, verified non-interacting)
+    - adapters/claude-code/scripts/session-resumer.sh (f6562b2 + fe78ed3 D5 arm)
+    - adapters/claude-code/scripts/spawn-worktree.sh (f6562b2)
+    - adapters/claude-code/manifest.json (admission-lib entry)
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN — the harness-internal oracle (the lib's --self-test) was run TWICE with an identical, stable 46/1 result; the SOLE failure (Scenario 6, F9 rate window) was falsified to ground and shown to be a fork-tax wall-clock artifact of this ~24x-taxed machine (stamps 32 wall-seconds apart vs 2.5s user+sys; 2 stamp files correctly on disk = the F9 property holds), not a defect. T3's central safety claim — OBSERVE MODE never blocks — is triply re-derived (unconditional return 0 at :597, Scenario 15 PASS in both runs, isolated worst-case probe returning rc 0 under HALT+DRAIN+BLACK+999). All four splice sites are live at file:line and observe-only by construction (`|| true` after real work). The C2/C3/C4 occupancy fixes pass against the producer-shaped golden fixture (occupancy=1, scoped count, staleness, single-line multi-key extraction). The local 0758232 sentinel edit is isolated 200+ lines from the splice and does not interact. Confidence 8 (not 9) honestly discounts that a fully-green self-test was unattainable on this hardware — one red assertion had to be reasoned through and independently re-derived rather than observed green. Adversarial probes that did not break it: isolated rate metamorphic check (proved the mechanism, not the test's timing assumption), isolated worst-case observe-mode probe, splice-region diff against the unrelated sentinel commit, golden-fixture producer-shape audit.
+
+Outcome-metric note (Program rule 2): the metric "7 days of would-block ledger separating storm vs legitimate load" is forward-looking and cannot be a present fact at build time. Per the builder's disposition (honored): the >=7-day clock starts from the fixed build; the 14 pre-fix lines were archived to state/governor/discarded/. Re-check when reading calibration must apply the named caveats — pressure_src=absent on every line (Loop-2 tick unbuilt), occupancy -1 on any machine without a janitor snapshot, and the four environment bypasses — all of which are T6 acceptance criteria already recorded in the plan (lines 47-58) and the manifest retirement_condition. This verdict certifies the OBSERVE-MODE MECHANISM is built, wired, and safe; it does not and cannot certify the 7-day dataset, which accrues after close.
