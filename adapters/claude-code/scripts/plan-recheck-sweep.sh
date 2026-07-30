@@ -150,15 +150,26 @@ _prs_field() {
     | sed -E "s/^${field}:[[:space:]]*//I"
 }
 
-# _prs_now_epoch / _prs_iso_to_epoch -- source portable-time.sh (M4's
-# shared GNU/BSD date primitives) rather than hand-rolling a new
-# dual-branch. Falls back to bare `date +%s` if the lib is unreachable
-# (should not happen in-repo; defensive only).
+# _prs_load_portable_time -- source portable-time.sh (M4's shared GNU/BSD
+# date primitives) rather than hand-rolling a new dual-branch.
+#
+# CORRECTED CLAIM (2026-07-30, harness-reviewer Minor): this comment used
+# to claim a "falls back to bare `date +%s`" behavior that was never
+# actually implemented below. The real behavior when the lib is missing:
+# every caller already guards each portable-time function behind
+# `command -v ... >/dev/null 2>&1` before use (see _prs_reason_for), so an
+# absent/unreadable lib means the re-check-date and recurrence-check
+# conditions are silently SKIPPED for this sweep -- never a fabricated
+# fallback timestamp. Warn once, loudly, so that is at least visible to
+# whoever is debugging why a plan's re-check date never fires, rather than
+# a second silent failure layered on top of the first.
 _prs_load_portable_time() {
   local pt_lib="$SCRIPT_DIR/../hooks/lib/portable-time.sh"
   if [[ -f "$pt_lib" ]]; then
     # shellcheck disable=SC1090
     source "$pt_lib" 2>/dev/null || true
+  else
+    printf '%s: WARNING: portable-time.sh not found at %s -- re-check-date and recurrence-check evaluation will be skipped entirely for this sweep\n' "$SCRIPT_NAME" "$pt_lib" >&2
   fi
 }
 
@@ -170,30 +181,114 @@ _prs_load_portable_timeout() {
   fi
 }
 
-# _prs_reason_for <plan_file> -- prints a non-empty STRING reason if this
-# plan should reopen (either "re-check date <d> passed" or "recurrence
-# check '<cmd>' exited <n>"), or prints nothing and returns 1 if neither
-# condition fires. Two independent checks; EITHER firing is sufficient
-# (task spec: "when a re-check date passes OR the metric's recurrence
-# condition fires").
+# _prs_is_default_recheck <recheck_field_value> -- true (rc 0) if the
+# value carries close-plan.sh's OWN "(default)" marker (a Re-check date
+# THAT SCRIPT mechanically defaulted, never something the plan's author
+# declared). See the C1 header block below for why this distinction is
+# the whole fix.
+#
+# SELF-TEST-ONLY MUTATION HATCH: _PRS_SELFTEST_DISABLE_DEFAULT_SKIP, when
+# set to any non-empty value, forces this to always report "not default"
+# -- i.e. reproduces the PRE-FIX behavior where a defaulted date could not
+# be told apart from an author-declared one. This exists ONLY so this
+# script's own --self-test can mutation-prove the storm regression fixture
+# (disable the skip, watch the pre-fix reopen happen; re-enable, watch it
+# stop) rather than merely asserting the fixed behavior in isolation. It
+# has no effect outside a self-test process that explicitly exports it.
+_prs_is_default_recheck() {
+  [[ -z "${_PRS_SELFTEST_DISABLE_DEFAULT_SKIP:-}" ]] || return 1
+  printf '%s' "$1" | grep -qiE '\(default\)[[:space:]]*$' 2>/dev/null
+}
+
+# _prs_repo_is_trusted <repo_root> -- true (rc 0) if THIS repo is trusted
+# to auto-EXECUTE an author-declared Recurrence check shell command.
+#
+# ============================================================
+# M3 FIX (2026-07-30, harness-reviewer Major — "SessionStart auto-exec of
+# repo-authored commands")
+# ============================================================
+# plan-recheck-sweep.sh --quick is wired at SessionStart (feed_plan_recheck
+# in session-start-digest.sh) for EVERY repo a Claude Code session opens
+# in, not just this harness's own repo. Before this fix, ANY repo with a
+# docs/plans/archive/*.md file carrying a `Recurrence check:` field got
+# that field's shell command silently `bash -c`'d at session start -- a
+# pure repo-content -> auto-exec channel with zero project-trust gating
+# (opening a session in an untrusted/malicious repo would run whatever
+# shell command that repo's own plan file declared).
+#
+# Trust is granted, by the simplest honest mechanism available (no config
+# file, no registry to keep in sync), to:
+#   (a) the harness repo itself, fingerprinted by the presence of its own
+#       adapters/claude-code/manifest.json -- a file that exists ONLY in
+#       this harness's source checkout, never in an arbitrary consumer
+#       repo and never in a bare ~/.claude install copy (which has no
+#       manifest.json of its own at that path); or
+#   (b) any repo the operator has explicitly opted in via a
+#       `.claude/trust-recurrence-exec` marker file at the repo root
+#       (empty sentinel -- an operator who wants a non-harness repo's
+#       recurrence checks to auto-run creates this ONE file once).
+# Untrusted repos still get the field's EXISTENCE reported (never
+# silently dropped) -- see _prs_reason_for below -- just never executed.
+_prs_repo_is_trusted() {
+  local repo_root="$1"
+  [[ -n "$repo_root" ]] || return 1
+  [[ -f "$repo_root/adapters/claude-code/manifest.json" ]] && return 0
+  [[ -f "$repo_root/.claude/trust-recurrence-exec" ]] && return 0
+  return 1
+}
+
+# _prs_reason_for <plan_file> [repo_root] -- prints a non-empty STRING
+# reason if this plan should reopen (either "re-check date <d> passed" or
+# "recurrence check '<cmd>' exited <n>"), or prints nothing and returns 1
+# if neither condition fires. Two independent checks; EITHER firing is
+# sufficient (task spec: "when a re-check date passes OR the metric's
+# recurrence condition fires").
+#
+# C1 FIX (2026-07-30, CRITICAL — "default-date x sweep = scheduled
+# auto-reopen storm + infinite loop"): a Re-check date carrying close-
+# plan.sh's own "(default)" marker (nobody asked for this check-in; the
+# script mechanically defaulted it because the plan declared none) NEVER
+# triggers a reopen here, no matter how far past it is. Only an
+# AUTHOR-declared date (no marker) is a real commitment worth auto-
+# reopening for. Without this, EVERY plan this repo's close-plan.sh ever
+# closes -- opted into outcome-gating or not -- would auto-reopen ~14 days
+# later, and a re-close that preserved the same stale default verbatim fed
+# the exact same trigger right back in on the next sweep: a self-
+# sustaining storm. See close-plan.sh's generate_closure_outcome_section
+# for the write-side half (the other two layers of this fix).
 _prs_reason_for() {
-  local plan_file="$1"
+  local plan_file="$1" repo_root="${2:-}"
   local recheck recurrence
 
   recheck="$(_prs_field "$plan_file" "Re-check date" 2>/dev/null || true)"
   recurrence="$(_prs_field "$plan_file" "Recurrence check" 2>/dev/null || true)"
 
-  if [[ -n "$recheck" ]] && command -v nl_iso_to_epoch >/dev/null 2>&1; then
-    local recheck_epoch now_epoch
-    recheck_epoch="$(nl_iso_to_epoch "$recheck" 2>/dev/null || true)"
+  # M3: decide (and report) trust BEFORE the recheck-date branch below, so
+  # the "field reported, not executed" note surfaces in the verbose sweep
+  # log regardless of whether a re-check-date condition also fires.
+  local recurrence_trusted=1
+  if [[ -n "$recurrence" ]]; then
+    if ! _prs_repo_is_trusted "$repo_root"; then
+      recurrence_trusted=0
+      printf 'plan-recheck-sweep: NOTE: %s declares a Recurrence check (%s) but this repo is not trusted to auto-execute it -- field reported, not executed. See plan-recheck-sweep.sh _prs_repo_is_trusted for the trust gate (harness repo, or a .claude/trust-recurrence-exec marker).\n' "$plan_file" "$recurrence" >&2
+    fi
+  fi
+
+  if [[ -n "$recheck" ]] && ! _prs_is_default_recheck "$recheck" && command -v nl_iso_to_epoch >/dev/null 2>&1; then
+    # Strip any "(default)" marker before parsing regardless of the skip
+    # decision above -- the marker is metadata about PROVENANCE, never
+    # part of the ISO-8601 value itself.
+    local recheck_bare recheck_epoch now_epoch
+    recheck_bare="$(printf '%s' "$recheck" | sed -E 's/[[:space:]]*\(default\)[[:space:]]*$//')"
+    recheck_epoch="$(nl_iso_to_epoch "$recheck_bare" 2>/dev/null || true)"
     now_epoch="$(nl_now_epoch 2>/dev/null || true)"
     if [[ -n "$recheck_epoch" ]] && [[ -n "$now_epoch" ]] && [[ "$now_epoch" -gt "$recheck_epoch" ]]; then
-      printf 're-check date %s passed' "$recheck"
+      printf 're-check date %s passed' "$recheck_bare"
       return 0
     fi
   fi
 
-  if [[ -n "$recurrence" ]] && command -v nl_run_bounded >/dev/null 2>&1; then
+  if [[ -n "$recurrence" ]] && [[ "$recurrence_trusted" -eq 1 ]] && command -v nl_run_bounded >/dev/null 2>&1; then
     local rc
     nl_run_bounded 10 bash -c "$recurrence" >/dev/null 2>&1
     rc=$?
@@ -265,7 +360,7 @@ _prs_reopen_one() {
     local ny="$SCRIPT_DIR/needs-you.sh"
     if [[ -x "$ny" ]] || [[ -f "$ny" ]]; then
       bash "$ny" add --section question \
-        --text "Plan \`$slug\` auto-reopened at $ts by plan-recheck-sweep.sh (docs/plans/$slug.md). Reason: $reason. This plan was previously closed (docs/plans/archive/$slug.md) with a T9 Closure Outcome re-check date or recurrence check that has now fired — decide whether to re-verify/re-close it, defer it, or supersede it." \
+        --text "Plan \`$slug\` auto-reopened at $ts by plan-recheck-sweep.sh (docs/plans/$slug.md). Reason: $reason. This plan was previously closed (docs/plans/archive/$slug.md) with a T9 Closure Outcome re-check date or recurrence check that has now fired — decide whether to re-verify/re-close it, defer it, or supersede it. To stop this from reopening again: update the Re-check date (or remove it) before re-closing, or the sweep will reopen this again next session." \
         --session "plan-recheck-sweep" \
         --mechanical >/dev/null 2>&1 || true
     fi
@@ -329,7 +424,7 @@ cmd_sweep() {
     grep -qE '^## Closure Outcome[[:space:]]*$' "$f" 2>/dev/null || continue
 
     rel_path="docs/plans/archive/$(basename "$f")"
-    if reason="$(_prs_reason_for "$f")"; then
+    if reason="$(_prs_reason_for "$f" "$repo_root")"; then
       found=$((found + 1))
       printf '[plan-recheck-sweep] REOPEN CANDIDATE: %s (%s)\n' "$rel_path" "$reason" >&2
       new_path="$(_prs_reopen_one "$repo_root" "$rel_path" "$reason" "$dry_run")"
@@ -366,7 +461,7 @@ cmd_quick() {
     [[ -f "$f" ]] || continue
     grep -qE '^Status:[[:space:]]*COMPLETED' "$f" 2>/dev/null || continue
     grep -qE '^## Closure Outcome[[:space:]]*$' "$f" 2>/dev/null || continue
-    if reason="$(_prs_reason_for "$f")"; then
+    if reason="$(_prs_reason_for "$f" "$repo_root")"; then
       _prs_reopen_one "$repo_root" "docs/plans/archive/$(basename "$f")" "$reason" "0" >/dev/null 2>&1
       printf 'plan-recheck: %s reopened (%s)\n' "$(basename "$f" .md)" "$reason"
     fi
@@ -378,7 +473,7 @@ cmd_quick() {
 # Self-test
 # ---------------------------------------------------------------------------
 _prs_setup_repo() {
-  local slug="$1" recheck_field="$2" recurrence_field="$3"
+  local slug="$1" recheck_field="$2" recurrence_field="$3" trust="${4:-}"
   local d
   d=$(mktemp -d 2>/dev/null || mktemp -d -t prsst)
   (
@@ -387,6 +482,16 @@ _prs_setup_repo() {
     git config user.email "test@example.test"
     git config user.name "Test"
     mkdir -p docs/plans/archive
+    # M3 trust gate: a 4th "trusted" arg opts this fixture repo IN to
+    # Recurrence-check execution (via the .claude/trust-recurrence-exec
+    # marker, the simplest allowlist mechanism _prs_repo_is_trusted
+    # checks) -- ONLY the scenarios that specifically exercise recurrence-
+    # check EXECUTION request this; every other fixture stays untrusted by
+    # default, matching a real consumer repo's default posture.
+    if [[ "$trust" == "trusted" ]]; then
+      mkdir -p .claude
+      : > .claude/trust-recurrence-exec
+    fi
     {
       printf '# Plan: %s\n' "$slug"
       printf 'Status: COMPLETED\n'
@@ -417,7 +522,7 @@ run_self_test() {
   mkdir -p "$NEEDS_YOU_STATE_DIR" "$PROGRESS_LOG_STATE_DIR"
 
   local PASSED=0 FAILED=0
-  printf 'plan-recheck-sweep.sh self-test (8 scenarios)\n\n' >&2
+  printf 'plan-recheck-sweep.sh self-test (10 scenarios)\n\n' >&2
 
   # ----- S1: re-check date in the past -> REOPENS -----
   local D1; D1=$(_prs_setup_repo "p-past" "2020-01-01T00:00:00Z" "")
@@ -450,7 +555,9 @@ run_self_test() {
   rm -rf "$D2"
 
   # ----- S3: recurrence check exits nonzero (future re-check date) -> REOPENS -----
-  local D3; D3=$(_prs_setup_repo "p-recur-fail" "2099-01-01T00:00:00Z" "exit 3")
+  # ("trusted": this scenario tests EXECUTION of the recurrence command
+  # itself, so the fixture repo opts in to the M3 trust gate.)
+  local D3; D3=$(_prs_setup_repo "p-recur-fail" "2099-01-01T00:00:00Z" "exit 3" "trusted")
   bash "$SELF_PATH" sweep --repo "$D3" >/dev/null 2>&1
   if [[ -f "$D3/docs/plans/p-recur-fail.md" ]] \
      && grep -q '^Status: ACTIVE' "$D3/docs/plans/p-recur-fail.md" \
@@ -464,7 +571,9 @@ run_self_test() {
   rm -rf "$D3"
 
   # ----- S4: recurrence check exits zero (future re-check date) -> does NOT reopen -----
-  local D4; D4=$(_prs_setup_repo "p-recur-ok" "2099-01-01T00:00:00Z" "exit 0")
+  # ("trusted": likewise exercises real execution -- must run to prove it
+  # exits 0, not merely be skipped as untrusted.)
+  local D4; D4=$(_prs_setup_repo "p-recur-ok" "2099-01-01T00:00:00Z" "exit 0" "trusted")
   bash "$SELF_PATH" sweep --repo "$D4" >/dev/null 2>&1
   if [[ -f "$D4/docs/plans/archive/p-recur-ok.md" ]] \
      && [[ ! -f "$D4/docs/plans/p-recur-ok.md" ]]; then
@@ -546,9 +655,61 @@ run_self_test() {
   fi
   rm -rf "$D8"
 
+  # ----- S9 (C1 CRITICAL regression, harness-reviewer, 2026-07-30): a
+  # Re-check date carrying close-plan.sh's "(default)" marker -- even
+  # stale -- must NEVER trigger an auto-reopen (the storm this fixes:
+  # EVERY post-close default recheck date used to be indistinguishable
+  # from an author's own declared date, so every closed plan would
+  # auto-reopen ~14 days later). Mutation-proven: the SAME stale-default
+  # fixture DOES reopen when _PRS_SELFTEST_DISABLE_DEFAULT_SKIP simulates
+  # the pre-fix behavior, proving the fixed-behavior assertion below is
+  # not vacuous. -----
+  local D9; D9=$(_prs_setup_repo "p-default-stale" "2020-01-01T00:00:00Z (default)" "")
+  bash "$SELF_PATH" sweep --repo "$D9" >/dev/null 2>&1
+  local s9_fixed_ok=0
+  if [[ -f "$D9/docs/plans/archive/p-default-stale.md" ]] \
+     && grep -q '^Status: COMPLETED' "$D9/docs/plans/archive/p-default-stale.md" \
+     && [[ ! -f "$D9/docs/plans/p-default-stale.md" ]]; then
+    s9_fixed_ok=1
+  fi
+  _PRS_SELFTEST_DISABLE_DEFAULT_SKIP=1 bash "$SELF_PATH" sweep --repo "$D9" >/dev/null 2>&1
+  local s9_mutation_reopened=0
+  if [[ -f "$D9/docs/plans/p-default-stale.md" ]] && grep -q '^Status: ACTIVE' "$D9/docs/plans/p-default-stale.md" 2>/dev/null; then
+    s9_mutation_reopened=1
+  fi
+  if [[ "$s9_fixed_ok" -eq 1 ]] && [[ "$s9_mutation_reopened" -eq 1 ]]; then
+    printf 'self-test (S9) defaulted-stale-recheck-never-auto-reopens: PASS (mutation-proven)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S9) defaulted-stale-recheck-never-auto-reopens: FAIL (fixed_ok=%s mutation_reopened=%s)\n' "$s9_fixed_ok" "$s9_mutation_reopened" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D9"
+
+  # ----- S10 (M3 Major regression, harness-reviewer, 2026-07-30): a
+  # Recurrence check command declared in an UNTRUSTED repo (no
+  # .claude/trust-recurrence-exec marker, no adapters/claude-code/
+  # manifest.json) is reported but NEVER executed -- the plan must NOT
+  # reopen even though the declared command would exit nonzero if it ran,
+  # and the sweep's verbose log must say so ("field reported, not
+  # executed"). -----
+  local D10; D10=$(_prs_setup_repo "p-untrusted-recur" "2099-01-01T00:00:00Z" "exit 3")
+  local s10_out
+  s10_out="$(bash "$SELF_PATH" sweep --repo "$D10" 2>&1)"
+  if [[ -f "$D10/docs/plans/archive/p-untrusted-recur.md" ]] \
+     && [[ ! -f "$D10/docs/plans/p-untrusted-recur.md" ]] \
+     && printf '%s' "$s10_out" | grep -q 'not executed'; then
+    printf 'self-test (S10) untrusted-repo-recurrence-reported-not-executed: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S10) untrusted-repo-recurrence-reported-not-executed: FAIL (out=%s)\n' "$s10_out" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D10"
+
   rm -rf "$ST_DIR" 2>/dev/null || true
 
-  printf '\nself-test summary: %d passed, %d failed (of 8 scenarios)\n' "$PASSED" "$FAILED" >&2
+  printf '\nself-test summary: %d passed, %d failed (of 10 scenarios)\n' "$PASSED" "$FAILED" >&2
   [[ "$FAILED" -eq 0 ]] && return 0
   return 1
 }
