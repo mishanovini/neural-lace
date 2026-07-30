@@ -1634,11 +1634,14 @@ perform_resume() {
     # real backpressure evidence and the most interesting signal this dispatcher
     # produces; recording it as its own class (reason_hint=storm-cap-queued)
     # keeps "deferred" distinguishable from "never happened".
-    {
+    (
+      # SUBSHELL, not brace group (post-hoc review 2026-07-30, PROVEN): a
+      # set -u unbound-variable abort inside the sourced lib escapes
+      # `{...} || true` and kills the host; a subshell contains it.
       source "${SCRIPT_DIR}/../hooks/lib/admission-lib.sh" 2>/dev/null \
         && declare -F adm_admit >/dev/null 2>&1 \
         && adm_admit resumer reason_hint=stormcapqueued session="$(printf '%s' "${sid:-unknown}")" >/dev/null 2>&1
-    } || true
+    ) || true
     return 0
   fi
   # Committed to taking an action this pass — record it against the
@@ -1662,11 +1665,12 @@ perform_resume() {
   # control flow. When T6 flips enforcement, the drain flag must be honored
   # HERE (design 6b edge 1: the janitor-vs-resumer fight — janitor stops a
   # session, resumer resurrects it, unless both read the same drain flag).
-  {
+  (
+    # SUBSHELL, not brace group — same set -u containment as the queued arm.
     source "${SCRIPT_DIR}/../hooks/lib/admission-lib.sh" 2>/dev/null \
       && declare -F adm_admit >/dev/null 2>&1 \
       && adm_admit resumer session="$(printf '%s' "${sid:-unknown}")" >/dev/null 2>&1
-  } || true
+  ) || true
 
   # Guardrail 4 (REWORKED, ADR-061 D5): SHADOW MODE dispatches a
   # would-have-resumed line instead of a spawn, but ADVANCES the full
