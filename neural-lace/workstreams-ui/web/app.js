@@ -212,33 +212,83 @@
   // INVARIANT: rc!=0 renders a named ERROR state with plain language,
   // stderr tail, the failing command line, and a Retry wired to the
   // refresh endpoint. NEVER the empty state on failure.)
+  //
+  // R17 deliverable 3 (audit F2 — live on two panels right now): the OLD
+  // shape led with "Derivation failed (rc=1)" then "$ nl status --json"
+  // then a raw stderr <pre> whose content could end in a jq CLI usage
+  // hint — the most prominent guidance on the panel addressed a shell
+  // user mid-pipeline, not an operator reading a dashboard. Reshaped per
+  // the operator's own binding order: plain-language headline (in
+  // question terms, naming what's now unanswerable) -> scope honesty
+  // (which panel is affected — every other panel keeps working
+  // independently, since each has its own derive-cache entry) -> actions
+  // (Retry, Copy details) -> the command + stderr fold into a <details>
+  // "Technical detail" expander, never the first thing on screen.
   // ============================================================
+  // RENDER-ERROR-BEGIN
+  // PANE-ERROR-INFO-BEGIN
+  var PANE_ERROR_INFO = {
+    'status': { headline: "Can't read live session status right now", label: "What's running" },
+    'needs-me': { headline: "Can't read what needs you right now", label: 'What needs me' },
+    'shipped': { headline: "Can't read what happened since your last look", label: 'What happened' },
+    'health': { headline: "Can't read harness health right now", label: 'Harness health' },
+    'costs': { headline: "Can't read cost data right now", label: "What's it costing" },
+    'backlog': { headline: "Can't read backlog health right now", label: 'Backlog health' },
+    'why': { headline: "Can't read why this happened", label: 'the why drawer' },
+  };
+  // PANE-ERROR-INFO-END
   function renderError(container, paneResp) {
     container.innerHTML = '';
     var box = document.createElement('div');
     box.className = 'pane-error';
     box.setAttribute('role', 'alert');
+
+    var info = PANE_ERROR_INFO[paneResp.pane] || null;
     var h = document.createElement('div');
     h.className = 'pane-error-title';
-    h.textContent = 'Derivation failed (rc=' + paneResp.rc + ')';
+    h.textContent = info ? info.headline : ('Derivation failed (rc=' + paneResp.rc + ')');
     box.appendChild(h);
-    var cmd = document.createElement('div');
-    cmd.className = 'pane-error-cmd';
-    cmd.textContent = '$ ' + paneResp.command;
-    box.appendChild(cmd);
-    if (paneResp.stderr_tail) {
-      var pre = document.createElement('pre');
-      pre.className = 'pane-error-stderr';
-      pre.textContent = paneResp.stderr_tail;
-      box.appendChild(pre);
-    }
+
+    var scope = document.createElement('div');
+    scope.className = 'pane-error-scope';
+    scope.textContent = 'This affects only the "' + (info ? info.label : 'this') +
+      '" panel — every other panel keeps working (each derives independently).';
+    box.appendChild(scope);
+
+    var actions = document.createElement('div');
+    actions.className = 'pane-error-actions';
     var retry = document.createElement('button');
     retry.className = 'btn-go small';
     retry.textContent = 'Retry';
     retry.addEventListener('click', forceRefresh);
-    box.appendChild(retry);
+    actions.appendChild(retry);
+    var detailText = '$ ' + paneResp.command + (paneResp.stderr_tail ? ('\n' + paneResp.stderr_tail) : '');
+    actions.appendChild(makeCopyBtn(detailText, 'Copy details'));
+    box.appendChild(actions);
+
+    // Technical detail — folded, never the primary content (audit F2's
+    // own required fix). Still fully present (never dropped) for the
+    // fixing session: the exact failing command + the real stderr tail.
+    var details = document.createElement('details');
+    details.className = 'pane-error-details';
+    var summary = document.createElement('summary');
+    summary.textContent = 'Technical detail (for the fixing session)';
+    details.appendChild(summary);
+    var cmd = document.createElement('div');
+    cmd.className = 'pane-error-cmd';
+    cmd.textContent = '$ ' + paneResp.command;
+    details.appendChild(cmd);
+    if (paneResp.stderr_tail) {
+      var pre = document.createElement('pre');
+      pre.className = 'pane-error-stderr';
+      pre.textContent = paneResp.stderr_tail;
+      details.appendChild(pre);
+    }
+    box.appendChild(details);
+
     container.appendChild(box);
   }
+  // RENDER-ERROR-END
 
   function renderLoading(container) {
     container.innerHTML = '<div class="pane-loading" aria-busy="true">loading…</div>';

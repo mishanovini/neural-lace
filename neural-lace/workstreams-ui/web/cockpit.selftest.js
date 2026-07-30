@@ -1340,6 +1340,112 @@ ok('R17-T8 a top-group is a real <details> (keyboard-native disclosure, C9 basel
   ok('R17-A6 an unparseable timestamp renders "unknown", never NaN-poisoned text', runPure(src, "formatAge('not-a-date')") === 'unknown');
 })();
 
+// --- R17 deliverable 3 (audit F2 — "Derivation failed" panels live on two
+// panels right now): real execution of the reshaped renderError against a
+// minimal fake DOM (same hand-rolled technique as the badge-law/docs-list
+// sections above — no jsdom/headless browser). Proves the ACTUAL rendered
+// structure/order, not just source-text presence. -----------------------
+(function () {
+  const src = extractMarkedBlock(js, '// RENDER-ERROR-BEGIN', '// RENDER-ERROR-END');
+  ok('R17-E0 selftest can locate the RENDER-ERROR extraction anchors in app.js', !!src);
+  if (!src) return;
+  function makeErrorFakeDom() {
+    function FakeNode(tag) {
+      this.tagName = tag;
+      this.className = '';
+      this._text = '';
+      this.children = [];
+      this.attrs = {};
+    }
+    Object.defineProperty(FakeNode.prototype, 'textContent', {
+      get: function () { return this._text; },
+      set: function (v) { this._text = v; this.children = []; },
+    });
+    FakeNode.prototype.appendChild = function (c) { this.children.push(c); return c; };
+    FakeNode.prototype.setAttribute = function (k, v) { this.attrs[k] = v; };
+    FakeNode.prototype.addEventListener = function () {};
+    return { createElement: function (tag) { return new FakeNode(tag); } };
+  }
+  // allText(node) -- every textContent in the subtree, in document order,
+  // so "headline before scope before details" can be asserted positionally
+  // without depending on class-name internals.
+  function allText(node) {
+    var out = [];
+    if (node._text) out.push(node._text);
+    (node.children || []).forEach(function (c) { out = out.concat(allText(c)); });
+    return out;
+  }
+  function findByClass(node, cls) {
+    if ((' ' + node.className + ' ').indexOf(' ' + cls + ' ') !== -1) return node;
+    for (var i = 0; i < (node.children || []).length; i++) {
+      var found = findByClass(node.children[i], cls);
+      if (found) return found;
+    }
+    return null;
+  }
+  function runRenderError(container, paneResp) {
+    const fakeDoc = makeErrorFakeDom();
+    const sandbox = {
+      document: fakeDoc,
+      forceRefresh: function () {},
+      makeCopyBtn: function (text, label) {
+        var b = fakeDoc.createElement('button');
+        b.className = 'copy-btn'; b.textContent = label; b._copyText = text;
+        return b;
+      },
+    };
+    vmMod.createContext(sandbox);
+    const code = src + "\nrenderError(container, " + JSON.stringify(paneResp) + ");";
+    sandbox.container = container;
+    try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+    return container;
+  }
+  const statusResp = { pane: 'status', rc: 1, command: 'nl status --json', stderr_tail: 'jq: invalid JSON text passed to --argjson\nUse jq --help for help' };
+  const dom1 = makeErrorFakeDom();
+  const c1 = dom1.createElement('div');
+  const result1 = runRenderError(c1, statusResp);
+  const box1 = result1 && !result1.__error ? findByClass(result1, 'pane-error') : null;
+  ok('R17-E1 the headline is PLAIN LANGUAGE and question-shaped ("Can\'t read live session status right now"), never "Derivation failed (rc=1)"',
+    box1 && findByClass(box1, 'pane-error-title') && findByClass(box1, 'pane-error-title')._text === "Can't read live session status right now",
+    JSON.stringify(result1 && result1.__error));
+  ok('R17-E2 the headline renders BEFORE (document order) the raw command/stderr — the technical detail is never the first thing on screen',
+    (function () {
+      const all = allText(box1);
+      const idxHeadline = all.indexOf("Can't read live session status right now");
+      const idxCmd = all.findIndex(function (t) { return /nl status --json/.test(t); });
+      return idxHeadline !== -1 && idxCmd !== -1 && idxHeadline < idxCmd;
+    })());
+  ok('R17-E3 scope honesty names the SPECIFIC affected panel ("What\'s running") — never a generic, unscoped error',
+    findByClass(box1, 'pane-error-scope') && /What's running/.test(findByClass(box1, 'pane-error-scope')._text));
+  ok('R17-E4 the raw command + stderr (including the jq usage-hint text) are folded INSIDE a <details> element, never rendered as a top-level sibling of the headline',
+    (function () {
+      const details = findByClass(box1, 'pane-error-details');
+      return details && details.tagName === 'details' && allText(details).some(function (t) { return /jq: invalid JSON/.test(t); });
+    })());
+  ok('R17-E5 a "Copy details" action exists, carrying the command + stderr as its copy payload',
+    (function () {
+      const actions = findByClass(box1, 'pane-error-actions');
+      const copyBtn = actions && actions.children.find(function (c) { return c.textContent === 'Copy details'; });
+      return !!copyBtn && /nl status --json/.test(copyBtn._copyText) && /jq: invalid JSON/.test(copyBtn._copyText);
+    })());
+  ok('R17-E6 every one of the six panes + the why-drawer has its OWN named headline (never a shared generic message that hides which question went unanswerable)',
+    ['status', 'needs-me', 'shipped', 'health', 'costs', 'backlog', 'why'].every(function (pane) {
+      const c = makeErrorFakeDom().createElement('div');
+      const r = runRenderError(c, { pane: pane, rc: 1, command: 'nl ' + pane, stderr_tail: '' });
+      const b = r && !r.__error ? findByClass(r, 'pane-error') : null;
+      const title = b && findByClass(b, 'pane-error-title');
+      return title && title._text && title._text !== 'Derivation failed (rc=1)';
+    }));
+  ok('R17-E7 an UNRECOGNIZED pane key still degrades honestly (the old rc-numbered headline), never a throw',
+    (function () {
+      const c = makeErrorFakeDom().createElement('div');
+      const r = runRenderError(c, { pane: 'some-future-pane', rc: 1, command: 'nl x', stderr_tail: '' });
+      const b = r && !r.__error ? findByClass(r, 'pane-error') : null;
+      const title = b && findByClass(b, 'pane-error-title');
+      return title && title._text === 'Derivation failed (rc=1)';
+    })());
+})();
+
 // --- Round 15 (coordinator, operator verbatim: "the Workstreams UI still
 // doesn't actually represent the actual order of building, at least not at
 // the plan level") — THREE STABLE BANDS: real execution, not source-regex,

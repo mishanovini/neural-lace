@@ -812,7 +812,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   background: color-mix(in srgb, var(--err) 10%, var(--panel2));
 }
 .pane-error-title { color: var(--err); font-weight: 700; margin-bottom: 4px; }
-.pane-error-cmd { font-family: monospace; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+/* R17 deliverable 3 (audit F2): plain-language headline leads (above);
+   scope honesty names which panel is affected; actions (Retry/Copy
+   details) come next; the command + stderr fold into <details> below —
+   never the primary content a non-developer reader sees first. */
+.pane-error-scope { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.pane-error-actions { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.pane-error-details { margin-top: 4px; }
+.pane-error-details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.pane-error-cmd { font-family: monospace; font-size: 12px; color: var(--muted); margin: 6px 0; }
 .pane-error-stderr {
   font-family: monospace;
   font-size: 11px;
