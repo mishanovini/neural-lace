@@ -963,6 +963,28 @@ async function main() {
       corruptTasklessItem && corruptTasklessItem.status.value === 'unknown' && /plan parse failed/.test(corruptTasklessItem.status.reason),
       JSON.stringify(corruptTasklessItem && corruptTasklessItem.status));
 
+    // (e) ROADMAP-STATUSLESS-CORRUPT-VANISH-01 (advocate re-run S7 residual):
+    // the header itself is DESTROYED — no Status: line survives at all — but
+    // the body carries the binary-corruption signature. Pre-fix this file
+    // VANISHED from the tree (the no-header branch returned silently); the
+    // fix surfaces it as unknown. Its control: a clean header-less evidence
+    // stub must STILL be excluded — flooding the tree with every .md was
+    // Round 14's correct fear, and the corruption signature is the line.
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-corrupt3.md'),
+      Buffer.from('\x01\x02\xffgarbage where the header was\n\n- [x] 1. a task that survived\n- [ ] 2. another\n', 'binary'));
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-clean-stub-evidence.md'),
+      '# Evidence — some plan\n\nOrdinary prose, no Status header, no corruption.\n');
+    const rHeaderless = await httpGet(PORT, '/api/roadmap');
+    const headerlessItem = findItem(rHeaderless.json.items, 'fx-corrupt3');
+    const cleanStubItem = findItem(rHeaderless.json.items, 'fx-clean-stub-evidence');
+    ok('S15e a plan whose HEADER was destroyed (no Status: line + binary-corruption signature) surfaces as unknown("header destroyed"), NEVER vanishes (ROADMAP-STATUSLESS-CORRUPT-VANISH-01)',
+      headerlessItem && headerlessItem.status.value === 'unknown' && /no Status header/.test(headerlessItem.status.reason),
+      JSON.stringify(headerlessItem && headerlessItem.status));
+    ok('S15f a CLEAN header-less .md (evidence stub) stays EXCLUDED — the corruption signature, not header-less-ness, is the trigger (no tree flooding)',
+      !cleanStubItem, JSON.stringify(cleanStubItem || null));
+    fs.rmSync(path.join(repoDir, 'docs', 'plans', 'fx-corrupt3.md'), { force: true });
+    fs.rmSync(path.join(repoDir, 'docs', 'plans', 'fx-clean-stub-evidence.md'), { force: true });
+
     // (c) an unreadable (EACCES) scanned plan file must surface as an
     // unknown root, never silently skipped by the scan's catch. chmod 000
     // is a no-op for root/some sandboxes -- probe first, skip honestly.

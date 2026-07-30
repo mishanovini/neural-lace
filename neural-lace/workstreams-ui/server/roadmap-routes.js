@@ -349,7 +349,23 @@ function scanPlanDir(dir, opts) {
       return;
     }
     const statusText = planParse.parsePlanStatus(text);
-    if (!isEligiblePlanStatus(statusText)) return; // no Status: header, or REFERENCE/NORMATIVE — not an independent plan (unchanged)
+    if (!isEligiblePlanStatus(statusText)) {
+      // ROADMAP-STATUSLESS-CORRUPT-VANISH-01 (advocate re-run S7 residual,
+      // 2026-07-30): a file with NO Status: header is normally not an
+      // independent plan — evidence stubs, fragments, reference docs — and
+      // stays excluded; flagging every header-less .md would flood the tree
+      // (Round 14's correct rationale). But ABSENT header + the
+      // binary-corruption signature in the body is the one combination whose
+      // likeliest story is "a plan whose header was destroyed", and C5
+      // forbids exactly this rendering: vanishing. Recognized-but-ineligible
+      // statuses (REFERENCE/NORMATIVE) keep their unconditional exclusion —
+      // their header survived, so their author's intent is legible.
+      if (!statusText && PLAN_BODY_CORRUPTION_RE.test(text)) {
+        out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+          scanIssue: 'plan parse failed (no Status header + corrupt content — header destroyed?)' });
+      }
+      return;
+    }
 
     // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (a): the Status: header
     // survives but its value is outside the known enum (see
