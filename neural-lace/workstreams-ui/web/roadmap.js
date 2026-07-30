@@ -1187,20 +1187,28 @@
       handle.draggable = true;
       handle.title = 'drag to reorder';
       titleCellEl.insertBefore(handle, titleCellEl.firstChild);
-      handle.addEventListener('dragstart', function (e) {
-        dragState = { itemId: item.id };
-        det.classList.add('rm-dragging');
-        if (e.dataTransfer) {
-          e.dataTransfer.effectAllowed = 'move';
-          try { e.dataTransfer.setData('text/plain', item.id); } catch (_) {}
-        }
-      });
-      handle.addEventListener('dragend', function () {
-        det.classList.remove('rm-dragging');
-        clearDropIndicators();
-        dragState = null;
-      });
     }
+    // Live fix (operator, 2026-07-30): the WHOLE row is the drag surface.
+    // The grip alone was a ~14px target — a real mouse drag anywhere else
+    // on the row did nothing (grip-only dragstart), which read as "drag and
+    // drop doesn't work". The grip stays as the visual affordance; its own
+    // dragstart bubbles here. Drags beginning on links/buttons are not
+    // hijacked — those keep native behavior.
+    sum.draggable = true;
+    sum.addEventListener('dragstart', function (e) {
+      if (e.target && e.target.closest && e.target.closest('a, button, input, textarea')) { e.preventDefault(); return; }
+      dragState = { itemId: item.id };
+      det.classList.add('rm-dragging');
+      if (e.dataTransfer) {
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', item.id); } catch (_) {}
+      }
+    });
+    sum.addEventListener('dragend', function () {
+      det.classList.remove('rm-dragging');
+      clearDropIndicators();
+      dragState = null;
+    });
 
     sum.addEventListener('dragover', function (e) {
       if (!dragState || dragState.itemId === item.id) return;

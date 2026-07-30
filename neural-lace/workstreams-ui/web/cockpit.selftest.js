@@ -1991,8 +1991,8 @@ ok('R12-30 every one of the six states maps to a title CSS class (rm-title-<valu
 // that stayed green across this inversion would have been proving nothing;
 // R13-31 pins the NEW not-started rule specifically and R13-31b proves the
 // OLD rule is actually gone (not just an additional rule shadowing it).
-ok('R13-31 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--running)/600 (ROUND 16: operator — "green instead of blue for the running items because blue looks like links"; was var(--info) blue in Round 15), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
-  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--running\);\s*font-weight:\s*600/.test(C) &&
+ok('R13-31 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--accent)/600 (2026-07-30 operator: "The green items are supposed to indicate something is actively running. I see several green plans that aren\'t running" — GREEN is reserved for live running signals only; Round 16 briefly made in-progress titles --running green, superseded same day), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
+  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--accent\);\s*font-weight:\s*600/.test(C) &&
   /\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--text\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-complete\s*\{\s*color:\s*var\(--done\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-stalled\s*\{\s*color:\s*var\(--interrupt\);\s*font-weight:\s*600/.test(C) &&

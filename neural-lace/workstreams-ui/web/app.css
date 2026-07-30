@@ -1246,7 +1246,10 @@ button, a, [role="button"] { min-height: 24px; }
    this is set at (600 weight). --info is now reserved EXCLUSIVELY for real
    interactive links across this view (the operator's own stated reason). */
 .rm-title.rm-title-not-started { color: var(--text); font-weight: 400; }                /* 11.86:1 */
-.rm-title.rm-title-in-progress { color: var(--running); font-weight: 600; }             /* 8.42:1 */
+/* Operator 2026-07-30: GREEN means ACTIVELY RUNNING, nothing else — an
+   in-progress-but-idle plan title must not read as live. Accent (violet)
+   keeps row 69's "distinct from white" requirement without lying green. */
+.rm-title.rm-title-in-progress { color: var(--accent); font-weight: 600; }
 .rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note; the ONLY dim state now */
 .rm-title.rm-title-stalled { color: var(--interrupt); font-weight: 600; }               /* 5.45:1 */
 .rm-title.rm-title-merged-unverified { color: var(--warn); font-weight: 600; }          /* 8.79:1 */
@@ -1386,7 +1389,9 @@ button, a, [role="button"] { min-height: 24px; }
    though this rule never renders live today. ---- */
 .chip.rm-status { white-space: nowrap; }
 .chip.rm-status-not-started { color: var(--muted); border-color: var(--border2); }
-.chip.rm-status-in-progress { color: var(--running); border-color: var(--running); }
+/* Operator 2026-07-30: green = ACTIVELY RUNNING only — an idle in-progress
+   plan's status chip must not read live. Accent, matching the title ladder. */
+.chip.rm-status-in-progress { color: var(--accent); border-color: var(--accent); }
 .chip.rm-status-merged-unverified { color: var(--warn); border-color: var(--warn); }
 .chip.rm-status-complete { color: var(--done); border-color: var(--done); } /* retired --ok (green) — see --done's note */
 .chip.rm-status-stalled { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; cursor: pointer; }
