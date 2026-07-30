@@ -1659,7 +1659,11 @@ CHECK13_HI4
   # missing-field nudge is v2-vintage-gated per the fd48741 review, so the
   # WARN fixtures must be v2; pass "" to model a grandfathered legacy plan).
   write_loe_plan() {
-    local out="$1" loe_class_line="${2:-}" status="${3:-ACTIVE}" schema_line="${4:-lifecycle-schema: v2}"
+    local out="$1" loe_class_line="${2:-}" status="${3:-ACTIVE}"
+    # ${4-...} not ${4:-...}: dd6 passes an EXPLICIT empty 4th arg to model a
+    # legacy plan; colon-form substituted the v2 default on it, so the "legacy"
+    # fixture was v2 and dd6 could never pass anywhere (T7 verifier, 2026-07-30).
+    local schema_line="${4-lifecycle-schema: v2}"
     {
       echo "# Plan: Self-test Check 18 LOE fixture"
       echo "Status: $status"

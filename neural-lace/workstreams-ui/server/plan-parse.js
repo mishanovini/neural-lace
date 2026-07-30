@@ -123,7 +123,13 @@ const TASK_LINE_START_RE = /^- \[([ xX])\][ \t]+(.*)$/;
 // like `v2 rollout` stay non-tasks; plan-lifecycle.sh shares the old
 // grammar and its own lettered blindness is filed via nl-issue (parity
 // delta is DELIBERATE here, not drift — see the R11 pins).
-const TASK_ID_TOKEN_RE = /^([A-Za-z]+\.)?[A-Z]?[0-9]+[A-Za-z]?([.-][0-9]+[A-Za-z]?)*/;
+// R12/SE EXTENSION (2026-07-30, operator: "speaking the same language on all
+// surfaces"): the plan-Key convention fuses a 2-3 UPPERCASE key to the digit
+// (SE1, RI1, EST14). The R11 grammar capped the fused prefix at ONE uppercase
+// letter, so SE/RI plans parsed to ZERO tasks and rendered taskless — the
+// silent-drop class again, one letter wider. Cap stays at 3 so 4+-letter
+// acronym prose (WCAG 2...) still never parses as a task id.
+const TASK_ID_TOKEN_RE = /^([A-Za-z]+\.)?[A-Z]{0,3}[0-9]+[A-Za-z]?([.-][0-9]+[A-Za-z]?)*/;
 
 // MODE_PREFIX_RE — the `[serial]`/`[parallel]` dispatch-mode prefix that
 // immediately follows the id + separator on many newer plans.
