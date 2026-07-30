@@ -1,8 +1,8 @@
-Last updated: 2026-07-18
+Last updated: 2026-07-30
 
 # Neural Lace — Harness Backlog
 
-**Last updated:** 2026-07-18 v71 — cockpit-roadmap-redesign ACTIVE @70f7133: five-round operator
+**Last updated:** 2026-07-30 v72 — cockpit-roadmap-redesign ACTIVE @70f7133: five-round operator
 sit-down synthesized, BOTH design gates run (arch SOUND-WITH-AMENDMENTS A1-A10; ux FAIL→delta
 PASS-WITH-CONCERNS, C1-C9/I1-I6 + delta R1-R6 all folded); cockpit-ui-polish SUPERSEDED+archived
 (absorbed as tasks 6+8); badge-storm auditor fix LANDED+DEPLOYED (unmatched_dispatch age-bounded
