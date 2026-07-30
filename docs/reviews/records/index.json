@@ -2162,6 +2162,21 @@
     },
     {
       "path": "adapters/claude-code/scripts/close-plan.sh",
+      "blob_sha": "e38e358189a81b88089474a735f45549bd36b18e",
+      "record_id": "hcr-20260730-181f6323",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T16:58:51Z",
+      "reviewer_principal": {
+        "hostname": "Mishas-Mac-mini",
+        "account": "unknown",
+        "session_id": "a2a535c44bfab2bd9"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "adapters/claude-code/scripts/close-plan.sh",
       "blob_sha": "f28ad15219784c75421a7fd3534c68b884777032",
       "record_id": "hcr-20260729-4586088a",
       "kind": "harness-change-review",
@@ -2548,6 +2563,21 @@
       "created_at": "2026-07-30T05:53:16Z",
       "reviewer_principal": null,
       "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/plan-recheck-sweep.sh",
+      "blob_sha": "70d64d6810a6032d820f5c4a86989c6aba3d6e8d",
+      "record_id": "hcr-20260730-181f6323",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T16:58:51Z",
+      "reviewer_principal": {
+        "hostname": "Mishas-Mac-mini",
+        "account": "unknown",
+        "session_id": "a2a535c44bfab2bd9"
+      },
+      "independence": "pathway"
     },
     {
       "path": "adapters/claude-code/scripts/portability-sweep.sh",
