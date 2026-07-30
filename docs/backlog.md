@@ -1977,3 +1977,16 @@ running this lib's own `--self-test` under both interpreters to verify the `decl
   verification-dispatch, worktree isolation now exist — the risk calculus has changed), and
   propose enable/improve/retire per agent. Owner: orchestrator prepares the brief; operator
   decides. Not started.
+- **RUNNER-POST-WRITER-REFUSAL-REVERT-01** (minor, review 2026-07-30): review-runner.sh's
+  defense-in-depth stray check (~line 359) fires AFTER the record writer ran; its "re-run
+  finalize" remedy can then mint a committed index referencing an orphaned record. Fix: revert
+  writer output (rm record, checkout index, unstage) on that refusal path, or name the cleanup
+  in the remedy text. HYPOTHESIZED-frequency (microsecond window); detectable-after via
+  review-index-consistency.
+- **OBS-COMMENT-DRIFT-670-01** (minor, review 2026-07-30): observability-derive.sh lines
+  670-673 header still describes the retired _OD_*_BY_SID assoc arrays; rewrite to name the
+  string-index + fold-at-lookup shape (the STRUCTURE note beneath is already correct).
+- **MANIFEST-LIB-HOOKS-RESOLUTION-01** (minor, review 2026-07-30): manifest.json
+  git-command-parse entry has hooks:[] so manifest-check cannot path-resolve it (5 sibling lib
+  entries carry "lib/..." refs). Add the hooks[] ref or note the unpoliced drift in
+  honest_status; sweep other hooks[]-less entries via the review's jq query.
