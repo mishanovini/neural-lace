@@ -214,3 +214,32 @@ oracles: `data-item-id` selectors, geometry (row height 174→36px) + `elementFr
   "verdict": "FAIL (single residual leg: Status-less corrupt plan vanishes; orchestrator: fix or de-scope with rationale)"
 }
 ```
+
+---
+
+## ADDENDUM 2026-07-30 — S7 residual re-check (fix commit a074b08): GREEN
+
+Orchestrator call on the residual: FIX (not de-scope). Re-checked ONLY the S7
+Status-less-corrupt leg per the brief. Verified live deployment first: disk
+`roadmap-routes.js` == a074b08 blob AND the :7733 LaunchAgent process was restarted
+onto it (23:02:42) — no repeat of the merged-undeployed gap (now tracked as
+COCKPIT-DEPLOY-NEEDS-SERVER-RESTART-01).
+
+Sandbox (:7799, synced to the a074b08 blob), probe R3-S7b + screenshot
+`R3-S7b-statusless-fixed.png`, results `sandbox-rerun3-results.json`:
+
+- fx-corrupt3 (header destroyed + binary body) AND fx-corrupt (pure binary, no header)
+  now SURFACE as unknown("plan parse failed (no Status header + corrupt content —
+  header destroyed?)") — rendered in the DOM with the reason, never a confident bucket,
+  and the group roll-up carries them ("5 status unknown"). The vanish is gone.
+- Flood control holds: fx-clean-stub (ordinary header-less markdown, no control bytes)
+  stays EXCLUDED — the corruption signature, not header-less-ness, is the trigger.
+  Live confirmation (read-only): 23 roadmap items pre-fix and post-fix; the repo's 26
+  real evidence-companion .md stubs in docs/plans/ all remain excluded; zero no-header
+  unknowns on the live payload. Console errors: 0.
+
+**S7: PASS (all 6 legs).** Final scenario table: S1-S8 PASS (S5 surface PASS with the
+cross-machine ≤2min leg explicitly HYPOTHESIZED until a real peer exports — the honest
+empty state names COORD-SYNC-NO-PEER-EXPORTS-YET-01), S9 PENDING-OPERATOR.
+
+advocate pass GREEN — task 9 awaits only the operator walkthrough.
