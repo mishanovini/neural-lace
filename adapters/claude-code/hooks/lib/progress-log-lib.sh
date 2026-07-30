@@ -31,7 +31,7 @@
 #   {"v":1,"event_id":"<hash>","ts":"ISO-8601-UTC","ask_id":"...",
 #    "type":"task_done|task_started|waiting_on_operator|merged|
 #            plan_amended|plan_completed|plan_outcome_recorded|plan_reopened|
-#            merge-completed|merge-failed|ask_registered|session_attached|...",
+#            merge_completed|merge_failed|ask_registered|session_attached|...",
 #    "plan_slug":"...","task_id":"...","sha":"...","needs_you_id":"...",
 #    "session_id":"...","summary":"...","evidence_link":"...",
 #    "emitter":"...","provenance":"known|unknown","user":"...",
@@ -61,7 +61,7 @@
 #   plan_completed          -> plan_slug + --dedup-extra (content-hash of the Status-line ts; caller-computed)
 #   plan_outcome_recorded   -> plan_slug + --dedup-extra (content-hash of close_ts+metric+re-check date; T9, caller-computed)
 #   plan_reopened           -> plan_slug + --dedup-extra (content-hash of re-check-date+reason; T9, caller-computed)
-#   merge-completed         -> plan_slug + task_id + sha (SE1, status-event-ledger plan;
+#   merge_completed         -> plan_slug + task_id + sha (SE1, status-event-ledger plan;
 #     emitted by scripts/estate-merge.sh's _em_log_merge -- the single funnel every
 #     terminal outcome in cmd_merge already passes through. FIELD REUSE, no new JSON
 #     fields: plan_slug carries the caller's optional --slug log-correlation label
@@ -69,8 +69,8 @@
 #     names survive in one field; sha is the POST-MERGE target SHA. A byte-identical
 #     replay of the same successful branch-pair+sha combination dedups, exactly like
 #     `merged` above; a later merge producing a NEW sha is always a new event.)
-#   merge-failed            -> plan_slug + task_id + --dedup-extra (SE1; same field
-#     reuse as merge-completed above, but sha is empty -- nothing landed -- so
+#   merge_failed            -> plan_slug + task_id + --dedup-extra (SE1; same field
+#     reuse as merge_completed above, but sha is empty -- nothing landed -- so
 #     dedup_extra (caller-computed pid+ms per attempt, see estate-merge.sh's
 #     _em_emit_ledger_event) makes EVERY failed attempt its own row by construction:
 #     an operator retrying an identical blocked merge (e.g. still dirty) must never
@@ -427,16 +427,16 @@ _pl_natural_key() {
       # and never re-emits at all -- naturally idempotent by construction
       # (see plan-recheck-sweep.sh header).
       printf 'plan_reopened|%s|%s' "$plan_slug" "$dedup_extra" ;;
-    merge-completed)
+    merge_completed)
       # SE1 (status-event-ledger). plan_slug/task_id carry the estate-merge
       # field reuse described in the DEDUP header comment above -- a
       # byte-identical (branch-pair, sha) replay dedups; a new sha is new.
-      printf 'merge-completed|%s|%s|%s' "$plan_slug" "$task_id" "$sha" ;;
-    merge-failed)
+      printf 'merge_completed|%s|%s|%s' "$plan_slug" "$task_id" "$sha" ;;
+    merge_failed)
       # SE1. dedup_extra is the caller's per-attempt uniqueness token (pid+ms
       # from estate-merge.sh) -- every failed attempt is intentionally its
       # own row, never silently collapsed by a naive natural key.
-      printf 'merge-failed|%s|%s|%s' "$plan_slug" "$task_id" "$dedup_extra" ;;
+      printf 'merge_failed|%s|%s|%s' "$plan_slug" "$task_id" "$dedup_extra" ;;
     ask_registered|session_attached)
       printf '%s|%s|%s' "$type" "$ask_id" "$session_id" ;;
     *)

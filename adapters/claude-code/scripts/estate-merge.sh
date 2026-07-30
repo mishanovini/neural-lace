@@ -60,6 +60,7 @@
 # ============================================================
 #   estate-merge.sh merge <branch> --into <target> [options]
 #   estate-merge.sh --check [--into <target>] [options]
+#   estate-merge.sh --acknowledge <sha> --reason <text> [options]
 #   estate-merge.sh --self-test
 #   estate-merge.sh --help
 #
@@ -98,6 +99,26 @@
 #                           AND the tracking-since marker (see below)
 #   --quiet
 #
+# --acknowledge options (SE1 REFORMULATE F7 — record a legitimate merge
+# that landed OUTSIDE this script's lock, e.g. a hand-run `git merge` or
+# the pre-existing PR flow, so --check's bypass-detection axis stops
+# flagging it RED forever. The RED finding itself names this command as
+# the remediation path):
+#   <sha>                   REQUIRED. The out-of-band merge commit to
+#                           acknowledge (positional, like merge's <branch>).
+#   --reason <text>         REQUIRED. Why this bypass is accepted — an
+#                           acknowledgment with no reason would silently
+#                           wave every bypass through, defeating the whole
+#                           point of --check's detection axis.
+#   --repo <path>
+#   --into <target>         which target branch this merge belongs to
+#                           (default: master if it exists locally, else
+#                           main, else current HEAD — same default as
+#                           --check)
+#   --slug <slug>           optional log-correlation label (see merge's
+#                           own --slug note above)
+#   --quiet
+#
 # TRACKING-SINCE MARKER (state/estate-merge/tracking-since-sha): the FIRST
 # time --check (or merge) runs against a given STATE_DIR, it stamps the
 # target branch's CURRENT tip as "everything before this is pre-existing
@@ -109,15 +130,18 @@
 # state dir (or the marker file) to reset the tracked window deliberately.
 #
 # Exit codes:
-#   0  merge: success (ff, no-ff, or already-integrated) | check: CLEAN
+#   0  merge: success (ff, no-ff, or already-integrated) | check: CLEAN |
+#      --acknowledge: recorded
 #   1  generic failure (a git command failed unexpectedly, not a preflight
 #      refusal)
 #   2  usage error OR a preflight block (dirty tree, wrong branch checked
 #      out, target missing, target behind/diverged its upstream, lock busy,
-#      merge conflict)
+#      merge conflict, --acknowledge missing <sha>/--reason or an
+#      unresolvable <sha>)
 #   3  --self-test failure
 #   4  --check found a RED finding (true divergence, or a merge that
-#      bypassed this lock)
+#      bypassed this lock — remediate a legitimate bypass with
+#      --acknowledge <sha> --reason <text>)
 #
 # Self-test: bash estate-merge.sh --self-test (sandboxed fixture repos; never
 # touches a real remote, the real checkout, or ~/.claude/state/estate-merge
@@ -234,7 +258,7 @@ _em_release_lock() { rm -rf "$LOCK_DIR" 2>/dev/null || true; }
 # event schema (ask-rooted-workstreams-p1) rather than a parallel store --
 # same idiom the plan_outcome_recorded/plan_reopened types already
 # established there (progress-log-lib.sh's own DEDUP header comment): two
-# NEW types, `merge-completed` and `merge-failed`, with `estate-merge`
+# NEW types, `merge_completed` and `merge_failed`, with `estate-merge`
 # registered as a known emitter (mirrors plan-recheck-sweep's own
 # registration) so a real mechanism-emitted event is never flagged
 # provenance:unknown.
@@ -267,20 +291,23 @@ _em_emit_ledger_event() {
 
   local type
   case "$outcome" in
-    merged-ff|merged-noff|already-integrated) type="merge-completed" ;;
-    *) type="merge-failed" ;;
+    merged-ff|merged-noff|already-integrated|acknowledged) type="merge_completed" ;;
+    *) type="merge_failed" ;;
   esac
 
   local summary="estate-merge ${outcome}: ${source_branch} -> ${target}"
   [ -n "${reason:-}" ] && summary="${summary} (reason: ${reason})"
 
-  local dedup_extra
-  if [ "$type" = "merge-completed" ]; then
-    dedup_extra="$outcome"
-  else
+  local dedup_extra=""
+  if [ "$type" != "merge_completed" ]; then
     # Failures are NEVER deduped away -- an operator retrying an identical
     # blocked merge (e.g. still dirty) must produce a NEW row every time,
     # never a silent no-op. pid+ms is unique per invocation of this script.
+    # merge_completed's own natural key (plan_slug+task_id+sha,
+    # progress-log-lib.sh's _pl_natural_key) never reads dedup_extra at
+    # all, so leaving it empty there (rather than a value that silently
+    # does nothing) is the honest choice -- a non-empty dedup_extra would
+    # wrongly imply it participates in that type's dedup formula.
     dedup_extra="${outcome}-$$-$(_em_now_ms)"
   fi
 
@@ -417,6 +444,12 @@ cmd_merge() {
 
   if ! _em_acquire_lock; then
     echo "$SCRIPT_NAME: BLOCKED — another estate-merge is in progress (lock held at $LOCK_DIR) — refusing to run concurrently. Re-run once it finishes." >&2
+    # SE1 REFORMULATE F1: this refusal previously bypassed _em_log_merge
+    # entirely (it returns before the lock-guarded section even begins),
+    # so it was the one terminal outcome with no merges.log line and no
+    # status-event-ledger row. Logged here, outside the lock (this append
+    # is not part of the critical section the lock protects).
+    _em_log_merge "blocked-lock-busy" "$target" "$source_branch" "" "$reason" "no" "$slug" "$main"
     return 2
   fi
   trap _em_release_lock EXIT
@@ -662,7 +695,7 @@ cmd_check() {
     fi
     bypass_n=$((bypass_n + 1))
     local subject; subject=$(git -C "$main" log -1 --format=%s "$sha" 2>/dev/null)
-    findings="${findings}RED: merge commit $sha ('$subject') in '$target' history is not recorded in $MERGE_LOG -- it bypassed the estate-merge lock.
+    findings="${findings}RED: merge commit $sha ('$subject') in '$target' history is not recorded in $MERGE_LOG -- it bypassed the estate-merge lock. If this merge is legitimate (e.g. an accepted PR-flow merge), record it with: $SCRIPT_NAME --acknowledge $sha --reason \"<why>\" --into $target
 "
   done
   [ "$bypass_n" -gt 0 ] && red=1
@@ -673,6 +706,66 @@ cmd_check() {
     return 4
   fi
   echo "$SCRIPT_NAME --check: CLEAN (target=$target, lookback=$lookback)."
+  return 0
+}
+
+# ============================================================
+# --acknowledge subcommand (SE1 REFORMULATE F7) -- the escape hatch for a
+# merge that landed OUTSIDE this script (bypassing the lock -- a hand-run
+# `git merge`, or the pre-existing PR flow) but is legitimate and accepted.
+# `--check`'s own bypass-detection axis (above) has no way to tell "nobody
+# reviewed this bypass" apart from "an operator looked at it and it's fine"
+# -- every bypass reads identically RED forever. `--acknowledge` records
+# the SAME merges.log line shape `_em_log_merge` already writes for every
+# OTHER outcome (so `--check`'s `grep -q "sha=$sha" "$MERGE_LOG"` test
+# stops flagging it, per the exact mechanism documented in that function),
+# and ALSO fires the SE1 status-event-ledger emit -- classified
+# `merge_completed` (an acknowledged merge genuinely landed; it is not a
+# failure) via the case arm below.
+#
+# --reason is REQUIRED, not optional: an acknowledgment with no stated
+# reason would be indistinguishable from silently waving every bypass
+# through, which defeats the entire point of `--check`'s detection axis.
+# ============================================================
+cmd_acknowledge() {
+  local sha="" reason="" repo="" target="" slug=""
+
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason) shift; reason="${1:-}" ;;
+      --repo) shift; repo="${1:-}" ;;
+      --into) shift; target="${1:-}" ;;
+      --slug) shift; slug="${1:-}" ;;
+      --quiet) QUIET=1 ;;
+      --*) echo "$SCRIPT_NAME: unknown flag: $1" >&2; return 2 ;;
+      *)
+        if [ -z "$sha" ]; then sha="$1"; else echo "$SCRIPT_NAME: unexpected arg: $1" >&2; return 2; fi
+        ;;
+    esac
+    shift
+  done
+
+  [ -n "$sha" ] || { echo "$SCRIPT_NAME: --acknowledge requires a <sha>" >&2; return 2; }
+  [ -n "$reason" ] || { echo "$SCRIPT_NAME: --acknowledge requires --reason <text> -- an out-of-band merge must be recorded with WHY it's accepted, never silently waved through" >&2; return 2; }
+
+  repo="${repo:-$(pwd)}"
+  local main
+  main="$(git -C "$repo" rev-parse --show-toplevel 2>/dev/null)" || {
+    echo "$SCRIPT_NAME: --repo is not a usable git repo: $repo" >&2; return 2; }
+
+  local resolved_sha
+  resolved_sha="$(git -C "$main" rev-parse --verify --quiet "$sha" 2>/dev/null)"
+  [ -n "$resolved_sha" ] || {
+    echo "$SCRIPT_NAME: --acknowledge: '$sha' does not resolve to a commit in $main" >&2; return 2; }
+
+  if [ -z "$target" ]; then
+    if git -C "$main" rev-parse --verify --quiet refs/heads/master >/dev/null 2>&1; then target="master"
+    elif git -C "$main" rev-parse --verify --quiet refs/heads/main >/dev/null 2>&1; then target="main"
+    else target="$(git -C "$main" symbolic-ref --short HEAD 2>/dev/null || echo "")"; fi
+  fi
+
+  _em_log_merge "acknowledged" "$target" "" "$resolved_sha" "$reason" "no" "$slug" "$main"
+  log "$SCRIPT_NAME: acknowledged out-of-band merge $resolved_sha into '${target:-<unknown>}' -- reason: $reason"
   return 0
 }
 
@@ -695,13 +788,23 @@ _em_self_test() {
     pass "static guarantee: no force-push pattern anywhere in this script"
   fi
 
-  # Static guarantee (SE1, status-event-ledger plan): the ledger-emit call
-  # site is genuinely wired into _em_log_merge, the single funnel every
-  # terminal merge outcome passes through. This grep is itself mutation-
-  # resistant: commenting out, deleting, or moving the call out of
-  # _em_log_merge fails this guard immediately, independent of whether any
-  # functional scenario below happens to exercise the exact outcome path
-  # that would have caught it.
+  # Static guarantee (SE1, status-event-ledger plan; softened per REFORMULATE
+  # F4 -- the prior wording overclaimed unqualified "mutation-resistant").
+  # A narrow, SYNTACTIC check: a line-anchored grep proving the literal call
+  # site for _em_emit_ledger_event still exists inside _em_log_merge. It
+  # catches ONE regression class -- the whole line (or the function) being
+  # deleted, commented out, or moved elsewhere -- and nothing more; it is
+  # NOT a semantic proof that the call still fires correctly (a
+  # text-preserving no-op wrapper, an argument-shape change, or a broken
+  # callee elsewhere in the file would all leave this grep green). The
+  # anchor to line-start was itself a build-time lesson: an earlier, looser
+  # (unanchored) version of this pattern stayed green even when the call
+  # was disabled in place via a `: disabled_for_mutation_test` no-op prefix
+  # -- proof that a static text match alone is a weak guarantee. The
+  # functional Scenarios 21-24 below (real sandboxed merges, real emitted
+  # JSONL fields asserted) are the load-bearing evidence that the emit
+  # actually works; this guard is a cheap supplementary tripwire for the
+  # "somebody deleted the line" class only.
   if grep -qE '^[[:space:]]*_em_emit_ledger_event "\$outcome" "\$target" "\$source_branch"' "${BASH_SOURCE[0]}"; then
     pass "static guarantee: _em_log_merge calls _em_emit_ledger_event (SE1 ledger emit wired at the merge chokepoint)"
   else
@@ -942,11 +1045,13 @@ _em_self_test() {
       || fail "not recorded as skipped: $(cat "$d/state/merges.log" 2>/dev/null)"
   }
 
-  echo "Scenario 12: lock prevents concurrent execution (held, fresh) -> refuses, no mutation"
+  echo "Scenario 12: lock prevents concurrent execution (held, fresh) -> refuses, no mutation, AND logs blocked-lock-busy (SE1 REFORMULATE F1 -- this refusal returns before _em_log_merge's usual call sites, so it needed its own instrumentation)"
   {
     local d="$T/s12"; mkdir -p "$d"
     _mk_fixture "$d"
     export ESTATE_MERGE_STATE_DIR="$d/state"
+    export PROGRESS_LOG_STATE_DIR="$d/pl-state"
+    mkdir -p "$PROGRESS_LOG_STATE_DIR"
     git -C "$FX_MAIN" checkout -q source
     echo s1 > "$FX_MAIN/s.txt"; git -C "$FX_MAIN" add s.txt
     git -C "$FX_MAIN" -c commit.gpgsign=false commit -qm "source commit 1"
@@ -959,6 +1064,13 @@ _em_self_test() {
     [ "$rc" = "2" ] && pass "held fresh lock: exit 2 (BLOCKED)" || fail "held fresh lock: expected 2, got $rc"
     [ "$(git -C "$FX_MAIN" rev-parse target)" = "$before" ] && pass "held fresh lock: target unchanged (no merge attempted)" \
       || fail "held fresh lock: target moved despite the lock"
+    grep -q "outcome=blocked-lock-busy" "$d/state/merges.log" 2>/dev/null && pass "held fresh lock: logged outcome=blocked-lock-busy in merges.log" \
+      || fail "held fresh lock: merges.log missing outcome=blocked-lock-busy: $(cat "$d/state/merges.log" 2>/dev/null)"
+    local ledger="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+    grep -q '"type":"merge_failed"' "$ledger" 2>/dev/null && pass "held fresh lock: also emits a merge_failed status-event-ledger row (F1)" \
+      || fail "held fresh lock: expected a merge_failed ledger row in $ledger: $(cat "$ledger" 2>/dev/null)"
+    grep -q '"summary":"estate-merge blocked-lock-busy' "$ledger" 2>/dev/null && pass "held fresh lock: ledger summary names blocked-lock-busy" \
+      || fail "held fresh lock: ledger summary missing/wrong: $(cat "$ledger" 2>/dev/null)"
   }
 
   echo "Scenario 13: a STALE lock is reclaimed and the merge proceeds"
@@ -1129,7 +1241,7 @@ _em_self_test() {
       || fail "production path wrong: '$prod'"
   }
 
-  echo "Scenario 21: successful merge emits a merge-completed status-event-ledger event (SE1, docs/plans/status-event-ledger.md) with branch, target, sha, machine"
+  echo "Scenario 21: successful merge emits a merge_completed status-event-ledger event (SE1, docs/plans/status-event-ledger.md) with branch, target, sha, machine"
   {
     local d="$T/s21"; mkdir -p "$d"
     _mk_fixture "$d"
@@ -1143,26 +1255,26 @@ _em_self_test() {
     local src_sha; src_sha=$(git -C "$FX_MAIN" rev-parse source)
     bash "${BASH_SOURCE[0]}" merge source --into target --repo "$FX_MAIN" --no-push --quiet --slug se1-demo-plan >"$d/out.log" 2>&1
     local ledger="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
-    [ -f "$ledger" ] && pass "merge-completed: ledger event file exists (unlinked lane -- no ask tracked by estate-merge.sh)" \
-      || fail "merge-completed: expected $ledger to exist: $(cat "$d/out.log")"
-    grep -q '"type":"merge-completed"' "$ledger" 2>/dev/null && pass "merge-completed: type recorded" \
-      || fail "merge-completed: type missing: $(cat "$ledger" 2>/dev/null)"
-    grep -q '"plan_slug":"se1-demo-plan"' "$ledger" 2>/dev/null && pass "merge-completed: plan_slug carries the --slug label" \
-      || fail "merge-completed: plan_slug missing/wrong: $(cat "$ledger" 2>/dev/null)"
-    grep -q '"task_id":"source -> target"' "$ledger" 2>/dev/null && pass "merge-completed: task_id carries the source -> target branch pair" \
-      || fail "merge-completed: task_id missing/wrong: $(cat "$ledger" 2>/dev/null)"
-    grep -q "\"sha\":\"$src_sha\"" "$ledger" 2>/dev/null && pass "merge-completed: sha matches the fast-forwarded target tip" \
-      || fail "merge-completed: sha missing/wrong (expected $src_sha): $(cat "$ledger" 2>/dev/null)"
-    grep -q '"emitter":"estate-merge"' "$ledger" 2>/dev/null && pass "merge-completed: emitter is estate-merge" \
-      || fail "merge-completed: emitter missing/wrong: $(cat "$ledger" 2>/dev/null)"
-    grep -q '"provenance":"known"' "$ledger" 2>/dev/null && pass "merge-completed: provenance known (estate-merge is a registered progress-log-lib.sh emitter)" \
-      || fail "merge-completed: provenance not known: $(cat "$ledger" 2>/dev/null)"
+    [ -f "$ledger" ] && pass "merge_completed: ledger event file exists (unlinked lane -- no ask tracked by estate-merge.sh)" \
+      || fail "merge_completed: expected $ledger to exist: $(cat "$d/out.log")"
+    grep -q '"type":"merge_completed"' "$ledger" 2>/dev/null && pass "merge_completed: type recorded" \
+      || fail "merge_completed: type missing: $(cat "$ledger" 2>/dev/null)"
+    grep -q '"plan_slug":"se1-demo-plan"' "$ledger" 2>/dev/null && pass "merge_completed: plan_slug carries the --slug label" \
+      || fail "merge_completed: plan_slug missing/wrong: $(cat "$ledger" 2>/dev/null)"
+    grep -q '"task_id":"source -> target"' "$ledger" 2>/dev/null && pass "merge_completed: task_id carries the source -> target branch pair" \
+      || fail "merge_completed: task_id missing/wrong: $(cat "$ledger" 2>/dev/null)"
+    grep -q "\"sha\":\"$src_sha\"" "$ledger" 2>/dev/null && pass "merge_completed: sha matches the fast-forwarded target tip" \
+      || fail "merge_completed: sha missing/wrong (expected $src_sha): $(cat "$ledger" 2>/dev/null)"
+    grep -q '"emitter":"estate-merge"' "$ledger" 2>/dev/null && pass "merge_completed: emitter is estate-merge" \
+      || fail "merge_completed: emitter missing/wrong: $(cat "$ledger" 2>/dev/null)"
+    grep -q '"provenance":"known"' "$ledger" 2>/dev/null && pass "merge_completed: provenance known (estate-merge is a registered progress-log-lib.sh emitter)" \
+      || fail "merge_completed: provenance not known: $(cat "$ledger" 2>/dev/null)"
     local host; host="$(hostname 2>/dev/null || echo unknown)"
-    grep -qF "\"machine\":\"$host\"" "$ledger" 2>/dev/null && pass "merge-completed: machine field populated with this host" \
-      || fail "merge-completed: machine field missing/wrong: $(cat "$ledger" 2>/dev/null)"
+    grep -qF "\"machine\":\"$host\"" "$ledger" 2>/dev/null && pass "merge_completed: machine field populated with this host" \
+      || fail "merge_completed: machine field missing/wrong: $(cat "$ledger" 2>/dev/null)"
   }
 
-  echo "Scenario 22: a BLOCKED merge (dirty worktree) emits an honest merge-failed status-event-ledger event -- empty sha (nothing landed), reason recorded"
+  echo "Scenario 22: a BLOCKED merge (dirty worktree) emits an honest merge_failed status-event-ledger event -- empty sha (nothing landed), reason recorded"
   {
     local d="$T/s22"; mkdir -p "$d"
     _mk_fixture "$d"
@@ -1176,21 +1288,21 @@ _em_self_test() {
     echo uncommitted > "$FX_MAIN/dirty.txt"
     bash "${BASH_SOURCE[0]}" merge source --into target --repo "$FX_MAIN" --no-push --quiet --slug se1-demo-plan >"$d/out.log" 2>&1
     local ledger="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
-    [ -f "$ledger" ] && pass "merge-failed: ledger event file exists" \
-      || fail "merge-failed: expected $ledger to exist: $(cat "$d/out.log")"
-    grep -q '"type":"merge-failed"' "$ledger" 2>/dev/null && pass "merge-failed: type recorded" \
-      || fail "merge-failed: type missing: $(cat "$ledger" 2>/dev/null)"
-    grep -q '"sha":""' "$ledger" 2>/dev/null && pass "merge-failed: sha honestly empty -- nothing landed" \
-      || fail "merge-failed: sha not empty: $(cat "$ledger" 2>/dev/null)"
-    grep -q '"task_id":"source -> target"' "$ledger" 2>/dev/null && pass "merge-failed: task_id still carries the source -> target branch pair" \
-      || fail "merge-failed: task_id missing/wrong: $(cat "$ledger" 2>/dev/null)"
-    grep -q 'estate-merge blocked-dirty: source -> target' "$ledger" 2>/dev/null && pass "merge-failed: summary names the blocked-dirty outcome" \
-      || fail "merge-failed: summary missing/wrong: $(cat "$ledger" 2>/dev/null)"
-    grep -q '"emitter":"estate-merge"' "$ledger" 2>/dev/null && pass "merge-failed: emitter is estate-merge" \
-      || fail "merge-failed: emitter missing: $(cat "$ledger" 2>/dev/null)"
+    [ -f "$ledger" ] && pass "merge_failed: ledger event file exists" \
+      || fail "merge_failed: expected $ledger to exist: $(cat "$d/out.log")"
+    grep -q '"type":"merge_failed"' "$ledger" 2>/dev/null && pass "merge_failed: type recorded" \
+      || fail "merge_failed: type missing: $(cat "$ledger" 2>/dev/null)"
+    grep -q '"sha":""' "$ledger" 2>/dev/null && pass "merge_failed: sha honestly empty -- nothing landed" \
+      || fail "merge_failed: sha not empty: $(cat "$ledger" 2>/dev/null)"
+    grep -q '"task_id":"source -> target"' "$ledger" 2>/dev/null && pass "merge_failed: task_id still carries the source -> target branch pair" \
+      || fail "merge_failed: task_id missing/wrong: $(cat "$ledger" 2>/dev/null)"
+    grep -q 'estate-merge blocked-dirty: source -> target' "$ledger" 2>/dev/null && pass "merge_failed: summary names the blocked-dirty outcome" \
+      || fail "merge_failed: summary missing/wrong: $(cat "$ledger" 2>/dev/null)"
+    grep -q '"emitter":"estate-merge"' "$ledger" 2>/dev/null && pass "merge_failed: emitter is estate-merge" \
+      || fail "merge_failed: emitter missing: $(cat "$ledger" 2>/dev/null)"
   }
 
-  echo "Scenario 23: two SEPARATE blocked-dirty attempts each produce their OWN merge-failed row -- never silently collapsed (per-attempt dedup_extra, not a static natural key)"
+  echo "Scenario 23: two SEPARATE blocked-dirty attempts each produce their OWN merge_failed row -- never silently collapsed (per-attempt dedup_extra, not a static natural key)"
   {
     local d="$T/s23"; mkdir -p "$d"
     _mk_fixture "$d"
@@ -1205,9 +1317,9 @@ _em_self_test() {
     bash "${BASH_SOURCE[0]}" merge source --into target --repo "$FX_MAIN" --no-push --quiet >/dev/null 2>&1
     bash "${BASH_SOURCE[0]}" merge source --into target --repo "$FX_MAIN" --no-push --quiet >/dev/null 2>&1
     local ledger="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
-    local n; n=$(grep -c '"type":"merge-failed"' "$ledger" 2>/dev/null | tr -d ' ')
-    [ "$n" = "2" ] && pass "merge-failed: two separate blocked attempts produced 2 distinct rows (honest per-attempt logging, never deduped away)" \
-      || fail "merge-failed: expected 2 rows, got '$n': $(cat "$ledger" 2>/dev/null)"
+    local n; n=$(grep -c '"type":"merge_failed"' "$ledger" 2>/dev/null | tr -d ' ')
+    [ "$n" = "2" ] && pass "merge_failed: two separate blocked attempts produced 2 distinct rows (honest per-attempt logging, never deduped away)" \
+      || fail "merge_failed: expected 2 rows, got '$n': $(cat "$ledger" 2>/dev/null)"
   }
 
   echo "Scenario 24: a missing scripts/progress-log.sh is a silent no-op -- the merge itself still succeeds (writer-semantics never-block law)"
@@ -1230,6 +1342,64 @@ _em_self_test() {
       || fail "missing progress-log.sh: expected 0, got $rc: $(cat "$d/out.log")"
   }
 
+  echo "Scenario 25: --acknowledge resolves a RED bypass finding to CLEAN (SE1 REFORMULATE F7) and emits a merge_completed status-event-ledger row"
+  {
+    local d="$T/s25"; mkdir -p "$d"
+    _mk_fixture "$d"
+    export ESTATE_MERGE_STATE_DIR="$d/state"
+    export PROGRESS_LOG_STATE_DIR="$d/pl-state"
+    mkdir -p "$PROGRESS_LOG_STATE_DIR"
+    git -C "$FX_MAIN" checkout -q target
+    bash "${BASH_SOURCE[0]}" --check --into target --repo "$FX_MAIN" >/dev/null 2>&1   # stamp the tracking marker first
+    git -C "$FX_MAIN" checkout -q source
+    echo s1 > "$FX_MAIN/s.txt"; git -C "$FX_MAIN" add s.txt
+    git -C "$FX_MAIN" -c commit.gpgsign=false commit -qm "source commit 1"
+    git -C "$FX_MAIN" checkout -q target
+    echo t2 > "$FX_MAIN/t2.txt"; git -C "$FX_MAIN" add t2.txt
+    git -C "$FX_MAIN" -c commit.gpgsign=false commit -qm "target commit 2 (diverges from source)"
+    git -C "$FX_MAIN" -c commit.gpgsign=false merge -q --no-ff -m "hand-merged, bypassing the lock" source >/dev/null 2>&1
+    local hand_sha; hand_sha=$(git -C "$FX_MAIN" rev-parse target)
+    bash "${BASH_SOURCE[0]}" --check --into target --repo "$FX_MAIN" >"$d/pre.log" 2>&1
+    local pre_rc=$?
+    [ "$pre_rc" = "4" ] && pass "--acknowledge setup: bypass is RED before acknowledgment (exit 4)" \
+      || fail "--acknowledge setup: expected pre-acknowledge RED (4), got $pre_rc: $(cat "$d/pre.log")"
+    grep -qi -- "--acknowledge $hand_sha --reason" "$d/pre.log" && pass "--acknowledge: the RED finding itself names the --acknowledge remediation command" \
+      || fail "--acknowledge: RED finding does not name --acknowledge: $(cat "$d/pre.log")"
+    bash "${BASH_SOURCE[0]}" --acknowledge "$hand_sha" --reason "accepted PR-flow merge, pre-existing before this lock" --into target --repo "$FX_MAIN" --quiet >"$d/ack.log" 2>&1
+    local ack_rc=$?
+    [ "$ack_rc" = "0" ] && pass "--acknowledge: exit 0 on a resolvable sha + reason" \
+      || fail "--acknowledge: expected 0, got $ack_rc: $(cat "$d/ack.log")"
+    grep -q "outcome=acknowledged" "$d/state/merges.log" 2>/dev/null && grep -q "sha=$hand_sha" "$d/state/merges.log" 2>/dev/null \
+      && pass "--acknowledge: merges.log records outcome=acknowledged for the exact sha" \
+      || fail "--acknowledge: merges.log missing the acknowledged row: $(cat "$d/state/merges.log" 2>/dev/null)"
+    bash "${BASH_SOURCE[0]}" --check --into target --repo "$FX_MAIN" >"$d/post.log" 2>&1
+    local post_rc=$?
+    [ "$post_rc" = "0" ] && pass "--acknowledge: --check is now CLEAN for the SAME bypass sha (exit 0)" \
+      || fail "--acknowledge: expected --check CLEAN (0) after acknowledgment, got $post_rc: $(cat "$d/post.log")"
+    local ledger="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+    grep -q '"type":"merge_completed"' "$ledger" 2>/dev/null && grep -q "\"sha\":\"$hand_sha\"" "$ledger" 2>/dev/null \
+      && pass "--acknowledge: emits a merge_completed ledger row for the acknowledged sha (an acknowledged merge genuinely landed, it is not a failure)" \
+      || fail "--acknowledge: expected a merge_completed ledger row for $hand_sha: $(cat "$ledger" 2>/dev/null)"
+  }
+
+  echo "Scenario 26: --acknowledge refuses cleanly without a resolvable <sha> or a --reason (never silently waves a bypass through)"
+  {
+    local d="$T/s26"; mkdir -p "$d"
+    _mk_fixture "$d"
+    export ESTATE_MERGE_STATE_DIR="$d/state"
+    local target_sha; target_sha=$(git -C "$FX_MAIN" rev-parse target)
+    bash "${BASH_SOURCE[0]}" --acknowledge "$target_sha" --repo "$FX_MAIN" --quiet >"$d/out1.log" 2>&1
+    local rc1=$?
+    [ "$rc1" = "2" ] && pass "--acknowledge: missing --reason -> exit 2 (BLOCKED)" || fail "--acknowledge: expected 2 for missing --reason, got $rc1"
+    grep -qi "requires --reason" "$d/out1.log" && pass "--acknowledge: message explains --reason is required" \
+      || fail "--acknowledge: message missing the --reason requirement: $(cat "$d/out1.log")"
+    bash "${BASH_SOURCE[0]}" --acknowledge deadbeefnotreal --reason "test" --repo "$FX_MAIN" --quiet >"$d/out2.log" 2>&1
+    local rc2=$?
+    [ "$rc2" = "2" ] && pass "--acknowledge: unresolvable <sha> -> exit 2 (BLOCKED)" || fail "--acknowledge: expected 2 for a bad sha, got $rc2"
+    [ ! -f "$d/state/merges.log" ] && pass "--acknowledge: a refused call writes nothing to merges.log" \
+      || fail "--acknowledge: merges.log unexpectedly created on a refused call: $(cat "$d/state/merges.log" 2>/dev/null)"
+  }
+
   unset PROGRESS_LOG_STATE_DIR
 
   rm -rf "$T"
@@ -1249,6 +1419,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "${1:-}" in
     merge) shift; cmd_merge "$@"; exit $? ;;
     --check) shift; cmd_check "$@"; exit $? ;;
+    --acknowledge) shift; cmd_acknowledge "$@"; exit $? ;;
     --self-test) _em_self_test; exit $? ;;
     --help|-h) usage; exit 0 ;;
     "") usage >&2; exit 2 ;;
