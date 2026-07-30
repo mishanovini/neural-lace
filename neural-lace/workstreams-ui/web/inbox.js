@@ -212,6 +212,60 @@
   }
 
   // ============================================================
+  // links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01, round 14) — the
+  // server's `item.links[]` (producer `--link` entries PLUS anchors
+  // extractAnchorsFromText found inline in the raw text — see server
+  // header) had NO rendering surface anywhere in this file before this
+  // fix (a real, live defect: the field existed, nothing ever read it).
+  // Duplicated from asks.js's own absoluteLinkNode/isAbsoluteHref
+  // (this codebase's established small-duplicated-helper convention —
+  // see this file's header + auditor.js's "WHY THE READERS BELOW ARE
+  // DUPLICATED"): an http(s) URL becomes a REAL clickable <a> (always
+  // resolves); anything else (a repo-relative path, an NY-/wf_ id) is
+  // plain text + a copy button, NEVER a fabricated/relative href — "a
+  // dead link is worse than no link" (this defect's own binding rule).
+  // ============================================================
+  function makeCopyBtn(text, label) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost small ib-copy-btn';
+    b.textContent = label || 'copy';
+    b.title = 'copy "' + text + '" to clipboard';
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      copyToClipboard(text);
+      var orig = b.textContent;
+      b.textContent = 'copied';
+      setTimeout(function () { b.textContent = orig; }, 1200);
+    });
+    return b;
+  }
+  function linkRowNode(value) {
+    var row = el('div', 'ib-link-row');
+    if (typeof value !== 'string' || value === '') { row.textContent = '(none)'; return row; }
+    if (/^https?:\/\//i.test(value)) {
+      var a = document.createElement('a');
+      a.href = value; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.textContent = value;
+      row.appendChild(a);
+      return row;
+    }
+    // Not an absolute URL (a repo-relative path, or an NY-/wf_ id) — never
+    // a clickable href that cannot honestly resolve; plain text + copy so
+    // the reference is still visible and usable, never silently dropped.
+    row.appendChild(document.createTextNode(value));
+    row.appendChild(makeCopyBtn(value));
+    return row;
+  }
+  function linksBlock(links) {
+    if (!links || !links.length) return null;
+    var wrap = el('div', 'ib-links');
+    wrap.appendChild(el('div', 'ib-drill-label', 'Links: '));
+    links.forEach(function (l) { wrap.appendChild(linkRowNode(l)); });
+    return wrap;
+  }
+
+  // ============================================================
   // trade-offs table (decisions only — §3 anatomy step 3)
   // ============================================================
   function optionsTable(options) {
@@ -268,10 +322,18 @@
     var head = el('div', 'ib-anatomy-head', (item.kind === 'question' ? 'Question: ' : 'Decision needed: ') + item.title);
     box.appendChild(head);
 
-    // 2. Context (<=5 lines, decisions only — questions carry no structure).
+    // 2. Context (decisions only — questions carry no structure). Shows the
+    // first 5 lines directly; INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01
+    // fix (round 14): content beyond 5 lines is NEVER silently dropped —
+    // it is still fully present in raw_text (the "Raw verbatim" details
+    // below), but the primary anatomy now says so explicitly ("+N more —
+    // see Raw verbatim below") instead of just stopping with no note.
     if (item.context && item.context.length) {
       var ctxBox = el('div', 'ib-context');
       item.context.slice(0, 5).forEach(function (line) { ctxBox.appendChild(el('div', 'ib-context-line', line)); });
+      if (item.context.length > 5) {
+        ctxBox.appendChild(el('div', 'ib-context-more', '+' + (item.context.length - 5) + ' more line(s) — see "Raw verbatim" below'));
+      }
       box.appendChild(ctxBox);
     }
 
@@ -281,6 +343,12 @@
 
     // 4. My pick.
     if (item.my_pick) box.appendChild(el('div', 'ib-my-pick', 'My pick: ' + item.my_pick));
+
+    // 4b. Links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 part b) —
+    // producer `--link` entries PLUS anchors extracted from the raw text
+    // server-side; see linksBlock's own header for the resolution rule.
+    var links = linksBlock(item.links);
+    if (links) box.appendChild(links);
 
     // 5. Reply-with (the ANSWER lifecycle verb).
     if (!isQuarantined) box.appendChild(replyBlock(item, say));

@@ -690,3 +690,55 @@ Task 1 first, alone: the derived status of ONE real archived plan rendering corr
   pointer+stub for v1 (UX review "Questions for the user" §1; arch review is silent = no
   objection). DEFAULT: pointer+stub — task 4 builds it unless the operator overrides; inline
   answering is then a candidate follow-on task, not a rework.
+- (2026-07-29) **ROUND 14 — end-user-advocate runtime FAIL closure (decide-and-go, all
+  reversible).** Closing `docs/reviews/2026-07-29-cockpit-roadmap-redesign-advocate-runtime.md`
+  (5/9 PASS, 3 FAIL). Six fixes landed, all in `neural-lace/workstreams-ui/**`:
+  (a) INBOX-UNREADABLE-LEDGER-WIN-STATE-01 — `readNeedsYouLedgerItems` now partitions ENOENT
+  (true-empty) from every other errno (EACCES/EIO -> `LedgerUnavailableError`, same three-state
+  contract the 2026-07-29 hardening already established), mirroring Task 1's
+  `listRawHeartbeatsResult` ENOENT-vs-unreadable fix for the identical class.
+  (b) ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 — `scanPlanDir` now tags 3 corruption
+  signatures (unreadable file; Status: token outside the known enum
+  {ACTIVE,COMPLETED,DEFERRED,ABANDONED,SUPERSEDED}; taskless + binary-control-byte body) as
+  `scanIssue`, which `derivePlanRootNode` renders `unknown(reason)` — never a confident
+  not-started guess, never a silent vanish. A header-less non-plan stub (evidence.md files
+  etc.) is DELIBERATELY left excluded, unchanged — that's the correct, intentional behavior for
+  genuine non-plan docs, not part of this defect's scope (conflating the two risks flooding the
+  tree with every `*-evidence*.md` file in docs/plans/).
+  (c) ROADMAP-WAITING-ON-YOU-SIGNAL-01 — BUILT the producer: `plan-parse.js`'s new
+  `extractPlanTaskReferences` finds conservative (`#roadmap/<slug>/<task-id>` OR
+  `docs/plans/<slug>.md` + an explicit "task <id>" mention) candidates in the needs-you
+  ledger's own answerable items (reusing `inbox-routes.buildInboxPayload`, never re-deriving),
+  verifies each against the plan's REAL parsed tasks, and feeds
+  `stalledSignals.waitingOnYouId` into the pre-existing consumer. Also populates the
+  pre-existing, never-fed `status.unblock {label,hash}` field (client already rendered it) and
+  the reverse `blocks_roadmap_id` on the Inbox side (same conservative match, duplicated per
+  this codebase's small-duplicated-reader convention — the two routes would otherwise
+  circularly require each other).
+  (d) PEERS-SURFACE-RETIRED-01 — a NEW minimal "Machines" section in Harness Health (chosen as
+  the least-noisy home per Round 12/13's own decluttering posture) renders `payload.peers`
+  (person -> host -> freshness only, no per-plan/task breakdown — the fuller asks.js renderer
+  stays unmounted) with an honest empty state naming COORD-SYNC-NO-PEER-EXPORTS-YET-01.
+  (e) ROADMAP-SUPERSEDED-RENDERS-PENDING-01 — an authored `Status: SUPERSEDED`/`ABANDONED`
+  plan now renders `status.value:'complete'` (joins the existing Shipped-group predicate, zero
+  new enum value) with a distinct `terminal_label`, which `statusChip()`'s one exception (a
+  `complete` item WITH a `terminal_label` still gets a chip) surfaces visibly inside Shipped.
+  (f) **SCOPE ADDITION mid-round** (coordinator-directed, a live operator complaint):
+  INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 — `item.links[]` had NO client-side rendering
+  surface at all (a real, verified gap: the field existed, nothing ever read it); fixed with a
+  duplicated `absoluteLinkNode`-style resolver (http(s) -> real `<a>`; anything else -> plain
+  text + copy, never a fabricated href). Server-side: `extractAnchorsFromText`/`mergeLinks`
+  populate `links` from inline repo-path/NY-id/wf-id anchors when the producer supplied none;
+  `parseDecisionAnatomy` gained a second options grammar ("Option NAME -> outcome", not just
+  markdown tables — the exact shape the real production ledger item NY-1785357818-7d3f used,
+  which had silently lost its 3 options into unstructured context prose) and strips a
+  redundant "Decision needed:"/"Question:" label the producer sometimes repeats on line 1
+  (was rendering doubled). The `open_source_session` resume-command session-id-shape audit the
+  coordinator also asked for: the real ledger's `session` field can be an 8-char ABBREVIATED
+  session id (not the full UUID) — that shaping happens upstream of workstreams-ui (whichever
+  hook/dispatcher passes `--session` to needs-you.sh), out of this round's file scope; flagged,
+  not fixed, here.
+  All six: TDD'd (RED confirmed via temporary mutation + revert on every server-side fix),
+  verified live against a sandboxed :7799 instance (real HTTP + real browser screenshots), zero
+  regressions across inbox-routes/roadmap-routes/server/plan-parse/cockpit suites (see the T9
+  round-14 evidence for exact before/after counts).

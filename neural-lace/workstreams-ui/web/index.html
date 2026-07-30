@@ -264,6 +264,24 @@
       </section>
     </main>
 
+    <!-- Machines — cross-machine peer state (PEERS-SURFACE-RETIRED-01,
+         2026-07-29 round 14). payload.peers (server.js's buildPeersBlock ->
+         peer-view.js) had no rendering surface since b496b4f retired the
+         interim ask tree (#askTreeSection, still `display:none` — see
+         requests.js) that used to be its only mount. The exporter half is
+         proven (server-side selftest coverage); this is the MINIMAL
+         receive-half surface: person -> machines -> freshness only (no
+         per-plan/per-task breakdown — that fuller renderer stays in
+         asks.js, unmounted, matching Round 12/13's noise-reduction posture
+         for this least-noisy tab). Loaded once when this tab first opens,
+         same convention as Diagnostics directly below. -->
+    <section id="machinesSection" class="pane machines-section" aria-label="machines">
+      <div class="pane-head">
+        <span class="pane-title">Machines — cross-machine peer state</span>
+      </div>
+      <div class="pane-body" id="machinesBody"></div>
+    </section>
+
     <!-- Diagnostics — reconciler/auditor internals ("Diagnostics
          (reconciler internals, drift detail) live here too", Task 16). NOT
          schema-validated like /api/asks (server.js's own header comment on

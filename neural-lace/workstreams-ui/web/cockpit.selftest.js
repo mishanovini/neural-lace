@@ -1554,8 +1554,9 @@ ok('T4-5c question items are NEVER quarantined (the lint is decision-only, T25 i
 ok('T4-6 collapsed row anatomy: type glyph+label, one imperative ask sentence, source chip, age',
   /typeGlyph/.test(inboxJs) && /typeLabel/.test(inboxJs) && /ib-ask-text/.test(inboxJs) &&
   /ib-source-chip/.test(inboxJs) && /formatAge\(item\.created_at\)/.test(inboxJs));
-ok('T4-6b "blocks: <item>" only renders when the server actually names a roadmap id (never fabricated — HONEST LIMIT)',
-  /if \(item\.blocks_roadmap_id\)/.test(inboxJs) && /blocks_roadmap_id: null/.test(inboxRoutesJs));
+ok('T4-6b "blocks: <item>" only renders when the server actually names a roadmap id (WIRED, ROADMAP-WAITING-ON-YOU-SIGNAL-01 round 14: resolveBlocksRoadmapId returns null on no conservative match — never fabricated)',
+  /if \(item\.blocks_roadmap_id\)/.test(inboxJs) && /blocks_roadmap_id: resolveBlocksRoadmapId\(item\)/.test(inboxRoutesJs) &&
+  /function resolveBlocksRoadmapId\(item\)/.test(inboxRoutesJs) && /return null;/.test(inboxRoutesJs));
 
 // --- expanded anatomy (constitution §3 compact format) ---
 ok('T4-7 expanded anatomy renders all five §3 steps: Decision/Action needed, Context, Trade-offs table, My pick, Reply-with',
@@ -1565,6 +1566,27 @@ ok('T4-7b the trade-offs table parser + the reply stub are server-derived (parse
   /parseDecisionAnatomy/.test(inboxRoutesJs) && /reply_stub/.test(inboxRoutesJs) && /reply_stub/.test(inboxJs));
 ok('T4-7c the ANSWER lifecycle (C3a) is pointer + copyable stub (v1) — a Copy button, never inline answer submission to the ledger',
   /ib-copy-btn/.test(inboxJs) && !/\/api\/inbox\/answer/.test(inboxJs));
+
+// --- links rendering (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01, round 14) ---
+// item.links[] had NO rendering surface anywhere in this file before this
+// fix — a real, live defect (the field existed, nothing ever read it).
+ok('T4-7d expandedAnatomy renders item.links via linksBlock — the field that used to be computed server-side and NEVER read client-side',
+  /function linksBlock\(links\)/.test(inboxJs) && /linksBlock\(item\.links\)/.test(inboxJs));
+ok('T4-7e linkRowNode renders an http(s) URL as a REAL <a> (always resolves); anything else is plain text + a copy button, NEVER a fabricated/relative href ("a dead link is worse than no link")',
+  /if \(\/\^https\?:\\\/\\\/\/i\.test\(value\)\) \{/.test(inboxJs) &&
+  /a\.href = value; a\.target = '_blank'/.test(inboxJs) &&
+  /makeCopyBtn\(value\)/.test(inboxJs));
+ok('T4-7f mutation control: linkRowNode is REACHED for every entry in a non-empty links array (linksBlock forEachs over `links`, not a fixed head/tail slice)',
+  /links\.forEach\(function \(l\) { wrap\.appendChild\(linkRowNode\(l\)\)/.test(inboxJs.replace(/\s+/g, ' ')));
+ok('T4-7g server-side: extractAnchorsFromText + mergeLinks populate `links` from inline anchors even when the producer supplied NO --link entries at all (part b of the fix)',
+  /function extractAnchorsFromText\(text\)/.test(inboxRoutesJs) && /function mergeLinks\(/.test(inboxRoutesJs) &&
+  /links: mergeLinks\(/.test(inboxRoutesJs));
+ok('T4-7h context beyond 5 lines is NEVER silently dropped with no note — a "+N more" line points to the Raw verbatim details below (still the full raw_text, never truly lost)',
+  /item\.context\.length > 5/.test(inboxJs) && /more line\(s\) — see "Raw verbatim" below/.test(inboxJs));
+ok('T4-7i server-side title extraction strips a redundant "Decision needed:"\/"Question:" prefix the producer already included on line 1 (the live double-label bug)',
+  /replace\(\/\^\(decision needed\|question\)\\s\*:\\s\*\/i, ''\)/.test(inboxRoutesJs));
+ok('T4-7j server-side: the arrow-format options grammar ("Option NAME -> outcome") is a SECOND accepted shape alongside the markdown table, both accumulating into the same options[] array',
+  /OPTION_ARROW_RE/.test(inboxRoutesJs) && /options\.push\(\{ option: arrowM\[1\], outcome: arrowM\[2\]\.trim\(\) \}\)/.test(inboxRoutesJs));
 
 // --- quarantine (I4/A8) — system-failure framing ---
 ok('T4-8 quarantine framing blames the SYSTEM, never the operator, and names what the system DOES know (lint_reasons)',
@@ -1755,9 +1777,9 @@ ok('R12-21 the footer "N items hidden (harness chores) show" duplicate is gone f
     var hits = (roadmapJsNoComments.match(/items hidden \(harness chores\)/g) || []).length;
     return hits === 1 && /pane-empty rm-chore-note.*items hidden \(harness chores\)/.test(roadmapJsNoComments.replace(/\n\s*/g, ' '));
   })());
-ok('R12-22 "since" no longer renders on a not-started row — DERIVABLE_STATES gates statusChip() to null for not-started BEFORE any age/formatAge text is built (the age was semantically empty per the operator: those timestamps are bulk file-touch clusters, not real transitions)',
-  /if \(DERIVABLE_STATES\[value\]\) return null;/.test(roadmapJsNoComments) &&
-  roadmapJsNoComments.indexOf('if (DERIVABLE_STATES[value]) return null;') < roadmapJsNoComments.indexOf('var ageTs = value ==='));
+ok('R12-22 "since" no longer renders on a not-started row — DERIVABLE_STATES gates statusChip() to null for not-started BEFORE any age/formatAge text is built (the age was semantically empty per the operator: those timestamps are bulk file-touch clusters, not real transitions); ROADMAP-SUPERSEDED-RENDERS-PENDING-01 (round 14) adds the ONE exception (a terminal_label chip), unrelated to age semantics',
+  /if \(DERIVABLE_STATES\[value\] && !st\.terminal_label\) return null;/.test(roadmapJsNoComments) &&
+  roadmapJsNoComments.indexOf('if (DERIVABLE_STATES[value] && !st.terminal_label) return null;') < roadmapJsNoComments.indexOf('var ageTs = value ==='));
 
 // ---- item 4: the exception column ---------------------------------------
 ok('R12-25 DERIVABLE_STATES names exactly the three states the fraction/task-span CAN derive (not-started/in-progress/complete) — statusChip() returns null for all three, so an empty column 6/7 means "healthy"',

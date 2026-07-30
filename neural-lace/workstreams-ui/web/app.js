@@ -73,7 +73,7 @@
       needsMeBody, statusBody, healthBody, costsBody, shippedBody, backlogHealthBody,
       lastLookAnchor, markSeenBtn,
       whyScrim, whyDrawer, whyTitle, whyBody, whyClose,
-      diagnosticsBody;
+      diagnosticsBody, machinesBody;
 
   // ============================================================
   // Link resolver (ux-review amendment 6) — the ONE component Q2/Q3/Q6 use.
@@ -999,6 +999,86 @@
     diagnosticsBody.appendChild(bookkeepingRow);
   }
 
+  // ============================================================
+  // Machines — cross-machine peer state (PEERS-SURFACE-RETIRED-01, 2026-07-29
+  // round 14). See index.html's own header comment on #machinesSection for
+  // why this lives here (least-noisy home) and why it is deliberately
+  // MINIMAL (person -> machines -> freshness only — no per-plan/per-task
+  // breakdown; the fuller renderer already exists at web/asks.js's
+  // renderPeersSection, unmounted since b496b4f, and stays that way — this
+  // is a NEW, smaller surface, not a relocation of that heavier one).
+  // Reads the SAME server-computed payload.peers (server.js's
+  // buildPeersBlock -> peer-view.js) via the already-existing /api/asks
+  // endpoint — no new endpoint, no re-derivation. Fetched once, when the
+  // Harness Health tab first opens, same convention as Diagnostics above.
+  // ============================================================
+  var PEER_FRESHNESS_LABEL = { 'fresh-ish': 'fresh', 'estate-unchanged': 'idle (no change, still alive)', 'peer-unreachable': 'unreachable' };
+  function renderMachines(peers) {
+    machinesBody.innerHTML = '';
+    peers = peers || { has_data: false, entries: [], persons: [], people_map_error: '' };
+    if (!peers.has_data) {
+      // Honest empty state naming exactly what's missing (never a bare "no
+      // data") — COORD-SYNC-NO-PEER-EXPORTS-YET-01 is the tracked reason on
+      // THIS machine today: zero plan-export/*.json files from any peer.
+      var empty = document.createElement('div');
+      empty.className = 'pane-empty';
+      empty.textContent = 'no peer exports received — the Windows cadence task is not ' +
+        'registered; see COORD-SYNC-NO-PEER-EXPORTS-YET-01 (docs/backlog.md)';
+      machinesBody.appendChild(empty);
+      return;
+    }
+    if (peers.people_map_error) {
+      var mapErr = document.createElement('div');
+      mapErr.className = 'pane-error';
+      mapErr.setAttribute('role', 'alert');
+      mapErr.textContent = 'Person grouping unavailable — ' + peers.people_map_error +
+        ' (machines shown under "unassigned" meanwhile)';
+      machinesBody.appendChild(mapErr);
+    }
+    var byHost = {};
+    (peers.entries || []).forEach(function (e) { byHost[e.host] = e; });
+    var groups = (peers.persons && peers.persons.length)
+      ? peers.persons
+      : [{ person: 'unassigned', hosts: (peers.entries || []).map(function (e) { return e.host; }) }];
+    groups.forEach(function (g) {
+      var row = document.createElement('div');
+      row.className = 'diag-row machines-person-row';
+      var label = document.createElement('span');
+      label.className = 'machines-person-label';
+      label.textContent = g.person + ': ';
+      row.appendChild(label);
+      (g.hosts || []).forEach(function (h) {
+        var e = byHost[h];
+        var chip = document.createElement('span');
+        var st = (e && e.state) || 'unknown';
+        // Reuses asks.js's own peer-state-* chip classes (app.css already
+        // colors fresh-ish/estate-unchanged/peer-unreachable) — no new CSS.
+        chip.className = 'chip peer-state peer-state-' + st;
+        // text + color, never color-only (a11y baseline) — host name AND
+        // freshness word both always present in the chip's own text.
+        chip.textContent = h + ' (' + (PEER_FRESHNESS_LABEL[st] || st) +
+          (e && e.age_minutes != null ? ', ' + e.age_minutes + 'm ago' : '') + ')';
+        row.appendChild(chip);
+      });
+      machinesBody.appendChild(row);
+    });
+  }
+
+  function loadMachines() {
+    machinesBody.innerHTML = '<div class="pane-loading" aria-busy="true">loading machines…</div>';
+    fetch('/api/asks')
+      .then(function (r) { return r.json(); })
+      .then(function (payload) { renderMachines(payload && payload.peers); })
+      .catch(function (err) {
+        machinesBody.innerHTML = '';
+        var e = document.createElement('div');
+        e.className = 'pane-error';
+        e.setAttribute('role', 'alert');
+        e.textContent = 'Could not load machines: ' + String(err);
+        machinesBody.appendChild(e);
+      });
+  }
+
   function loadDiagnostics() {
     diagnosticsBody.innerHTML = '<div class="pane-loading" aria-busy="true">loading diagnostics…</div>';
     fetch('/api/diagnostics/drift')
@@ -1042,6 +1122,7 @@
     whyScrim = $('whyScrim'); whyDrawer = $('whyDrawer');
     whyTitle = $('whyTitle'); whyBody = $('whyBody'); whyClose = $('whyClose');
     diagnosticsBody = $('diagnosticsBody');
+    machinesBody = $('machinesBody');
 
     whyClose.addEventListener('click', closeWhyDrawer);
     whyScrim.addEventListener('click', closeWhyDrawer);
@@ -1060,6 +1141,7 @@
     es.onerror = function () { /* SSE reconnects automatically; polling loop is the fallback truth source regardless */ };
 
     loadDiagnostics();
+    loadMachines();
   }
 
   // ============================================================

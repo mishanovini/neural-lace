@@ -112,6 +112,13 @@ header .spacer { flex: 1; }
 .diag-healed { color: var(--ok); }
 .diag-errors { color: var(--err); font-weight: 600; }
 
+/* Machines section (PEERS-SURFACE-RETIRED-01) — minimal person -> host chip
+   row, reusing .diag-row's own spacing rhythm + asks.js's .peer-state-*
+   chip colors (no new color rules). */
+.machines-section { max-width: 1400px; margin: 0 auto 24px; }
+.machines-person-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.machines-person-label { font-weight: 600; }
+
 button.ghost {
   background: transparent;
   border: 1px solid var(--border2);
@@ -1563,6 +1570,13 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-options-table th, .ib-options-table td { border: 1px solid var(--border2); padding: 3px 8px; text-align: left; }
 .ib-options-table th { color: var(--muted); font-weight: 600; }
 .ib-my-pick { margin: 4px 0; font-weight: 600; color: var(--text); }
+.ib-context-more { margin: 2px 0; color: var(--muted); font-style: italic; }
+
+/* ---- links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01) ---- */
+.ib-links { margin: 6px 0; }
+.ib-drill-label { font-weight: 600; }
+.ib-link-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0; word-break: break-all; }
+.ib-link-row a { color: var(--info); }
 
 /* ---- reply (the ANSWER lifecycle verb, C3a — pointer + copyable stub) ---- */
 .ib-reply { margin: 6px 0; }

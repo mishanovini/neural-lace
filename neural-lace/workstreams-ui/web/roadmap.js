@@ -494,8 +494,13 @@
     // fraction + task-span text already say it; a same-info chip here was
     // the operator's named redundancy ("showing the 'in progress'/
     // 'complete' status next to the progress bar is also redundant").
-    if (DERIVABLE_STATES[value]) return null;
-    var label = st.label || STATUS_LABEL[value] || value;
+    // ROADMAP-SUPERSEDED-RENDERS-PENDING-01: a `complete` item carrying a
+    // `terminal_label` (superseded/abandoned) is the ONE exception — an
+    // authored terminal status must render its own distinct chip inside
+    // Shipped, never fold silently into the same no-chip "ordinary
+    // complete" bucket (server: roadmap-routes.js derivePlanRootNode).
+    if (DERIVABLE_STATES[value] && !st.terminal_label) return null;
+    var label = st.terminal_label || st.label || STATUS_LABEL[value] || value;
     var ageTs = value === 'complete' ? (item.completed_at || st.since) : st.since;
     var text = label + (ageTs ? ', ' + formatAge(ageTs) : '');
     var chip;
@@ -510,7 +515,8 @@
       });
       chip.title = st.reason || 'open for the derived reason';
     } else {
-      chip = el('span', 'chip rm-status rm-status-' + value, text);
+      var chipClass = 'chip rm-status rm-status-' + (st.terminal_label ? 'terminal-' + st.terminal_label : value);
+      chip = el('span', chipClass, text);
     }
     return chip;
   }

@@ -69,6 +69,15 @@ async function main() {
   process.env.NEEDS_YOU_STATE_DIR = nyStateDir;
   process.env.NEEDS_YOU_CLI = path.join(tmp, 'no-such-needs-you.sh'); // default: missing, named-error path
   process.env.AUDITOR_NL_ISSUE_STATE_PATH = path.join(tmp, 'auditor-nl-issue-state.json');
+  // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (round 14) reverse-lookup sandbox: a
+  // dedicated docs/plans/ root, independent of this repo's real plans, so
+  // resolveBlocksRoadmapId's match-verification (which plan-parse.loadPlanFile
+  // reads for real) is fully deterministic and never depends on real repo state.
+  const planScanRoot = path.join(tmp, 'plan-scan-root');
+  fs.mkdirSync(path.join(planScanRoot, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(planScanRoot, 'docs', 'plans', 'fixture-plan.md'),
+    '# Plan: Fixture\nStatus: ACTIVE\n\n## Tasks\n- [ ] 9. A real task, referenced by NY-blocks below.\n');
+  process.env.ROADMAP_PLAN_SCAN_ROOT = planScanRoot;
 
   const GOOD_TEXT = '### Ship the O.9 dashboard tonight?\n' +
     'The backlog KPI dashboard (adapters/claude-code/docs/kpis.md) has been green in staging for 3 days.\n' +
@@ -92,6 +101,31 @@ async function main() {
     { id: 'NY-inflight', section: 'inflight', state: 'open', created_at: '2026-07-19T12:00:00Z', lint_warnings: [], text: 'Wave X batch building.' },
     // ask-resolved: already resolved -> excluded ENTIRELY (left the Inbox).
     { id: 'NY-resolved', section: 'decision', state: 'resolved', created_at: '2026-07-18T10:00:00Z', lint_warnings: [], text: 'Old resolved thing.' },
+    // ask-blocks: ROADMAP-WAITING-ON-YOU-SIGNAL-01 (round 14) -- an explicit
+    // docs/plans/<slug>.md anchor + "task 9" mention, verified against the
+    // real fixture-plan.md task list (planScanRoot above) -> blocks_roadmap_id
+    // should resolve to 'fixture-plan/9'.
+    { id: 'NY-blocks', section: 'decision', state: 'open', created_at: '2026-07-19T13:00:00Z', lint_warnings: [], text: 'See docs/plans/fixture-plan.md -- task 9 needs your call. My pick: A.' },
+    // ask-nonmatch: names a path + a number, but NOT a real task of that plan
+    // (task 999 does not exist in fixture-plan.md) -- must NEVER fabricate a match.
+    { id: 'NY-nonmatch', section: 'decision', state: 'open', created_at: '2026-07-19T14:00:00Z', lint_warnings: [], text: 'See docs/plans/fixture-plan.md -- task 999 needs your call. My pick: A.' },
+    // ask-realshape: INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 (round 14,
+    // operator live complaint) -- a REDUCED reproduction of the real
+    // production ledger item (NY-1785357818-7d3f) that exposed the bug: no
+    // "### " heading (a bare "Decision needed: ..." first line instead),
+    // arrow-format options ("Option NAME -> outcome", never a markdown
+    // table), inline repo-path + workflow-id anchors, and NO producer-
+    // supplied --link entries at all.
+    {
+      id: 'NY-realshape', section: 'decision', state: 'open', session: 'a3fcb6ea', created_at: '2026-07-29T20:43:38Z',
+      lint_warnings: [],
+      text: 'Decision needed: which review-independence model unblocks master.\n' +
+        'Context: the harness requires a harness-reviewer PASS record per changed enforcement file (adapters/claude-code/doctrine/review-before-deploy.md); nothing merges without it.\n' +
+        'Option SWEEP -> I dispatch reviewer subagents now -> master unblocks today.\n' +
+        'Option DESKTOP -> the desktop machine reviews instead -> genuinely independent eyes.\n' +
+        'My pick: SWEEP -- fastest path.\n' +
+        'Reply with: SWEEP or DESKTOP.',
+    },
   ];
   fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), JSON.stringify({ schema_version: 1, items: ledgerItems }));
   // Mark NY-quarantined as ALREADY auto-defect-filed (auditor state fixture) so the
@@ -125,8 +159,10 @@ async function main() {
     // ---- S2: CONTEXT CONTRACT split (I4/A8) ----
     const answerableIds = (r1.json.answerable || []).map((i) => i.id).sort();
     const quarantinedIds = (r1.json.quarantined || []).map((i) => i.id).sort();
-    ok('S2 clean decision + clean question land in answerable; nothing else does',
-      answerableIds.length === 2 && answerableIds[0] === 'NY-clean' && answerableIds[1] === 'NY-question',
+    ok('S2 clean decision + clean question + the blocks-matching fixtures + the real-shape fixture land in answerable; nothing else does',
+      answerableIds.length === 5 &&
+      answerableIds[0] === 'NY-blocks' && answerableIds[1] === 'NY-clean' &&
+      answerableIds[2] === 'NY-nonmatch' && answerableIds[3] === 'NY-question' && answerableIds[4] === 'NY-realshape',
       JSON.stringify(answerableIds));
     ok('S2b lint-flagged decisions (session-backed AND legacy no-producer) land in quarantined',
       quarantinedIds.length === 2 && quarantinedIds[0] === 'NY-legacy' && quarantinedIds[1] === 'NY-quarantined',
@@ -151,6 +187,34 @@ async function main() {
     ok('S3f a question item has no anatomy structure -- ask is the raw text itself, no options/my_pick',
       question && question.ask === 'Which deploy target for the new worker?' && question.options.length === 0 && !question.my_pick);
 
+    // ------------------------------------------------------------------
+    // S3g-S3l: INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 (round 14,
+    // operator live complaint) -- a stored multi-line ask must round-trip
+    // to the API with its FULL text/structure, never silently losing the
+    // options/anchors/context past line 1.
+    // ------------------------------------------------------------------
+    const realshape = findItem(r1.json.answerable, 'NY-realshape');
+    ok('S3g title does NOT double the "Decision needed:"/"Question:" label the producer already included on line 1 (the live bug: title rendered "Decision needed: Decision needed: ...")',
+      realshape && realshape.title === 'which review-independence model unblocks master.',
+      JSON.stringify(realshape && realshape.title));
+    ok('S3h arrow-format options ("Option NAME -> outcome", never a markdown table) parse into REAL {option, outcome} pairs -- the exact shape that used to fall through to unstructured context prose, losing the Trade-offs table entirely',
+      realshape && realshape.options.length === 2 &&
+      realshape.options[0].option === 'SWEEP' && /master unblocks today/.test(realshape.options[0].outcome) &&
+      realshape.options[1].option === 'DESKTOP' && /independent eyes/.test(realshape.options[1].outcome),
+      JSON.stringify(realshape && realshape.options));
+    ok('S3i the Context: line survives as its own context entry (never dropped, never merged into the option lines)',
+      realshape && realshape.context.length === 1 && /review-before-deploy\.md/.test(realshape.context[0]),
+      JSON.stringify(realshape && realshape.context));
+    ok('S3j my_pick and reply_with both still extract correctly alongside the new arrow-option parsing (no regression to the existing anatomy fields)',
+      realshape && realshape.my_pick === 'SWEEP -- fastest path.' && realshape.reply_with === 'SWEEP or DESKTOP.',
+      JSON.stringify(realshape && { my_pick: realshape.my_pick, reply_with: realshape.reply_with }));
+    ok('S3k raw_text carries the COMPLETE original text verbatim (the round-trip oracle: nothing the parser could not structure is ever actually lost)',
+      realshape && realshape.raw_text === ledgerItems.find((i) => i.id === 'NY-realshape').text,
+      JSON.stringify(realshape && realshape.raw_text.length));
+    ok('S3l links[] is populated by SERVER-SIDE anchor extraction from the raw text even though the producer supplied NO --link entries at all (the repo path mentioned inline) -- part (b) of the fix',
+      realshape && realshape.links.length === 1 && realshape.links[0] === 'adapters/claude-code/doctrine/review-before-deploy.md',
+      JSON.stringify(realshape && realshape.links));
+
     // ---- S4: reply_channel (v1 ANSWER lifecycle, C3a) ----
     ok('S4 a session-backed item names "reply in session `<id>`"', clean && clean.reply_channel === 'reply in session `sess-clean`', clean && clean.reply_channel);
     const legacy = findItem(r1.json.quarantined, 'NY-legacy');
@@ -170,9 +234,15 @@ async function main() {
     ok('S5e open_source_session honestly reports no session for a legacy no-producer item (never a fabricated command)',
       legacy && legacy.open_source_session.has_session === false && legacy.open_source_session.resume_cmd === '');
 
-    // ---- S6: "blocks:" HONEST LIMIT -- always null (no fabricated correlation) ----
-    ok('S6 blocks_roadmap_id is always null (no roadmap-side signal exists yet -- see server header HONEST LIMIT)',
+    // ---- S6: "blocks:" WIRED (ROADMAP-WAITING-ON-YOU-SIGNAL-01, round 14) ----
+    ok('S6 blocks_roadmap_id is null when the item carries no plan/task anchor at all (never fabricated)',
       clean && clean.blocks_roadmap_id === null && quarantined && quarantined.blocks_roadmap_id === null);
+    const blocksItem = findItem(r1.json.answerable, 'NY-blocks');
+    ok('S6b blocks_roadmap_id resolves to "<slug>/<task_id>" when the item explicitly names a real docs/plans/<slug>.md anchor + a real "task <id>" of that plan',
+      blocksItem && blocksItem.blocks_roadmap_id === 'fixture-plan/9', JSON.stringify(blocksItem && blocksItem.blocks_roadmap_id));
+    const nonmatchItem = findItem(r1.json.answerable, 'NY-nonmatch');
+    ok('S6c blocks_roadmap_id stays null when the mentioned task id does NOT exist on the referenced plan (task 999 is not a real task of fixture-plan.md) -- never a fabricated correlation',
+      nonmatchItem && nonmatchItem.blocks_roadmap_id === null, JSON.stringify(nonmatchItem && nonmatchItem.blocks_roadmap_id));
 
     // ---- S7: dismiss endpoint -- named error with no CLI, then delegates once a fake CLI exists ----
     const dismiss1 = await httpPostJson(PORT, '/api/inbox/dismiss', { id: 'NY-clean' });
@@ -284,11 +354,66 @@ async function main() {
       r10.json && r10.json.ok === true && r10.json.status === 'ok' && r10.json.ledger_present === true,
       JSON.stringify(r10.json));
 
+    // ------------------------------------------------------------------
+    // S15: INBOX-UNREADABLE-LEDGER-WIN-STATE-01 (2026-07-29 round 14) — a
+    // PRESENT-but-permission-denied (EACCES) ledger.json must classify
+    // exactly like S12's corrupt-content case (status:'unavailable'),
+    // NEVER silently fall into S9's absent/not_yet_derived win-state path
+    // (the pre-fix bug: fs.readFileSync's catch(_){return null} treated
+    // EVERY read error, including EACCES, as "absent"). chmod 000 is a
+    // no-op for the root user (and some CI sandboxes run as root, or a
+    // filesystem that ignores unix permission bits) — probe first and skip
+    // honestly rather than a false PASS/FAIL on a permission model that
+    // cannot express the scenario here.
+    // ------------------------------------------------------------------
+    {
+      const probePath = path.join(nyStateDir, '.eacces-probe');
+      fs.writeFileSync(probePath, 'x');
+      fs.chmodSync(probePath, 0o000);
+      let probeBlocked = true;
+      try { fs.readFileSync(probePath, 'utf8'); probeBlocked = false; } catch (_) { probeBlocked = true; }
+      fs.chmodSync(probePath, 0o644);
+      fs.rmSync(probePath, { force: true });
+
+      if (!probeBlocked) {
+        console.log('  SKIP: S15 EACCES-ledger scenario -- chmod 000 is a no-op in this sandbox (likely running as root, or a filesystem ignoring unix permission bits); the permission model cannot express this scenario here');
+      } else {
+        fs.writeFileSync(path.join(nyStateDir, 'ledger.json'), JSON.stringify({
+          schema_version: 1,
+          items: [{ id: 'NY-hidden', section: 'decision', state: 'open', created_at: '2026-07-01T00:00:00Z', lint_warnings: [], text: '### Something waiting\nreal context here.\n| Option | What happens |\n|---|---|\n| A | B |\nMy pick: A.\nReply with: "a".' }],
+        }));
+        fs.chmodSync(path.join(nyStateDir, 'ledger.json'), 0o000);
+        const r15 = await httpGet(PORT, '/api/inbox');
+        ok('S15 a chmod-000 (EACCES) ledger.json is classified status:"unavailable", ok:false -- NEVER the not_yet_derived win-state path (INBOX-UNREADABLE-LEDGER-WIN-STATE-01)',
+          r15.json && r15.json.ok === false && r15.json.status === 'unavailable' && r15.json.status !== 'not_yet_derived' &&
+          r15.json.ledger_present === true && r15.json.answerable.length === 0,
+          JSON.stringify(r15.json));
+        ok('S15b the EACCES error message names the errno, not a generic "not valid JSON" (a distinct failure mode from S8/S12\'s parse errors)',
+          r15.json && typeof r15.json.error === 'string' && /EACCES|could not be read/.test(r15.json.error),
+          JSON.stringify(r15.json));
+        fs.chmodSync(path.join(nyStateDir, 'ledger.json'), 0o644); // restore so cleanup/rmSync never trips on this fixture
+      }
+    }
+
     // ---- S10: /inbox.js is served by this handler (single mount line) ----
     const asset = await httpGet(PORT, '/inbox.js');
     ok('S10 GET /inbox.js serves the client module with a JS content type',
       asset.status === 200 && /javascript/.test(asset.headers['content-type'] || '') && asset.body.length > 500,
       'status=' + asset.status + ' len=' + asset.body.length);
+
+    // ------------------------------------------------------------------
+    // S18: extractAnchorsFromText / mergeLinks unit coverage (round 14).
+    // ------------------------------------------------------------------
+    const anchorsUrl = inboxRoutes.extractAnchorsFromText('see https://example.test/pr/42 for details.');
+    ok('S18 extractAnchorsFromText finds an http(s) URL, trailing punctuation stripped', anchorsUrl.length === 1 && anchorsUrl[0] === 'https://example.test/pr/42', JSON.stringify(anchorsUrl));
+    const anchorsPath = inboxRoutes.extractAnchorsFromText('per adapters/claude-code/doctrine/review-before-deploy.md, nothing merges.');
+    ok('S18b extractAnchorsFromText finds a repo-relative path with a recognized extension', anchorsPath.length === 1 && anchorsPath[0] === 'adapters/claude-code/doctrine/review-before-deploy.md', JSON.stringify(anchorsPath));
+    const anchorsIds = inboxRoutes.extractAnchorsFromText('see NY-1785357818-7d3f and workflow wf_77b4b077-7a5 for context.');
+    ok('S18c extractAnchorsFromText finds NY-<id> and wf_<id> tokens', anchorsIds.length === 2 && anchorsIds.indexOf('NY-1785357818-7d3f') !== -1 && anchorsIds.indexOf('wf_77b4b077-7a5') !== -1, JSON.stringify(anchorsIds));
+    const anchorsNone = inboxRoutes.extractAnchorsFromText('I have 9 tasks left, no anchors here at all.');
+    ok('S18d extractAnchorsFromText never fabricates a match on ordinary prose with no anchor shape', anchorsNone.length === 0, JSON.stringify(anchorsNone));
+    ok('S18e mergeLinks keeps producer-supplied links FIRST, appends extracted ones, deduplicated',
+      JSON.stringify(inboxRoutes.mergeLinks(['https://a.test'], ['https://a.test', 'https://b.test'])) === JSON.stringify(['https://a.test', 'https://b.test']));
   } finally {
     server.close();
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}

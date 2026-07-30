@@ -258,6 +258,57 @@ function parsePlanStatus(markdown) {
 }
 
 // ----------------------------------------------------------------------
+// extractPlanTaskReferences(text) -> [{slug, taskId}, ...] —
+// ROADMAP-WAITING-ON-YOU-SIGNAL-01 (2026-07-29 round 14): CONSERVATIVE,
+// EXPLICIT reference extraction shared by roadmap-routes.js (the
+// stalledSignals.waitingOnYouId producer) and inbox-routes.js (the
+// reverse blocks_roadmap_id chip) — pure string matching, no disk I/O, no
+// fuzzy title/keyword matching. Two accepted shapes, both requiring an
+// EXPLICIT slug AND an EXPLICIT task id in the SAME text blob — a false
+// correlation is worse than a missing one (this defect's own binding
+// rule, echoed from the roll-up law's own C1/C5 discipline):
+//   1. the app's own canonical address `#roadmap/<slug>/<task-id>`
+//      (highest confidence — an intentional cross-reference).
+//   2. a `docs/plans/<slug>.md` (or archive/) repo-path anchor — the SAME
+//      concrete-anchor needs-you.sh's own cold-reader lint already
+//      REQUIRES of every answerable decision item (LINT_LABELS
+//      'no-anchor' in inbox-routes.js) — combined with an explicit
+//      "task <id>" mention anywhere in the SAME text blob.
+// Callers MUST still verify the (slug, taskId) pair against the plan's
+// REAL parsed task list (parseTasks) before trusting it — a bare number
+// appearing near a path is not proof it names that plan's actual task;
+// this function only narrows the candidate set, it never asserts
+// existence.
+function extractPlanTaskReferences(text) {
+  const hay = String(text || '');
+  const out = [];
+  const seen = {};
+  function push(slug, taskId) {
+    const key = slug + '/' + taskId;
+    if (seen[key]) return;
+    seen[key] = true;
+    out.push({ slug: slug, taskId: taskId });
+  }
+
+  const hashRe = /#roadmap\/([A-Za-z0-9._-]+)\/([A-Za-z0-9](?:[.-][A-Za-z0-9]+)*)/g;
+  let hm;
+  while ((hm = hashRe.exec(hay))) push(hm[1], hm[2]);
+
+  const pathRe = /docs\/plans\/(?:archive\/)?([A-Za-z0-9._-]+)\.md/g;
+  const slugs = [];
+  let pm;
+  while ((pm = pathRe.exec(hay))) slugs.push(pm[1]);
+  if (slugs.length) {
+    const taskRe = /\btask\s+([A-Za-z0-9](?:[.-][A-Za-z0-9]+)*)\b/gi;
+    const taskIds = [];
+    let tm;
+    while ((tm = taskRe.exec(hay))) taskIds.push(tm[1]);
+    slugs.forEach((slug) => taskIds.forEach((tid) => push(slug, tid)));
+  }
+  return out;
+}
+
+// ----------------------------------------------------------------------
 // Resolver (M5 — the shared module owns this too, not just the parser)
 // ----------------------------------------------------------------------
 
@@ -324,6 +375,7 @@ function parsePlanFile(absPath) {
 module.exports = {
   parseTasks: parseTasks,
   parsePlanStatus: parsePlanStatus,
+  extractPlanTaskReferences: extractPlanTaskReferences,
   resolvePlanAbsPath: resolvePlanAbsPath,
   loadPlanFile: loadPlanFile,
   parsePlanFile: parsePlanFile,
@@ -502,6 +554,34 @@ function selfTest() {
   ok('parsePlanFile returns {tasks, status, absPath} for a real archived plan',
     parsedOk && parsedOk.status === 'COMPLETED' && parsedOk.tasks.length === 1 && parsedOk.tasks[0].done === true,
     JSON.stringify(parsedOk));
+
+  // ---- extractPlanTaskReferences (ROADMAP-WAITING-ON-YOU-SIGNAL-01) ----
+  const refsHash = extractPlanTaskReferences('please look at #roadmap/cockpit-roadmap-redesign/9 today');
+  ok('extractPlanTaskReferences: #roadmap/<slug>/<task-id> is the highest-confidence match',
+    refsHash.length === 1 && refsHash[0].slug === 'cockpit-roadmap-redesign' && refsHash[0].taskId === '9',
+    JSON.stringify(refsHash));
+
+  const refsPathAndTask = extractPlanTaskReferences('see docs/plans/cockpit-roadmap-redesign.md — task 9 needs your call');
+  ok('extractPlanTaskReferences: a docs/plans/<slug>.md anchor + an explicit "task <id>" mention in the same text combine into a match',
+    refsPathAndTask.length === 1 && refsPathAndTask[0].slug === 'cockpit-roadmap-redesign' && refsPathAndTask[0].taskId === '9',
+    JSON.stringify(refsPathAndTask));
+
+  const refsArchive = extractPlanTaskReferences('docs/plans/archive/old-plan.md task A.1 blocked');
+  ok('extractPlanTaskReferences: an archive/ path anchor is recognized too',
+    refsArchive.length === 1 && refsArchive[0].slug === 'old-plan' && refsArchive[0].taskId === 'A.1',
+    JSON.stringify(refsArchive));
+
+  const refsPathOnly = extractPlanTaskReferences('see docs/plans/cockpit-roadmap-redesign.md for context');
+  ok('extractPlanTaskReferences: a path anchor with NO explicit "task <id>" mention yields zero matches — conservative, never fuzzy',
+    refsPathOnly.length === 0, JSON.stringify(refsPathOnly));
+
+  const refsTaskOnly = extractPlanTaskReferences('task 9 is stuck');
+  ok('extractPlanTaskReferences: an explicit "task <id>" mention with NO plan anchor yields zero matches — never guesses which plan',
+    refsTaskOnly.length === 0, JSON.stringify(refsTaskOnly));
+
+  const refsProse = extractPlanTaskReferences('I have 9 tasks left and read docs/plans/foo.md yesterday, no big deal');
+  ok('extractPlanTaskReferences: a bare number near a path with no "task" keyword never fabricates a correlation',
+    refsProse.length === 0, JSON.stringify(refsProse));
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) { /* best-effort */ }
 

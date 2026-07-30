@@ -202,6 +202,17 @@ async function main() {
     '    three named classes.',
     '',
   ].join('\n'));
+  // waiting-plan (ROADMAP-WAITING-ON-YOU-SIGNAL-01, round 14): ONE task,
+  // started (task_started event below, unlinked lane) by a session with NO
+  // heartbeat file at all -- reaches deriveItemStatus's stalled branch via
+  // activity:'no-heartbeat', the real precondition buildWaitingOnYouMap's
+  // stalledSignals.waitingOnYouId needs to actually win the precedence over
+  // the 'crashed' fallback (see derive-lib.js's deriveStalledReason).
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'waiting-plan.md'), [
+    '# Plan: Waiting', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task genuinely stalled, waiting on an operator decision',
+    '',
+  ].join('\n'));
   // ROUND 8 (b): redesign-plan has NO linked ask at all — the operator's
   // own "active plan with no ask" scenario (the real defect round 8
   // fixes: this plan used to be invisible under the ask-rooted tree).
@@ -408,7 +419,31 @@ async function main() {
   fs.writeFileSync(path.join(progressDir, 'unlinked.jsonl'), [
     JSON.stringify({ type: 'task_done', ts: '2026-07-20T09:00:00Z', plan_slug: 'redesign-plan', task_id: '1' }),
     JSON.stringify({ type: 'task_done', ts: RECENT_ASK_TS, plan_slug: 'recent-plan', task_id: '1' }),
+    // waiting-plan/1: started by a session with NO heartbeat file anywhere
+    // -- sessionActivityForIds returns 'no-heartbeat' (never 'crashed' via
+    // an old timestamp; genuinely absent), reaching the stalled branch.
+    JSON.stringify({ type: 'task_started', ts: '2026-07-10T09:00:00Z', plan_slug: 'waiting-plan', task_id: '1', session_id: 'sess-waiting-ghost' }),
   ].join('\n') + '\n');
+
+  // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (round 14): the needs-you ledger
+  // sandbox buildWaitingOnYouMap's lazy require('./inbox-routes.js') reads.
+  // A real, answerable decision item explicitly naming docs/plans/waiting-
+  // plan.md + "task 1" -- the ONLY conservative match shape this producer
+  // accepts (plan-parse.js's extractPlanTaskReferences).
+  const needsYouStateDir = path.join(tmp, 'needs-you-state');
+  fs.mkdirSync(needsYouStateDir, { recursive: true });
+  process.env.NEEDS_YOU_STATE_DIR = needsYouStateDir;
+  fs.writeFileSync(path.join(needsYouStateDir, 'ledger.json'), JSON.stringify({
+    schema_version: 1,
+    items: [{
+      id: 'NY-waiting-1', section: 'decision', state: 'open', created_at: '2026-07-10T10:00:00Z',
+      lint_warnings: [],
+      text: '### Which approach for the stuck task?\n' +
+        'docs/plans/waiting-plan.md -- task 1 is blocked on this call.\n' +
+        '| Option | What happens |\n|---|---|\n| A | goes one way |\n| B | goes the other |\n' +
+        'My pick: A.\nReply with: "a" or "b".',
+    }],
+  }));
 
   delete require.cache[require.resolve('./roadmap-routes.js')];
   const roadmapRoutes = require('./roadmap-routes.js');
@@ -470,8 +505,8 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 21 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
-      items.length === 21, topIds.join(','));
+    ok('S1e exactly 22 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
+      items.length === 22, topIds.join(','));
     ok('R11 child-a-fixture no longer appears in the TOP-LEVEL list (it renders once, nested under its master)',
       topIds.indexOf('child-a-fixture') === -1, topIds.join(','));
 
@@ -882,6 +917,139 @@ async function main() {
       multiIds.indexOf('demo-plan') !== -1 && multiIds.indexOf('redesign-plan') !== -1);
     ok('R9-8d a THIRD configured repo with NO docs/plans/ at all contributes NOTHING — honest absence, never a crash, never a synthesized item',
       rMulti.status === 200 && rMulti.json.ok === true);
+
+    // ------------------------------------------------------------------
+    // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (2026-07-29 round 14) —
+    // a SCANNED plan file (docs/plans/, not registry-linked) with a
+    // surviving-but-unrecognized Status: token, or an unreadable scan
+    // read, must NEVER render a confident not-started bucket, and must
+    // NEVER silently vanish from the tree. Placed BEFORE S14 below (which
+    // permanently corrupts the ask-registry for the rest of this run) —
+    // these fixtures include a registry-override-backed "done-plan" sanity
+    // check that needs the registry still readable.
+    // ------------------------------------------------------------------
+
+    // (a) live repro of the advocate's fx-corrupt2 fixture: a Status:
+    // header survives ("WHAT") but is outside the known enum, plus
+    // binary garbage bytes in the body -- zero parseable tasks.
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-corrupt2.md'),
+      Buffer.from('garbage\nStatus: WHAT\n\x01\xff\n', 'binary'));
+    const rCorruptA = await httpGet(PORT, '/api/roadmap');
+    const corruptAItem = findItem(rCorruptA.json.items, 'fx-corrupt2');
+    ok('S15 a scanned plan with an unrecognized Status: token ("WHAT") renders unknown("plan parse failed"), NEVER a confident not-started bucket (ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01a)',
+      corruptAItem && corruptAItem.status.value === 'unknown' && /plan parse failed/.test(corruptAItem.status.reason) &&
+      /unrecognized Status/.test(corruptAItem.status.reason),
+      JSON.stringify(corruptAItem && corruptAItem.status));
+
+    // A KNOWN status (ACTIVE) but a genuinely fresh, taskless plan stub
+    // (ordinary prose, no `## Tasks` yet) must STAY not-started — the
+    // corruption signature (binary/control bytes), not mere taskless-ness,
+    // is what distinguishes a corrupt plan from a legitimately new one.
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-fresh-stub.md'),
+      '# Plan: Fresh Stub\n\nStatus: ACTIVE\n\nTasks not written yet -- just an idea.\n');
+    const rFreshStub = await httpGet(PORT, '/api/roadmap');
+    const freshStubItem = findItem(rFreshStub.json.items, 'fx-fresh-stub');
+    ok('S15b a genuinely fresh, taskless plan stub (ordinary prose, KNOWN status) still renders not-started -- taskless-ness ALONE never triggers the corruption path',
+      freshStubItem && freshStubItem.status.value === 'not-started',
+      JSON.stringify(freshStubItem && freshStubItem.status));
+
+    // A KNOWN status (ACTIVE) but taskless AND corrupt (binary/control
+    // bytes, zero tasks) -- the OTHER half of the required fix.
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-corrupt-taskless.md'),
+      Buffer.from('# Plan: Corrupt Taskless\n\nStatus: ACTIVE\n\n\x01\x02\xff garbage, no real tasks\n', 'binary'));
+    const rCorruptTaskless = await httpGet(PORT, '/api/roadmap');
+    const corruptTasklessItem = findItem(rCorruptTaskless.json.items, 'fx-corrupt-taskless');
+    ok('S15c a KNOWN-status plan that is BOTH taskless AND shows the binary-corruption signature renders unknown("plan parse failed"), never not-started (ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01, "zero tasks AND unparseable structure" clause)',
+      corruptTasklessItem && corruptTasklessItem.status.value === 'unknown' && /plan parse failed/.test(corruptTasklessItem.status.reason),
+      JSON.stringify(corruptTasklessItem && corruptTasklessItem.status));
+
+    // (c) an unreadable (EACCES) scanned plan file must surface as an
+    // unknown root, never silently skipped by the scan's catch. chmod 000
+    // is a no-op for root/some sandboxes -- probe first, skip honestly.
+    {
+      const probePath2 = path.join(repoDir, 'docs', 'plans', '.eacces-probe2');
+      fs.writeFileSync(probePath2, 'x');
+      fs.chmodSync(probePath2, 0o000);
+      let probeBlocked2 = true;
+      try { fs.readFileSync(probePath2, 'utf8'); probeBlocked2 = false; } catch (_) { probeBlocked2 = true; }
+      fs.chmodSync(probePath2, 0o644);
+      fs.rmSync(probePath2, { force: true });
+      if (!probeBlocked2) {
+        console.log('  SKIP: S15d EACCES-scanned-plan scenario -- chmod 000 is a no-op in this sandbox (likely running as root)');
+      } else {
+        fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-unreadable.md'), '# Plan: Unreadable\n\nStatus: ACTIVE\n\n## Tasks\n\n- [ ] 1. x\n');
+        fs.chmodSync(path.join(repoDir, 'docs', 'plans', 'fx-unreadable.md'), 0o000);
+        const rUnreadable = await httpGet(PORT, '/api/roadmap');
+        const unreadableItem = findItem(rUnreadable.json.items, 'fx-unreadable');
+        ok('S15d a scanned plan file that exists but cannot be READ (EACCES) surfaces as unknown("plan file unreadable"), NEVER silently skipped/vanished (ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01c)',
+          unreadableItem && unreadableItem.status.value === 'unknown' && /plan file unreadable/.test(unreadableItem.status.reason),
+          JSON.stringify(unreadableItem && unreadableItem.status));
+        fs.chmodSync(path.join(repoDir, 'docs', 'plans', 'fx-unreadable.md'), 0o644);
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // ROADMAP-SUPERSEDED-RENDERS-PENDING-01 (2026-07-29 round 14) — an
+    // authored Status: SUPERSEDED/ABANDONED plan must render `complete`
+    // (so it joins the client's existing Shipped grouping) with a
+    // distinct terminal_label, NEVER as an ordinary pending item.
+    // ------------------------------------------------------------------
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-superseded.md'), [
+      '# Plan: Old Polish Plan', '', 'Status: SUPERSEDED', '', '## Tasks', '',
+      '- [ ] 1. never finished before being superseded',
+      '', // deliberately NOT all-done — the pre-fix bug applied the task-count ladder regardless
+    ].join('\n'));
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-abandoned.md'), [
+      '# Plan: Abandoned Idea', '', 'Status: ABANDONED', '', '## Tasks', '',
+      '- [ ] 1. never started',
+      '',
+    ].join('\n'));
+    const rSuperseded = await httpGet(PORT, '/api/roadmap');
+    const supersededItem = findItem(rSuperseded.json.items, 'fx-superseded');
+    ok('S16 a Status: SUPERSEDED plan (with UNDONE tasks) renders status.value:"complete" (joins Shipped), never "not-started"/"in-progress" among live work',
+      supersededItem && supersededItem.status.value === 'complete',
+      JSON.stringify(supersededItem && supersededItem.status));
+    ok('S16b ...carrying a distinct terminal_label:"superseded" (so the client renders it as its OWN labeled chip, never indistinguishable from ordinary shipped work)',
+      supersededItem && supersededItem.status.terminal_label === 'superseded',
+      JSON.stringify(supersededItem && supersededItem.status));
+    const abandonedItem = findItem(rSuperseded.json.items, 'fx-abandoned');
+    ok('S16c a Status: ABANDONED plan renders the same complete+terminal_label pattern, labeled "abandoned"',
+      abandonedItem && abandonedItem.status.value === 'complete' && abandonedItem.status.terminal_label === 'abandoned',
+      JSON.stringify(abandonedItem && abandonedItem.status));
+    const completedFixtureItem = findItem(rSuperseded.json.items, 'done-plan');
+    ok('S16d a genuinely complete plan (done-plan, S10\'s operator-override fixture) is UNCHANGED by this fix — still complete, but with NO terminal_label (ordinary shipped work, not a superseded/abandoned one)',
+      completedFixtureItem && completedFixtureItem.status.value === 'complete' && !completedFixtureItem.status.terminal_label,
+      JSON.stringify(completedFixtureItem && completedFixtureItem.status));
+
+    // ------------------------------------------------------------------
+    // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (2026-07-29 round 14, the S6
+    // blocker) — buildWaitingOnYouMap's END-TO-END wiring: a real needs-you
+    // ledger item conservatively matched to waiting-plan/1 (fixture set up
+    // at the top of this file) must make THAT task -- and only that task --
+    // render stalled(waiting-on-you) with a real #inbox/<id> unblock link,
+    // never a generic 'crashed' fallback.
+    // ------------------------------------------------------------------
+    const rWaiting = await httpGet(PORT, '/api/roadmap');
+    const waitingTask = findItem(rWaiting.json.items, 'waiting-plan/1');
+    ok('S17 waiting-plan/1 (started, no heartbeat anywhere, referenced by a real needs-you ledger item) renders stalled(waiting-on-you) -- the waitingOnYouId signal WINS over the generic crashed fallback',
+      waitingTask && waitingTask.status.value === 'stalled' && waitingTask.status.reason_class === 'waiting-on-you',
+      JSON.stringify(waitingTask && waitingTask.status));
+    ok('S17b ...carrying a real status.unblock {label, hash} pointing at #inbox/NY-waiting-1 -- the PRE-EXISTING, previously-never-populated consumer field (this file\'s own header, line ~96) the client already renders as a real link',
+      waitingTask && waitingTask.status.unblock && waitingTask.status.unblock.hash === '#inbox/NY-waiting-1',
+      JSON.stringify(waitingTask && waitingTask.status.unblock));
+    // Roll-up: the plan-level ancestor must show the counted waiting-on-you
+    // badge (C1 roll-up law), never masked by the plan's own in-progress-ish
+    // status.
+    const waitingPlanRoot = findItem(rWaiting.json.items, 'waiting-plan');
+    ok('S17c the waiting-plan ROOT rolls up the waiting-on-you badge from its stalled descendant (C1: attention states propagate to every collapsed ancestor)',
+      waitingPlanRoot && waitingPlanRoot.roll_up && waitingPlanRoot.roll_up['waiting-on-you'] && waitingPlanRoot.roll_up['waiting-on-you'].count === 1,
+      JSON.stringify(waitingPlanRoot && waitingPlanRoot.roll_up));
+    // Conservative matching: a plan/task pair NOT explicitly named anywhere
+    // in the ledger must NEVER be marked waiting-on-you (no fuzzy matching).
+    const unrelatedTask = findItem(rWaiting.json.items, 'demo-plan/2');
+    ok('S17d conservative matching: an UNRELATED task (demo-plan/2, never mentioned in the ledger) is NEVER marked waiting-on-you -- no fuzzy/global matching',
+      unrelatedTask && unrelatedTask.status.reason_class !== 'waiting-on-you',
+      JSON.stringify(unrelatedTask && unrelatedTask.status));
 
     // ---- S14: error honesty — a torn registry file never crashes the route,
     // AND (round 8) the roadmap now SURVIVES a corrupt registry entirely,

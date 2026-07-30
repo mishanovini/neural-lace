@@ -51,20 +51,23 @@
 // docs/backlog.md for the tracked follow-up.
 //
 // ============================================================
-// "blocks: <item>" (I5 collapsed-row anatomy) — HONEST LIMIT
+// "blocks: <item>" (I5 collapsed-row anatomy) — WIRED (2026-07-29 round 14,
+// ROADMAP-WAITING-ON-YOU-SIGNAL-01)
 // ============================================================
 // The plan specs a "blocks: <item>" chip linking `#roadmap/<id>` when an
-// Inbox item stalls live work. Task 1's deriveStalledReason() accepts a
-// caller-supplied `stalledSignals.waitingOnYouId` per roadmap item
-// (server/derive-lib.js:586), but roadmap-routes.js (task 3, already
-// merged) never populates it — no roadmap item is today computed as
-// "stalled: waiting-on-you" pointing at a specific needs-you ledger id, so
-// there is no live data source for a reverse (ledger-id -> roadmap-item)
-// lookup. Rather than fabricate a correlation that does not exist,
-// `blocks` is always `null` on every item this route returns; inbox.js
-// omits the chip entirely when null (never a fake/dead link). Wiring the
-// forward signal is roadmap-routes.js's file (task-3-owned) — flagged in
-// docs/backlog.md as a named follow-up, not silently routed around here.
+// Inbox item stalls live work. roadmap-routes.js's buildWaitingOnYouMap()
+// now produces the forward signal (an Inbox item's text/links, matched
+// CONSERVATIVELY via plan-parse.js's extractPlanTaskReferences — see that
+// function's own header for the exact rule — feeds
+// stalledSignals.waitingOnYouId into deriveStalledReason). This route
+// performs the SAME conservative match in the REVERSE direction
+// (resolveBlocksRoadmapId, below) — duplicated per this codebase's own
+// established small-duplicated-reader convention (see this file's own
+// header above, and auditor.js's "WHY THE READERS BELOW ARE DUPLICATED")
+// rather than a cross-route require (roadmap-routes.js already requires
+// THIS file for the ledger read; requiring back would be circular).
+// `blocks_roadmap_id` is `null` whenever no conservative match is found —
+// inbox.js omits the chip entirely when null (never a fake/dead link).
 //
 // ============================================================
 // ANATOMY PARSING (I5 — constitution §3 compact format, best-effort)
@@ -91,6 +94,8 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const planParse = require('./plan-parse.js');
+const deriveLib = require('./derive-lib.js');
 
 const WEB_DIR = path.join(__dirname, '..', 'web');
 
@@ -155,7 +160,24 @@ class LedgerUnavailableError extends Error {}
 // shape document like `null`/`{}` used to silently coerce to `[]`).
 function readNeedsYouLedgerItems() {
   let raw;
-  try { raw = fs.readFileSync(needsYouLedgerFile(), 'utf8'); } catch (_) { return null; } // absent — TRUE-empty, not an error
+  try {
+    raw = fs.readFileSync(needsYouLedgerFile(), 'utf8');
+  } catch (err) {
+    // INBOX-UNREADABLE-LEDGER-WIN-STATE-01 (2026-07-29 round 14): ENOENT
+    // (the file genuinely does not exist) is the ONLY true-empty case —
+    // needs-you.sh has never run on this machine, not an error. Every
+    // OTHER errno (EACCES/EISDIR/EIO/a mid-read race on a present file)
+    // means the ledger EXISTS but could not be read — that must raise the
+    // SAME LedgerUnavailableError as a malformed/wrong-shape ledger below,
+    // never be silently folded into "absent" (which renders the
+    // not_yet_derived -> "nothing waiting on you" WIN STATE while open
+    // items may actually wait). Mirrors derive-lib.js's own
+    // listRawHeartbeatsResult fix for the identical errno-conflation class
+    // (Task 1 comprehension-review fix R-1) — the ledger reader was the
+    // missed sibling that fix's own sweep note flagged.
+    if (err && err.code === 'ENOENT') return null; // absent — TRUE-empty, not an error
+    throw new LedgerUnavailableError('ledger.json exists but could not be read (' + (err && err.code ? err.code : String(err && err.message || err)) + ')');
+  }
 
   let parsed;
   try { parsed = JSON.parse(raw); }
@@ -228,12 +250,41 @@ function runNeedsYouCli(args) {
 // ----------------------------------------------------------------------
 // parseDecisionAnatomy(rawText) — tolerant §3 block parser. See file
 // header "ANATOMY PARSING" for the shape it targets and the degrade path.
+//
+// INBOX-OPTIONS-ARROW-FORMAT-NOT-PARSED (2026-07-29 round 14, operator
+// live complaint): a REAL production ledger item (NY-1785357818-7d3f)
+// proved a second, lint-PASSING §3 shape this parser never recognized —
+// "Option <NAME> -> <effect> -> <outcome>" prose (never a markdown
+// table). needs-you.sh's own cold-reader lint only checks for the WORDS
+// (context/anchor/outcomes present), not a rigid grammar, so this shape
+// legitimately passes the write-side gate while the read side silently
+// swallowed its three options into unstructured context prose — the
+// Trade-offs table (anatomy step 3) rendered EMPTY for a decision that
+// very clearly enumerated three real options with real outcomes. Fixed
+// by recognizing this shape as a SECOND options grammar, alongside the
+// markdown-table one (both accumulate into the SAME options[] array).
 // ----------------------------------------------------------------------
 function stripMdEmphasis(s) { return String(s).replace(/^\*+/, '').replace(/\*+$/, '').trim(); }
 
+// OPTION_ARROW_RE — "Option <NAME> -> ... " (an em-dash arrow "—>" or a
+// double-hyphen "-->" are also accepted spellings seen in practice).
+// Deliberately captures EVERYTHING after the arrow as the outcome
+// (including any FURTHER arrows in a multi-step "action -> effect ->
+// outcome" chain, our real fixture's own shape) rather than trying to
+// split on every arrow — losing no text is more important than a
+// perfectly-segmented cell (I5's own "never drop content" spirit).
+const OPTION_ARROW_RE = /^option\s+(\S+)\s*(?:->|-->|—>)\s*(.+)$/i;
+
 function parseDecisionAnatomy(rawText) {
   const lines = String(rawText || '').split('\n');
-  const title = stripMdEmphasis(lines[0] || '').replace(/^#+\s*/, '').trim() || '(untitled decision)';
+  // A producer sometimes repeats the literal "Decision needed:"/"Question:"
+  // label INSIDE its own first line (needs-you.sh's lint accepts this shape
+  // too) — strip it here so the client's expandedAnatomy header (which
+  // ALWAYS prepends its own "Decision needed: "/"Question: " label) never
+  // doubles it (the live bug: title rendered "Decision needed: Decision
+  // needed: ...").
+  const titleLine = stripMdEmphasis(lines[0] || '').replace(/^#+\s*/, '').trim();
+  const title = titleLine.replace(/^(decision needed|question)\s*:\s*/i, '').trim() || '(untitled decision)';
   const context = [];
   const options = [];
   let myPick = '';
@@ -251,6 +302,9 @@ function parseDecisionAnatomy(rawText) {
     const replyM = /^reply(?:\s*with)?:\s*(.*)$/i.exec(clean);
     if (replyM) { replyWith = replyM[1].trim(); return; }
 
+    const arrowM = OPTION_ARROW_RE.exec(t);
+    if (arrowM) { options.push({ option: arrowM[1], outcome: arrowM[2].trim() }); return; }
+
     if (/^\|/.test(t)) {
       if (!sawTableHeader) { sawTableHeader = true; return; } // header row ("Option | What happens") — labels only
       // separator row, e.g. "|---|---|"
@@ -265,6 +319,63 @@ function parseDecisionAnatomy(rawText) {
   });
 
   return { title: title, context: context, options: options, my_pick: myPick, reply_with: replyWith };
+}
+
+// ----------------------------------------------------------------------
+// extractAnchorsFromText(text) — INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01
+// part (b): a producer that never called needs-you.sh's `--link` still
+// routinely names concrete anchors INLINE in its prose (repo paths, ledger
+// ids, workflow ids, URLs) — needs-you.sh's own cold-reader lint requires
+// "a concrete anchor" to pass at all (LINT_LABELS 'no-anchor' above), so an
+// answerable item is GUARANTEED to name one somewhere in its text, yet
+// `links[]` stayed empty because nothing ever scanned the text for it.
+// CONSERVATIVE, three shapes only (a false/unresolvable "link" is worse
+// than none — the coordinator's own binding rule):
+//   - http(s) URLs (always resolve — real absolute hrefs client-side).
+//   - repo-relative paths with a recognized source-file extension AND at
+//     least one internal slash (low false-positive risk; ordinary prose
+//     essentially never contains a slash-delimited, extensioned token by
+//     accident) — rendered client-side as copyable text, NEVER a fake
+//     clickable href (a relative path cannot honestly resolve in a
+//     browser — see inbox.js's absoluteLinkNode).
+//   - this codebase's own NY-<digits>-<hex> ledger ids and wf_<hex...>
+//     workflow ids (both unambiguous, narrow shapes).
+// Merged into (never replacing) any producer-supplied `--link` entries,
+// deduplicated.
+// ----------------------------------------------------------------------
+const ANCHOR_URL_RE = /https?:\/\/[^\s)]+/g;
+const ANCHOR_PATH_RE = /\b[\w.-]+(?:\/[\w.-]+)+\.(?:md|js|sh|json|ts|tsx|py|yml|yaml|css|html)\b/g;
+const ANCHOR_NY_ID_RE = /\bNY-\d+-[a-f0-9]+\b/g;
+const ANCHOR_WF_ID_RE = /\bwf_[a-f0-9-]+\b/g;
+
+function extractAnchorsFromText(text) {
+  const hay = String(text || '');
+  const found = [];
+  const seen = {};
+  function collect(re) {
+    let m;
+    re.lastIndex = 0;
+    while ((m = re.exec(hay))) {
+      const v = m[0].replace(/[.,;:)]+$/, ''); // trailing punctuation never belongs to the anchor
+      if (!seen[v]) { seen[v] = true; found.push(v); }
+    }
+  }
+  collect(ANCHOR_URL_RE);
+  collect(ANCHOR_PATH_RE);
+  collect(ANCHOR_NY_ID_RE);
+  collect(ANCHOR_WF_ID_RE);
+  return found;
+}
+
+// mergeLinks(producerLinks, extractedLinks) -> deduplicated array,
+// producer-supplied entries first (an explicit `--link` is a stronger,
+// deliberate signal than a best-effort text scan).
+function mergeLinks(producerLinks, extractedLinks) {
+  const out = Array.isArray(producerLinks) ? producerLinks.slice() : [];
+  const seen = {};
+  out.forEach((l) => { seen[l] = true; });
+  (extractedLinks || []).forEach((l) => { if (!seen[l]) { seen[l] = true; out.push(l); } });
+  return out;
 }
 
 // ----------------------------------------------------------------------
@@ -295,6 +406,32 @@ function lintReasons(lintWarnings) {
 }
 
 // ----------------------------------------------------------------------
+// resolveBlocksRoadmapId(item) — see the file header "blocks: <item>"
+// section above for the full contract. Returns the roadmap item id
+// ('<slug>/<task_id>') a real, verified reference resolves to, or null.
+// ----------------------------------------------------------------------
+function planScanRootForBlocksLookup() {
+  return process.env.ROADMAP_PLAN_SCAN_ROOT || deriveLib.mainRepoRoot();
+}
+function resolveBlocksRoadmapId(item) {
+  const haystack = String(item.text || '') + ' ' + (Array.isArray(item.links) ? item.links.join(' ') : '');
+  const refs = planParse.extractPlanTaskReferences(haystack);
+  if (!refs.length) return null;
+  const scanRoot = planScanRootForBlocksLookup();
+  for (let i = 0; i < refs.length; i++) {
+    const ref = refs[i];
+    const abs = planParse.resolvePlanAbsPath(scanRoot, ref.slug);
+    if (!abs) continue;
+    const loaded = planParse.loadPlanFile(abs);
+    if (!loaded.ok) continue;
+    const isRealTask = (loaded.tasks || []).some((t) => t.id === ref.taskId);
+    if (!isRealTask) continue; // never a fabricated correlation
+    return ref.slug + '/' + ref.taskId;
+  }
+  return null;
+}
+
+// ----------------------------------------------------------------------
 // buildInboxItem(item) — shared shape for BOTH answerable and quarantined
 // rows (I5 anatomy fields are the same; quarantine-only fields are added by
 // the caller). `kind` mirrors the ledger's own `section` value.
@@ -313,7 +450,11 @@ function buildInboxItem(item) {
     session: item.session || '',
     tier: item.tier || '',
     created_at: item.created_at || '',
-    links: Array.isArray(item.links) ? item.links : [],
+    // INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 (b): producer-supplied
+    // `--link` entries FIRST, then any anchor extractAnchorsFromText finds
+    // inline in the raw text that isn't already listed — merged, never
+    // replacing what the producer explicitly supplied.
+    links: mergeLinks(Array.isArray(item.links) ? item.links : [], extractAnchorsFromText(item.text)),
     context: anatomy.context,
     options: anatomy.options,
     my_pick: anatomy.my_pick,
@@ -321,9 +462,10 @@ function buildInboxItem(item) {
     reply_channel: replyChannel(item),
     reply_stub: replyStub(anatomy.title),
     raw_text: item.text || '',
-    // HONEST LIMIT (see file header) — never fabricated; inbox.js omits the
-    // "blocks:" chip entirely when null.
-    blocks_roadmap_id: null,
+    // WIRED (see file header "blocks: <item>") — null when no conservative
+    // match is found; inbox.js omits the "blocks:" chip entirely then
+    // (never a fake/dead link).
+    blocks_roadmap_id: resolveBlocksRoadmapId(item),
   };
 }
 
@@ -507,4 +649,7 @@ module.exports = {
   auditorNlIssueStatePath,
   readAuditorFiledIds,
   LedgerUnavailableError,
+  resolveBlocksRoadmapId,
+  extractAnchorsFromText,
+  mergeLinks,
 };

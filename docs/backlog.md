@@ -1722,3 +1722,25 @@ per that runbook's own "Registration" section. Once ONE other machine's `plan-ex
 immediately (no further code change needed — the mechanism is generic across N machines
 per the runbook's own "N-machine is the shipped architecture" note).
 **Filed by:** neural-lace session, 2026-07-29 (macOS coord-sync wiring build).
+
+---
+
+## INBOX-SESSION-ID-ABBREVIATED-01 — needs-you.sh ledger items can carry an 8-char abbreviated `session` field instead of the full session UUID
+
+**Severity:** P3 (the quarantine "open source session" resume-command affordance would render
+an unresumable `claude --resume <8-char-prefix>` command if this ever reaches that path today).
+**Context:** found auditing INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 (round 14, workstreams-ui
+cockpit). The real production ledger item `NY-1785357818-7d3f` carries `"session":
+"a3fcb6ea"` — an 8-char hex PREFIX of a real session UUID, not the full id `claude --resume`
+normally expects. `inbox-routes.js`'s `open_source_session.resume_cmd` builds
+`'claude --resume ' + item.session` verbatim — if a QUARANTINED item (the only place this
+affordance renders today) ever carries a session id shaped like this, the copyable command
+would be unresumable. The shaping happens UPSTREAM of workstreams-ui, in whichever
+hook/dispatcher passes `--session <id>` to `needs-you.sh add` (needs-you.sh itself never
+truncates — `--session` is a plain passthrough CLI arg) — out of workstreams-ui's own file
+scope to fix or even locate without a cross-repo grep.
+**Action:** `rg -n -- '--session' adapters/claude-code/hooks/ adapters/claude-code/scripts/`
+to find the emitter using an abbreviated id, then either pass the FULL session id at the
+call site or (if `claude --resume` genuinely supports prefix matching) confirm that and close
+this as a non-issue.
+**Filed by:** plan-phase-builder, cockpit-roadmap-redesign round-14 build, 2026-07-29.

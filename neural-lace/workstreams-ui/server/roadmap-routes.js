@@ -269,6 +269,33 @@ function isEligiblePlanStatus(statusText) {
   return !PLAN_STATUS_EXCLUDE_RE.test(t);
 }
 
+// ----------------------------------------------------------------------
+// ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 / ROADMAP-SUPERSEDED-RENDERS-
+// PENDING-01 (2026-07-29 round 14) shared vocabulary — the harness's own
+// terminal-status enum (ADR 052 + plan-lifecycle.sh's extract_status:
+// "ACTIVE / COMPLETED / DEFERRED / ABANDONED / SUPERSEDED / etc.") is the
+// only set of Status: tokens this derivation trusts enough to run the
+// normal task-count ladder on unconditionally. Anything else surviving
+// past isEligiblePlanStatus (a real Status: line, just not one of these —
+// e.g. binary corruption landing "Status: WHAT" in place of a real token)
+// is NOT a confident bucket (C5) — see scanPlanDir's read-failure/unknown-
+// status handling below.
+// ----------------------------------------------------------------------
+const KNOWN_PLAN_STATUS_TOKENS = { ACTIVE: true, COMPLETED: true, DEFERRED: true, ABANDONED: true, SUPERSEDED: true };
+function planStatusToken(statusText) {
+  const m = /^([A-Za-z][A-Za-z0-9_-]*)/.exec(String(statusText || '').trim());
+  return m ? m[1].toUpperCase() : '';
+}
+// PLAN_BODY_CORRUPTION_RE — control/binary bytes (outside the common
+// whitespace \t\n\r already handled by line-splitting) anywhere in a
+// scanned plan's body are a strong corruption signal: a genuine markdown
+// plan is prose + task lines, never raw binary/control bytes. Used ONLY
+// as the second half of the "zero tasks AND unparseable structure" test
+// in scanPlanDir — never applied when tasks parsed successfully (a normal
+// plan's continuation-line text can legitimately contain unusual but
+// PRINTABLE punctuation, which this never flags).
+const PLAN_BODY_CORRUPTION_RE = /[\x00-\x08\x0E-\x1F\x7F]/;
+
 // scanPlanDir(dir, opts) -> [{slug, absPath, archived, mtimeMs}] for every
 // eligible top-level *.md file directly inside `dir` (non-recursive — a
 // subdirectory like fragments/ or archive/ itself is never descended into
@@ -301,14 +328,54 @@ function scanPlanDir(dir, opts) {
     if (!e.isFile() || !/\.md$/i.test(e.name)) return;
     const abs = path.join(dir, e.name);
     let stat;
-    try { stat = fs.statSync(abs); } catch (_) { return; }
+    try { stat = fs.statSync(abs); } catch (_) { return; } // vanished mid-scan race — genuinely gone, not this file's fault
     const slug = e.name.replace(/\.md$/i, '');
     if (typeof options.cutoffMs === 'number' && !(options.recentSlugs && options.recentSlugs[slug])) {
       return; // aging is gated here and this slug has no recency evidence
     }
     let text;
-    try { text = fs.readFileSync(abs, 'utf8'); } catch (_) { return; }
-    if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
+    try {
+      text = fs.readFileSync(abs, 'utf8');
+    } catch (err) {
+      // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (c): the file EXISTS
+      // (readdirSync/statSync above both succeeded) but could not be
+      // read — a genuine permission/race failure, never silently skipped
+      // the way an ineligible-status file legitimately is below. Matches
+      // the registry-linked path's own `damaged` handling (derivePlanRootNode
+      // via planParse.loadPlanFile) — surfaced as an unknown root instead
+      // of vanishing from the tree.
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan file unreadable (' + (err && err.code ? err.code : String(err)) + ')' });
+      return;
+    }
+    const statusText = planParse.parsePlanStatus(text);
+    if (!isEligiblePlanStatus(statusText)) return; // no Status: header, or REFERENCE/NORMATIVE — not an independent plan (unchanged)
+
+    // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (a): the Status: header
+    // survives but its value is outside the known enum (see
+    // KNOWN_PLAN_STATUS_TOKENS above) — e.g. binary corruption landed
+    // "Status: WHAT" where a real token belongs. The OLD code let this
+    // through as an eligible plan and zero parseable tasks then defaulted
+    // it to a confident "not-started" (live repro: fx-corrupt2). Never a
+    // confident bucket for a status this derivation doesn't recognize.
+    if (!KNOWN_PLAN_STATUS_TOKENS[planStatusToken(statusText)]) {
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan parse failed (unrecognized Status: "' + statusText.trim() + '")' });
+      return;
+    }
+
+    // A KNOWN status token survives, but the body is BOTH taskless AND
+    // shows the binary/control-byte corruption signature — never
+    // legitimate markdown prose. A genuinely fresh plan stub (zero tasks,
+    // ordinary prose, no `## Tasks` written yet) is NOT flagged here —
+    // only the corruption signature, so this never guesses on a plan that
+    // is merely new.
+    if (planParse.parseTasks(text).length === 0 && PLAN_BODY_CORRUPTION_RE.test(text)) {
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan parse failed (unparseable body — zero tasks, corrupt content)' });
+      return;
+    }
+
     out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs });
   });
   return out;
@@ -527,13 +594,18 @@ function mapDerivedValue(value) {
 function statusObj(value, opts) {
   const o = opts || {};
   let label;
-  if (value === 'unknown') label = 'status unknown — ' + (o.reason || 'derivation failed');
+  // ROADMAP-SUPERSEDED-RENDERS-PENDING-01: an AUTHORED terminal label
+  // (superseded/abandoned) always wins the display text — see the
+  // derivePlanRootNode call site for who sets this and why value stays
+  // 'complete' underneath (Shipped-group membership, no new enum value).
+  if (o.terminal_label) label = o.terminal_label;
+  else if (value === 'unknown') label = 'status unknown — ' + (o.reason || 'derivation failed');
   else if (value === 'merged-unverified') label = 'merged — deploy unverified';
   else if (value === 'stalled') label = 'stalled — ' + (o.reason || 'reason unavailable');
   else if (value === 'complete') label = 'complete' + (o.override ? ' (operator override)' : '');
   else if (value === 'in-progress') label = 'in progress';
   else label = 'not started';
-  return { value: value, reason: o.reason || '', reason_class: o.reason_class || '', label: label, since: o.since || '' };
+  return { value: value, reason: o.reason || '', reason_class: o.reason_class || '', label: label, since: o.since || '', terminal_label: o.terminal_label || '' };
 }
 
 function statusFromDerived(derived, opts) {
@@ -643,6 +715,62 @@ function deriveUnboundSessionsNode(hbCtx) {
   };
 }
 
+// buildWaitingOnYouMap(scanRoot) -> { '<slug>/<task_id>': <needs-you ledger
+// id>, ... } — ROADMAP-WAITING-ON-YOU-SIGNAL-01 (2026-07-29 round 14): the
+// producer half of deriveStalledReason's `waitingOnYouId` input (task-1-
+// owned consumer, unit-proven but never populated in production —
+// inbox-routes.js:55-68's own honest-limit note this closes).
+//
+// Reuses GET /api/inbox's OWN derivation (inbox-routes.buildInboxPayload) —
+// never a second ledger parse (a lazy require here, not a module-load-time
+// one, since roadmap-routes.js is required BY server.js alongside
+// inbox-routes.js — deferring the require avoids any load-order coupling
+// between sibling route modules, matching this file's existing
+// derive-cache.js lazy-require precedent above).
+//
+// MATCHING (conservative — "a false badge is worse than a missing one",
+// this defect's own binding rule): plan-parse.js's extractPlanTaskReferences
+// finds CANDIDATE (slug, taskId) pairs via two explicit shapes only (its own
+// header has the full rule — the app's own `#roadmap/<slug>/<task-id>`
+// address, or a `docs/plans/<slug>.md` anchor + an explicit "task <id>"
+// mention in the SAME text) — no fuzzy title/keyword matching. Every
+// candidate is then VERIFIED against the plan's REAL parsed task list
+// before being trusted; an unverified candidate is silently dropped, never
+// fabricated. Only status:'ok' (a TRUSTED ledger read) is consulted — an
+// unavailable/not-yet-derived ledger contributes nothing (never a guess).
+//
+// A bare plan-slug reference (no specific task id) does NOT mark anything
+// here — the six-value enum has no plan-ROOT 'stalled' state (only task
+// nodes reach deriveItemStatus's stalled branch; a plan's own not-started/
+// in-progress status is derived from child task counts, never from
+// deriveItemStatus directly) — an honest, documented limit rather than an
+// invented "first stalled task in this plan" heuristic.
+function buildWaitingOnYouMap(scanRoot) {
+  const map = {};
+  let payload;
+  try {
+    payload = require('./inbox-routes.js').buildInboxPayload();
+  } catch (_) {
+    return map; // inbox derivation unavailable — honest no-op, never a crash here
+  }
+  if (!payload || payload.status !== 'ok') return map; // only a TRUSTED read is a signal source
+  (payload.answerable || []).forEach((item) => {
+    const haystack = String(item.raw_text || '') + ' ' + (Array.isArray(item.links) ? item.links.join(' ') : '');
+    planParse.extractPlanTaskReferences(haystack).forEach((ref) => {
+      const roadmapId = ref.slug + '/' + ref.taskId;
+      if (map[roadmapId]) return; // first (oldest, per buildInboxPayload's own sort) match wins
+      const abs = planParse.resolvePlanAbsPath(scanRoot, ref.slug);
+      if (!abs) return;
+      const loaded = planParse.loadPlanFile(abs);
+      if (!loaded.ok) return;
+      const isRealTask = (loaded.tasks || []).some((t) => t.id === ref.taskId);
+      if (!isRealTask) return; // never a fabricated correlation
+      map[roadmapId] = item.id;
+    });
+  });
+  return map;
+}
+
 // deriveTaskNode(slug, t, ...) — id scheme is now `<slug>/<task_id>` (the
 // ask_id segment is gone: plans, not asks, are the root, so a task's
 // address is relative to its plan alone).
@@ -654,6 +782,10 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     completedAt = doneTs[t.id] || '';
     status = statusObj('complete', { since: completedAt });
   } else {
+    // ROADMAP-WAITING-ON-YOU-SIGNAL-01: this task's own roadmap id
+    // ('<slug>/<task_id>') is the key buildWaitingOnYouMap's producer
+    // above keys the map by — an EXACT match, never a substring/fuzzy one.
+    const waitingOnYouId = (hbCtx.waitingOnYou && hbCtx.waitingOnYou[slug + '/' + t.id]) || null;
     const derived = deriveLib.deriveItemStatus({
       done: false,
       startedEvent: !!startedTs[t.id],
@@ -661,8 +793,23 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
       heartbeats: hbCtx.heartbeats,
       heartbeatsStoreOk: hbCtx.heartbeatsStoreOk,
       nowMs: hbCtx.nowMs,
+      stalledSignals: waitingOnYouId ? { waitingOnYouId: waitingOnYouId } : undefined,
     });
     status = statusFromDerived(derived, { since: startedTs[t.id] || '' });
+    // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (S6's "clicking it expands the
+    // path; the #inbox/<id> link lands focused + highlighted" leg): feeds
+    // the PRE-EXISTING, previously-never-populated `status.unblock
+    // {label, hash}` field (documented at this file's own header, line
+    // ~96 — "OPTIONAL {label, hash}") that web/roadmap.js's reasonRow
+    // already renders as a real navigate-on-click link (line ~866) — no
+    // new client-side plumbing needed, the consumer was unit-built and
+    // simply never fed. Only set when the signal actually won the
+    // stalled-reason precedence (deriveStalledReason ranks waiting-on-you
+    // first, so if it was supplied it always wins — this mirrors that
+    // fact rather than re-deriving it).
+    if (waitingOnYouId && status.value === 'stalled' && status.reason_class === 'waiting-on-you') {
+      status.unblock = { label: 'open in Inbox', hash: '#inbox/' + encodeURIComponent(waitingOnYouId) };
+    }
   }
 
   const struct = deriveLib.splitTaskStructure(t.description);
@@ -951,12 +1098,45 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     return node;
   }
 
+  // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01: a SCAN-path corruption
+  // signal (unreadable file, unrecognized Status: token, or a taskless
+  // body with binary/control bytes — see scanPlanDir's own header) renders
+  // unknown(reason) here, matching the registry-linked path's own
+  // loadPlanFile-failure handling directly below. Never a confident
+  // not-started/in-progress bucket for a plan whose derivation input has
+  // already failed. Checked AFTER doneAsk (an ask-registry override never
+  // depends on the plan FILE being readable at all — same precedent as
+  // the loadPlanFile-failure check below).
+  if (pf.scanIssue) {
+    node.status = statusObj('unknown', { reason: pf.scanIssue, since: '' });
+    return node;
+  }
+
   const loaded = planParse.loadPlanFile(pf.absPath);
   if (!loaded.ok) {
     const reason = loaded.reason === 'damaged'
       ? 'plan file unreadable (' + (loaded.error || 'read failed') + ')'
       : 'plan file not found (docs/plans/' + pf.slug + '.md)';
     node.status = statusObj('unknown', { reason: reason, since: '' });
+    return node;
+  }
+
+  // ROADMAP-SUPERSEDED-RENDERS-PENDING-01: an AUTHORED terminal status
+  // (SUPERSEDED/ABANDONED) on an otherwise-readable, otherwise-eligible
+  // plan never runs through the task-count-derived not-started/in-
+  // progress/complete ladder below — it renders `status.value: 'complete'`
+  // (so the EXISTING Shipped grouping, web/roadmap.js's status.value===
+  // 'complete' check, picks it up with zero new client-side plumbing —
+  // never the pending/live list) with a distinct `terminal_label` so the
+  // operator can still tell it apart from real shipped work (live case:
+  // cockpit-ui-polish, superseded by THIS plan's own closure contract).
+  // COMPLETED is deliberately NOT special-cased here — an all-done
+  // COMPLETED plan already derives 'complete' correctly via the normal
+  // ladder below.
+  const authoredToken = planStatusToken(loaded.status);
+  if (authoredToken === 'SUPERSEDED' || authoredToken === 'ABANDONED') {
+    node.status = statusObj('complete', { terminal_label: authoredToken === 'SUPERSEDED' ? 'superseded' : 'abandoned' });
+    node.completed_at = new Date(pf.mtimeMs || Date.now()).toISOString();
     return node;
   }
 
@@ -1243,6 +1423,11 @@ function buildRoadmapTree() {
   // not-done task) — mutated-through-hbCtx is the same threading pattern
   // heartbeats/nowMs already use for this exact request-scoped object.
   const hbCtx = { heartbeats: hbResult.heartbeats, heartbeatsStoreOk: hbResult.ok, nowMs: Date.now(), boundSessionIds: {} };
+  // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (2026-07-29 round 14): read ONCE per
+  // request (same convention as heartbeats above), handed to every task's
+  // own derivation below via hbCtx — see buildWaitingOnYouMap's header for
+  // the full matching contract.
+  hbCtx.waitingOnYou = buildWaitingOnYouMap(scanRoot);
 
   let items = planFiles.map((pf) => {
     const linkedAsks = planAskLinks[pf.slug] || [];
@@ -1481,6 +1666,12 @@ module.exports = {
   isEligiblePlanStatus,
   ROLLUP_CLASSES,
   COMPLETED_AGE_DAYS,
+  // round-14 fix exports (test/reuse hooks — ROADMAP-CORRUPT-PLAN-CONFIDENT-
+  // BUCKET-01 / ROADMAP-SUPERSEDED-RENDERS-PENDING-01)
+  scanPlanDir,
+  planStatusToken,
+  KNOWN_PLAN_STATUS_TOKENS,
+  derivePlanRootNode,
   // round-9 fix-round exports (test/reuse hooks)
   planFileHeaderExtras,
   planProvenanceClass,
