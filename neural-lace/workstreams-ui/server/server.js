@@ -1085,6 +1085,9 @@ const server = http.createServer((req, res) => {
   const q = parsedUrl.query || {};
 
   if (url === '/' || url === '/index.html') return serveStatic(res, 'index.html');
+  // Round 16 deliverable 2: the shared markdown renderer both the Docs
+  // panel (app.js) and the plan-doc modal (roadmap.js) call.
+  if (url === '/md-render.js') return serveStatic(res, 'md-render.js');
   if (url === '/app.js') return serveStatic(res, 'app.js');
   if (url === '/app.css') return serveStatic(res, 'app.css');
   if (url === '/asks.js') return serveStatic(res, 'asks.js');

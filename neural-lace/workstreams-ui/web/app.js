@@ -859,6 +859,20 @@
   docsClose.addEventListener('click', closeDocsPanel);
   docScrim.addEventListener('click', function (e) { if (e.target === docScrim) { closeDocsPanel(); closeDocModal(); } });
 
+  // Round 16 deliverable 2 (operator: "the plans are now displaying in a
+  // popup but it's still not rendering the formatting"): render real
+  // markdown -> HTML via the shared web/md-render.js (escaping-first — see
+  // that file's own header for the security contract), same renderer
+  // roadmap.js#openPlanDocModal uses for the SAME #docBody element. A
+  // missing MdRender global (script failed to load) degrades to the old
+  // plain-text render rather than throwing.
+  function renderIntoDocBody(rawContent) {
+    if (window.MdRender && typeof window.MdRender.renderMarkdown === 'function') {
+      docBody.innerHTML = window.MdRender.renderMarkdown(rawContent);
+    } else {
+      docBody.textContent = rawContent;
+    }
+  }
   function openDoc(project, docPath) {
     docTitle.textContent = project + ' / ' + docPath;
     docBody.textContent = 'loading…';
@@ -866,7 +880,8 @@
     fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        docBody.textContent = j && j.ok ? j.content : ('error: ' + (j && j.error));
+        if (j && j.ok) renderIntoDocBody(j.content);
+        else docBody.textContent = 'error: ' + (j && j.error);
       })
       .catch(function (err) { docBody.textContent = 'error: ' + err; });
     docOpenEditor.onclick = function () {

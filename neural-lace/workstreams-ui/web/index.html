@@ -337,6 +337,10 @@
     <div class="doc-body" id="docBody"></div>
   </div>
 
+  <!-- md-render.js loads FIRST: app.js's Docs panel and roadmap.js's
+       plan-doc modal both call window.MdRender.renderMarkdown into the
+       shared #docBody above (Round 16 deliverable 2). -->
+  <script src="/md-render.js"></script>
   <script src="/asks.js"></script>
   <script src="/backlog.js"></script>
   <script src="/app.js"></script>

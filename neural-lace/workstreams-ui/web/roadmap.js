@@ -144,7 +144,6 @@
   var lastFetchFailed = false;
   var lastDerivedAt = null;
   var landingId = null;   // the currently-highlighted landed item (survives re-render)
-  var pendingEdit = null; // {itemId, value, selStart, selEnd} — uncommitted title edit
   var whenLoadedQueue = [];
   var currentMatchNotes = {}; // item id -> matched descendant (Round 12 item 8), refreshed each renderAll()
 
@@ -882,7 +881,22 @@
     docModal.hidden = false;
     fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
       .then(function (r) { return r.json(); })
-      .then(function (j) { docBody.textContent = j && j.ok ? j.content : ('error: ' + (j && j.error)); })
+      .then(function (j) {
+        // Round 16 deliverable 2: same shared markdown renderer app.js's
+        // Docs panel uses for this SAME #docBody element (see
+        // web/md-render.js's header for the escaping-first security
+        // contract) — no second implementation. Missing global (script
+        // failed to load) degrades to plain text, never a throw.
+        if (j && j.ok) {
+          if (window.MdRender && typeof window.MdRender.renderMarkdown === 'function') {
+            docBody.innerHTML = window.MdRender.renderMarkdown(j.content);
+          } else {
+            docBody.textContent = j.content;
+          }
+        } else {
+          docBody.textContent = 'error: ' + (j && j.error);
+        }
+      })
       .catch(function (err) { docBody.textContent = 'error: ' + err; });
     if (docOpenEditor) {
       docOpenEditor.onclick = function () {
@@ -910,9 +924,12 @@
   }
 
   // ============================================================
-  // drill-down body (C6 + C5 reasons + title edit + rank reorder)
+  // drill-down body (C6 + C5 reasons + merged-unverified override).
+  // ROUND 16: title edit + rank reorder used to live here — both retired
+  // (deliverables 3/4/5); reorder now wires onto the SUMMARY row itself,
+  // see wirePlanRowReorder/renderNode, not this drill-down body.
   // ============================================================
-  function drilldown(item, topLevelIndex, topLevelCount) {
+  function drilldown(item) {
     var box = el('div', 'rm-drill');
 
     // R9 follow-up (operator 2026-07-24: "is there a plan this is tied to?
@@ -1005,35 +1022,20 @@
         feedback.className = 'rm-edit-feedback' + (isErr ? ' rm-feedback-err' : ' rm-feedback-ok');
       }
 
-      // Compact item chrome (round-6 gap 4): ONE row of small ICON buttons
-      // (never two permanent rows), hidden until hover OR focus-within
-      // (CSS-only — keyboard reachable, WCAG 2.2 2.5.7 stands: never
-      // hover-only). The todo.js edit pattern (explicit Edit button, never
-      // click-on-text-only, Escape cancels, focus returns — C9/A3) and the
-      // keyboard-operable move up/down (A7 + delta R2) are UNCHANGED
-      // behaviorally — only the chrome's visual weight + grouping changed.
-      var titleRow = el('div', 'rm-title-edit');
-      var chromeRow = el('div', 'rm-item-chrome');
-      var editBtn = btn('ghost small rm-edit-btn rm-icon-btn', '✎', null);
-      editBtn.setAttribute('aria-label', 'edit the title of "' + item.title + '"');
-      editBtn.dataset.focusKey = 'edit:' + item.id;
-      editBtn.addEventListener('click', function () { openTitleEditor(titleRow, item, editBtn, say, null); });
-      chromeRow.appendChild(editBtn);
-
-      // build-order reorder — keyboard-operable REAL buttons, never
-      // drag-only (A7 + WCAG 2.2 2.5.7, delta R2).
-      var upBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↑', function () { moveRank(item, 'up', say); });
-      upBtn.setAttribute('aria-label', 'Move up in build order: ' + item.title);
-      upBtn.dataset.focusKey = 'rank-up:' + item.id;
-      upBtn.disabled = topLevelIndex === 0;
-      var downBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↓', function () { moveRank(item, 'down', say); });
-      downBtn.setAttribute('aria-label', 'Move down in build order: ' + item.title);
-      downBtn.dataset.focusKey = 'rank-down:' + item.id;
-      downBtn.disabled = topLevelIndex === topLevelCount - 1;
-      chromeRow.appendChild(upBtn);
-      chromeRow.appendChild(downBtn);
-      box.appendChild(titleRow);
-      box.appendChild(chromeRow);
+      // ROUND 16 deliverables 3/4 (operator, live walkthrough, verbatim):
+      // "I don't like the buttons appearing below the plan doc links;
+      // they force the GUI underneath to jump around awkwardly, and
+      // they're also unnecessary. I don't see any need to edit the name
+      // of the plan titles." The edit-button + Move up/down chrome row
+      // that used to render here (round-6 gap 4, then Round 13 fix 5's
+      // height:0 hover-reveal hack) is REMOVED outright, not merely
+      // hidden — plan titles come from the H1, no edit affordance
+      // anywhere in this view. Reordering is now drag-and-drop on the
+      // row's own grip handle (wirePlanRowReorder, called from renderNode
+      // once the row's DOM exists) — same moveRank()/`/api/roadmap/rank`
+      // delegation as the retired buttons; a NON-VISUAL Cmd/Ctrl+ArrowUp/Down keyboard
+      // path on the focused row satisfies WCAG 2.2 2.5.7 (drag must not
+      // be the ONLY operable path) without resurrecting a visible control.
 
       // merged-unverified: the LABELED per-item operator override to
       // complete (A4's binding rule) — delegates to the existing lifecycle
@@ -1065,48 +1067,174 @@
     return box;
   }
 
-  function openTitleEditor(titleRow, item, editBtn, say, restore) {
-    if (titleRow.querySelector('.rm-title-input')) return; // already open
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'rm-title-input';
-    input.value = restore ? restore.value : item.title;
-    input.setAttribute('aria-label', 'edit title');
-    input.dataset.editFor = item.id;
-    var saveBtn = btn('btn-go small', 'Save', null);
-    var cancelBtn = btn('ghost small', 'Cancel', null);
-    editBtn.hidden = true;
-    // gap 4: keep the (otherwise hover/focus-only) chrome row visible for
-    // the WHOLE edit, so a stray mouseout mid-edit never hides the open
-    // input/Save/Cancel controls.
-    titleRow.classList.add('rm-editing');
-    titleRow.appendChild(input);
-    titleRow.appendChild(saveBtn);
-    titleRow.appendChild(cancelBtn);
-    input.focus();
-    if (restore && restore.selStart !== undefined) {
-      try { input.setSelectionRange(restore.selStart, restore.selEnd); } catch (_) {}
-    } else { input.select(); }
-    function close() {
-      input.remove(); saveBtn.remove(); cancelBtn.remove();
-      editBtn.hidden = false;
-      titleRow.classList.remove('rm-editing');
-      editBtn.focus(); // focus-return (todo.js pattern)
-      if (pendingEdit && pendingEdit.itemId === item.id) pendingEdit = null;
+  // openTitleEditor / the plan-title edit affordance is RETIRED (Round 16
+  // deliverable 4, operator verbatim: "I don't see any need to edit the
+  // name of the plan titles"). Plan titles come from the H1 — no edit
+  // input, no Save/Cancel, anywhere in this view. NOTE: `POST
+  // /api/roadmap/title` still exists server-side (roadmap-routes.js) —
+  // deliberately left in place, out of THIS scope: the operator's ask was
+  // "no edit affordance on plan TITLES" in the Roadmap view specifically
+  // ("ask/request title editing elsewhere is NOT in scope"), and
+  // requests-routes.js's own title-write path shares the same underlying
+  // delegation (see that file's own comment referencing this endpoint) —
+  // removing the route would risk that shared surface for a UI-only ask.
+
+  // ============================================================
+  // ROUND 16 deliverable 5 — drag-and-drop build-order reordering
+  // (replaces the retired Move up / Move down buttons). Persists via the
+  // SAME /api/roadmap/rank one-step-at-a-time delegation moveRank() below
+  // always used; a drag of N visual positions issues N sequential calls.
+  // WCAG 2.2 2.5.7 (drag must never be the ONLY operable path): every
+  // plan row's <summary> also carries a Cmd/Ctrl+ArrowUp/Down keydown
+  // handler that calls moveRank() directly — a real, documented (row
+  // title/aria-keyshortcuts), non-visual alternative, not a second visible
+  // control (which is exactly what the operator asked to have removed).
+  // ============================================================
+  var dragState = null; // { itemId } — the plan currently being dragged
+
+  // planRowContainer(rowEl) -> the nearest wrapper that groups a plan row
+  // with its TRUE reorder siblings, mirroring the server's own
+  // computeSiblingIds scoping (roadmap-routes.js): top-level plans share
+  // one project group (or the bare tree, ungrouped fallback); a master's
+  // resolved child plans share their own .rm-master-plans subsection's
+  // .rm-children wrapper (rendered with rm-phase-series exactly like the
+  // top level — renderChildList applies the identical wrapping either way).
+  function planRowContainer(rowEl) {
+    return rowEl.closest('.rm-project-group, .rm-children.rm-phase-series, .rm-tree');
+  }
+  function siblingPlanRows(container) {
+    if (!container) return [];
+    return Array.prototype.slice.call(
+      container.querySelectorAll(':scope > .rm-phase-step > .rm-node.rm-kind-plan, :scope > .rm-node.rm-kind-plan')
+    );
+  }
+  function clearDropIndicators() {
+    var marked = document.querySelectorAll('.rm-drop-before, .rm-drop-after');
+    for (var i = 0; i < marked.length; i++) marked[i].classList.remove('rm-drop-before', 'rm-drop-after');
+  }
+  // reorderFeedback(det) -> a say(text, isErr) callback writing into THIS
+  // row's own .rm-edit-feedback element (the same one the merged-
+  // unverified override button already renders into) — one feedback
+  // surface per plan row, never a second implementation.
+  function reorderFeedback(det) {
+    return function (text, isErr) {
+      if (!det) return;
+      var fb = det.querySelector(':scope > .rm-drill > .rm-edit-feedback');
+      if (!fb) return;
+      fb.hidden = false;
+      fb.textContent = text;
+      fb.className = 'rm-edit-feedback' + (isErr ? ' rm-feedback-err' : ' rm-feedback-ok');
+    };
+  }
+  // sequentialMove(item, direction, remaining, say) — issues `remaining`
+  // single-step /api/roadmap/rank calls (the exact endpoint the retired
+  // buttons called), silently for every step but the last; the LAST step
+  // delegates to moveRank() itself so the user sees the SAME human message
+  // ("Moved ... now #N of M in ...'s build order") a single button click
+  // always produced — one message implementation, not a duplicate.
+  function sequentialMove(item, direction, remaining, say) {
+    if (remaining <= 1) { moveRank(item, direction, say); return; }
+    fetch('/api/roadmap/rank', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: item.id, direction: direction }),
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) { if (say) say('Could not reorder: ' + ((j && j.error) || 'unknown error'), true); load(); return; }
+      if (j.unchanged) {
+        if (say) say('Could not move further — already at the ' + (direction === 'up' ? 'top' : 'bottom') + '.', false);
+        load();
+        return;
+      }
+      sequentialMove(item, direction, remaining - 1, say);
+    }).catch(function (e) { if (say) say('Could not reorder: ' + e, true); load(); });
+  }
+  // REORDER-STEPS-BEGIN
+  // computeReorderSteps(ids, draggedId, targetId, before) -> {direction,
+  // count} | null — PURE (no DOM), so the selftest can real-execute it
+  // directly in a `vm` sandbox rather than trusting a source-regex. `ids`
+  // is the CURRENT sibling order (same list /api/roadmap/rank's
+  // computeSiblingIds would compute server-side); the result is the
+  // direction + step count of single-position /api/roadmap/rank moves
+  // needed to land `draggedId` immediately before/after `targetId`.
+  function computeReorderSteps(ids, draggedId, targetId, before) {
+    var fromIdx = ids.indexOf(draggedId);
+    var targetIdx = ids.indexOf(targetId);
+    if (fromIdx === -1 || targetIdx === -1 || fromIdx === targetIdx) return null;
+    var destIdx = before ? targetIdx : targetIdx + 1;
+    if (fromIdx < destIdx) destIdx -= 1; // removing the dragged row shifts everything after it left by one
+    var steps = destIdx - fromIdx;
+    if (steps === 0) return null;
+    return { direction: steps > 0 ? 'down' : 'up', count: Math.abs(steps) };
+  }
+  // REORDER-STEPS-END
+  function performDrop(draggedId, targetId, before, say) {
+    var targetEl = document.querySelector('[data-item-id="' + cssEscape(targetId) + '"]');
+    var container = targetEl && planRowContainer(targetEl);
+    var rows = siblingPlanRows(container);
+    var ids = rows.map(function (r) { return r.dataset.itemId; });
+    var move = computeReorderSteps(ids, draggedId, targetId, before);
+    if (!move) return;
+    var draggedItem = findItemData(draggedId) || { id: draggedId };
+    sequentialMove(draggedItem, move.direction, move.count, say);
+  }
+  // wirePlanRowReorder(det, sum, item) — called from renderNode for every
+  // kind:"plan" row. Adds a small grip handle (draggable) into the title
+  // cell and dragover/drop/keydown listeners onto the row itself.
+  function wirePlanRowReorder(det, sum, item) {
+    var titleCellEl = sum.querySelector('.rm-cell-title');
+    if (titleCellEl) {
+      var handle = el('span', 'rm-drag-handle', '⠿');
+      handle.setAttribute('aria-hidden', 'true');
+      handle.draggable = true;
+      handle.title = 'drag to reorder';
+      titleCellEl.insertBefore(handle, titleCellEl.firstChild);
+      handle.addEventListener('dragstart', function (e) {
+        dragState = { itemId: item.id };
+        det.classList.add('rm-dragging');
+        if (e.dataTransfer) {
+          e.dataTransfer.effectAllowed = 'move';
+          try { e.dataTransfer.setData('text/plain', item.id); } catch (_) {}
+        }
+      });
+      handle.addEventListener('dragend', function () {
+        det.classList.remove('rm-dragging');
+        clearDropIndicators();
+        dragState = null;
+      });
     }
-    cancelBtn.addEventListener('click', close);
-    input.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
-    saveBtn.addEventListener('click', function () {
-      var t = input.value.trim();
-      if (!t) { say('Title cannot be empty.', true); return; }
-      saveBtn.disabled = true;
-      fetch('/api/roadmap/title', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: item.id, title: t }),
-      }).then(function (r) { return r.json(); }).then(function (j) {
-        if (j && j.ok) { say('Title saved.', false); close(); load(); }
-        else { saveBtn.disabled = false; say((j && j.error) || 'Could not save the title.', true); }
-      }).catch(function (e) { saveBtn.disabled = false; say('Could not save the title: ' + e, true); });
+
+    sum.addEventListener('dragover', function (e) {
+      if (!dragState || dragState.itemId === item.id) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      var r = sum.getBoundingClientRect();
+      var before = (e.clientY - r.top) < r.height / 2;
+      clearDropIndicators();
+      sum.classList.add(before ? 'rm-drop-before' : 'rm-drop-after');
+    });
+    sum.addEventListener('dragleave', function () {
+      sum.classList.remove('rm-drop-before', 'rm-drop-after');
+    });
+    sum.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var before = sum.classList.contains('rm-drop-before');
+      clearDropIndicators();
+      var dragged = dragState;
+      dragState = null;
+      if (!dragged || dragged.itemId === item.id) return;
+      performDrop(dragged.itemId, item.id, before, reorderFeedback(det));
+    });
+
+    // WCAG 2.2 2.5.7 — a non-drag path MUST exist. Cmd/Ctrl+ArrowUp/Down
+    // on the focused row (a real <summary>, already natively focusable)
+    // fires the SAME moveRank() the retired buttons called. Documented on
+    // the row itself (title + aria-keyshortcuts), never a silent shortcut.
+    sum.setAttribute('aria-keyshortcuts', 'Control+ArrowUp Control+ArrowDown Meta+ArrowUp Meta+ArrowDown');
+    var existingTitle = sum.getAttribute('title');
+    sum.setAttribute('title', (existingTitle ? existingTitle + ' — ' : '') + 'Cmd/Ctrl+↑/↓ to move in the build order');
+    sum.addEventListener('keydown', function (e) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === 'ArrowUp') { e.preventDefault(); moveRank(item, 'up', reorderFeedback(det)); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); moveRank(item, 'down', reorderFeedback(det)); }
     });
   }
 
@@ -1224,6 +1352,11 @@
     sum.appendChild(exceptionLabelCell(item));              // column 6 (132px)
     det.appendChild(sum);
 
+    // Round 16 deliverable 5: drag-and-drop + Cmd/Ctrl+ArrowUp/Down
+    // build-order reorder — plan rows only (matches the retired buttons'
+    // own kind==='plan' gate).
+    if (item.kind === 'plan') wirePlanRowReorder(det, sum, item);
+
     // Round 12 item 8: the note is a SIBLING of summary, not inside
     // .rm-drill — it must stay visible even while the row is collapsed
     // (rm-filter-match-note is not gated by [open], unlike .rm-drill).
@@ -1234,7 +1367,7 @@
       det.appendChild(el('div', 'rm-filter-match-note', matchText));
     }
 
-    det.appendChild(drilldown(item, topLevelIndex, topLevelCount));
+    det.appendChild(drilldown(item));
 
     var kids = item.children || [];
     var childPlans = item.child_plans || [];
@@ -1669,27 +1802,19 @@
   }
 
   // captureUiState/restoreUiState — the C7 law: any auto-refreshing surface
-  // preserves expansion + scroll + focus + uncommitted edits. openSet is
-  // maintained live by the toggle listeners; here we capture the rest.
+  // preserves expansion + scroll + focus. openSet is maintained live by the
+  // toggle listeners; here we capture the rest. ROUND 16: the uncommitted-
+  // title-edit capture that used to live here (T3-fix1, comprehension gate
+  // FAIL conf 6) is retired ALONG WITH the edit feature itself (deliverable
+  // 4) — there is no more `.rm-title-input` for it to ever find, so this is
+  // a genuine removal, not a stale no-op left behind.
   // CAPTURE-UI-STATE-BEGIN
   function captureUiState() {
-    var st = { scrollY: window.scrollY, bodyScrollTop: body.scrollTop, focusKey: null, edit: null };
+    var st = { scrollY: window.scrollY, bodyScrollTop: body.scrollTop, focusKey: null };
     var ae = document.activeElement;
     if (ae && body.contains(ae)) {
       if (ae.dataset && ae.dataset.focusKey) st.focusKey = ae.dataset.focusKey;
       else if (ae.dataset && ae.dataset.itemId) st.focusKey = 'item:' + ae.dataset.itemId;
-    }
-    // T3-fix1 (comprehension gate FAIL conf 6): capture any OPEN title editor's
-    // uncommitted value by PRESENCE, not focus — an open-but-unfocused editor
-    // (focus on Save/Cancel, or moved outside the pane entirely) is otherwise
-    // silently destroyed by the 30s tick's renderAll() DOM wipe.
-    var openInput = document.querySelector('.rm-title-input');
-    if (openInput) {
-      st.edit = {
-        itemId: openInput.dataset.editFor,
-        value: openInput.value,
-        selStart: openInput.selectionStart, selEnd: openInput.selectionEnd,
-      };
     }
     return st;
   }
@@ -1699,20 +1824,6 @@
     if (!st) return;
     window.scrollTo(0, st.scrollY);
     body.scrollTop = st.bodyScrollTop;
-    if (st.edit && st.edit.itemId) {
-      pendingEdit = st.edit;
-      var det = findItemEl(st.edit.itemId);
-      if (det) {
-        det.open = true;
-        var row = det.querySelector('.rm-title-edit');
-        var editBtn = row && row.querySelector('.rm-edit-btn');
-        var itemData = findItemData(st.edit.itemId);
-        if (row && editBtn && itemData) {
-          openTitleEditor(row, itemData, editBtn, function () {}, st.edit);
-          return;
-        }
-      }
-    }
     if (st.focusKey) {
       var sel = st.focusKey.indexOf('item:') === 0
         ? '[data-item-id="' + cssEscape(st.focusKey.slice(5)) + '"]'

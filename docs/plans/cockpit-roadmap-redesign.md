@@ -597,6 +597,26 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   STABLE-named, continuously-updated living document (the whole point — future rounds edit it in
   place rather than deciding whether to mint a new dated file), same pattern already established
   for `docs/reviews/records/`.
+- 2026-07-30: ROUND 16 — six fixes, operator walkthrough of the Round 15 surface (verbatim
+  quotes in the Decisions Log entry below). Files: `neural-lace/workstreams-ui/web/md-render.js`
+  (NEW — the shared escaping-first markdown->HTML renderer, deliverable 2), `neural-lace/
+  workstreams-ui/web/roadmap.js` (title-edit/rank-button chrome RETIRED; new `wirePlanRowReorder`
+  drag-and-drop + Cmd/Ctrl+Arrow keyboard reorder + `computeReorderSteps` pure helper;
+  `openPlanDocModal` now renders via `MdRender.renderMarkdown`), `neural-lace/workstreams-ui/
+  web/app.js` (`openDoc` now renders via the SAME `MdRender.renderMarkdown`),
+  `neural-lace/workstreams-ui/web/app.css` (`--running` green variable + the full non-link
+  blue sweep; inter-plan spacing 30px->8px + continuous connector rail; the hover-reveal edit
+  chrome CSS retired; `.doc-body` markdown styling), `neural-lace/workstreams-ui/web/index.html`
+  (`<script src="/md-render.js">`, loaded before app.js/roadmap.js), `neural-lace/workstreams-ui/
+  server/server.js` (one static-mount line for `/md-render.js`, same convention as app.js/
+  asks.js/todo.js/backlog.js), `neural-lace/workstreams-ui/web/cockpit.selftest.js` (+32: T3-27c/
+  d/e, T3-28, T3-29/29b, T3-41/42/42b, R8-4, R13-31, R12-51, R13-65 all updated for the
+  retirements/colour sweep; R16-1..R16-15 + R16-MD0..R16-MD17 new), `docs/reviews/
+  cockpit-ui-requirements-ledger.md` (rows 74-79 new; rows 5/10/27 flipped SUPERSEDED; rows
+  46/68/69/70/71/73 evidence updated for the Round 16 changes they're affected by). Server-side
+  `neural-lace/workstreams-ui/server/roadmap-routes.js`/its selftest are UNTOUCHED — drag-and-
+  drop persists through the pre-existing `/api/roadmap/rank` endpoint unchanged, no new server
+  contract needed.
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
@@ -840,3 +860,80 @@ Task 1 first, alone: the derived status of ONE real archived plan rendering corr
   production instance at :7733 (read-only checks only — no real state mutated). Suites: 397/0
   cockpit (+17 from the 380 baseline), 110/0 roadmap-routes (+4 from the 106 baseline), 25/0
   requests-routes, 47/0 inbox-routes, 173/0 server — zero regressions.
+- (2026-07-30) **ROUND 16 — six fixes, operator walkthrough of the Round 15 surface, verbatim:**
+  "I don't like the spaces between the plans. It looks awkward with the spacing between the
+  nesting lines. The plans are now displaying in a popup but it's still not rendering the
+  formatting. I don't like the buttons appearing below the plan doc links; they force the GUI
+  underneath to jump around awkwardly, and they're also unnecessary. I don't see any need to
+  edit the name of the plan titles and lets use drag and drop instead of buttons for
+  rearranging. Let's use green instead of blue for the running items because blue looks like
+  links."
+  (1) INTER-PLAN SPACING: `.rm-phase-step`'s Round 13 30px bottom margin (paired with a
+  DELIBERATE break in the connector rail — that round's own rationale: "these are separate
+  plans") shrinks to 8px, and the connector's `bottom` offset widens (-6px -> -26px) so the SAME
+  rail now reaches the next step's own line start exactly — live-measured via
+  `getBoundingClientRect` at 1400px: 8px gap between every consecutive top-level plan, 0px break
+  in the rail (the line's computed end position and the next step's line start position are
+  numerically identical). The parent->child proximity law survives BECAUSE removing the
+  title-edit/rank chrome (deliverable 3/4) trims that side further than Round 13 already had it,
+  not despite the inter-plan gap shrinking.
+  (2) MARKDOWN RENDERING: new `web/md-render.js`, a self-contained (no CDN — CSP blocks
+  external), escaping-first renderer shared by BOTH the plan-doc modal and the Docs panel (they
+  already write into the SAME `#docBody` element). Escaping runs on every leaf text segment
+  before any markdown substitution; block structure (headings/lists/quotes/fences/tables) is
+  parsed from RAW characters and never itself emitted raw. Security fixture proven THIS session,
+  live and in the selftest: a doc containing a literal `<script>alert(1)</script>` — in a
+  paragraph, heading, list item, and blockquote — renders as inert escaped text in every case.
+  Only http(s) links become real `<a href>`; a repo-relative reference renders as inert text
+  (no cross-doc navigation exists to wire it to); any other scheme (`javascript:` etc.) drops to
+  plain text, never an href.
+  (3+4) TITLE EDIT + ICON CHROME RETIRED: the round-6 gap 4 edit/rank icon-button chrome (and
+  Round 13's height:0 hover-reveal mechanism protecting it) is removed OUTRIGHT — source, CSS,
+  and the client's `POST /api/roadmap/title` call site are all gone. DECISION (decide-and-go,
+  reversible): the SERVER route `/api/roadmap/title` is deliberately left in place — out of this
+  UI-only scope (the operator's ask was specifically "no edit affordance on plan titles" in the
+  Roadmap view; "ask/request title editing elsewhere is NOT in scope") and `requests-routes.js`
+  documents reusing the same underlying delegation, so removing the route risks a surface this
+  round was never asked to touch.
+  (5) DRAG-AND-DROP REORDER: `wirePlanRowReorder` adds an HTML5-draggable grip handle
+  (`.rm-drag-handle`) to every plan row, computing the move via a new PURE `computeReorderSteps`
+  function (real-execution tested + a mutation-style no-op-position check) and persisting
+  through the SAME `/api/roadmap/rank` endpoint the retired buttons called — zero server-side
+  change. DECISION (decide-and-go, reversible): sibling scope for a drag mirrors the server's own
+  `computeSiblingIds` (top-level project group / bare tree, or a master's own child-plan
+  subsection) via DOM container matching, not a flat global list — keeps drag semantics aligned
+  with what the server will actually do with each single-step move. ACCESSIBILITY (WCAG 2.2
+  2.5.7, binding since R12): a non-visual Cmd/Ctrl+ArrowUp/Down keydown on the focused row fires
+  the identical `moveRank()` — documented via the row's own `title`/`aria-keyshortcuts`, not a
+  second visible control (which is exactly what this round retires). Live-proven THIS session:
+  dispatching a real `Control+ArrowDown` keydown fired `POST /api/roadmap/rank -> 200 OK` in the
+  sandbox.
+  (6) GREEN FOR RUNNING: new `--running: #4ade80` (measured 8.42:1 against `--panel`, computed
+  via the same relative-luminance formula the file's own `--done` comment already documents —
+  the selftest computes this itself, not merely asserts it). Every non-link roadmap signal is
+  swept off `--info`: the in-progress title, the leaf running chip, the plan-row running token,
+  and the roll-up running badge all move to `--running`; two purely-decorative non-running,
+  non-link signals (`rm-marker-midbuild`, `rm-filter-match-note`) move to `--accent` instead
+  (blue reserved EXCLUSIVELY for real links now); the plan-link's rare non-clickable plain-text
+  fallback also moves off blue to `--muted`, closing a latent inconsistency the operator's own
+  rule exposed (a NON-clickable fallback rendering the SAME blue as a real link is precisely the
+  "looks like a link" complaint, just for a different element). Live-swept THIS session across
+  every rendered element on the page: zero non-link elements render `--info`'s blue.
+  All six: TDD'd where behavior-bearing (RED confirmed via source mutation + revert — 4
+  discriminating mutation transcripts captured: the --running color, the 8px margin, the
+  escapeHtml no-op, and the draggable flag, each independently reverted to prove its own test
+  catches the regression). Verified live against an env-redirected sandbox at :7799 (real HTTP,
+  real browser screenshots, `getBoundingClientRect`/computed-style measurements, and one real
+  network-level write proven to land in the sandbox's own isolated state dir, never
+  `~/.claude/state/`). The real production instance at :7733 was NOT touched this session — its
+  LaunchAgent needs the orchestrator's kickstart post-cherry-pick, per this task's own dispatch
+  note; a :7733 re-verification is the orchestrator's follow-on, not this session's claim. Server
+  side (`roadmap-routes.js` + its selftest) is completely untouched — all six deliverables are
+  client-side (or the one CSS/static-mount line in server.js), reusing existing endpoints
+  unchanged. Suites: 429/0 cockpit (+32 from the 397 baseline), 110/0 roadmap-routes (UNCHANGED —
+  no server-side deliverable this round), 173/0 server, 47/0 inbox-routes, 25/0 requests-routes —
+  zero regressions. Requirements ledger: rows 74-79 added (all MET, live-verified); rows 5, 10,
+  and 27 flipped SUPERSEDED (title editing and icon-button reorder, both retired at the
+  operator's own later request); rows 46/68/69/70/71/73 evidence updated for the changes that
+  touch them. New row-count: 56 MET + 12 MET(selftest) + 3 MET(carried) + 1 PARTIAL + 6
+  SUPERSEDED + 1 UNBUILT + 0 REGRESSED = 79 rows.

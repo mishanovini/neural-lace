@@ -39,35 +39,47 @@ history stays legible.
 ## Row count summary (the honest number)
 
 Computed by machine (grep against this file's own table, first-status-token classification —
-reproducible, not hand-tallied) against all 77 numbered rows below. Three of the 77 (rows 10,
-18, 19) are the SAME requirement restated by the operator in the same round and are cross-
-referenced rather than independently re-verified — they are still counted here since every row
-still carries its own verifiable status, not folded away to make the total look smaller.
+reproducible, not hand-tallied) against all 83 numbered rows below (73 through Round 15 + 6 new
+Round 16 rows + 4 Round-17-queue rows from the operator's 2026-07-30 afternoon message). Three
+of the 83 (rows 10, 18, 19) are the SAME requirement restated by the operator in the same round
+and are cross-referenced rather than independently re-verified — they are still counted here
+since every row still carries its own verifiable status, not folded away to make the total look
+smaller.
 
 | Status | Count |
 |---|---|
-| MET — verified live or structurally sound this session | 52 |
+| MET — verified live or structurally sound this session | 56 |
 | MET (selftest) — real-execution suite proof, not re-verified live this session | 12 |
-| MET (carried) — not re-verified this session; citing a prior verified record | 4 |
+| MET (carried) — not re-verified this session; citing a prior verified record | 3 |
 | PARTIAL — mechanism exists, real live gap found this session | 3 |
-| SUPERSEDED — operator's own later direction replaced an earlier ask | 3 (see note) |
+| SUPERSEDED — operator's own later direction replaced an earlier ask | 6 (see note) |
 | REGRESSED | 0 |
 | UNBUILT — explicitly out-of-scope elsewhere, not silently dropped | 3 |
-| **Total rows** | **77** |
+| **Total rows** | **83** |
 
-Note on SUPERSEDED: rows 29, 37, and 45 are counted as SUPERSEDED (first status word). Rows 33
-and 43 also describe a superseded WORDING ("phases") while the underlying requirement they carry
-was separately met by a different mechanism — those two are counted under MET since that is
-their literal first status word, with the superseded half stated in the row's own text; the
-distinction is deliberately visible in the table, not smoothed over by this summary.
+Note on SUPERSEDED: rows 29, 37, and 45 (Rounds 11/12) plus rows 5, 10, and 27 (Round 16 — plan-
+title editing and the edit/rank icon chrome, both retired at the operator's own explicit later
+request) are counted as SUPERSEDED (first status word). Rows 33 and 43 also describe a superseded
+WORDING ("phases") while the underlying requirement they carry was separately met by a different
+mechanism — those two are counted under MET since that is their literal first status word, with
+the superseded half stated in the row's own text; the distinction is deliberately visible in the
+table, not smoothed over by this summary.
 
-Zero REGRESSED rows this round is itself a claim that needs a caveat, stated honestly: this is
-the FIRST time this ledger has existed, so "zero regressed" reflects Round 15's own fixes landing
-clean plus everything checked holding up — it does NOT mean the 14 prior rounds never regressed
-anything (Round 13's own opening line was a fresh regression list against Round 12's shipped
-work, and Round 15 opened the same way against Rounds 9-14). The mechanism this ledger exists to
-provide — a full-row re-check every round — is what should keep future REGRESSED rows at zero,
-not this round's particular count.
+Note on the MET (carried) -> MET count change: row 46 moved from (carried) to a fresh live
+re-verification this session (a real `Control+ArrowDown` keydown fired `POST /api/roadmap/rank`
+in the sandbox) — MORE grounded than Round 15's citation, not less; this is the one non-Round-16
+row this session's own live testing happened to touch while proving deliverable 5's keyboard path.
+
+Zero REGRESSED rows across two rounds now (15 and 16) is itself a claim that needs a caveat,
+stated honestly: it does NOT mean the 14 rounds before Round 15 never regressed anything (Round
+13's own opening line was a fresh regression list against Round 12's shipped work, and Round 15
+opened the same way against Rounds 9-14) — Round 16 in particular RETIRES two previously-MET
+mechanisms outright (title editing, icon-button reorder) rather than regressing them silently;
+that is why they are tracked as SUPERSEDED-by-the-operator's-own-request, not REGRESSED — a
+regression is an accidental break, a supersession is the operator changing their own mind, and
+conflating the two would hide which failure mode actually happened. The mechanism this ledger
+exists to provide — a full-row re-check every round — is what should keep future REGRESSED rows
+at zero, not any one round's particular count.
 
 ---
 
@@ -80,7 +92,7 @@ Source: `docs/reviews/2026-07-17-cockpit-ux-design-input.md`
 | 2 | Ask titles from first-prompt text are "not a good reference for what my actual ask was" | MET | `title_source` field + distilled titles; `server.selftest.js` S13 ("operator set-title survives a NEWER auto summary_updated") passing this session (173/0). |
 | 3 | "The multitude of drift tags is not helpful" (badge storm, 718 identical chips) | MET (selftest) | `cockpit.selftest.js` T6-1..T6-6c (badge suppression + drill-down cap), real-execution `vm`-sandbox proof, part of this session's 397/0 pass. |
 | 4 | Roadmap-first mental model, not session-first | MET | Live :7733: Roadmap is the landing tab, hierarchical plan tree confirmed via `get_page_text` this session. |
-| 5 | Auto-name always + operator-editable anytime, no confirm ceremony | MET | Live :7733 this session: `read_page` showed `button "edit the title of \"...\""` present on every plan row. |
+| 5 | Auto-name always + operator-editable anytime, no confirm ceremony | SUPERSEDED (Round 16, the editable half) | The operator's OWN later verbatim (Round 16): "I don't see any need to edit the name of the plan titles." Plan titles are now the H1 ONLY, no edit affordance anywhere in this view (auto-naming itself is unaffected and still holds); see row 75. Round 16 explicitly scoped this to the Roadmap view — "ask/request title editing elsewhere is NOT in scope." |
 | 6 | Statuses: not started / in progress / complete / stalled-with-reason+unblock | MET | Live :7733 payload this session (curl `/api/roadmap`) shows `status.value` incl. `stalled`/`unknown` with `reason`/`reason_class` fields populated where applicable. |
 | 7 | Telemetry quiet + click-to-drill on any item | MET | Live :7733 this session: expanding a plan row reveals its drill-down (verified on `cockpit-roadmap-redesign` and `macOS portability` rows). |
 
@@ -90,7 +102,7 @@ Source: `docs/reviews/2026-07-17-cockpit-ux-design-input.md`
 |---|---|---|---|
 | 8 | "Complete means there's nothing else needed... fully functional in production" (strict oracle) | MET | Live :7733 this session: `Supervisor tick` + `context-watermark: Opus 5` render `⏳ merged — deploy unverified` OUTSIDE Complete (screenshot, sandbox :7799 this session) — the A4 three-class oracle (`deploy-oracle`/`merged-is-deployed`/`no-signal`) is exactly this strictness. |
 | 9 | Meeting-sourced items proposed/accept/modify/partial-accept before landing on the status page | UNBUILT (named, out of scope) | Plan's own Scope section: "OUT: Circuit P1 (own plan; the propose/partial-accept surface ships there, landing on THIS surface's Requests/Roadmap)" — explicitly deferred to a named other plan, not silently dropped. |
-| 10 | (duplicate of #5 — auto-name + always-editable) | MET | See row 5. |
+| 10 | (duplicate of #5 — auto-name + always-editable) | SUPERSEDED (Round 16, the editable half) | See row 5. |
 | 11 | Project facet vs swimlane (undecided at the time) | MET | Live :7733 this session: project filter chip ("neural-lace") present in the toolbar; resolved as facet-chips, not swimlanes, per Decisions Log. |
 
 ## Round 4 (2026-07-17/18)
@@ -122,7 +134,7 @@ Source: `docs/reviews/2026-07-17-cockpit-ux-design-input.md`
 | 24 | Task leaves one-line, not full markdown walls | MET | Live :7733 this session: task rows read "task 1: Derived top-level status foundation" (one line), confirmed via `get_page_text`. |
 | 25 | "from your request(s):" never verbatim-duplicates the title; drill-down only | MET (selftest) | `roadmap.js` `visibleFromRequests` dedup logic; `cockpit.selftest.js` T3-18 area passing this session. Not re-clicked live this session. |
 | 26 | Completed subtrees immediate-collapse; roll-up shows latest TITLE not full text | MET | Live :7733 this session: `Shipped (6) — latest: Anti-vaporware config-control policy — the inverse shape (HARNESS-GAP-57)` — a title, not a text wall. |
-| 27 | Compact icon affordances for edit/move, not always-on full-size chrome | MET | Live :7733 this session (`read_page`): `edit the title of...` / `Move up in build order...` / `Move down in build order...` render as small buttons alongside the title, not two rows of always-on chrome. |
+| 27 | Compact icon affordances for edit/move, not always-on full-size chrome | SUPERSEDED (Round 16) | The operator's OWN later verbatim (Round 16): "I don't like the buttons appearing below the plan doc links; they force the GUI underneath to jump around awkwardly, and they're also unnecessary." Round 13's "make them compact" fix did not go far enough — Round 16 removes the buttons OUTRIGHT (edit gone per row 5/75; move up/down replaced by drag-and-drop + a non-visual keyboard path, row 78). |
 | 28 | Noise-classification lane running (junk conversational fragments not showing as roadmap items) | MET | Structural consequence of 8A (Roadmap roots on plans, not asks) — confirmed live this session: no conversational-fragment titles appear among the 26 live plan rows. |
 | 29 | Sibling plans render as a connected phase-series (phase 1→2→3→4) | SUPERSEDED (Round 11) | The operator's OWN later verbatim (Round 11): "Labeling each item as phases is misleading... This UI is supposed to be representative of the way that you build things" — the phase-series framing was retired at the operator's explicit request; see row 40. |
 
@@ -161,7 +173,7 @@ Source: `docs/reviews/2026-07-17-cockpit-ux-design-input.md`
 | 43 | R10-1: "PHASE N OF M" merged into the title row, not a separate line above it | MET (superseded wording, row 40's underlying "one line" law holds) | Live :7733 this session: every plan row is one line (title + tokens + fraction), confirmed via screenshot. |
 | 44 | R10-2: explicit disclosure chevron on collapsed nodes | MET | Live :7733 this session: `.rm-chevron` present (`javascript_exec` computed-style check). |
 | 45 | R10-3: master-plan clarity (aggregate series progress) | SUPERSEDED (Round 11) | `docs/reviews/2026-07-28-operator-requests-ledger.md` row 3: "SHIPPED → superseded" by R11's mechanical `parent-plan:` field + dual-count master rendering. |
-| 46 | R10-4: reorder feedback names what moved, where, in which build order | MET (carried) | `docs/reviews/2026-07-28-operator-requests-ledger.md` row 4: "SHIPPED `3474075` + `18e8f65`"; live :7733 this session confirmed the button's own aria-label already names the plan ("Move up in build order: macOS portability..."); the post-click toast text was NOT re-triggered this session to avoid mutating this real machine's live build order (the task's "never touch real state" instruction). |
+| 46 | R10-4: reorder feedback names what moved, where, in which build order | MET | `docs/reviews/2026-07-28-operator-requests-ledger.md` row 4: "SHIPPED `3474075` + `18e8f65`". ROUND 16 UPDATE: the message-generation code (`moveRank`'s `say(...)` call, "Moved ... now #N of M in ...'s build order") is UNCHANGED — only the trigger changed (drag-and-drop / Cmd+Ctrl+Arrow, row 78, replaced the Move up/down buttons this row's ORIGINAL evidence cited, per row 27's supersession). Live sandbox :7799 THIS session: dispatching a real `Control+ArrowDown` keydown on a focused plan row fired `POST /api/roadmap/rank -> 200 OK` (`read_network_requests`), proving the SAME feedback path still fires end to end through the new trigger. |
 
 ## Round 11 (2026-07-28) — master-plan hierarchy (binding spec: `docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md`)
 
@@ -210,12 +222,26 @@ Source: `docs/reviews/2026-07-17-cockpit-ux-design-input.md`
 
 | # | Verbatim | Status | Evidence |
 |---|---|---|---|
-| 68 | "the plan itself doesn't show that there's anything in progress... running indicator is small and not obvious" | MET | Fixed this round. Live sandbox :7799 this session: `roll_up.running:{count:1,exemplar:"cockpit-roadmap-redesign/9"}` on the collapsed plan node (curl); collapsed-row roll-up badge "1 running" rendered (measured `color: rgb(96,165,250)`); next-token reads "9 running" not "9 next". |
-| 69 | "in-progress text still isn't given a different color... running indicator small" | MET | Fixed this round. Live sandbox :7799 this session, COMPUTED STYLE measured: in-progress title `rgb(96,165,250)` (= `--info` #60a5fa, was `#f9fafb` white); task-level running chip promoted to a bordered pill (`font-size:12px`, blue background tint 18%) from plain 600-weight text. |
-| 70 | "plan links don't work; they're supposed to open and display the rendered md files right there in the page" | MET | Fixed this round. ROOT CAUSE proven live at :7733 THIS session (pre-fix): the plan link was `href="file:///..."` — clicking it produced ZERO navigation and ZERO network activity (confirmed via `read_page`/`read_network_requests`). Fixed: live sandbox :7799 this session, clicking the (now `<button>`) plan link opened `docModal` in-page with real fetched content (`docBody.textContent` began "# Plan: Cockpit roadmap redesign..."). |
-| 71 | "the Docs button in the corner doesn't show any files" | MET | Fixed this round. ROOT CAUSE proven via direct `fetch`+eval against the live :7733 payload THIS session: `docsCache[proj]` is `{root,missing,files}`, not an array — `.filter is not a function` threw inside the render loop. Fixed: live sandbox :7799 this session, Docs panel rendered 1221 file rows. |
+| 68 | "the plan itself doesn't show that there's anything in progress... running indicator is small and not obvious" | MET | Fixed this round (Round 15). Live sandbox :7799 this session: `roll_up.running:{count:1,exemplar:"cockpit-roadmap-redesign/9"}` on the collapsed plan node (curl); collapsed-row roll-up badge "1 running" rendered; next-token reads "9 running" not "9 next". ROUND 16: the badge's COLOUR changed from blue to green (see row 76) — the underlying visibility requirement this row is about is unaffected, still MET, now via `--running`. |
+| 69 | "in-progress text still isn't given a different color... running indicator small" | MET | Fixed this round (Round 15: promoted to a real bordered chip, given a loud colour instead of plain text). ROUND 16 (operator, this round): the loud colour ITSELF changed from blue to green — "blue looks like links." Live sandbox :7799 THIS session, COMPUTED STYLE measured: in-progress title `rgb(74,222,128)` (= `--running` #4ade80, was `rgb(96,165,250)` = `--info` blue in Round 15); see row 76 for the full colour-sweep evidence. The chip-vs-plain-text half of this requirement (still a bordered pill, not plain text) is unchanged. |
+| 70 | "plan links don't work; they're supposed to open and display the rendered md files right there in the page" | MET | Fixed this round (Round 15: the link itself). ROOT CAUSE proven live at :7733 THIS session (pre-fix): the plan link was `href="file:///..."` — clicking it produced ZERO navigation and ZERO network activity. Fixed: sandbox :7799 this session, clicking the (now `<button>`) plan link opened `docModal` in-page. ROUND 15's OWN residual gap, verbatim: "the plans are now displaying in a popup but it's still not rendering the formatting" (Round 15's fix left `docBody.textContent` as RAW markdown — literal `#`/`**` characters visible, not rendered). Closed THIS round (16, row 75): live sandbox :7799 this session, `docBody.innerHTML` now begins `<h1>Plan: Flat-skills → directory-form migration</h1>` — real rendered HTML, not raw text. |
+| 71 | "the Docs button in the corner doesn't show any files" | MET | Fixed this round (Round 15: the file list itself). ROOT CAUSE proven via direct `fetch`+eval against the live :7733 payload THIS session: `docsCache[proj]` is `{root,missing,files}`, not an array — `.filter is not a function` threw inside the render loop. Fixed: sandbox :7799 this session, Docs panel rendered file rows. ROUND 16: clicking a file in this SAME panel used to show raw markdown too (identical residual as row 70) — closed together (row 75): live sandbox :7799 THIS session, clicking `docs/DECISIONS.md` rendered a real `<table class="md-table">` from that file's markdown table, not raw pipe-and-dash text. |
 | 72 | (Deliverable 5 — the ledger itself) "Do you have the record of everything I've stated I want in this UI...?" | MET | This document. |
-| 73 | (Deliverable 6, coordinator mid-round) "the Workstreams UI still doesn't actually represent the actual order of building, at least not at the plan level" | MET | Fixed this round. Live sandbox :7799 this session, `get_page_text`: all 9 in-progress-ish plans render before all 7 upcoming ones (banding, rank-order preserved within each band); header reads "...in build order (7 in progress, 2 partially done, 7 upcoming)" (in-progress leads). Move up/down controls verified NOT regressed: live `read_page` this session shows `button "Move up in build order: ..."` / `button "Move down in build order: ..."` present and aria-labeled on every plan row. |
+| 73 | (Deliverable 6, coordinator mid-round) "the Workstreams UI still doesn't actually represent the actual order of building, at least not at the plan level" | MET | Fixed this round (Round 15). Live sandbox :7799 this session, `get_page_text`: all 9 in-progress-ish plans render before all 7 upcoming ones (banding, rank-order preserved within each band); header reads "...in build order (7 in progress, 2 partially done, 7 upcoming)" (in-progress leads). ROUND 16 CORRECTION: this row's original evidence cited "Move up in build order" buttons as proof reorder was not regressed — those buttons are GONE as of Round 16 (row 27's supersession); reorder itself is NOT regressed, now via drag-and-drop + keyboard (row 78), re-verified live this session (see row 46's updated evidence for the keyboard-path proof). |
+
+---
+
+## Round 16 (2026-07-30) — operator walkthrough of the Round 15 surface
+Source: this session's dispatch prompt, verbatim operator quotes from the Round 15 walkthrough.
+
+| # | Verbatim | Status | Evidence |
+|---|---|---|---|
+| 74 | "I don't like the spaces between the plans. It looks awkward with the spacing between the nesting lines." | MET | Fixed this round. Live sandbox :7799 THIS session, `getBoundingClientRect` measured on 4 consecutive top-level plan rows: gap = exactly 8px between every pair (down from Round 13's 30px). The connector rail (`.rm-phase-step::before`) was measured end-to-end: one step's rendered line ends at absolute Y 229.0px, the NEXT step's own line starts at the SAME Y 229.0px — a computed 0px break, i.e. genuinely continuous (Round 13 left a ~24px visible gap in the rail by design; this round closes it). Parent→child proximity law re-verified: an opened plan's own drill content starts within 6px of pure whitespace (rest is the real plan-link-row content), still tighter than the new 8px inter-plan gap — the law holds, not just "still passes because both shrank." |
+| 75 | "The plans are now displaying in a popup but it's still not rendering the formatting." | MET | Fixed this round. New shared renderer `web/md-render.js` (headings, bold/italic, inline+fenced code, `- [ ]`/`- [x]` checkboxes, safe links, tables, blockquotes — escaping-first). Live sandbox :7799 THIS session, BOTH callers proven: the plan-doc modal (`docBody.innerHTML`) rendered a real `<h1>`/`<h2>`/`<code>`/checkbox-list from `flat-skills-directory-form-migration.md`; the Docs panel, SAME `#docBody` element, rendered a real `<table class="md-table">` from `docs/DECISIONS.md`'s markdown table. SECURITY FIXTURE (selftest `R16-MD11`/`R16-MD12`/`R16-MD13`, `cockpit.selftest.js`): a doc body containing a literal `<script>alert(1)</script>` — in a paragraph, a heading, a list item, AND a blockquote — renders as inert escaped text (`&lt;script&gt;...`) in every case, never a live tag; an `<img onerror=...>` attribute-injection attempt is likewise fully inert. |
+| 76 | "I don't like the buttons appearing below the plan doc links; they force the GUI underneath to jump around awkwardly, and they're also unnecessary." | MET | Fixed this round. The hover-reveal edit/rank chrome (round-6 gap 4, Round 13's height:0 reclaim hack) is REMOVED OUTRIGHT, not merely re-hidden — `cockpit.selftest.js` T3-41/42/42b/R16-9 (mutation-proven: the CSS mechanism and its JS triggers are gone from source, not just visually suppressed). Live sandbox :7799 THIS session: `.rm-edit-btn`/`.rm-rank-btn`/`.rm-title-input` — 0 present anywhere in the live DOM (22 plan rows checked via `querySelectorAll`). |
+| 77 | "I don't see any need to edit the name of the plan titles." | MET | Fixed this round (see row 5/10/27's SUPERSEDED entries for the historical requirement this reverses). Live sandbox :7799 THIS session: zero `.rm-edit-btn`/edit-title inputs anywhere in the DOM; source-proven (`cockpit.selftest.js` T3-28): `openTitleEditor`/`rm-title-input`/`rm-edit-btn`/the client's `POST /api/roadmap/title` call site are ALL gone from `roadmap.js`. Scope boundary honored precisely: ask/request title editing OUTSIDE the Roadmap view (e.g. the Requests ledger) is untouched, per the operator's own "elsewhere is NOT in scope." |
+| 78 | "lets use drag and drop instead of buttons for rearranging" | MET | Fixed this round. `wirePlanRowReorder` wires an HTML5-draggable grip handle (`.rm-drag-handle`) per plan row + dragover/drop dropzone-highlight listeners, computing the move via a NEW pure `computeReorderSteps` function (real-execution tested, `cockpit.selftest.js` R16-11/11b/12/13/14 — incl. a mutation-style "no-op position computes null, never a wasted call" check), persisting through the SAME `/api/roadmap/rank` endpoint the retired buttons called (zero server-side change). ACCESSIBILITY (WCAG 2.2 2.5.7 — drag must not be the ONLY path, R12 already made this binding): a NON-VISUAL Cmd/Ctrl+ArrowUp/Down keydown handler on the focused row fires the identical `moveRank()` call, documented via the row's own `title`/`aria-keyshortcuts` attributes rather than a second visible control. Live sandbox :7799 THIS session: 22 real `.rm-drag-handle` grips present (`draggable:true`, correctly seated as the title cell's first child — the Round 12 fixed-column grid is unchanged, `16px 468px 190px 76px 46px 132px`); dispatching a real `Control+ArrowDown` keydown on a focused row fired `POST /api/roadmap/rank -> 200 OK` (`read_network_requests`), landing in the sandbox's own isolated state dir (never real machine state — confirmed the write landed in the scratch `ASK_REGISTRY_STATE_DIR` override, not `~/.claude/state/`). |
+| 79 | "Let's use green instead of blue for the running items because blue looks like links." | MET | Fixed this round. New `--running: #4ade80` variable (measured 8.42:1 against `--panel` via the SAME relative-luminance formula this file's own `--done` comment already used — `cockpit.selftest.js` R16-2 computes this itself, not merely asserts it in prose). Every non-link roadmap signal swept off `--info`: `.rm-title-in-progress`, `.chip.rm-task-running`, `.rm-taskspan-running`, `.chip.rm-rollup-running` (all -> `--running`); `.rm-marker-midbuild`/`.rm-filter-match-note` (non-link, non-running) -> `--accent` instead, since blue is now reserved EXCLUSIVELY for real links; the plan-link's rare non-clickable plain-text fallback (`.rm-plan-link` alone, no `-btn`) also moved off blue to `--muted` — the real clickable button keeps blue via a higher-specificity compound rule. Live sandbox :7799 THIS session: COMPUTED STYLE swept across every `.rm-node`/`.chip`/`.rm-title`/`span`/`div` on the page — **zero** elements render `--info`'s blue (`rgb(96,165,250)`) outside a real `<a>`/`.rm-plan-link-btn`; genuinely in-progress titles measured `rgb(74,222,128)` (= `--running`) live. |
 
 ---
 
@@ -223,10 +249,10 @@ Source: `docs/reviews/2026-07-17-cockpit-ux-design-input.md`
 
 | # | Verbatim | Status | Evidence |
 |---|---|---|---|
-| 74 | "is 'Cockpit' the same as the Workstreams UI? If so, that's great... I think I prefer it, but we need to keep consistency in terminology." | UNBUILT | Naming decision taken 2026-07-30: **Cockpit** is the canonical product name. Rename queued for Round 17: UI header/title (web/), server strings, docs, chat vocabulary (extends SE10's vocabulary lock). Until it lands, every surface saying "Workstreams" is a violation of this row. |
-| 75 | "the instruction on this page to run the ps command does not make it clear where the command itself begins and ends" | UNBUILT | Two halves: (a) Inbox/ask RENDERING — runnable commands must be visually fenced, copyable, never inline with prose (audit of every command-bearing surface dispatched to ux-ia-auditor this session); (b) ask COMPOSITION — needs-you.sh asks carry commands in a distinct field/fence. Neither built yet. |
-| 76 | "The purpose of the walkthrough is not for you to show me what's there; it's to review everything I've requested over the last couple months and see how much of it is still not there, and allow me to decide how much I truly want every item I've asked for in the past." | PARTIAL | This ledger IS the review instrument (all 77 rows, statuses live-verified), but the walkthrough deliverable is reframed: present EVERY row with a keep / drop / change decision column for the operator, regressions and rebuild-losses first — not a feature tour. Brief updated (docs/reviews/2026-07-30-ui-walkthrough-brief.md §7). |
-| 77 | "I keep having to nudge you for little UI improvements that any decent UX designer should have caught on their own. It's very burdensome." | PARTIAL | Proactive ux-ia-auditor audit of the live cockpit dispatched 2026-07-30 (report: docs/reviews/2026-07-30-cockpit-ux-audit.md when it lands). Standing rule queued: no UI round lands without a UX-agent pass over the changed surfaces — to be wired into the cockpit-redesign plan's acceptance so it is mechanical, not remembered. |
+| 80 | "is 'Cockpit' the same as the Workstreams UI? If so, that's great... I think I prefer it, but we need to keep consistency in terminology." | UNBUILT | Naming decision taken 2026-07-30: **Cockpit** is the canonical product name. Rename queued for Round 17: UI header/title (web/), server strings, docs, chat vocabulary (extends SE10's vocabulary lock). Until it lands, every surface saying "Workstreams" is a violation of this row. |
+| 81 | "the instruction on this page to run the ps command does not make it clear where the command itself begins and ends" | UNBUILT | Two halves: (a) Inbox/ask RENDERING — runnable commands must be visually fenced, copyable, never inline with prose (audit of every command-bearing surface dispatched to ux-ia-auditor this session); (b) ask COMPOSITION — needs-you.sh asks carry commands in a distinct field/fence. Neither built yet. |
+| 82 | "The purpose of the walkthrough is not for you to show me what's there; it's to review everything I've requested over the last couple months and see how much of it is still not there, and allow me to decide how much I truly want every item I've asked for in the past." | PARTIAL | This ledger IS the review instrument (all 83 rows, statuses live-verified), but the walkthrough deliverable is reframed: present EVERY row with a keep / drop / change decision column for the operator, regressions and rebuild-losses first — not a feature tour. Brief updated (docs/reviews/2026-07-30-ui-walkthrough-brief.md §7). |
+| 83 | "I keep having to nudge you for little UI improvements that any decent UX designer should have caught on their own. It's very burdensome." | PARTIAL | Proactive ux-ia-auditor audit of the live cockpit dispatched 2026-07-30 (report: docs/reviews/2026-07-30-cockpit-ux-audit.md when it lands). Standing rule queued: no UI round lands without a UX-agent pass over the changed surfaces — to be wired into the cockpit-redesign plan's acceptance so it is mechanical, not remembered. |
 
 ## Known gaps this ledger surfaces (logged to `docs/backlog.md`)
 
@@ -246,8 +272,22 @@ Source: `docs/reviews/2026-07-17-cockpit-ux-design-input.md`
 - `docs/plans/cockpit-roadmap-redesign.md` — Decisions Log + Round 12/13/14 in-flight entries
 - Tonight's dispatch (Round 15, this session) — five operator complaints + one coordinator
   mid-round addition
-- Live verification THIS SESSION: `http://127.0.0.1:7733` (real production instance, read-only
-  checks only) + a fixture-seeded sandbox at `http://127.0.0.1:7799` (same worktree code,
-  env-redirected state — no real state touched) + `cockpit.selftest.js` (397/0),
+- Live verification Round 15's session: `http://127.0.0.1:7733` (real production instance,
+  read-only checks only) + a fixture-seeded sandbox at `http://127.0.0.1:7799` (same worktree
+  code, env-redirected state — no real state touched) + `cockpit.selftest.js` (397/0),
   `roadmap-routes.selftest.js` (110/0), `requests-routes.selftest.js` (25/0),
   `inbox-routes.selftest.js` (47/0), `server.selftest.js` (173/0)
+- Round 16 (this session's own dispatch, 2026-07-30): six verbatim operator complaints from the
+  Round 15 walkthrough (rows 74-79). Live verification THIS session ran ONLY against an
+  env-redirected sandbox at `http://127.0.0.1:7799` — every state-writing path (`ASK_REGISTRY_
+  STATE_DIR`, `HEARTBEAT_STATE_DIR`, `PROGRESS_LOG_STATE_DIR`, `DISPATCH_PROVENANCE_STATE_DIR`,
+  `NEEDS_YOU_STATE_DIR`, `NEEDS_YOU_MD_PATH`, `OPERATOR_TODO_PATH`, `BACKLOG_MD_PATH`) redirected
+  to a scratch directory outside the repo, confirmed post-hoc (the one write this session's
+  testing triggered, `roadmap-plan-rank-overlay.json`, landed in the scratch dir, never
+  `~/.claude/state/`); `http://127.0.0.1:7733` (the real production instance) was NOT touched
+  this session — the plan's own dispatch note explains why: "the LaunchAgent needs the
+  orchestrator's kickstart post-cherry-pick," so a :7733 re-verification is the orchestrator's
+  follow-on step, not this session's. Suites this session: `cockpit.selftest.js` 429/0 (+32 from
+  the 397 baseline), `roadmap-routes.selftest.js` 110/0 (UNCHANGED — none of Round 16's six
+  deliverables touched `server/roadmap-routes.js`), `server.selftest.js` 173/0,
+  `inbox-routes.selftest.js` 47/0, `requests-routes.selftest.js` 25/0 — zero regressions.

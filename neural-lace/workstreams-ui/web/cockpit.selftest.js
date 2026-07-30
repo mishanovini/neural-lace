@@ -782,9 +782,12 @@ const roadmapJsNoComments = stripJsComments(roadmapJs);
 // anchors / the REAL regex literal, run it in a minimal Node `vm` sandbox
 // (no jsdom/headless browser, per this file's header). --------------------
 
-// FIX 1 — captureUiState must capture an open title editor's uncommitted
-// value by PRESENCE, not focus (a focus-gated capture silently loses the
-// edit when focus is on Save/Cancel or has left the pane).
+// FIX 1 (historical) — captureUiState used to capture an open title
+// editor's uncommitted value by PRESENCE, not focus. ROUND 16 retires the
+// title-edit feature outright (deliverable 4) — captureUiState no longer
+// has an `edit` field to capture at all; the tests below are re-pointed at
+// PROVING that retirement (mutation-control style: the capture code, and
+// its `.rm-title-input` query, are actually gone — not merely untested).
 const captureUiStateSrc = (function () {
   const beginMarker = '// CAPTURE-UI-STATE-BEGIN';
   const endMarker = '// CAPTURE-UI-STATE-END';
@@ -965,31 +968,57 @@ ok('T3-25d TRUE-empty explains items arrive automatically from sessions (no setu
 // --- refresh model (C7) --------------------------------------------------
 ok('T3-26 the view polls on the 30s tick and labels failures "derived <age> — STALE", never silent staleness',
   /30000|REFRESH_INTERVAL/.test(roadmapJs) && /STALE/.test(roadmapJs));
-ok('T3-27 re-render is STATE-PRESERVING: open-details set + scroll + focus + uncommitted edits captured and restored',
+ok('T3-27 re-render is STATE-PRESERVING: open-details set + scroll + focus captured and restored',
   /captureUiState/.test(roadmapJs) && /restoreUiState/.test(roadmapJs) &&
   /scrollTop|scrollY/.test(roadmapJs) && /activeElement/.test(roadmapJs));
-ok('T3-27c open-but-unfocused title editor (focus moved to the Save button, NOT the input) still has its uncommitted value CAPTURED by captureUiState — the pre-fix focus-gated code returned edit:null here and the 30s tick silently destroyed the editor',
+// T3-27c/d/e used to prove an open title editor's uncommitted value
+// survived a re-render even when unfocused. ROUND 16 (deliverable 4:
+// "I don't see any need to edit the name of the plan titles") retires the
+// title-edit feature outright — these three now prove the RETIREMENT
+// itself: real execution against the ACTUAL captureUiState (not a
+// reimplementation) shows it (a) never reads `.rm-title-input` even when
+// the sandbox's document.querySelector mock WOULD hand one back, and
+// (b) returns no `edit` field at all any more — a stale `.edit: null` left
+// on the result would still pass a shallow "feature removed" check without
+// proving the actual capture branch is gone; asserting the key is ABSENT
+// (not merely null) closes that gap.
+ok('T3-27c ROUND 16: captureUiState no longer queries `.rm-title-input` — a sandbox mock that WOULD return a fake open editor is never consulted (the querySelector call itself is gone from the real source, not merely its result ignored)',
+  !/document\.querySelector\('\.rm-title-input'\)/.test(roadmapJsNoComments || roadmapJs));
+ok('T3-27d ROUND 16: captureUiState()\'s real result carries no `edit` key at all (mutation-control: a stray `edit: null` literal left behind would still pass a weaker "!r.edit" check — this asserts the key is ABSENT)',
   (function () {
     var r = runCaptureUiState({ activeElement: fakeSaveBtn, openInput: fakeOpenInput });
-    return !r.__error && !!r.edit && r.edit.itemId === 'item-42' && r.edit.value === 'uncommitted title text';
+    return !r.__error && !('edit' in r) && r.scrollY === 0;
   })());
-ok('T3-27d open title editor survives capture even when focus has left the pane entirely (activeElement null/outside)',
+ok('T3-27e ROUND 16: captureUiState still captures focusKey correctly (the retirement removed ONLY the title-edit branch, not the surrounding scroll/focus capture C7 still requires)',
   (function () {
-    var r = runCaptureUiState({ activeElement: null, openInput: fakeOpenInput });
-    return !r.__error && !!r.edit && r.edit.itemId === 'item-42';
-  })());
-ok('T3-27e no open editor in the DOM -> captureUiState.edit stays null (presence-based capture does not false-positive)',
-  (function () {
-    var r = runCaptureUiState({ activeElement: fakeSaveBtn, openInput: null });
-    return !r.__error && r.edit === null;
+    var r = runCaptureUiState({ activeElement: { dataset: { itemId: 'item-9' } }, activeInBody: true });
+    return !r.__error && r.focusKey === 'item:item-9';
   })());
 
-// --- title editing + rank reorder (A3 / A7 / R2) -------------------------
-ok('T3-28 title editing reuses the todo.js pattern: an explicit Edit button, Escape cancels, focus returns',
-  /rm-title-edit|Edit/.test(roadmapJs) && /Escape/.test(roadmapJs) && /\.focus\(\)/.test(roadmapJs));
-ok('T3-28b edit feedback is aria-live (C9)', /aria-live/.test(roadmapJs));
-ok('T3-29 build-order reorder ships keyboard-operable move up/down REAL buttons (WCAG 2.2 2.5.7 — never drag-only)',
-  /[Mm]ove up/.test(roadmapJs) && /[Mm]ove down/.test(roadmapJs) && /\/api\/roadmap\/rank/.test(roadmapJs));
+// --- title editing RETIRED (Round 16 deliverable 4) + rank reorder -------
+// T3-28/T3-28b used to prove the todo.js-style Edit/Save/Cancel title
+// editor. That editor is GONE outright (operator: "I don't see any need
+// to edit the name of the plan titles") — restated below as proof of
+// absence, source AND runtime (drilldown() never appends an edit
+// control for a plan-kind item any more).
+ok('T3-28 ROUND 16: no plan-title edit affordance anywhere — openTitleEditor/rm-title-input/rm-edit-btn/the client POST to /api/roadmap/title are all gone from roadmap.js (the server route itself is deliberately left in place, out of this UI-only scope — see the retirement comment above openTitleEditor\'s old location)',
+  !/function openTitleEditor/.test(roadmapJsNoComments) &&
+  !/rm-title-input/.test(roadmapJsNoComments) &&
+  !/rm-edit-btn/.test(roadmapJsNoComments) &&
+  !/fetch\('\/api\/roadmap\/title'/.test(roadmapJsNoComments));
+ok('T3-28b edit feedback is aria-live (C9) — still true: the SAME .rm-edit-feedback element now carries reorder + override messages, not title-save ones',
+  /aria-live/.test(roadmapJs));
+ok('T3-29 ROUND 16: build-order reorder is drag-and-drop on a grip handle wired via wirePlanRowReorder, backed by the SAME /api/roadmap/rank endpoint the retired Move up/down buttons called; a NON-VISUAL Cmd/Ctrl+ArrowUp/Down keydown path on the row satisfies WCAG 2.2 2.5.7 without a second visible control',
+  /function wirePlanRowReorder/.test(roadmapJsNoComments) &&
+  /rm-drag-handle/.test(roadmapJsNoComments) &&
+  /handle\.draggable = true/.test(roadmapJsNoComments) &&
+  /addEventListener\('dragover'/.test(roadmapJsNoComments) &&
+  /addEventListener\('drop'/.test(roadmapJsNoComments) &&
+  /e\.metaKey \|\| e\.ctrlKey/.test(roadmapJsNoComments) &&
+  /moveRank\(item, 'up', reorderFeedback\(det\)\)/.test(roadmapJsNoComments) &&
+  /moveRank\(item, 'down', reorderFeedback\(det\)\)/.test(roadmapJsNoComments));
+ok('T3-29b the retired Move up/Move down button LABELS are gone from the source (mutation control: proves the buttons were actually deleted, not just visually hidden)',
+  !/'Move up in build order: '/.test(roadmapJsNoComments) && !/'Move down in build order: '/.test(roadmapJsNoComments));
 
 // --- a11y hygiene (C9) ---------------------------------------------------
 ok('T3-30 roadmap.js builds interactive controls as real <button>s (the one btn() factory, used throughout) and never wires click onto a bare div',
@@ -1125,16 +1154,24 @@ ok('R10-4 reorder feedback names WHAT moved, its NEW position, and WHOSE build o
   /build order/.test(roadmapJsNoComments) && !/say\('Order updated\.'/.test(roadmapJsNoComments) &&
   !/now phase '/.test(roadmapJsNoComments));
 
-// --- gap 4: compact icon chrome, hover/focus-within, never hover-only -----
-ok('T3-41 Edit-title/Move-up/Move-down are compact icon buttons (short glyph text) carrying a full aria-label — never bare icons with no accessible name',
-  /rm-icon-btn/.test(roadmapJs) && /'✎'/.test(roadmapJs) && /'↑'/.test(roadmapJs) && /'↓'/.test(roadmapJs) &&
-  /edit the title of/.test(roadmapJs) && /Move up in build order/.test(roadmapJs) && /Move down in build order/.test(roadmapJs));
-ok('T3-42 CSS hides the chrome by default and reveals it on hover OR :focus-within (never hover-only — WCAG 2.2 2.5.7)',
-  /\.rm-title-edit,\s*\.rm-item-chrome\s*\{[^}]*opacity:\s*0/.test(C) &&
-  /:hover[^{,]*\.rm-title-edit[\s\S]{0,80}:focus-within/.test(C.replace(/\n/g, ' ')));
-ok('T3-42b an OPEN title editor stays visible through the whole edit (a JS-toggled class, not hover-state, keeps it shown — a stray mouseout never hides in-progress input/Save/Cancel)',
-  /classList\.add\('rm-editing'\)/.test(roadmapJs) && /classList\.remove\('rm-editing'\)/.test(roadmapJs) &&
-  /\.rm-title-edit\.rm-editing\s*\{/.test(C));
+// --- gap 4 (round-6): compact icon chrome, hover/focus-within ------------
+// RETIRED whole-cloth in Round 16 (deliverables 3/4, operator verbatim:
+// "I don't like the buttons appearing below the plan doc links; they
+// force the GUI underneath to jump around awkwardly, and they're also
+// unnecessary"). T3-41/42/42b used to pin the Edit/Move-up/Move-down icon
+// chrome + its hover/focus-within height:0 reveal hack; restated below as
+// proof the WHOLE mechanism is gone (source AND stylesheet), replaced by
+// the drag-and-drop + Cmd/Ctrl+Arrow path T3-29 already proves.
+ok('T3-41 ROUND 16: the icon-chrome glyphs/aria-labels (edit "✎", "Move up in build order", "Move down in build order") are gone from roadmap.js — no bare-icon-with-no-label regression is possible for a control that no longer exists',
+  !/'✎'/.test(roadmapJsNoComments) &&
+  !/edit the title of/.test(roadmapJsNoComments) &&
+  !/Move up in build order/.test(roadmapJsNoComments) &&
+  !/Move down in build order/.test(roadmapJsNoComments));
+ok('T3-42 ROUND 16: the hover/focus-within height:0 reveal hack (.rm-title-edit, .rm-item-chrome) is gone from the stylesheet — the layout-jump root cause the operator named cannot recur because the mechanism no longer exists',
+  !/\.rm-title-edit,\s*\.rm-item-chrome/.test(C) && !/\.rm-item-chrome\s*[,{]/.test(C));
+ok('T3-42b ROUND 16: the JS-toggled `.rm-editing` class + its CSS rule are gone (the open-editor-stays-visible mechanism they protected no longer has an editor to protect)',
+  !/classList\.add\('rm-editing'\)/.test(roadmapJs) && !/classList\.remove\('rm-editing'\)/.test(roadmapJs) &&
+  !/\.rm-title-edit\.rm-editing/.test(C));
 
 // --- 7A: no paragraph form anywhere; 7B: visible task->subtask hierarchy -
 ok('T3-43 the task drill-down renders lead/subtask/live-agent content as bulleted LISTS (<ul>/<li>), never a single paragraph text blob',
@@ -1354,8 +1391,12 @@ ok('R9F-2 the My-items pane surfaces the Inbox ANSWERABLE set (the real waiting-
   ok('R9F-4 the Roadmap tab has its own column resize handle wired through the SAME setupHandle machinery (adjustable panes stay a feature)',
     /rmColResizeHandle/.test(html) && /rmColResizeHandle/.test(appSrc) && /targetId: 'rmSidebar'/.test(appSrc));
 })();
-ok('R8-4 the rank-move and title-save wire bodies are id-keyed (a plan slug), not ask_id-keyed (the old ask-rooted contract) — no POST body anywhere still sends ask_id',
-  /JSON\.stringify\(\{ id: item\.id, title: t \}\)/.test(roadmapJsNoComments) &&
+// R8-4 originally also pinned a client-side title-save POST body
+// (JSON.stringify({ id: item.id, title: t })) — that call site is GONE
+// along with the whole title-edit affordance (Round 16 deliverable 4);
+// the rank-move half of the id-keyed (not ask_id-keyed) contract still
+// holds and is re-pinned below.
+ok('R8-4 the rank-move wire body is id-keyed (a plan slug), not ask_id-keyed (the old ask-rooted contract) — no POST body anywhere still sends ask_id',
   /JSON\.stringify\(\{ id: itemId, direction: direction \}\)/.test(roadmapJsNoComments) &&
   !/ask_id: item\.id/.test(roadmapJsNoComments) && !/ask_id: askId/.test(roadmapJsNoComments));
 ok('R8-5 the merged-unverified "mark complete anyway" override resolves its ask-lifecycle target via the plan\'s first linked request (from_requests[0]) — never posts a plan slug where an ask id is required',
@@ -1950,8 +1991,8 @@ ok('R12-30 every one of the six states maps to a title CSS class (rm-title-<valu
 // that stayed green across this inversion would have been proving nothing;
 // R13-31 pins the NEW not-started rule specifically and R13-31b proves the
 // OLD rule is actually gone (not just an additional rule shadowing it).
-ok('R13-31 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--info)/600 (Round 15: the operator\'s own colour, twice requested — was #f9fafb bright-white, not actually the blue asked for), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
-  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--info\);\s*font-weight:\s*600/.test(C) &&
+ok('R13-31 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--running)/600 (ROUND 16: operator — "green instead of blue for the running items because blue looks like links"; was var(--info) blue in Round 15), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
+  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--running\);\s*font-weight:\s*600/.test(C) &&
   /\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--text\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-complete\s*\{\s*color:\s*var\(--done\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-stalled\s*\{\s*color:\s*var\(--interrupt\);\s*font-weight:\s*600/.test(C) &&
@@ -1959,6 +2000,22 @@ ok('R13-31 CSS pins the ladder: not-started var(--text)/400 (normal reading colo
   /\.rm-title\.rm-title-unknown\s*\{\s*color:\s*var\(--warn\);\s*font-weight:\s*400;\s*border-bottom:\s*1px dashed/.test(C));
 ok('R13-31b mutation control: the Round 12 not-started rule (var(--muted)) is GONE, not merely shadowed by a later rule of equal specificity (a stray leftover .rm-title-not-started{color:var(--muted)} earlier in the file would make the ladder non-deterministic depending on cascade order)',
   !/\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--muted\)/.test(C));
+ok('R16-1 ROUND 16 mutation control: the Round 15 --info (blue) in-progress-title rule is GONE, not merely shadowed — a stray leftover .rm-title-in-progress{color:var(--info)} earlier in the cascade would make the ladder non-deterministic',
+  !/\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--info\)/.test(C));
+ok('R16-2 --running is defined and measures >= 4.5:1 against --panel (WCAG AA body-text floor) — computed here with the SAME relative-luminance formula the file\'s own --done comment already documents, not merely asserted in prose',
+  (function () {
+    var m = css.match(/--running:\s*#([0-9a-fA-F]{6});/);
+    var panelM = css.match(/--panel:\s*#([0-9a-fA-F]{6});/);
+    if (!m || !panelM) return false;
+    function srgbToLin(c) { c = c / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+    function relLum(hex) {
+      var r = parseInt(hex.substring(0, 2), 16), g = parseInt(hex.substring(2, 4), 16), b = parseInt(hex.substring(4, 6), 16);
+      return 0.2126 * srgbToLin(r) + 0.7152 * srgbToLin(g) + 0.0722 * srgbToLin(b);
+    }
+    var L1 = relLum(m[1]), L2 = relLum(panelM[1]);
+    var ratio = (Math.max(L1, L2) + 0.05) / (Math.min(L1, L2) + 0.05);
+    return ratio >= 4.5;
+  })());
 ok('R12-32 --done is the darkest neutral that still clears WCAG AA 4.5:1 against --panel (measured #87909e = 4.55:1) — the value is pinned exactly, not "rounded to a nicer gray"',
   /--done:\s*#87909e;/.test(css));
 ok('R13-33 WCAG 1.4.1: every row keeps at least two NON-colour carriers regardless of state — the task-span cell and the fraction cell are appended UNCONDITIONALLY (never gated on item.status), so colour is never the only signal (R12-33 pinned the OLD 1-arg taskSpanCell(item) call — FLIPS to the 2-arg isNextTask signature fix 4 introduced)',
@@ -1976,8 +2033,10 @@ ok('R12-42 opening a Shipped plan still renders ALL its own tasks via the UNCHAN
 // ---- item 7: pre-existing contrast bugs -----------------------------------
 ok('R12-50 EVERY chip has an explicit transparent background — a chip rendered as a real <button> (rm-project-chip, rm-status-stalled, rm-rollup-badge...) previously fell back to the UA button face (measured live: rgb(239,239,239), a light box in the dark theme)',
   /\.chip \{[^}]*background:\s*transparent/.test(C));
-ok('R12-51 .rm-plan-link has an explicit color (var(--info)) — previously unstyled, so all 16 plan links rendered at the browser default blue (#0000EE, 1.56:1, a hard WCAG 1.4.3 failure)',
-  /\.rm-plan-link\s*\{[^}]*color:\s*var\(--info\)/.test(C));
+ok('R12-51 .rm-plan-link has an explicit color — previously unstyled, so all 16 plan links rendered at the browser default blue (#0000EE, 1.56:1, a hard WCAG 1.4.3 failure). ROUND 16 sweep: the base rule (which also covers the rare non-clickable plain-text fallback) is now NEUTRAL (var(--muted)) — blue moves to the compound .rm-plan-link-btn rule below, present ONLY on the real clickable button (operator: "blue looks like links", so it is reserved for real ones)',
+  /\.rm-plan-link\s*\{[^}]*color:\s*var\(--muted\)/.test(C));
+ok('R16-3 the REAL clickable plan-link button keeps blue (var(--info)) via the compound .rm-plan-link.rm-plan-link-btn rule — higher specificity than the plain .rm-plan-link rule above, so the genuine link still reads as one even though the fallback text no longer does',
+  /\.rm-plan-link\.rm-plan-link-btn\s*\{[^}]*color:\s*var\(--info\)/.test(C));
 
 // ---- item 8: filter placeholder + surfaced task-id match ------------------
 ok('R12-60 the filter placeholder now NAMES the task-id matching capability (previously announced only to screen readers via aria-label, while sighted users saw a generic "filter the roadmap…")',
@@ -2081,10 +2140,15 @@ ok('R13-64 the SAME nextId is threaded into every child render path — the plai
   /renderTaskBatches\(live, nextId\)/.test(roadmapJsNoComments) &&
   /renderNode\(c, -1, -1, c\.id === nextId\)/.test(roadmapJsNoComments) && /renderBatchRow\(label, liveChildren\.slice\(i, runEnd\), nextId\)/.test(roadmapJsNoComments) &&
   /renderNode\(t, -1, -1, t\.id === nextId\)/.test(roadmapJsNoComments));
-ok('R13-65 CSS: .rm-task-check inherits the complete-dim colour (var(--done), reads as PART of the dimmed line); .rm-task-next is weight-only (text emphasis, never the ONLY signal); .rm-task-running earns the one loud colour (var(--info)) because it is a claim backed by real live_sessions evidence, not a position guess. Round 15: promoted to a real chip (bordered pill + background tint, "small and not obvious" per the operator) rather than plain text',
+ok('R13-65 CSS: .rm-task-check inherits the complete-dim colour (var(--done), reads as PART of the dimmed line); .rm-task-next is weight-only (text emphasis, never the ONLY signal); .rm-task-running earns the one loud colour because it is a claim backed by real live_sessions evidence, not a position guess. ROUND 16: --info (blue) -> --running (green) — operator: "blue looks like links"',
   /\.rm-task-check\s*\{\s*color:\s*var\(--done\)/.test(C) &&
   /\.rm-task-next\s*\{\s*font-weight:\s*600;\s*color:\s*var\(--text\)/.test(C) &&
-  /\.chip\.rm-task-running\s*\{[^}]*color:\s*var\(--info\)/.test(C));
+  /\.chip\.rm-task-running\s*\{[^}]*color:\s*var\(--running\)/.test(C));
+ok('R16-4 mutation control: the Round 15 --info (blue) task-running rule is GONE, not merely shadowed',
+  !/\.chip\.rm-task-running\s*\{[^}]*color:\s*var\(--info\)/.test(C));
+ok('R16-5 the plan-row "<id> running" token (.rm-taskspan-running) and the roll-up "running" badge (.chip.rm-rollup-running) both use --running too — the SAME green language as the leaf chip and the in-progress title, not three different colours for "someone is working on this right now"',
+  /\.rm-taskspan-running\s*\{\s*color:\s*var\(--running\)/.test(C) &&
+  /\.chip\.rm-rollup-running\s*\{\s*color:\s*var\(--running\)/.test(C));
 
 // ---- fix 5: hierarchy legibility + spacing -------------------------------
 ok('R13-70 tasks render visibly SMALLER than the plan that owns them (12px vs the plan/base 14px) — a size ladder ON TOP of the existing indentation + rail, so "this is a child" is legible before reading a single word',
@@ -2099,17 +2163,160 @@ ok('R13-73 an OPEN node\'s own immediate children get a faint background tint (d
     var m = C.match(/\.rm-node\[open\] > \.rm-children\s*\{([^}]*)\}/);
     return !!m && /background:\s*rgba\(255, 255, 255, 0\.025\)/.test(m[1]);
   })());
-ok('R13-74 the top-level phase-step (one per plan) gets a LARGER bottom margin (30px, up from Round 12\'s 2px) — live-measured root cause of "more space between child tasks and their own parent than between them and the next plan": the gap was backwards (65px parent->child, 2px subtree->next-plan live-measured before ANY fix 5 change) — this fix both widens the inter-plan gap AND (R13-75/76/77 + the trimmed .rm-drill/.rm-plan-link-row padding) shrinks the intra-plan one; live re-measured after both changes together: 28px parent->child vs 30px subtree->next-plan — the inversion is closed, not just narrowed',
-  /\.rm-phase-step\s*\{\s*position:\s*relative;\s*padding-left:\s*16px;\s*margin:\s*2px 0 30px;\s*\}/.test(C));
-ok('R13-75 the previously-invisible-but-space-reserving edit chrome (.rm-title-edit/.rm-item-chrome) now collapses to height:0 while hidden (reclaiming the live-measured 24px .rm-item-chrome was costing on EVERY expanded plan row) and expands back to height:auto on the SAME hover/focus-within/`.rm-editing` triggers that already restore opacity — no new transition, so the WCAG 2.2 2.5.7 instant-reveal-on-focus guarantee from round-6 gap 4 is preserved, not regressed',
-  /\.rm-title-edit, \.rm-item-chrome \{\s*opacity:\s*0;\s*pointer-events:\s*none;\s*height:\s*0;/.test(C) &&
-  /\.rm-item-chrome:focus-within \{\s*opacity:\s*1;\s*pointer-events:\s*auto;\s*height:\s*auto;/.test(C) &&
-  /\.rm-title-edit\.rm-editing \{ opacity: 1; pointer-events: auto; height: auto;/.test(C));
-ok('R13-76 mutation control: deleting the height:0 reclaim leaves opacity:0/pointer-events:none untouched (proving R13-75 is pinning a REAL additive change, not restating the pre-existing round-6 rule the file already had)',
-  /opacity:\s*0;\s*pointer-events:\s*none;\s*height:\s*0;\s*margin:\s*0;\s*overflow:\s*hidden;/.test(C));
-ok('R13-77 the two remaining live-measured contributors to the parent->first-child gap — .rm-drill\'s own padding and .rm-plan-link-row\'s bottom margin — are BOTH trimmed (4/6px -> 2/2px each), not just the edit-chrome reclaim alone',
+// R13-74 pinned Round 13's 30px inter-plan gap + the deliberate rail break.
+// ROUND 16 REVERSES it (operator, live walkthrough, verbatim): "I don't
+// like the spaces between the plans. It looks awkward with the spacing
+// between the nesting lines" — restated below as R16-6/7.
+ok('R16-6 ROUND 16 deliverable 1: the inter-plan gap shrinks to a single-digit-beyond-row-padding margin (8px, down from Round 13\'s 30px) — the operator called the old gap "awkward"',
+  /\.rm-phase-step\s*\{\s*position:\s*relative;\s*padding-left:\s*16px;\s*margin:\s*2px 0 8px;\s*\}/.test(C));
+ok('R16-7 ROUND 16 deliverable 1: the phase-step connector line now reaches ALL THE WAY to the next step\'s own line start (top:18px unchanged, bottom widened from -6px to -26px = new 8px gap + the next step\'s 18px offset) — continuous, not the Round 13 "deliberate break"',
+  /\.rm-phase-step::before\s*\{[^}]*top:\s*18px;[^}]*bottom:\s*-26px;/.test(C));
+ok('R16-8 mutation control: the Round 13 30px margin and the -6px break-leaving connector offset are BOTH gone, not merely shadowed by a later rule',
+  !/margin:\s*2px 0 30px/.test(C) && !/bottom:\s*-6px/.test(C));
+// R13-75/76 pinned the hover/focus-within height:0 reveal hack for the
+// edit/rank chrome. ROUND 16 removes that mechanism ENTIRELY (deliverables
+// 3/4/5) — restated as R16-9 (proof of absence; T3-42/T3-42b above already
+// cover the same retirement from a different angle, kept here so the
+// R13-7x numbering isn't silently orphaned without an explicit successor).
+ok('R16-9 ROUND 16: the hover-reveal height:0 chrome mechanism (.rm-title-edit, .rm-item-chrome and its :focus-within/.rm-editing companion rules) is completely gone from the stylesheet — replaced by .rm-drag-handle (always-rendered, no layout-jumping reveal/hide)',
+  !/\.rm-title-edit,\s*\.rm-item-chrome/.test(C) &&
+  !/\.rm-item-chrome:focus-within/.test(C) &&
+  /\.rm-drag-handle\s*\{/.test(C));
+ok('R13-77 the two remaining live-measured contributors to the parent->first-child gap — .rm-drill\'s own padding and .rm-plan-link-row\'s bottom margin — are BOTH still trimmed (4/6px -> 2/2px each) — unaffected by Round 16\'s inter-plan/chrome changes',
   /\.rm-drill\s*\{\s*display:\s*none;\s*padding:\s*2px 8px 2px 20px/.test(C) &&
   /\.rm-plan-link-row\s*\{\s*margin:\s*2px 0 2px/.test(C));
+
+// ============================================================
+// ROUND 16 (2026-07-30) — operator walkthrough feedback on the Round 15
+// surface (verbatim, docs/plans/cockpit-roadmap-redesign.md Round 16
+// entry). Six deliverables: (1) inter-plan spacing — covered above
+// (R16-6/7/8); (2) markdown rendering in the doc popup — this block;
+// (3) kill the buttons below the plan-doc links — T3-41/42/42b above;
+// (4) remove plan-title editing — T3-27c/d, T3-28 above; (5) drag-and-drop
+// reordering — T3-29 above + computeReorderSteps real-execution below;
+// (6) green not blue for running — R13-31/R13-65/R16-1..5 above.
+// ============================================================
+
+// ---- deliverable 5: computeReorderSteps (PURE, real execution) ----------
+const reorderStepsSrc = extractMarkedBlock(roadmapJs, '// REORDER-STEPS-BEGIN', '// REORDER-STEPS-END');
+ok('R16-10 selftest can locate the REORDER-STEPS extraction anchors in roadmap.js (source-execution harness precondition)',
+  !!reorderStepsSrc);
+function runReorderSteps(ids, draggedId, targetId, before) {
+  return runPure(reorderStepsSrc, 'computeReorderSteps(' + JSON.stringify(ids) + ', ' +
+    JSON.stringify(draggedId) + ', ' + JSON.stringify(targetId) + ', ' + JSON.stringify(!!before) + ')');
+}
+ok('R16-11 dragging item "c" to drop BEFORE "b" in [a,b,c,d] (already adjacent to it) computes ONE "up" step — a real single drag-one-slot gesture',
+  (function () {
+    var r = runReorderSteps(['a', 'b', 'c', 'd'], 'c', 'b', true);
+    return !r.__error && r.direction === 'up' && r.count === 1;
+  })());
+ok('R16-11b dragging item "d" to drop BEFORE "b" in [a,b,c,d] computes TWO "up" steps (index 3 -> index 1 is a 2-slot move, not 1 — d must pass c on the way)',
+  (function () {
+    var r = runReorderSteps(['a', 'b', 'c', 'd'], 'd', 'b', true);
+    return !r.__error && r.direction === 'up' && r.count === 2;
+  })());
+ok('R16-12 dragging item "a" to drop AFTER "c" in [a,b,c,d] computes TWO "down" steps',
+  (function () {
+    var r = runReorderSteps(['a', 'b', 'c', 'd'], 'a', 'c', false);
+    return !r.__error && r.direction === 'down' && r.count === 2;
+  })());
+ok('R16-13 dropping an item on ITSELF, or an id missing from the sibling list, is a no-op (null) — never a phantom 0-step network call',
+  (function () {
+    var r1 = runReorderSteps(['a', 'b'], 'a', 'a', true);
+    var r2 = runReorderSteps(['a', 'b'], 'x', 'a', true);
+    return r1 === null && r2 === null;
+  })());
+ok('R16-14 dropping "b" AFTER "a" in [a,b] (already adjacent, no-op position) computes null — no wasted rank-endpoint call for a drop that would not change anything',
+  runReorderSteps(['a', 'b'], 'b', 'a', false) === null);
+ok('R16-15 wirePlanRowReorder scopes sibling rows via the SAME container hierarchy the server\'s computeSiblingIds uses (top-level project group / bare tree, or a master\'s own .rm-master-plans child-plan list) — never a flat cross-scope query',
+  /planRowContainer\(rowEl\)/.test(roadmapJsNoComments) &&
+  /rm-project-group,\s*\.rm-children\.rm-phase-series,\s*\.rm-tree/.test(roadmapJsNoComments.replace(/\s+/g, ' ')));
+
+// ---- deliverable 2: markdown rendering (web/md-render.js) ----------------
+let mdRender = null;
+try { mdRender = require(path.join(D, 'md-render.js')); } catch (_) { /* R16-MD checks fail honestly below */ }
+ok('R16-MD0 md-render.js loads as a plain Node module (dual-mode: browser global AND require()) and exports renderMarkdown',
+  !!mdRender && typeof mdRender.renderMarkdown === 'function');
+if (mdRender) {
+  const rm = mdRender.renderMarkdown;
+  ok('R16-MD1 headings render as real <h1>-<h6>, escaped',
+    rm('# Title') === '<h1>Title</h1>' && rm('### Sub') === '<h3>Sub</h3>');
+  ok('R16-MD2 bold/italic/inline-code render inside a paragraph',
+    rm('a **bold** b *italic* c `code` d') === '<p>a <strong>bold</strong> b <em>italic</em> c <code>code</code> d</p>');
+  ok('R16-MD3 fenced code blocks render verbatim (escaped), never inline-formatted (a "**not bold**" literal inside a fence stays literal)',
+    rm('```\n**not bold**\n```') === '<pre class="md-code"><code>**not bold**</code></pre>');
+  ok('R16-MD4 a language-tagged fence carries a language-<lang> class on <code>',
+    rm('```js\nvar x=1;\n```') === '<pre class="md-code"><code class="language-js">var x=1;</code></pre>');
+  ok('R16-MD5 "- [ ] x" / "- [x] y" render as an unchecked/checked list item, glyph + real text (never colour/glyph-only)',
+    (function () {
+      const html = rm('- [ ] todo one\n- [x] done one');
+      return /<li class="md-task">.*todo one<\/li>/.test(html) &&
+        /<li class="md-task md-task-done">.*done one<\/li>/.test(html) &&
+        /&#9744;/.test(html) && /&#9745;/.test(html);
+    })());
+  ok('R16-MD6 blockquotes render as <blockquote>, recursively rendering their (unwrapped) content',
+    rm('> a quoted line') === '<blockquote><p>a quoted line</p></blockquote>');
+  ok('R16-MD7 a "cheap" GFM-style table renders <table>/<thead>/<tbody>',
+    (function () {
+      const html = rm('| a | b |\n|---|---|\n| 1 | 2 |');
+      return /<table class="md-table">/.test(html) && /<th>a<\/th>/.test(html) && /<td>2<\/td>/.test(html);
+    })());
+  ok('R16-MD8 an http(s) link becomes a real <a href> with target=_blank/rel=noopener (never a leaked window.opener handle)',
+    rm('[go](https://example.com/x)') === '<p><a href="https://example.com/x" target="_blank" rel="noopener noreferrer">go</a></p>');
+  ok('R16-MD9 a repo-relative link (no URL scheme) renders as an inert doc-link span — never a clickable href (no cross-doc navigation is wired here)',
+    (function () {
+      const html = rm('[plan](docs/plans/foo.md)');
+      return /<span class="md-doc-link"[^>]*>plan<\/span>/.test(html) && !/<a /.test(html);
+    })());
+  ok('R16-MD10 an unsafe scheme (javascript:) NEVER becomes an href — the link syntax degrades to plain text, no anchor at all',
+    (function () {
+      const html = rm('[bad](javascript:alert(1))');
+      return !/<a /.test(html) && !/href/.test(html);
+    })());
+  // THE fixture proof this task's report is required to cite: a doc
+  // containing a literal <script> tag renders INERT — escaped text inside
+  // a <p>, never a live, executing tag. This is the security-critical
+  // property web/md-render.js's own header names as load-bearing.
+  ok('R16-MD11 SECURITY FIXTURE: a doc body containing a literal "<script>alert(1)</script>" renders as inert escaped text, NEVER a live tag — proves the escaping-first design actually holds end to end',
+    rm('<script>alert(1)</script>') === '<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>');
+  ok('R16-MD12 SECURITY FIXTURE 2: the SAME literal script tag embedded inside a heading, a list item, and a blockquote all still render escaped — the escaping discipline is not just the paragraph path',
+    (function () {
+      const h = rm('# <script>alert(2)</script>');
+      const li = rm('- <script>alert(3)</script>');
+      const bq = rm('> <script>alert(4)</script>');
+      return h.indexOf('<script>') === -1 && h.indexOf('&lt;script&gt;') !== -1 &&
+        li.indexOf('<script>') === -1 && li.indexOf('&lt;script&gt;') !== -1 &&
+        bq.indexOf('<script>') === -1 && bq.indexOf('&lt;script&gt;') !== -1;
+    })());
+  ok('R16-MD13 a raw "<img onerror=...>"-style attribute-injection attempt also renders fully inert (escaped), not just <script> specifically',
+    rm('<img src=x onerror="alert(1)">').indexOf('<img') === -1);
+}
+
+// ---- deliverable 2: BOTH callers (Docs panel + plan-doc modal) wire the
+// SAME renderer into the SAME shared #docBody, per the plan's binding spec
+ok('R16-MD14 app.js\'s Docs panel (openDoc) renders fetched doc content via window.MdRender.renderMarkdown into #docBody.innerHTML (never raw textContent for real content — the plain-text path is a defensive fallback only, for when the script failed to load)',
+  /window\.MdRender && typeof window\.MdRender\.renderMarkdown === 'function'/.test(js) &&
+  /docBody\.innerHTML = window\.MdRender\.renderMarkdown\(j\.content\)|docBody\.innerHTML = window\.MdRender\.renderMarkdown\(rawContent\)/.test(js));
+ok('R16-MD15 roadmap.js\'s plan-doc modal (openPlanDocModal) renders through the SAME window.MdRender.renderMarkdown into the SAME #docBody — one renderer, two callers, per the plan\'s ux-review amendment 6 ("no pane grows its own link/render handling")',
+  /docBody\.innerHTML = window\.MdRender\.renderMarkdown\(j\.content\)/.test(roadmapJsNoComments));
+ok('R16-MD16 md-render.js is served by server.js at /md-render.js (same static-mount convention as app.js/asks.js/todo.js/backlog.js) and loaded in index.html BEFORE app.js and roadmap.js (both callers need window.MdRender defined by the time they run)',
+  (function () {
+    const serverSrc = fs.readFileSync(path.join(D, '..', 'server', 'server.js'), 'utf8');
+    const mdMountIdx = serverSrc.indexOf("url === '/md-render.js'");
+    // match the literal <script src="..."> TAGS specifically — a bare
+    // path search would also match this same file's own prose comments
+    // (e.g. "Rendered by web/roadmap.js" inside a tab-description block),
+    // giving a false-early index unrelated to script load order.
+    const htmlMdIdx = html.indexOf('<script src="/md-render.js">');
+    const htmlAppIdx = html.indexOf('<script src="/app.js">');
+    const htmlRoadmapIdx = html.indexOf('<script src="/roadmap.js">');
+    return mdMountIdx !== -1 && htmlMdIdx !== -1 && htmlAppIdx !== -1 && htmlRoadmapIdx !== -1 &&
+      htmlMdIdx < htmlAppIdx && htmlMdIdx < htmlRoadmapIdx;
+  })());
+ok('R16-MD17 the Docs panel/plan-doc modal CSS (.doc-body) scopes monospace to code only (.md-code/code), not the whole document — the Round 15-and-earlier white-space:pre-wrap/monospace raw-text dump is gone',
+  !/\.doc-body\s*\{[^}]*white-space:\s*pre-wrap/.test(C) &&
+  !/\.doc-body\s*\{[^}]*font-family:\s*monospace/.test(C) &&
+  /\.doc-body code\s*\{[^}]*font-family:/.test(C));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');
