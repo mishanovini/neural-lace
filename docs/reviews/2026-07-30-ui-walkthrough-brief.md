@@ -58,13 +58,15 @@ The scanning mechanism exists and is tested — it is ONE config file away.
 
 ### B. The Machines panel (cross-machine view)
 This Mac publishes its state every 60s. The panel stays honestly empty until the Windows
-desktop publishes too. **CORRECTION (2026-07-30): the instruction previously here was
-defective — the installer script `install-coord-sync-task.ps1` exists only on this Mac's
-unmerged branch, so it is NOT on the desktop's checkout and the command fails with
-file-not-found (operator proved this live).** The Inbox item is retracted. After the
-branch merges to master, the corrected ask will be re-issued with the full sequence
-(cd into the repo → git pull → the command, each step fenced separately). Nothing for
-you to do until then.
+desktop publishes too. **SECOND CORRECTION (2026-07-30, supersedes the first — which was
+itself wrong): the installer script HAS been on origin/master since 14568b2 (2026-07-17);
+proven by `git cat-file -e origin/master:adapters/claude-code/scripts/install-coord-sync-task.ps1`
+→ exit 0 after a fresh fetch. The first "correction" claimed the script was unmerged —
+asserted without running that one-line check. The REAL failure, per the operator's own
+screenshot: PowerShell was at `C:\Users\misha`, outside the repo, so the relative `-File`
+path had nothing to resolve against.** The corrected ask (cd into the repo → git pull →
+run, each step its own fenced block) is re-issued in the Inbox and is actionable NOW —
+no merge required.
 
 ### C. The propose/accept flow — the ONE thing you asked for that was never built
 From your Round 4 sit-down (2026-07-17/18): work items sourced from meetings/suggestions

@@ -1,6 +1,8 @@
 # Plan — Machine folder reorganization: three roots, every project home
 
-Status: ACTIVE
+Status: ACTIVE (DEPRIORITIZED — operator 2026-07-30: "the folder cleanup is not a
+priority at all"; no tasks dispatched until the operator raises it. Recorded, not
+dropped.)
 Key: ORG
 Mode: code
 rung: 1
