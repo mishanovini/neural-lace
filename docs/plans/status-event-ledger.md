@@ -33,7 +33,7 @@ unknown(reason)) + `<PlanKey><TaskId>` tokens; chat reports use EXACTLY these to
 | 1 | dispatch started (plan/task/role attributed) | PreToolUse Task\|Agent\|Workflow → workstreams-emit --on-builder-dispatch parses NL-ATTRIBUTION | **BUILT** b93a7d5 |
 | 2 | dispatch concluded (paired ids) | Stop → --on-stop reads the stopping session's header | **BUILT** b93a7d5 |
 | 3 | task started/done | plan-lifecycle + progress-log emit task_started/task_done | **PARTIAL** — events exist; done-emit fires only via checkbox flip path |
-| 4 | handoff complete (builder commit landed) | estate-merge.sh + the orchestrator's cherry-pick → emit at the merge primitive (T5's single merge path IS the chokepoint) | **BUILT** 2c86b60 — SE1 (`_em_log_merge`, the single funnel every terminal `cmd_merge` outcome already passes through, now calls `_em_emit_ledger_event`; two new progress-log-lib.sh types, `merge-completed`/`merge-failed`, field-reuse per the plan_outcome_recorded/plan_reopened idiom; `estate-merge` registered in `_PL_KNOWN_EMITTERS`. estate-merge.sh --self-test 52/0 → 69/0 both /bin/bash 3.2.57 and /opt/homebrew/bin/bash 5.3.15, mutation-proven. RESIDUAL, named not hidden: today only close-worktree.sh routes through estate-merge.sh (per its own manifest entry: "NOT yet the estate's ONLY merge path"); the orchestrator's own PARALLEL-mode cherry-pick is a direct `git cherry-pick` an agent performs, not a call into this script, so that path stays uninstrumented until it too is routed through estate-merge.sh or gets its own emit) |
+| 4 | handoff complete (builder commit landed) | estate-merge.sh + the orchestrator's cherry-pick → emit at the merge primitive (T5's single merge path IS the chokepoint) | **BUILT** 4a2ca13 — SE1 (`_em_log_merge`, the single funnel every terminal `cmd_merge` outcome already passes through, now calls `_em_emit_ledger_event`; two new progress-log-lib.sh types, `merge-completed`/`merge-failed`, field-reuse per the plan_outcome_recorded/plan_reopened idiom; `estate-merge` registered in `_PL_KNOWN_EMITTERS`. estate-merge.sh --self-test 52/0 → 69/0 both /bin/bash 3.2.57 and /opt/homebrew/bin/bash 5.3.15, mutation-proven. RESIDUAL, named not hidden: today only close-worktree.sh routes through estate-merge.sh (per its own manifest entry: "NOT yet the estate's ONLY merge path"); the orchestrator's own PARALLEL-mode cherry-pick is a direct `git cherry-pick` an agent performs, not a call into this script, so that path stays uninstrumented until it too is routed through estate-merge.sh or gets its own emit) |
 | 5 | suite run pass/fail counts | the sweep runner + a per-suite emit wrapper at the --self-test entry | **UNBUILT** — SE2 |
 | 6 | review verdict INCLUDING non-PASS | write-review-record.sh emits every verdict; records index gains non-PASS entries (REVIEW-INDEX-FAILURE-BLIND-01) | **BUILT** — SE3 (cmd_capture emits a `review-verdict` ledger event on EVERY verdict, unconditionally; index already folded non-PASS rows, now proven by self-test S21/S22, 22/22 both interpreters. RESIDUAL: nothing forces capture to be CALLED for a non-queue-pathway review — an uncaptured verdict still emits nothing, honestly unchanged) |
 | 7 | verification verdict + checkbox flip | plan-edit-validator already gates the flip; add emit at validation | **BUILT** — SE4 (emit_flip_ledger_event fires a `flip-verdict` ledger event {plan, task, verdict, confidence, verifier} on every AUTHORIZED flip; self-test F16/F17, 12/17 both interpreters — the 5 pre-existing F5-F9 failures are an unrelated, pre-existing `stat -c %Y` portability bug, PROVEN unchanged on the unmodified file, docs/backlog.md HARNESS-GAP-62) |
@@ -48,7 +48,7 @@ unknown(reason)) + `<PlanKey><TaskId>` tokens; chat reports use EXACTLY these to
 
 - [ ] SE1 — Handoff-complete emit at estate-merge.sh (the single merge chokepoint) + the
       orchestrator cherry-pick path. Verification: full.
-      **BUILT 2026-07-30** (2c86b60) — see taxonomy row 4. `_em_log_merge` (already the
+      **BUILT 2026-07-30** (4a2ca13) — see taxonomy row 4. `_em_log_merge` (already the
       one funnel every terminal `cmd_merge` outcome passes through) now calls
       `_em_emit_ledger_event`, emitting `merge-completed`/`merge-failed` progress-log-lib.sh
       events with branch/target/sha/machine on every success/failure path. Suite 69/0 both
@@ -124,6 +124,10 @@ session builds them, per `## In-flight scope updates` below. -->
 ## In-flight scope updates
 - SE1's files are now declared in the `## Files to Modify/Create` section below
   (estate-merge.sh, progress-log-lib.sh, manifest.json).
+- 2026-07-30: `docs/plans/status-event-ledger-evidence.md` (new) — SE1's rung-2
+  `## Comprehension Articulation` evidence entry, required before task-verifier can flip the
+  checkbox; also carries the corrected row-4/SE1 BUILT SHA (4a2ca13, the landed commit, not
+  the worktree-local 2c86b60).
 - SE2/SE5/SE6/SE7/SE8/SE9's own files are not yet declared — each builder adds its
   actual touched files here (or to the list above) when that task lands, per this
   section's standard purpose.
