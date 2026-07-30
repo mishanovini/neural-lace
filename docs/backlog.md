@@ -2103,3 +2103,17 @@ and does not explain it.
 **Action:** none required beyond what `PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` already tracks.
 **Filed by:** plan-phase-builder, false-eternal-running-fix build, 2026-07-30 (investigation
 requested alongside the roadmap rollup fix).
+- **REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01** (CRITICAL, measured 2026-07-30):
+  review-record-commit-gate.sh demands a harness-reviewer PASS record before a builder
+  subagent may commit — but builder subagents have NO Task/Agent-dispatch tool, so they
+  cannot invoke harness-reviewer. The gate's prescribed remedy is UNREACHABLE from the
+  layer the gate fires at. Evidence: ~/.claude/state/review-record-gate-overrides.log
+  holds 78 override events (68 on 2026-07-29, 10 on 2026-07-30); EVERY one of today's
+  ten states the same reason — "no Task/Agent-dispatch tool; cannot invoke
+  harness-reviewer". This is a remedy-chain deadlock (ADR 059 D5 class), not agent
+  misconduct: the only two exits are "never commit" or "override". It is also why the
+  override exists and why it is used as the normal path.
+  FIX DIRECTION (builder aff45ca5 in flight): move the AUTHORITATIVE gate to pre-push,
+  where the ORCHESTRATOR — which does have dispatch capability — is the actor, so the
+  remedy is reachable from the layer that enforces it. Keep the commit-time gate as
+  advisory-only early feedback so builders are informed without being deadlocked.
