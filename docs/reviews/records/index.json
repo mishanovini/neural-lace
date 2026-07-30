@@ -585,6 +585,21 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "b6967aa2acde2f4d600d0cf0e1ecff6e67420447",
+      "record_id": "hcr-20260730-5e935b29",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T16:06:03Z",
+      "reviewer_principal": {
+        "hostname": "Mishas-Mac-mini",
+        "account": "unknown",
+        "session_id": "a1bed5264b506cf2a"
+      },
+      "independence": "pathway"
+    },
+    {
       "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
       "blob_sha": "1792665e3a56142aea332020467da337f15295a7",
       "record_id": "hcr-20260724-63b76ebb",
@@ -715,6 +730,21 @@
       "created_at": "2026-07-30T00:35:28Z",
       "reviewer_principal": null,
       "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/observability-derive.sh",
+      "blob_sha": "6678c2e30dc9e96f58aa16209f7900c8e0b57fcd",
+      "record_id": "hcr-20260730-5e935b29",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T16:06:03Z",
+      "reviewer_principal": {
+        "hostname": "Mishas-Mac-mini",
+        "account": "unknown",
+        "session_id": "a1bed5264b506cf2a"
+      },
+      "independence": "pathway"
     },
     {
       "path": "adapters/claude-code/hooks/lib/perf-ledger.sh",
@@ -2476,6 +2506,21 @@
       "created_at": "2026-07-30T07:06:36Z",
       "reviewer_principal": null,
       "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/review-runner.sh",
+      "blob_sha": "2cfd6a858059bcb1645087374963908f07c91c39",
+      "record_id": "hcr-20260730-5e935b29",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T16:06:03Z",
+      "reviewer_principal": {
+        "hostname": "Mishas-Mac-mini",
+        "account": "unknown",
+        "session_id": "a1bed5264b506cf2a"
+      },
+      "independence": "pathway"
     },
     {
       "path": "adapters/claude-code/scripts/selftest-sweep-exclusions.sh",
