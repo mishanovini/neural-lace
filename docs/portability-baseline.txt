@@ -23,11 +23,10 @@
 #
 # Measured: interpreter=/bin/bash  (GNU bash, version 3.2.57(1)-release (arm64-apple-darwin25))
 #           roots="hooks hooks/lib scripts"  per-script-timeout=120s  total-budget=5400s
-#           discovered=164 pass=112 fail=52 timeout=0 skip=0
+#           discovered=170 pass=124 fail=46 timeout=0 skip=0  (2026-07-29, macos-portability M6)
 #
 # Format: <STATUS><TAB><path relative to adapters/claude-code>
 FAIL	hooks/backlog-plan-atomicity.sh
-FAIL	hooks/cross-repo-nl-touch-warn.sh
 FAIL	hooks/decision-context-pending-surfacer.sh
 FAIL	hooks/decisions-index-gate.sh
 FAIL	hooks/docs-freshness-gate.sh
@@ -35,9 +34,7 @@ FAIL	hooks/evidence-before-fix-gate.sh
 FAIL	hooks/find-disk-scan-gate.sh
 FAIL	hooks/harness-doctor.sh
 FAIL	hooks/lib/observability-derive.sh
-FAIL	hooks/lib/perf-ledger.sh
 FAIL	hooks/lib/perf-tick-snapshot.sh
-FAIL	hooks/lib/session-heartbeat-lib.sh
 FAIL	hooks/migration-claude-md-gate.sh
 FAIL	hooks/plan-edit-validator.sh
 FAIL	hooks/plan-lifecycle.sh
@@ -45,12 +42,10 @@ FAIL	hooks/plan-reviewer.sh
 FAIL	hooks/pr-template-inline-gate.sh
 FAIL	hooks/propagation-trigger-router.sh
 FAIL	hooks/review-finding-fix-gate.sh
-FAIL	hooks/scope-enforcement-gate.sh
 FAIL	hooks/session-start-digest.sh
 FAIL	hooks/session-start-git-freshness.sh
 FAIL	hooks/workstreams-emit.sh
 FAIL	hooks/workstreams-read.sh
-FAIL	scripts/agent-heartbeat.sh
 FAIL	scripts/ask-registry.sh
 FAIL	scripts/check-cross-repo-drift.sh
 FAIL	scripts/close-plan.sh
@@ -69,13 +64,10 @@ FAIL	scripts/gate-demotion.sh
 FAIL	scripts/harness-eval-decision-queue-bridge.sh
 FAIL	scripts/master-drift-autocorrect.sh
 FAIL	scripts/model-availability.sh
-FAIL	scripts/needs-you.sh
-FAIL	scripts/nl-issue.sh
 FAIL	scripts/nl.sh
 FAIL	scripts/pr-health-snapshot.sh
 FAIL	scripts/remap-placeholder-ask-events.sh
 FAIL	scripts/scheduled-task-health.sh
-FAIL	scripts/session-resumer.sh
 FAIL	scripts/session-wrap.sh
 FAIL	scripts/start-plan.sh
 FAIL	scripts/state-summary.sh

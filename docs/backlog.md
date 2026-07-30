@@ -1857,3 +1857,45 @@ artifact is needed ONCE and the next attempt runs on a faster machine or a
 generous scheduled-task limit, either of which removes the need).
 **Filed by:** accountable-estate-program-2026-07 T7 build (loe-backfill.sh
 + plan-reviewer.sh Check 18).
+
+---
+
+**RETRY-GUARD-STATE-LEAK-DCG-01** (2026-07-29)
+**Severity:** P2 (a retired script's own self-test corrupts real repo state
+on repeat runs; the script itself is scheduled for hard-delete, so the fix
+is small, but the leak is real and currently un-contained outside my
+hardened caller).
+**Finding (PROVEN, macos-portability-2026-07 M6 S11-flake investigation):**
+`adapters/claude-code/attic/decision-context-gate.sh --self-test` scenario
+ST1 (lines ~924-933) invokes `bash "$SELF" <<<...` without isolating CWD or
+`RETRY_GUARD_STATE_DIR`. Its Tier-1-block path calls
+`retry_guard_block_or_exit` (`hooks/lib/stop-hook-retry-guard.sh`), which
+persists a counter at `${RETRY_GUARD_STATE_DIR:-.claude/state}/stop-hook-
+retries-decision-context-gate-st1.txt` — CWD-relative, i.e. the REAL repo's
+own `.claude/state/`. PROVEN: after ~90 repeated self-test runs during this
+investigation, that file held `271db2a4f357|db280f21df93572e34539e6ee36d96
+fafb11b255|93`. Once the counter crosses `RETRY_GUARD_THRESHOLD` (3), ST1's
+own "exit 2" assertion starts failing — the gate silently downgrades
+(exits 0) instead of blocking, because it believes it has seen the same
+failure 3+ times, independent of whether this is really the 1st or 93rd
+run. Sibling scenario ST9 already isolates correctly (it `cd`s into a fresh
+`$TMP/run9-state` before invoking the child); ST1 (and possibly ST2/ST5/
+ST11/ST12/ST28, not yet audited) does not.
+**Not fixed here** — out of my dispatched scope (macos-portability M6 owns
+only `adapters/claude-code/scripts/selftest-sweep-exclusions.sh` and
+`docs/portability-baseline.txt`). I hardened the CALLER instead: my S11
+loop (in `selftest-sweep-exclusions.sh`) now injects a fresh
+`RETRY_GUARD_STATE_DIR`/`HARNESS_SELFTEST_DIR` per child invocation as
+defense-in-depth, so the sweep itself no longer writes into real repo
+state or depends on prior-run history. But `decision-context-gate.sh`
+invoked ANY OTHER way (directly, or by a future caller that doesn't
+replicate my isolation) still leaks.
+**Action (future):** apply ST9's isolation pattern to ST1 (and audit ST2/
+ST5/ST11/ST12/ST28) in `attic/decision-context-gate.sh`. Verify with 5+
+repeated `--self-test` runs from a stable CWD: ST1 must stay PASS every
+time, and no file may appear under the repo's real
+`.claude/state/stop-hook-retries-decision-context-gate-*`. Also spawned as
+task_8d243391 ("Fix retry-guard state leak in attic/decision-context-
+gate.sh").
+**Filed by:** macos-portability-2026-07 M6 build (S11-flake root-cause
+investigation).

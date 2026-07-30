@@ -220,7 +220,7 @@ EOF
 # WARN (exit 0) when one now passes: the exclusion is stale.
 # ------------------------------------------------------------
 do_verify() {
-  local root path stale=0 checked=0 rc
+  local root path stale=0 checked=0 rc sandbox
   root="$(resolve_repo_root)" || {
     echo "[exclusions] WARN repo root unresolvable — verify skipped"
     return 0
@@ -229,9 +229,17 @@ do_verify() {
     [ -n "$path" ] || continue
     [ -f "${root}/${path}" ] || continue
     checked=$((checked + 1))
-    HARNESS_SELFTEST=1 nl_run_bounded "${NL_EXCLUSIONS_VERIFY_TIMEOUT:-300}" \
+    # Same isolation as S11's --self-test copy of this loop, and for the
+    # same proven reason: a child's own retry-guard state must never
+    # accumulate across invocations of THIS reader (see the S11 comment in
+    # do_self_test for the full incident this fixes).
+    sandbox="$(mktemp -d 2>/dev/null || echo "${TMPDIR:-/tmp}/nl-excl-verify-$$-${checked}")"
+    mkdir -p "$sandbox" 2>/dev/null || true
+    HARNESS_SELFTEST=1 RETRY_GUARD_STATE_DIR="$sandbox" HARNESS_SELFTEST_DIR="$sandbox" \
+      nl_run_bounded "${NL_EXCLUSIONS_VERIFY_TIMEOUT:-300}" \
       "$BASH" "${root}/${path}" --self-test >/dev/null 2>&1 </dev/null
     rc=$?
+    rm -rf "$sandbox" 2>/dev/null || true
     if [ "$rc" -eq 0 ]; then
       echo "[exclusions] WARN C4 ${path}: --self-test now PASSES under $BASH — this exclusion is STALE, delete its ledger line"
       stale=$((stale + 1))
@@ -356,12 +364,51 @@ EOF
   # ---- S11 (REAL ARTIFACT, C4): both excluded scripts must STILL FAIL their
   # own --self-test under THIS interpreter. Run directly here rather than
   # through do_verify so the assertion is on the real exit codes.
-  local p stale=0
+  #
+  # ISOLATION (2026-07-29, macos-portability M6 follow-up on a verifier-proven
+  # 5/7-run flake in this exact loop): attic/decision-context-gate.sh's own
+  # --self-test drives Tier-1-block scenarios through
+  # hooks/lib/stop-hook-retry-guard.sh, which persists a per-(hook,session)
+  # counter at `${RETRY_GUARD_STATE_DIR:-.claude/state}/stop-hook-retries-*` —
+  # CWD-relative, and NOT sandboxed by that child itself outside its own ST9
+  # fixture. This loop never changes CWD, so every prior invocation through
+  # THIS script wrote that counter into the REAL repo's own .claude/state/
+  # (PROVEN live in this worktree: after ~90 repeated self-test runs during
+  # this investigation, `.claude/state/stop-hook-retries-decision-context-
+  # gate-st1.txt` held count=93; deleted as part of this fix). Once that
+  # counter crosses RETRY_GUARD_THRESHOLD (default 3), the child's OWN
+  # Tier-1-block scenario stops blocking and starts exiting 0 via the
+  # downgrade path — a real, reproduced source of a child's outcome
+  # depending on "how many times has this suite run before, in this
+  # session or any prior one," which is exactly the shared-state-across-
+  # invocations class this loop must never depend on. A fresh
+  # RETRY_GUARD_STATE_DIR (and HARNESS_SELFTEST_DIR, same class) per child
+  # invocation removes that dependency: every run starts the counter at 1,
+  # identically, regardless of history. This does NOT touch CWD/HOME — the
+  # child's OWN git-root/schema resolution, and therefore WHICH documented
+  # failure it reports, is unchanged; only the one CWD-relative state path
+  # this shared library resolves outside of any test fixture's own sandbox
+  # is isolated.
+  local p stale=0 s11_out s11_rc s11_sandbox
   while IFS= read -r p; do
     [ -n "$p" ] || continue
-    HARNESS_SELFTEST=1 nl_run_bounded "${NL_EXCLUSIONS_VERIFY_TIMEOUT:-300}" \
-      "$BASH" "${root}/${p}" --self-test >/dev/null 2>&1 </dev/null
-    [ $? -eq 0 ] && stale=$((stale + 1))
+    s11_sandbox="$(mktemp -d 2>/dev/null || echo "${tmp}/s11-rg-$$-$(printf '%s' "$p" | tr -c 'A-Za-z0-9' '_')")"
+    mkdir -p "$s11_sandbox" 2>/dev/null || true
+    s11_out="$(HARNESS_SELFTEST=1 RETRY_GUARD_STATE_DIR="$s11_sandbox" \
+      HARNESS_SELFTEST_DIR="$s11_sandbox" \
+      nl_run_bounded "${NL_EXCLUSIONS_VERIFY_TIMEOUT:-300}" \
+      "$BASH" "${root}/${p}" --self-test 2>&1 </dev/null)"
+    s11_rc=$?
+    rm -rf "$s11_sandbox" 2>/dev/null || true
+    if [ "$s11_rc" -eq 0 ]; then
+      stale=$((stale + 1))
+      # Self-diagnosing (required so the NEXT flake here never needs a human
+      # to re-run this under a debugger to see what happened): name the
+      # offending child, its rc, and a tail of what it actually printed.
+      echo "[S11-DIAG] STALE: ${p} --self-test exited 0 under $BASH (expected non-zero)" >&2
+      echo "[S11-DIAG] output tail (last 15 lines of combined stdout+stderr):" >&2
+      printf '%s\n' "$s11_out" | tail -n 15 >&2
+    fi
   done <<EOF
 $listed
 EOF
