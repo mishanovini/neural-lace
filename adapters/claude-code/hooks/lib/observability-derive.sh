@@ -635,12 +635,36 @@ _od_ledger_prefilter() {
 # as od_harness_health's per-gate tally), so bash only ever does cheap
 # integer comparisons on already-computed epochs.
 # ----------------------------------------------------------------------
-declare -gA _OD_BLOCK_EPOCH_BY_SID 2>/dev/null || true
-declare -gA _OD_THROTTLE_EPOCH_BY_SID 2>/dev/null || true
+# Storage is an append-only newline-delimited "sid<TAB>epoch" string per
+# event kind, max-folded at lookup by _od_epoch_index_max — NOT `declare -A`:
+# on /bin/bash 3.2 the `declare -gA ... || true` this replaces failed
+# SILENTLY, the arrays degraded to indexed, and `[$sid]` arithmetic-evaluated
+# real session ids as variable names ("a3fcb6ea: unbound variable" — broke
+# `nl status --json` and the cockpit's What's-running panel live). Same
+# lesson as the case/string patterns further down this file; the ONE-jq-pass
+# O.3 design is preserved (lookups scan a small in-memory string).
+_OD_BLOCK_EPOCH_INDEX=""
+_OD_THROTTLE_EPOCH_INDEX=""
+
+# _od_epoch_index_max <index-string> <sid> — print the max epoch among the
+# index lines whose sid matches exactly, or 0 when none match.
+_od_epoch_index_max() {
+  local s e best=0
+  if [[ -n "$1" ]]; then
+    while IFS=$'\t' read -r s e; do
+      [[ "$s" == "$2" ]] || continue
+      if [[ -n "$e" ]] && [[ "$e" -gt "$best" ]] 2>/dev/null; then
+        best="$e"
+      fi
+    done <<< "$1"
+  fi
+  printf '%s' "$best"
+}
+
 _od_sessions_epoch_index_build() {
   local ledger="$1"
-  _OD_BLOCK_EPOCH_BY_SID=()
-  _OD_THROTTLE_EPOCH_BY_SID=()
+  _OD_BLOCK_EPOCH_INDEX=""
+  _OD_THROTTLE_EPOCH_INDEX=""
   [[ -f "$ledger" ]] || return 0
 
   local sid kind epoch
@@ -648,16 +672,8 @@ _od_sessions_epoch_index_build() {
     while IFS=$'\t' read -r sid kind epoch; do
       [[ -z "$sid" ]] && continue
       case "$kind" in
-        block)
-          if [[ -z "${_OD_BLOCK_EPOCH_BY_SID[$sid]:-}" ]] || [[ "$epoch" -gt "${_OD_BLOCK_EPOCH_BY_SID[$sid]}" ]]; then
-            _OD_BLOCK_EPOCH_BY_SID["$sid"]="$epoch"
-          fi
-          ;;
-        throttle)
-          if [[ -z "${_OD_THROTTLE_EPOCH_BY_SID[$sid]:-}" ]] || [[ "$epoch" -gt "${_OD_THROTTLE_EPOCH_BY_SID[$sid]}" ]]; then
-            _OD_THROTTLE_EPOCH_BY_SID["$sid"]="$epoch"
-          fi
-          ;;
+        block)    _OD_BLOCK_EPOCH_INDEX="${_OD_BLOCK_EPOCH_INDEX}${sid}"$'\t'"${epoch}"$'\n' ;;
+        throttle) _OD_THROTTLE_EPOCH_INDEX="${_OD_THROTTLE_EPOCH_INDEX}${sid}"$'\t'"${epoch}"$'\n' ;;
       esac
     done < <(_od_jq -r '
       select(.event == "block" or (.gate == "resumer" and .event == "throttle-detected"))
@@ -675,18 +691,14 @@ _od_sessions_epoch_index_build() {
       [[ -z "$sid" ]] && sid="unknown"
       ts_raw="$(printf '%s' "$line" | sed -nE 's/.*"ts":"([^"]*)".*/\1/p')"
       epoch="$(_od_epoch "$ts_raw")"
-      if [[ -z "${_OD_BLOCK_EPOCH_BY_SID[$sid]:-}" ]] || [[ "$epoch" -gt "${_OD_BLOCK_EPOCH_BY_SID[$sid]}" ]]; then
-        _OD_BLOCK_EPOCH_BY_SID["$sid"]="$epoch"
-      fi
+      _OD_BLOCK_EPOCH_INDEX="${_OD_BLOCK_EPOCH_INDEX}${sid}"$'\t'"${epoch}"$'\n'
     done < <(grep '"event":"block"' "$ledger" 2>/dev/null)
     while IFS= read -r line; do
       sid="$(printf '%s' "$line" | sed -nE 's/.*"session_id":"([^"]*)".*/\1/p')"
       [[ -z "$sid" ]] && sid="unknown"
       ts_raw="$(printf '%s' "$line" | sed -nE 's/.*"ts":"([^"]*)".*/\1/p')"
       epoch="$(_od_epoch "$ts_raw")"
-      if [[ -z "${_OD_THROTTLE_EPOCH_BY_SID[$sid]:-}" ]] || [[ "$epoch" -gt "${_OD_THROTTLE_EPOCH_BY_SID[$sid]}" ]]; then
-        _OD_THROTTLE_EPOCH_BY_SID["$sid"]="$epoch"
-      fi
+      _OD_THROTTLE_EPOCH_INDEX="${_OD_THROTTLE_EPOCH_INDEX}${sid}"$'\t'"${epoch}"$'\n'
     done < <(grep '"gate":"resumer"' "$ledger" 2>/dev/null | grep '"event":"throttle-detected"')
   fi
 }
@@ -932,8 +944,9 @@ od_sessions() {
     else
       last_activity_epoch="$(_od_session_last_activity "$sid" "$hbfile" "$hb_last_activity_ts")"
     fi
-    local last_block_epoch="${_OD_BLOCK_EPOCH_BY_SID[$sid]:-0}"
-    local last_throttle_epoch="${_OD_THROTTLE_EPOCH_BY_SID[$sid]:-0}"
+    local last_block_epoch last_throttle_epoch
+    last_block_epoch="$(_od_epoch_index_max "$_OD_BLOCK_EPOCH_INDEX" "$sid")"
+    last_throttle_epoch="$(_od_epoch_index_max "$_OD_THROTTLE_EPOCH_INDEX" "$sid")"
 
     # Priority order: waiting-on-me > crashed > stalled > throttled >
     # blocked > working (unobserved-cloud is a distinct branch below,
@@ -1812,7 +1825,7 @@ od_costs() {
       if [[ -n "$self_sid" ]]; then
         local -a filtered_files=()
         local fbase
-        for tf in "${all_files[@]}"; do
+        for tf in ${all_files[@]+"${all_files[@]}"}; do
           fbase="$(basename "$tf" .jsonl)"
           if [[ "$fbase" == "$self_sid" || "$tf" == *"/${self_sid}/"* ]]; then
             self_excluded=1
@@ -1820,7 +1833,7 @@ od_costs() {
           fi
           filtered_files+=("$tf")
         done
-        all_files=("${filtered_files[@]}")
+        all_files=(${filtered_files[@]+"${filtered_files[@]}"})
       fi
 
       local total_files="${#all_files[@]}"
@@ -1829,7 +1842,7 @@ od_costs() {
         all_files=("${all_files[@]:0:$max_transcripts}")
       fi
       local sid
-      for tf in "${all_files[@]}"; do
+      for tf in ${all_files[@]+"${all_files[@]}"}; do
         sid="$(basename "$tf" .jsonl)"
         targets+=("$sid"$'\t'"$tf")
       done
