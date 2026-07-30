@@ -279,47 +279,138 @@
   }
 
   // ============================================================
+  // R17 deliverable 6 (audit F3 — the ledger's missing exit verb) + F7's
+  // JTBD J7 ("Clean up a junk request... no affordance exists"). Dismiss
+  // delegates to the SAME lifecycle endpoint asks.js's own (hidden)
+  // dismiss button already uses (POST /api/ask/<id>/lifecycle, action:
+  // "dismiss" — the server-side write path this audit finding itself
+  // notes "already exists conceptually"). "Confirm-click, not confirm-
+  // dialog" (the dispatch's own binding instruction): the action fires
+  // immediately, then offers an Undo within a short window — this app's
+  // own established undo-window pattern (asks.js's lifecycle rows /
+  // backlog.js), never a native confirm() dialog.
+  // ============================================================
+  var DISMISS_UNDO_WINDOW_MS = 8000;
+  function postLifecycle(askId, action) {
+    return fetch('/api/ask/' + encodeURIComponent(askId) + '/lifecycle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: action }),
+    }).then(function (r) { return r.json(); }).catch(function (err) { return { ok: false, error: String(err) }; });
+  }
+  function dismissRequest(askId, say, dismissBtn) {
+    dismissBtn.disabled = true;
+    postLifecycle(askId, 'dismiss').then(function (r) {
+      if (!(r && r.ok)) {
+        dismissBtn.disabled = false;
+        say((r && r.error) || 'Could not dismiss this request.', true);
+        return;
+      }
+      dismissBtn.hidden = true;
+      var undoBtn = btn('ghost small rl-undo-btn', 'Undo', function () {
+        clearTimeout(timer);
+        undoBtn.disabled = true;
+        postLifecycle(askId, 'reopen').then(function (r2) {
+          if (r2 && r2.ok) { say('Restored.', false); dismissBtn.hidden = false; undoBtn.remove(); dismissBtn.disabled = false; }
+          else { undoBtn.disabled = false; say('Could not undo: ' + ((r2 && r2.error) || 'unknown error'), true); }
+        });
+      });
+      dismissBtn.parentNode.appendChild(undoBtn);
+      say('Dismissed.', false);
+      var timer = setTimeout(function () { load(); }, DISMISS_UNDO_WINDOW_MS);
+    });
+  }
+
+  // ============================================================
   // timeline rendering (I6 — oldest-first, origin pinned first, "became →"
   // as the terminal event)
+  //
+  // R17 deliverable 2b (audit F4b — the live defect: 93 of 95 timeline
+  // events were the literal three words "amendment captured", rendered as
+  // 93 identical <li> rows with zero content scent). groupConsecutiveTimelineEvents
+  // (pure, DOM-free — marker-anchored for real-execution testing) groups a
+  // RUN of 3+ consecutive, identical (type+text) events; timelineNode folds
+  // a collapsed run behind its own <details> ("N × <text> ▸"), never
+  // dropping the individual events — expanding it still renders every one
+  // via the SAME timelineEventNode a non-collapsed event uses (so a
+  // collapsed amendment keeps its own Detach affordance once expanded).
+  // Threshold of 3 (not 2): two adjacent identical events aren't noisy
+  // enough to be worth hiding behind a click.
   // ============================================================
+  // GROUP-TIMELINE-RUNS-BEGIN
+  function groupConsecutiveTimelineEvents(events) {
+    var evs = events || [];
+    var groups = [];
+    var i = 0;
+    while (i < evs.length) {
+      var j = i + 1;
+      while (j < evs.length && evs[j].type === evs[i].type && evs[j].text === evs[i].text) j++;
+      groups.push({ events: evs.slice(i, j), collapsed: (j - i) >= 3 });
+      i = j;
+    }
+    return groups;
+  }
+  // GROUP-TIMELINE-RUNS-END
+
+  function timelineEventNode(item, ev) {
+    var li = document.createElement('li');
+    li.className = 'rl-timeline-event rl-event-' + ev.type;
+    var textSpan = el('span', 'rl-event-text', ev.text);
+    li.appendChild(textSpan);
+    var ageSpan = el('span', 'rl-event-age', formatAge(ev.ts));
+    li.appendChild(ageSpan);
+    if (ev.type === 'promoted' && shell) {
+      // Round 8 re-rooted the Roadmap on PLAN slugs (roadmap-routes.js
+      // id: pf.slug) — the target is the promoted plan, never this ask's
+      // own id (2026-07-22 acceptance S4: ask-id targets false-miss).
+      var becameSlug = ev.plan_slug || (item.became && item.became.plan_slug) || '';
+      if (becameSlug) {
+        li.appendChild(btn('ghost small rl-became-link', 'open on the Roadmap', function () {
+          shell.navigate('#roadmap/' + becameSlug);
+        }));
+      }
+    }
+    if (ev.detachable) {
+      var feedback = el('span', 'rl-event-feedback', '');
+      feedback.setAttribute('aria-live', 'polite');
+      var detachBtn = btn('ghost small rl-detach-btn', 'Detach (not an amendment)', function () {
+        detachBtn.disabled = true;
+        detachAmendment(item.id, ev.ts, function (text, isErr) {
+          feedback.textContent = text;
+          feedback.className = 'rl-event-feedback' + (isErr ? ' rl-feedback-err' : ' rl-feedback-ok');
+          if (isErr) detachBtn.disabled = false;
+        });
+      });
+      detachBtn.title = 'marks this candidate as not-an-amendment (feeds the classifier) — undo-window pattern (I6)';
+      li.appendChild(detachBtn);
+      li.appendChild(feedback);
+    }
+    return li;
+  }
+
+  function collapsedRunNode(item, runEvents) {
+    var li = document.createElement('li');
+    li.className = 'rl-timeline-event rl-event-collapsed-run';
+    var det = document.createElement('details');
+    det.className = 'rl-collapsed-run';
+    var sum = document.createElement('summary');
+    sum.className = 'rl-collapsed-run-summary';
+    var baseText = runEvents[0].text || '(no text)';
+    sum.textContent = runEvents.length + ' × ' + baseText;
+    det.appendChild(sum);
+    var innerList = document.createElement('ol');
+    innerList.className = 'rl-timeline-list rl-collapsed-run-list';
+    runEvents.forEach(function (ev) { innerList.appendChild(timelineEventNode(item, ev)); });
+    det.appendChild(innerList);
+    li.appendChild(det);
+    return li;
+  }
+
   function timelineNode(item) {
     var wrap = el('div', 'rl-timeline');
     var list = document.createElement('ol');
     list.className = 'rl-timeline-list';
-    (item.timeline || []).forEach(function (ev) {
-      var li = document.createElement('li');
-      li.className = 'rl-timeline-event rl-event-' + ev.type;
-      var textSpan = el('span', 'rl-event-text', ev.text);
-      li.appendChild(textSpan);
-      var ageSpan = el('span', 'rl-event-age', formatAge(ev.ts));
-      li.appendChild(ageSpan);
-      if (ev.type === 'promoted' && shell) {
-        // Round 8 re-rooted the Roadmap on PLAN slugs (roadmap-routes.js
-        // id: pf.slug) — the target is the promoted plan, never this ask's
-        // own id (2026-07-22 acceptance S4: ask-id targets false-miss).
-        var becameSlug = ev.plan_slug || (item.became && item.became.plan_slug) || '';
-        if (becameSlug) {
-          li.appendChild(btn('ghost small rl-became-link', 'open on the Roadmap', function () {
-            shell.navigate('#roadmap/' + becameSlug);
-          }));
-        }
-      }
-      if (ev.detachable) {
-        var feedback = el('span', 'rl-event-feedback', '');
-        feedback.setAttribute('aria-live', 'polite');
-        var detachBtn = btn('ghost small rl-detach-btn', 'Detach (not an amendment)', function () {
-          detachBtn.disabled = true;
-          detachAmendment(item.id, ev.ts, function (text, isErr) {
-            feedback.textContent = text;
-            feedback.className = 'rl-event-feedback' + (isErr ? ' rl-feedback-err' : ' rl-feedback-ok');
-            if (isErr) detachBtn.disabled = false;
-          });
-        });
-        detachBtn.title = 'marks this candidate as not-an-amendment (feeds the classifier) — undo-window pattern (I6)';
-        li.appendChild(detachBtn);
-        li.appendChild(feedback);
-      }
-      list.appendChild(li);
+    groupConsecutiveTimelineEvents(item.timeline).forEach(function (g) {
+      if (g.collapsed) list.appendChild(collapsedRunNode(item, g.events));
+      else g.events.forEach(function (ev) { list.appendChild(timelineEventNode(item, ev)); });
     });
     wrap.appendChild(list);
     return wrap;
@@ -347,6 +438,21 @@
     editBtn.addEventListener('click', function () { openTitleEditor(titleRow, item, editBtn, say); });
     titleRow.appendChild(editBtn);
     box.appendChild(titleRow);
+
+    // R17 deliverable 6 (audit F3): Dismiss — the ledger's missing exit
+    // verb, OPEN requests only (a closed one already has its own exit
+    // recorded — "became"/"done"/"dismissed"/"merged"). Confirm-click
+    // (fires immediately), not a confirm() dialog — see dismissRequest's
+    // own header for the undo-window rationale.
+    if (item.state !== 'closed') {
+      var actionsRow = el('div', 'rl-actions');
+      var dismissBtn = btn('ghost small rl-dismiss-btn', 'Dismiss', function () {
+        dismissRequest(item.id, say, dismissBtn);
+      });
+      dismissBtn.title = 'clear this request — a junk/misfiled capture, or one you no longer want tracked';
+      actionsRow.appendChild(dismissBtn);
+      box.appendChild(actionsRow);
+    }
 
     // verbatim origin — "one click away" (I6): already carried eagerly in
     // the landing payload, so this is a plain disclosure, no extra fetch.

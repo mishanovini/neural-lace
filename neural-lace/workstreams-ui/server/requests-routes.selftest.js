@@ -118,6 +118,37 @@ async function main() {
     { ask_id: 'ask-detached', record_type: 'created', ts: '2026-07-13T10:00:00Z', summary: 'Ask with a detached amendment', repo: '/r', project: 'demo', origin_session: 'sess-8', status: 'active', emitter: 'ask-registry' },
     { ask_id: 'ask-detached', record_type: 'amendment_candidate', ts: '2026-07-13T11:00:00Z', verbatim_ref: '/t/transcript.jsonl#99', classification: 'amendment' },
     { ask_id: 'ask-detached', record_type: 'amendment_detached', ts: '2026-07-13T12:00:00Z', detach_ref: '2026-07-13T11:00:00Z', emitter: 'operator-ui' },
+
+    // R17 deliverable 2b (audit F4a) — the LIVE defect, reproduced: the
+    // operator's real origin summary survives a LATER auto-retitle that
+    // got corrupted with captured machine/error output (a real API 401).
+    { ask_id: 'ask-error-retitle', record_type: 'created', ts: '2026-07-20T10:00:00Z', summary: 'Please connect to gh and download the latest copy of Neural Lace.', repo: '/r', project: 'demo', origin_session: 'sess-9', status: 'active', emitter: 'ask-registry' },
+    { ask_id: 'ask-error-retitle', record_type: 'summary_updated', ts: '2026-07-20T11:00:00Z', summary: '401 Unauthorized: gh auth token expired, run gh auth login' },
+
+    // R17 deliverable 2b (audit F4c) — a fallback-string LEAK: the
+    // producer's own summary is the literal text "none" (not empty) —
+    // must never render as the title verbatim; falls all the way to id.
+    { ask_id: 'ask-none-title', record_type: 'created', ts: '2026-07-21T10:00:00Z', summary: 'none', repo: '/r', project: 'demo', origin_session: 'sess-10', status: 'active', emitter: 'ask-registry' },
+
+    // R17 deliverable 2b — mutation control: an ORDINARY later auto-
+    // retitle (no error signature) must be UNCHANGED behavior — the newer
+    // auto_title still wins over the origin summary (this fix only ever
+    // intervenes on a DETECTED error signature, never on ordinary
+    // re-distillation).
+    { ask_id: 'ask-ordinary-retitle', record_type: 'created', ts: '2026-07-23T10:00:00Z', summary: 'first draft summary', repo: '/r', project: 'demo', origin_session: 'sess-12', status: 'active', emitter: 'ask-registry' },
+    { ask_id: 'ask-ordinary-retitle', record_type: 'summary_updated', ts: '2026-07-23T11:00:00Z', summary: 'a better, later summary' },
+
+    // R17 deliverable 2b (audit F4b) — 5 consecutive, identical "amendment
+    // captured" candidates (the live defect: 93 of them) — client-side
+    // collapse is tested against requests.js directly; this proves the
+    // RAW payload genuinely carries the repeated-event shape the collapse
+    // logic must handle.
+    { ask_id: 'ask-noisy-amend', record_type: 'created', ts: '2026-07-22T10:00:00Z', summary: 'Ask with a noisy amendment run', repo: '/r', project: 'demo', origin_session: 'sess-11', status: 'active', emitter: 'ask-registry' },
+    { ask_id: 'ask-noisy-amend', record_type: 'amendment_candidate', ts: '2026-07-22T11:00:00Z', verbatim_ref: '', classification: 'amendment' },
+    { ask_id: 'ask-noisy-amend', record_type: 'amendment_candidate', ts: '2026-07-22T11:01:00Z', verbatim_ref: '', classification: 'amendment' },
+    { ask_id: 'ask-noisy-amend', record_type: 'amendment_candidate', ts: '2026-07-22T11:02:00Z', verbatim_ref: '', classification: 'amendment' },
+    { ask_id: 'ask-noisy-amend', record_type: 'amendment_candidate', ts: '2026-07-22T11:03:00Z', verbatim_ref: '', classification: 'amendment' },
+    { ask_id: 'ask-noisy-amend', record_type: 'amendment_candidate', ts: '2026-07-22T11:04:00Z', verbatim_ref: '', classification: 'amendment' },
   ];
   fs.writeFileSync(path.join(stateDir, 'ask-registry.jsonl'), reg.map((r) => JSON.stringify(r)).join('\n') + '\n');
 
@@ -199,6 +230,26 @@ async function main() {
     const detachedItem = findItem(items, 'ask-detached');
     ok('S7c a DETACHED amendment is excluded from the timeline (detach marks it not-an-amendment, I6)',
       detachedItem.timeline.filter((e) => e.type === 'amendment').length === 0);
+
+    // ---- R17 deliverable 2b (audit F4): render defenses ----------------
+    const errorRetitle = findItem(items, 'ask-error-retitle');
+    ok('R17-D1 a LATER auto-retitle that reads as a captured error (a real "401" + "Unauthorized") never displaces the operator\'s own origin words — the title stays the ORIGIN summary',
+      errorRetitle && errorRetitle.title === 'Please connect to gh and download the latest copy of Neural Lace.',
+      errorRetitle && errorRetitle.title);
+    ok('R17-D1b title_source is still honestly "auto" (no operator ever confirmed this title — the origin-summary fallback is a render defense, not a promotion to operator-authored)',
+      errorRetitle && errorRetitle.title_source === 'auto');
+    const noneTitle = findItem(items, 'ask-none-title');
+    ok('R17-D2 a producer summary that is literally the string "none" NEVER renders as the title verbatim — falls all the way to the ask id',
+      noneTitle && noneTitle.title === 'ask-none-title' && noneTitle.title.toLowerCase() !== 'none',
+      noneTitle && noneTitle.title);
+    const ordinaryRetitle = findItem(items, 'ask-ordinary-retitle');
+    ok('R17-D3 mutation control: an ORDINARY later auto-retitle (no error signature) is UNCHANGED — the newer auto_title still wins over the origin summary; this fix only ever intervenes on a DETECTED error signature, never on ordinary re-distillation',
+      ordinaryRetitle && ordinaryRetitle.title === 'a better, later summary',
+      ordinaryRetitle && ordinaryRetitle.title);
+    const noisyAmend = findItem(items, 'ask-noisy-amend');
+    const noisyAmendEvents = noisyAmend ? noisyAmend.timeline.filter((e) => e.type === 'amendment') : [];
+    ok('R17-D4 the raw payload genuinely carries 5 consecutive, IDENTICAL "amendment captured" timeline events (proves the shape the client-side collapse — requests.js — must handle; collapsing itself is a render-layer concern tested against requests.js directly)',
+      noisyAmendEvents.length === 5 && noisyAmendEvents.every((e) => e.text === 'amendment captured'));
 
     // ---- S8: title endpoint — named error with no CLI, then delegates once a fake CLI exists ----
     const title = await httpPostJson(PORT, '/api/requests/title', { ask_id: 'ask-open', title: 'A better name' });

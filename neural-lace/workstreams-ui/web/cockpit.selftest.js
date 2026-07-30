@@ -1757,6 +1757,71 @@ ok('T5-16 the tree/rows use nested native <details>/<summary> disclosure (C9 key
 ok('T5-17 edit/detach feedback rows are aria-live (C9)', (requestsJs.match(/aria-live/g) || []).length >= 2);
 ok('T5-18 landed rows are programmatically focusable (tabindex="-1" set on row containers)',
   /tabIndex = -1/.test(requestsJs));
+
+// ============================================================
+// R17 deliverable 6 (audit F3 — the ledger's missing exit verb) + 2b
+// (audit F4 — render defenses). ------------------------------------------
+// ============================================================
+ok('R17-R1 Dismiss delegates to the SAME lifecycle endpoint asks.js\'s own dismiss button already uses (POST /api/ask/<id>/lifecycle, action:"dismiss") — no new server route invented for this',
+  /postLifecycle\(askId, action\)/.test(requestsJs) &&
+  /fetch\('\/api\/ask\/' \+ encodeURIComponent\(askId\) \+ '\/lifecycle'/.test(requestsJs) &&
+  /dismissRequest\(item\.id, say, dismissBtn\)/.test(requestsJs));
+ok('R17-R2 Dismiss is a real <button> (rl-dismiss-btn) rendered ONLY for OPEN requests — a closed one already has its own recorded exit',
+  /if \(item\.state !== 'closed'\)/.test(requestsJs) && /rl-dismiss-btn/.test(requestsJs));
+ok('R17-R3 "confirm-click, not confirm-dialog" (the dispatch\'s own binding instruction): the dismiss action fires IMMEDIATELY on click — no window.confirm(...) gate before the fetch call (source comments merely NAME the avoided pattern in prose, never invoke it)',
+  !/window\.confirm\(|[^.\w]confirm\(['"]/.test(requestsJs));
+ok('R17-R4 an Undo affordance appears after a successful dismiss, within a short window, before the list reloads — the app\'s own established undo-window pattern (asks.js/backlog.js), never a native dialog',
+  /rl-undo-btn/.test(requestsJs) && /DISMISS_UNDO_WINDOW_MS/.test(requestsJs) &&
+  /postLifecycle\(askId, 'reopen'\)/.test(requestsJs));
+ok('R17-R5 a FAILED dismiss re-enables the button and surfaces a named error (never a silent no-op)',
+  /dismissBtn\.disabled = false;\s*\n\s*say\(\(r && r\.error\) \|\| 'Could not dismiss this request\.', true\)/.test(requestsJs));
+
+// --- F4b: collapse consecutive identical timeline events (real execution) ---
+(function () {
+  const src = extractMarkedBlock(requestsJs, '// GROUP-TIMELINE-RUNS-BEGIN', '// GROUP-TIMELINE-RUNS-END');
+  ok('R17-R6 selftest can locate the GROUP-TIMELINE-RUNS extraction anchors in requests.js', !!src);
+  if (!src) return;
+  function group(eventsExpr) { return runPure(src, 'groupConsecutiveTimelineEvents(' + eventsExpr + ')'); }
+  const g1 = group(JSON.stringify([
+    { type: 'origin', text: 'Registered' },
+    { type: 'amendment', text: 'amendment captured' },
+    { type: 'amendment', text: 'amendment captured' },
+    { type: 'amendment', text: 'amendment captured' },
+    { type: 'amendment', text: 'amendment captured' },
+    { type: 'amendment', text: 'amendment captured' },
+    { type: 'decision', text: 'dismissed (you)' },
+  ]));
+  ok('R17-R7 a run of 5 consecutive, identical (type+text) events collapses into ONE group (collapsed:true) — the live defect: 93 identical "amendment captured" rows',
+    Array.isArray(g1) && g1.length === 3 && g1[0].collapsed === false && g1[0].events.length === 1 &&
+    g1[1].collapsed === true && g1[1].events.length === 5 && g1[2].collapsed === false && g1[2].events.length === 1,
+    JSON.stringify(g1 && g1.map((g) => ({ n: g.events.length, c: g.collapsed }))));
+  const g2 = group(JSON.stringify([
+    { type: 'amendment', text: 'amendment captured' },
+    { type: 'amendment', text: 'amendment captured' },
+  ]));
+  ok('R17-R8 a run of only TWO identical events does NOT collapse — not noisy enough to hide behind a click (threshold is 3+)',
+    Array.isArray(g2) && g2.length === 1 && g2[0].collapsed === false && g2[0].events.length === 2);
+  const g3 = group(JSON.stringify([
+    { type: 'amendment', text: 'amendment captured' },
+    { type: 'amendment', text: 'possible amendment captured (not yet classified)' },
+    { type: 'amendment', text: 'amendment captured' },
+  ]));
+  ok('R17-R9 events with the SAME type but DIFFERENT text never merge into one run (text must match too — a pending vs. confirmed amendment are genuinely different events)',
+    Array.isArray(g3) && g3.length === 3 && g3.every((g) => !g.collapsed));
+  ok('R17-R10 empty/absent input never throws, returns an empty group list',
+    group('[]').length === 0 && group('null').length === 0);
+  ok('R17-R11 timelineNode actually calls groupConsecutiveTimelineEvents (the wiring, not just the pure function existing in isolation), and a collapsed run still renders each ORIGINAL event via timelineEventNode once expanded — never dropping individual events (so a collapsed amendment keeps its own Detach affordance)',
+    /groupConsecutiveTimelineEvents\(item\.timeline\)\.forEach/.test(requestsJs) &&
+    /runEvents\.forEach\(function \(ev\) \{ innerList\.appendChild\(timelineEventNode\(item, ev\)\)/.test(requestsJs.replace(/\s+/g, ' ')));
+})();
+
+// --- F4a/F4c: render-defense wiring (the actual title/error-signature
+// detection is server-side, requests-routes.js — this just proves the
+// client trusts and renders whatever title the server sends, never a
+// second client-side heuristic re-deriving it, per this app's own
+// "no second heuristic" convention). ---------------------------------
+ok('R17-R12 the row summary and drill-down both render item.title directly (no client-side title-guessing logic duplicated here — the server\'s buildRequestItem is the ONE place title defenses live)',
+  /el\('span', 'rl-title', item\.title\)/.test(requestsJs));
 // cockpit-roadmap-redesign Task 8 — "UI polish absorbed" (the four operator
 // items folded from the superseded cockpit-ui-polish.md, PLUS item 5, the
 // standalone My-To-Do pane retirement (A10) — held back in an earlier pass

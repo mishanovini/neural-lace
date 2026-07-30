@@ -258,11 +258,46 @@ function classifyRequestState(cur) {
   return { state: 'open', closed_reason: '', closed_at: '', became: null };
 }
 
+// isErrorSignature(text) — R17 deliverable 2b (audit F4a, the live
+// defect: "origin event says the operator's actual request was 'Please
+// connect to gh and download the latest copy of Neural Lace.' — a
+// title_changed event then AUTO-RETITLED the request to the 401 error
+// string. Machine output displaced operator intent on the intent
+// ledger.") A conservative, two-signal check (an HTTP status-code-shaped
+// token AND a recognized error/auth keyword, co-occurring anywhere in the
+// text) — deliberately requires BOTH so an ordinary operator sentence
+// that happens to mention a number ("fix bug 404") or the word "error"
+// alone never false-positives; only genuine API-error-dump shapes trip it.
+const ERROR_STATUS_RE = /\b[45]\d{2}\b/;
+const ERROR_WORD_RE = /\b(unauthorized|forbidden|denied|not authenticated|auth failed|exception|traceback|internal server error)\b/i;
+function isErrorSignature(text) {
+  const s = String(text || '');
+  return ERROR_STATUS_RE.test(s) && ERROR_WORD_RE.test(s);
+}
+
 function buildRequestItem(cur) {
-  const title = cur.operator_title || cur.auto_title || cur.summary || cur.ask_id;
-  const titleSource = cur.operator_title ? 'operator' : 'auto';
-  const distilledIntent = cur.auto_title || cur.summary || '';
   const cls = classifyRequestState(cur);
+  // R17 deliverable 2b (audit F4a): a LATER auto-retitle can overwrite
+  // auto_title with machine output that reads as a captured error — prefer
+  // the ORIGIN's own summary (cur.summary, set ONCE from the 'created'
+  // record and never touched by a later summary_updated) when that has
+  // happened. Never applies once the OPERATOR explicitly set the title —
+  // operator_title always wins regardless (A3's own precedent).
+  const rawAutoTitle = cur.auto_title || '';
+  const originSummary = cur.summary || '';
+  const safeAutoTitle = (isErrorSignature(rawAutoTitle) && originSummary && !isErrorSignature(originSummary))
+    ? originSummary
+    : rawAutoTitle;
+  let title = cur.operator_title || safeAutoTitle || cur.ask_id;
+  // R17 deliverable 2b (audit F4c): never render a bare 'none'/empty
+  // title (a fallback-string leak observed live on a closed request) —
+  // fall back to the distilled intent, then the became-slug, then the id.
+  if (!title || String(title).trim().toLowerCase() === 'none') {
+    title = originSummary || (cls.became && cls.became.plan_slug) || cur.ask_id;
+    if (!title || String(title).trim().toLowerCase() === 'none') title = cur.ask_id;
+  }
+  const titleSource = cur.operator_title ? 'operator' : 'auto';
+  const distilledIntent = safeAutoTitle || originSummary || '';
   const nonOrigin = cur.timeline.filter((e) => e.type !== 'origin');
   const lastAmendedTs = nonOrigin.length ? nonOrigin.map((e) => e.ts).sort().pop() : '';
   return {

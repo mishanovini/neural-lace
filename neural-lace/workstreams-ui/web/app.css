@@ -1603,6 +1603,15 @@ details[open] > summary .rm-rollups { display: none; }
 .rl-row[open] > .rl-drill { display: block; }
 .rl-title-edit, .rl-recency, .rl-subhead { margin: 4px 0; }
 .rl-subhead { font-weight: 600; color: var(--text); }
+/* R17 deliverable 6 (audit F3): the ledger's missing exit verb. */
+.rl-actions { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+/* R17 deliverable 2b (audit F4b): a collapsed run of identical timeline
+   events — same <details> disclosure convention as the app's other
+   roll-ups (rm-completed-rollup etc.), dimmer text (it's noise, not
+   content) until expanded. */
+.rl-collapsed-run { margin: 2px 0; }
+.rl-collapsed-run-summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.rl-collapsed-run-list { list-style: none; margin: 2px 0 2px 14px; padding: 0; border-left: 1px dotted var(--border2); }
 
 /* ---- current-state chip (collapsed anatomy): text + color, never color-only ---- */
 .chip.rl-state-chip { white-space: nowrap; }
