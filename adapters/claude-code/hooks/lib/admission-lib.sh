@@ -136,6 +136,20 @@
 # disproportionate to this micro-slice — accepted in writing, residual risk
 # named, at docs/decisions/065-admission-lib-env-bypass-closure.md.
 #
+# FIFTH TUNABLE, ADDED TO THIS INVENTORY (2026-07-30 delta re-review finding
+# 2): ADM_PRESSURE_MAX_AGE_SECS (adm_pressure_color's reader-side age bound,
+# added same day by review REJECT C2) is ALSO a sourcing-shell-settable
+# env var, same channel as the four above. It stays OPEN in production, same
+# as NL_PROTECTED_ORCHESTRATOR and for the same reason — it is a legitimate
+# operator tunable (how stale a color is allowed to be before it stops being
+# authoritative), not an unauthenticated identity claim to close. What it
+# DOES get, which it was missing at introduction: input validation. A
+# non-numeric value reached the `(( max_age > 0 ))` arithmetic directly and
+# aborted the calling subshell instead of degrading to the fail-open
+# default — fixed by `[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=7200` before
+# any arithmetic touches it. Self-test Scenario 10b pins this alongside its
+# four siblings.
+#
 # ============================================================================
 # API
 # ============================================================================
@@ -384,28 +398,72 @@ _adm_json_scalar() {
   printf '%s' "$val"
 }
 
+# _ADM_PRESSURE_REASON / _ADM_PRESSURE_COLOR — side-channel globals set by
+# adm_pressure_color as a side effect (mirrors the existing _ADM_LAST_VERDICT
+# pattern below). WHY a global instead of a second return value: bash has no
+# multi-value return, and command substitution ($(...)) forks a subshell, so
+# any global a function sets while running INSIDE a $(...) capture is lost
+# the instant that subshell exits. adm_admit needs both "what color" (for the
+# ledger's pressure field) and "why" (fresh/stale/unreadable/absent, for
+# pressure_src — 2026-07-30 delta re-review finding 4) from ONE call, so it
+# calls this function directly (no $(...)) and reads both globals afterward.
+_ADM_PRESSURE_REASON=""
+_ADM_PRESSURE_COLOR=""
+
 adm_pressure_color() {
   local f="${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}"
-  [[ -r "$f" ]] || { printf 'unknown'; return 0; }
+  if [[ ! -r "$f" ]]; then
+    _ADM_PRESSURE_REASON="absent"
+    _ADM_PRESSURE_COLOR="unknown"
+    printf 'unknown'; return 0
+  fi
   # READER-SIDE AGE BOUND (review REJECT C2, 2026-07-30): without this, a
   # stopped tick freezes the last color into authority FOREVER — at T6 a
   # frozen red would block every dispatch, a frozen green would admit
   # through a real storm (the exact frozen-occupancy class the 2026-07-28
   # review fixed one axis over). Default 7200s = 2x the hourly carrier
   # cadence (health-tick). Stale -> 'unknown' (which admits, fail-open).
+  #
+  # ENV VALIDATION (2026-07-30 delta re-review finding 2): ADM_PRESSURE_
+  # MAX_AGE_SECS is a new sourcing-shell-settable tunable (see the file
+  # header's env inventory, now updated to list it). A non-numeric value
+  # reached the `(( max_age > 0 ))` arithmetic below directly and aborted
+  # the calling subshell instead of degrading to the default — a caller-
+  # supplied garbage value must never crash a fail-open lib. Self-test
+  # Scenario 10b pins this: a non-numeric value falls back to 7200, it does
+  # not disable the bound and does not abort.
   local max_age="${ADM_PRESSURE_MAX_AGE_SECS:-7200}"
+  [[ "$max_age" =~ ^[0-9]+$ ]] || max_age=7200
   if (( max_age > 0 )); then
     local p_m now_p
-    p_m="$(stat -c %Y "$f" 2>/dev/null)" || p_m=""
+    # PORTABLE MTIME (2026-07-30 delta re-review finding 1, CRITICAL): this
+    # used to call `stat -c %Y "$f"` directly. GNU-only — BSD/macOS `stat`
+    # does not accept -c and prints nothing with a nonzero rc, so on a real
+    # BSD/macOS box p_m was permanently unreadable and every fresh pressure
+    # file read as stale ("unknown") forever, even seconds after a real tick
+    # wrote it. Route through this file's own portable helper (_adm_mtime,
+    # already used everywhere else in this file for exactly this GNU/BSD
+    # split) instead of re-inventing a GNU-only stat call here. Self-test
+    # Scenario 22 shims a BSD-only `stat` on PATH and proves a fresh file
+    # still reads its real color through it.
+    p_m="$(_adm_mtime "$f")"
     now_p="$(_adm_now)"
-    if [[ ! "$p_m" =~ ^[0-9]+$ ]] || (( now_p < p_m )) || (( now_p - p_m > max_age )); then
+    if [[ ! "$p_m" =~ ^[0-9]+$ ]] || (( p_m == 0 )) || (( now_p < p_m )) || (( now_p - p_m > max_age )); then
+      _ADM_PRESSURE_REASON="stale"
+      _ADM_PRESSURE_COLOR="unknown"
       printf 'unknown'; return 0
     fi
   fi
   local color; color="$(_adm_json_scalar "$f" color)" || color=""
   case "$color" in
-    green|yellow|red|black) printf '%s' "$color" ;;
-    *) printf 'unknown' ;;
+    green|yellow|red|black)
+      _ADM_PRESSURE_REASON="fresh"
+      _ADM_PRESSURE_COLOR="$color"
+      printf '%s' "$color" ;;
+    *)
+      _ADM_PRESSURE_REASON="unreadable"
+      _ADM_PRESSURE_COLOR="unknown"
+      printf 'unknown' ;;
   esac
 }
 
@@ -1035,6 +1093,37 @@ _adm_self_test() {
 
   echo "  (NL_PROTECTED_ORCHESTRATOR: ACCEPTED open by design -- see Scenario 11 and docs/decisions/065-admission-lib-env-bypass-closure.md)"
 
+  # ADM_PRESSURE_MAX_AGE_SECS (2026-07-30 delta re-review finding 2): the
+  # fifth env tunable named in this inventory (see the file header). Stays
+  # OPEN in production by design (a legitimate operator tunable, not an
+  # identity claim to close) -- but a non-numeric value must NOT disable
+  # the age bound and must NOT abort the calling subshell; it must degrade
+  # to the fail-safe 7200s default. The reviewer's own probe: under this
+  # file's strict `[[ =~ ]]`-guarded arithmetic, an unvalidated non-numeric
+  # value reaching `(( max_age > 0 ))` directly aborts the subshell.
+  echo "  ADM_PRESSURE_MAX_AGE_SECS: non-numeric input must fall back, never abort or disable"
+  printf '{"color":"red"}\n' > "$ADM_PRESSURE_FILE"
+  # UNDER set -u SPECIFICALLY (not just this self-test's own default shell
+  # mode): this lib is SOURCED (never executed) into workstreams-emit.sh
+  # (`set -uo pipefail`), session-resumer.sh (`set -u`), and
+  # spawn-worktree.sh (`set -u`) -- all three real production callers -- so
+  # adm_pressure_color inherits the CALLER's nounset, not its own. Bash's
+  # DEFAULT (non -u) mode silently treats an unset bare-word arithmetic
+  # operand as 0 (a non-numeric value like "not-a-number" parses as
+  # `not - a - number`, three unset vars, evaluating to harmless 0), so
+  # testing this guard in this self-test's own non -u shell would pass
+  # whether or not the validation line exists -- proven empirically: it did,
+  # against a scratch mutation with the validation removed. Wrapping the
+  # call in its own `set -u` subshell reproduces the REAL production risk
+  # the reviewer's probe named and actually distinguishes fixed from broken.
+  local garbage_rc pc_garbage
+  pc_garbage="$(set -u; ADM_PRESSURE_MAX_AGE_SECS='not-a-number' ADM_PRESSURE_FILE="$ADM_PRESSURE_FILE" adm_pressure_color)"; garbage_rc=$?
+  [[ "$garbage_rc" == "0" ]] && pass "non-numeric ADM_PRESSURE_MAX_AGE_SECS does not abort the call even under an inherited set -u (rc=0)" \
+    || fail "non-numeric ADM_PRESSURE_MAX_AGE_SECS aborted the call under set -u: rc=$garbage_rc"
+  [[ "$pc_garbage" == "red" ]] && pass "non-numeric ADM_PRESSURE_MAX_AGE_SECS falls back to the 7200s default (does NOT disable the bound) -- fresh color still reads through" \
+    || fail "non-numeric ADM_PRESSURE_MAX_AGE_SECS did not fall back to the safe default: got '$pc_garbage'"
+  rm -f "$ADM_PRESSURE_FILE"
+
   echo "Scenario 11: calibration-pollution tag (edge 3)"
   v="$(NL_PROTECTED_ORCHESTRATOR=1 adm_admit emit-feed)"
   last="$(tail -1 "$led")"
@@ -1197,13 +1286,20 @@ _adm_self_test() {
   # of this scenario failed their own recount assert by violating the
   # producer shape ("x" generated_at; missing terminator).
   printf '{"generated_at":%s,"sessions":[{"classify":"live"},{"classify":"live"}],"sessions_degraded":false}\n' "$(date -u +%s)" > "$snap20"
-  s20_m="$(stat -c %Y "$snap20" 2>/dev/null)"; s20_sz="$(stat -c %s "$snap20" 2>/dev/null)"
+  # Portable mtime+size (2026-07-30 delta re-review finding 1, second site):
+  # this used to call `stat -c %Y`/`stat -c %s` raw. Same GNU-only bug as
+  # adm_pressure_color's C2 bound — on BSD/macOS both calls print nothing,
+  # so the cache-identity fields this scenario writes would never match a
+  # real snapshot's (mtime,size) there. Route through the file's own
+  # portable helper instead of re-inventing the GNU/BSD split a second time.
+  s20_ms="$(_adm_mtime_size "$snap20")"
+  s20_m="${s20_ms%% *}"; s20_sz="${s20_ms#* }"
   inj_marker="$T/injected-by-scenario-20"
   printf '%s\t%s\t%s\t%s\t%s\n' "$s20_m" "$s20_sz" 'x[$(touch '"$inj_marker"')]' "$(date -u +%s)" "$snap20" > "$(adm_occ_cache_path)"
   occ20_err="$T/occ20.stderr"
   occ20="$(ADM_ESTATE_SNAPSHOT="$snap20" adm_live_sessions 2>"$occ20_err")"
   if [[ ! -e "$inj_marker" ]]; then
-    pass "injection payload in the cache did NOT execute (numeric gate holds)"
+    pass "injection payload in the cache did NOT execute via adm_live_sessions alone (numeric gate holds)"
   else
     fail "COMMAND INJECTION: the cache payload created $inj_marker"
   fi
