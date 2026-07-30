@@ -3055,6 +3055,35 @@
       "honesty_rationale": "Read-only over the repo by construction: git log/status reads only, never a mutation; the only writes are its own docs/plans/loe-calibration.json/.md artifacts. No enforce mode exists to graduate into -- the outcome metric's close-side half (actuals append at close-plan.sh) is a documented, unbuilt seam (exact function + call site named in the script's own header) rather than a silently-claimed mechanism, per the WIP-1 directive keeping this slice out of closer/admission/dispatch files while the other machine builds T3."
     },
     {
+      "id": "plan-recheck-sweep",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [
+        "scripts/plan-recheck-sweep.sh"
+      ],
+      "events": [
+        "SessionStart"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/plan-recheck-sweep.sh",
+          "hooks/session-start-digest.sh",
+          "scripts/close-plan.sh",
+          "docs/plans/accountable-estate-program-2026-07.md"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "Accountable Estate program T9 (docs/plans/accountable-estate-program-2026-07.md), the AUTO-REOPEN half of program rule 2 ('recurrence auto-reopens... never silently'). Sweeps docs/plans/archive/*.md for Status: COMPLETED plans carrying a T9 '## Closure Outcome' section (written by close-plan.sh's write_closure_outcome_section) whose Re-check date has passed OR whose optional Recurrence check command now exits nonzero (bounded under portable-timeout.sh's nl_run_bounded, 10s), and reopens them: git mv back to docs/plans/, Status: COMPLETED -> ACTIVE, a Reopen Log entry naming the reason, a docs/backlog.md row under a canonical '## Auto-reopened plans' section, a needs-you.sh --mechanical question entry (cockpit-visible), a plan_reopened progress-log event (dedup key: plan_slug + hash(reason+ts)), and a pathspec-limited commit. Wired as a NEW feed (feed_plan_recheck) in session-start-digest.sh -- the file's own header names it as the general-purpose SessionStart surfacer every session already runs through, chosen over supervisor-tick.sh/health-tick.sh after `launchctl list` proved NEITHER is actually registered on this machine (both ship Windows-Task-Scheduler installers only), so the digest is the one PROVEN-firing chokepoint today; the honest gap (no true session-independent periodic tick yet) is named in plan-recheck-sweep.sh's own header, with the --quick entry point left fully decoupled from its caller so a future janitor/supervisor registration can invoke it with zero code changes. Verified via an 8-scenario --self-test (past-date reopens; future-date does not; recurrence-nonzero reopens despite a future date; recurrence-zero does not; idempotent second sweep -- a reopened plan is Status: ACTIVE and off the archive scan, so it is never found twice, no separate tracking file; unparseable date skips gracefully, never crashes, never reopens; --quick is silent when clean and one line per reopen when dirty; the plan_reopened event's exact type is asserted in the sandboxed progress-log). Both /bin/bash 3.2.57 and Homebrew bash 5.3.15 green.",
+      "fp_expectation": "Low. The only false-positive class is a plan's own author-declared Recurrence check command misbehaving (a flaky/environment-dependent nonzero exit unrelated to the actual recurrence condition) -- mitigated by the command being entirely author-chosen prose (the plan writer picks a deterministic check, e.g. estate-attribution-check.sh) and by every reopen being loud + reversible (never a silent state change; a wrongly-reopened plan is just re-closed). No false-negative risk beyond the honest session-dependent-chokepoint gap named above.",
+      "retirement_condition": "Superseded once program rule 2's fuller estate-ledger vision (docs/designs/accountable-estate-2026-07-27.md section 2, work-item lifecycle 'done(outcome-evidence link) -- No done without an outcome link') lands as T10's store consolidation -- at that point plan-level reopen becomes a specific instance of the general work-item state machine, not a bespoke script. Not retired at build time: this is the first concrete instance of 'done-without-outcome -> reopened' in this program; program rule 3 checked honestly, no redundant mechanism found to retire.",
+      "honesty_rationale": "Every mutation is append-only or a single well-known field flip (Status:), never a deletion; every reopen writes to at least two independent durable surfaces (backlog.md + NEEDS-YOU.md) plus the progress-log event, so 'why did this come back' is answerable even if one surface is missed. The SessionStart-only trigger is disclosed as a real, currently-firing chokepoint AND an honest gap (not session-independent) in the same header comment -- no claim of periodic coverage this script cannot back with a launchctl/Task-Scheduler registration that does not exist yet."
+    },
+    {
       "id": "harness-claim-lint",
       "kind": "gate",
       "doctrine_file": "doctrine/claims.md",

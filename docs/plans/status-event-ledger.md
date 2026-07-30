@@ -129,3 +129,23 @@ session builds them, per `## In-flight scope updates` below. -->
 Each SE task: discriminating scenarios + mutation transcripts, both interpreters by absolute
 path, sandboxed state (the Scenario-16b idiom). The golden scenario for the plan: replay
 2026-07-30's seven-agent spend-limit kill and show every kill/resume/landing as ledger rows.
+
+## Files to Modify/Create
+(Structural-completeness fix, 2026-07-30 — this plan was missing this required section
+entirely, tripping `scope-enforcement-gate.sh`'s repo-wide PLAN_ERRORS check for every commit
+in the repo, not just this plan's own. Derived STRICTLY from file/mechanism names already
+named in the taxonomy table + Tasks above — no new scope invented. Vague entries (no exact
+filename given yet by the table) are named honestly as TBD; the plan's actual owner should
+pin these down as each SE task starts, not this fix.)
+- `adapters/claude-code/scripts/estate-merge.sh` — SE1 (handoff-complete emit at the merge chokepoint)
+- SE2's "sweep runner + a shared --self-test entry helper" — exact file TBD by SE2's own builder
+- `adapters/claude-code/scripts/write-review-record.sh` — SE3 (emit every verdict, not PASS-only)
+- plan-edit-validator (verifier) — SE4 (flip-time emit); exact path TBD by SE4's own builder
+- stop-verdict-dispatcher + each blocking gate's block path — SE5; exact gate list TBD by SE5's own builder
+- `adapters/claude-code/scripts/session-resumer.sh` + the notification consumer — SE6 (kill/resume pairing)
+- auto-install summary line + ensure-* scripts — SE7 (deploy emits); exact files TBD by SE7's own builder
+- `adapters/claude-code/hooks/lib/agent-heartbeat.sh` — SE8 (per-agent heartbeat wiring); path TBD if this
+  lib does not yet exist under this exact name
+- `adapters/claude-code/scripts/needs-you.sh` + `adapters/claude-code/scripts/nl-issue.sh` — SE9
+  (decision/incident emits feeding the unified view)
+- doctrine amendment (file TBD) — SE10 (vocabulary-lock doctrine + Stop-WARN vocabulary check)

@@ -30,7 +30,8 @@
 #
 #   {"v":1,"event_id":"<hash>","ts":"ISO-8601-UTC","ask_id":"...",
 #    "type":"task_done|task_started|waiting_on_operator|merged|
-#            plan_amended|plan_completed|ask_registered|session_attached|...",
+#            plan_amended|plan_completed|plan_outcome_recorded|plan_reopened|
+#            ask_registered|session_attached|...",
 #    "plan_slug":"...","task_id":"...","sha":"...","needs_you_id":"...",
 #    "session_id":"...","summary":"...","evidence_link":"...",
 #    "emitter":"...","provenance":"known|unknown","user":"...",
@@ -58,6 +59,8 @@
 #   merged                  -> repo + sha
 #   plan_amended            -> plan_slug + --dedup-extra (content-hash of the delta; caller-computed)
 #   plan_completed          -> plan_slug + --dedup-extra (content-hash of the Status-line ts; caller-computed)
+#   plan_outcome_recorded   -> plan_slug + --dedup-extra (content-hash of close_ts+metric+re-check date; T9, caller-computed)
+#   plan_reopened           -> plan_slug + --dedup-extra (content-hash of re-check-date+reason; T9, caller-computed)
 #   ask_registered/session_attached -> ask_id (+ session_id)
 #   (any other/future type) -> a superset hash of every field supplied —
 #     never silently un-deduped, and never wrongly collapses a real
@@ -147,7 +150,7 @@ _PROGRESS_LOG_LIB_SOURCED=1
 
 # Known mechanism emitters (constraint 10). Extend this list, never widen
 # the check itself, when a new splice lands.
-_PL_KNOWN_EMITTERS=(plan-lifecycle workstreams-emit needs-you post-commit close-plan ask-registry auditor)
+_PL_KNOWN_EMITTERS=(plan-lifecycle workstreams-emit needs-you post-commit close-plan ask-registry auditor plan-recheck-sweep)
 
 # ----------------------------------------------------------------------
 # pl_state_dir — resolve the progress-log state directory per the order
@@ -390,6 +393,23 @@ _pl_natural_key() {
       printf 'plan_amended|%s|%s' "$plan_slug" "$dedup_extra" ;;
     plan_completed)
       printf 'plan_completed|%s|%s' "$plan_slug" "$dedup_extra" ;;
+    plan_outcome_recorded)
+      # T9 (accountable-estate-program, outcome-gated closure semantics).
+      # close-plan.sh's caller pre-hashes (close_ts + metric + re-check
+      # date) into dedup_extra (see emit_plan_outcome_recorded_progress_log_
+      # event) -- mirrors plan_completed's own convention exactly: a
+      # re-close after reopen (new close_ts, likely a revised outcome) is a
+      # NEW key; a byte-identical replay dedupes.
+      printf 'plan_outcome_recorded|%s|%s' "$plan_slug" "$dedup_extra" ;;
+    plan_reopened)
+      # T9 auto-reopen (plan-recheck-sweep.sh). dedup_extra carries the
+      # caller's pre-hashed (re-check-date-that-fired + reason) so a
+      # DIFFERENT re-check date or recurrence condition on a later sweep is
+      # a legitimately-distinct new event, while a sweep re-running against
+      # an already-reopened (now ACTIVE, no longer archived) plan simply
+      # finds nothing to reopen and never re-emits at all -- naturally
+      # idempotent by construction (see plan-recheck-sweep.sh header).
+      printf 'plan_reopened|%s|%s' "$plan_slug" "$dedup_extra" ;;
     ask_registered|session_attached)
       printf '%s|%s|%s' "$type" "$ask_id" "$session_id" ;;
     *)

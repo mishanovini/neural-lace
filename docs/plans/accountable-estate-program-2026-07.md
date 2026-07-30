@@ -6,6 +6,12 @@ Execution Mode: orchestrator
 Backlog items absorbed: none
 acceptance-exempt: yes (harness-internal; each slice demonstrates via its own outcome metric + --self-test)
 Build machine: the operator's OTHER computer (this repo pulled fresh); the desktop stays on downstream-product work.
+outcome-gated: true (T9, 2026-07-30 — "applied to THIS program first" per the T9 task's own words:
+this program opts into the outcome-gate close-plan.sh now enforces (`verify_closure_outcome_declared`).
+Harmless today (this plan has many open tasks and will not close soon), but when it eventually DOES
+close, close-plan.sh will require the `## Closure Outcome` section below to be genuinely populated
+(non-placeholder metric + re-check date) before flipping Status — the program's own program-rule-2
+requirement, now mechanically enforced on itself rather than aspirational prose.)
 
 ## Goal
 Ship the reviewed Accountable Estate program — estate observability, deterministic closure,
@@ -173,6 +179,18 @@ part-time autonomous work with review gates. T10 adds 5–10 bs and is separatel
   committed artifacts) — T7 calibration table output
 - anomaly rules + incident capture in janitor — T8
 - manifest.json + settings.json.template wiring throughout; docs/designs + this plan as specs
+- `adapters/claude-code/scripts/close-plan.sh` — T9: outcome-gate (verify_closure_outcome_declared
+  and write_closure_outcome_section), the T7 append-at-close splice, the Task-ID/PASS-conf parser
+  fixes, the Scope-slash-Tasks heading-variant fix, and the multi-line-field extraction fix
+  (already covered by the T4 close-star-dot-sh glob above, named explicitly here for T9's own record)
+- `adapters/claude-code/scripts/plan-recheck-sweep.sh` — NEW, T9 AUTO-REOPEN sweep
+- `adapters/claude-code/hooks/session-start-digest.sh` — T9 chokepoint wiring, new feed_plan_recheck
+- `adapters/claude-code/hooks/lib/progress-log-lib.sh` — T9: plan_outcome_recorded and
+  plan_reopened case arms, plus the plan-recheck-sweep known-emitter entry
+- `docs/plans/context-watermark-opus5-window.md` — T9 acceptance demonstration, real plan closure
+- `docs/plans/context-watermark-opus5-window-evidence.md` — moved to archive by the same closure
+- `docs/loe/loe-calibration.json` — T7 splice side effect of the T9 demonstration closure above
+- `docs/loe/loe-calibration.md` — T7 splice side effect of the T9 demonstration closure above
 
 ## Assumptions
 - The architecture review's amendments are binding (lib-not-gate, observe-first, views-first, ≤3
@@ -189,6 +207,25 @@ model/mode skew) — each slice's builder must consult §6b and address the entr
 Each artifact ships --self-test (fixture-sandboxed, HARNESS_SELFTEST=1 conventions); slices verify
 via task-verifier + their declared outcome metric demonstrated live (constitution §4); enforcement
 flips (T6) additionally require the calibration data attached to the evidence file.
+
+## Closure Outcome
+(T9, 2026-07-30 — this program applying its own outcome-gated-closure mechanism to itself, per the
+task's own words "applied to THIS program first." This section is LIVE prose, not yet the final
+close-time record — close-plan.sh's write_closure_outcome_section preserves whatever is here
+verbatim at the real close, so a future session should refine this metric as T6/T8/T10-14 land, the
+same way the Decisions Log / In-flight scope updates sections already accrete prose across the
+program's life. Right now it states the program's honest current-best success condition.)
+
+Outcome metric: every task T1-T9 has a task-verifier PASS + a live-demonstrated outcome metric
+(constitution §4); T6's enforce-vs-defer decision is made and recorded with reasoning (not silently
+skipped); T10's go/no-go re-authorization decision is made explicitly by the operator (not
+defaulted); zero of the shipped mechanisms (admission-lib, estate-registration-lib, estate-merge,
+loe-backfill, close-plan's outcome-gate, plan-recheck-sweep) have been silently disabled or bypassed
+during the observation window.
+Re-check date: 2026-08-13T05:56:00Z (aligned to T5's own already-declared 14-day re-check window —
+the program's nearest existing calibration horizon; a program-wide re-check sooner than the pieces
+it depends on finishing their own observation windows would fire before there is anything new to
+observe).
 
 ## In-flight scope updates
 - 2026-07-27: docs/designs/accountable-estate-2026-07-27.md — program spec (this plan's design)
@@ -297,3 +334,67 @@ flips (T6) additionally require the calibration data attached to the evidence fi
   session's own T5 commits; see that commit's message for the full file list) with this worktree's
   own T7-only additions (the Machine-claims section, the richer T7 Files-to-Modify entry, and the
   2026-07-28 T7 in-flight-scope line above) re-applied on top so neither side's honest record is lost.
+- 2026-07-30: `adapters/claude-code/scripts/close-plan.sh` — T9: (a) fixed the KNOWN-BUG fragile
+  parser (verify_task_full's block-boundary regex matched any "Task <word>" prose line, orphaning
+  real verdicts — new Scenario S22 regression-tests it against this repo's OWN real evidence-block
+  shape, reproduced+confirmed BEFORE the fix via a standalone awk repro); also broadened PASS
+  detection to accept the task-verifier agent's own "PASS conf N" convention alongside the literal
+  "Verdict: PASS" form (both real, already-verified plans this task's acceptance demonstration
+  closes use the terser form); (b) added the opt-in `outcome-gated: true` closure gate
+  (verify_closure_outcome_declared) requiring a non-placeholder `## Closure Outcome` section
+  (Outcome metric + Re-check date) before a plan can close — opt-in, never retroactive, per program
+  rule 4 (observe-first before every enforcement flip: this gate must not surprise-block the ~163
+  other archived plans or any other in-flight plan across the estate); (c) added the UNCONDITIONAL,
+  observe-only write half (write_closure_outcome_section/generate_closure_outcome_section) — every
+  plan this script closes, opted in or not, gets a `## Closure Outcome` section written into its
+  archived copy (author-declared metric/re-check preserved verbatim if present; an honest default
+  otherwise), with derived Evidence pointers (same git-log traversal generate_completion_report
+  already used — one implementation, not two); (d) the T7 append-at-close splice, exactly per
+  loe-backfill.sh's own documented seam (`bash .../loe-backfill.sh >/dev/null 2>&1 || true`,
+  `|| true`-guarded per the T3 admission-lib splice convention); (e) two new progress-log event
+  types, `plan_outcome_recorded` and `plan_reopened` (added to progress-log-lib.sh's
+  `_pl_natural_key` + `_PL_KNOWN_EMITTERS`), emitted from the SAME successful-close call site as the
+  pre-existing `plan_completed`. Self-test grew from 21 to 25 scenarios (28 assertions incl. S7's
+  4 sub-parts), 28/0 on BOTH `/bin/bash` 3.2.57 and Homebrew bash 5.3.15.
+- 2026-07-30: `adapters/claude-code/scripts/plan-recheck-sweep.sh` — NEW, T9's AUTO-REOPEN half.
+  Sweeps `docs/plans/archive/*.md` for Status: COMPLETED plans carrying a `## Closure Outcome`
+  section whose Re-check date has passed, or whose optional author-declared Recurrence check
+  command now exits nonzero (bounded via `portable-timeout.sh`'s `nl_run_bounded`, 10s) — reopens
+  them: `git mv` back to `docs/plans/`, Status flip to ACTIVE, a Reopen Log entry, a
+  `docs/backlog.md` row, a `needs-you.sh --mechanical` cockpit-visible entry, a `plan_reopened`
+  event, one pathspec-limited commit. Never silent, never destructive (only appends + one field
+  flip), idempotent by construction (a reopened plan is no longer in `archive/`, so it is never
+  found twice — no separate tracking file to drift). DETERMINISTIC TRIGGER decision (SE design law:
+  chokepoint, not memory): wired as a new `feed_plan_recheck` in `session-start-digest.sh`, NOT
+  `supervisor-tick.sh`/`health-tick.sh` — `launchctl list` on this machine PROVED neither is
+  actually registered here (both ship Windows-Task-Scheduler installers only, the same honest gap
+  T1's `estate-janitor.sh` already disclosed), so the digest is the one chokepoint proven to fire on
+  every real session today; the `--quick` entry point is fully decoupled from its caller so a future
+  janitor/supervisor registration can invoke it with zero changes to this file. 8/8 self-test
+  scenarios, both interpreters green.
+- 2026-07-30: `adapters/claude-code/hooks/session-start-digest.sh` — T9: `feed_plan_recheck` (new
+  feed, delegates to `plan-recheck-sweep.sh --quick` exactly like `feed_nl_issues` delegates to
+  `nl-issue.sh --digest-feed`) + its call site alongside `feed_stale_plans`; 2 new self-test
+  scenarios (S21a/b: silent-when-clean, one-line-when-a-plan-reopens). 91/91 on Homebrew bash;
+  88/91 on `/bin/bash` 3.2.57 — the 3 failures (S1 monitor-alerts, S4 auto-ack) are PRE-EXISTING on
+  bash 3.2 (confirmed via `git stash` — present before this task's changes, unrelated to T9; out of
+  this task's scope, not silently hidden).
+- 2026-07-30: `adapters/claude-code/hooks/lib/progress-log-lib.sh` — T9: `plan_outcome_recorded` +
+  `plan_reopened` case arms in `_pl_natural_key` (dedup keys mirror `plan_completed`'s own
+  convention exactly) + `plan-recheck-sweep` added to `_PL_KNOWN_EMITTERS`.
+- 2026-07-30: `adapters/claude-code/manifest.json` — plan-recheck-sweep entry (writer,
+  SessionStart-triggered via the digest feed, golden_scenario/fp_expectation/retirement_condition/
+  honesty_rationale all named honestly, incl. the SessionStart-only-not-periodic gap).
+  `manifest-check.sh` GREEN (148 entries, 0 new REDs) after the addition.
+- 2026-07-30: `docs/plans/accountable-estate-program-2026-07.md` (this file) — T9 "applied to THIS
+  program first": added `outcome-gated: true` (opt-in, harmless today — no other open task is
+  affected — but binding when this plan eventually closes) + a `## Closure Outcome` section with a
+  real, honest current-best program-level metric and a re-check date aligned to T5's own already-
+  declared 2026-08-13T05:56Z window (the program's nearest existing calibration horizon).
+- 2026-07-30: `docs/plans/context-watermark-opus5-window.md` + its evidence file — T9 acceptance
+  demonstration (real closure, not a fixture): see this plan's own Decisions/commit log for the
+  close-plan.sh invocation and outcome. `docs/plans/macos-portability-2026-07.md` was NOT closed —
+  its M6 task is still `[ ]` unchecked at this session's landing time (verified via
+  `git log --oneline -- docs/plans/macos-portability-2026-07.md`: the latest commit, `00d592d`, is
+  a FIX, not a task-verifier FLIP) — per the task's own explicit instruction ("if M6 is still open
+  at your landing time, close only the watermark plan and say so").
