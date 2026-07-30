@@ -35,9 +35,9 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
   ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01). DESKTOP → T6 prerequisites as file-disjoint
   micro-slices (occupancy TTL cache in admission-lib; env-bypass closure; Loop-2 pressure tick),
   then T9 after T4 lands (T9 builds on T4's generalized closers). T8 waits on telemetry accrual.
-- CLAIM: T7 remainder (run `bash adapters/claude-code/scripts/loe-backfill.sh`, commit
-  docs/loe/loe-calibration.json/.md — path per the fd48741 review remediation b5dfaf1) —
-  UNCLAIMED, either machine — 2026-07-29 — docs/loe/loe-calibration.*
+- CLEARED 2026-07-29: T7 remainder — full 163-plan mine completed on the DESKTOP post-purge
+  (the purge collapsed the fork tax that killed it 3x); docs/loe/loe-calibration.json/.md
+  committed. T7 awaits task-verifier only.
 - CLAIM: T6 prerequisites (a) occupancy TTL cache + (b) env-bypass closure/acceptance —
   desktop — 2026-07-29 — adapters/claude-code/hooks/lib/admission-lib.sh (NOTE for the other
   machine: T4's closure-gates-new-work splice also touches this file — pull and rebase small;
