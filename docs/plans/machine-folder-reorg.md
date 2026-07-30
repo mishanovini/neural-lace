@@ -64,13 +64,13 @@ mess and get graduated (close-worktree.sh) or removed, never orphaned.
 
 ## Files to Modify/Create
 
-- docs/reviews/machine-folder-reorg-mac-inventory.md (ORG1)
-- adapters/claude-code/scripts/estate-relocate.sh (ORG2, new)
-- docs/reviews/machine-folder-reorg-windows-inventory.md (ORG4)
-- adapters/claude-code/scripts/worktree-hygiene-sweep.sh or
-  adapters/claude-code/hooks/harness-doctor.sh (ORG6 — whichever the guard fits;
+- `docs/reviews/machine-folder-reorg-mac-inventory.md` (ORG1)
+- `adapters/claude-code/scripts/estate-relocate.sh` (ORG2, new)
+- `docs/reviews/machine-folder-reorg-windows-inventory.md` (ORG4)
+- `adapters/claude-code/scripts/worktree-hygiene-sweep.sh` or
+  `adapters/claude-code/hooks/harness-doctor.sh` (ORG6 — whichever the guard fits;
   decided at ORG6 build time)
-- ~/.claude/local per-machine configs + LaunchAgent plists (ORG3/ORG5 execution
+- `~/.claude/local` per-machine configs + LaunchAgent plists (ORG3/ORG5 execution
   surface, rewritten by ORG2's script, not hand-edited)
 
 ## Decisions Log

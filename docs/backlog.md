@@ -1934,3 +1934,38 @@ require the SAME real information (project name -> repo root) entered twice, whi
 the kind of drift this whole ledger effort exists to catch.
 **Filed by:** cockpit-roadmap-redesign Round 15 build, 2026-07-30 (discovered live while
 verifying R9-8 for `docs/reviews/cockpit-ui-requirements-ledger.md`).
+
+## OBS-DERIVE-SELFTEST-ERREXIT-LEAK-01 — `observability-derive.sh --self-test` crashes at Scenario 6h (rc=2), never running Scenarios 6h(remainder)/7/8/9/10/11
+
+**Severity:** P2 (self-test coverage gap, not a production bug — `nl status --json` / `nl costs
+--json` both verified clean end-to-end on this machine; the crash only hides LATER self-test
+scenarios from ever running, including some of od_costs/od_why's own coverage)
+**What:** PROVEN pre-existing, NOT a regression from the bash-3.2 `declare -gA` repair (this
+task, 2026-07-30): `/bin/bash adapters/claude-code/hooks/lib/observability-derive.sh
+--self-test` and the `/opt/homebrew/bin/bash` equivalent both exit rc=2 immediately after
+Scenario 6h's first `od_costs`/jq call, before printing that scenario's pass/fail line —
+verified byte-for-byte IDENTICAL output (40 PASS / 9 FAIL, same crash point) between this
+task's fixed file and the untouched pre-fix commit (1256721) via `git stash` + re-run. Root
+cause (traced with `bash -x`): Scenario 6f (`## od_costs tolerates a CORRUPTED cache file`)
+brackets its risky call with `set +e` / … / `set -e` to capture an rc without aborting — but
+the self-test's own top-of-block only ever does `set +u` (never `set -e`), so errexit was OFF
+the entire time before 6f. Scenario 6f's trailing `set -e` therefore turns errexit ON for the
+first time and leaves it on for every scenario after it (6g, 6h, 7, 8a, until Scenario 8b's own
+`set +e`/`set -e` pair repeats the same mistake). The very next unprotected non-zero-returning
+simple statement — Scenario 6h's `jq '...' "$OBS_COSTS_CACHE"` when the cache file does not yet
+exist (jq's real "no such file" exit code) — then trips errexit and the whole self-test process
+exits immediately via its `trap 'rm -rf "$TMP"' EXIT`, silently skipping every scenario after it
+(unrelated Scenarios 6h-tail/7/8a/9/10/11 never execute this run, INCLUDING their PASS/FAIL never
+being counted — the printed "40 passed / 9 failed" undercounts what a healthy run would report).
+The same pattern exists at the 2955-2958 (Scenario 6b) and 3280-3283 (Scenario 8b) `set +e`/
+`set -e` pairs — 8b's trailing `set -e` re-triggers the same leak for whatever follows it.
+**Not fixed here** — out of this task's scope (three `declare -gA` clusters + an `${arr[@]}`
+empty-array sweep in the same file); fixing it means editing self-test scenario bodies unrelated
+to that fix, which would mix an unrelated bug fix into this task's commit.
+**Fix:** each `set +e` / `<command>` / `set -e` bracket should restore the AMBIENT state, not
+force errexit on — replace the trailing `set -e` in these three blocks with `set +e` (a no-op,
+since that's the self-test's actual resting state), or better, drop the `set +e`/`set -e` pair
+entirely and just capture `rc=$?` directly (a bare command statement's non-zero exit does not
+abort a script that never enabled `set -e` to begin with).
+**Filed by:** bash-3.2 portability repair build (this task), 2026-07-30 — discovered while
+running this lib's own `--self-test` under both interpreters to verify the `declare -gA` fix.

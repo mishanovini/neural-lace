@@ -246,17 +246,28 @@ _od_transcripts_dir() {
 # that measured ~50-55s wall for `nl status` alone. A caller that needs
 # to resolve MANY session ids in a loop (od_sessions) now calls this
 # ONCE up front; every subsequent _od_find_transcript lookup then costs
-# one O(1) hash-array access instead of a fresh tree walk. Rebuilt fresh
-# on every call (never cached across calls) so a transcript created or
-# removed between two calls in the same process — the self-test sources
-# this file once and drives many scenarios in sequence — is never served
-# stale; production is one process per `nl` invocation anyway, so this
-# costs nothing there.
+# one in-memory string scan (see STRUCTURE note below) instead of a fresh
+# tree walk. Rebuilt fresh on every call (never cached across calls) so a
+# transcript created or removed between two calls in the same process —
+# the self-test sources this file once and drives many scenarios in
+# sequence — is never served stale; production is one process per `nl`
+# invocation anyway, so this costs nothing there.
+# STRUCTURE (bash 3.2 floor, 2026-07-30): a newline-delimited
+# "sid<TAB>path" string, exact-match scanned at lookup — NOT `declare -A`:
+# on /bin/bash 3.2 the `declare -gA ... || true` this replaces failed
+# SILENTLY, the array degraded to indexed, and `[$sid]` arithmetic-
+# evaluated real session ids as variable names (same failure class as
+# _OD_BLOCK_EPOCH_INDEX/_OD_THROTTLE_EPOCH_INDEX below — see that
+# STRUCTURE note for the exact live error this reproduces). First-match-
+# wins is now a property of the LOOKUP (returns on the first matching
+# line) rather than a dedupe-on-insert at build time, so the build loop
+# needs no per-file existence check — cheaper, and behaviorally identical
+# to the original `head -n1`-style "first match" contract.
 # ----------------------------------------------------------------------
-declare -gA _OD_TRANSCRIPT_INDEX 2>/dev/null || true
+_OD_TRANSCRIPT_INDEX=""
 _OD_TRANSCRIPT_INDEX_BUILT=0
 _od_transcript_index_build() {
-  _OD_TRANSCRIPT_INDEX=()
+  _OD_TRANSCRIPT_INDEX=""
   _OD_TRANSCRIPT_INDEX_BUILT=1
   local dir; dir="$(_od_transcripts_dir)"
   [[ -d "$dir" ]] || return 0
@@ -264,11 +275,24 @@ _od_transcript_index_build() {
   while IFS=$'\t' read -r fname fpath; do
     [[ -z "$fname" ]] && continue
     sid="${fname%.jsonl}"
-    # first-match-wins — matches _od_find_transcript's original `head -n1`
-    # semantics if a session id somehow ever appears more than once.
-    [[ -n "${_OD_TRANSCRIPT_INDEX[$sid]:-}" ]] && continue
-    _OD_TRANSCRIPT_INDEX["$sid"]="$fpath"
+    _OD_TRANSCRIPT_INDEX="${_OD_TRANSCRIPT_INDEX}${sid}"$'\t'"${fpath}"$'\n'
   done < <(find "$dir" -maxdepth 4 -type f -name '*.jsonl' -printf '%f\t%p\n' 2>/dev/null)
+}
+
+# _od_transcript_index_lookup <index-string> <sid> — print the path from
+# the first index line whose sid matches exactly, or empty when none
+# match. Exact `[[ "$s" == "$2" ]]` comparison (never a `case`/substring
+# match), so one session id can never accidentally match another's line.
+_od_transcript_index_lookup() {
+  local s p
+  if [[ -n "$1" ]]; then
+    while IFS=$'\t' read -r s p; do
+      [[ "$s" == "$2" ]] || continue
+      printf '%s' "$p"
+      return 0
+    done <<< "$1"
+  fi
+  printf ''
 }
 
 # _od_transcript_index_reset — drop the index so subsequent
@@ -278,7 +302,7 @@ _od_transcript_index_build() {
 # invocation per process) never serves a lookup from an index some
 # earlier od_sessions call built and never refreshed.
 _od_transcript_index_reset() {
-  _OD_TRANSCRIPT_INDEX=()
+  _OD_TRANSCRIPT_INDEX=""
   _OD_TRANSCRIPT_INDEX_BUILT=0
 }
 
@@ -286,17 +310,18 @@ _od_transcript_index_reset() {
 # _od_find_transcript <session-id> — locate the transcript JSONL file for
 # a session id anywhere under the transcripts dir (real layout nests by
 # sanitized-cwd; self-test layout is flat). Prints the first match or
-# empty. Never errors. Serves from _OD_TRANSCRIPT_INDEX at O(1) when a
-# caller has built one via _od_transcript_index_build (od_sessions);
-# otherwise falls back to the original per-call `find` — correct, just
-# O(full-tree), which is fine for a single lookup (od_why, `od_costs
-# --session`) that never runs this in a per-session loop.
+# empty. Never errors. Serves from _OD_TRANSCRIPT_INDEX (in-memory string
+# scan, zero forks) when a caller has built one via
+# _od_transcript_index_build (od_sessions); otherwise falls back to the
+# original per-call `find` — correct, just O(full-tree), which is fine
+# for a single lookup (od_why, `od_costs --session`) that never runs this
+# in a per-session loop.
 # ----------------------------------------------------------------------
 _od_find_transcript() {
   local sid="$1" dir
   [[ -n "$sid" ]] || { printf ''; return 0; }
   if [[ "$_OD_TRANSCRIPT_INDEX_BUILT" == "1" ]]; then
-    printf '%s' "${_OD_TRANSCRIPT_INDEX[$sid]:-}"
+    _od_transcript_index_lookup "$_OD_TRANSCRIPT_INDEX" "$sid"
     return 0
   fi
   dir="$(_od_transcripts_dir)"
@@ -319,10 +344,10 @@ _od_epoch() {
 
 # ----------------------------------------------------------------------
 # _od_heartbeat_batch_build <file1> [file2 ...] — populate the global
-# per-session heartbeat field maps (_OD_HB_MARKER, _OD_HB_BRANCH,
-# _OD_HB_WORKTREE, _OD_HB_CWD, _OD_HB_LAST_ACTIVITY_TS,
-# _OD_HB_LAST_ACTIVITY_EPOCH, _OD_HB_PID) via exactly ONE jq invocation
-# over ALL heartbeat files at once, keyed by the FILENAME-derived session
+# per-session heartbeat index (_OD_HB_INDEX; marker/branch/worktree/cwd/
+# last_activity_ts/last_activity_epoch/pid, one TSV line per sid — see
+# _od_heartbeat_batch_lookup) via exactly ONE jq invocation over ALL
+# heartbeat files at once, keyed by the FILENAME-derived session
 # id (matching od_sessions' own `basename "$f" .json` convention exactly
 # — never the JSON's internal session_id field, so a hypothetical
 # mismatched/malformed fixture can't silently join under the wrong key).
@@ -344,8 +369,9 @@ _od_epoch() {
 # source. The epoch conversion for last_activity_ts also happens INSIDE
 # this jq call via `fromdateiso8601` (same technique already used by
 # od_harness_health / _od_sessions_epoch_index_build above) — a caller
-# threading `_OD_HB_LAST_ACTIVITY_EPOCH[$sid]` through to
-# hb_is_stale/hb_classify's own pre-resolved-epoch arg therefore never
+# threading the resolved last_activity_epoch (via
+# _od_heartbeat_batch_lookup) through to hb_is_stale/hb_classify's own
+# pre-resolved-epoch arg therefore never
 # forks a `date`/`_hb_epoch` subprocess for this value AT ALL, on top of
 # never forking the `_hb_field` jq calls those functions used to run
 # themselves. Combined with od_sessions passing a single shared
@@ -355,18 +381,24 @@ _od_epoch() {
 # identified as the dominant residual `nl status` cost after the
 # sibling-find fix (a524474) — see that backlog entry for the full
 # before/after measurement.
+# STRUCTURE (bash 3.2 floor, 2026-07-30): ONE newline-delimited index
+# string of TSV lines "sid<TAB>marker<TAB>branch<TAB>worktree<TAB>cwd<TAB>
+# ts<TAB>epoch<TAB>pid" — replacing the 7 PARALLEL `declare -gA` maps this
+# used to be. NOT `declare -A`: on /bin/bash 3.2 the
+# `declare -gA ... || true` this replaces failed SILENTLY, the arrays
+# degraded to indexed, and `[$sid]` arithmetic-evaluated real session ids
+# as variable names (same failure class as _OD_BLOCK_EPOCH_INDEX and
+# _OD_TRANSCRIPT_INDEX elsewhere in this file — verified live: `/bin/bash
+# nl.sh status --json` emitted "line 410: 81a56f17: value too great for
+# base"). ONE index (not 7) because every lookup site below already reads
+# all 7 fields together for the same sid (see _od_heartbeat_batch_lookup)
+# — a single TSV line per sid is both the natural shape for that access
+# pattern and one join key instead of seven independent hash lookups.
 # ----------------------------------------------------------------------
-declare -gA _OD_HB_MARKER 2>/dev/null || true
-declare -gA _OD_HB_BRANCH 2>/dev/null || true
-declare -gA _OD_HB_WORKTREE 2>/dev/null || true
-declare -gA _OD_HB_CWD 2>/dev/null || true
-declare -gA _OD_HB_LAST_ACTIVITY_TS 2>/dev/null || true
-declare -gA _OD_HB_LAST_ACTIVITY_EPOCH 2>/dev/null || true
-declare -gA _OD_HB_PID 2>/dev/null || true
+_OD_HB_INDEX=""
 _OD_HB_BATCH_OK=0
 _od_heartbeat_batch_build() {
-  _OD_HB_MARKER=(); _OD_HB_BRANCH=(); _OD_HB_WORKTREE=(); _OD_HB_CWD=()
-  _OD_HB_LAST_ACTIVITY_TS=(); _OD_HB_LAST_ACTIVITY_EPOCH=(); _OD_HB_PID=()
+  _OD_HB_INDEX=""
   _OD_HB_BATCH_OK=0
 
   local -a files=("$@")
@@ -407,25 +439,46 @@ _od_heartbeat_batch_build() {
     [[ -z "$file" ]] && continue
     sid="$(basename "$file" .json)"
     [[ -z "$sid" ]] && continue
-    _OD_HB_MARKER["$sid"]="$marker"
-    _OD_HB_BRANCH["$sid"]="$branch"
-    _OD_HB_WORKTREE["$sid"]="$worktree"
-    _OD_HB_CWD["$sid"]="$cwd"
-    _OD_HB_LAST_ACTIVITY_TS["$sid"]="$ts"
-    _OD_HB_LAST_ACTIVITY_EPOCH["$sid"]="${epoch:-0}"
-    _OD_HB_PID["$sid"]="$pid"
+    _OD_HB_INDEX="${_OD_HB_INDEX}${sid}"$'\t'"${marker}"$'\t'"${branch}"$'\t'"${worktree}"$'\t'"${cwd}"$'\t'"${ts}"$'\t'"${epoch:-0}"$'\t'"${pid}"$'\n'
   done <<< "$raw"
 
   _OD_HB_BATCH_OK=1
   return 0
 }
 
-# _od_heartbeat_batch_reset — drop the batch maps so a LATER call in the
+# _od_heartbeat_batch_lookup <sid> — sets the caller-visible globals
+# _OD_HB_L_MARKER/_OD_HB_L_BRANCH/_OD_HB_L_WORKTREE/_OD_HB_L_CWD/
+# _OD_HB_L_LAST_ACTIVITY_TS/_OD_HB_L_LAST_ACTIVITY_EPOCH/_OD_HB_L_PID from
+# the first _OD_HB_INDEX line matching <sid> exactly (blank/"0" when no
+# match — the build loop emits at most one line per sid, since a
+# heartbeat file's basename is already unique on disk, so first-match and
+# only-match coincide). Returns via VARIABLES, never stdout: a caller
+# doing `x="$(_od_heartbeat_batch_lookup ...)"` would run this in a
+# command-substitution SUBSHELL and silently discard any attempt to
+# return 7 values at once — same class of bug this file's _OD_GH_I
+# comment documents for _od_gh_idx. Always returns 0 (see _od_gh_idx's
+# own note on why a helper called as a bare statement must never end on
+# a failing condition under a `set -e` caller).
+_od_heartbeat_batch_lookup() {
+  local want="$1" s m b w c t e p
+  _OD_HB_L_MARKER=""; _OD_HB_L_BRANCH=""; _OD_HB_L_WORKTREE=""; _OD_HB_L_CWD=""
+  _OD_HB_L_LAST_ACTIVITY_TS=""; _OD_HB_L_LAST_ACTIVITY_EPOCH="0"; _OD_HB_L_PID=""
+  if [[ -n "$_OD_HB_INDEX" ]]; then
+    while IFS=$'\t' read -r s m b w c t e p; do
+      [[ "$s" == "$want" ]] || continue
+      _OD_HB_L_MARKER="$m"; _OD_HB_L_BRANCH="$b"; _OD_HB_L_WORKTREE="$w"; _OD_HB_L_CWD="$c"
+      _OD_HB_L_LAST_ACTIVITY_TS="$t"; _OD_HB_L_LAST_ACTIVITY_EPOCH="${e:-0}"; _OD_HB_L_PID="$p"
+      break
+    done <<< "$_OD_HB_INDEX"
+  fi
+  return 0
+}
+
+# _od_heartbeat_batch_reset — drop the batch index so a LATER call in the
 # same long-lived process (only realistic in --self-test — production is
 # one invocation per `nl` call) never serves a lookup from a stale batch.
 _od_heartbeat_batch_reset() {
-  _OD_HB_MARKER=(); _OD_HB_BRANCH=(); _OD_HB_WORKTREE=(); _OD_HB_CWD=()
-  _OD_HB_LAST_ACTIVITY_TS=(); _OD_HB_LAST_ACTIVITY_EPOCH=(); _OD_HB_PID=()
+  _OD_HB_INDEX=""
   _OD_HB_BATCH_OK=0
 }
 
@@ -771,12 +824,20 @@ od_sessions() {
   fi
 
   # Merge: local heartbeat sids ∪ lifecycle-only sids (dedup).
+  # BASH-3.2 GUARD: `for x in "${arr[@]}"` on a possibly-EMPTY array is an
+  # "unbound variable" hard error under bash 3.2 + `set -u` (verified —
+  # this file's own STRUCTURE notes on _OD_TRANSCRIPT_INDEX/_OD_HB_INDEX
+  # document the same failure class for associative arrays; the fix here
+  # is the parameter-expansion guard `${arr[@]+"${arr[@]}"}`, which
+  # expands to nothing when the array has zero elements instead of
+  # raising). sids/lifecycle_sids/all_sids can all legitimately be empty
+  # (a fresh estate with no heartbeats or ledger lifecycle events yet).
   local -a all_sids=()
-  for sid in "${sids[@]}"; do all_sids+=("$sid"); done
+  for sid in ${sids[@]+"${sids[@]}"}; do all_sids+=("$sid"); done
   local lsid known s
-  for lsid in "${lifecycle_sids[@]}"; do
+  for lsid in ${lifecycle_sids[@]+"${lifecycle_sids[@]}"}; do
     known=0
-    for s in "${all_sids[@]}"; do [[ "$s" == "$lsid" ]] && known=1 && break; done
+    for s in ${all_sids[@]+"${all_sids[@]}"}; do [[ "$s" == "$lsid" ]] && known=1 && break; done
     [[ "$known" == "0" ]] && all_sids+=("$lsid")
   done
 
@@ -810,7 +871,11 @@ od_sessions() {
   # does. Reset at the end of this function alongside the transcript
   # index, for the same reason (a later od_costs/od_why call in the same
   # long-lived --self-test process must never see a stale batch).
-  _od_heartbeat_batch_build "${hb_files[@]}"
+  # BASH-3.2 GUARD: hb_files can legitimately be empty (no heartbeat
+  # files at all) — an unguarded "${hb_files[@]}" is an unbound-variable
+  # hard error under bash 3.2 + `set -u` (see the guard note above on the
+  # sids/lifecycle_sids/all_sids merge).
+  _od_heartbeat_batch_build ${hb_files[@]+"${hb_files[@]}"}
   local _od_hb_now_epoch; _od_hb_now_epoch="$(_od_now_epoch)"
 
   # PERFORMANCE (this task): replaces one `bash needs-you.sh
@@ -848,7 +913,10 @@ od_sessions() {
   local -a out_rows=()
   local state marker branch worktree cwd hbfile detail
 
-  for sid in "${all_sids[@]}"; do
+  # BASH-3.2 GUARD: all_sids is legitimately empty on a machine with no
+  # heartbeats and no ledger lifecycle events at all (see the guard note
+  # on the merge loop above).
+  for sid in ${all_sids[@]+"${all_sids[@]}"}; do
     hbfile=""
     marker=""; branch=""; worktree=""; cwd=""; detail=""
     local hb_last_activity_ts="" hb_last_activity_epoch="0" hb_pid=""
@@ -859,14 +927,17 @@ od_sessions() {
         # loop needs (plus pid and the last_activity_ts epoch) already
         # came out of the ONE whole-directory jq call above
         # (_od_heartbeat_batch_build) — zero additional jq/date forks
-        # per session on this path.
-        marker="${_OD_HB_MARKER[$sid]:-}"
-        branch="${_OD_HB_BRANCH[$sid]:-}"
-        worktree="${_OD_HB_WORKTREE[$sid]:-}"
-        cwd="${_OD_HB_CWD[$sid]:-}"
-        hb_last_activity_ts="${_OD_HB_LAST_ACTIVITY_TS[$sid]:-}"
-        hb_last_activity_epoch="${_OD_HB_LAST_ACTIVITY_EPOCH[$sid]:-0}"
-        hb_pid="${_OD_HB_PID[$sid]:-}"
+        # per session on this path. _od_heartbeat_batch_lookup reads all 7
+        # fields in one string scan (see its own header for why it sets
+        # variables rather than returning via stdout).
+        _od_heartbeat_batch_lookup "$sid"
+        marker="$_OD_HB_L_MARKER"
+        branch="$_OD_HB_L_BRANCH"
+        worktree="$_OD_HB_L_WORKTREE"
+        cwd="$_OD_HB_L_CWD"
+        hb_last_activity_ts="$_OD_HB_L_LAST_ACTIVITY_TS"
+        hb_last_activity_epoch="${_OD_HB_L_LAST_ACTIVITY_EPOCH:-0}"
+        hb_pid="$_OD_HB_L_PID"
       elif _od_have jq; then
         # Fallback (batch failed — no jq, or a malformed heartbeat file
         # elsewhere in the directory poisoned the whole-directory read):
@@ -993,10 +1064,13 @@ od_sessions() {
   _od_transcript_index_reset
   _od_heartbeat_batch_reset
 
+  # BASH-3.2 GUARD: out_rows is empty whenever all_sids was empty (no
+  # heartbeats, no ledger lifecycle events) — a real, reachable shape for
+  # `nl status --json` on a quiet estate, not just a self-test edge case.
   if [[ "$json_mode" == "1" ]]; then
     printf '{"schema":1,"oracle":"od_sessions","sessions":['
     local first=1 row
-    for row in "${out_rows[@]}"; do
+    for row in ${out_rows[@]+"${out_rows[@]}"}; do
       IFS=$'\t' read -r r_sid r_state r_branch r_wt r_marker r_detail <<< "$row"
       [[ "$first" == "1" ]] || printf ','
       first=0
@@ -1011,7 +1085,7 @@ od_sessions() {
 
   printf '%d session(s) (oracle: od_sessions)\n' "${#out_rows[@]}"
   local row
-  for row in "${out_rows[@]}"; do
+  for row in ${out_rows[@]+"${out_rows[@]}"}; do
     IFS=$'\t' read -r r_sid r_state r_branch r_wt r_marker r_detail <<< "$row"
     printf '  %s  %-18s branch=%s  %s%s\n' "$r_sid" "$r_state" "${r_branch:-?}" "${r_wt:-?}" "${r_detail:+ ($r_detail)}"
   done
@@ -1182,7 +1256,9 @@ od_shipped_since() {
     printf '],"decisions":['
     first=1
     local d
-    for d in "${decisions[@]}"; do
+    # BASH-3.2 GUARD: decisions can be empty (no decision docs added in
+    # the window) — guard the possibly-empty array expansion.
+    for d in ${decisions[@]+"${decisions[@]}"}; do
       [[ "$first" == "1" ]] || printf ','
       first=0
       printf '"%s"' "$(_od_json_escape "$d")"
@@ -1198,7 +1274,7 @@ od_shipped_since() {
   done
   printf '%d decision doc(s) added (oracle: od_shipped_since)\n' "${#decisions[@]}"
   local d
-  for d in "${decisions[@]}"; do
+  for d in ${decisions[@]+"${decisions[@]}"}; do
     printf '  docs/decisions/%s\n' "$d"
   done
   printf '%d failure event(s) [block|downgrade] in window (oracle: od_shipped_since)\n' "$failures"
@@ -1469,17 +1545,31 @@ _od_costs_cache_path() {
   printf '%s/.claude/state/obs-costs-cache.json' "${HOME:-$PWD}"
 }
 
-# _od_costs_cache_load — populate the global assoc array
-# _OD_COSTS_CACHE (path -> "mtime\tsize\tin\tout\tcc\tcr\tnote") from the
-# cache file in ONE jq pass. Never errors; an absent/corrupt cache just
-# leaves the array empty.
-declare -gA _OD_COSTS_CACHE 2>/dev/null || true
+# _od_costs_cache_load — populate the global cache index
+# _OD_COSTS_CACHE_INDEX (newline-delimited TSV lines "path<TAB>mtime<TAB>
+# size<TAB>in<TAB>out<TAB>cc<TAB>cr<TAB>note", at most one line per path)
+# from the cache file in ONE jq pass. Never errors; an absent/corrupt
+# cache just leaves the index empty.
+# STRUCTURE (bash 3.2 floor, 2026-07-30): a plain string index, not
+# `declare -A` — on /bin/bash 3.2 the `declare -gA ... || true` this
+# replaces failed SILENTLY, the array degraded to indexed, and
+# `[$file]`/`[$path]` arithmetic-evaluated a transcript PATH as a bash
+# expression (same failure class documented on _OD_TRANSCRIPT_INDEX and
+# _OD_HB_INDEX above — a cache key here is a filesystem path, which is
+# even less arithmetic-shaped than a session id, so the same bug would
+# have surfaced as a syntax error rather than a plausible-looking wrong
+# number). The key count here is small (the transcripts touched by one
+# `nl costs` run — tens, not thousands), so a linear scan per lookup/
+# store/flush is fine; this is a WORKING CACHE, not a hot inner loop —
+# see _od_costs_cache_store's own note on why store rebuilds the whole
+# index rather than appending.
+_OD_COSTS_CACHE_INDEX=""
 _OD_COSTS_CACHE_LOADED=0
 _OD_COSTS_CACHE_DIRTY=0
 _od_costs_cache_load() {
   [[ "$_OD_COSTS_CACHE_LOADED" == "1" ]] && return 0
   _OD_COSTS_CACHE_LOADED=1
-  _OD_COSTS_CACHE=()
+  _OD_COSTS_CACHE_INDEX=""
   local cache_file; cache_file="$(_od_costs_cache_path)"
   [[ -f "$cache_file" ]] || return 0
   _od_have jq || return 0
@@ -1498,7 +1588,7 @@ _od_costs_cache_load() {
   local path mtime size in_t out_t cc cr note
   while IFS=$'\t' read -r path mtime size in_t out_t cc cr note; do
     [[ -z "$path" ]] && continue
-    _OD_COSTS_CACHE["$path"]="${mtime}"$'\t'"${size}"$'\t'"${in_t}"$'\t'"${out_t}"$'\t'"${cc}"$'\t'"${cr}"$'\t'"${note}"
+    _OD_COSTS_CACHE_INDEX="${_OD_COSTS_CACHE_INDEX}${path}"$'\t'"${mtime}"$'\t'"${size}"$'\t'"${in_t}"$'\t'"${out_t}"$'\t'"${cc}"$'\t'"${cr}"$'\t'"${note}"$'\n'
   done <<< "$rows"
   return 0
 }
@@ -1507,14 +1597,19 @@ _od_costs_cache_load() {
 # "in\tout\tcc\tcr\tnote" if the cache has an entry for this exact
 # path+mtime+size (i.e. the file has not changed since it was cached);
 # prints nothing (cache miss) otherwise. Zero subprocess cost (pure bash
-# associative-array lookup).
+# in-memory string scan — see _OD_COSTS_CACHE_INDEX's own STRUCTURE note
+# on why a linear scan is fine here).
 _od_costs_cache_lookup() {
   local file="$1" mtime="$2" size="$3"
-  local entry="${_OD_COSTS_CACHE[$file]:-}"
-  [[ -z "$entry" ]] && return 1
-  local c_mtime c_size c_in c_out c_cc c_cr c_note
-  IFS=$'\t' read -r c_mtime c_size c_in c_out c_cc c_cr c_note <<< "$entry"
-  if [[ "$c_mtime" == "$mtime" && "$c_size" == "$size" ]]; then
+  local p c_mtime c_size c_in c_out c_cc c_cr c_note found=0
+  if [[ -n "$_OD_COSTS_CACHE_INDEX" ]]; then
+    while IFS=$'\t' read -r p c_mtime c_size c_in c_out c_cc c_cr c_note; do
+      [[ "$p" == "$file" ]] || continue
+      found=1
+      break
+    done <<< "$_OD_COSTS_CACHE_INDEX"
+  fi
+  if [[ "$found" == "1" && "$c_mtime" == "$mtime" && "$c_size" == "$size" ]]; then
     printf '%s\t%s\t%s\t%s\t%s' "$c_in" "$c_out" "$c_cc" "$c_cr" "$c_note"
     return 0
   fi
@@ -1523,10 +1618,25 @@ _od_costs_cache_lookup() {
 
 # _od_costs_cache_store <file> <mtime> <size> <in> <out> <cc> <cr> <note>
 # — updates the in-memory cache entry (bash only, no I/O) and marks the
-# cache dirty so od_costs writes it back once at the end.
+# cache dirty so od_costs writes it back once at the end. Rebuilds the
+# index with the OLD line for this path (if any) dropped before
+# appending the new one, preserving the "at most one line per path"
+# invariant _od_costs_cache_lookup/_od_costs_cache_flush both rely on —
+# an append-only store would let a stale first-scanned line shadow a
+# newer value at lookup time. Cheap: see the STRUCTURE note on
+# _OD_COSTS_CACHE_INDEX for why a linear rebuild is fine at this key count.
 _od_costs_cache_store() {
   local file="$1" mtime="$2" size="$3" in_t="$4" out_t="$5" cc="$6" cr="$7" note="$8"
-  _OD_COSTS_CACHE["$file"]="${mtime}"$'\t'"${size}"$'\t'"${in_t}"$'\t'"${out_t}"$'\t'"${cc}"$'\t'"${cr}"$'\t'"${note}"
+  local new_index="" line p
+  if [[ -n "$_OD_COSTS_CACHE_INDEX" ]]; then
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      p="${line%%$'\t'*}"
+      [[ "$p" == "$file" ]] && continue
+      new_index="${new_index}${line}"$'\n'
+    done <<< "$_OD_COSTS_CACHE_INDEX"
+  fi
+  _OD_COSTS_CACHE_INDEX="${new_index}${file}"$'\t'"${mtime}"$'\t'"${size}"$'\t'"${in_t}"$'\t'"${out_t}"$'\t'"${cc}"$'\t'"${cr}"$'\t'"${note}"$'\n'
   _OD_COSTS_CACHE_DIRTY=1
 }
 
@@ -1543,21 +1653,22 @@ _od_costs_cache_flush() {
   local cache_dir; cache_dir="$(dirname "$cache_file")"
   mkdir -p "$cache_dir" 2>/dev/null || return 0
 
-  local path entry mtime size in_t out_t cc cr note
+  local path mtime size in_t out_t cc cr note
   local tmp; tmp="$(mktemp "${cache_dir}/.obs-costs-cache.XXXXXX" 2>/dev/null)" || return 0
   {
     printf '{"schema":1,"entries":{'
     local first=1
-    for path in "${!_OD_COSTS_CACHE[@]}"; do
-      entry="${_OD_COSTS_CACHE[$path]}"
-      IFS=$'\t' read -r mtime size in_t out_t cc cr note <<< "$entry"
-      [[ "$first" == "1" ]] || printf ','
-      first=0
-      printf '%s:{"mtime":%s,"size":%s,"in":%s,"out":%s,"cc":%s,"cr":%s,"note":%s}' \
-        "$(_od_json_escape "$path" | sed 's/^/"/;s/$/"/')" \
-        "${mtime:-0}" "${size:-0}" "${in_t:-0}" "${out_t:-0}" "${cc:-0}" "${cr:-0}" \
-        "$(_od_json_escape "$note" | sed 's/^/"/;s/$/"/')"
-    done
+    if [[ -n "$_OD_COSTS_CACHE_INDEX" ]]; then
+      while IFS=$'\t' read -r path mtime size in_t out_t cc cr note; do
+        [[ -z "$path" ]] && continue
+        [[ "$first" == "1" ]] || printf ','
+        first=0
+        printf '%s:{"mtime":%s,"size":%s,"in":%s,"out":%s,"cc":%s,"cr":%s,"note":%s}' \
+          "$(_od_json_escape "$path" | sed 's/^/"/;s/$/"/')" \
+          "${mtime:-0}" "${size:-0}" "${in_t:-0}" "${out_t:-0}" "${cc:-0}" "${cr:-0}" \
+          "$(_od_json_escape "$note" | sed 's/^/"/;s/$/"/')"
+      done <<< "$_OD_COSTS_CACHE_INDEX"
+    fi
     printf '}}\n'
   } > "$tmp" 2>/dev/null
   if jq -e . "$tmp" >/dev/null 2>&1; then
@@ -1574,8 +1685,8 @@ _od_costs_cache_flush() {
 # CALLER (od_costs's loop, running in the parent shell, not a subshell)
 # perform the actual cache WRITE via _od_costs_cache_store — this
 # function is always invoked as `res="$(_od_costs_one_transcript ...)"`
-# (command substitution), which forks a subshell; any bash associative-
-# array mutation made INSIDE that subshell (_OD_COSTS_CACHE[...]=...,
+# (command substitution), which forks a subshell; any bash variable
+# mutation made INSIDE that subshell (_OD_COSTS_CACHE_INDEX=...,
 # _OD_COSTS_CACHE_DIRTY=1) is silently lost the instant the subshell
 # exits. This is a real bug caught in this task's own self-test
 # (cache-hit scenario 6d passed on VALUE but the cache file was never
@@ -1732,11 +1843,11 @@ od_costs() {
   # cache ONCE HERE, in this PARENT scope, BEFORE the per-transcript loop
   # below. _od_costs_one_transcript also calls _od_costs_cache_load, but
   # that function runs inside a command-substitution SUBSHELL (`res="$(
-  # _od_costs_one_transcript ...)"` further down) — any array mutation a
-  # subshell makes (including populating _OD_COSTS_CACHE from disk) is
+  # _od_costs_one_transcript ...)"` further down) — any variable mutation a
+  # subshell makes (including populating _OD_COSTS_CACHE_INDEX from disk) is
   # discarded the instant that subshell exits, so a load that happens
   # ONLY inside the subshell never reaches this parent scope. Without
-  # this line, _OD_COSTS_CACHE stays empty here for the entire run: every
+  # this line, _OD_COSTS_CACHE_INDEX stays empty here for the entire run: every
   # per-file HIT is correctly detected inside its own subshell (which
   # redundantly reloads the whole cache from disk on EVERY file, itself
   # wasteful) but never recorded in the parent, so _od_costs_cache_store
@@ -1745,7 +1856,7 @@ od_costs() {
   # every previously-cached hit silently vanishes from disk, and the
   # cache file's entry count oscillates (e.g. 10 -> 2 -> 10 -> 2) run over
   # run instead of growing/persisting. Loading here means: (a) this
-  # parent's _OD_COSTS_CACHE starts pre-populated with every valid
+  # parent's _OD_COSTS_CACHE_INDEX starts pre-populated with every valid
   # existing entry, so the flush at the end preserves them alongside any
   # new misses; (b) _OD_COSTS_CACHE_LOADED is now already 1 by the time
   # each subshell forks, so _od_costs_cache_load's early-return short-
@@ -1862,7 +1973,10 @@ od_costs() {
   local total_in=0 total_out=0 total_cc=0 total_cr=0
   local -a rows=()
   local t
-  for t in "${targets[@]}"; do
+  # BASH-3.2 GUARD: targets is empty for `--session <not-found>` or an
+  # empty/absent transcripts dir — a real reachable shape for `nl costs`,
+  # not just a self-test edge case.
+  for t in ${targets[@]+"${targets[@]}"}; do
     IFS=$'\t' read -r r_sid r_file <<< "$t"
     local res; res="$(_od_costs_one_transcript "$r_file" "$per_file_tail")"
     # 9-field tuple: in/out/cc/cr/note are the answer; cache_key/mtime/
@@ -1927,7 +2041,10 @@ od_costs() {
       "$([[ "$truncated_all" == "1" ]] && echo true || echo false)" \
       "$([[ "$self_excluded_flag" == "1" ]] && echo true || echo false)"
     local first=1 row
-    for row in "${rows[@]}"; do
+    # BASH-3.2 GUARD: rows is empty whenever targets was empty (see the
+    # guard note above on the targets loop) — a real reachable shape for
+    # `nl costs --json`, e.g. an estate with no matching transcripts.
+    for row in ${rows[@]+"${rows[@]}"}; do
       IFS=$'\t' read -r r_sid r_in r_out r_cc r_cr r_note <<< "$row"
       [[ "$first" == "1" ]] || printf ','
       first=0
@@ -1948,7 +2065,7 @@ od_costs() {
   printf '  total input=%d output=%d cache_create=%d cache_read=%d\n' "$total_in" "$total_out" "$total_cc" "$total_cr"
   printf '%d throttle event(s), ~%d min lost (oracle: od_costs)\n' "$throttle_count" "$est_minutes_lost"
   local row
-  for row in "${rows[@]}"; do
+  for row in ${rows[@]+"${rows[@]}"}; do
     IFS=$'\t' read -r r_sid r_in r_out r_cc r_cr r_note <<< "$row"
     printf '  %s  in=%d out=%d [%s]\n' "$r_sid" "$r_in" "$r_out" "$r_note"
   done
@@ -2383,7 +2500,11 @@ od_why() {
     printf '{"schema":1,"oracle":"od_why","session_id":"%s","transcript_status":"%s","verdict":"%s","chain":[' \
       "$(_od_json_escape "$sid")" "$(_od_json_escape "$transcript_status")" "$(_od_json_escape "$verdict_text")"
     local first=1 row
-    for row in "${sorted[@]}"; do
+    # BASH-3.2 GUARD: sorted (== chain) is empty for an unknown/quiet
+    # session id — unlike the text-mode branch below, this JSON branch
+    # returns BEFORE the `${#sorted[@]} -eq 0` early-return, so the loop
+    # itself must tolerate an empty array directly.
+    for row in ${sorted[@]+"${sorted[@]}"}; do
       IFS=$'\t' read -r r_ts r_gate r_ev r_detail <<< "$row"
       [[ "$first" == "1" ]] || printf ','
       first=0
@@ -2452,13 +2573,13 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   export OBS_COSTS_CACHE="$TMP/obs-costs-cache.json"
   mkdir -p "$HEARTBEAT_STATE_DIR" "$NEEDS_YOU_STATE_DIR" "$OBS_TRANSCRIPTS_ROOT" "$OBS_REMOTE_LEDGERS_DIR" "$OBS_DOCTOR_CACHE_DIR"
   unset CLAUDE_CODE_SESSION_ID
-  # od_costs's cache is process-global state (_OD_COSTS_CACHE /
+  # od_costs's cache is process-global state (_OD_COSTS_CACHE_INDEX /
   # _OD_COSTS_CACHE_LOADED / _OD_COSTS_CACHE_DIRTY) — reset it explicitly
   # so this self-test run never inherits a loaded/dirty state from an
   # earlier sourcing of this file in the same shell (defensive; matters
   # if this file is ever sourced by a long-lived process rather than
   # exec'd fresh per invocation, which is the real `nl costs` CLI shape).
-  _OD_COSTS_CACHE=()
+  _OD_COSTS_CACHE_INDEX=""
   _OD_COSTS_CACHE_LOADED=0
   _OD_COSTS_CACHE_DIRTY=0
 
@@ -2944,7 +3065,7 @@ EOF
   # clean load (mirrors a fresh `nl costs` process, which is the real
   # invocation shape — the cache is designed to be loaded once per
   # process, not to persist across unrelated self-test scenarios).
-  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  _OD_COSTS_CACHE_INDEX=""; _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
   printf '{"type":"assistant","message":{"usage":{"input_tokens":42,"output_tokens":17,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-cache-hit.jsonl"
   out6d_miss="$(od_costs --session sess-cache-hit)"
   if [[ -f "$OBS_COSTS_CACHE" ]] && jq -e '.entries | keys | length > 0' "$OBS_COSTS_CACHE" >/dev/null 2>&1; then
@@ -2958,7 +3079,7 @@ EOF
   # cache is actually being CONSULTED (not merely written) via Scenario
   # 6e's invalidation test below, which changes the file and asserts the
   # sum DOES change — round-tripping proves both the hit and miss paths.
-  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  _OD_COSTS_CACHE_INDEX=""; _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
   out6d_hit="$(od_costs --session sess-cache-hit)"
   if printf '%s' "$out6d_hit" | grep -qE "in=42 out=17"; then
     pass "od_costs cache-hit path returns the correct sum (in=42 out=17) identical to the cold run"
@@ -2968,12 +3089,12 @@ EOF
   rm -f "$OBS_TRANSCRIPTS_ROOT/sess-cache-hit.jsonl"
 
   echo "Scenario 6e: od_costs cache invalidation — a changed mtime/size (file grew) is NOT served stale cached data"
-  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  _OD_COSTS_CACHE_INDEX=""; _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
   printf '{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-cache-grow.jsonl"
   out6e_before="$(od_costs --session sess-cache-grow)"
   sleep 1  # ensure a distinguishable mtime on filesystems with 1s resolution
   printf '{"type":"assistant","message":{"usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n{"type":"assistant","message":{"usage":{"input_tokens":90,"output_tokens":45,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-cache-grow.jsonl"
-  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  _OD_COSTS_CACHE_INDEX=""; _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
   out6e_after="$(od_costs --session sess-cache-grow)"
   if printf '%s' "$out6e_before" | grep -qE "in=10 out=5" && printf '%s' "$out6e_after" | grep -qE "in=100 out=50"; then
     pass "od_costs cache correctly invalidates on mtime/size change (before: in=10 out=5, after growth: in=100 out=50, not a stale in=10 out=5)"
@@ -2983,7 +3104,7 @@ EOF
   rm -f "$OBS_TRANSCRIPTS_ROOT/sess-cache-grow.jsonl"
 
   echo "Scenario 6f: od_costs tolerates a CORRUPTED cache file (never fatal, falls back to full recomputation)"
-  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  _OD_COSTS_CACHE_INDEX=""; _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
   printf 'this is not valid json {{{' > "$OBS_COSTS_CACHE"
   printf '{"type":"assistant","message":{"usage":{"input_tokens":7,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-corrupt-cache.jsonl"
   set +e
@@ -3020,7 +3141,7 @@ EOF
   # Start from a clean, empty on-disk cache and clean in-process state so
   # this scenario is not affected by any residual entries from 6d-6g.
   rm -f "$OBS_COSTS_CACHE" 2>/dev/null
-  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  _OD_COSTS_CACHE_INDEX=""; _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
   printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-persist-a.jsonl"
   printf '{"type":"assistant","message":{"usage":{"input_tokens":2,"output_tokens":2,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-persist-b.jsonl"
   printf '{"type":"assistant","message":{"usage":{"input_tokens":3,"output_tokens":3,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-persist-c.jsonl"
@@ -3041,15 +3162,15 @@ EOF
   # unchanged (must HIT), d is new (MISS, triggers the flush). Under the
   # ORIGINAL bug, _od_costs_cache_load was only ever called inside
   # _od_costs_one_transcript's own command-substitution SUBSHELL, so this
-  # PARENT's _OD_COSTS_CACHE stayed empty here regardless of what was on
+  # PARENT's _OD_COSTS_CACHE_INDEX stayed empty here regardless of what was on
   # disk — a/b/c's hits were correctly detected inside their own throwaway
   # subshells but never recorded in this parent scope, so the flush at the
   # end wrote ONLY d's new entry, silently dropping a/b/c from the cache
   # file (the "10 -> 2 -> 10 -> 2"-style oscillation named in the bug
   # report). The fix (calling _od_costs_cache_load once here in od_costs,
-  # before the loop) makes this parent's _OD_COSTS_CACHE start pre-loaded
+  # before the loop) makes this parent's _OD_COSTS_CACHE_INDEX start pre-loaded
   # with all 3 prior entries, so they survive the flush alongside d.
-  _OD_COSTS_CACHE=(); _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
+  _OD_COSTS_CACHE_INDEX=""; _OD_COSTS_CACHE_LOADED=0; _OD_COSTS_CACHE_DIRTY=0
   out6h_run2="$(OBS_COSTS_MAX_TRANSCRIPTS=0 od_costs)"
   n6h_run2_keys="$(jq '[.entries | keys[] | select(contains("sess-persist-"))] | length' "$OBS_COSTS_CACHE" 2>/dev/null)"
   if [[ "$n6h_run2_keys" == "4" ]]; then
