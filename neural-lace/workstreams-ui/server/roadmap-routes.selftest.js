@@ -330,6 +330,15 @@ async function main() {
   ].join('\n'));
   const emptyRepoDir = path.join(tmp, 'empty-repo-no-plans');
   fs.mkdirSync(emptyRepoDir, { recursive: true });
+  // R17 (2026-07-30, decision A — multi-project GROUPING) fixture: a
+  // FOURTH configured repo using the LEGACY flat-string config form (no
+  // `group` declared) — its plans must land in the honest '(ungrouped)'
+  // catch-all, never a silently-guessed default group.
+  const flatRepoDir = path.join(tmp, 'flat-repo');
+  fs.mkdirSync(path.join(flatRepoDir, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(flatRepoDir, 'docs', 'plans', 'flat-project-plan.md'), [
+    '# Plan: Flat Project Effort', '', 'Status: ACTIVE', '', '## Tasks', '', '- [ ] 1. do the flat-project thing', '',
+  ].join('\n'));
   // The projects-config env override starts pointed at a NONEXISTENT file —
   // configuredRepoRoots() must degrade to [] honestly, so the zero-config
   // default (S1-era GETs below) stays single-repo (R9-8's own binding rule).
@@ -938,8 +947,11 @@ async function main() {
       topIds.indexOf('other-repo-plan') === -1);
     const projectsConfigPath = path.join(tmp, 'fixture-projects.json');
     fs.writeFileSync(projectsConfigPath, JSON.stringify({
-      'other-project': otherRepoDir,
+      // Object form (R17): declares a top-level display group explicitly.
+      'other-project': { root: otherRepoDir, group: 'Pocket Technician' },
       'empty-project': emptyRepoDir,
+      // Legacy flat-string form (R17): no group -> honest '(ungrouped)'.
+      'flat-project': flatRepoDir,
     }));
     process.env.ROADMAP_PROJECTS_CONFIG = projectsConfigPath;
     const rMulti = await httpGet(PORT, '/api/roadmap');
@@ -953,6 +965,27 @@ async function main() {
       multiIds.indexOf('demo-plan') !== -1 && multiIds.indexOf('redesign-plan') !== -1);
     ok('R9-8d a THIRD configured repo with NO docs/plans/ at all contributes NOTHING — honest absence, never a crash, never a synthesized item',
       rMulti.status === 200 && rMulti.json.ok === true);
+
+    // ---- R17 (2026-07-30, decision A): multi-project display GROUPING --
+    // redesign-plan (not demo-plan): demo-plan is linked to ask-alpha, whose
+    // OWN registry `project` field ('fixture-proj') wins over the path-
+    // derived one (see the `projectKey` precedence in derivePlanRootNode) —
+    // an unrelated pre-existing quirk this test must not trip over.
+    // redesign-plan has NO linked ask, so its project is purely
+    // planProjectFromPath(absPath) === path.basename(repoDir), the exact
+    // self-detection this test verifies.
+    const selfPlanForGroup = findItem(multiItems, 'redesign-plan');
+    ok('R17-G1 the self repo\'s own plans carry project_group "Neural Lace" (intrinsic — this app\'s own home repo has no config/projects.json entry to read a group from)',
+      selfPlanForGroup && selfPlanForGroup.project_group === 'Neural Lace',
+      selfPlanForGroup && selfPlanForGroup.project_group);
+    const otherRepoItem = findItem(multiItems, 'other-repo-plan');
+    ok('R17-G2 a configured repo using the OBJECT config form ({root, group}) carries the DECLARED group ("Pocket Technician") on its plans — never a hardcoded default',
+      otherRepoItem && otherRepoItem.project_group === 'Pocket Technician',
+      otherRepoItem && otherRepoItem.project_group);
+    const flatRepoItem = findItem(multiItems, 'flat-project-plan');
+    ok('R17-G3 a configured repo using the LEGACY flat-string config form (no group declared) lands its plans in the honest "(ungrouped)" catch-all, never silently defaulted into one of the named groups',
+      flatRepoItem && flatRepoItem.project_group === '(ungrouped)',
+      flatRepoItem && flatRepoItem.project_group);
 
     // ------------------------------------------------------------------
     // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (2026-07-29 round 14) —

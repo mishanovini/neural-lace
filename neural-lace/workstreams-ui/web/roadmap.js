@@ -1527,7 +1527,86 @@
     return wrap;
   }
 
+  // TOP-GROUP-BEGIN
+  // R17 Round 17 deliverable 4 (operator 2026-07-30, decision A —
+  // multi-project grouping). ABOVE the existing per-project grouping
+  // (groupItemsByProject/projectGroupHeaderText, unchanged below), plans
+  // now render under up to three canonical top-level DISPLAY groups, in
+  // this fixed order: "Neural Lace" (this repo, always present), "Pocket
+  // Technician" (Circuit's plans, when configured), "Personal" (always
+  // rendered too, even with zero plans — an honest "no projects
+  // configured" line rather than the group silently vanishing). Any
+  // OTHER group name the server's data actually produces (e.g. the
+  // '(ungrouped)' catch-all a flat-string, no-`group` config entry lands
+  // in) is appended after the canonical three, in first-appearance order.
+  // The mapping itself (which project belongs to which group) is
+  // server-computed (`item.project_group`, from config/projects.json) —
+  // this is purely a client-side DISPLAY partition over data the server
+  // already grouped, never a client-side guess at project membership.
+  var CANONICAL_TOP_GROUPS = ['Neural Lace', 'Pocket Technician', 'Personal'];
+  function groupItemsByTopGroup(items) {
+    var byGroup = {};
+    var order = [];
+    CANONICAL_TOP_GROUPS.forEach(function (g) { byGroup[g] = []; order.push(g); }); // always present, even empty
+    (items || []).forEach(function (it) {
+      var g = it.project_group || '(ungrouped)';
+      if (!byGroup[g]) { byGroup[g] = []; order.push(g); }
+      byGroup[g].push(it);
+    });
+    return order.map(function (g) { return { group: g, items: byGroup[g] }; });
+  }
+  // topGroupHasInProgress(items) — "in progress" here means the same
+  // "not not-started and not complete" band bandPlanItems already uses
+  // for its first band (in-progress/stalled/merged-unverified/unknown);
+  // drives the group's collapsed-by-default state (renderTopGroup below).
+  function topGroupHasInProgress(items) {
+    return (items || []).some(function (it) {
+      return it.status && it.status.value !== 'not-started' && it.status.value !== 'complete';
+    });
+  }
+  function topGroupHeaderText(groupName, items) {
+    var count = (items || []).length;
+    if (!count) return groupName + ' — no projects configured';
+    return groupName + ' — ' + count + (count === 1 ? ' plan' : ' plans');
+  }
+  function renderTopGroup(groupName, items) {
+    var det = document.createElement('details');
+    det.className = 'rm-top-group';
+    det.dataset.topGroup = groupName;
+    var openKey = 'topgroup:' + groupName;
+    var defaultOpen = topGroupHasInProgress(items);
+    det.open = Object.prototype.hasOwnProperty.call(openSet, openKey) ? !!openSet[openKey] : defaultOpen;
+    det.addEventListener('toggle', function () { openSet[openKey] = det.open; });
+    var sum = document.createElement('summary');
+    sum.className = 'rm-top-group-head';
+    sum.textContent = topGroupHeaderText(groupName, items);
+    det.appendChild(sum);
+    var bodyEl = el('div', 'rm-top-group-body');
+    if (!items.length) {
+      bodyEl.appendChild(el('div', 'rm-empty-note', 'no projects configured'));
+    } else {
+      bodyEl.appendChild(renderProjectGroups(items));
+    }
+    det.appendChild(bodyEl);
+    return det;
+  }
   function renderTree(visibleItems) {
+    var outer = el('div', 'rm-tree');
+    groupItemsByTopGroup(visibleItems).forEach(function (tg) {
+      outer.appendChild(renderTopGroup(tg.group, tg.items));
+    });
+    return outer;
+  }
+  // TOP-GROUP-END
+
+  // renderProjectGroups(visibleItems) — the PRE-R17 renderTree body,
+  // unchanged: per-project grouping (R9-2), in-progress/upcoming banding
+  // (Round 15), and the Shipped roll-up — now scoped to ONE top-level
+  // group's items at a time (renderTree above calls this once per group,
+  // so "Keep in-progress→upcoming→shipped banding WITHIN each group"
+  // holds by construction: nothing below this line changed, only WHO
+  // calls it and with WHAT SUBSET of items).
+  function renderProjectGroups(visibleItems) {
     var tree = el('div', 'rm-tree');
     var live = [], shipped = [];
     // Round 12 item 6 (operator: "each bundle of tasks should roll up and

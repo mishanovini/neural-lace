@@ -1266,6 +1266,48 @@ ok('R11-C7 the substring filter (I4) also searches a master\'s resolved child pl
     /1 upcoming/.test(h2) && /1 in progress/.test(h2) && /1 partially done/.test(h2) && /1 status unknown/.test(h2));
 })();
 
+// --- Round 17 deliverable 4 (operator 2026-07-30, decision A — multi-
+// project GROUPING): real execution of the pure top-group helpers, same
+// marker-anchored extraction technique as R9-2/R15 above. ------------------
+(function () {
+  const topGroupSrc = extractMarkedBlock(roadmapJs, '// TOP-GROUP-BEGIN', '// TOP-GROUP-END');
+  ok('R17-T0 selftest can locate the TOP-GROUP extraction anchors in roadmap.js', !!topGroupSrc);
+  if (!topGroupSrc) return;
+  const items = [
+    { id: 'a', project_group: 'Neural Lace', status: { value: 'in-progress' } },
+    { id: 'b', project_group: 'Pocket Technician', status: { value: 'not-started' } },
+    { id: 'c', project_group: 'Neural Lace', status: { value: 'not-started' } },
+    { id: 'd', status: { value: 'not-started' } }, // no project_group at all -> '(ungrouped)'
+  ];
+  const g = runPure(topGroupSrc, 'groupItemsByTopGroup(' + JSON.stringify(items) + ')');
+  ok('R17-T1 groupItemsByTopGroup ALWAYS emits the three canonical groups, in the fixed order Neural Lace / Pocket Technician / Personal, even when a group (Personal) has zero items',
+    Array.isArray(g) && g.length >= 3 && g[0].group === 'Neural Lace' && g[1].group === 'Pocket Technician' && g[2].group === 'Personal' && g[2].items.length === 0,
+    JSON.stringify(g && g.map((x) => x.group)));
+  ok('R17-T2 items partition into their DECLARED project_group, preserving first-appearance order within the group (never a re-sort)',
+    Array.isArray(g) && g[0].items.length === 2 && g[0].items[0].id === 'a' && g[0].items[1].id === 'c' &&
+    g[1].items.length === 1 && g[1].items[0].id === 'b',
+    JSON.stringify(g));
+  ok('R17-T3 an item with NO project_group at all lands in an appended "(ungrouped)" section (after the canonical three), never silently dropped and never merged into one of the named groups',
+    Array.isArray(g) && g.length === 4 && g[3].group === '(ungrouped)' && g[3].items.length === 1 && g[3].items[0].id === 'd',
+    JSON.stringify(g));
+  const hip1 = runPure(topGroupSrc, 'topGroupHasInProgress([{status:{value:"in-progress"}}])');
+  const hip2 = runPure(topGroupSrc, 'topGroupHasInProgress([{status:{value:"not-started"}},{status:{value:"complete"}}])');
+  const hip3 = runPure(topGroupSrc, 'topGroupHasInProgress([])');
+  ok('R17-T4 topGroupHasInProgress is true when ANY item is neither not-started nor complete (the same in-progress-ish band bandPlanItems already uses), false for an all not-started/complete/empty set — this drives the group\'s collapsed-by-default state',
+    hip1 === true && hip2 === false && hip3 === false);
+  const headerEmpty = runPure(topGroupSrc, "topGroupHeaderText('Personal', [])");
+  ok('R17-T5 an EMPTY canonical group renders an honest "no projects configured" line in its own header (never a bare "0 plans" or a vanished group)',
+    typeof headerEmpty === 'string' && /Personal — no projects configured/.test(headerEmpty));
+  const headerNonEmpty = runPure(topGroupSrc, "topGroupHeaderText('Neural Lace', [{id:'a'},{id:'c'}])");
+  ok('R17-T6 a non-empty group renders its name + a plan count',
+    typeof headerNonEmpty === 'string' && /Neural Lace — 2 plans/.test(headerNonEmpty));
+})();
+ok('R17-T7 renderTree is now the TOP-GROUP outer wrapper (partitions visibleItems via groupItemsByTopGroup and delegates each group\'s rendering to renderProjectGroups, the pre-R17 renderTree body, unchanged) — the wiring, not just the pure functions existing in isolation',
+  /function renderTree\(visibleItems\) \{[\s\S]{0,200}groupItemsByTopGroup\(visibleItems\)/.test(roadmapJsNoComments) &&
+  /renderProjectGroups\(items\)/.test(roadmapJsNoComments));
+ok('R17-T8 a top-group is a real <details> (keyboard-native disclosure, C9 baseline) whose open/closed state is remembered in the SAME openSet session-state map every other collapsible in this file uses',
+  /det\.className = 'rm-top-group'/.test(roadmapJsNoComments) && /openSet\[openKey\] = det\.open/.test(roadmapJsNoComments));
+
 // --- Round 15 (coordinator, operator verbatim: "the Workstreams UI still
 // doesn't actually represent the actual order of building, at least not at
 // the plan level") — THREE STABLE BANDS: real execution, not source-regex,

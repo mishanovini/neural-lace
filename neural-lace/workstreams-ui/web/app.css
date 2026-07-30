@@ -1751,6 +1751,19 @@ details[open] > summary .rm-rollups { display: none; }
 }
 /* R9-3: per-item project tag (text chip, never color-only). */
 .rm-project-tag { font-size: 10px; opacity: 0.75; }
+/* R17 Round 17 deliverable 4 (operator 2026-07-30, decision A): top-level
+   display groups (Neural Lace / Pocket Technician / Personal / any
+   '(ungrouped)' catch-all) sit ABOVE the existing per-project group. A
+   plain <details> so a group with zero in-progress plans collapses by
+   default (renderTopGroup in roadmap.js sets .open) while the group NAME
+   (and an honest empty-state line) always stays visible via <summary>. */
+.rm-top-group { margin: 4px 0 20px; }
+.rm-top-group-head {
+  cursor: pointer; font-size: 15px; font-weight: 700; color: var(--text);
+  padding: 4px 0 8px; border-bottom: 1px solid var(--border2); margin-bottom: 8px;
+}
+.rm-top-group-body { padding-left: 2px; }
+.rm-top-group .rm-empty-note { font-size: 12px; color: var(--muted); padding: 4px 0 4px 2px; }
 /* R9-7: unattributed live sessions — one top-of-tree collapsible node. */
 .rm-unbound-sessions {
   margin: 0 0 10px; padding: 4px 8px;

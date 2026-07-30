@@ -490,6 +490,15 @@ function newestLinkTs(links) {
 // default", so this reads the raw JSON directly and stays scoped to repos
 // the operator actually configured. A malformed/absent config file is an
 // honest zero-length list (never a crash, never a silent guess).
+// R17 (operator 2026-07-30, decision A — multi-project grouping): each
+// entry supports TWO forms — the pre-existing flat string (`"Circuit":
+// "/abs/path"`, no group — those plans land in the honest '(ungrouped)'
+// display bucket, see projectGroupFor below) AND a new object form
+// (`"Circuit": { "root": "...", "group": "Pocket Technician" }`) that
+// additionally declares which top-level DISPLAY GROUP the repo's plans
+// belong to. `group` is deliberately read straight from the config file,
+// never defaulted/guessed here — the operator's own binding rule for this
+// round ("default group... for Circuit is NOT hardcoded").
 function configuredRepoRoots() {
   const cfgPath = process.env.ROADMAP_PROJECTS_CONFIG ||
     path.join(__dirname, '..', 'config', 'projects.json');
@@ -498,9 +507,45 @@ function configuredRepoRoots() {
   const out = [];
   Object.keys(raw || {}).forEach((key) => {
     if (key === '_comment') return;
-    if (typeof raw[key] === 'string' && raw[key]) out.push({ key: key, root: raw[key] });
+    const val = raw[key];
+    if (typeof val === 'string' && val) { out.push({ key: key, root: val, group: '' }); return; }
+    if (val && typeof val === 'object' && typeof val.root === 'string' && val.root) {
+      out.push({ key: key, root: val.root, group: (typeof val.group === 'string' ? val.group : '') });
+    }
   });
   return out;
+}
+
+// projectGroupFor(projectKey) -> the top-level DISPLAY GROUP a plan's
+// project belongs to. The self repo's group is intrinsic ('Neural Lace' —
+// this app's own home repo; it has no config/projects.json entry to read
+// a group from, since that file is for OTHER repos). "Self" is identified
+// by comparing projectKey against path.basename(planScanRoot()) — the
+// SAME derivation planProjectFromPath uses for the self repo's own plans
+// (discoverPlanFiles's `{key:'self', root:scanRoot}` entry) — never a
+// hardcoded literal like 'neural-lace', which would silently break under
+// ROADMAP_PLAN_SCAN_ROOT overrides (this file's own test suite included).
+// Every OTHER project key's group comes from the SAME configuredRepoRoots()
+// the repo-scan already reads (object-form entries only); a flat-string
+// entry (no group declared) or an entirely unrecognized project key both
+// fall to the honest '(ungrouped)' catch-all — never a silently-guessed
+// default.
+const SELF_PROJECT_GROUP = 'Neural Lace';
+const UNGROUPED_PROJECT_GROUP = '(ungrouped)';
+function projectGroupFor(projectKey) {
+  if (projectKey && projectKey === path.basename(planScanRoot())) return SELF_PROJECT_GROUP;
+  // Matched by the REPO ROOT's own basename, not the config KEY: a plan's
+  // `project` value is planProjectFromPath's path-derived repo dirname
+  // (same as the `{key:'self', root:...}` convention discoverPlanFiles
+  // uses), which the operator's chosen config KEY need not equal (a
+  // config key is just a human label picked for the JSON file; the real
+  // Circuit case happens to have key===basename==="Circuit", but that is
+  // a coincidence, not a guarantee this lookup may rely on).
+  const configured = configuredRepoRoots();
+  for (let i = 0; i < configured.length; i++) {
+    if (path.basename(configured[i].root) === projectKey) return configured[i].group || UNGROUPED_PROJECT_GROUP;
+  }
+  return UNGROUPED_PROJECT_GROUP;
 }
 
 function discoverPlanFiles(scanRoot, planAskLinks) {
@@ -1083,12 +1128,18 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
   const operatorTitle = (firstLink && firstLink.title_source === 'operator') ? firstLink.title : '';
   const askAutoTitle = (firstLink && firstLink.title_source !== 'operator') ? (firstLink.title || '') : '';
   const provClass = planProvenanceClass(pf.slug, headerExtras.provenanceField, !!(linkedAsks && linkedAsks.length));
+  const projectKey = (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath);
   const node = {
     id: pf.slug,
     kind: 'plan',
     title: operatorTitle || headerExtras.h1Title || askAutoTitle || pf.slug,
     title_source: operatorTitle ? 'operator' : 'auto',
-    project: (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath),
+    project: projectKey,
+    // R17 deliverable 4: the top-level DISPLAY GROUP this plan's project
+    // belongs to (see projectGroupFor above) — a NEW field, additive to
+    // the existing `project` (per-repo) grouping the client already uses;
+    // never replaces it.
+    project_group: projectGroupFor(projectKey),
     plan_path: pf.absPath, // R9 follow-up (operator 2026-07-24): every phase IS a plan file — link it
     // Round 15 (operator, verified live): the client's ONLY prior rendering
     // of plan_path was a raw `file:///` href — a dead link from an http-
