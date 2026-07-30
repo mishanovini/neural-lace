@@ -57,22 +57,22 @@ unfixable by the agent. It fired 3+ times in one session and had to be hand-patc
 
 ## Scope / Tasks
 
-- [ ] M1 — Fix `session-wrap.sh:319`'s GNU-only `sed -i` so the SCRATCHPAD stamp refresh works
+- [x] M1 — Fix `session-wrap.sh:319`'s GNU-only `sed -i` so the SCRATCHPAD stamp refresh works
       on BSD sed. Use a portable form (`sed -i.bak … && rm -f …`, or tmp+mv) — NOT `sed -i ''`,
       which is itself GNU-incompatible. Outcome: running `session-wrap.sh refresh` on this Mac
       updates the stamp and the Stop hook stops reporting a false STALE.
       Verification: full (run it, observe the stamp change and the signal clear).
-- [ ] M2 — Sweep the other 3 GNU-only `sed -i` callsites found by
+- [x] M2 — Sweep the other 3 GNU-only `sed -i` callsites found by
       `grep -rlE "sed -i '?[^'\"]*'? " adapters/claude-code --include='*.sh'` and apply the
       same portable form. Decompose per-file before starting (planning doctrine: sweep tasks
       decompose per-target). Verification: full, per file.
-- [ ] M3 — Audit the 12 `timeout` callsites. GNU `timeout` is absent on stock macOS. Decide
+- [x] M3 — Audit the 12 `timeout` callsites. GNU `timeout` is absent on stock macOS. Decide
       per callsite: guard with a `command -v timeout` fallback, or use the portable
       background+poll+kill idiom already written in this repo. Verification: full, per file.
-- [ ] M4 — Audit the 21 `date -d` callsites (GNU-only; BSD needs `date -j -f`). Prefer
+- [x] M4 — Audit the 21 `date -d` callsites (GNU-only; BSD needs `date -j -f`). Prefer
       eliminating the call (file mtime, `$EPOCHSECONDS`) over dual-syntax branching, since
       dual-syntax doubles the fork cost on any hot path. Verification: full, per file.
-- [ ] M5 — Make portability a MECHANISM rather than a memory: a self-test sweep runner
+- [x] M5 — Make portability a MECHANISM rather than a memory: a self-test sweep runner
       committed to the repo (the ad-hoc script used for the measurement above) plus a doctor
       check that runs it and REDs on a regression, so the next GNU-ism is caught at authoring
       time instead of by an operator hitting it. Verification: full.
