@@ -39,8 +39,8 @@ history stays legible.
 ## Row count summary (the honest number)
 
 Computed by machine (grep against this file's own table, first-status-token classification —
-reproducible, not hand-tallied) against all 83 numbered rows below (73 through Round 15 + 6 new
-Round 16 rows + 4 Round-17-queue rows from the operator's 2026-07-30 afternoon message). Three
+reproducible, not hand-tallied) against all 87 numbered rows below (73 through Round 15 + 6 new
+Round 16 rows + 4 Round-17-queue rows + 4 Round-17 live catches, all 2026-07-30). Three
 of the 83 (rows 10, 18, 19) are the SAME requirement restated by the operator in the same round
 and are cross-referenced rather than independently re-verified — they are still counted here
 since every row still carries its own verifiable status, not folded away to make the total look
@@ -48,14 +48,14 @@ smaller.
 
 | Status | Count |
 |---|---|
-| MET — verified live or structurally sound this session | 56 |
+| MET — verified live or structurally sound this session | 58 |
 | MET (selftest) — real-execution suite proof, not re-verified live this session | 12 |
 | MET (carried) — not re-verified this session; citing a prior verified record | 3 |
-| PARTIAL — mechanism exists, real live gap found this session | 3 |
+| PARTIAL — mechanism exists, real live gap found this session | 5 |
 | SUPERSEDED — operator's own later direction replaced an earlier ask | 6 (see note) |
 | REGRESSED | 0 |
 | UNBUILT — explicitly out-of-scope elsewhere, not silently dropped | 3 |
-| **Total rows** | **83** |
+| **Total rows** | **87** |
 
 Note on SUPERSEDED: rows 29, 37, and 45 (Rounds 11/12) plus rows 5, 10, and 27 (Round 16 — plan-
 title editing and the edit/rank icon chrome, both retired at the operator's own explicit later
@@ -253,6 +253,15 @@ Source: this session's dispatch prompt, verbatim operator quotes from the Round 
 | 81 | "the instruction on this page to run the ps command does not make it clear where the command itself begins and ends" | UNBUILT | Two halves: (a) Inbox/ask RENDERING — runnable commands must be visually fenced, copyable, never inline with prose (audit of every command-bearing surface dispatched to ux-ia-auditor this session); (b) ask COMPOSITION — needs-you.sh asks carry commands in a distinct field/fence. Neither built yet. |
 | 82 | "The purpose of the walkthrough is not for you to show me what's there; it's to review everything I've requested over the last couple months and see how much of it is still not there, and allow me to decide how much I truly want every item I've asked for in the past." | PARTIAL | This ledger IS the review instrument (all 83 rows, statuses live-verified), but the walkthrough deliverable is reframed: present EVERY row with a keep / drop / change decision column for the operator, regressions and rebuild-losses first — not a feature tour. Brief updated (docs/reviews/2026-07-30-ui-walkthrough-brief.md §7). |
 | 83 | "I keep having to nudge you for little UI improvements that any decent UX designer should have caught on their own. It's very burdensome." | PARTIAL | Audit LANDED 2026-07-30 (1ce550c): docs/reviews/2026-07-30-cockpit-ux-audit.md — 15 severity-rated findings; top items: unfenced inline commands everywhere (= row 81), raw bash/jq error dumps as operator-facing error surfaces, Requests ledger dead-end (no dismiss verb — the 401 junk item is unclearable), machine text displacing operator words, "what happened since last look" buried under Harness Health, "Workstreams" naming (= row 80), 377h-style raw-hour ages. These form Round 17's worklist. Still PARTIAL: the standing no-round-lands-without-UX-pass rule is not yet wired into the plan's acceptance. |
+
+## Round 17 live catches (2026-07-30 evening — operator at the deployed Round 16 surface)
+
+| # | Verbatim | Status | Evidence |
+|---|---|---|---|
+| 84 | "The green items are supposed to indicate something is actively running. I see several green plans that aren't running." | MET | Fixed live same hour (6b19c8b): Round 16 had applied `--running` green to STATE colors (`.rm-title-in-progress`, `.chip.rm-status-in-progress`) — semantic lie for idle in-progress plans. Both moved to `--accent`; R13-31 selftest re-pinned to this verbatim. Live computed-style sweep post-deploy: the ONLY green leaf classes are rm-taskspan-running / rm-rollup-running / rm-task-running — all genuine live-session signals. |
+| 85 | "The drag and drop reordering doesn't work." | MET | Fixed live same hour (6b19c8b). Root cause PROVEN: only the ~14px ⠿ grip carried dragstart — synthetic grip-drag fired `POST /api/roadmap/rank → 200` while row-body drags did nothing (the operator's real gesture). Whole summary row is now the drag surface (links/buttons exempted); live-verified: dragstart from the title text produces the drop indicator. |
+| 86 | "The Requests tab doesn't show me anything useful." | PARTIAL | = audit F4 (machine output displaced operator words: auto-retitle to a 401 error string, 93/95 timeline events identical "amendment captured", a title rendering literal `none`). Round 17 builder briefed mid-build with the render defenses: operator's original words lead, duplicate events collapse to a count, machine noise folds behind a disclosure, plus the dismiss verb (F3). |
+| 87 | "The links on the Inbox tab don't work." | PARTIAL | Root cause PROVEN live: every Inbox link is a `file://` href (inbox.js absoluteLinkHref ~575-577), silently blocked by the browser from an http page — the same class row 70 fixed for plan links. Round 17 builder briefed mid-build: route repo-file links through the in-page doc modal (`/api/doc` + shared md-render). |
 
 ## Known gaps this ledger surfaces (logged to `docs/backlog.md`)
 

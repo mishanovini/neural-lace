@@ -1969,3 +1969,11 @@ entirely and just capture `rc=$?` directly (a bare command statement's non-zero 
 abort a script that never enabled `set -e` to begin with).
 **Filed by:** bash-3.2 portability repair build (this task), 2026-07-30 — discovered while
 running this lib's own `--self-test` under both interpreters to verify the `declare -gA` fix.
+- **AGENTS-ROSTER-REEVALUATION-01** (high, operator 2026-07-30): "I'm also wondering if we need
+  to improve the agents (the UX ones in particular). We rebuilt many of them a few weeks back and
+  only enabled a few of them because Claude told me there was substantial risk in doing so. I'd
+  like to reevaluate that with you at some point." → a joint sitting: inventory the rebuilt-but-
+  disabled agent roster, restate the original risk assessment against today's harness (RI pipeline,
+  verification-dispatch, worktree isolation now exist — the risk calculus has changed), and
+  propose enable/improve/retire per agent. Owner: orchestrator prepares the brief; operator
+  decides. Not started.
