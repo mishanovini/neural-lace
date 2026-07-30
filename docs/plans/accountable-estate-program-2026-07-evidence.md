@@ -653,3 +653,94 @@ Runtime verification: test adapters/claude-code/scripts/loe-backfill.sh::--self-
 Runtime verification: test adapters/claude-code/hooks/plan-reviewer.sh::dd6 (PASS both at a8b114c; FAIL both at 8604509)
 Runtime verification: file docs/loe/loe-calibration.json::plans_total
 Runtime verification: file adapters/claude-code/templates/plan-template.md::loe-class
+
+## Task T9 — Outcome-gated closure semantics (verifier record)
+
+EVIDENCE BLOCK
+==============
+Task ID: T9
+Task description: Outcome-gated closure semantics for harness plans (metric + re-check + auto-reopen), applied to THIS program first. LOE: MEDIUM, 2 bs. Verification: full.
+Verified at: 2026-07-30T15:20:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's own three-part contract (metric + re-check + auto-reopen + "applied to THIS program first") + the harness-internal functionality signal (--self-test on both interpreters) + a real production plan closure as live demonstration (c7b8c22/43117a0).
+
+Comprehension-gate: skipped — rung field missing (plan has no `rung:` header; treated as rung 0 per Decision 020a)
+
+Operator invariants: none registered (exit 3)
+
+Checks run:
+1. close-plan.sh self-test, system bash
+   Command: /bin/bash adapters/claude-code/scripts/close-plan.sh --self-test
+   Output: self-test summary: 30 passed, 0 failed (of 27 scenarios); EXIT=0
+   Result: PASS
+2. close-plan.sh self-test, Homebrew bash
+   Command: /opt/homebrew/bin/bash adapters/claude-code/scripts/close-plan.sh --self-test
+   Output: 30 passed, 0 failed; EXIT=0. T9 regression scenarios present and green: S22 prose-mention-does-not-orphan-verdict, S23 outcome-gated-plan-missing-section-blocks, S24 outcome-gated-plan-closes-preserves-metric-plus-t7-splice-plus-event, S25 non-opted-in-plan-still-gets-default-outcome-section (observe-only), S26 scope-slash-tasks-heading-variant, S27 multiline-outcome-metric-survives-verbatim.
+   Result: PASS
+3. plan-recheck-sweep.sh self-test, both interpreters
+   Command: /bin/bash (and /opt/homebrew/bin/bash) adapters/claude-code/scripts/plan-recheck-sweep.sh --self-test
+   Output: 8 passed, 0 failed on BOTH (past-date reopens; future-date does not; recurrence-nonzero reopens; recurrence-zero does not; idempotent 2nd sweep; unparseable-date skip; --quick silent/one-line; S8 plan_reopened event asserted)
+   Result: PASS
+4. session-start-digest.sh self-test
+   Command: /opt/homebrew/bin/bash adapters/claude-code/hooks/session-start-digest.sh --self-test → 91/91 OK. /bin/bash → 88 passed, 3 failed; failures are S1 monitor-alerts + S4 auto-ack ONLY (pre-existing on bash 3.2); T9's S21a/S21b feed_plan_recheck scenarios PASS on BOTH interpreters.
+   Result: PASS (3 failures pre-existing, isolated, not T9 scenarios)
+5. manifest-check
+   Command: bash adapters/claude-code/scripts/manifest-check.sh
+   Output: [manifest-check] GREEN — 148 entries, 122 hooks covered, 0 warn; entry id=plan-recheck-sweep at entries/145 with golden_scenario naming T9
+   Result: PASS
+6. Live sweep probe against the real repo (read path of the production wiring)
+   Command: bash adapters/claude-code/scripts/plan-recheck-sweep.sh --quick --repo /Users/misha/Claude/neural-lace
+   Output: empty, exit 0 — correct: the only archived Closure Outcome (context-watermark-opus5-window) has a future Re-check date 2026-09-28T00:00:00Z
+   Result: PASS
+7. Parser-fix RED arm (pre-fix source inspected, not trusted from the commit message)
+   Command: git show 7f74f54^:adapters/claude-code/scripts/close-plan.sh | grep -n 'Task\[\[:space:\]\]'
+   Output: old awk block boundary at old-line 423 was /Task[[:space:]]+(ID:[[:space:]]*)?[A-Za-z0-9.-]+/ — matches ANY "Task <word>" prose line (e.g. "Task description:"), resetting found_id/found_pass and orphaning real verdicts; old found_pass accepted only "Verdict: PASS". New code (close-plan.sh:604-613) anchors to literal ^Task ID: and accepts "PASS conf N" (close-plan.sh:591). S22 is the pinned regression.
+   Result: PASS (bug real before, fixed after, regression scenario pinned)
+8. "Applied to THIS program first"
+   Files: docs/plans/accountable-estate-program-2026-07.md:9 `outcome-gated: true` + populated ## Closure Outcome (lines 211-228) with a non-placeholder Outcome metric and Re-check date: 2026-08-13T05:56:00Z
+   Result: PASS
+9. Live demonstration closure (real production run, not fixture)
+   Files: docs/plans/archive/context-watermark-opus5-window.md — Status: COMPLETED, populated ## Closure Outcome (metric lines 155-158; bare machine-parseable Re-check date line 159 `2026-09-28T00:00:00Z`; Evidence pointers present); unarchived original absent from docs/plans/ (ls confirms). T7 append-at-close splice fired live: docs/loe/loe-calibration.json plans_total == 166 (was 163), regenerated in 43117a0 by the demo close itself. macos-portability-2026-07.md remains OPEN in docs/plans/ (deliberately not closed, M6 unfinished) — consistent.
+   Result: PASS
+10. Events + emitter registration
+   File: adapters/claude-code/hooks/lib/progress-log-lib.sh:396-412 (plan_outcome_recorded, plan_reopened natural keys), :153 (_PL_KNOWN_EMITTERS includes plan-recheck-sweep). Asserted at runtime by close-plan S24 and sweep S8.
+   Result: PASS
+11. Docs impact: plan predates the `Docs impact:` convention (no task in this plan carries the field) — grandfathered per verifier protocol.
+
+Runtime verification: test adapters/claude-code/scripts/close-plan.sh::--self-test
+Runtime verification: test adapters/claude-code/scripts/plan-recheck-sweep.sh::--self-test
+Runtime verification: test adapters/claude-code/hooks/session-start-digest.sh::--self-test
+Runtime verification: file docs/plans/archive/context-watermark-opus5-window.md::Re-check date: 2026-09-28T00:00:00Z
+Runtime verification: file docs/plans/accountable-estate-program-2026-07.md::outcome-gated: true
+Runtime verification: functionality-verifier T9::SKIP (rationale: harness-internal mechanism with --self-test; the maintainer-facing functionality signal — self-tests on both interpreters plus a live --quick invocation and a real production close in git history — was exercised directly by this verifier; no Task tool available in this verification environment)
+
+DEPENDENCY TRACE
+================
+Step 1: maintainer runs `close-plan.sh close <slug>` on an outcome-gated plan
+  ↓ Verified at: close-plan.sh:1494 (verify_closure_outcome_declared gate, opt-in via `outcome-gated: true`) — S23 blocks placeholder/missing section
+Step 2: close writes ## Closure Outcome unconditionally (observe-only for non-opted-in plans)
+  ↓ Verified at: close-plan.sh:1590 (write_closure_outcome_section) — S24 preserves author metric verbatim, S25 default section, S27 multiline verbatim; live demo archive file lines 151-184
+Step 3: T7 append-at-close splice fires
+  ↓ Verified at: close-plan.sh:1690 (`bash "$SCRIPT_DIR/loe-backfill.sh" ... || true`, the seam loe-backfill.sh documents) — live proof: loe-calibration.json plans_total 163→166 in 43117a0
+Step 4: plan_outcome_recorded event emitted
+  ↓ Verified at: progress-log-lib.sh:396-403 — asserted by close-plan S24
+Step 5: next session start → digest chokepoint invokes the sweep
+  ↓ Verified at: session-start-digest.sh:1353 (call site) → :619 feed_plan_recheck → plan-recheck-sweep.sh --quick — S21a/b green on BOTH interpreters; live --quick run silent/exit 0
+Step 6: passed re-check date or failing recurrence command → auto-reopen (git mv back, Status flip, Reopen Log, backlog row, needs-you entry, plan_reopened event; idempotent)
+  ↓ Verified at: plan-recheck-sweep.sh self-test S1-S8 (8/8 both interpreters), progress-log-lib.sh:404-412
+
+Git evidence:
+  Files modified in recent history (all within the T9 window, 2026-07-30):
+    - adapters/claude-code/scripts/close-plan.sh (7f74f54)
+    - adapters/claude-code/scripts/plan-recheck-sweep.sh (NEW, 9135fb7)
+    - adapters/claude-code/hooks/session-start-digest.sh (9135fb7)
+    - adapters/claude-code/hooks/lib/progress-log-lib.sh (7f74f54)
+    - adapters/claude-code/manifest.json (7f74f54)
+    - docs/plans/archive/context-watermark-opus5-window.md (c7b8c22 close, 43117a0 truncation correction)
+    - docs/loe/loe-calibration.json/.md (43117a0)
+    - docs/backlog.md ESTATE-T9-EVIDENCE-POINTERS-NOISE-01 follow-up (5ea5d29)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: all three halves of the task's contract were independently re-executed against real oracles — (1) metric+re-check WRITE half: close-plan.sh --self-test 30/0 on BOTH /bin/bash 3.2.57 and Homebrew bash with the six T9 scenarios green, plus a real production closure (context-watermark-opus5-window archived COMPLETED with populated Closure Outcome and the unarchived original gone); (2) AUTO-REOPEN half: plan-recheck-sweep.sh --self-test 8/8 both interpreters + live --quick probe silent/exit-0 against the real archive + SessionStart wiring green (S21a/b both interpreters); (3) "applied to THIS program first": outcome-gated: true + populated Closure Outcome with metric and re-check date in this plan itself. The parser-fix RED arm was verified against the actual pre-fix source (7f74f54^), not taken from the commit message. Known residue: ESTATE-T9-EVIDENCE-POINTERS-NOISE-01 (noisy Evidence pointers) filed in backlog by design, and the sweep's honest-gap disclosure (interactive-session chokepoint, not a true periodic tick) is documented in the script header — neither contradicts the task contract.

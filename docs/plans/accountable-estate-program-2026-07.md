@@ -110,7 +110,7 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
       with default-action) → outcome-track. Outcome metric: next incident's forensics cost ≈ one
       file-read; ≥1 proposal round-trips the full loop. LOE: MEDIUM, 2–3 bs, medium variance
       (anomaly thresholds need T1/T3 data). Verification: full.
-- [ ] T9 — Outcome-gated closure semantics for harness plans (metric + re-check + auto-reopen),
+- [x] T9 — Outcome-gated closure semantics for harness plans (metric + re-check + auto-reopen),
       applied to THIS program first. LOE: MEDIUM, 2 bs. Verification: full.
 - [ ] T10 — Store consolidation tail (8 → ≤3, one store at a time, views-first sequencing per
       review F6; signal-ledger stays a dumb flight recorder per F5). DEFERRED until T1–T9 prove
