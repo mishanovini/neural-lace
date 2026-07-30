@@ -731,6 +731,15 @@
       "created_at": "2026-07-20T17:45:15Z"
     },
     {
+      "path": "adapters/claude-code/scripts/health-tick.sh",
+      "blob_sha": "85b161c298332632f907918968507d2e488366cb",
+      "record_id": "hcr-20260730-0f821897",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "task-verifier",
+      "created_at": "2026-07-30T13:22:00Z"
+    },
+    {
       "path": "adapters/claude-code/scripts/install-coord-sync-task.ps1",
       "blob_sha": "abafd5030573da2466772a802358f4ffc01c7eca",
       "record_id": "hcr-20260728-3d5d64f9",
@@ -774,6 +783,15 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-19T20:43:00Z"
+    },
+    {
+      "path": "adapters/claude-code/scripts/needs-you.sh",
+      "blob_sha": "281916e8e341b1533c90cbea5330e159d7dda651",
+      "record_id": "hcr-20260730-6c3d6b88",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T13:22:40Z"
     },
     {
       "path": "adapters/claude-code/scripts/needs-you.sh",
