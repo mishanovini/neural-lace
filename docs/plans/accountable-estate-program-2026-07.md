@@ -35,6 +35,7 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
   ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01). DESKTOP → T6 prerequisites as file-disjoint
   micro-slices (occupancy TTL cache in admission-lib; env-bypass closure; Loop-2 pressure tick),
   then T9 after T4 lands (T9 builds on T4's generalized closers). T8 waits on telemetry accrual.
+- T9 NOTE (2026-07-30, T7 flip): the append-at-close seam is T9's to build — splice spec in loe-backfill.sh's header; ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01 closed against 6ffe534.
 - CLEARED 2026-07-29: T7 remainder — full 163-plan mine completed on the DESKTOP post-purge
   (the purge collapsed the fork tax that killed it 3x); docs/loe/loe-calibration.json/.md
   committed. T7 awaits task-verifier only.
@@ -94,7 +95,7 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
       janitor schedule — the installer is Windows-only today); (d) the Loop-2 pressure tick
       emitting, so pressure_src stops reading 'absent' on every line.
       LOE: TRIVIAL, 0.5 bs. Verification: full.
-- [ ] T7 — LOE v1: per-PLAN actuals mining (archived plans + evidence + git history), 3–5 plan
+- [x] T7 — LOE v1: per-PLAN actuals mining (archived plans + evidence + git history), 3–5 plan
       classes, P50/P90 bands + concentration flag surfaced by plan-reviewer. Outcome metric: every
       new plan carries class+band annotations; actuals append at close.
       LOE: MEDIUM, 2 bs. Verification: full.

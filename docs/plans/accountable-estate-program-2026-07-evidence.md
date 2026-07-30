@@ -622,3 +622,34 @@ Runtime verification: file docs/runbooks/master-reconcile-and-estate-cleanup.md:
 Two verifier-filed follow-ups (nl-issues, non-gating): exit-code doc says 3, suite exits 1
 (cosmetic); close-worktree Scenario 8's real-log absence assertion will false-FAIL after the
 first production merge — needs the before/after-delta idiom.
+
+## Task T7
+
+EVIDENCE BLOCK
+==============
+Task ID: T7
+Task description: LOE v1: per-PLAN actuals mining (archived plans + evidence + git history), 3-5 plan classes, P50/P90 bands + concentration flag surfaced by plan-reviewer. Outcome metric: every new plan carries class+band annotations; actuals append at close. Verification: full.
+Verified at: 2026-07-30T07:55:00Z (flip same day)
+Verifier: task-verifier — FAIL conf 9 (first Mac cross-check) -> two gating fixes at a8b114c -> targeted re-check -> PASS conf 9
+Subject SHAs: fd48741 (desktop build) + b5dfaf1 (review remediation) + 6ffe534 (163-plan artifact) + a8b114c (Mac-gating fixes)
+
+PROVEN with exact before/after pairs: loe-backfill scenario 4 FAIL("got null")/exit 1 both
+interpreters at 8604509 -> "all scenarios matched expectations"/exit 0 both at a8b114c
+(GNU `date -d` -> M4 dual-branch; the adversarial negative-offset probe on the BSD branch
+held); the DECISIVE live mine on this Mac went wall_clock coverage 0% -> 100% with spot
+values BYTE-IDENTICAL to the independently desktop-mined committed artifact (10.89==10.89,
+13.93==13.93, 0.19==0.19 — two machines, two date implementations, same actuals); dd6
+FAIL -> PASS both interpreters (`${4:-}` -> unset-only `${4-}`); mining honesty proven
+against git-history ground truth (3/3 exact); surfacing re-demonstrated LIVE at a8b114c
+(band INFO line + nudge WARN + vintage silence); review chain 9708ced genuine with both
+spot-checked Majors landed.
+Non-gating, classified: iv4 pre-existing at fd48741^ (filed PLAN-REVIEWER-IV4-MACOS-
+PREEXISTING-01); append-at-close = operator-authorized WIP-1 deferral — OWNER: T9 (per
+this flip, citing loe-backfill.sh's header splice spec); outcome metric is mechanism-true
+via template+nudge, HYPOTHESIZED for the next template-created plan (refuter: that plan
+lacking loe-class).
+
+Runtime verification: test adapters/claude-code/scripts/loe-backfill.sh::--self-test (exit 0 both interpreters at a8b114c; exit 1 both at 8604509)
+Runtime verification: test adapters/claude-code/hooks/plan-reviewer.sh::dd6 (PASS both at a8b114c; FAIL both at 8604509)
+Runtime verification: file docs/loe/loe-calibration.json::plans_total
+Runtime verification: file adapters/claude-code/templates/plan-template.md::loe-class
