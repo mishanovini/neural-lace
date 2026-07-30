@@ -1334,11 +1334,36 @@ _adm_self_test() {
   [[ -s "$occ20_err" ]] && fail "corrupt cache leaked bash diagnostics to stderr: $(head -1 "$occ20_err")" \
     || pass "fail-open path stayed silent on stderr under a poisoned cache"
 
+  # RE-AIMED injection assertion (2026-07-30 delta re-review finding 3,
+  # MAJOR): the assertion above drives adm_live_sessions directly, which
+  # only ever `printf`s c_count -- it never puts the cache-supplied value
+  # through a `(( ))` arithmetic evaluation itself, so removing/weakening
+  # the `[[ "$c_count" =~ ^-?[0-9]+$ ]]` guard would NOT be caught there:
+  # a poisoned string just gets printf'd back out unexecuted. The actual
+  # arithmetic sink is `_adm_decide`'s `(( live >= $(_adm_session_cap) ))`,
+  # reached only via adm_admit. Re-poison the cache with a FRESH marker and
+  # drive it through the full adm_admit path so a reverted guard would be
+  # caught at the sink that actually evaluates it.
+  inj_marker2="$T/injected-by-scenario-20-admit"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$s20_m" "$s20_sz" 'x[$(touch '"$inj_marker2"')]' "$(date -u +%s)" "$snap20" > "$(adm_occ_cache_path)"
+  occ20b_err="$T/occ20-admit.stderr"
+  ADM_ESTATE_SNAPSHOT="$snap20" adm_admit selftest >/dev/null 2>"$occ20b_err"
+  if [[ ! -e "$inj_marker2" ]]; then
+    pass "injection payload survives the FULL adm_admit path (the real (( )) sink in _adm_decide) without executing"
+  else
+    fail "COMMAND INJECTION via adm_admit's arithmetic sink: created $inj_marker2"
+  fi
+
   echo "Scenario 21: STALE pressure file -> color unknown + pressure_src tick-stale (review REJECT C2 — existence is not a staleness signal)"
   printf '{"color":"red"}\n' > "$ADM_PRESSURE_FILE"
+  # max_age=0 disables the bound entirely (matches the ttl>0 idiom
+  # elsewhere in this file) -- pin that disable semantics directly (2026-
+  # 07-30 delta re-review finding 7: this assignment used to be dead, its
+  # only comment claiming the behavior with nothing asserting it).
   pc21="$(ADM_PRESSURE_MAX_AGE_SECS=0 ADM_PRESSURE_FILE="$ADM_PRESSURE_FILE" adm_pressure_color)"
-  # max_age=0 disables the bound (matches the ttl>0 idiom); use a 1-second
-  # bound against a backdated file instead.
+  [[ "$pc21" == "red" ]] && pass "ADM_PRESSURE_MAX_AGE_SECS=0 disables the age bound entirely -- a fresh color reads through untouched" \
+    || fail "expected max_age=0 to disable the bound and read the real color 'red', got '$pc21'"
+  # Now bound against a backdated file instead.
   touch -d '2000-01-01' "$ADM_PRESSURE_FILE" 2>/dev/null || touch -t 200001010000 "$ADM_PRESSURE_FILE" 2>/dev/null
   pc21="$(ADM_PRESSURE_MAX_AGE_SECS=1 ADM_PRESSURE_FILE="$ADM_PRESSURE_FILE" adm_pressure_color)"
   [[ "$pc21" == "unknown" ]] && pass "a color older than the reader-side age bound reads unknown (a frozen red can never become permanently authoritative)" \
