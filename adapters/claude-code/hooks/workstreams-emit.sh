@@ -1809,7 +1809,7 @@ PLANEOF
   # the SAME dispatch IMMEDIATELY (a true hook double-fire: same
   # session_id, same prompt, back-to-back) -> still exactly ONE
   # task_started. This runs at PRODUCTION DEFAULTS (no debounce override):
-  # both fires land inside _dispatch_replay_token's default 5s window, so
+  # both fires land inside _dispatch_replay_token's default 120s window, so
   # the second one reuses the first's token and pl_emit's natural key
   # (plan_slug+task_id+session_id+dedup_extra) collapses it.
   ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
@@ -1829,12 +1829,13 @@ PLANEOF
   # distinguishes a re-dispatch from a replay.
   #
   # DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 compresses the clock rather than
-  # sleeping past the real 30s production window (a 31s sleep in a self-test
-  # is not worth it). This is the SAME mechanism and the SAME boundary the
-  # shipped default crosses -- only the window's width is parameterized, via
-  # the documented knob. The COMPLEMENTARY assertion (PL1b, immediately
-  # above) runs at the PRODUCTION DEFAULT, so between them both sides of the
-  # window are covered: replay-inside dedups, re-dispatch-outside does not.
+  # sleeping past the real 120s production window (a 121s sleep in a
+  # self-test is not worth it). This is the SAME mechanism and the SAME
+  # boundary the shipped default crosses -- only the window's width is
+  # parameterized, via the documented knob. The COMPLEMENTARY assertion
+  # (PL1b, immediately above) runs at the PRODUCTION DEFAULT, so between them
+  # both sides of the window are covered: replay-inside dedups,
+  # re-dispatch-outside does not.
   sleep 3
   ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
       CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
@@ -2601,21 +2602,26 @@ _dispatch_state_dir() {
 # WHAT THIS DOES INSTEAD -- a debounce anchored at the FIRST fire, so there is
 # no boundary to straddle: the first fire of a given (sid, slug, task_id)
 # records `<epoch> <token>` in a small state file and returns that token. Any
-# re-fire within DISPATCH_REPLAY_DEBOUNCE_SECONDS (default 30) reads the file
+# re-fire within DISPATCH_REPLAY_DEBOUNCE_SECONDS (default 120) reads the file
 # and returns the SAME token -> identical natural key -> deduped (a replay).
 # A fire after the window mints a NEW token -> new key -> a distinct event (a
 # genuine re-dispatch).
 #
-# SIZING THE WINDOW (30s). It must exceed the wall-clock gap between two fires
-# of ONE dispatch, and stay well under the gap between two GENUINE dispatches
-# of the same task. The lower bound is NOT "sub-second": this hook forks a
-# whole bash process (plus git + sha1sum) per fire, which on the Windows/Git-
-# Bash target costs SECONDS -- a 5s window was measurably too tight and let a
-# replay mint a fresh token (caught by this file's own PL1b scenario). The
-# upper bound is generous: an orchestrator must dispatch, let the builder run,
-# and verify before it can re-dispatch -- minutes, not seconds. 30s sits with
-# large margin on both sides. Override via the env var for tests that need to
-# compress the clock rather than sleep past a real window.
+# SIZING THE WINDOW (120s). It must exceed the wall-clock gap between two
+# fires of ONE dispatch, and stay well under the gap between two GENUINE
+# dispatches of the same task. The lower bound is NOT "sub-second" -- and, as
+# of 2026-07-29, NOT "tens of seconds" either: this hook forks a whole bash
+# process (plus git + sha1sum) per fire, and on this machine's Windows/Git-
+# Bash fork-taxed target that measurably costs multiple tens of seconds under
+# load. The PREVIOUS 30s default was PROVEN too tight, not just theorized:
+# the full self-test suite failed PL1b (got 2 want 1) and PL1c (got 3 want 2)
+# twice in a row on this machine, and the T3 verifier independently measured
+# a 32-wall-second gap between two back-to-back stamp writes the same day.
+# The upper bound is still generous: a genuine orchestrator re-dispatch cycle
+# is dispatch -> let the builder run -> verify -- minutes, not seconds -- so
+# 120s keeps large real margin on both sides even after the correction.
+# Override via the env var for tests that need to compress the clock rather
+# than sleep past a real window.
 #
 # Best-effort and NEVER BLOCKS: if the state dir is unwritable or `date` is
 # missing, it falls back to a value that is merely conservative (never a
@@ -2629,7 +2635,7 @@ _dispatch_replay_token() {
   # conservative direction: never manufacture a spurious second event).
   [[ -n "$now" ]] || { printf 'noclock'; return 0; }
 
-  local debounce="${DISPATCH_REPLAY_DEBOUNCE_SECONDS:-30}"
+  local debounce="${DISPATCH_REPLAY_DEBOUNCE_SECONDS:-120}"
   local dir; dir="$(_dispatch_state_dir)"
   mkdir -p "$dir" 2>/dev/null || { printf '%s' "$now"; return 0; }
 
