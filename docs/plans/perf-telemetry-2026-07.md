@@ -28,7 +28,7 @@ that were supposed to notice. This plan builds the feedback loop, not another re
   is a wish.
 
 ## Tasks
-- [ ] P1 — Per-call chain latency ledger: wrap the PreToolUse chain execution with $EPOCHREALTIME
+- [x] P1 — Per-call chain latency ledger: wrap the PreToolUse chain execution with $EPOCHREALTIME
       stamps; append ONE JSONL line per tool call (total ms, 3 slowest hooks, hook count) to a
       daily-rotated file under ~/.claude/state/perf/. Hot-path cost budget: <5ms, zero forks
       (asserted in self-test). Verification: full (self-test + a live capture line quoted).

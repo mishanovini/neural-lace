@@ -22,3 +22,24 @@ portability plan ports it — named, not silent. Arming on this Mac = no LaunchA
 Runtime verification: test adapters/claude-code/scripts/health-tick.sh::--self-test (25/0 at HEAD, incl. P2 Scenario 7)
 Runtime verification: file adapters/claude-code/scripts/supervisor-tick.sh::pts_run_tick
 Runtime verification: file adapters/claude-code/scripts/health-tick.sh::pts_run_tick
+
+## Task P1 (re-verification at e6720aa — supersedes the e8c74cb FAIL and the stale 7506451 block)
+EVIDENCE BLOCK
+==============
+Task ID: P1
+Verified at: 2026-07-29T17:13:00-07:00 (flip same day)
+Verifier: task-verifier — PASS conf 9 (targeted re-check after FAIL at e8c74cb)
+PROVEN: the interpreter-identity lie at perf-ledger.sh:226 is REMOVED (sweep: one
+comment-only hit repo-wide) and honest at runtime — /bin/bash 3.2.57 run cites its real
+identity; both interpreters exit 0 (12/0 on 5.3, 11/0 on 3.2) with capability-honest
+expectations matching the lib's documented pre-5 no-op contract. Verifier's OWN mutation
+(pl_available forced true, scratch copy): 3.2 goes 10/1 exit 1 with "detection is broken"
+— the new branch is falsifiable. Live fire re-run at e6720aa: 5.3 appends a schema-correct
+row (ms:2); 3.2 no-ops cleanly; organic ledger flowing. Untouched surfaces (5-hook wiring,
+manifest entry, zero-fork timing) carried forward per blast-radius check + partially
+re-executed.
+Cosmetic note (verifier): the summary line does not echo the interpreter — identity is
+carried in Scenario 1/4 messages, satisfying the honesty bar; parity with
+perf-tick-snapshot's interpreter line is a one-line follow-up, not a gap.
+Runtime verification: test adapters/claude-code/hooks/lib/perf-ledger.sh::--self-test (12/0 on 5.3, 11/0 on 3.2, exit 0 both)
+Runtime verification: file ~/.claude/state/perf/chain-20260729.jsonl::"hook":"scope-enforcement-gate"
