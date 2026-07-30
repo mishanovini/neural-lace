@@ -1329,6 +1329,37 @@ run_digest() {
   ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/ensure-coord-sync.sh" >/dev/null 2>&1 ) || true
   # ---- END COORD-SYNC-SESSIONSTART CALLSITE ---------------------------
 
+  # ---- LIMIT-RESUME SESSIONSTART CALLSITE: ensure the watchdog LaunchAgent --
+  # + arm this session (operator, 2026-07-30: "I'm guessing you're still not
+  # retriggering yourself after the limits reset. How do we make that
+  # actually work?"). Folded in here beside the cockpit/coord-sync ensure
+  # splices (NOT a new SessionStart hooks[] entry -- that array is already
+  # at its 8/8 cap): install-limit-resume.sh ensure idempotently
+  # installs/refreshes the macOS LaunchAgent (Darwin-only, self-test-gated,
+  # kill-switchable, tolerate-absent -- see that script's own header,
+  # mirroring ensure-cockpit.sh's decision-065 precedent almost exactly),
+  # then limit-resume.sh arm records THIS session's id (from
+  # $CLAUDE_CODE_SESSION_ID) + cwd into the one tracked marker. This is
+  # ONLY half of the arming story: because Claude Code's Stop hook fires
+  # per-TURN (not once per session -- this file's own turn-trace/heartbeat
+  # bookkeeping already depends on that), a session-only arm/disarm would
+  # protect just the FIRST turn. The other half -- re-arming on every
+  # subsequent turn -- is a genuinely NEW UserPromptSubmit hooks[] entry in
+  # settings.json.template (that event carries no doctor-enforced budget
+  # today, unlike SessionStart/Stop, so a new entry there is not a budget
+  # violation). See scripts/limit-resume.sh's own header ("TURN-SCOPED
+  # ARMING") and docs/decisions/068-macos-limit-resume-turn-scoped-auto-arm.md
+  # for the full reasoning, including reconciliation with ADR-061's
+  # deliberately-still-unarmed session-resumer.sh supervisor (a different,
+  # broader, Windows-only mechanism this does NOT touch or re-arm).
+  # arm() itself no-ops from any cwd that is not the main checkout (a
+  # worktree-isolated builder session never arms the one tracked marker),
+  # so `cd "$cwd"` here matches the cockpit/coord-sync splices' own
+  # cwd-override-honoring reason.
+  ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/install-limit-resume.sh" ensure >/dev/null 2>&1 ) || true
+  ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/limit-resume.sh" arm >/dev/null 2>&1 ) || true
+  # ---- END LIMIT-RESUME SESSIONSTART CALLSITE --------------------------
+
   # ---- ASK-CAPTURE SESSION-ATTACH CALLSITE (Task 9b) ------------------
   # Best-effort session-attach beside the heartbeat/ensure-cockpit splices
   # above (NOT a new SessionStart hooks[] entry — that array is at its 8/8
