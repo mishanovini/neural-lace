@@ -20,6 +20,19 @@
 #   hooks/**/*.sh | scripts/**/*.sh | agents/*.md (top-level only) | config/**
 #   | manifest.json | settings.json.template | rules/**
 #
+# TRIGGER SURFACE, product side (Amendment G, 2026-07-30 — the cockpit was
+# never reviewed: 0 of 255 review records ever covered it, measured via
+# `jq -r '.entries[].path' docs/reviews/records/index.json | grep -c
+# workstreams-ui`). Additive, repo-root-relative (no adapters/claude-code/
+# prefix to strip): a file is ALSO in-surface iff its path matches:
+#   neural-lace/workstreams-ui/server/**/*.js
+#   | neural-lace/workstreams-ui/web/**/*.js
+# INCLUDES *.selftest.js deliberately (see docs/harness-improvements/
+# cockpit-review-surface-and-verification-gaps.md): a false-green self-test
+# is the same failure class as unreviewed product code, proven the same day
+# by cockpit.selftest.js's R17-DRAG-2 (a source-text regex that passed while
+# the optimistic drag move it claimed to cover was a live no-op).
+#
 # COVERAGE (Amendments D + E): a changed in-surface file is COVERED iff either
 #   (a) its {path, blob_sha} appears in the cutover grandfather-manifest.json
 #       (pre-cutover content — Amendment E, never needs a review record), OR
@@ -69,6 +82,16 @@
 # (hooks/foo.sh); the adapters/claude-code/ prefix is stripped if present.
 rrg_in_surface() {
   local full="$1" rel
+  # Amendment G (cockpit product surface) matches the REPO-ROOT-RELATIVE
+  # path directly -- checked BEFORE the adapters/claude-code/ prefix strip
+  # below, since these paths never carry that prefix and stripping is a
+  # no-op for them anyway. Case-pattern `*` matches `/` (the same property
+  # Amendment A's hooks/*.sh already relies on to match hooks/lib/*.sh), so
+  # both arms are recursive with no `**` token needed.
+  case "$full" in
+    neural-lace/workstreams-ui/server/*.js) return 0 ;;
+    neural-lace/workstreams-ui/web/*.js) return 0 ;;
+  esac
   rel="${full#adapters/claude-code/}"
   case "$rel" in
     hooks/*.sh) return 0 ;;
@@ -200,6 +223,12 @@ _rrg_self_test() {
     "adapters/claude-code/settings.json.template" \
     "adapters/claude-code/rules/constitution.md" \
     "hooks/lib/merge-scan-lib.sh" \
+    "neural-lace/workstreams-ui/server/roadmap-routes.js" \
+    "neural-lace/workstreams-ui/web/roadmap.js" \
+    "neural-lace/workstreams-ui/server/roadmap-routes.selftest.js" \
+    "neural-lace/workstreams-ui/web/cockpit.selftest.js" \
+    "neural-lace/workstreams-ui/server/lib/nested/deep.js" \
+    "neural-lace/workstreams-ui/web/components/widget.js" \
   ; do
     if rrg_in_surface "$p"; then
       echo "PASS: in-surface($p)"; pass=$((pass+1))
@@ -216,6 +245,11 @@ _rrg_self_test() {
     "docs/reviews/records/index.json" \
     "adapters/claude-code/agents/sub/nested.md" \
     "docs/backlog.md" \
+    "neural-lace/workstreams-ui/README.md" \
+    "neural-lace/workstreams-ui/server/package.json" \
+    "neural-lace/workstreams-ui/attic/responsive.selftest.js" \
+    "neural-lace/other-project/web/app.js" \
+    "workstreams-ui/web/roadmap.js" \
   ; do
     if rrg_in_surface "$p"; then
       echo "FAIL: in-surface($p) expected FALSE"; fail=$((fail+1))
