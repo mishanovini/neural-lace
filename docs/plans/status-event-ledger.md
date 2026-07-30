@@ -112,7 +112,9 @@ session builds them, per `## In-flight scope updates` below. -->
   BUILT annotations for SE3/SE4/SE10 (checkboxes untouched — task-verifier's job).
 
 ## In-flight scope updates
-- SE1/SE2/SE5/SE6/SE7/SE8/SE9's own files are not yet declared — each builder adds its
+- SE1's files are now declared in the `## Files to Modify/Create` section below
+  (estate-merge.sh, progress-log-lib.sh, manifest.json).
+- SE2/SE5/SE6/SE7/SE8/SE9's own files are not yet declared — each builder adds its
   actual touched files here (or to the list above) when that task lands, per this
   section's standard purpose.
 
@@ -137,7 +139,13 @@ in the repo, not just this plan's own. Derived STRICTLY from file/mechanism name
 named in the taxonomy table + Tasks above — no new scope invented. Vague entries (no exact
 filename given yet by the table) are named honestly as TBD; the plan's actual owner should
 pin these down as each SE task starts, not this fix.)
-- `adapters/claude-code/scripts/estate-merge.sh` — SE1 (handoff-complete emit at the merge chokepoint)
+- `adapters/claude-code/scripts/estate-merge.sh` — SE1 (handoff-complete emit at the merge chokepoint):
+  _em_log_merge now calls a new _em_emit_ledger_event at every terminal cmd_merge outcome.
+- `adapters/claude-code/hooks/lib/progress-log-lib.sh` — SE1: two new event types, `merge-completed`
+  and `merge-failed` (added to _pl_natural_key + the header's DEDUP table), and `estate-merge` added
+  to `_PL_KNOWN_EMITTERS`.
+- `adapters/claude-code/manifest.json` — SE1: `estate-merge` entry's golden_scenario updated (69/0
+  self-test, was 52/0) and `progress-log` entry's honest_status gains splice (7) for estate-merge.sh.
 - SE2's "sweep runner + a shared --self-test entry helper" — exact file TBD by SE2's own builder
 - `adapters/claude-code/scripts/write-review-record.sh` — SE3 (emit every verdict, not PASS-only)
 - plan-edit-validator (verifier) — SE4 (flip-time emit); exact path TBD by SE4's own builder
