@@ -1992,3 +1992,23 @@ running this lib's own `--self-test` under both interpreters to verify the `decl
   git-command-parse entry has hooks:[] so manifest-check cannot path-resolve it (5 sibling lib
   entries carry "lib/..." refs). Add the hooks[] ref or note the unpoliced drift in
   honest_status; sweep other hooks[]-less entries via the review's jq query.
+
+## CLOSE-PLAN-MECHANICAL-EVIDENCE-WHOLE-FILE-SCAN-01 — verify_task_mechanical's prose-evidence path is whole-file, not block-scoped
+
+**Severity:** Minor (narrow false-accept surface, not a known live incident)
+**What:** `close-plan.sh`'s `verify_task_mechanical` Path (b) — the prose-evidence-with-commit-SHA
+fallback, `adapters/claude-code/scripts/close-plan.sh` around the `Task ID:`/`commit[[:space:]:]`
+greps near line 480 — checks that the evidence file contains a `Task ID: <task_id>` line
+SOMEWHERE and a `commit <sha>` citation SOMEWHERE, independently, rather than requiring both
+inside the SAME task's block. A multi-task evidence file could satisfy task N's mechanical check
+with task M's commit citation if task N's own block never got one. `verify_task_full` (the
+`Verification: full` sibling) already solved the equivalent problem via its Task-ID-anchored
+block-boundary parser (the 2026-07-30 T9 parser-bug fix); this Path (b) predates that fix and was
+never retrofitted onto the same block-splitting discipline.
+**Fix:** reuse `verify_task_full`'s awk block-boundary approach (anchor on `^[[:space:]]*Task ID:`
+to open/close a block) for Path (b)'s commit-SHA check too, so both verification tiers parse
+evidence files the same way.
+**Filed by:** close-plan.sh / plan-recheck-sweep.sh harness-reviewer REFORMULATE remediation,
+2026-07-30 (a pre-existing code comment at this callsite promised "see backlog" for this exact
+limitation with no corresponding entry ever filed; this entry closes that promise). Also logged
+via `nl-issue.sh` the same session for cross-project triage visibility.
