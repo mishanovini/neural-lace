@@ -158,6 +158,15 @@
   // age > 2x refresh interval OR the last refresh failed.
   // ============================================================
   var REFRESH_INTERVAL_MS = 30000; // matches derive-cache.js's default; re-read from /api/health once available
+  // FORMAT-AGE-BEGIN
+  // R17 deliverable 5 (audit F8 / ledger row unresolved): this SHARED
+  // formatAge (exported as WorkstreamsShell.formatAge, below) is preferred
+  // by roadmap.js/inbox.js/requests.js over their own per-file fallbacks
+  // (which already had a day branch — this one lagged them, live-observed
+  // as "registered 377h ago"). Operator's own bucketing for this round
+  // (2026-07-30 dispatch): hours only under 48h, then days, then weeks —
+  // never raw hours past two days, never a fabricated day/week count from
+  // a bad/missing timestamp.
   function formatAge(iso) {
     if (!iso) return 'never';
     var ms = Date.now() - Date.parse(iso);
@@ -168,8 +177,13 @@
     var m = Math.round(s / 60);
     if (m < 60) return m + 'm ago';
     var h = Math.round(m / 60);
-    return h + 'h ago';
+    if (h < 48) return h + 'h ago';
+    var d = Math.round(h / 24);
+    if (d < 14) return d + 'd ago';
+    var w = Math.round(d / 7);
+    return w + 'w ago';
   }
+  // FORMAT-AGE-END
   function setAge(paneKey, iso, failed) {
     var el = document.querySelector('[data-age-for="' + paneKey + '"]');
     if (!el) return;

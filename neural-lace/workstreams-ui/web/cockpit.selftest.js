@@ -1320,6 +1320,26 @@ ok('R17-T7 renderTree is now the TOP-GROUP outer wrapper (partitions visibleItem
 ok('R17-T8 a top-group is a real <details> (keyboard-native disclosure, C9 baseline) whose open/closed state is remembered in the SAME openSet session-state map every other collapsible in this file uses',
   /det\.className = 'rm-top-group'/.test(roadmapJsNoComments) && /openSet\[openKey\] = det\.open/.test(roadmapJsNoComments));
 
+// --- R17 deliverable 5 (audit F8): formatAge gains day/week branches -----
+// (real execution, marker-anchored extraction from app.js, same technique
+// as every other pure-function test in this file — placed here, after
+// vmMod/runPure are defined, not up near the R1..R17-N regex-only checks.)
+(function () {
+  const src = extractMarkedBlock(js, '// FORMAT-AGE-BEGIN', '// FORMAT-AGE-END');
+  ok('R17-A0 selftest can locate the FORMAT-AGE extraction anchors in app.js', !!src);
+  if (!src) return;
+  function ageFor(hoursAgo) {
+    const iso = new Date(Date.now() - hoursAgo * 3600000).toISOString();
+    return runPure(src, "formatAge('" + iso + "')");
+  }
+  ok('R17-A1 under 48h still renders hours ("47h ago"), never a day', /^47h ago$/.test(ageFor(47)));
+  ok('R17-A2 48h and over renders DAYS, never raw hours (the live-observed "377h ago" defect: an age this old must never render in hours)', /^2d ago$/.test(ageFor(48)));
+  ok('R17-A3 mid-range ages render days (9d, matching the live "227h ago" -> ~9d conversion)', /^9d ago$/.test(ageFor(227)));
+  ok('R17-A4 14 days and over renders WEEKS, not days', /^2w ago$/.test(ageFor(14 * 24)));
+  ok('R17-A5 a missing timestamp renders "never", never a fabricated age', runPure(src, "formatAge('')") === 'never');
+  ok('R17-A6 an unparseable timestamp renders "unknown", never NaN-poisoned text', runPure(src, "formatAge('not-a-date')") === 'unknown');
+})();
+
 // --- Round 15 (coordinator, operator verbatim: "the Workstreams UI still
 // doesn't actually represent the actual order of building, at least not at
 // the plan level") — THREE STABLE BANDS: real execution, not source-regex,
