@@ -340,6 +340,31 @@
       "honesty_rationale": "Promotes parallel-dev-discipline Practice 8 (claim-before-touch) from self-applied Pattern to Mechanism \u2014 the lesson's root cause 4. World-fact check (git worktree list + fresh claims). Structured waiver hatch (fresh <1h, purpose clauses via lib/waiver-purpose-clause.sh, target-scoped, ledger-logged) per the ADR 059 D4 house pattern \u2014 present-moment friction, not consequence-deferred theater."
     },
     {
+      "id": "config-control-producer-scan",
+      "kind": "gate",
+      "doctrine_file": "doctrine/vaporware-prevention.md",
+      "hooks": [
+        "scripts/config-control-producer-scan.sh"
+      ],
+      "events": [
+        "manual"
+      ],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "HARNESS-GAP-57, 2026-07-29: NL_PROTECTED_ORCHESTRATOR, documented in hooks/lib/admission-lib.sh as the tag a protected downstream orchestrator must set, discovered (accountable-estate T7, task-verifier pass 4, D-4) to have ZERO producers anywhere in the repo -- all 888 live ledger rows carry protected:0. This is the inverse of the registry-vs-callsite 'decorative config control' class (vaporware-config-control entry, this manifest): instead of a registry entry with no consumer, it's a consumer with no producer -- a real read site, a real branch, nothing ever sets it. Neither functionality-auditor's registry-vs-callsite sweep (no registry+UI surface exists here) nor functionality-verifier's config-control protocol (no Verification: full task ever claimed this flag governs behavior) would have caught it; a task-verifier pass caught it by narratively reading the comment, not mechanically. This scan makes that catch repeatable: --self-test scenarios golden-pre-fix-shape (FLAGGED) and golden-post-fix-shape (MARKED) reproduce both states verbatim.",
+      "fp_expectation": "0% against the live repo as shipped: --self-test Scenario 7 runs the real scan over the real hooks/+scripts/ trees and asserts zero FLAGGED. Construction of this check found 7 pre-existing NL_*-prefixed levers consumed with zero producer for a legitimate reason (operator-shell or self-test-only overrides, e.g. NL_CHECKOUT_OVERRIDE, NL_SPAWN_PROCESS_COUNT_OVERRIDE) -- each audited against its real read site and recorded in config/config-control-allowlist.txt with a per-entry justification, not blanket-suppressed. A future false positive is a var that is legitimately externally-produced but lacks an allowlist entry; the fix is a one-line allowlist addition, not a code or check change. The marker-proximity heuristic anchors on ANY mention of the var name (not just its syntactic read), within a small line window, specifically because the real admission-lib.sh annotation sits 566 lines from the functional read site -- anchoring on the read site alone was tried first and produced a false FLAGGED on the real, already-fixed case.",
+      "retirement_condition": "If a FLAGGED verdict is proven wrong because a producer exists in a form this scan's regex cannot see (indirect ${!name} dereference, a non-.sh producer, a producer outside hooks/+scripts/), that recurrence is the evidence to either extend the producer regex (amendment, preferred) or retire the static scan in favor of the runtime audit-log approach HARNESS-GAP-39 proposes for the same 'wired but never exercised' class (production-log evidence over static grep). Also demotion-eligible via waiver-density per ADR 059 D7 if the allowlist grows without bound relative to genuine catches.",
+      "honest_status": "Standing, self-testing, deterministic scan -- invoke directly via `bash adapters/claude-code/scripts/config-control-producer-scan.sh` (exit 0 clean / exit 1 with a per-var report) or `--self-test` (7 scenarios). NOT wired to any settings.json.template event and NOT called from any other hook or CI workflow yet -- it fires only when a maintainer or a future CI job invokes it. Landing the CI/pre-commit wiring is the natural next step (see honesty_rationale) once this build's false-positive claim (0% against the live repo, --self-test Scenario 7) has stood for a normal review cycle.",
+      "honesty_rationale": "Ships as a standing, self-testing, deterministic scan invoked manually/via CI -- NOT wired to any blocking PreToolUse/git-hook event. D-2 in docs/plans/archive/vaporware-config-controls.md declined a new blocking gate for the sibling registry-vs-callsite class absent a proven recurrence past the existing functionality-verifier/task-verifier chain; NL_PROTECTED_ORCHESTRATOR is that recurrence, but in a non-UI-lever shape D-2 didn't anticipate (no registry+UI surface to audit), so the honest move is a new mechanical check, not a new blocking hook, until this check's own false-positive rate is proven in practice at CI/blocking scope. blocking:false reflects that today's reality exactly; wiring it into pre-commit/CI as an actually-blocking gate is the natural escalation this entry documents, not a claim already true."
+    },
+    {
       "id": "consolidation-discipline",
       "kind": "pattern",
       "doctrine_file": "doctrine/consolidation-discipline.md",

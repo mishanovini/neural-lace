@@ -1,0 +1,39 @@
+# config-control-allowlist.txt — the ONE machine-readable ledger of config
+# levers (env vars) that are legitimately consumed with ZERO in-repo
+# producer, because the producer is external BY DESIGN: an operator's own
+# shell, or a self-test/CLI-only override. Read by
+# scripts/config-control-producer-scan.sh; an entry here is a documented
+# claim, not a blanket suppression -- each row must cite where the lever
+# is read and why no in-repo producer is expected.
+#
+# This is the allowlist half of the HARNESS-GAP-57 generalization: the
+# registry-vs-callsite invariant (doctrine/vaporware-prevention-full.md)
+# checks "does a registry entry have a consumer." This scan checks the
+# missing other half for non-UI config levers: "does a consumed lever
+# have a producer" -- and this file is where a deliberately
+# producer-less lever gets to say so, on the record, instead of silently
+# passing or silently blocking.
+#
+# ---------------------------------------------------------------------------
+# FORMAT (parseable by bash 3.2 with `read -r var reason`)
+# ---------------------------------------------------------------------------
+#   <VAR_NAME><whitespace><reason, cites the read site and the intended
+#   external producer (operator shell / self-test / power-user CLI)>
+#
+#   - `#` starts a comment; blank lines ignored.
+#   - An entry here is ENFORCED-as-documentation, not enforced-as-code: if
+#     the named var later gains a real in-repo producer, the scan
+#     reclassifies it PRODUCED and the allowlist row becomes inert (safe to
+#     delete on the next sweep, not a correctness bug either way).
+#   - Do NOT add an entry to silence a var you have not read the callsite
+#     for. Every row below was audited (2026-07-29, HARNESS-GAP-57
+#     construction) against the actual read site before being added.
+# ---------------------------------------------------------------------------
+
+NL_CHECKOUT_OVERRIDE  hooks/session-start-auto-install.sh:219 discover_nl_checkout() reads it as "1. Explicit override (self-test / power user)" -- intentionally producer-less; a human operator or a self-test subshell exports it, never repo code.
+NL_CROSS_REPO_TOUCH_OK  hooks/cross-repo-nl-touch-warn.sh:83 is a WARN-only silence switch documented inline ("how to silence it if the cross-repo touch is deliberate") -- meant to be set by hand in the terminal, not produced by any script.
+NL_EXCLUSIONS_VERIFY_TIMEOUT  scripts/selftest-sweep-exclusions.sh:232,362 read as "${NL_EXCLUSIONS_VERIFY_TIMEOUT:-300}" -- an operator-tunable timeout override for a slow machine; the 300s default is the real behavior when unset, not a dead branch.
+NL_ISSUES_BACKLOG_PATH  scripts/nl-issue.sh:89,141 documented "wins (self-test / explicit override); else the [repo default]" -- self-test and power-user path override, not a production-set lever.
+NL_ISSUE_CLI_OVERRIDE  hooks/workstreams-read.sh:432 _nli_capture_cli_path() self-test-only override (exercised via inline env-prefixed invocation in that file's own --self-test, never a standalone producer).
+NL_SELFTEST_EXCLUSIONS_FILE  scripts/selftest-sweep-exclusions.sh:117 ledger_path() documented "Override with NL_SELFTEST_EXCLUSIONS_FILE (used by --self-test)" -- self-test-only fixture-path override.
+NL_SPAWN_PROCESS_COUNT_OVERRIDE  scripts/nl.sh:106 self-test/debug override for deterministic process-count assertions; nl.sh:324 unsets it explicitly in its own suite teardown, confirming test-only scope.
