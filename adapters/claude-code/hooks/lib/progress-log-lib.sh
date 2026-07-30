@@ -417,12 +417,15 @@ _pl_natural_key() {
       printf 'plan_outcome_recorded|%s|%s' "$plan_slug" "$dedup_extra" ;;
     plan_reopened)
       # T9 auto-reopen (plan-recheck-sweep.sh). dedup_extra carries the
-      # caller's pre-hashed (re-check-date-that-fired + reason) so a
-      # DIFFERENT re-check date or recurrence condition on a later sweep is
-      # a legitimately-distinct new event, while a sweep re-running against
-      # an already-reopened (now ACTIVE, no longer archived) plan simply
-      # finds nothing to reopen and never re-emits at all -- naturally
-      # idempotent by construction (see plan-recheck-sweep.sh header).
+      # caller's pre-hashed (reason + this reopen's timestamp) -- see
+      # plan-recheck-sweep.sh's _prs_reopen_one, which computes
+      # sha1sum("${reason}|${ts}") -- so a DIFFERENT re-check date or
+      # recurrence condition on a later sweep (a different "reason", or
+      # the same reason at a later "ts") is a legitimately-distinct new
+      # event, while a sweep re-running against an already-reopened (now
+      # ACTIVE, no longer archived) plan simply finds nothing to reopen
+      # and never re-emits at all -- naturally idempotent by construction
+      # (see plan-recheck-sweep.sh header).
       printf 'plan_reopened|%s|%s' "$plan_slug" "$dedup_extra" ;;
     merge-completed)
       # SE1 (status-event-ledger). plan_slug/task_id carry the estate-merge
