@@ -33,13 +33,21 @@
 #   dispatch-provenance.sh write --ask <id> --plan-slug <slug>
 #                                 --task-id <id> --session-id <dispatching-sid>
 #                                 --child-id <synthetic-child-node-id>
-#                                 [--worktree <path>]
+#                                 [--worktree <path>] [--role <role>]
 #     Writes ONE JSON marker file under the state dir (see SANDBOXING),
 #     named `<sanitized-worktree-or-UNRESOLVED>__<dispatch-ts-compact>.json`
 #     — best-effort "keyed by target worktree path + dispatch ts" per the
 #     plan's Task 3 spec. Fields:
 #       {v, ts, ask_id, plan_slug, task_id, session_id, child_id,
-#        worktree_path}
+#        worktree_path, role}
+#     `role` (ADDITIVE field, attribution-pipeline task 2026-07-29 — see
+#     workstreams-emit.sh's NL-ATTRIBUTION header section): the dispatch
+#     prompt's parsed `role=<builder|verifier|reviewer|advocate>` value, or
+#     "" when absent/unrecognized. Additive and backward-compatible: every
+#     pre-existing caller that omits --role gets role:"" and every
+#     pre-existing marker on disk (written before this field existed)
+#     simply lacks the key — Task 9's reader, per the CONTRACT note above,
+#     must not assume the key is present.
 #     `worktree_path` is "" when --worktree was not supplied. THIS IS AN
 #     HONEST GAP, not a guess: the true child worktree path is not visible
 #     to a PreToolUse hook for the generic Task/Agent/Workflow dispatch
@@ -222,7 +230,7 @@ _dp_prune() {
 # every failure path returns 0 without printing (mirrors pl_emit).
 # ----------------------------------------------------------------------
 cmd_write() {
-  local ask="" plan_slug="" task_id="" session_id="" child_id="" worktree=""
+  local ask="" plan_slug="" task_id="" session_id="" child_id="" worktree="" role=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --ask) ask="${2:-}"; shift 2 ;;
@@ -231,6 +239,7 @@ cmd_write() {
       --session-id) session_id="${2:-}"; shift 2 ;;
       --child-id) child_id="${2:-}"; shift 2 ;;
       --worktree) worktree="${2:-}"; shift 2 ;;
+      --role) role="${2:-}"; shift 2 ;;
       *) shift ;;
     esac
   done
@@ -246,17 +255,18 @@ cmd_write() {
   local fname="${wt_key}__${ts_compact}.json"
   local path="$dir/$fname"
 
-  local ask_e slug_e task_e sid_e child_e wt_e
+  local ask_e slug_e task_e sid_e child_e wt_e role_e
   ask_e="$(_dp_json_escape "$ask")"
   slug_e="$(_dp_json_escape "$plan_slug")"
   task_e="$(_dp_json_escape "$task_id")"
   sid_e="$(_dp_json_escape "$session_id")"
   child_e="$(_dp_json_escape "$child_id")"
   wt_e="$(_dp_json_escape "$worktree")"
+  role_e="$(_dp_json_escape "$role")"
 
   local json
-  json="$(printf '{"v":1,"ts":"%s","ask_id":"%s","plan_slug":"%s","task_id":"%s","session_id":"%s","child_id":"%s","worktree_path":"%s"}' \
-    "$ts" "$ask_e" "$slug_e" "$task_e" "$sid_e" "$child_e" "$wt_e")"
+  json="$(printf '{"v":1,"ts":"%s","ask_id":"%s","plan_slug":"%s","task_id":"%s","session_id":"%s","child_id":"%s","worktree_path":"%s","role":"%s"}' \
+    "$ts" "$ask_e" "$slug_e" "$task_e" "$sid_e" "$child_e" "$wt_e" "$role_e")"
 
   printf '%s\n' "$json" >"$path" 2>/dev/null || return 0
 
@@ -316,6 +326,25 @@ cmd_selftest() {
     else
       fail "field mismatch: ask=$askv slug=$slugv task=$taskv sid=$sidv child=$childv"
     fi
+  fi
+
+  echo "Scenario A2 (attribution-pipeline task, 2026-07-29): --role round-trips as an ADDITIVE field; omitting it (every pre-existing caller) still writes role:\"\" and every pre-existing field stays intact"
+  local out_a2
+  out_a2="$(cmd_write --ask "ask-role" --plan-slug "demo-plan" --task-id "3" \
+    --session-id "sess-A2" --child-id "ss-childA2" --role "builder")"
+  if command -v jq >/dev/null 2>&1; then
+    rolev="$(jq -r '.role' "$out_a2" 2>/dev/null | tr -d '\r')"
+    [[ "$rolev" == "builder" ]] && pass "role round-trips when supplied" || fail "role mismatch: '$rolev'"
+  fi
+  local out_a3
+  out_a3="$(cmd_write --ask "ask-role2" --plan-slug "demo-plan" --task-id "4" \
+    --session-id "sess-A3" --child-id "ss-childA3")"
+  if command -v jq >/dev/null 2>&1; then
+    if jq -e . "$out_a3" >/dev/null 2>&1; then pass "marker with no --role is still valid JSON (backward compat)"; else fail "marker with no --role is NOT valid JSON"; fi
+    rolev3="$(jq -r '.role' "$out_a3" 2>/dev/null | tr -d '\r')"
+    [[ "$rolev3" == "" ]] && pass "role defaults to empty string, never guessed, when --role is omitted" || fail "expected role='' when omitted, got '$rolev3'"
+    slugv3="$(jq -r '.plan_slug' "$out_a3" 2>/dev/null | tr -d '\r')"
+    [[ "$slugv3" == "demo-plan" ]] && pass "pre-existing fields (plan_slug etc.) unaffected by the new role field" || fail "plan_slug regressed: '$slugv3'"
   fi
 
   echo "Scenario B: write WITHOUT --worktree is the HONEST unresolved case -- filename says UNRESOLVED, worktree_path is empty, never a guess"
@@ -440,7 +469,7 @@ dispatch-provenance.sh — DISPATCH-PROVENANCE MARKER writer CLI
 Verbs:
   write --ask <id> --plan-slug <slug> --task-id <id>
         --session-id <dispatching-session-id> --child-id <synthetic-node-id>
-        [--worktree <path>]
+        [--worktree <path>] [--role <builder|verifier|reviewer|advocate>]
                           Write ONE dispatch-provenance marker file. Never
                           blocks; exit 0 always. Prints the written path.
   --self-test             Run the self-test suite (sandboxed).

@@ -206,10 +206,15 @@ flips (T6) additionally require the calibration data attached to the evidence fi
 - 2026-07-29: `adapters/claude-code/scripts/manifest-check.sh` — scripts/ resolver, rejection scenarios, three jq-fallback defect fixes
 - 2026-07-29: `adapters/claude-code/manifest.json` — estate-janitor and estate-brief moved off the inexpressible ../scripts/ form
 - 2026-07-29: `adapters/claude-code/doctrine/INDEX.md` — regenerated; it carried the now-schema-invalid path string
-
 - 2026-07-28: adapters/claude-code/scripts/loe-backfill.sh (NEW) + adapters/claude-code/hooks/plan-reviewer.sh
   (Check 18, WARN-only) + adapters/claude-code/manifest.json (loe-backfill entry) — T7 mining +
   reviewer-surfacing halves; close-side actuals-append shipped as a documented seam in
   loe-backfill.sh's own header (exact close-plan.sh function + call site named), not built, per
   the operator's WIP-1 directive keeping this slice out of admission/dispatch/closer files while
   the other machine owns T3.
+- 2026-07-29: `adapters/claude-code/hooks/workstreams-emit.sh` — attribution-pipeline task (operator directive: "how do we ensure we don't keep running into this same damn issue of you reporting something that's complete false"): NL-ATTRIBUTION header convention + `_extract_nl_attribution`/`_stop_extract_nl_attribution` parsers, wired into `--on-builder-dispatch` (START, threaded into the existing T3 admission-lib splice's ledger row + `_emit_dispatch_provenance`) and `--on-stop` (END, `spawn-concluded` detail enrichment) — this is the natural next increment on T3's emit-feed registration point, closing the "attribution" half T3/T4 left as governor-only
+- 2026-07-29: `adapters/claude-code/hooks/lib/admission-lib.sh` — `_adm_key_allowed` extended with `role`/`attributed` labels for the attribution-pipeline task, alongside T3/T4's existing `plan`/`task` keys
+- 2026-07-29: `adapters/claude-code/scripts/dispatch-provenance.sh` — attribution-pipeline task: additive `--role` field on the dispatch-provenance marker (backward compatible)
+- 2026-07-29: `adapters/claude-code/doctrine/orchestrator-pattern.md` — attribution-pipeline task: NL-ATTRIBUTION header made MANDATORY in dispatch prompts, WARN-only enforcement rung named per constitution §10
+- 2026-07-29: `adapters/claude-code/doctrine/orchestrator-pattern-full.md` — attribution-pipeline task: full NL-ATTRIBUTION section (format, wiring, honest gap, enforcement rung, retirement condition)
+- 2026-07-29: `docs/plans/fragments/attribution-server-fragment.md` — NEW, attribution-pipeline task: consumer contract for the workstreams-ui builder (different file owner) — how `deriveLiveAgentLeaves` should join the new START/END attribution rows to a `<plan>/<task>` id

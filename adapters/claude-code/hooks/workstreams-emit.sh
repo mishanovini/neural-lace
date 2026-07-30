@@ -877,6 +877,10 @@ _kind_of_item() {
 _run_on_stop() {
   local input; input=$(_read_stdin)
   local sid; sid=$(_session_id "$input")
+  # Stop hooks receive transcript_path on stdin alongside session_id (same
+  # field bug-persistence-gate.sh / work-integrity-gate.sh / the reconciler
+  # already read) — used below by the NL-ATTRIBUTION END trigger.
+  local transcript_path; transcript_path=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
   local ledger="$LEDGER_DIR/opened-${sid}.jsonl"
   [[ -f "$ledger" ]] || exit 0   # session opened no branches -> silent no-op
 
@@ -921,8 +925,24 @@ _run_on_stop() {
     # this Stop actually concluded >=1 branch ($first==0, same guard as the
     # _emit_dual call above) — a session that opened nothing has nothing to
     # conclude (mirrors the pre-existing silent-no-op-at-top guard).
+    #
+    # NL-ATTRIBUTION END trigger (attribution-pipeline task, 2026-07-29): a
+    # dispatched CHILD session's PreToolUse dispatch text was never visible
+    # to IT (that lived in the PARENT's hook invocation) but its OWN
+    # transcript's first user turn IS the prompt it was launched with -- the
+    # same text the header convention asks orchestrators to put the
+    # NL-ATTRIBUTION line into. _stop_extract_nl_attribution reads it here,
+    # at the guaranteed-complete end of the session, so start (governor
+    # ledger, parent-side) and end (this signal-ledger row, child-side)
+    # carry the SAME plan/task/role vocabulary even though they are
+    # necessarily two different session_ids (HONEST GAP, not silently
+    # papered over: see docs/plans/fragments/attribution-server-fragment.md
+    # for how a consumer should treat "concluded with no matching start" as
+    # its own class rather than a join failure).
     if command -v ledger_emit >/dev/null 2>&1; then
-      ledger_emit "workstreams-emit" "spawn-concluded" "session=${sid} concluded=${n_cc} shipped=${n_ship}"
+      local a_plan a_task a_role a_attributed
+      IFS='|' read -r a_plan a_task a_role a_attributed <<<"$(_stop_extract_nl_attribution "$transcript_path")"
+      ledger_emit "workstreams-emit" "spawn-concluded" "session=${sid} concluded=${n_cc} shipped=${n_ship} plan=${a_plan} task=${a_task} role=${a_role} attributed=${a_attributed}"
     fi
     # ---- END WAVE-O O.1 EMIT ------------------------------------------------
   fi
@@ -1956,6 +1976,152 @@ PLANEOF
   _ck "PL5 missing progress-log.sh/dispatch-provenance.sh CLIs -> exit 0 (never blocks)" "$rcPL5" "0"
 
   # ================================================================
+  # NLA1-NLA4, NLA-STOP1/2 (attribution-pipeline task, 2026-07-29): the
+  # NL-ATTRIBUTION header convention (doctrine/orchestrator-pattern.md) — a
+  # machine-readable `plan=<slug> task=<id> role=<...>` line any dispatch
+  # prompt may carry, parsed once by _extract_nl_attribution and threaded
+  # into every sink --on-builder-dispatch already writes (governor ledger
+  # via adm_admit, task_started progress-log, dispatch-provenance marker)
+  # PLUS the --on-stop END trigger (spawn-concluded), so a future consumer
+  # can join "started, not concluded" dispatches to a <plan>/<task> id --
+  # see docs/plans/fragments/attribution-server-fragment.md.
+  # ================================================================
+
+  # NLA1: a dispatch prompt with ONLY the header — NO "docs/plans/X.md"
+  # text, NO "Task N of" phrasing (the exact shape the pre-existing
+  # free-text heuristic silently no-ops on, PL3-style, and the exact shape
+  # THIS task's own dispatch prompt had) — still gets a task_started event
+  # resolved against the REAL fixture plan's ask-id, via the header alone.
+  local plog_nla1="$tmp/pl-nla1" dpdir_nla1="$tmp/dp-nla1" adm_nla1="$tmp/adm-nla1"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_nla1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir_nla1" \
+      ADM_STATE_DIR="$adm_nla1" CONV_TREE_STATE_PATH="$tmp/nla-1.json" CLAUDE_SESSION_ID="sess-nla-1" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build the thing","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=7 role=builder\nGo build the thing -- no plan-file phrasing anywhere in this prompt at all."},"session_id":"sess-nla-1"}' >/dev/null 2>&1 )
+  local plfile_nla1="$plog_nla1/ask-pl-fixture-1.jsonl"
+  if [[ -f "$plfile_nla1" ]] && grep -q '"plan_slug":"pl-fixture-plan"' "$plfile_nla1" && grep -q '"task_id":"7"' "$plfile_nla1"; then
+    echo "PASS: NLA1 header-only prompt (no free-text plan/task phrasing) still emits task_started via the NL-ATTRIBUTION header alone -- fixes the exact silent-no-op class PL3 documents for prose-less dispatches"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA1 expected task_started plan_slug=pl-fixture-plan task_id=7 in $plfile_nla1 (header-only dispatch)"; fail=$((fail+1))
+    [[ -f "$plfile_nla1" ]] && cat "$plfile_nla1"
+  fi
+  local dpfile_nla1; dpfile_nla1=$(ls "$dpdir_nla1"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile_nla1" ]] && grep -q '"role":"builder"' "$dpfile_nla1" 2>/dev/null; then
+    echo "PASS: NLA1b dispatch-provenance marker carries role=builder from the header"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA1b expected role=builder in dispatch-provenance marker ($dpfile_nla1)"; fail=$((fail+1))
+  fi
+  local ledger_nla1; ledger_nla1=$(ls "$adm_nla1"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_nla1" ]] && grep -q '"plan":"pl-fixture-plan"' "$ledger_nla1" 2>/dev/null \
+      && grep -q '"task":"7"' "$ledger_nla1" 2>/dev/null && grep -q '"role":"builder"' "$ledger_nla1" 2>/dev/null \
+      && grep -q '"attributed":"1"' "$ledger_nla1" 2>/dev/null; then
+    echo "PASS: NLA1c governor ledger row (adm_admit, the same 1000+/day emit-feed row) carries plan/task/role/attributed=1 -- the START trigger's consumer-ready row"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA1c expected plan/task/role/attributed=1 in governor ledger $ledger_nla1"; fail=$((fail+1))
+    [[ -n "$ledger_nla1" ]] && cat "$ledger_nla1"
+  fi
+
+  # NLA2: NO header (an ORDINARY pre-existing dispatch, e.g. BD1's own
+  # prompt shape) -> attributed=0 in the governor ledger row, a WARN line
+  # logged, and the pre-existing free-text-heuristic behavior is completely
+  # unaffected (no plan/task label written at all -- honest absence, never
+  # a guess).
+  local adm_nla2="$tmp/adm-nla2"
+  ADM_STATE_DIR="$adm_nla2" CONV_TREE_STATE_PATH="$tmp/nla-2.json" CLAUDE_SESSION_ID="sess-nla-2" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build the widget","prompt":"long body, no header, no plan reference"},"session_id":"sess-nla-2"}' >/dev/null 2>&1
+  local ledger_nla2; ledger_nla2=$(ls "$adm_nla2"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_nla2" ]] && grep -q '"attributed":"0"' "$ledger_nla2" 2>/dev/null && ! grep -q '"plan":"' "$ledger_nla2" 2>/dev/null; then
+    echo "PASS: NLA2 no header -> attributed=0, and plan/task/role labels are absent (empty values dropped by adm_admit itself, never a guessed value)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA2 expected attributed=0 with no plan/task/role labels in $ledger_nla2"; fail=$((fail+1))
+    [[ -n "$ledger_nla2" ]] && cat "$ledger_nla2"
+  fi
+  if grep -qE 'WARN unattributed builder dispatch.*session=sess-nla-2' "$LOG_FILE" 2>/dev/null; then
+    echo "PASS: NLA2b unattributed dispatch logs a WARN line naming this session (constitution §10 adoption-lag signal, never a block)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA2b expected a WARN line naming session=sess-nla-2 in $LOG_FILE"; fail=$((fail+1))
+  fi
+
+  # NLA3: PARTIAL header (plan= present, task= missing) -> attributed=0
+  # (both fields are required to name a real <slug>/<task_id> node) even
+  # though plan WAS parsed and is still recorded (diagnostic visibility,
+  # never silently dropped) -- and _emit_dispatch_provenance falls all the
+  # way back to the free-text heuristic rather than trusting a
+  # half-populated header (this prompt's free text also names no plan, so
+  # the net effect mirrors PL3: no task_started emitted).
+  local plog_nla3="$tmp/pl-nla3" adm_nla3="$tmp/adm-nla3"
+  PROGRESS_LOG_STATE_DIR="$plog_nla3" ADM_STATE_DIR="$adm_nla3" \
+    CONV_TREE_STATE_PATH="$tmp/nla-3.json" CLAUDE_SESSION_ID="sess-nla-3" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"prompt":"NL-ATTRIBUTION: plan=orphan-plan role=builder\nno task= token in this header"},"session_id":"sess-nla-3"}' >/dev/null 2>&1
+  local ledger_nla3; ledger_nla3=$(ls "$adm_nla3"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_nla3" ]] && grep -q '"attributed":"0"' "$ledger_nla3" 2>/dev/null && grep -q '"plan":"orphan-plan"' "$ledger_nla3" 2>/dev/null; then
+    echo "PASS: NLA3 partial header (plan without task) -> attributed=0 but the parsed plan value is still recorded"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA3 expected attributed=0 with plan=orphan-plan in $ledger_nla3"; fail=$((fail+1))
+    [[ -n "$ledger_nla3" ]] && cat "$ledger_nla3"
+  fi
+  if [[ ! -d "$plog_nla3" || -z "$(ls -A "$plog_nla3" 2>/dev/null)" ]]; then
+    echo "PASS: NLA3b a partial header falls back to the free-text heuristic in full (no task_started emitted, matching PL3's plan-less anti-noise since the free text also names no plan)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA3b expected no task_started output for a partial-header, plan-less-by-heuristic dispatch (plog3=$(ls -A "$plog_nla3" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # NLA4: role=hacker (out-of-enum) -> role dropped (empty), plan/task
+  # still honored, attributed still 1 (role never gates attribution).
+  local adm_nla4="$tmp/adm-nla4"
+  ADM_STATE_DIR="$adm_nla4" CONV_TREE_STATE_PATH="$tmp/nla-4.json" CLAUDE_SESSION_ID="sess-nla-4" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"prompt":"NL-ATTRIBUTION: plan=some-plan task=2 role=hacker\nbody"},"session_id":"sess-nla-4"}' >/dev/null 2>&1
+  local ledger_nla4; ledger_nla4=$(ls "$adm_nla4"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_nla4" ]] && grep -q '"attributed":"1"' "$ledger_nla4" 2>/dev/null && ! grep -q '"role":"' "$ledger_nla4" 2>/dev/null; then
+    echo "PASS: NLA4 an out-of-enum role= value is dropped (never guessed/passed-through) while plan/task attribution still succeeds"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA4 expected attributed=1 with NO role label for role=hacker in $ledger_nla4"; fail=$((fail+1))
+    [[ -n "$ledger_nla4" ]] && cat "$ledger_nla4"
+  fi
+
+  # NLA-STOP1: the END trigger. --on-stop reads the STOPPING session's OWN
+  # transcript (not tool_input -- that lived in the DISPATCHING parent's
+  # hook) for the SAME NL-ATTRIBUTION line, since the transcript's first
+  # user turn IS the prompt the session was launched with. --on-spawn opens
+  # the branch first (OBS1/OBS2's own precedent) so --on-stop's early
+  # "nothing opened" guard does not short-circuit.
+  local tp_nla1="$tmp/transcript-nla1.jsonl"
+  cat >"$tp_nla1" <<'TRJSON'
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"NL-ATTRIBUTION: plan=attribution-pipeline task=2 role=builder\nBuild the thing."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+TRJSON
+  local obs_ledger_nla1="$tmp/obs-ledger-nla1.jsonl"
+  CONV_TREE_STATE_PATH="$tmp/nla-stop-1.json" SIGNAL_LEDGER_PATH="$obs_ledger_nla1" CLAUDE_SESSION_ID="sess-nla-stop-1" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"NLA Stop Branch"},"session_id":"sess-nla-stop-1"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$tmp/nla-stop-1.json" SIGNAL_LEDGER_PATH="$obs_ledger_nla1" CLAUDE_SESSION_ID="sess-nla-stop-1" \
+    bash "$SELF" --on-stop <<<"$(printf '{"session_id":"sess-nla-stop-1","transcript_path":"%s"}' "$tp_nla1")" >/dev/null 2>&1
+  if grep -q '"event":"spawn-concluded"' "$obs_ledger_nla1" 2>/dev/null && grep -q 'plan=attribution-pipeline task=2 role=builder attributed=1' "$obs_ledger_nla1" 2>/dev/null; then
+    echo "PASS: NLA-STOP1 --on-stop's spawn-concluded carries the SAME plan/task/role parsed from the stopping session's own transcript (END trigger, same ids as START)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA-STOP1 expected spawn-concluded detail with plan=attribution-pipeline task=2 role=builder attributed=1 in $obs_ledger_nla1"; fail=$((fail+1))
+    [[ -f "$obs_ledger_nla1" ]] && cat "$obs_ledger_nla1"
+  fi
+
+  # NLA-STOP2: a transcript with NO NL-ATTRIBUTION line -> spawn-concluded
+  # still carries attributed=0 explicitly (never omits the field, never
+  # crashes on a header-less transcript) -- "a concluded event without a
+  # matching start is its own honest class" starts here: a consumer sees
+  # attributed=0 rather than a guessed or silently-missing field.
+  local tp_nla2="$tmp/transcript-nla2.jsonl"
+  cat >"$tp_nla2" <<'TRJSON2'
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"just build the thing, no header here"}]}}
+TRJSON2
+  local obs_ledger_nla2="$tmp/obs-ledger-nla2.jsonl"
+  CONV_TREE_STATE_PATH="$tmp/nla-stop-2.json" SIGNAL_LEDGER_PATH="$obs_ledger_nla2" CLAUDE_SESSION_ID="sess-nla-stop-2" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"NLA Stop Branch 2"},"session_id":"sess-nla-stop-2"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$tmp/nla-stop-2.json" SIGNAL_LEDGER_PATH="$obs_ledger_nla2" CLAUDE_SESSION_ID="sess-nla-stop-2" \
+    bash "$SELF" --on-stop <<<"$(printf '{"session_id":"sess-nla-stop-2","transcript_path":"%s"}' "$tp_nla2")" >/dev/null 2>&1
+  if grep -q 'plan= task= role= attributed=0' "$obs_ledger_nla2" 2>/dev/null; then
+    echo "PASS: NLA-STOP2 a header-less transcript still emits attributed=0 explicitly (honest absence, never omitted or guessed)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA-STOP2 expected 'plan= task= role= attributed=0' in $obs_ledger_nla2"; fail=$((fail+1))
+    [[ -f "$obs_ledger_nla2" ]] && cat "$obs_ledger_nla2"
+  fi
+
+  # ================================================================
   # OBS1/OBS2 (Wave O task O.1, specs-o §O.1 deliverable 3, contract C2):
   # --on-spawn emits spawn-dispatched; --on-stop emits spawn-concluded.
   # SIGNAL_LEDGER_PATH is set explicitly (rather than relying on the
@@ -2512,6 +2678,93 @@ _extract_task_id() {
   printf '%s' "$m" | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1
 }
 
+# ============================================================================
+# NL-ATTRIBUTION header (attribution-pipeline task, 2026-07-29 — operator
+# directive: "how do we ensure we don't keep running into this same damn
+# issue of you reporting something that's complete false" -- the START
+# trigger (this hook's --on-builder-dispatch) already fires reliably, but
+# nothing a dispatch carries is MACHINE-READABLE, so deriveLiveAgentLeaves
+# (workstreams-ui/server/roadmap-routes.js) can bind nothing and the cockpit
+# reads "N running, unattributed to a task" all day. This is the convention
+# (doctrine: doctrine/orchestrator-pattern.md) + parser closing that gap.
+#
+# CONVENTION: a dispatch prompt MAY include a line anywhere in its text:
+#   NL-ATTRIBUTION: plan=<slug> task=<id> role=<builder|verifier|reviewer|advocate>
+# Same key=value vocabulary as admission-lib.sh's adm_admit labels and
+# estate-registration-lib.sh's reg_register labels (plan=/task= already
+# closed-enum keys in both) -- one vocabulary across all three attribution
+# surfaces, not a fourth invented shape.
+#
+# _extract_nl_attribution <text> -> plan|task|role|attributed ('|'-joined —
+#   see the printf at the end of this function for why NOT tab-joined)
+#   attributed=1 iff BOTH plan AND task are present -- the id scheme
+#   (roadmap-routes.js: `<slug>/<task_id>`) needs both to name a real node;
+#   role is supplementary metadata and never gates attribution. role is a
+#   CLOSED enum (builder|verifier|reviewer|advocate) -- an unrecognized
+#   value is dropped, not guessed, mirroring _adm_key_allowed's closed-enum
+#   discipline. Tolerant of a missing/malformed header: never guesses,
+#   always returns the 4-field row (empty fields, attributed=0) so a caller
+#   can unconditionally destructure it.
+# ============================================================================
+_extract_nl_attribution() {
+  local text="$1"
+  local line
+  line=$(printf '%s' "$text" | grep -oE 'NL-ATTRIBUTION:.*' | head -n1)
+  local plan="" task="" role=""
+  if [[ -n "$line" ]]; then
+    plan=$(printf '%s' "$line" | grep -oE 'plan=[A-Za-z0-9_.-]+' | head -n1)
+    plan="${plan#plan=}"
+    task=$(printf '%s' "$line" | grep -oE 'task=[A-Za-z0-9_.-]+' | head -n1)
+    task="${task#task=}"
+    role=$(printf '%s' "$line" | grep -oE 'role=(builder|verifier|reviewer|advocate)' | head -n1)
+    role="${role#role=}"
+  fi
+  local attributed="0"
+  [[ -n "$plan" && -n "$task" ]] && attributed="1"
+  # Field separator is '|', NOT a tab: bash treats tab as "IFS whitespace"
+  # (like space/newline) regardless of being the SOLE IFS character, so
+  # `IFS=$'\t' read -r a b c d` silently COLLAPSES leading empty fields —
+  # proven live: `printf '\t\t\t0'` read back with IFS=$'\t' assigns "0" to
+  # the FIRST variable, not the fourth (every caller destructures via `read`
+  # and must see a true absent-plan/absent-task row correctly, so this bug
+  # would have silently mis-attributed the common no-header case). '|' is
+  # not IFS whitespace, so leading/embedded empty fields round-trip exactly
+  # — and '|' can never appear in plan/task (charset [A-Za-z0-9_.-]) or role
+  # (closed enum), so no value collision is possible.
+  printf '%s|%s|%s|%s' "$plan" "$task" "$role" "$attributed"
+}
+
+# _stop_extract_nl_attribution <transcript_path>
+#   END-side counterpart: a dispatched CHILD session cannot see its own
+#   dispatch tool_input (that lived in the PARENT's PreToolUse hook) but its
+#   OWN transcript's first user-role turn IS the prompt it was launched
+#   with -- the same text the header convention asks orchestrators to put
+#   the NL-ATTRIBUTION line into. Reading it at --on-stop (not
+#   --on-session-start) is deliberate: the transcript is GUARANTEED
+#   complete by the time a session stops, whereas SessionStart timing
+#   relative to first-turn ingestion is not something this hook can safely
+#   assume. jq idiom mirrors work-integrity-gate.sh's _wig_touched_plan_paths
+#   and workstreams-emit-reconciler.sh's user/tool_result extraction (both
+#   already read this same transcript JSONL shape) -- not a new technique.
+#   Only the FIRST matching user-role turn is read (head -n1): later turns
+#   are ordinary conversation, not the dispatch prompt.
+_stop_extract_nl_attribution() {
+  local tp="$1"
+  [[ -n "$tp" && -f "$tp" ]] || { _extract_nl_attribution ""; return 0; }
+  _have jq || { _extract_nl_attribution ""; return 0; }
+  local text
+  text=$(jq -r '
+    select(.type == "user" or .role == "user" or .message.role == "user")
+    | (.message.content // .content // empty)
+    | if type == "array" then
+        ([ .[] | select(type=="object" and .type=="text") | .text ] | join(" "))
+      elif type == "string" then .
+      else empty end
+    | gsub("\n"; " ")
+  ' "$tp" 2>/dev/null | head -n1)
+  _extract_nl_attribution "$text"
+}
+
 # Read the plan header's `ask-id:` value from docs/plans/<slug>.md, resolved
 # against the CURRENT repo's toplevel (ephemeral-ok READ, constraint 11 --
 # this is not a durable in-repo WRITE). Deliberately duplicates
@@ -2672,20 +2925,40 @@ _looks_like_worktree_pool() {
   esac
 }
 
-# _emit_dispatch_provenance <input> <sid> <child_id>
+# _emit_dispatch_provenance <input> <sid> <child_id> [h_plan h_task h_role h_attributed]
 #   Best-effort task_started progress-log emission + dispatch-provenance
-#   marker write. Silent no-op when the dispatch text names no plan
-#   (anti-noise: not every builder/spawn dispatch is plan-rooted). sid/
-#   child_id are the SAME dispatching-session-derived values the caller
-#   already computed for the conv-tree SESSIONS lineage rendering -- this is
-#   "the same provenance the SESSIONS lineage rendering consumes" per the
-#   plan's Task 3 spec, not a newly-invented session concept.
+#   marker write. Silent no-op when NEITHER the NL-ATTRIBUTION header NOR
+#   the free-text heuristic names a plan (anti-noise: not every
+#   builder/spawn dispatch is plan-rooted). sid/child_id are the SAME
+#   dispatching-session-derived values the caller already computed for the
+#   conv-tree SESSIONS lineage rendering -- this is "the same provenance the
+#   SESSIONS lineage rendering consumes" per the plan's Task 3 spec, not a
+#   newly-invented session concept.
+#
+#   ATTRIBUTION PRECEDENCE (attribution-pipeline task, 2026-07-29): the
+#   caller (_run_on_builder_dispatch) already parsed the dispatch text once
+#   via _extract_nl_attribution and passes the 4 fields through as
+#   h_plan/h_task/h_role/h_attributed. When h_attributed=="1" (BOTH header
+#   plan AND task present) the header is AUTHORITATIVE and the free-text
+#   heuristic (_extract_plan_slug/_extract_task_id) is skipped entirely --
+#   deterministic beats prose-scanning. Otherwise (header absent OR only
+#   partially present) this falls back to the pre-existing heuristic
+#   UNCHANGED, so every dispatch prompt written before this convention
+#   existed keeps working exactly as it did (PL1-PL5 regressions below stay
+#   green with zero header text).
 _emit_dispatch_provenance() {
   local input="$1" sid="$2" child_id="$3"
+  local h_plan="${4:-}" h_task="${5:-}" h_role="${6:-}" h_attributed="${7:-0}"
   local text; text=$(_dispatch_text "$input")
-  local slug; slug=$(_extract_plan_slug "$text")
-  [[ -z "$slug" ]] && return 0
-  local task_id; task_id=$(_extract_task_id "$text")
+  local slug task_id
+  if [[ "$h_attributed" == "1" ]]; then
+    slug="$h_plan"
+    task_id="$h_task"
+  else
+    slug=$(_extract_plan_slug "$text")
+    [[ -z "$slug" ]] && return 0
+    task_id=$(_extract_task_id "$text")
+  fi
   local ask_id; ask_id=$(_resolve_ask_id_for_plan_slug "$slug")
 
   local pl_cli; pl_cli=$(_pl_progress_log_cli)
@@ -2727,11 +3000,11 @@ _emit_dispatch_provenance() {
   if [[ -f "$dp_cli" ]]; then
     if [[ -n "$wt_hint" ]] && _looks_like_worktree_pool "$wt_hint"; then
       bash "$dp_cli" write --ask "$ask_id" --plan-slug "$slug" --task-id "$task_id" \
-        --session-id "$sid" --child-id "$child_id" --worktree "$wt_hint" \
+        --session-id "$sid" --child-id "$child_id" --worktree "$wt_hint" --role "$h_role" \
         >/dev/null 2>&1 || true
     else
       bash "$dp_cli" write --ask "$ask_id" --plan-slug "$slug" --task-id "$task_id" \
-        --session-id "$sid" --child-id "$child_id" \
+        --session-id "$sid" --child-id "$child_id" --role "$h_role" \
         >/dev/null 2>&1 || true
     fi
   fi
@@ -2748,6 +3021,13 @@ _run_on_builder_dispatch() {
   [[ -z "$line" ]] && exit 0
   local tool sid child_id item_id title bg
   IFS=$'\t' read -r tool sid child_id item_id title bg <<<"$line"
+
+  # NL-ATTRIBUTION header parse (attribution-pipeline task, 2026-07-29) —
+  # ONE parse of the dispatch text, reused by every downstream sink below
+  # (governor ledger, dispatch-provenance marker, WARN counter) so they can
+  # never disagree with each other about what this dispatch claims.
+  local h_plan h_task h_role h_attributed
+  IFS='|' read -r h_plan h_task h_role h_attributed <<<"$(_extract_nl_attribution "$(_dispatch_text "$input")")"
 
   local lib; lib=$(_resolve_state_lib)
   local events
@@ -2766,10 +3046,20 @@ _run_on_builder_dispatch() {
   # lib is called by session-resumer.sh (hookless scheduled dispatcher) and
   # spawn-worktree.sh. Best-effort by construction — a missing or broken lib
   # leaves this hook's behavior byte-identical. See hooks/lib/admission-lib.sh.
+  #
+  # plan=/task=/role=/attributed= (attribution-pipeline task, 2026-07-29):
+  # the SAME NL-ATTRIBUTION parse above, carried into the governor ledger row
+  # this splice already writes 1000+ times/day — the START trigger the
+  # cockpit's future consumer joins against (see
+  # docs/plans/fragments/attribution-server-fragment.md). adm_admit's own
+  # _adm_key_allowed enum gates role/attributed same as plan/task; empty
+  # values are dropped by adm_admit itself, so an absent header contributes
+  # only attributed=0 (honest, never guessed).
   {
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/admission-lib.sh" 2>/dev/null \
       && declare -F adm_admit >/dev/null 2>&1 \
-      && adm_admit emit-feed kind="$([[ "${bg:-0}" == "1" ]] && printf bg || printf fg)" >/dev/null 2>&1
+      && adm_admit emit-feed kind="$([[ "${bg:-0}" == "1" ]] && printf bg || printf fg)" \
+           plan="$h_plan" task="$h_task" role="$h_role" attributed="$h_attributed" >/dev/null 2>&1
   } || true
 
   # Builder correlation ledger (observability + reconciler hint):
@@ -2780,13 +3070,31 @@ _run_on_builder_dispatch() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$item_id" "$child_id" "$tool" "$bg" "$title" \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
   fi
-  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid"
+
+  # WARN counter (constitution §10 requires the golden scenario/FP-rate/
+  # retirement condition named at the callsite, not just here — see
+  # doctrine/orchestrator-pattern-full.md's NL-ATTRIBUTION section). NEVER
+  # blocks: this is the adoption-lag signal, not a gate. Counts prior
+  # attributed=0 lines already appended to the append-only LOG_FILE (no
+  # separate racy read-modify-write counter file needed) so the value is
+  # exact under sequential dispatches and merely best-effort (never wrong in
+  # a blocking sense) under true concurrency.
+  local warn_count=""
+  if [[ "$h_attributed" == "0" ]]; then
+    local prior_warns; prior_warns=$(grep -c 'WARN unattributed builder dispatch' "$LOG_FILE" 2>/dev/null | tr -d ' \n')
+    [[ -n "$prior_warns" ]] || prior_warns=0
+    warn_count=$((prior_warns + 1))
+    _log "WARN unattributed builder dispatch (no NL-ATTRIBUTION header) item=$item_id title=\"$title\" session=$sid — unattributed dispatch #$warn_count logged this session (doctrine/orchestrator-pattern.md names the header MANDATORY; this WARN never blocks the dispatch)"
+  fi
+  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid plan=$h_plan task=$h_task role=$h_role attributed=$h_attributed${warn_count:+ warn_count=$warn_count}"
 
   # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
   # emission + dispatch-provenance marker (see the section above this
   # function for the full contract; silent no-op when the dispatch names no
-  # plan).
-  _emit_dispatch_provenance "$input" "$sid" "$child_id" || true
+  # plan). Header fields passed through so the header takes precedence over
+  # the free-text heuristic when present (see _emit_dispatch_provenance's
+  # own ATTRIBUTION PRECEDENCE note).
+  _emit_dispatch_provenance "$input" "$sid" "$child_id" "$h_plan" "$h_task" "$h_role" "$h_attributed" || true
 
   # ---- WAVE-O O.1 EMIT: bg-task-started (contract C2) --------------------
   # ONE marked emit line, per specs-o §O.1 deliverable 3. Scoped HONESTLY:

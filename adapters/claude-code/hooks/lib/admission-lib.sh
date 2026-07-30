@@ -312,9 +312,16 @@ _adm_scrub() {
 
 # Label KEYS are a closed enum. An unknown key is dropped, not written — this is
 # what stops a future caller from quietly piping a prompt or cmdline in here.
+# role/attributed added by the attribution-pipeline task (2026-07-29):
+# workstreams-emit.sh's --on-builder-dispatch splice carries the parsed
+# NL-ATTRIBUTION header (doctrine/orchestrator-pattern.md) alongside the
+# plan/task labels this enum already had — role is the closed builder|
+# verifier|reviewer|advocate enum, attributed is "0"|"1" (both already
+# pre-validated by _extract_nl_attribution before reaching here; this
+# allowlist is the second, independent gate, not the only one).
 _adm_key_allowed() {
   case "$1" in
-    repo|agent|kind|reason_hint|plan|task|session) return 0 ;;
+    repo|agent|kind|reason_hint|plan|task|session|role|attributed) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -789,6 +796,25 @@ _adm_self_test() {
   case "$last" in
     */*) fail "path separators survived the scrub: $last" ;;
     *) pass "path separators stripped from label values" ;;
+  esac
+
+  echo "Scenario 8b: attribution labels (attribution-pipeline task, 2026-07-29) — plan/task/role/attributed round-trip; a still-disallowed key beside them stays dropped"
+  adm_admit emit-feed plan=attribution-pipeline task=1 role=builder attributed=1 cmdline=/Users/secret/leak >/dev/null
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"plan":"attribution-pipeline"'*'"task":"1"'*'"role":"builder"'*'"attributed":"1"'*)
+      pass "plan/task/role/attributed all round-tripped into the ledger line, in order" ;;
+    *) fail "expected plan/task/role/attributed labels in: $last" ;;
+  esac
+  case "$last" in
+    *cmdline*|*leak*) fail "disallowed key 'cmdline' leaked alongside allowed attribution keys" ;;
+    *) pass "disallowed key 'cmdline' still dropped when allowed keys are also present" ;;
+  esac
+  adm_admit emit-feed role=hacker >/dev/null
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"role":"hacker"'*) pass "role value is byte-scrubbed but NOT enum-validated by this lib -- workstreams-emit.sh's _extract_nl_attribution is the ONLY role-enum gate upstream; documented division of labor, not a gap in this scenario" ;;
+    *) fail "expected role=hacker to pass this lib's byte-scrub unchanged (this lib enforces the KEY allowlist, not a VALUE enum): $last" ;;
   esac
 
   echo "Scenario 9: absurd-level backstops, against PRODUCER-SHAPED snapshots"
