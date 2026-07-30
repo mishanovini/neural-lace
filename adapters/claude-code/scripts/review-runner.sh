@@ -302,6 +302,18 @@ cmd_finalize() {
     i=$((i+1))
   done
 
+  # ORDERING (final-3 reviewer 2026-07-30, PROVEN by reproduction): this check
+  # must run BEFORE the writer — the writer mutates the record file + index, so
+  # a refusal AFTER it orphans a record and the next clean finalize commits an
+  # index referencing an uncommitted record file (cross-machine corruption).
+  local _stray
+  _stray=$(git -C "$repo_root" diff --cached --name-only 2>/dev/null | grep -v '^docs/reviews/records/' || true)
+  if [[ -n "$_stray" ]]; then
+    echo "$SCRIPT_NAME: REFUSING finalize — the index holds staged content outside docs/reviews/records/ (a record commit must contain ONLY the record):" >&2
+    printf '%s\n' "$_stray" | head -5 >&2
+    return 2
+  fi
+
   local -a wargs=(capture --kind harness-change-review --reviewer "$reviewer" \
     --verdict "$verdict" --plan-ref "$plan_ref" --quote "$quote" \
     --repo-root "$repo_root" --reviewer-principal "$claimant_json" --independence "$independence")
@@ -327,6 +339,8 @@ cmd_finalize() {
   # script does not override it.
   local index_file="$repo_root/docs/reviews/records/index.json"
   git -C "$repo_root" add "$record_file" "$index_file" >/dev/null 2>&1
+  # Defense-in-depth re-check (primary check hoisted above the writer per the
+  # final-3 review; this one catches anything staged BETWEEN writer and commit).
   # ONLY-THE-RECORD GUARANTEE (delta-sweep reviewer 2026-07-30, PROVEN by
   # fixture): an UNSCOPED commit here swept any pre-staged content into the
   # record commit under the REVIEWER identity — invisible to the commit gate
@@ -541,6 +555,20 @@ run_self_test() {
     PASSED=$((PASSED+1))
   else
     echo "self-test (S9a) stray-staged-content-refused: FAIL (rc=$rc out=$out4)" >&2
+    FAILED=$((FAILED+1))
+  fi
+  # S9a2 (final-3 reviewer): the refusal must run BEFORE the writer — a refused
+  # finalize must leave ZERO new record files and an UNTOUCHED index (pre-fix,
+  # the writer had already mutated both, orphaning a record the next clean
+  # finalize would then reference from a committed index).
+  local _rec_count _idx_dirty
+  _rec_count=$(ls "$REPO/docs/reviews/records/"*.json 2>/dev/null | grep -vc 'index.json' || true)
+  _idx_dirty=$(git -C "$REPO" status --porcelain docs/reviews/records/ 2>/dev/null | wc -l | tr -d ' ')
+  if [[ "${_idx_dirty:-1}" -eq 0 ]]; then
+    echo "self-test (S9a2) refused-finalize-writes-nothing: PASS (records dir clean after refusal)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S9a2) refused-finalize-writes-nothing: FAIL (records dir dirty after refusal: $_idx_dirty entries, $_rec_count records)" >&2
     FAILED=$((FAILED+1))
   fi
   ( cd "$REPO" && git reset -q HEAD adapters/claude-code/hooks/leftover.sh && rm -f adapters/claude-code/hooks/leftover.sh )

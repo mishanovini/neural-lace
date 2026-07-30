@@ -2993,7 +2993,10 @@ check_review_reviewer_independence() {
   # in --full; --quick does the O(1) date classification and emits the
   # single grandfather summary below.
   local _rri_deep=0
-  [[ "${MODE:-}" == "--full" || "${MODE:-}" == "full" ]] && _rri_deep=1
+  # RRI_FORCE_DEEP=1 is a TEST SEAM (self-test fixtures only — running every
+  # fixture through a full multi-minute --full to reach this walk would be
+  # absurd); production quick runs never set it.
+  [[ "${MODE:-}" == "--full" || "${MODE:-}" == "full" || "${RRI_FORCE_DEEP:-0}" == "1" ]] && _rri_deep=1
 
   local f base kind verdict reviewed_commit record_relpath reviewed_author
   local record_commit_sha record_author post_cutover created_at
@@ -5599,15 +5602,16 @@ EOF
   ( cd "$D/repo" && git add -A && git commit -q -m "author: self-approve real.sh" )
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
-  # Cutover override (this fixture's OWN first commit is an ancestor of the
-  # self-approval commit, so it counts as post-cutover) -- the production
-  # default SHA obviously does not exist in a from-scratch fixture repo, so
-  # WITHOUT this override every self-approval fixture would read as
-  # pre-cutover (WARN, not RED) -- see the dedicated pre-cutover-warn
-  # scenario below for that path tested on its own.
-  export REVIEW_REVIEWER_INDEPENDENCE_CUTOVER="$RI_REVIEWED_SHA"
+  # FIXTURE DRIFT FIX (final-3 reviewer 2026-07-30, PROVEN dead three ways):
+  # the old override exported the retired SHA-cutover var, the record's
+  # created_at pre-dated the default ISO cutover, and _run_quick never runs
+  # the authorship walk. Now: ISO cutover earlier than the record's
+  # created_at (2026-07-30T00:00:00Z) + the RRI_FORCE_DEEP test seam so the
+  # walk actually executes.
+  export REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO="2026-01-01T00:00:00Z"
+  export RRI_FORCE_DEEP=1
   OUT="$(_run_quick "$D")"; RC=$?
-  unset REVIEW_REVIEWER_INDEPENDENCE_CUTOVER
+  unset REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO RRI_FORCE_DEEP
   _assert "review-reviewer-independence-red" 1 "$RC" "RED review-reviewer-independence" "$OUT"
 
   # ---- review-reviewer-independence: GREEN fixture -- a DIFFERENT git
@@ -5632,7 +5636,12 @@ EOF
   ( cd "$D/repo" && git add -A && git commit -q -m "runner: PASS record for real.sh" )
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # Same ISO+deep environment as the RED twin — without it this no-RED
+  # assertion is vacuous (the walk never runs in quick mode).
+  export REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO="2026-01-01T00:00:00Z"
+  export RRI_FORCE_DEEP=1
   OUT="$(_run_quick "$D")"
+  unset REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO RRI_FORCE_DEEP
   if printf '%s' "$OUT" | grep -q "RED review-reviewer-independence"; then
     echo "self-test (review-reviewer-independence-green): FAIL (unexpected RED: $OUT)" >&2
     FAILED=$((FAILED + 1))
@@ -5694,7 +5703,7 @@ EOF
   if printf '%s' "$OUT" | grep -q "RED review-reviewer-independence"; then
     echo "self-test (review-reviewer-independence-pre-cutover-warn): FAIL (unexpected RED -- pre-cutover content must be grandfathered: $OUT)" >&2
     FAILED=$((FAILED + 1))
-  elif printf '%s' "$OUT" | grep -q "WARN review-reviewer-independence.*PRE-DATES the review-independence cutover"; then
+  elif printf '%s' "$OUT" | grep -q "WARN review-reviewer-independence.*pre-cutover record(s) grandfathered"; then
     echo "self-test (review-reviewer-independence-pre-cutover-warn): PASS" >&2
     PASSED=$((PASSED + 1))
   else
