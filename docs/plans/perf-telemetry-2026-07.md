@@ -32,7 +32,7 @@ that were supposed to notice. This plan builds the feedback loop, not another re
       stamps; append ONE JSONL line per tool call (total ms, 3 slowest hooks, hook count) to a
       daily-rotated file under ~/.claude/state/perf/. Hot-path cost budget: <5ms, zero forks
       (asserted in self-test). Verification: full (self-test + a live capture line quoted).
-- [ ] P2 — Tick perf snapshot + orphan reap: one line per tick — bash.exe count, claude/Defender
+- [x] P2 — Tick perf snapshot + orphan reap: one line per tick — bash.exe count, claude/Defender
       CPU, worktree count — on the EXISTING supervisor-tick.sh (landed f22b55d; PERF-ESTATE-
       PROGRAM-01's named home) with health-tick as fallback if supervisor-tick's cadence is
       unsuitable; same tick reaps parent-dead orphan bash/claude processes (log each reap).
