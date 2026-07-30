@@ -2054,13 +2054,173 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
   sweep, the Inbox links, and the requests pipeline all passed in sandbox and were broken live.
   A UI round's acceptance must require evidence from the real deployed app.
 
-## ROADMAP-FALSE-ETERNAL-RUNNING-01 — NOT FIXED: one dispatch fans out into many spurious task_started events (refuted 2026-07-30, see CORRECTION below)
+## ROADMAP-FALSE-ETERNAL-RUNNING-01 — emitter fix WRITTEN, NOT MERGED, NOT INSTALLED; still live in production
 
-**Severity:** HIGH, OPEN (operator-reported: "The green items are supposed to indicate something
-is actively running. I see several green plans that aren't running.").
+> **STATUS DISCIPLINE (corrected 2026-07-30 after an adversarial refutation caught this entry
+> committing the very defect class it documents).** This entry previously headed
+> "emitter fixed 2026-07-30" and described the change as "**FIX (landed 2026-07-30 …)**" while
+> **nothing was committed and the live hook was byte-identical to the unfixed one.** Constitution
+> §1: done = merged to master with a SHA. The correct status of the work described below is
+> **WRITTEN, staged in a builder worktree, NOT merged and NOT installed.**
+>
+> **PROVEN at the time of writing:** `shasum ~/.claude/hooks/workstreams-emit.sh` ==
+> `git show HEAD:adapters/claude-code/hooks/workstreams-emit.sh | shasum`
+> (`87743bca9d440964b0a4f7ca01216eef232dd349`, identical) — the live hook is the OLD one.
+>
+> **THE LIVE COCKPIT CANNOT CLEAR UNTIL `install.sh` RUNS**, which happens only after this
+> lands on master. A merge alone does not stop the spurious events: the running harness
+> executes `~/.claude/hooks/`, not the repo. Until then every replay keeps emitting, so any
+> "the greens will age out" reasoning is measured from INSTALL, never from commit.
 
-**CORRECTION 2026-07-30 (adversarial refutation, agent a7b621c3, verdict PARTIAL — the earlier
-"FIXED this build" claim in this entry was FALSE and is retracted):**
+**Severity:** HIGH. Emitter fix WRITTEN (see below); the entry stays OPEN both because the fix
+is not yet live AND because the honest replacement signal then depends on `NL-ATTRIBUTION`
+header adoption, which is at ~12%.
+(Operator-reported: "The green items are supposed to indicate something is actively running.
+I see several green plans that aren't running.")
+
+**SECOND CORRECTION 2026-07-30 (builder, independent re-derivation from the raw data — the
+refutation below got the DIRECTION right and the MECHANISM wrong):**
+- The refutation's claim "ONE Task dispatch produced 42 markers" is NOT what the data shows.
+  MEASURED from `~/.claude/logs/conversation-tree-emit.log`: that window
+  (22:16:59Z-22:18:06Z) contains **100 separate `--on-builder-dispatch` hook fires**, not one.
+- WHAT THEY ACTUALLY ARE (PROVEN): the fires walk
+  `~/.claude/state/conversation-tree-emit/builder-a3fcb6ea-….jsonl` **in ledger order from
+  index 0** — beginning with "Verify T3 admission lib", whose real tool call happened
+  **2026-07-29T03:12:13Z, 43 hours earlier** — with exactly 2 genuinely-new dispatches
+  (ledger idx 103, 104) spliced in. PreToolUse **re-fires for every historical Task/Agent
+  tool call in the transcript**. Five such replays on 2026-07-30 (21:11, 21:32, 21:36,
+  22:17, 22:28), each re-emitting `task_started` for every plan/task any prompt in 43h of
+  history ever named. THAT is why plans stayed green with nothing running.
+- The single-`child_id` observation is real but proves nothing about fan-out:
+  `child_id = "ss-" + sha1(session_id)`, so EVERY dispatch from one session shares it by
+  construction. It is a session id, not a dispatch id.
+- BOTH defects were live and BOTH had to be fixed. Mention-scraping alone explains the
+  wrong-task attribution; replay alone explains the eternal re-greening. Fixing only the
+  first would have left the observed incident **100% intact** — counterfactual over the five
+  measured bursts: 468 fires, 60 of them `attributed=1`, but **0** were first-fires of their
+  dispatch identity, so a header-only fix emits 0 of the 95 spurious events and also 0 of the
+  real ones. Every task_started emitted in those five bursts was spurious.
+
+**THE FIX — WRITTEN 2026-07-30, NOT MERGED, NOT INSTALLED** (`adapters/claude-code/hooks/workstreams-emit.sh`): the two sinks
+inside `_emit_dispatch_provenance` were one code path and are now separated, because they are
+not the same kind of claim — `task_started` is a claim about the PRESENT that the operator
+reads as a green chip, while the dispatch-provenance marker is a correlation hint for
+`pl_classify_session`. `task_started` now requires BOTH:
+1. **Header-authoritative attribution.** Only `NL-ATTRIBUTION: plan=… task=…` may name the
+   task that started. `_extract_plan_slug`/`_extract_task_id` are no longer a source of
+   `task_started` at all. A mention is not a dispatch.
+2. **First fire of the dispatch identity.** `item_id = sha1(sid|tool|title)` (deliberately
+   time-bucket-free) already has first-seen semantics in the builder correlation ledger; that
+   ledger read is now load-bearing. A fire for an identity already recorded is a transcript
+   replay, not a start. Correct from the first fire after install — the ledger already holds
+   the session's history, so no warm-up period. The spawn surface got the same treatment
+   keyed on `(child_id, title)`, plus the `NL-ATTRIBUTION` parse it never had.
+   **THE IDENTITY LEDGER MUST OUTLIVE THE TURN (second pass, 2026-07-30).** The spawn half of
+   this gate first keyed on `opened-<sid>.jsonl` — the CONCLUDE ledger, which `--on-stop`
+   deletes at every turn boundary and `--heartbeat` deletes on staleness. PROVEN by executed
+   trace: first spawn → 1 event; replay with no Stop → still 1 (gate holds); ledger dir after
+   `--on-stop` → empty; replay after `--on-stop` → **2** — i.e. the "first fire only"
+   guarantee this entry claimed evaporated one turn after being set, and the eternal-green
+   defect was still fully live on the spawn surface while the code, the commit message, the
+   doctrine, the manifest AND this entry all said it was fixed. A dispatch-identity SET and a
+   conclude QUEUE have different lifetimes, so they are now different files: `spawn-<sid>.jsonl`
+   is append-only and deleted by nothing, matching `builder-<sid>.jsonl` (which is why the
+   builder surface never had the hole). Pinned by RPL6/RPL6b/RPL6c.
+3. **The header must OPEN the dispatch, not merely appear in it** (second pass, 2026-07-30).
+   The parse matched `NL-ATTRIBUTION:` ANYWHERE in the joined prompt text, so a **QUOTED**
+   header was indistinguishable from a real one: a prompt merely DISCUSSING a prior dispatch
+   ("…it was dispatched with the line `NL-ATTRIBUTION: plan=X task=9 role=builder` and it
+   failed") emitted a real `task_started` for task 9. That is the SAME mention-is-not-a-dispatch
+   defect this entry exists for, surviving inside the source the fix had just declared
+   authoritative — and a LIVE vector, since handoff/review/post-mortem prompts routinely paste
+   the builder prompt they are about. The header must now start a line AND sit within the first
+   `NL_ATTRIBUTION_MAX_LINE` (default 5) lines, which is what `doctrine/orchestrator-pattern.md`
+   already required in words ("MUST open with"). Pinned by RPL7/RPL7b, with RPL7c pinning that
+   a real dispatch is not collateral damage.
+No-header policy is **honest silence**: an unattributed event names no task, so it can turn no
+chip green — it could only pollute the orphan lane (the
+`PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` class), and the WARN counter already logs every
+unattributed dispatch with a running total. Falling back to scraping was never an option:
+scraping is the bug.
+**Proven by:** `workstreams-emit.sh --self-test` **113 passed / 1 failed** on BOTH `/bin/bash`
+(3.2.57) and `/opt/homebrew/bin/bash` (the 1 is pre-existing ST11, failing identically at
+baseline 92/1); **20 new executing assertions** (RPL1-RPL8b, PL1a, PL1d) — never a regex over
+source text, every one drives the real hook. Siblings green on both interpreters:
+`progress-log-lib.sh` 48/0, `dispatch-provenance.sh` 17/0; Node `roadmap-routes` 116/0,
+`derive-lib` 65/0. **Eight mutations, all with non-empty and mutually disjoint kill sets:**
+M1 restore-the-scrape → PL1/RPL3/RPL4; M2 scrape-beats-header → RPL1b/RPL1c; M3
+replay-gate-off → PL1d/RPL2b/RPL2c/RPL5b; M4 spawn-gate-keyed-on-the-deleted-ledger →
+RPL6b/RPL6c; M5 header-matched-anywhere → RPL7/RPL7b; M5b line-start-kept/window-removed →
+RPL7b only; M5c window-kept/line-start-removed → RPL7 only (M5b+M5c prove EACH HALF of the
+anchor is independently load-bearing, not one redundant with the other); M6 awk-field-equality
+→ `grep -qF` substring → RPL8/RPL8b.
+
+**RESIDUAL — WHAT IS STILL WRONG AFTER THIS FIX (honest):**
+- **The cockpit now UNDER-reports, and this is the big one.** Only 12 of 103 distinct dispatch
+  identities in the whole log carried an `NL-ATTRIBUTION` header (~12%); the WARN counter is at
+  4090+ unattributed dispatches for that one session. Real work in progress will show NOTHING
+  until orchestrators actually emit the header that `doctrine/orchestrator-pattern.md` already
+  calls MANDATORY. Silence is the correct direction (a missing green is not a lie) but it is
+  not the destination. **Next action: make the header a dispatch-time requirement, not a WARN.**
+- **No END signal at this layer.** The fix stops re-greening; it adds no "task stopped" event.
+  A green still ages out only via the downstream 60-min `taskStartedIdleMs`
+  (`derive-lib.js:690`, `:914`), so a genuinely-finished task stays green for up to an hour.
+- **Accepted cost:** a genuine re-dispatch reusing an IDENTICAL (session, tool, title) emits no
+  second `task_started` — indistinguishable from a replay at PreToolUse. Errs toward a missing
+  green over a false one. Pinned by scenario PL1d. All 105 identities in the operator's real
+  43h ledger have distinct titles, so the empirical cost today is zero.
+- **No one-shot cleanup of stale rows is required** (checked, not assumed): green is gated on
+  `startedAtMs` being within `taskStartedIdleMs` (60 min default, `derive-lib.js:690`), so
+  spurious rows age out on their own once **no new ones are emitted**. The 1394 historical
+  `task_started` rows can stay; they are inert to the green chip.
+  **CORRECTED 2026-07-30 — the earlier "they age out within an hour of the last replay
+  (22:29:23Z)" was WRONG, and wrong in the direction that flatters the fix.** 22:29Z was not
+  the last replay; it was merely the last one that had happened when the sentence was written.
+  PROVEN from `~/.claude/logs/conversation-tree-emit.log`, minute-bucketed: bursts continued at
+  **22:44-22:46Z (711 fires), 23:26-23:28Z (739), and 23:39-23:40Z (723)** — at least three
+  more after the cited "last" one, on top of the five already counted. **The clock does not
+  start at the last observed replay, and it does not start at commit: it starts at INSTALL.**
+  Replays keep firing the OLD hook until `install.sh` copies the new one into `~/.claude/`,
+  which happens only after this merges to master. Any "N minutes until the cockpit is honest"
+  estimate must be measured from that moment.
+  HYPOTHESIZED (not runtime-verified — no cockpit instance was exercised from this worktree):
+  the operator's live cockpit goes quiet ~60 min after the last replay THAT FOLLOWS INSTALL.
+  REFUTED BY: a green chip persisting past that with no `task_started` newer than 60 min for
+  its task.
+- **The replay gate is per-session and per-ledger-file, and both are defeatable** (disclosed
+  after an adversarial refutation executed them, 2026-07-30 — neither is a regression, both
+  were always true and were simply never written down):
+  (a) **A NEW `session_id` re-emits every identity.** The gate key includes the session id, so
+  replaying the same dispatch identities under a fresh session id emits them all again
+  (measured 4 → 8). This is by construction — a genuinely new session dispatching the same
+  work IS a new start — but it means a session-id churn (resume, re-attach, a new window over
+  the same transcript) can re-green tasks. Not currently distinguishable at PreToolUse.
+  (b) **Deleting the identity ledger re-emits.** Removing `spawn-<sid>.jsonl` /
+  `builder-<sid>.jsonl` and replaying emits again (measured 1 → 2). The ledger is now
+  deleted by no code path in this repo (that was the F1 fix), so this requires external
+  removal — but it means the gate's durability is exactly the durability of
+  `~/.claude/state/conversation-tree-emit/`, which nothing guarantees against manual cleanup,
+  tmp-reaping, or a machine migration.
+- **The header's positional anchor is a heuristic, not proof of intent.** A prompt that
+  LITERALLY BEGINS with a quoted header is still indistinguishable from a real dispatch and
+  still emits. Closing that needs an out-of-band channel the prose cannot forge (a dispatch
+  field, not prompt text), which a PreToolUse hook reading `tool_input` cannot reach today.
+  Stated rather than papered over; the residual is narrow (a paste must be the first thing in
+  the prompt) and the failure direction is a FALSE green, so it is the one remaining known
+  path to the original defect.
+- **`harness-doctor.sh --quick` gains exactly one new RED: `manifest-freshness`** — "live
+  ~/.claude/manifest.json does not match repo adapters/claude-code/manifest.json — run: bash
+  adapters/claude-code/install.sh". EXPECTED two-layer drift, not a defect: this change edits
+  the repo manifest, and the live copy only updates at install. Measured delta, not asserted:
+  13 RED at baseline (`git stash`) → 14 RED with the change, the single added entry being
+  `manifest-freshness`. It resolves when `install.sh` runs post-merge. The other 13 REDs
+  (budget-*, obs-*, review-index-consistency, session-resumer, template-live-drift, wave-e-e,
+  wave-f-f, wiring-resolves) are all pre-existing and untouched by this work.
+
+**FIRST CORRECTION 2026-07-30 (adversarial refutation, agent a7b621c3, verdict PARTIAL — the
+earlier "FIXED this build" claim in this entry was FALSE and is retracted; this correction's
+own mechanism claim is in turn corrected above, though its "stop scraping the prompt text"
+prescription was right):**
 - The live app STILL renders all three operator-reported tasks green (verified 22:24:52Z against
   the shipped 60-min default, server PID started after the commit) — including
   `cockpit-roadmap-redesign/9`, an Acceptance task requiring the OPERATOR'S OWN walkthrough,
@@ -2192,6 +2352,41 @@ would require dispatch-provenance.sh to learn the child's session id before/at d
 which it does not currently have (the child session doesn't exist yet at PreToolUse time). Out
 of scope for this task; flagged for a future round.
 **Filed by:** plan-phase-builder, false-eternal-running-fix build, 2026-07-30.
+
+## NL-ATTRIBUTION-ADOPTION-12-PERCENT-01 — the honest green signal now depends on a header almost nobody sends
+
+**Severity:** HIGH, OPEN. Direct consequence of ROADMAP-FALSE-ETERNAL-RUNNING-01's fix above.
+**Measured 2026-07-30** (`~/.claude/logs/conversation-tree-emit.log`, session
+a3fcb6ea-7fab-460d-8506-e2a655016f09): of **103** distinct dispatch identities, only **12**
+carried an `NL-ATTRIBUTION: plan=… task=…` header — ~12%. The hook's own WARN counter reached
+**4090** unattributed dispatches in that single session.
+**Why it matters now:** `task_started` is header-authoritative as of today, so an unheadered
+dispatch produces NO green chip. That is deliberate (a missing green is not a lie; a false one
+is) but it means the cockpit under-reports real work until adoption rises.
+**`doctrine/orchestrator-pattern.md` already calls the header MANDATORY** — so this is a
+mechanism gap, not a doctrine gap: the only enforcement is a non-blocking WARN, and 4090
+ignored WARNs is the measured proof that a WARN is not a mechanism (constitution §10:
+"documented enforcement that does not fire is the cardinal harness defect").
+**Fix direction:** make the header a dispatch-time requirement with a real block (or have the
+dispatching layer inject it automatically from the task it is dispatching, which removes the
+human step entirely — preferred, since it cannot be forgotten).
+**Filed by:** plan-phase-builder, false-eternal-running upstream fix, 2026-07-30.
+
+## DISPATCH-PROVENANCE-MARKER-SECOND-COLLISION-01 — markers are silently overwritten within the same second
+
+**Severity:** MEDIUM, OPEN. Found while building the ROADMAP-FALSE-ETERNAL-RUNNING-01 fix.
+**Finding (PROVEN by executing test):** `scripts/dispatch-provenance.sh`'s marker filenames are
+`UNRESOLVED__<YYYYMMDDHHMMSS>.json` — **one-second granularity with no disambiguator**. Three
+distinct dispatches emitted inside one second leave **two** files, not three; the third
+silently overwrote a sibling. Reproduced deterministically in
+`workstreams-emit.sh --self-test` scenario RPL2 (3 real dispatches -> 2 marker files), which is
+why RPL2c asserts "the replay pass adds no new markers" rather than an exact count — pinning
+the count would couple that assertion to this unrelated bug.
+**Impact:** `pl_classify_session`'s spawned-session guard loses evidence for bursty dispatches,
+exactly when there is most of it. Aggravated (not caused) by the 200-marker cap.
+**Fix direction:** add a uniqueness suffix (pid + counter, or the item_id's short sha) to the
+marker filename, the same way `_dispatch_replay_token` already keys on a hash.
+**Filed by:** plan-phase-builder, false-eternal-running upstream fix, 2026-07-30.
 
 ## PROGRESS-LOG-ID-PLACEHOLDER-STILL-LIVE-CHECK-01 — "<id" ask_id placeholder bug: checked, currently quarantined and NOT growing
 

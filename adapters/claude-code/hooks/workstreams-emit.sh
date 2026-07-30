@@ -641,11 +641,56 @@ _run_on_spawn() {
   # Correlation ledger: child_id, title, ts, serves_item_id, base-commit-SHA.
   # The base SHA lets --on-stop detect whether the session shipped a commit
   # (HEAD moved) and emit item-shipped. serves_item_id names the item to ship.
+  #
+  # REPLAY DETECTION (ROADMAP-FALSE-ETERNAL-RUNNING-01, 2026-07-30): the
+  # spawn surface is replayed by PreToolUse exactly like the builder surface
+  # (see the long note at _run_on_builder_dispatch's ledger append for the
+  # measured evidence). (child_id, title) is this surface's dispatch
+  # identity -- child_id alone is sha1(sid) and therefore constant, so the
+  # title field must participate. Read BEFORE the append below, and with
+  # awk field equality rather than a substring grep so a title that happens
+  # to appear inside another row's text can never produce a false "already
+  # seen" (which would silently suppress a real spawn). That field-equality
+  # claim is PINNED BY SCENARIO RPL8 -- it was load-bearing and untested
+  # until 2026-07-30, when a refuter swapped in `grep -qF` and the whole
+  # suite stayed green.
+  #
+  # THE IDENTITY LEDGER IS A SEPARATE FILE FROM THE CONCLUDE LEDGER, and the
+  # separation is the whole point (F1, adversarial refuter 2026-07-30). The
+  # gate first keyed on `opened-<sid>.jsonl` -- but that file is CONSUMED
+  # STATE with a per-turn lifetime: `--on-stop` deletes it after concluding
+  # (correctly -- concluding twice would be wrong) and `--heartbeat` deletes
+  # it when a session goes stale. A Stop hook fires at EVERY turn boundary
+  # (48 real invocations logged by 2026-07-30), so the gate was erased within
+  # one turn of being set and every later transcript replay counted as a
+  # start again -- i.e. the eternal-green defect was still fully live on this
+  # surface while the code comment, the commit message, the doctrine, the
+  # manifest and the backlog all claimed it was fixed. Executed proof and the
+  # regression pin: scenarios RPL6/RPL6b/RPL6c.
+  #
+  # A DISPATCH IDENTITY SET AND A CONCLUDE QUEUE ARE DIFFERENT THINGS with
+  # different lifetimes, so they get different files. The identity set must
+  # live as long as the SESSION whose replays it must suppress; the conclude
+  # queue must be cleared the moment it is drained. `spawn-<sid>.jsonl` is
+  # therefore append-only and deleted by nothing -- the same shape, and the
+  # same durability, the builder surface's `builder-<sid>.jsonl` already has
+  # (which is exactly why the builder surface never had this hole). Growth is
+  # bounded by dispatches-per-session at ~1 short line each, matching the
+  # builder ledger's already-accepted footprint.
   mkdir -p "$LEDGER_DIR" 2>/dev/null || true
   local ledger="$LEDGER_DIR/opened-${sid}.jsonl"
+  local id_ledger="$LEDGER_DIR/spawn-${sid}.jsonl"
+  local spawn_is_new=1
+  if [[ -f "$id_ledger" ]] && awk -F'\t' -v c="$child_id" -v t="$title" \
+       '$1==c && $2==t { found=1; exit } END { exit !found }' "$id_ledger" 2>/dev/null; then
+    spawn_is_new=0
+  else
+    printf '%s\t%s\t%s\n' "$child_id" "$title" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$id_ledger" 2>/dev/null || true
+  fi
   local base_sha; base_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
   printf '%s\t%s\t%s\t%s\t%s\n' "$child_id" "$title" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" "$serves_item_id" "$base_sha" >>"$ledger" 2>/dev/null || true
-  _log "branch-opened child=$child_id title=\"$title\" root=$root_id session=$sid serves=${serves_item_id:-none}"
+  _log "branch-opened child=$child_id title=\"$title\" root=$root_id session=$sid serves=${serves_item_id:-none} replay=$((1 - spawn_is_new))"
 
   # v1.1.4 item 41 — observability for the GUI detail-pane content quality.
   # Non-blocking warning when a substantive Dispatch prompt ships without
@@ -658,12 +703,22 @@ _run_on_spawn() {
   _warn_no_rich_details "$input" "$title"
 
   # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
-  # emission + dispatch-provenance marker (see the section above
-  # _run_on_builder_dispatch for the full contract; silent no-op when the
-  # dispatch names no plan). sid/child_id here are the SAME values just used
-  # for the branch-opened/session-bound events above -- "the same provenance
-  # the SESSIONS lineage rendering consumes" per the plan's Task 3 spec.
-  _emit_dispatch_provenance "$input" "$sid" "$child_id" || true
+  # emission + dispatch-provenance marker (see the TWO SINKS block above
+  # _emit_dispatch_provenance for the full contract). sid/child_id here are
+  # the SAME values just used for the branch-opened/session-bound events
+  # above -- "the same provenance the SESSIONS lineage rendering consumes"
+  # per the plan's Task 3 spec.
+  #
+  # The NL-ATTRIBUTION parse is done HERE too (2026-07-30). It was
+  # previously only done on the builder surface, so a spawn's task_started
+  # could only ever come from the free-text scrape. Now that scraping is no
+  # longer a source of task_started, omitting this parse would silently kill
+  # attribution for headered spawns instead of fixing them -- so the spawn
+  # surface gets the same authoritative path the builder surface has.
+  local sp_plan sp_task sp_role sp_attributed
+  IFS='|' read -r sp_plan sp_task sp_role sp_attributed <<<"$(_extract_nl_attribution "$(_dispatch_text "$input")")"
+  _emit_dispatch_provenance "$input" "$sid" "$child_id" \
+    "$sp_plan" "$sp_task" "$sp_role" "$sp_attributed" "$spawn_is_new" || true
 
   # ---- WAVE-O O.1 EMIT: spawn-dispatched (contract C2) --------------------
   # ONE marked emit line, per specs-o §O.1 deliverable 3. Never blocks
@@ -1181,6 +1236,16 @@ _self_test() {
   _node_state() { node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var n=st.snapshot.nodes.filter(function(x){return x.title===process.argv[3]})[0];process.stdout.write(n?n.state:"MISSING")}catch(e){process.stdout.write("ERR")}' "$LIB" "$1" "$2" 2>/dev/null; }
   _has_root() { node -e 'try{var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});process.stdout.write(st.snapshot.nodes.some(function(x){return x.node_id===process.argv[3]&&x.parent_id===null})?"Y":"N")}catch(e){process.stdout.write("ERR")}' "$LIB" "$1" "$2" 2>/dev/null; }
   _ck() { if [[ "$2" == "$3" ]]; then echo "PASS: $1"; pass=$((pass+1)); else echo "FAIL: $1 (got '$2' want '$3')"; fail=$((fail+1)); fi; }
+  # Count task_started events across a per-ask progress-log DIRECTORY that
+  # may not exist at all (the honest-silence cases assert exactly that).
+  # `grep -c` exits 1 on zero matches, so the naive `|| echo 0` idiom yields
+  # the two-line string "0\n0" and fails a numeric compare against "0" --
+  # normalize to a single integer here instead of repeating the trap.
+  _ts_count_dir() {
+    local n; n=$(cat "$1"/*.jsonl 2>/dev/null | grep -c '"type":"task_started"' 2>/dev/null | tr -d ' \n')
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    printf '%s' "$n"
+  }
 
   # ST1-ST2: each Dispatch spawn tool emits a branch-opened titled by the
   # spawn title. ST3-ST4: sub-agent Task/Agent are AI-internal mechanics
@@ -1809,59 +1874,106 @@ PLANEOF
         && git add -A && git commit -qm init ) >/dev/null 2>&1
   fi
 
-  # PL1: --on-builder-dispatch with a "Task N of ... docs/plans/<slug>.md"
-  # prompt emits ONE task_started event with the right plan_slug/task_id,
-  # resolved to the fixture plan's ask-id, via the UNCHANGED progress-log.sh
-  # emit CLI (Task 2).
+  # PL1 (REFORMULATED 2026-07-30, ROADMAP-FALSE-ETERNAL-RUNNING-01 -- this
+  # scenario previously asserted THE DEFECT). It used to require that a
+  # free-text "Task 3 of ... docs/plans/<slug>.md" prompt EMIT a
+  # task_started. That is precisely how a dispatch that merely MENTIONS a
+  # plan/task turned the operator's chip green with nothing running, so the
+  # assertion is inverted deliberately, not weakened: prose is no longer a
+  # source of task_started. The marker (sink 2) is unaffected and PL2 below
+  # still proves it is written from exactly this prompt.
   local plog1="$tmp/pl-progresslog-1" dpdir1="$tmp/dispatch-provenance-1"
   ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
       CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
   local plfile1="$plog1/ask-pl-fixture-1.jsonl"
-  if [[ -f "$plfile1" ]] && grep -q '"type":"task_started"' "$plfile1" && grep -q '"plan_slug":"pl-fixture-plan"' "$plfile1" && grep -q '"task_id":"3"' "$plfile1" && grep -q '"emitter":"workstreams-emit"' "$plfile1"; then
-    echo "PASS: PL1 --on-builder-dispatch emits task_started (plan_slug/task_id/ask_id resolved, emitter=workstreams-emit) via the unchanged progress-log.sh CLI"; pass=$((pass+1))
+  # Counted across the WHOLE progress-log DIRECTORY, not just the one file
+  # this dispatch is expected to resolve to (F7, adversarial refuter
+  # 2026-07-30). Asserting absence in ONE named file passes VACUOUSLY whenever
+  # a regression makes the event land somewhere else -- the orphan/unlinked
+  # lane, or a differently-resolved ask-id -- which is a real and already-
+  # observed failure shape here (PL4d exists because a placeholder ask-id once
+  # routed events to `_id.jsonl`). _ts_count_dir is what RPL3/RPL4 already use
+  # for exactly this reason; PL1 is now consistent with them.
+  local pl1_n; pl1_n=$(_ts_count_dir "$plog1")
+  if [[ "$pl1_n" == "0" ]]; then
+    echo "PASS: PL1 a header-less, prose-only dispatch emits NO task_started ANYWHERE under the progress-log dir -- a MENTION of a plan/task is not a dispatch of it (the green-chip lie under repair)"; pass=$((pass+1))
   else
-    echo "FAIL: PL1 expected a task_started event with plan_slug=pl-fixture-plan task_id=3 in $plfile1"; fail=$((fail+1))
-    [[ -f "$plfile1" ]] && cat "$plfile1"
+    echo "FAIL: PL1 expected NO task_started from a prose-only dispatch, found $pl1_n under $plog1"; fail=$((fail+1))
+    cat "$plog1"/*.jsonl 2>/dev/null
   fi
 
-  # PL1b (FINDING 2 REGRESSION, half 1 -- REPLAY MUST STILL DEDUP): re-fire
-  # the SAME dispatch IMMEDIATELY (a true hook double-fire: same
-  # session_id, same prompt, back-to-back) -> still exactly ONE
-  # task_started. This runs at PRODUCTION DEFAULTS (no debounce override):
-  # both fires land inside _dispatch_replay_token's default 5s window, so
-  # the second one reuses the first's token and pl_emit's natural key
-  # (plan_slug+task_id+session_id+dedup_extra) collapses it.
-  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
-      CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
-      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
-  local ts_count_pl1; ts_count_pl1=$(grep -c '"type":"task_started"' "$plfile1" 2>/dev/null || echo 0)
-  _ck "PL1b true double-fire (same session_id, back-to-back, within the replay-debounce window) dedups (still exactly 1 task_started)" "$ts_count_pl1" "1"
+  # PL1a: the SAME prompt WITH an NL-ATTRIBUTION header emits exactly one
+  # task_started carrying the HEADER's plan/task, resolved to the fixture
+  # plan's ask-id, via the UNCHANGED progress-log.sh emit CLI (Task 2). The
+  # header says task=3 and the prose says "Task 3" too, so this is the
+  # like-for-like replacement of what PL1 used to assert -- the emission
+  # lane still works, it just requires the authoritative source now.
+  local plog1a="$tmp/pl-progresslog-1a" dpdir1a="$tmp/dispatch-provenance-1a"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1a" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1a" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1a.json" CLAUDE_SESSION_ID="sess-pl-1a" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=3 role=builder\nBuild Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1a"}' >/dev/null 2>&1 )
+  local plfile1a="$plog1a/ask-pl-fixture-1.jsonl"
+  if [[ -f "$plfile1a" ]] && grep -q '"type":"task_started"' "$plfile1a" && grep -q '"plan_slug":"pl-fixture-plan"' "$plfile1a" && grep -q '"task_id":"3"' "$plfile1a" && grep -q '"emitter":"workstreams-emit"' "$plfile1a"; then
+    echo "PASS: PL1a a header-attributed dispatch emits task_started (plan_slug/task_id/ask_id resolved, emitter=workstreams-emit) via the unchanged progress-log.sh CLI"; pass=$((pass+1))
+  else
+    echo "FAIL: PL1a expected a task_started event with plan_slug=pl-fixture-plan task_id=3 in $plfile1a"; fail=$((fail+1))
+    [[ -f "$plfile1a" ]] && cat "$plfile1a"
+  fi
 
-  # PL1c (FINDING 2 REGRESSION, half 2 -- THE LOAD-BEARING TEST): drive the
-  # REAL caller path a THIRD time with the IDENTICAL plan-rooted prompt and
-  # the SAME CLAUDE_SESSION_ID -- exactly the real-world shape, since an
-  # orchestrator's CLAUDE_SESSION_ID is INVARIANT across its own
-  # re-dispatches. That invariance is precisely what the OLD key got wrong:
-  # it keyed on that sid and silently DROPPED the re-dispatch. Nothing is
-  # hand-fed here -- same sid, same prompt, same plan, same task; the ONLY
-  # difference is WALL-CLOCK TIME, which is the only thing that genuinely
-  # distinguishes a re-dispatch from a replay.
+  # PL1b (FINDING 2 REGRESSION, half 1 -- A RE-FIRE MUST NEVER DOUBLE-EMIT):
+  # re-fire the SAME dispatch identity IMMEDIATELY (same session_id, same
+  # tool, same title, back-to-back) -> still exactly ONE task_started. Two
+  # independent mechanisms now enforce this: the ledger replay gate (this
+  # identity is already recorded) and, for the truly-concurrent case where
+  # two processes could both win the append race, _dispatch_replay_token's
+  # debounce window feeding pl_emit's natural key. Run at PRODUCTION
+  # DEFAULTS (no debounce override).
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1a" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1a" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1a.json" CLAUDE_SESSION_ID="sess-pl-1a" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=3 role=builder\nBuild Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1a"}' >/dev/null 2>&1 )
+  local ts_count_pl1; ts_count_pl1=$(grep -c '"type":"task_started"' "$plfile1a" 2>/dev/null || echo 0)
+  _ck "PL1b true double-fire (same session_id, same dispatch identity, back-to-back) emits exactly 1 task_started" "$ts_count_pl1" "1"
+
+  # PL1c (FINDING 2 REGRESSION, half 2 -- THE LOAD-BEARING TEST, REFORMULATED
+  # 2026-07-30). FINDING 2's real intent was: a GENUINE re-dispatch must not
+  # be silently swallowed just because the orchestrator's CLAUDE_SESSION_ID
+  # is invariant across its own dispatches. That intent is preserved here,
+  # against the real-world re-dispatch shape -- a distinct title ("(retry)",
+  # "Re-verify", "Round 2"), which is what every one of the 105 dispatch
+  # identities in the operator's real 43h ledger looks like.
+  #
+  # What changed and why: the OLD form of this test re-fired a BYTE-IDENTICAL
+  # dispatch and demanded a 2nd event, with wall-clock time as the only
+  # discriminator. That contract is now impossible to honor honestly --
+  # PreToolUse replays the whole transcript, so "same identity, later clock"
+  # is exactly what a REPLAY looks like, and a rule that emits for it is the
+  # bug (see PL1d, which pins the accepted cost explicitly).
   #
   # DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 compresses the clock rather than
-  # sleeping past the real 30s production window (a 31s sleep in a self-test
-  # is not worth it). This is the SAME mechanism and the SAME boundary the
-  # shipped default crosses -- only the window's width is parameterized, via
-  # the documented knob. The COMPLEMENTARY assertion (PL1b, immediately
-  # above) runs at the PRODUCTION DEFAULT, so between them both sides of the
-  # window are covered: replay-inside dedups, re-dispatch-outside does not.
+  # sleeping past the real 30s production window; same mechanism, same
+  # boundary, only the width parameterized via the documented knob.
   sleep 3
-  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
-      CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1a" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1a" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1a.json" CLAUDE_SESSION_ID="sess-pl-1a" \
       DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
-      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
-  local ts_count_pl1c; ts_count_pl1c=$(grep -c '"type":"task_started"' "$plfile1" 2>/dev/null || echo 0)
-  _ck "PL1c re-dispatch of the SAME task from the SAME dispatching session_id, past the debounce window, is NOT dropped (2 task_started events total, not still 1)" "$ts_count_pl1c" "2"
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md (retry)","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=3 role=builder\nBuild Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1a"}' >/dev/null 2>&1 )
+  local ts_count_pl1c; ts_count_pl1c=$(grep -c '"type":"task_started"' "$plfile1a" 2>/dev/null || echo 0)
+  _ck "PL1c a GENUINE re-dispatch of the same task from the same dispatching session_id (distinct dispatch identity, past the debounce window) is NOT dropped (2 task_started events total)" "$ts_count_pl1c" "2"
+
+  # PL1d (THE ACCEPTED COST, pinned so it can never regress silently): a
+  # re-fire that reuses the IDENTICAL (session, tool, title) identity stays
+  # at 2 -- it is indistinguishable from a transcript replay at PreToolUse,
+  # so it is treated as the same dispatch. Documented in full at
+  # _run_on_builder_dispatch's ledger-append note; asserted here so the
+  # trade is visible in the suite output rather than buried in a comment.
+  sleep 2
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1a" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1a" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1a.json" CLAUDE_SESSION_ID="sess-pl-1a" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md (retry)","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=3 role=builder\nBuild Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1a"}' >/dev/null 2>&1 )
+  local ts_count_pl1d; ts_count_pl1d=$(grep -c '"type":"task_started"' "$plfile1a" 2>/dev/null || echo 0)
+  _ck "PL1d an identical-identity re-fire past the debounce window is treated as a replay and emits nothing further (still 2, never 3) -- the deliberate miss-a-green-before-faking-one trade" "$ts_count_pl1d" "2"
 
   # PL2: the SAME dispatch also writes a dispatch-provenance marker file
   # (Task 9's future guard input) with the resolved fields.
@@ -1930,6 +2042,270 @@ PLANEOF
     *) echo "FAIL: PL4c expected an UNRESOLVED-prefixed marker filename for a bare-project-root cwd hint, got '$(basename "${dpfile4b:-}" 2>/dev/null)'"; fail=$((fail+1)) ;;
   esac
 
+  # ================================================================
+  # RPL1-RPL5 (ROADMAP-FALSE-ETERNAL-RUNNING-01, 2026-07-30): the operator's
+  # longest-running visible defect, stated verbatim -- "The green items are
+  # supposed to indicate something is actively running. I see several green
+  # plans that aren't running."
+  #
+  # Every scenario below EXECUTES the real hook and asserts the real emitted
+  # events; none of them reads this file's source text. The two production
+  # mechanisms they pin, both measured on the operator's machine 2026-07-30:
+  #   MENTION != DISPATCH  -- prompt-text scraping marked any plan/task a
+  #     prompt merely named as started.
+  #   REPLAY  != START     -- PreToolUse re-fires for every historical
+  #     dispatch in the transcript (100 fires in 67s, walking 43h of
+  #     history), re-greening everything the session ever dispatched.
+  # ================================================================
+
+  # RPL1 (THE MANDATED SCENARIO): a prompt that MENTIONS THREE tasks but
+  # carries an NL-ATTRIBUTION header for ONE must emit EXACTLY ONE
+  # task_started -- for the header's task, not for the prose's. The prose
+  # here is deliberately the most seductive shape for the old heuristic: it
+  # names a plan file and three "Task N" tokens, and the FIRST one it would
+  # have scraped (Task 5) is NOT the task actually being dispatched (task
+  # 11), so a scraping regression cannot pass this by accident.
+  local plog_rpl1="$tmp/pl-rpl1" dpdir_rpl1="$tmp/dp-rpl1"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir_rpl1" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-1.json" CLAUDE_SESSION_ID="sess-rpl-1" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Round 3 orchestration","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=11 role=builder\nContext for you: Task 5 of docs/plans/pl-fixture-plan.md already landed, Task 6 of docs/plans/pl-fixture-plan.md is with the verifier, and Task 9 of docs/plans/pl-fixture-plan.md is blocked on the operator walkthrough. Do not touch any of them."},"session_id":"sess-rpl-1"}' >/dev/null 2>&1 )
+  local plfile_rpl1="$plog_rpl1/ask-pl-fixture-1.jsonl"
+  local rpl1_n; rpl1_n=$(grep -c '"type":"task_started"' "$plfile_rpl1" 2>/dev/null || echo 0)
+  _ck "RPL1 a prompt mentioning THREE tasks with a header naming ONE emits exactly 1 task_started (mention != dispatch)" "$rpl1_n" "1"
+  if [[ -f "$plfile_rpl1" ]] && grep -q '"task_id":"11"' "$plfile_rpl1" 2>/dev/null; then
+    echo "PASS: RPL1b the single event names the HEADER's task (11), not the first task the prose mentions (5)"; pass=$((pass+1))
+  else
+    echo "FAIL: RPL1b expected task_id=11 (the header's task) in $plfile_rpl1"; fail=$((fail+1))
+    [[ -f "$plfile_rpl1" ]] && cat "$plfile_rpl1"
+  fi
+  if [[ -f "$plfile_rpl1" ]] && ! grep -qE '"task_id":"(5|6|9)"' "$plfile_rpl1" 2>/dev/null; then
+    echo "PASS: RPL1c none of the three merely-MENTIONED tasks (5, 6, 9) was marked started"; pass=$((pass+1))
+  else
+    echo "FAIL: RPL1c a merely-mentioned task (5/6/9) was marked started in $plfile_rpl1"; fail=$((fail+1))
+    [[ -f "$plfile_rpl1" ]] && cat "$plfile_rpl1"
+  fi
+
+  # RPL2 (REPLAY SUPPRESSION, the production shape): fire three DISTINCT
+  # header-attributed dispatches, then replay ALL THREE identities the way
+  # PreToolUse actually does. Result must stay at 3 -- one per real
+  # dispatch, none per replay. Before this fix the second pass re-emitted
+  # every one of them, which is literally what kept the operator's chips
+  # green with nothing running.
+  local plog_rpl2="$tmp/pl-rpl2" dpdir_rpl2="$tmp/dp-rpl2"
+  local rpl2_task
+  for rpl2_task in 21 22 23; do
+    ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl2" DISPATCH_PROVENANCE_STATE_DIR="$dpdir_rpl2" \
+        CONV_TREE_STATE_PATH="$tmp/rpl-2.json" CLAUDE_SESSION_ID="sess-rpl-2" \
+        bash "$SELF" --on-builder-dispatch <<<"{\"tool_name\":\"Task\",\"tool_input\":{\"description\":\"Build item $rpl2_task\",\"prompt\":\"NL-ATTRIBUTION: plan=pl-fixture-plan task=$rpl2_task role=builder\\nbody\"},\"session_id\":\"sess-rpl-2\"}" >/dev/null 2>&1 )
+  done
+  local plfile_rpl2="$plog_rpl2/ask-pl-fixture-1.jsonl"
+  local rpl2_first; rpl2_first=$(grep -c '"type":"task_started"' "$plfile_rpl2" 2>/dev/null || echo 0)
+  _ck "RPL2 three distinct header-attributed dispatches emit 3 task_started (one each)" "$rpl2_first" "3"
+  local rpl2_markers_before; rpl2_markers_before=$(ls "$dpdir_rpl2"/*.json 2>/dev/null | wc -l | tr -d ' ')
+  # The replay: same session, same identities, past the debounce window so
+  # the token cannot be what suppresses them -- only the replay gate can.
+  sleep 3
+  for rpl2_task in 21 22 23; do
+    ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl2" DISPATCH_PROVENANCE_STATE_DIR="$dpdir_rpl2" \
+        CONV_TREE_STATE_PATH="$tmp/rpl-2.json" CLAUDE_SESSION_ID="sess-rpl-2" \
+        DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+        bash "$SELF" --on-builder-dispatch <<<"{\"tool_name\":\"Task\",\"tool_input\":{\"description\":\"Build item $rpl2_task\",\"prompt\":\"NL-ATTRIBUTION: plan=pl-fixture-plan task=$rpl2_task role=builder\\nbody\"},\"session_id\":\"sess-rpl-2\"}" >/dev/null 2>&1 )
+  done
+  local rpl2_after; rpl2_after=$(grep -c '"type":"task_started"' "$plfile_rpl2" 2>/dev/null || echo 0)
+  _ck "RPL2b replaying all three dispatch identities past the debounce window emits NOTHING further (still 3, not 6) -- a replay is not a start" "$rpl2_after" "3"
+  # And the marker sink is replay-gated too: the replay pass must add ZERO
+  # new marker files (a replayed marker is byte-identical in every field its
+  # consumer joins on, and only ever evicted genuine older markers from
+  # dispatch-provenance.sh's 200-marker cap).
+  #
+  # Asserted as "the count did not GROW" rather than "== 3" on purpose:
+  # marker filenames are UNRESOLVED__<YYYYMMDDHHMMSS>.json, one-second
+  # granularity, so same-second dispatches overwrite each other and 3 real
+  # dispatches can legitimately leave 2 files. That collision is a REAL
+  # pre-existing defect in scripts/dispatch-provenance.sh (filed as
+  # DISPATCH-PROVENANCE-MARKER-SECOND-COLLISION-01) and is NOT what this
+  # scenario is here to measure -- pinning an exact count would couple this
+  # assertion to that unrelated bug and mask the thing it does measure.
+  local rpl2_markers_after; rpl2_markers_after=$(ls "$dpdir_rpl2"/*.json 2>/dev/null | wc -l | tr -d ' ')
+  _ck "RPL2c the dispatch-provenance sink is replay-gated as well (the replay pass adds no new markers)" "$rpl2_markers_after" "$rpl2_markers_before"
+
+  # RPL3: honest silence for a header-less dispatch -- NO task_started at
+  # all, while the WARN observability that already counts these stays. This
+  # is the no-header policy justified in _emit_dispatch_provenance's header:
+  # an unattributed event names no task, so it can turn no chip green; it
+  # could only pollute the orphan lane.
+  local plog_rpl3="$tmp/pl-rpl3"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl3" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl3" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-3.json" CLAUDE_SESSION_ID="sess-rpl-3" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Sweep the estate","prompt":"Please look at docs/plans/pl-fixture-plan.md and tell me about Task 4."},"session_id":"sess-rpl-3"}' >/dev/null 2>&1 )
+  local rpl3_n; rpl3_n=$(_ts_count_dir "$plog_rpl3")
+  _ck "RPL3 a header-less dispatch that names a plan AND a task in prose emits 0 task_started (honest silence, never a scrape)" "$rpl3_n" "0"
+  if grep -qE 'WARN unattributed builder dispatch.*session=sess-rpl-3' "$LOG_FILE" 2>/dev/null; then
+    echo "PASS: RPL3b honest silence keeps its observability -- the unattributed dispatch is still WARN-logged with a running count"; pass=$((pass+1))
+  else
+    echo "FAIL: RPL3b expected a WARN line naming session=sess-rpl-3 in $LOG_FILE"; fail=$((fail+1))
+  fi
+
+  # RPL4: an ACCEPTANCE task the operator alone can perform -- the exact
+  # cockpit-roadmap-redesign/9 shape that was rendering green all day. Three
+  # different historical dispatches MENTIONED it (with role=builder,
+  # role=advocate, and no role); none of them dispatched it. Zero events.
+  local plog_rpl4="$tmp/pl-rpl4"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl4" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl4" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-4.json" CLAUDE_SESSION_ID="sess-rpl-4" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Status roundup","prompt":"Task 9 of docs/plans/pl-fixture-plan.md is an Acceptance task and needs the OPERATOR to walk through it -- no agent can run it. Report on it only."},"session_id":"sess-rpl-4"}' >/dev/null 2>&1 )
+  local rpl4_n; rpl4_n=$(_ts_count_dir "$plog_rpl4")
+  _ck "RPL4 an operator-only Acceptance task discussed in a prompt is never marked started (the cockpit-roadmap-redesign/9 shape)" "$rpl4_n" "0"
+
+  # RPL5: the spawn surface keeps a working attribution lane. --on-spawn
+  # previously had NO header parse at all, so making task_started
+  # header-only would have silently killed spawn attribution instead of
+  # fixing it. A headered spawn still emits; a replayed one does not.
+  local plog_rpl5="$tmp/pl-rpl5"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl5" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl5" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-5.json" CLAUDE_SESSION_ID="sess-rpl-5" \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn RPL5","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=31 role=builder\nbody"},"session_id":"sess-rpl-5"}' >/dev/null 2>&1 )
+  local plfile_rpl5="$plog_rpl5/ask-pl-fixture-1.jsonl"
+  if [[ -f "$plfile_rpl5" ]] && grep -q '"task_id":"31"' "$plfile_rpl5" 2>/dev/null; then
+    echo "PASS: RPL5 --on-spawn now parses NL-ATTRIBUTION too, so a headered spawn still emits task_started (lane preserved, not collateral damage)"; pass=$((pass+1))
+  else
+    echo "FAIL: RPL5 expected task_id=31 from a headered spawn in $plfile_rpl5"; fail=$((fail+1))
+    [[ -f "$plfile_rpl5" ]] && cat "$plfile_rpl5"
+  fi
+  sleep 3
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl5" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl5" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-5.json" CLAUDE_SESSION_ID="sess-rpl-5" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn RPL5","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=31 role=builder\nbody"},"session_id":"sess-rpl-5"}' >/dev/null 2>&1 )
+  local rpl5_after; rpl5_after=$(grep -c '"type":"task_started"' "$plfile_rpl5" 2>/dev/null || echo 0)
+  _ck "RPL5b a replayed spawn identity emits nothing further (still 1, not 2)" "$rpl5_after" "1"
+
+  # ------------------------------------------------------------------------
+  # RPL6 (F1, adversarial refuter 2026-07-30 -- THE REPLAY GATE MUST SURVIVE A
+  # TURN BOUNDARY). RPL5b above proves the spawn gate holds WITHIN one turn.
+  # It did NOT prove it holds ACROSS one, and it did not: the spawn gate used
+  # to key on `opened-<sid>.jsonl`, the SAME file `--on-stop` deletes at the
+  # end of every turn (and `--heartbeat` deletes when a session goes stale).
+  # A Stop hook is not a rare event -- it is wired at ~/.claude/settings.json
+  # and had 48 real invocations logged by 2026-07-30. So on the spawn surface
+  # the "first fire of a dispatch identity" guarantee evaporated at the first
+  # turn boundary and every subsequent transcript replay counted as a start
+  # again -- the exact eternal-green defect this whole change exists to kill,
+  # still live on one of the two surfaces.
+  #
+  # The BUILDER surface never had this hole (`builder-<sid>.jsonl` is written
+  # by no deleter), which is why RPL2b passes and this scenario is needed:
+  # the two surfaces had different lifetimes for the same claimed guarantee.
+  local plog_rpl6="$tmp/pl-rpl6"
+  local rpl6_dispatch='{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn RPL6","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=61 role=builder\nbody"},"session_id":"sess-rpl-6"}'
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl6" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl6" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-6.json" CLAUDE_SESSION_ID="sess-rpl-6" \
+      bash "$SELF" --on-spawn <<<"$rpl6_dispatch" >/dev/null 2>&1 )
+  local rpl6_first; rpl6_first=$(_ts_count_dir "$plog_rpl6")
+  _ck "RPL6 a real headered spawn emits 1 task_started (the lane this scenario then replays across a turn boundary)" "$rpl6_first" "1"
+  # THE TURN BOUNDARY. --on-stop concludes the branch and clears the conclude
+  # ledger, exactly as it does after every real turn.
+  ( cd "$plfix" && CONV_TREE_STATE_PATH="$tmp/rpl-6.json" CLAUDE_SESSION_ID="sess-rpl-6" \
+      bash "$SELF" --on-stop <<<'{"session_id":"sess-rpl-6"}' >/dev/null 2>&1 )
+  sleep 3
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl6" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl6" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-6.json" CLAUDE_SESSION_ID="sess-rpl-6" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-spawn <<<"$rpl6_dispatch" >/dev/null 2>&1 )
+  local rpl6_after; rpl6_after=$(_ts_count_dir "$plog_rpl6")
+  _ck "RPL6b a replay AFTER --on-stop emits nothing further (still 1, not 2) -- the spawn replay gate survives the turn boundary that clears the conclude ledger" "$rpl6_after" "1"
+  # RPL6c: the same across the OTHER deleter of that file, --heartbeat's
+  # stale-session sweep. Same erasure, same class, different trigger.
+  ( cd "$plfix" && CONV_TREE_STATE_PATH="$tmp/rpl-6.json" CLAUDE_SESSION_ID="sess-rpl-6" \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn RPL6 second"},"session_id":"sess-rpl-6"}' >/dev/null 2>&1 )
+  rm -f "$LEDGER_DIR/opened-sess-rpl-6.jsonl" 2>/dev/null || true
+  sleep 3
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl6" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl6" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-6.json" CLAUDE_SESSION_ID="sess-rpl-6" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-spawn <<<"$rpl6_dispatch" >/dev/null 2>&1 )
+  local rpl6_hb; rpl6_hb=$(_ts_count_dir "$plog_rpl6")
+  _ck "RPL6c a replay after the conclude ledger is removed by ANY path (--heartbeat's stale sweep) still emits nothing (still 1)" "$rpl6_hb" "1"
+
+  # ------------------------------------------------------------------------
+  # RPL7 (F2, adversarial refuter 2026-07-30 -- A QUOTED HEADER IS NOT A
+  # DISPATCH). The header parse grepped `NL-ATTRIBUTION:.*` ANYWHERE in the
+  # joined prompt+description+content, so a prompt that merely DISCUSSED a
+  # prior dispatch -- pasting or quoting its header -- emitted a real
+  # task_started for the quoted task. This is a LIVE vector, not a theoretical
+  # one: handoff, review and post-mortem prompts routinely paste the builder
+  # prompt they are talking about. It is the SAME defect class as the free-text
+  # scrape this change removed (a MENTION is not a DISPATCH), surviving in the
+  # one source the fix declared authoritative.
+  #
+  # RPL7 is the refuter's own probe, verbatim.
+  local plog_rpl7="$tmp/pl-rpl7"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7.json" CLAUDE_SESSION_ID="sess-rpl-7" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Handoff","prompt":"The prior builder was dispatched with the line NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder and it failed. Just read the diff."},"session_id":"sess-rpl-7"}' >/dev/null 2>&1 )
+  local rpl7_n; rpl7_n=$(_ts_count_dir "$plog_rpl7")
+  _ck "RPL7 a prompt that QUOTES a header mid-sentence while discussing a prior dispatch emits 0 task_started (a quoted header is not a dispatch)" "$rpl7_n" "0"
+
+  # RPL7b: the same vector in its other real shape -- a VERBATIM PASTE, so the
+  # header sits at line start but deep inside a handoff prompt, after the
+  # explanatory prose that necessarily precedes a paste.
+  local plog_rpl7b="$tmp/pl-rpl7b"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7b" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7b" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7b.json" CLAUDE_SESSION_ID="sess-rpl-7b" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Review","prompt":"Review the failed run from the prior session.\n\nContext: the orchestrator dispatched a builder and it returned PARTIAL.\n\nHere is the prompt it was given, verbatim:\n\nNL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\nBuild the thing.\n\nDo not build anything. Only report what went wrong."},"session_id":"sess-rpl-7b"}' >/dev/null 2>&1 )
+  local rpl7b_n; rpl7b_n=$(_ts_count_dir "$plog_rpl7b")
+  _ck "RPL7b a pasted header buried below the handoff prose that introduces it emits 0 task_started" "$rpl7b_n" "0"
+
+  # RPL7c: THE LANE IS NOT COLLATERAL DAMAGE. A real dispatch -- whose prompt
+  # OPENS with the header, which is what doctrine/orchestrator-pattern.md
+  # already mandates in those words -- still emits exactly one event. Without
+  # this assertion RPL7/RPL7b would be satisfiable by breaking attribution
+  # outright, which is the failure mode the narrowing must not have.
+  local plog_rpl7c="$tmp/pl-rpl7c"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7c" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7c" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7c.json" CLAUDE_SESSION_ID="sess-rpl-7c" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Build","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=71 role=builder\n\nBuild the thing. The prior attempt was dispatched with NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder and failed."},"session_id":"sess-rpl-7c"}' >/dev/null 2>&1 )
+  local plfile_rpl7c="$plog_rpl7c/ask-pl-fixture-1.jsonl"
+  if [[ -f "$plfile_rpl7c" ]] && grep -q '"task_id":"71"' "$plfile_rpl7c" 2>/dev/null && ! grep -q '"task_id":"9"' "$plfile_rpl7c" 2>/dev/null; then
+    echo "PASS: RPL7c a real dispatch OPENING with its header still emits exactly one event naming ITS task (71), not the task quoted later in the same prompt (9)"; pass=$((pass+1))
+  else
+    echo "FAIL: RPL7c expected exactly task_id=71 (never 9) in $plfile_rpl7c"; fail=$((fail+1))
+    [[ -f "$plfile_rpl7c" ]] && cat "$plfile_rpl7c"
+  fi
+
+  # ------------------------------------------------------------------------
+  # RPL8 (F4, adversarial refuter 2026-07-30 -- PIN THE FIELD-EQUALITY CLAIM).
+  # The spawn gate's comment claims awk FIELD equality is used "rather than a
+  # substring grep so a title that happens to appear inside another row's text
+  # can never produce a false 'already seen'". That claim was load-bearing and
+  # UNTESTED: the refuter swapped the awk for `grep -qF "$title"` and the whole
+  # suite stayed green, so nothing in the harness detected the regression the
+  # comment exists to prevent. A false "already seen" SUPPRESSES a real
+  # dispatch's green chip -- silent under-reporting, the hardest kind to
+  # notice, since the operator sees nothing rather than something wrong.
+  #
+  # Two spawns in ONE session where title B ("Alpha") is a SUBSTRING of title
+  # A's ledger row ("Spawn RPL8 Alpha Beta"). child_id is sha1(session_id) and
+  # therefore IDENTICAL for both, so the title field is the only discriminator
+  # -- which is precisely why it must be compared as a FIELD.
+  local plog_rpl8="$tmp/pl-rpl8"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl8" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl8" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-8.json" CLAUDE_SESSION_ID="sess-rpl-8" \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn RPL8 Alpha Beta","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=81 role=builder\nbody"},"session_id":"sess-rpl-8"}' >/dev/null 2>&1 )
+  sleep 3
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl8" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl8" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-8.json" CLAUDE_SESSION_ID="sess-rpl-8" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Alpha","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=82 role=builder\nbody"},"session_id":"sess-rpl-8"}' >/dev/null 2>&1 )
+  local plfile_rpl8="$plog_rpl8/ask-pl-fixture-1.jsonl"
+  if [[ -f "$plfile_rpl8" ]] && grep -q '"task_id":"81"' "$plfile_rpl8" 2>/dev/null && grep -q '"task_id":"82"' "$plfile_rpl8" 2>/dev/null; then
+    echo "PASS: RPL8 a second spawn whose title is a SUBSTRING of an earlier row still emits (field equality, not substring match) -- both 81 and 82 present"; pass=$((pass+1))
+  else
+    echo "FAIL: RPL8 expected BOTH task_id=81 and task_id=82 in $plfile_rpl8 (a substring match would have suppressed 82)"; fail=$((fail+1))
+    [[ -f "$plfile_rpl8" ]] && cat "$plfile_rpl8"
+  fi
+  _ck "RPL8b exactly 2 task_started across the substring-title pair (no suppression, no duplication)" "$(_ts_count_dir "$plog_rpl8")" "2"
+
   # PL4d (REGRESSION, proven 2026-07-27 bug): a fixture plan whose header
   # still carries the LITERAL un-substituted template placeholder
   # (`ask-id: <id | none — no linked ask>` — real example still on disk:
@@ -1953,7 +2329,7 @@ PLANEOF
   local plog4d="$tmp/pl-progresslog-4d"
   ( cd "$plfixph" && PROGRESS_LOG_STATE_DIR="$plog4d" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dispatch-provenance-4d" \
       CONV_TREE_STATE_PATH="$tmp/pl-4d.json" CLAUDE_SESSION_ID="sess-pl-4d" \
-      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-placeholder.md","prompt":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-placeholder.md in your worktree."},"session_id":"sess-pl-4d"}' >/dev/null 2>&1 )
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-placeholder.md","prompt":"NL-ATTRIBUTION: plan=pl-fixture-placeholder task=2 role=builder\nBuild Task 2 of the FROZEN plan docs/plans/pl-fixture-placeholder.md in your worktree."},"session_id":"sess-pl-4d"}' >/dev/null 2>&1 )
   if [[ -f "$plog4d/unlinked.jsonl" ]] && grep -q '"plan_slug":"pl-fixture-placeholder"' "$plog4d/unlinked.jsonl"; then
     echo "PASS: PL4d a plan header carrying the literal un-substituted placeholder resolves to the unlinked log, same as no ask-id header at all"; pass=$((pass+1))
   else
@@ -2708,8 +3084,49 @@ _extract_task_id() {
 # ============================================================================
 _extract_nl_attribution() {
   local text="$1"
+  # POSITIONAL ANCHOR (F1/F2 pass, adversarial refuter 2026-07-30): the
+  # header must OPEN the dispatch -- it must start a line (leading whitespace
+  # only) AND sit within the first NL_ATTRIBUTION_MAX_LINE lines of the text.
+  #
+  # WHY. This grep used to match `NL-ATTRIBUTION:.*` ANYWHERE in the joined
+  # prompt+description+content, which made a QUOTED header indistinguishable
+  # from a real one: a prompt merely DISCUSSING a prior dispatch ("...it was
+  # dispatched with the line NL-ATTRIBUTION: plan=X task=9 role=builder and it
+  # failed") emitted a real task_started for task 9 and turned that chip
+  # green. That is the SAME defect class as the free-text scrape this change
+  # removed -- a MENTION is not a DISPATCH -- surviving inside the one source
+  # the fix had just declared authoritative, and it is a live vector rather
+  # than a theoretical one: handoff, review and post-mortem prompts routinely
+  # paste the builder prompt they are about. Pinned by RPL7/RPL7b; RPL7c pins
+  # that a real dispatch is NOT collateral damage.
+  #
+  # WHY THIS ANCHOR IS THE RIGHT ONE. Line-start alone does not close it (a
+  # verbatim paste keeps the header at line start); a first-lines window alone
+  # does not either (prose can quote a header inline in its opening sentence).
+  # Both together match what doctrine/orchestrator-pattern.md ALREADY states
+  # in those words -- a dispatch prompt "MUST open with" the header -- so this
+  # narrows the parser to the documented convention rather than inventing a
+  # stricter one. (orchestrator-pattern-full.md said "anywhere in the prompt
+  # text"; that looser wording was the bug's charter and is corrected in the
+  # same commit.)
+  #
+  # RESIDUAL, STATED NOT HIDDEN: a positional anchor is a heuristic, not a
+  # proof of intent. A prompt that LITERALLY BEGINS with a quoted header is
+  # still indistinguishable from a real dispatch and will still emit. Closing
+  # that needs an out-of-band channel (a dispatch field the prose cannot
+  # forge), which this hook cannot reach from PreToolUse tool_input alone --
+  # filed as a residual in docs/backlog.md rather than papered over here.
+  #
+  # The window is overridable so a caller can compress or widen it without
+  # editing the parser; 5 lines allows a blank line or a short preamble ahead
+  # of the header while excluding a paste, which necessarily follows the
+  # explanatory prose that introduces it.
+  local maxln="${NL_ATTRIBUTION_MAX_LINE:-5}"
+  case "$maxln" in ''|*[!0-9]*) maxln=5 ;; esac
+  [[ "$maxln" -lt 1 ]] && maxln=5
   local line
-  line=$(printf '%s' "$text" | grep -oE 'NL-ATTRIBUTION:.*' | head -n1)
+  line=$(printf '%s' "$text" | head -n "$maxln" 2>/dev/null \
+         | grep -oE '^[[:space:]]*NL-ATTRIBUTION:.*' | head -n1)
   local plan="" task="" role=""
   if [[ -n "$line" ]]; then
     plan=$(printf '%s' "$line" | grep -oE 'plan=[A-Za-z0-9_.-]+' | head -n1)
@@ -2748,6 +3165,14 @@ _extract_nl_attribution() {
 #   already read this same transcript JSONL shape) -- not a new technique.
 #   Only the FIRST matching user-role turn is read (head -n1): later turns
 #   are ordinary conversation, not the dispatch prompt.
+#
+#   POSITIONAL-ANCHOR CONSEQUENCE (2026-07-30, F2): this function flattens the
+#   turn to ONE line (gsub of newlines) before handing it to
+#   _extract_nl_attribution, so the anchor there resolves, on this path, to
+#   "the first user turn BEGINS with the header". That is a deliberate
+#   tightening and the SAME rule the START side applies: a child session whose
+#   opening turn merely QUOTES a header (a handoff or review prompt) must not
+#   attribute its spawn-concluded row to the quoted task.
 _stop_extract_nl_attribution() {
   local tp="$1"
   [[ -n "$tp" && -f "$tp" ]] || { _extract_nl_attribution ""; return 0; }
@@ -2925,31 +3350,100 @@ _looks_like_worktree_pool() {
   esac
 }
 
-# _emit_dispatch_provenance <input> <sid> <child_id> [h_plan h_task h_role h_attributed]
+# _emit_dispatch_provenance <input> <sid> <child_id> [h_plan h_task h_role h_attributed first_dispatch]
 #   Best-effort task_started progress-log emission + dispatch-provenance
-#   marker write. Silent no-op when NEITHER the NL-ATTRIBUTION header NOR
-#   the free-text heuristic names a plan (anti-noise: not every
-#   builder/spawn dispatch is plan-rooted). sid/child_id are the SAME
-#   dispatching-session-derived values the caller already computed for the
-#   conv-tree SESSIONS lineage rendering -- this is "the same provenance the
-#   SESSIONS lineage rendering consumes" per the plan's Task 3 spec, not a
-#   newly-invented session concept.
+#   marker write. sid/child_id are the SAME dispatching-session-derived
+#   values the caller already computed for the conv-tree SESSIONS lineage
+#   rendering -- this is "the same provenance the SESSIONS lineage rendering
+#   consumes" per the plan's Task 3 spec, not a newly-invented session
+#   concept.
 #
-#   ATTRIBUTION PRECEDENCE (attribution-pipeline task, 2026-07-29): the
-#   caller (_run_on_builder_dispatch) already parsed the dispatch text once
-#   via _extract_nl_attribution and passes the 4 fields through as
-#   h_plan/h_task/h_role/h_attributed. When h_attributed=="1" (BOTH header
-#   plan AND task present) the header is AUTHORITATIVE and the free-text
-#   heuristic (_extract_plan_slug/_extract_task_id) is skipped entirely --
-#   deterministic beats prose-scanning. Otherwise (header absent OR only
-#   partially present) this falls back to the pre-existing heuristic
-#   UNCHANGED, so every dispatch prompt written before this convention
-#   existed keeps working exactly as it did (PL1-PL5 regressions below stay
-#   green with zero header text).
+# ===========================================================================
+# THE TWO SINKS ARE NOT THE SAME SIGNAL (ROADMAP-FALSE-ETERNAL-RUNNING-01,
+# 2026-07-30). They used to share one attribution path; that is the defect.
+#
+#   SINK 1 `task_started` -> the cockpit's GREEN "running NOW" chip. It is a
+#   CLAIM ABOUT THE PRESENT and the operator reads it as one, verbatim: "The
+#   green items are supposed to indicate something is actively running."
+#   A wrong one is a lie on the operator's screen.
+#
+#   SINK 2 the dispatch-provenance marker -> pl_classify_session's
+#   spawned-session guard. It is a CORRELATION HINT consumed by a
+#   best-effort classifier; a loose one costs a misclassification at worst.
+#
+# So they get DIFFERENT admission rules, and sink 1 gets the strict one.
+#
+# SINK 1 RULE (both conditions, no fallback):
+#   (a) HEADER-AUTHORITATIVE ONLY. Only an `NL-ATTRIBUTION: plan=<slug>
+#       task=<id>` header may name the task that started. The free-text
+#       heuristic (_extract_plan_slug / _extract_task_id) is NEVER a source
+#       of task_started. It scrapes the PROMPT TEXT, so a dispatch that
+#       merely MENTIONS `docs/plans/<slug>.md` or the words "Task 9" marked
+#       that task started -- MEASURED 2026-07-30: one orchestration prompt
+#       mentioning a plan re-greened it with no task id at all, and
+#       cockpit-roadmap-redesign/9 (an ACCEPTANCE task only the operator can
+#       perform, which no agent can ever be running) was marked started
+#       from prose. A mention is not a dispatch.
+#   (b) FIRST FIRE OF THIS DISPATCH IDENTITY ONLY (first_dispatch==1). See
+#       the caller's replay note: PreToolUse re-fires for EVERY historical
+#       Task/Agent tool call in the transcript, so without this a single
+#       replay re-greens every task the session ever dispatched, forever.
+#
+# NO-HEADER POLICY = HONEST SILENCE, and here is the justification (the
+# alternative considered was "emit an explicitly-unattributed event"):
+# an unattributed task_started names no task, so it CANNOT turn any chip
+# green -- it can only land in the orphan lane as a row a future consumer
+# might mis-join, which is exactly the pollution class
+# PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01 already tracks. The observability it
+# would provide already exists and is strictly better: the caller logs a
+# WARN line per unattributed dispatch WITH a running count (4090 and rising
+# on this machine on 2026-07-30). Silence here loses no information and
+# fabricates no green. Falling back to scraping is not an option at all --
+# scraping IS the bug.
+#
+# SINK 2 keeps its pre-existing header-then-free-text resolution UNCHANGED
+# (a looser hint is the right trade for a correlation guard, and narrowing
+# it would shrink pl_classify_session's evidence for a defect it does not
+# have). It IS also replay-gated, which strictly HELPS it: a replayed marker
+# is byte-identical to the one the first fire already wrote in every field
+# the consumer joins on, and its only real effect was evicting genuine older
+# markers out of dispatch-provenance.sh's 200-marker cap (auditor.js already
+# recorded the dir pinned at exactly 200 markers spanning ~2.3h).
+# ===========================================================================
 _emit_dispatch_provenance() {
   local input="$1" sid="$2" child_id="$3"
   local h_plan="${4:-}" h_task="${5:-}" h_role="${6:-}" h_attributed="${7:-0}"
+  local first_dispatch="${8:-1}"
+
+  # (b) REPLAY GATE -- applies to BOTH sinks. A PreToolUse fire for a
+  # dispatch identity this session already recorded is a transcript replay,
+  # not a start. Nothing about it is news; emitting is pure fabrication.
+  if [[ "$first_dispatch" != "1" ]]; then
+    _log "dispatch-provenance: replayed dispatch identity (session=$sid) -> no task_started, no marker"
+    return 0
+  fi
+
   local text; text=$(_dispatch_text "$input")
+
+  # ---- SINK 1: task_started -- HEADER ONLY, never the free-text scrape ----
+  if [[ "$h_attributed" == "1" ]]; then
+    local pl_cli; pl_cli=$(_pl_progress_log_cli)
+    if [[ -f "$pl_cli" ]]; then
+      local h_ask_id; h_ask_id=$(_resolve_ask_id_for_plan_slug "$h_plan")
+      # FINDING 2 fix: --dedup-extra carries a per-dispatch replay-debounce
+      # token (see _dispatch_replay_token above) so this dispatch's
+      # task_started event is NOT collapsed with a LATER re-dispatch of the
+      # same task from the same (invariant) dispatching session_id, while a
+      # hook double-fire of THIS dispatch still dedups to one event.
+      local dispatch_token; dispatch_token=$(_dispatch_replay_token "$sid" "$h_plan" "$h_task")
+      bash "$pl_cli" emit --type task_started --ask "$h_ask_id" --plan-slug "$h_plan" \
+        --task-id "$h_task" --session-id "$sid" --dedup-extra "$dispatch_token" \
+        --summary "task ${h_task} dispatched" --emitter workstreams-emit \
+        >/dev/null 2>&1 || true
+    fi
+  fi
+
+  # ---- SINK 2: dispatch-provenance marker (resolution UNCHANGED) ---------
   local slug task_id
   if [[ "$h_attributed" == "1" ]]; then
     slug="$h_plan"
@@ -2960,20 +3454,6 @@ _emit_dispatch_provenance() {
     task_id=$(_extract_task_id "$text")
   fi
   local ask_id; ask_id=$(_resolve_ask_id_for_plan_slug "$slug")
-
-  local pl_cli; pl_cli=$(_pl_progress_log_cli)
-  if [[ -f "$pl_cli" ]]; then
-    # FINDING 2 fix: --dedup-extra carries a per-dispatch replay-debounce
-    # token (see _dispatch_replay_token above) so this dispatch's
-    # task_started event is NOT collapsed with a LATER re-dispatch of the
-    # same task from the same (invariant) dispatching session_id, while a
-    # hook double-fire of THIS dispatch still dedups to one event.
-    local dispatch_token; dispatch_token=$(_dispatch_replay_token "$sid" "$slug" "$task_id")
-    bash "$pl_cli" emit --type task_started --ask "$ask_id" --plan-slug "$slug" \
-      --task-id "$task_id" --session-id "$sid" --dedup-extra "$dispatch_token" \
-      --summary "task ${task_id:-?} dispatched" --emitter workstreams-emit \
-      >/dev/null 2>&1 || true
-  fi
 
   # Best-effort worktree hint: only the spawn_task surface's optional `cwd`
   # override is ever visible pre-dispatch (see the section header above) --
@@ -3064,9 +3544,50 @@ _run_on_builder_dispatch() {
 
   # Builder correlation ledger (observability + reconciler hint):
   # item_id \t child_id \t tool \t bg \t title \t ts — append once per item.
+  #
+  # REPLAY DETECTION (ROADMAP-FALSE-ETERNAL-RUNNING-01, 2026-07-30). This
+  # ledger's first-seen semantics are now LOAD-BEARING, not just
+  # observability: `dispatch_is_new` is the ONLY honest signal available at
+  # PreToolUse for "is this tool call happening now, or is the transcript
+  # being replayed?".
+  #
+  # WHY IT IS NEEDED (measured, not theorized). PreToolUse on Task|Agent|
+  # Workflow re-fires for EVERY historical dispatch in the session's
+  # transcript. On 2026-07-30 the operator's session logged 100 fires in 67
+  # seconds (22:16:59Z-22:18:06Z) walking this very ledger's rows in order
+  # from index 0 -- a dispatch whose real tool call happened 43 hours
+  # earlier -- with exactly 2 genuinely-new dispatches spliced in. Five such
+  # replays happened between 21:11Z and 22:29Z. Every one re-emitted
+  # task_started for every plan/task any prompt in that history named, which
+  # is precisely why plans stayed green with nothing running. No downstream
+  # idle-window can separate these: the replayed events and the genuine ones
+  # arrive in the same second.
+  #
+  # WHY THIS ORACLE AND NOT A TIME WINDOW: item_id is sha1(sid|tool|title)
+  # with NO time bucket -- deliberately, so PostToolUse and the Stop-time
+  # reconciler recompute it hours later (see _builder_classify). A row here
+  # therefore means "this session already dispatched this identity", which
+  # is exactly the question. It is also correct from the FIRST fire after
+  # install: the ledger already holds the session's history, so a replay
+  # finds every id present rather than needing a warm-up period.
+  #
+  # ACCEPTED COST, stated plainly: a GENUINE re-dispatch that reuses the
+  # identical (session, tool, title) is now treated as the same dispatch and
+  # emits no second task_started. That is a deliberate trade -- the harness
+  # ALREADY treats that triple as one work item everywhere else (this
+  # ledger dedups it, _emit_dual dedups the conv-tree row), so this makes
+  # task_started agree with the identity model rather than inventing a new
+  # one, and it errs toward a MISSING green rather than a FALSE one, which
+  # is the operator's stated bar. A re-dispatch with any distinct title
+  # (the real-world shape: "(retry)", "Re-verify", "Round 2") is unaffected
+  # -- see scenario RPL3. Empirical support: all 105 dispatch identities in
+  # the operator's real 43-hour ledger are distinct titles.
   mkdir -p "$LEDGER_DIR" 2>/dev/null || true
   local ledger="$LEDGER_DIR/builder-${sid}.jsonl"
-  if [[ ! -f "$ledger" ]] || ! grep -q "^${item_id}	" "$ledger" 2>/dev/null; then
+  local dispatch_is_new=1
+  if [[ -f "$ledger" ]] && grep -q "^${item_id}	" "$ledger" 2>/dev/null; then
+    dispatch_is_new=0
+  else
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$item_id" "$child_id" "$tool" "$bg" "$title" \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
   fi
@@ -3086,15 +3607,14 @@ _run_on_builder_dispatch() {
     warn_count=$((prior_warns + 1))
     _log "WARN unattributed builder dispatch (no NL-ATTRIBUTION header) item=$item_id title=\"$title\" session=$sid — unattributed dispatch #$warn_count logged this session (doctrine/orchestrator-pattern.md names the header MANDATORY; this WARN never blocks the dispatch)"
   fi
-  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid plan=$h_plan task=$h_task role=$h_role attributed=$h_attributed${warn_count:+ warn_count=$warn_count}"
+  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid plan=$h_plan task=$h_task role=$h_role attributed=$h_attributed replay=$((1 - dispatch_is_new))${warn_count:+ warn_count=$warn_count}"
 
   # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
-  # emission + dispatch-provenance marker (see the section above this
-  # function for the full contract; silent no-op when the dispatch names no
-  # plan). Header fields passed through so the header takes precedence over
-  # the free-text heuristic when present (see _emit_dispatch_provenance's
-  # own ATTRIBUTION PRECEDENCE note).
-  _emit_dispatch_provenance "$input" "$sid" "$child_id" "$h_plan" "$h_task" "$h_role" "$h_attributed" || true
+  # emission + dispatch-provenance marker (see the TWO SINKS block above
+  # that function for the full contract). Header fields AND the replay
+  # signal are passed through: task_started is emitted ONLY for a
+  # header-attributed dispatch on its first fire.
+  _emit_dispatch_provenance "$input" "$sid" "$child_id" "$h_plan" "$h_task" "$h_role" "$h_attributed" "$dispatch_is_new" || true
 
   # ---- WAVE-O O.1 EMIT: bg-task-started (contract C2) --------------------
   # ONE marked emit line, per specs-o §O.1 deliverable 3. Scoped HONESTLY:
