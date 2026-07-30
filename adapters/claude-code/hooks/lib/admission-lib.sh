@@ -1191,7 +1191,12 @@ _adm_self_test() {
   # snapshot identity fields are made to MATCH so only the numeric guard
   # stands between the payload and the (( )) sink.
   snap20="$T/snap20.json"
-  printf '{"generated_at":"x","sessions":[{"classify":"live"},{"classify":"live"}]}\n' > "$snap20"
+  # PRODUCER-SHAPED fixture (the 2026-07-28 review's own law): the region
+  # parse requires the '],"sessions_degraded"' terminator estate-janitor
+  # emits — without it the lib honestly refuses to count (-1). Two drafts
+  # of this scenario failed their own recount assert by violating the
+  # producer shape ("x" generated_at; missing terminator).
+  printf '{"generated_at":%s,"sessions":[{"classify":"live"},{"classify":"live"}],"sessions_degraded":false}\n' "$(date -u +%s)" > "$snap20"
   s20_m="$(stat -c %Y "$snap20" 2>/dev/null)"; s20_sz="$(stat -c %s "$snap20" 2>/dev/null)"
   inj_marker="$T/injected-by-scenario-20"
   printf '%s\t%s\t%s\t%s\t%s\n' "$s20_m" "$s20_sz" 'x[$(touch '"$inj_marker"')]' "$(date -u +%s)" "$snap20" > "$(adm_occ_cache_path)"
