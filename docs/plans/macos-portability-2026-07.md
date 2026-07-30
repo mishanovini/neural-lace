@@ -76,7 +76,7 @@ unfixable by the agent. It fired 3+ times in one session and had to be hand-patc
       committed to the repo (the ad-hoc script used for the measurement above) plus a doctor
       check that runs it and REDs on a regression, so the next GNU-ism is caught at authoring
       time instead of by an operator hitting it. Verification: full.
-- [ ] M6 — Decide the disposition of the 3 residual `attic/` failures: fix, or move them out
+- [x] M6 — Decide the disposition of the 3 residual `attic/` failures: fix, or move them out
       of the self-test-capable set with a stated reason. They are retired scripts, so
       "documented as out of scope" is an acceptable outcome — silence is not.
       Verification: mechanical (disposition recorded).

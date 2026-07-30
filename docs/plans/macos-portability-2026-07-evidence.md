@@ -77,3 +77,44 @@ deterministically rc=1 12/12). THE GAP: selftest-sweep-exclusions.sh scenario S1
 doctor's quiet sweep, so `doctor --portability` intermittently REDs the real repo.
 Constitution-§7 "gate that false-fires" class. Fix + ≥10 stable runs both interpreters
 required before re-verification.
+
+## Task M6 — attic residual disposition (re-verification after S11 fix; verifier record)
+
+EVIDENCE BLOCK
+==============
+Task ID: M6
+Task description: Decide the disposition of the 3 residual attic/ failures: fix, or move
+  them out of the self-test-capable set with a stated reason. Verification: mechanical.
+Verified at: 2026-07-30T15:05Z (runs 07:44-08:35 PT)
+Verifier: task-verifier agent (re-verification pass; original M6 disposition-core evidence stands)
+
+Oracle: specified — the plan's mechanical bar (disposition recorded AND enforced) + the
+  verifier's pre-committed re-verification bar (>=10 clean suite runs per interpreter +
+  live doctor --portability), both exceeded.
+Comprehension-gate: skipped — rung field missing. Operator invariants: none (exit 3).
+
+Prior gap closed (verified against code+behavior): root cause = stop-hook-retry-guard.sh:136-137
+  CWD-relative counter downgrading a blocking child's exit to 0 at threshold 3; fix =
+  per-child mktemp'd RETRY_GUARD_STATE_DIR + HARNESS_SELFTEST_DIR isolation
+  (selftest-sweep-exclusions.sh:393-404) + [S11-DIAG] self-diagnosis (00d592d).
+  Environment-dependence independently reproduced (zod present -> attic gate exits 0
+  legitimately), validating the S11 advisory / S11b deterministic-fixture split (cede0f9).
+
+Runtime verification: test adapters/claude-code/scripts/selftest-sweep-exclusions.sh::--self-test
+  23/0 x24 consecutive (10x /bin/bash 3.2.57, 10x /opt/homebrew/bin/bash at cede0f9,
+  +2 at 5ea5d29, +2 at tip 6b5218d). Pre-fix baseline: RED 5/7 runs both interpreters.
+Runtime verification: doctor --portability GREEN twice post-fix (cede0f9-era tree AND the
+  T9-inclusive tree at 5ea5d29): "no new failures relative to the baseline", EXIT=0
+  (session artifacts m6-reverify-doctor.log, m6-tip-doctor.log).
+Runtime verification: file docs/portability-baseline.txt::discovered=170 pass=124 fail=46
+  (8 stale rows deleted in 00d592d, 45 rows remain, coord-sync sanctioned hand-add kept).
+Runtime verification: functionality-verifier M6::SKIP (harness-internal; the doctor runs
+  ARE the maintainer demonstration).
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN — the exact command that RED'd 5/7 pre-fix is green 24/24 post-fix on both
+  interpreters; root cause visible in shipped code and corroborated by on-disk state;
+  live doctor enforcement GREEN twice including the T9-inclusive tree; disposition core
+  (1 FIXED at 31/0 both interpreters + 2 EXCLUDED with root-caused, doctor-enforced
+  ledger entries) unchanged since the original pass.
