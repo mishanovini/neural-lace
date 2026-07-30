@@ -2019,3 +2019,10 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
   rev-parse isn't pinned to ^{commit} nor checked as a merge commit in the target's history
   (bounded by required --reason + audit row); acknowledged rows carry empty source_branch
   ("acknowledged:  -> target" cosmetic). Two one-line fixes for a future pass.
+- **CLOSE-PLAN-VERIFIER-LINE-FAIL-VETO-01** (minor, closure re-review 2026-07-30): the M1
+  verdict anchor accepts a `Verifier:` line reading "PASS conf 8, OVERALL FAIL" (shape exists
+  at cockpit-roadmap-redesign-evidence-t3.md:51) — inherent in the reviewer's own recommended
+  anchor; add a FAIL/INCOMPLETE veto token to the block parser.
+- **PRS-DISABLE-SKIP-ENV-GATING-01** (advisory, closure re-review 2026-07-30): gate
+  _PRS_SELFTEST_DISABLE_DEFAULT_SKIP on HARNESS_SELFTEST=1 per the S7c precedent (currently
+  any exporter re-arms the default-date skip; only-more-aggressive + loud, so advisory).

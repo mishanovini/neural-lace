@@ -216,24 +216,46 @@ _prs_is_default_recheck() {
 # (opening a session in an untrusted/malicious repo would run whatever
 # shell command that repo's own plan file declared).
 #
-# Trust is granted, by the simplest honest mechanism available (no config
-# file, no registry to keep in sync), to:
-#   (a) the harness repo itself, fingerprinted by the presence of its own
-#       adapters/claude-code/manifest.json -- a file that exists ONLY in
-#       this harness's source checkout, never in an arbitrary consumer
-#       repo and never in a bare ~/.claude install copy (which has no
-#       manifest.json of its own at that path); or
-#   (b) any repo the operator has explicitly opted in via a
-#       `.claude/trust-recurrence-exec` marker file at the repo root
-#       (empty sentinel -- an operator who wants a non-harness repo's
-#       recurrence checks to auto-run creates this ONE file once).
+# M3 HARDENING (2026-07-30, closure re-review): the first fix's two trust
+# anchors were both IN-REPO CONTENT (a manifest.json at a known path; a
+# .claude/trust-recurrence-exec marker) -- and the re-review sentinel-PROVED
+# a malicious repo simply ships those files itself and re-arms the exact
+# SessionStart auto-exec channel the fix claimed closed. Trust must never be
+# derivable from anything the reviewed repo itself carries. Now:
+#   (a) the harness repo itself, identified by PHYSICAL PATH IDENTITY: the
+#       candidate repo root must resolve (pwd -P) to the same directory as
+#       this very script's own checkout toplevel (SCRIPT_DIR/../../..).
+#       A copy-install (~/.claude on Windows) has no repo toplevel there,
+#       so anchor (a) simply never grants -- fail-closed; or
+#   (b) an OUT-OF-REPO operator allowlist: ~/.claude/state/
+#       trusted-recurrence-repos (override: PRS_TRUSTED_REPOS_FILE, for the
+#       self-test sandbox), one absolute repo-root path per line, compared
+#       by physical path. The operator appends a line once per repo they
+#       trust; repo content can never write this file.
+# In-repo markers grant NOTHING (S11 pins this negatively).
 # Untrusted repos still get the field's EXISTENCE reported (never
 # silently dropped) -- see _prs_reason_for below -- just never executed.
 _prs_repo_is_trusted() {
   local repo_root="$1"
   [[ -n "$repo_root" ]] || return 1
-  [[ -f "$repo_root/adapters/claude-code/manifest.json" ]] && return 0
-  [[ -f "$repo_root/.claude/trust-recurrence-exec" ]] && return 0
+  local phys="" self_top=""
+  phys="$(cd "$repo_root" 2>/dev/null && pwd -P)" || return 1
+  [[ -n "$phys" ]] || return 1
+  # (a) physical-path identity with THIS script's own checkout
+  self_top="$(cd "$SCRIPT_DIR/../../.." 2>/dev/null && pwd -P)" || self_top=""
+  if [[ -n "$self_top" && "$phys" == "$self_top" ]]; then
+    return 0
+  fi
+  # (b) operator-maintained out-of-repo allowlist, physical-path compared
+  local allowlist="${PRS_TRUSTED_REPOS_FILE:-$HOME/.claude/state/trusted-recurrence-repos}"
+  if [[ -f "$allowlist" ]]; then
+    local line line_phys
+    while IFS= read -r line; do
+      [[ -z "$line" || "$line" == \#* ]] && continue
+      line_phys="$(cd "$line" 2>/dev/null && pwd -P)" || continue
+      [[ "$line_phys" == "$phys" ]] && return 0
+    done < "$allowlist"
+  fi
   return 1
 }
 
@@ -270,7 +292,7 @@ _prs_reason_for() {
   if [[ -n "$recurrence" ]]; then
     if ! _prs_repo_is_trusted "$repo_root"; then
       recurrence_trusted=0
-      printf 'plan-recheck-sweep: NOTE: %s declares a Recurrence check (%s) but this repo is not trusted to auto-execute it -- field reported, not executed. See plan-recheck-sweep.sh _prs_repo_is_trusted for the trust gate (harness repo, or a .claude/trust-recurrence-exec marker).\n' "$plan_file" "$recurrence" >&2
+      printf 'plan-recheck-sweep: NOTE: %s declares a Recurrence check (%s) but this repo is not trusted to auto-execute it -- field reported, not executed. To trust this repo, append its absolute path as one line to ~/.claude/state/trusted-recurrence-repos (an OUT-OF-repo operator file; nothing inside a repo can grant this).\n' "$plan_file" "$recurrence" >&2
     fi
   fi
 
@@ -482,15 +504,16 @@ _prs_setup_repo() {
     git config user.email "test@example.test"
     git config user.name "Test"
     mkdir -p docs/plans/archive
-    # M3 trust gate: a 4th "trusted" arg opts this fixture repo IN to
-    # Recurrence-check execution (via the .claude/trust-recurrence-exec
-    # marker, the simplest allowlist mechanism _prs_repo_is_trusted
-    # checks) -- ONLY the scenarios that specifically exercise recurrence-
-    # check EXECUTION request this; every other fixture stays untrusted by
-    # default, matching a real consumer repo's default posture.
-    if [[ "$trust" == "trusted" ]]; then
-      mkdir -p .claude
-      : > .claude/trust-recurrence-exec
+    # M3 trust gate (hardened): a 4th "trusted" arg opts this fixture repo
+    # IN to Recurrence-check execution by appending its path to the
+    # self-test's OWN out-of-repo allowlist (the PRS_TRUSTED_REPOS_FILE
+    # seam, exported by _prs_self_test) -- mirroring exactly how a real
+    # operator trusts a real repo. In-repo markers grant NOTHING anymore
+    # (S11 pins that negatively). Only scenarios that specifically
+    # exercise recurrence EXECUTION request this; every other fixture
+    # stays untrusted by default, matching a real consumer repo's posture.
+    if [[ "$trust" == "trusted" && -n "${PRS_TRUSTED_REPOS_FILE:-}" ]]; then
+      printf '%s\n' "$d" >> "$PRS_TRUSTED_REPOS_FILE"
     fi
     {
       printf '# Plan: %s\n' "$slug"
@@ -519,6 +542,11 @@ run_self_test() {
   export NEEDS_YOU_STATE_DIR="$ST_DIR/ny-state"
   export NEEDS_YOU_MD_PATH="$ST_DIR/NEEDS-YOU.md"
   export PROGRESS_LOG_STATE_DIR="$ST_DIR/progress-logs"
+  # M3 hardened trust: the self-test's own out-of-repo allowlist; fixture
+  # repos requesting "trusted" get appended here by _prs_setup_repo. Never
+  # the operator's real ~/.claude/state file.
+  export PRS_TRUSTED_REPOS_FILE="$ST_DIR/selftest-trusted-repos"
+  : > "$PRS_TRUSTED_REPOS_FILE"
   mkdir -p "$NEEDS_YOU_STATE_DIR" "$PROGRESS_LOG_STATE_DIR"
 
   local PASSED=0 FAILED=0
@@ -707,9 +735,51 @@ run_self_test() {
   fi
   rm -rf "$D10"
 
+  # ----- S11 (M3 ADVERSARIAL residual, closure re-review 2026-07-30): a
+  # malicious repo SHIPS the old in-repo trust anchors itself
+  # (.claude/trust-recurrence-exec AND adapters/claude-code/manifest.json)
+  # -- in-repo content must grant NOTHING: the recurrence command (which
+  # would drop a sentinel file if it ran) must NOT execute, the plan must
+  # NOT reopen, and the log must still say "not executed". This is the
+  # re-review's sentinel-proven attack, pinned negatively. Also the
+  # positive arm: the OUT-of-repo allowlist (PRS_TRUSTED_REPOS_FILE seam)
+  # naming this repo DOES grant execution -- proving trust moved, not died.
+  local D11; D11=$(_prs_setup_repo "p-hostile-recur" "2099-01-01T00:00:00Z" "exit 0")
+  mkdir -p "$D11/.claude" "$D11/adapters/claude-code"
+  : > "$D11/.claude/trust-recurrence-exec"
+  printf '{}\n' > "$D11/adapters/claude-code/manifest.json"
+  # Rewrite the recurrence command to touch an ABSOLUTE sentinel path
+  # (recurrence commands execute in the CALLER's CWD, not the repo — a
+  # relative sentinel would land outside the fixture and prove nothing).
+  local s11_plan="$D11/docs/plans/archive/p-hostile-recur.md"
+  sed "s|^Recurrence check: .*|Recurrence check: touch $D11/.prs-s11-sentinel|" "$s11_plan" > "$s11_plan.tmp" \
+    && mv "$s11_plan.tmp" "$s11_plan"
+  local s11_out
+  s11_out="$(PRS_TRUSTED_REPOS_FILE="$ST_DIR/empty-allowlist" bash "$SELF_PATH" sweep --repo "$D11" 2>&1)"
+  local s11_neg_ok=0
+  if [[ ! -f "$D11/.prs-s11-sentinel" ]] \
+     && [[ -f "$D11/docs/plans/archive/p-hostile-recur.md" ]] \
+     && printf '%s' "$s11_out" | grep -q 'not executed'; then
+    s11_neg_ok=1
+  fi
+  printf '%s\n' "$D11" > "$ST_DIR/s11-allowlist"
+  local s11_pos_ok=0
+  PRS_TRUSTED_REPOS_FILE="$ST_DIR/s11-allowlist" bash "$SELF_PATH" sweep --repo "$D11" >/dev/null 2>&1 || true
+  if [[ -f "$D11/.prs-s11-sentinel" ]]; then
+    s11_pos_ok=1
+  fi
+  if [[ "$s11_neg_ok" -eq 1 && "$s11_pos_ok" -eq 1 ]]; then
+    printf 'self-test (S11) in-repo-trust-markers-grant-nothing-allowlist-grants: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S11) in-repo-trust-markers-grant-nothing-allowlist-grants: FAIL (neg=%s pos=%s out=%s)\n' "$s11_neg_ok" "$s11_pos_ok" "$s11_out" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D11"
+
   rm -rf "$ST_DIR" 2>/dev/null || true
 
-  printf '\nself-test summary: %d passed, %d failed (of 10 scenarios)\n' "$PASSED" "$FAILED" >&2
+  printf '\nself-test summary: %d passed, %d failed (of 11 scenarios)\n' "$PASSED" "$FAILED" >&2
   [[ "$FAILED" -eq 0 ]] && return 0
   return 1
 }
