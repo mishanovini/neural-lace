@@ -196,3 +196,8 @@ flips (T6) additionally require the calibration data attached to the evidence fi
   loe-backfill.sh's own header (exact close-plan.sh function + call site named), not built, per
   the operator's WIP-1 directive keeping this slice out of admission/dispatch/closer files while
   the other machine owns T3.
+- 2026-07-29: `docs/decisions/065-admission-lib-env-bypass-closure.md` (NEW) — T6-PREREQUISITES (b)
+  written acceptance for the one of four T6-named env bypasses (NL_PROTECTED_ORCHESTRATOR) that
+  stays open by design; the other three (ADM_ABSURD_SESSION_CAP, ADM_ESTATE_SNAPSHOT,
+  ADM_STATE_DIR) are closed mechanically in admission-lib.sh itself (already in scope, T3/T4/T6 row
+  above). Desktop machine, per the CLAIM line in Machine claims above.

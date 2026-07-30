@@ -101,7 +101,7 @@
 # ESTATE-T1-HB-CLASSIFY-PERF-01, 12m38s for a full janitor pass); occupancy is
 # read from the janitor's already-computed snapshot instead.
 #
-# DERIVED, NEVER DECLARED — TRUE FOR ARGUMENTS, FALSE FOR THE ENVIRONMENT.
+# DERIVED, NEVER DECLARED — TRUE FOR ARGUMENTS, MOSTLY TRUE FOR THE ENVIRONMENT NOW.
 #
 # RETIRED CLAIM (2026-07-28, same retirement): this header previously said
 # "Nothing here trusts a caller-supplied claim about capacity." task-verifier
@@ -117,10 +117,24 @@
 #                                     this slice exists to produce
 # The accurate claim: no caller ARGUMENT decides — the key enum drops
 # live_sessions=/verdict=/rate_1m= and the snapshot wins (self-test Scenario 10).
-# The environment channels above are NAMED T6 BYPASSES. They are harmless while
-# nothing blocks; before the enforcement flip T6 must either read this state
-# from a fixed path that ignores the environment, or accept that any dispatcher
-# can opt out of admission control by exporting one variable.
+#
+# T6-PREREQUISITES (b) UPDATE (2026-07-29): of the four bypasses above, THREE
+# are now CLOSED — ADM_ABSURD_SESSION_CAP, ADM_ESTATE_SNAPSHOT, and
+# ADM_STATE_DIR are honored ONLY under HARNESS_SELFTEST=1 (see adm_state_dir,
+# _adm_snapshot_path, _adm_session_cap below). No production callsite ever set
+# any of the three (grep across adapters/claude-code confirmed zero non-lib,
+# non-self-test occurrences at closure time), so gating them behind the flag
+# this lib's own self-test now exports globally closes the bypass for every
+# real dispatcher with zero production behavior change. Self-test Scenario 10b
+# proves both halves: closed in production, still available under
+# HARNESS_SELFTEST=1.
+# NL_PROTECTED_ORCHESTRATOR stays OPEN by design — it is a genuine production
+# signal the real protected orchestrator sets in ITS OWN environment; gating
+# it behind HARNESS_SELFTEST would defeat its actual purpose (edge 3
+# calibration-pollution tagging). There is no mechanism to verify a caller's
+# self-declared identity without new authentication infrastructure
+# disproportionate to this micro-slice — accepted in writing, residual risk
+# named, at docs/decisions/065-admission-lib-env-bypass-closure.md.
 #
 # ============================================================================
 # API
@@ -142,6 +156,12 @@
 #                                  "(called by the janitor)" annotation was
 #                                  hallucinated infrastructure, 2026-07-28)
 #   _adm_mtime <file>           -> portable mtime (GNU stat -c / BSD stat -f)
+#   _adm_mtime_size <file>      -> portable "mtime size" in one stat call
+#   adm_occ_cache_path          -> occupancy TTL cache file path (T6-prereq a)
+#   _adm_snapshot_path          -> resolved janitor-snapshot path (ADM_ESTATE_
+#                                  SNAPSHOT closed outside HARNESS_SELFTEST=1)
+#   _adm_session_cap            -> resolved absurd-session-cap threshold
+#                                  (ADM_ABSURD_SESSION_CAP closed likewise)
 #
 # STATE (all overridable for tests; hostname-scoped per review F10 so there is
 # exactly ONE writer per file and cross-machine merge is append-only):
@@ -201,10 +221,19 @@
 # per-caller relies on every future caller remembering. So the defense lives
 # HERE: under HARNESS_SELFTEST=1 with no explicit ADM_STATE_DIR, the lib
 # redirects to a throwaway per-process dir instead of real state. An explicit
-# ADM_STATE_DIR always wins, so this lib's own self-test still controls its
-# sandbox precisely.
+# ADM_STATE_DIR STILL wins over that guard, but ONLY under HARNESS_SELFTEST=1
+# (T6-PREREQUISITES (b), 2026-07-29 -- CLOSED bypass, was open before: the
+# 2026-07-28 review found ADM_STATE_DIR honored unconditionally, which any
+# sourcing shell could set to redirect the lib away from the real HALT kill
+# switch. No production callsite ever set this var (grep across
+# adapters/claude-code found zero non-lib, non-self-test occurrences), so
+# gating it behind the flag this lib's OWN self-test now sets globally --
+# see _adm_self_test's `export HARNESS_SELFTEST=1` -- closes the bypass for
+# every real dispatcher without touching test isolation at all).
 adm_state_dir() {
-  if [[ -n "${ADM_STATE_DIR:-}" ]]; then printf '%s' "$ADM_STATE_DIR"; return 0; fi
+  if [[ -n "${ADM_STATE_DIR:-}" && "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s' "$ADM_STATE_DIR"; return 0
+  fi
   if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
     # Honor the harness-wide HARNESS_SELFTEST_DIR convention (doctrine-jit.sh,
     # context-watermark.sh, pre-compact-continuity.sh all pair the two). The
@@ -418,8 +447,27 @@ _adm_occ_cache_write() {
 }
 
 # Counting is builtin-only: strip every occurrence and divide the length delta.
+#
+# ADM_ESTATE_SNAPSHOT closure (T6-PREREQUISITES (b), 2026-07-29): the
+# 2026-07-28 review named `ADM_ESTATE_SNAPSHOT=/dev/null` as a T6 bypass --
+# any sourcing shell could erase occupancy by pointing this var elsewhere. No
+# production callsite ever sets it (same grep result as ADM_STATE_DIR above),
+# so the override is now honored ONLY under HARNESS_SELFTEST=1 (which every
+# self-test scenario in this file gets for free from _adm_self_test's global
+# `export HARNESS_SELFTEST=1`). CLOSED for every real dispatcher.
+# Side-effect-free path resolver, factored out so the self-test can assert
+# the ADM_ESTATE_SNAPSHOT closure directly (T6-PREREQUISITES (b)) without
+# needing to drive a full adm_admit cycle.
+_adm_snapshot_path() {
+  local f="$HOME/.claude/state/estate/snapshot.json"
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" && -n "${ADM_ESTATE_SNAPSHOT:-}" ]]; then
+    f="$ADM_ESTATE_SNAPSHOT"
+  fi
+  printf '%s' "$f"
+}
+
 adm_live_sessions() {
-  local f="${ADM_ESTATE_SNAPSHOT:-$HOME/.claude/state/estate/snapshot.json}"
+  local f; f="$(_adm_snapshot_path)"
   [[ -r "$f" ]] || { printf '%s' -1; return 0; }
 
   local ms snap_m snap_sz
@@ -550,6 +598,23 @@ adm_rate_in_window() {
 # 120/min and exists only to catch a runaway retry loop (the UNRESOLVED__ spam
 # class named in F7), not to shape normal load.
 
+# ADM_ABSURD_SESSION_CAP closure (T6-PREREQUISITES (b), 2026-07-29): named as
+# a T6 bypass by the 2026-07-28 review (any sourcing shell could raise the
+# absurd-level backstop past derived occupancy). No production callsite ever
+# sets it -- the only place that has ever set this var is this file's own
+# self-test (Scenario 10b). So the override is honored ONLY under
+# HARNESS_SELFTEST=1; every real dispatcher gets the fixed default of 50.
+# A real, operator-authorized tunable threshold (per T6's calibration data)
+# is T6's own job at the enforcement flip, not this observe-only prereq --
+# this closure only removes the UNAUTHENTICATED environment-channel version.
+_adm_session_cap() {
+  local cap=50
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" && -n "${ADM_ABSURD_SESSION_CAP:-}" ]]; then
+    cap="$ADM_ABSURD_SESSION_CAP"
+  fi
+  printf '%s' "$cap"
+}
+
 _adm_decide() {
   if adm_halt_active; then printf 'would-block:halt'; return 0; fi
   if adm_drain_active; then printf 'would-block:drain'; return 0; fi
@@ -561,7 +626,7 @@ _adm_decide() {
   esac
 
   local live; live="$(adm_live_sessions)"
-  if [[ "$live" != "-1" ]] && (( live >= ${ADM_ABSURD_SESSION_CAP:-50} )); then
+  if [[ "$live" != "-1" ]] && (( live >= $(_adm_session_cap) )); then
     printf 'would-block:session-backstop'; return 0
   fi
 
@@ -686,6 +751,12 @@ _adm_self_test() {
   fail() { FAIL=$((FAIL+1)); echo "  FAIL: $*"; }
 
   local T; T="$(mktemp -d 2>/dev/null)" || { echo "cannot mktemp"; return 1; }
+  # T6-PREREQUISITES (b), 2026-07-29: this self-test IS the sanctioned
+  # HARNESS_SELFTEST context, so it declares itself globally -- this is what
+  # lets adm_state_dir/adm_live_sessions/_adm_session_cap honor their
+  # ADM_STATE_DIR/ADM_ESTATE_SNAPSHOT/ADM_ABSURD_SESSION_CAP overrides below
+  # while closing those SAME overrides for every real (non-self-test) caller.
+  export HARNESS_SELFTEST=1
   export ADM_STATE_DIR="$T/governor"
   export ADM_ESTATE_SNAPSHOT="$T/snapshot.json"
   export ADM_PRESSURE_FILE="$T/governor/pressure.json"
@@ -875,30 +946,48 @@ _adm_self_test() {
   esac
   rm -f "$ADM_ESTATE_SNAPSHOT"
 
-  echo "Scenario 10b: the ENVIRONMENT channel is a KNOWN T6 BYPASS — assert it, don't pretend"
-  # task-verifier D5/D3 (2026-07-28) falsified the absolute "nothing here trusts
-  # a caller-supplied claim" header. The lib is SOURCED into the dispatcher's
-  # shell, so its environment decides. These assertions PIN the current honest
-  # behavior so T6 cannot flip enforcement while believing the bypass is closed.
-  _mk_snapshot 77
-  local bypass; bypass="$(ADM_ABSURD_SESSION_CAP=999999 adm_admit emit-feed)"
-  if [[ "$bypass" == "admit" ]]; then
-    pass "KNOWN BYPASS pinned: ADM_ABSURD_SESSION_CAP from the environment overrides derived occupancy (must be closed at T6)"
-  else
-    fail "behavior changed: env cap no longer bypasses ('$bypass') — update the header's named-bypass list and this test"
-  fi
-  rm -f "$ADM_ESTATE_SNAPSHOT"   # isolate HALT as the only signal in play
-  : > "$ADM_STATE_DIR/HALT"
-  local halt_seen halt_bypassed
-  halt_seen="$(adm_admit emit-feed)"
-  halt_bypassed="$(ADM_STATE_DIR="$T/elsewhere" adm_admit emit-feed)"
-  if [[ "$halt_seen" == "would-block:halt" && "$halt_bypassed" != "would-block:halt" ]]; then
-    pass "KNOWN BYPASS pinned: ADM_STATE_DIR redirection hides the HALT kill switch (must be closed at T6)"
-  else
-    fail "HALT bypass behavior changed (seen='$halt_seen' redirected='$halt_bypassed') — re-derive the T6 bypass list"
-  fi
-  rm -f "$ADM_STATE_DIR/HALT"
-  rm -f "$ADM_ESTATE_SNAPSHOT"
+  echo "Scenario 10b: the four T6 bypasses -- three now CLOSED, one ACCEPTED in writing"
+  # 2026-07-28 review named four environment bypasses. T6-PREREQUISITES (b)
+  # (2026-07-29) closed three of them (no production callsite ever set any of
+  # the three -- verified by grep across adapters/claude-code) by gating their
+  # overrides behind HARNESS_SELFTEST=1, which this self-test now exports
+  # globally. The fourth (NL_PROTECTED_ORCHESTRATOR) is a genuine production
+  # signal set by the REAL protected orchestrator's own environment -- gating
+  # it behind HARNESS_SELFTEST would break its actual purpose, so it stays
+  # open by design; see docs/decisions/065-admission-lib-env-bypass-closure.md
+  # for the written acceptance. Scenario 11 above already proves it still
+  # works in production (no HARNESS_SELFTEST needed to tag protected=1).
+  #
+  # These checks call the PURE, side-effect-free resolvers directly
+  # (_adm_session_cap / adm_state_dir / _adm_snapshot_path), never adm_admit
+  # with HARNESS_SELFTEST=0 -- that would fall through to the REAL production
+  # state dir and write a real ledger line, exactly the sandbox escape
+  # Scenario 16 exists to catch.
+  local cap_prod cap_test
+  cap_prod="$(HARNESS_SELFTEST=0 ADM_ABSURD_SESSION_CAP=999999 _adm_session_cap)"
+  [[ "$cap_prod" == "50" ]] && pass "CLOSED: ADM_ABSURD_SESSION_CAP ignored outside HARNESS_SELFTEST (production sees the fixed default of 50)" \
+    || fail "ADM_ABSURD_SESSION_CAP still honored in production: got cap=$cap_prod, expected 50"
+  cap_test="$(HARNESS_SELFTEST=1 ADM_ABSURD_SESSION_CAP=999999 _adm_session_cap)"
+  [[ "$cap_test" == "999999" ]] && pass "still available under HARNESS_SELFTEST=1 (the escape hatch itself still works for tests)" \
+    || fail "ADM_ABSURD_SESSION_CAP override broken even under HARNESS_SELFTEST=1: got '$cap_test'"
+
+  local dir_prod dir_test
+  dir_prod="$(HARNESS_SELFTEST=0 ADM_STATE_DIR="$T/elsewhere" adm_state_dir)"
+  [[ "$dir_prod" == "$HOME/.claude/state/governor" ]] && pass "CLOSED: ADM_STATE_DIR ignored outside HARNESS_SELFTEST (production resolves to real state, HALT kill switch cannot be hidden)" \
+    || fail "ADM_STATE_DIR still honored in production: got '$dir_prod'"
+  dir_test="$(HARNESS_SELFTEST=1 ADM_STATE_DIR="$T/elsewhere" adm_state_dir)"
+  [[ "$dir_test" == "$T/elsewhere" ]] && pass "still available under HARNESS_SELFTEST=1 (Scenario 17 covers this too; re-confirmed here alongside its siblings)" \
+    || fail "ADM_STATE_DIR override broken even under HARNESS_SELFTEST=1: got '$dir_test'"
+
+  local snap_prod snap_test
+  snap_prod="$(HARNESS_SELFTEST=0 ADM_ESTATE_SNAPSHOT="$T/elsewhere.json" _adm_snapshot_path)"
+  [[ "$snap_prod" == "$HOME/.claude/state/estate/snapshot.json" ]] && pass "CLOSED: ADM_ESTATE_SNAPSHOT ignored outside HARNESS_SELFTEST (production reads the real janitor snapshot path, occupancy cannot be erased via /dev/null)" \
+    || fail "ADM_ESTATE_SNAPSHOT still honored in production: got '$snap_prod'"
+  snap_test="$(HARNESS_SELFTEST=1 ADM_ESTATE_SNAPSHOT="$T/elsewhere.json" _adm_snapshot_path)"
+  [[ "$snap_test" == "$T/elsewhere.json" ]] && pass "still available under HARNESS_SELFTEST=1 (this file's own fixture-swapping in Scenario 9 depends on it)" \
+    || fail "ADM_ESTATE_SNAPSHOT override broken even under HARNESS_SELFTEST=1: got '$snap_test'"
+
+  echo "  (NL_PROTECTED_ORCHESTRATOR: ACCEPTED open by design -- see Scenario 11 and docs/decisions/065-admission-lib-env-bypass-closure.md)"
 
   echo "Scenario 11: calibration-pollution tag (edge 3)"
   v="$(NL_PROTECTED_ORCHESTRATOR=1 adm_admit emit-feed)"
