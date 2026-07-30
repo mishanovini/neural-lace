@@ -228,6 +228,16 @@ _adm_mtime() {
   [[ -n "$m" ]] || m="$(stat -f %m "$f" 2>/dev/null)" || m=""
   printf '%s' "${m:-0}"
 }
+
+# Portable mtime+size in ONE stat call (T6-prereq (a) — the occupancy TTL
+# cache below needs both fields to key its cache; a separate `wc -c` per
+# dispatch would be a second fork for no reason). Prints "mtime size".
+_adm_mtime_size() {
+  local f="$1" out=""
+  out="$(stat -c '%Y %s' "$f" 2>/dev/null)" || out=""
+  [[ -n "$out" ]] || out="$(stat -f '%m %z' "$f" 2>/dev/null)" || out=""
+  printf '%s' "${out:-0 0}"
+}
 adm_ledger_dir() { printf '%s' "$(adm_state_dir)/ledger"; }
 adm_rate_dir()   { printf '%s' "$(adm_state_dir)/rate"; }
 
@@ -363,10 +373,76 @@ adm_pressure_color() {
 # so this IS the shared oracle's verdict (F8: slot liveness derives from
 # heartbeats), just read from the janitor's cached pass instead of recomputed.
 #
+# ---------------------------------------------------------------------------
+# Occupancy TTL cache (T6-PREREQUISITES (a), 2026-07-29)
+# ---------------------------------------------------------------------------
+# WHY: the header's measured cost (19.0 ms/dispatch snapshot-absent, 70.8 ms
+# snapshot-present) is ~52 ms of reading the janitor's document into a shell
+# variable and running two O(n) parameter expansions over it, below. The
+# janitor snapshot only changes every ~5 min (its own scheduled cadence), so
+# re-parsing it on EVERY dispatch is wasted work almost always.
+#
+# STALENESS CONTRACT (read this before changing ADM_OCC_CACHE_TTL_SECS):
+# the cache is keyed on (source path, mtime-seconds, byte-size) — NOT a blind
+# wall-clock cache. Any real snapshot change (new mtime OR new size) is an
+# IMMEDIATE cache miss regardless of TTL, so a fresh janitor pass is never
+# masked by a stale read. The TTL (default 45s, override
+# ADM_OCC_CACHE_TTL_SECS, 0 disables caching entirely) is a SECONDARY,
+# defensive bound for the one case identity-keying alone cannot catch: a
+# rewrite that lands in the same wall-clock SECOND (stat's mtime resolution)
+# AND happens to produce a byte-identical size to the previous content. That
+# is exactly what this lib's own self-test does back-to-back
+# (`_mk_snapshot 77` called twice around Scenario 9/10) — harmless there
+# because both calls report the same count, but the TTL is what bounds the
+# worst case in general to "at most one stale read per identity collision",
+# which stays fail-open (an admission, not a false block) same as every other
+# path in this observe-only slice. 45 s sits far inside the ~5 min snapshot
+# cadence (the sizing this task asked for). A cache HIT does not re-evaluate
+# ADM_SNAPSHOT_MAX_AGE_SECS staleness — safe because default TTL is 1/120th
+# of default age_max; an operator setting age_max below the TTL window is
+# trading that margin away deliberately.
+#
+# FORMAT: single line, TAB-delimited: mtime, size, count, computed_at(epoch),
+# source path. Builtin `read` only — no fork on the hit path beyond the one
+# `stat` already needed to know current (mtime,size) identity.
+adm_occ_cache_path() { printf '%s/occupancy.cache' "$(adm_state_dir)"; }
+
+_adm_occ_cache_write() {
+  local path="$1" mtime="$2" size="$3" count="$4"
+  local d; d="$(adm_state_dir)"
+  [[ -d "$d" ]] || mkdir -p "$d" 2>/dev/null || return 0
+  local now; now="$(_adm_now)"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$mtime" "$size" "$count" "$now" "$path" \
+    > "$(adm_occ_cache_path)" 2>/dev/null || true
+  return 0
+}
+
 # Counting is builtin-only: strip every occurrence and divide the length delta.
 adm_live_sessions() {
   local f="${ADM_ESTATE_SNAPSHOT:-$HOME/.claude/state/estate/snapshot.json}"
   [[ -r "$f" ]] || { printf '%s' -1; return 0; }
+
+  local ms snap_m snap_sz
+  ms="$(_adm_mtime_size "$f")"
+  snap_m="${ms%% *}"; snap_sz="${ms#* }"
+
+  # ---- TTL cache fast path — see the staleness contract above ----
+  local ttl="${ADM_OCC_CACHE_TTL_SECS:-45}"
+  if (( ttl > 0 )); then
+    local cache_f; cache_f="$(adm_occ_cache_path)"
+    if [[ -r "$cache_f" ]]; then
+      local c_mtime="" c_size="" c_count="" c_at="" c_path=""
+      IFS=$'\t' read -r c_mtime c_size c_count c_at c_path < "$cache_f" 2>/dev/null
+      if [[ "$c_path" == "$f" && "$c_mtime" == "$snap_m" && "$c_size" == "$snap_sz" && -n "$c_at" ]]; then
+        local now; now="$(_adm_now)"
+        if (( now - c_at < ttl )); then
+          printf '%s' "$c_count"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
   local data; data="$(<"$f")" 2>/dev/null || { printf '%s' -1; return 0; }
   case "$data" in *'"sessions"'*) ;; *) printf '%s' -1; return 0 ;; esac
 
@@ -384,10 +460,12 @@ adm_live_sessions() {
   # a faithful proxy here because estate-janitor.sh writes the snapshot via
   # tmp+mv (ej_write_snapshot), so mtime IS the write time.
   local age_max="${ADM_SNAPSHOT_MAX_AGE_SECS:-5400}"
-  local snap_m; snap_m="$(_adm_mtime "$f")"
   if [[ "$snap_m" != "0" ]]; then
-    local now; now="$(_adm_now)"
-    (( now - snap_m > age_max )) && { printf '%s' -1; return 0; }
+    local now2; now2="$(_adm_now)"
+    if (( now2 - snap_m > age_max )); then
+      (( ttl > 0 )) && _adm_occ_cache_write "$f" "$snap_m" "$snap_sz" -1
+      printf '%s' -1; return 0
+    fi
   fi
 
   # SCOPE THE COUNT TO sessions[] (2026-07-28 review C3): counting the needle
@@ -409,7 +487,9 @@ adm_live_sessions() {
   local stripped="${region//$needle/}"
   local delta=$(( ${#region} - ${#stripped} ))
   (( delta >= 0 )) || { printf '%s' -1; return 0; }
-  printf '%s' $(( delta / ${#needle} ))
+  local count=$(( delta / ${#needle} ))
+  (( ttl > 0 )) && _adm_occ_cache_write "$f" "$snap_m" "$snap_sz" "$count"
+  printf '%s' "$count"
 }
 
 
