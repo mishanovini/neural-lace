@@ -2,7 +2,17 @@ Last updated: 2026-07-18
 
 # Neural Lace — Harness Backlog
 
-**Last updated:** 2026-07-18 v71 — cockpit-roadmap-redesign ACTIVE @70f7133: five-round operator
+**Last updated:** 2026-07-29 v72 — ROADMAP-R11 rows 01-03 (ACTIVE-PATH-EXPANSION,
+L0-FOUR-BUCKET-STRIP, KANBAN-MASTER-CHIPS) found ALREADY BUILT on master @18e8f65 (the
+orchestrator's gap-closures landed in the SAME commit as the R11 hierarchy-renderer build,
+2026-07-27 — the filed rows were never removed after the fix). Verified structurally
+(self-test web/cockpit.selftest.js 305/0, incl. R9-2b/R11-L0/R11-C6/R11-I4 assertions) AND
+at runtime on a live :7799 instance: real-data four-bucket strip + active-path
+auto-expansion observed directly; the kanban master-chip rule was proven via a synthetic
+master/child_plans payload (fetch-override injection, since no real in-repo master/child
+family currently exists) rendering exactly two child cards each carrying the master's
+chip, master itself never its own card. No code changes were needed; rows removed. Prior —
+2026-07-18 v71 — cockpit-roadmap-redesign ACTIVE @70f7133: five-round operator
 sit-down synthesized, BOTH design gates run (arch SOUND-WITH-AMENDMENTS A1-A10; ux FAIL→delta
 PASS-WITH-CONCERNS, C1-C9/I1-I6 + delta R1-R6 all folded); cockpit-ui-polish SUPERSEDED+archived
 (absorbed as tasks 6+8); badge-storm auditor fix LANDED+DEPLOYED (unmatched_dispatch age-bounded
@@ -1188,44 +1198,6 @@ from the plan's own repo path. The DISCLOSURE gap above is the separate, still-o
 **Trigger:** 103 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 20d old (threshold >7d).
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
-
-## ROADMAP-R11-ACTIVE-PATH-EXPANSION-01 — Critical 6 not implemented
-
-**Severity:** P1 (a bound Critical constraint of the Round-11 hierarchy binding
-spec, docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md).
-**Gap:** `openSet` in `neural-lace/workstreams-ui/web/roadmap.js` still starts
-empty every session with no default-expansion heuristic. The spec requires:
-L0 project groups open (already true — not collapsible), every L1 row
-visible as one line (already true — summary rows), but auto-open chains to
-in-progress/live-session/waiting-on-operator descendants on first render,
-with a persisted-openSet-always-wins rule, is NOT built.
-**Fix shape:** a `seedDefaultOpenSet()` walk over the first successful
-payload (before the first `renderAll()`), guarded by a one-time flag so
-subsequent user toggles are never re-clobbered by the heuristic.
-**Filed by:** cockpit-roadmap-redesign R11 hierarchy-renderer build, wall-clock
-stop at 90 minutes.
-
-## ROADMAP-R11-L0-FOUR-BUCKET-STRIP-01 — L0 count strip not built
-
-**Severity:** P2.
-**Gap:** the Tree anatomy's L0 project header calls for a four-bucket count
-strip (upcoming / in progress / partially done / complete; merged-unverified
-maps to partially done). `projectGroupHeaderText()` in roadmap.js still
-renders a six-value prose breakdown (all enum values, unmapped), not the
-four-bucket strip the spec names.
-**Filed by:** same build/stop as above.
-
-## ROADMAP-R11-KANBAN-MASTER-CHIPS-01 — I4 kanban master-chip rule not built
-
-**Severity:** P2.
-**Gap:** I4 requires kanban cards to stay PLANS with masters rendering as
-CHIPS on child cards (never as their own cards). `renderKanban()` in
-roadmap.js still treats `child_plans` as invisible to the kanban view (a
-nested child plan currently never appears there at all, since
-`visibleItems` is the top-level-only list) — neither the "master renders as
-a chip on the child card" rule nor "nested child plans appear as cards" is
-implemented.
-**Filed by:** same build/stop as above.
 
 ## ROADMAP-R11-CROSS-REPO-RETROFIT-PATCH-01 — apply a verified cross-repo parent-plan header
 
