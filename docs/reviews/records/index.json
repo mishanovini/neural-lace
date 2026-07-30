@@ -813,6 +813,21 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/hooks/lib/progress-log-lib.sh",
+      "blob_sha": "f992b2e1174e12d2e4139fd89cf4960abc7aeff9",
+      "record_id": "hcr-20260730-0a183380",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T16:51:13Z",
+      "reviewer_principal": {
+        "hostname": "Mishas-Mac-mini",
+        "account": "unknown",
+        "session_id": "a8a6d7399d7f16bf9"
+      },
+      "independence": "pathway"
+    },
+    {
       "path": "adapters/claude-code/hooks/lib/review-queue-auto-enqueue-lib.sh",
       "blob_sha": "26f17b843f81f6acd76bc51428fc478b84771549",
       "record_id": "hcr-20260730-03cd6c9f",
@@ -2054,6 +2069,21 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "fd02503861c4079fd6bb45d6fea1ca384164fc18",
+      "record_id": "hcr-20260730-0a183380",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T16:51:13Z",
+      "reviewer_principal": {
+        "hostname": "Mishas-Mac-mini",
+        "account": "unknown",
+        "session_id": "a8a6d7399d7f16bf9"
+      },
+      "independence": "pathway"
+    },
+    {
       "path": "adapters/claude-code/scripts/agent-heartbeat.sh",
       "blob_sha": "10241d98b56416d69f989bd9447b044ab2d5ec02",
       "record_id": "hcr-20260730-716b25da",
@@ -2283,6 +2313,21 @@
       "created_at": "2026-07-30T07:06:05Z",
       "reviewer_principal": null,
       "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/estate-merge.sh",
+      "blob_sha": "466a3eaa4fa453c6bc2abe772ff35a6be0cc2ffb",
+      "record_id": "hcr-20260730-0a183380",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T16:51:13Z",
+      "reviewer_principal": {
+        "hostname": "Mishas-Mac-mini",
+        "account": "unknown",
+        "session_id": "a8a6d7399d7f16bf9"
+      },
+      "independence": "pathway"
     },
     {
       "path": "adapters/claude-code/scripts/estate-merge.sh",

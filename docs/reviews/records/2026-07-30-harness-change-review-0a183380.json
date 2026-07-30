@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-0a183380",
+  "created_at": "2026-07-30T16:51:13Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "unknown",
+  "plan_ref": "docs/plans/status-event-ledger.md",
+  "change_ref": {
+    "commit_sha": "504241b6fcb2286ea6f80d07ea51670f21374b69",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/progress-log-lib.sh",
+      "blob_sha": "f992b2e1174e12d2e4139fd89cf4960abc7aeff9"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "fd02503861c4079fd6bb45d6fea1ca384164fc18"
+    },
+    {
+      "path": "adapters/claude-code/scripts/estate-merge.sh",
+      "blob_sha": "466a3eaa4fa453c6bc2abe772ff35a6be0cc2ffb"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Closure confirmed: all seven findings addressed, every suite claim independently reproduced on both interpreters, three-site table sync verified against the current files, and the funnel claim is now true at runtime. All three files PASS.",
+    "findings_summary": "Adversarial harness-reviewer (agent a8a6d7399d7f16bf9, 2026-07-30, two-round SE1-delta review): estate-merge.sh PASS (F1 lock-busy instrumented + Scenario 12; F7 --acknowledge audit path Scenarios 25-26; force-push + emit mutation guards re-proven at current blob; 2 Minor advisories persisted as ESTATE-MERGE-GUARD-COMMENT-MOVED-PHRASE-01 and ESTATE-MERGE-ACK-SHA-VALIDATION-01). progress-log-lib.sh PASS (merge_completed/merge_failed snake_case rename, three-site dedup table sync verified incl. T9 backfill). manifest.json PASS (honest_status truthful at runtime; GREEN 149). Reviewer-reproduced both interpreters sequential: 82/0, 48/0, 6/0, 36/0."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Mishas-Mac-mini",
+    "account": "unknown",
+    "session_id": "a8a6d7399d7f16bf9"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
