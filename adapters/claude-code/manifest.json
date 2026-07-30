@@ -301,6 +301,31 @@
       "budget_class": "none"
     },
     {
+      "id": "closure-outcome-declared",
+      "kind": "gate",
+      "doctrine_file": null,
+      "hooks": ["scripts/close-plan.sh"],
+      "events": ["manual"],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "scripts/close-plan.sh",
+          "scripts/plan-recheck-sweep.sh",
+          "docs/plans/accountable-estate-program-2026-07.md"
+        ],
+        "keywords": []
+      },
+      "blocking": true,
+      "honest_status": "Invoked as one of close-plan.sh's own internal per-plan checks (verify_closure_outcome_declared, called from cmd_close step 2e) -- fires on every `close-plan.sh close <slug>` invocation (manual or the wired plan-auto-closure.sh PostToolUse --auto lane), never as its own settings.json.template hook entry.",
+      "budget_class": "none",
+      "added_after": "2026-07",
+      "golden_scenario": "close-plan.sh --self-test S23 (outcome-gated-plan-missing-section-blocks): a plan declaring `outcome-gated: true` with no `## Closure Outcome` section at all is BLOCKED at close (rc 2, named specifically as closure-outcome-declared, never silently folded into a generic failure). S24 proves the companion happy path (a well-formed section closes cleanly, author metric/re-check preserved verbatim, the T7 loe-backfill splice + plan_outcome_recorded event both fire); S25 proves a NON-opted-in plan is NEVER blocked by this gate but still gets an honest default `## Closure Outcome` section written (the unconditional, observe-only write half). S28/S29 (added 2026-07-30) regression-test the found_pass verdict-anchor fix and the C1 default-date storm fix respectively. Verified on both /bin/bash 3.2.57 and Homebrew bash 5.3.x.",
+      "fp_expectation": "Low and structurally bounded: BLOCKING is strictly opt-in via `outcome-gated: true` in the plan header (program rule 4, observe-first) -- only 2 plans in this repo carry that flag today (docs/plans/accountable-estate-program-2026-07.md, docs/plans/archive/context-watermark-opus5-window.md), so the blast radius of a false-positive is those 2 plans, never the ~163 other archived plans or any other in-flight plan across the estate. The one live over-fire surface this bar names: verify_closure_outcome_declared's placeholder-rejection patterns (`[populate me]`, bare `todo`/`tbd`, 'no outcome metric declared') originally matched as bare substrings anywhere in the metric/re-check text, which could false-block a legitimate metric merely CONTAINING one of those words in real prose (e.g. 'zero remaining todo items'); fixed 2026-07-30 to per-line exact-value matches for the bare-word forms (the bracketed `[todo]`/`[populate me ...]` forms stay substring matches -- an unambiguous literal template marker wherever it appears).",
+      "retirement_condition": "Superseded once program rule 2's fuller estate-ledger vision (docs/designs/accountable-estate-2026-07-27.md section 2, work-item lifecycle 'done(outcome-evidence link) -- No done without an outcome link') lands as T10's store consolidation -- at that point per-plan outcome-gating becomes a specific instance of the general work-item state machine, not a bespoke close-plan.sh check. Mirrors plan-recheck-sweep.sh's own retirement_condition exactly (the same T10 milestone retires both the write-side gate and the read-side sweep together, since they are the two halves of the same program rule).",
+      "honesty_rationale": "Every write is either a field the plan's own author already controls (Outcome metric/Re-check date, preserved verbatim when author-declared) or an explicit, honestly-labeled default ('no outcome metric declared by the plan at close time', and a Re-check date suffixed '(default)' so a later automated reader can tell a mechanically-generated date apart from a real author commitment -- the 2026-07-30 C1 fix). The BLOCKING half never fires unless the plan's own author opted in via `outcome-gated: true`; a non-opted-in plan is only ever written to, never blocked."
+    },
+    {
       "id": "comprehension-gate",
       "kind": "pattern",
       "doctrine_file": "doctrine/comprehension-gate.md",
