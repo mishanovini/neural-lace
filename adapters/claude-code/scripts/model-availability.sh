@@ -365,16 +365,35 @@ _ma_self_test() {
   local _a=0; [[ -d "$_real" ]] && _a="$(ls -1 "$_real" 2>/dev/null | wc -l | tr -d ' ')"
   [[ "$_b" == "$_a" ]] && pass "real state dir untouched by this self-test (entries $_b -> $_a)" \
     || fail "SANDBOX ESCAPE: real state dir changed ($_b -> $_a)"
+  # Clear the haiku marker THIS scenario just set (2026-07-30 state-leak fix):
+  # left marked, it silently survives into Scenario 8 below, whose "exp.md"
+  # fixture is pinned to haiku — reconcile would then see haiku as exhausted
+  # and repin exp.md to its chain fallback (sonnet), failing Scenario 8's
+  # "non-fable agent untouched" assertion for a reason that scenario is not
+  # testing at all. Inter-scenario state leakage, not a real defect.
+  cmd_clear haiku >/dev/null 2>&1
 
   echo "Scenario 8: apply/restore is the REAL fallback — pins actually change"
   local AD="$T/agents"; mkdir -p "$AD"; export MODEL_AVAIL_AGENTS_DIR="$AD"
   printf -- '---\nname: rev\nmodel: fable\ntools: Read\n---\nbody\n' > "$AD/rev.md"
   printf -- '---\nname: exp\nmodel: haiku\n---\nbody\n' > "$AD/exp.md"
+  # fable was cleared in Scenario 5, so it must be re-marked exhausted here
+  # (2026-07-30 state-leak fix) or cmd_apply below has nothing to fall back
+  # FROM — rev.md's primary (fable) would already be "available" and reconcile
+  # would leave it pinned to fable, failing "fable-pinned agent repinned to
+  # opus" for a reason this scenario is not testing either.
+  cmd_mark_exhausted fable --reason "scenario 8 probe: apply must have something to fall back from" >/dev/null 2>&1
   cmd_apply fable >/dev/null 2>&1
   [[ "$(_ma_pin_of "$AD/rev.md")" == "opus" ]] && pass "fable-pinned agent repinned to opus (this is the fallback)" \
     || fail "apply did not repin: got '$(_ma_pin_of "$AD/rev.md")'"
   [[ "$(_ma_pin_of "$AD/exp.md")" == "haiku" ]] && pass "non-fable agent untouched" || fail "apply touched an unrelated tier"
   grep -q '^tools: Read' "$AD/rev.md" && pass "rest of the frontmatter preserved" || fail "apply corrupted the frontmatter"
+  # "Restore" only means anything once the tier is available again — clear
+  # the marker THIS scenario set above (2026-07-30 state-leak fix) before
+  # calling cmd_restore, or fable is still exhausted and reconcile correctly
+  # leaves rev.md on its fallback (opus), which would fail this assertion for
+  # a reason that has nothing to do with whether restore itself works.
+  cmd_clear fable >/dev/null 2>&1
   cmd_restore fable >/dev/null 2>&1
   [[ "$(_ma_pin_of "$AD/rev.md")" == "fable" ]] && pass "restore returns the original pin exactly" \
     || fail "restore failed: got '$(_ma_pin_of "$AD/rev.md")'"

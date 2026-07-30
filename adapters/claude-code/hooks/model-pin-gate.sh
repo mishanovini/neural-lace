@@ -65,6 +65,59 @@ _mpg_frontmatter_model() {
   return 0
 }
 
+# Return 0 (true) iff <tier> is currently marked exhausted by
+# model-availability.sh. On a 0 return, sets _MPG_FB (fallback tier, may be
+# empty) and _MPG_REASON (stated reason, may be empty) for the caller's
+# message. Shared by BOTH exhaustion-check call sites (frontmatter-pinned
+# agent AND explicit `model:` on the spawn) so there is one parser for "is
+# this tier exhausted," not two that can drift.
+_mpg_tier_exhausted() {
+  local tier="$1"
+  _MPG_FB=""; _MPG_REASON=""
+  [ -n "$tier" ] || return 1
+  local ma; ma="$(dirname "$0")/../scripts/model-availability.sh"
+  [ -f "$ma" ] || ma="$HOME/.claude/scripts/model-availability.sh"
+  [ -f "$ma" ] || return 1
+  bash "$ma" is-exhausted "$tier" 2>/dev/null || return 1
+  _MPG_FB="$(bash "$ma" fallback-for "$tier" 2>/dev/null)"
+  _MPG_REASON="$(bash "$ma" reason "$tier" 2>/dev/null)"
+  return 0
+}
+
+# Print the reroute-required block to stderr. <tier> is the exhausted tier;
+# <source> is a one-clause description of WHERE it came from (frontmatter pin
+# vs explicit model:) that reads naturally as "<source>, but '<tier>' is
+# currently marked UNAVAILABLE...". Relies on _MPG_FB/_MPG_REASON already set
+# by _mpg_tier_exhausted.
+_mpg_print_exhausted_block() {
+  local tier="$1" source="$2"
+  {
+    echo "================================================================"
+    echo "MODEL-PIN GATE — PINNED TIER IS EXHAUSTED, REROUTE REQUIRED"
+    echo "================================================================"
+    echo "${source}, but '${tier}' is currently"
+    echo "marked UNAVAILABLE on this machine (reason: ${_MPG_REASON:-unspecified})."
+    echo ""
+    echo "Dispatching anyway does not fail safely — it dies at the API with a"
+    echo "spend-limit error, and a verifier that dies on arrival is a"
+    echo "verification that silently did not happen (2026-07-28: this is how"
+    echo "commit f6562b2 reached master with no harness-reviewer)."
+    echo ""
+    if [ -n "$_MPG_FB" ]; then
+      echo "FIX: re-dispatch this agent with an explicit model:"
+      echo "     model: ${_MPG_FB}"
+      echo "     (chain[1] for this agent in config/model-policy.json — the"
+      echo "      fallback the policy already documents.)"
+    else
+      echo "FIX: re-dispatch with an explicit model that is available."
+    fi
+    echo ""
+    echo "If '${tier}' is available again:"
+    echo "     bash ~/.claude/scripts/model-availability.sh clear ${tier}"
+    echo "================================================================"
+  } >&2
+}
+
 _frontmatter_pins_model() {
   local f="$1" in_fm=0 line
   [ -f "$f" ] || return 1
@@ -113,8 +166,19 @@ run_gate() {
   atype="$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // .tool_input.agentType // ""' 2>/dev/null || true)"
   model="$(printf '%s' "$input" | jq -r '.tool_input.model // ""' 2>/dev/null || true)"
 
-  # Explicit model on the spawn → the goal; allow.
-  if [ -n "$model" ] && [ "$model" != "null" ]; then return 0; fi
+  # Explicit model on the spawn → the goal, UNLESS that tier is itself
+  # exhausted (2026-07-29 extension — probe T4 proved `model: fable` while
+  # fable is exhausted passed rc=0 here and would die at the API: the same
+  # f6562b2 silent-verifier-death class the frontmatter-pin reroute below
+  # exists to prevent, just reached via the explicit-model path instead of
+  # the frontmatter path. One exhaustion check now covers both surfaces).
+  if [ -n "$model" ] && [ "$model" != "null" ]; then
+    if _mpg_tier_exhausted "$model"; then
+      _mpg_print_exhausted_block "$model" "This ${tool} spawn passes explicit model: ${model}"
+      return 2
+    fi
+    return 0
+  fi
 
   # 'fork' ALWAYS inherits the parent model by design and cannot be pinned or
   # model-overridden (the Agent tool ignores `model` for fork). Blocking it
@@ -147,40 +211,9 @@ run_gate() {
     # silent non-verification.
     local pinned_tier
     pinned_tier="$(_mpg_frontmatter_model "$def")"
-    if [ -n "$pinned_tier" ]; then
-      local ma="$(dirname "$0")/../scripts/model-availability.sh"
-      [ -f "$ma" ] || ma="$HOME/.claude/scripts/model-availability.sh"
-      if [ -f "$ma" ] && bash "$ma" is-exhausted "$pinned_tier" 2>/dev/null; then
-        local fb reason
-        fb="$(bash "$ma" fallback-for "$pinned_tier" 2>/dev/null)"
-        reason="$(bash "$ma" reason "$pinned_tier" 2>/dev/null)"
-        {
-          echo "================================================================"
-          echo "MODEL-PIN GATE — PINNED TIER IS EXHAUSTED, REROUTE REQUIRED"
-          echo "================================================================"
-          echo "agents/${atype}.md pins model: ${pinned_tier}, but '${pinned_tier}' is currently"
-          echo "marked UNAVAILABLE on this machine (reason: ${reason:-unspecified})."
-          echo ""
-          echo "Dispatching anyway does not fail safely — it dies at the API with a"
-          echo "spend-limit error, and a verifier that dies on arrival is a"
-          echo "verification that silently did not happen (2026-07-28: this is how"
-          echo "commit f6562b2 reached master with no harness-reviewer)."
-          echo ""
-          if [ -n "$fb" ]; then
-            echo "FIX: re-dispatch this agent with an explicit model:"
-            echo "     model: ${fb}"
-            echo "     (chain[1] for this agent in config/model-policy.json — the"
-            echo "      fallback the policy already documents.)"
-          else
-            echo "FIX: re-dispatch with an explicit model that is available."
-          fi
-          echo ""
-          echo "If '${pinned_tier}' is available again:"
-          echo "     bash ~/.claude/scripts/model-availability.sh clear ${pinned_tier}"
-          echo "================================================================"
-        } >&2
-        return 2
-      fi
+    if [ -n "$pinned_tier" ] && _mpg_tier_exhausted "$pinned_tier"; then
+      _mpg_print_exhausted_block "$pinned_tier" "agents/${atype}.md pins model: ${pinned_tier}"
+      return 2
     fi
     return 0                                         # frontmatter pins it → allow
   fi
@@ -239,6 +272,22 @@ run_self_test() {
     else echo "  FAIL $name (rc=$got, expected $exp)"; fail=$((fail+1)); fi
   }
 
+  # <expected-rc> <name> <json> <stderr-must-contain> — like _rc, but also
+  # asserts the block message actually names the substring given (guards
+  # against an rc-only assertion staying green while the reroute message
+  # regresses to generic text — the same false-green shape this fix closes).
+  _rc_msg() {
+    local exp="$1" name="$2" json="$3" needle="$4" out got
+    out="$(CLAUDE_TOOL_INPUT="$json" MODEL_PIN_AGENTS_DIR="$fix/agents" bash "$SELF" 2>&1 1>/dev/null)"
+    got=$?
+    if [ "$got" -eq "$exp" ] && printf '%s' "$out" | grep -q -- "$needle"; then
+      echo "  ok   $name (rc=$got, message names '$needle')"; pass=$((pass+1))
+    else
+      echo "  FAIL $name (rc=$got expected $exp; message contains '$needle'? $(printf '%s' "$out" | grep -q -- "$needle" && echo yes || echo no))"
+      fail=$((fail+1))
+    fi
+  }
+
   _rc 0 "explicit model → allow"            '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent","model":"sonnet"}}'
   _rc 0 "empty model + pinned agent → allow" '{"tool_name":"Agent","tool_input":{"subagent_type":"pinned-agent"}}'
   _rc 0 "display-name subagent_type resolves via name: → allow" '{"tool_name":"Agent","tool_input":{"subagent_type":"Display Agent"}}'
@@ -252,6 +301,27 @@ run_self_test() {
   _rc 0 "malformed json → fail-open allow"   'this is not json'
   _rc 0 "empty input → fail-open allow"      ''
   _rc 0 "explicit model null-string treated empty but pinned → allow" '{"tool_name":"Agent","tool_input":{"subagent_type":"pinned-agent","model":null}}'
+
+  # --- Exhausted-tier reroute (2026-07-29) — was previously UNTESTED: the
+  # suite stayed 13/13 with this whole block deleted (false-green class).
+  # Reuses the MODEL_AVAIL_STATE_DIR sandbox exported above; run LAST so
+  # marking fable exhausted here can't affect the fixed-model scenarios above.
+  local ma_path; ma_path="$(dirname "$SELF")/../scripts/model-availability.sh"
+
+  bash "$ma_path" mark-exhausted fable --reason "self-test probe" --hours 1 >/dev/null 2>&1
+  _rc_msg 2 "pinned agent + tier exhausted → BLOCK naming fallback" \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"pinned-agent"}}' "model: opus"
+  bash "$ma_path" clear fable >/dev/null 2>&1
+  _rc 0 "pinned agent + tier cleared → allow" '{"tool_name":"Agent","tool_input":{"subagent_type":"pinned-agent"}}'
+
+  # Same exhaustion check, extended to the EXPLICIT model: dispatch path
+  # (probe T4: `model: fable` while fable is exhausted used to pass rc=0 and
+  # die at the API — the f6562b2 silent-verifier-death class).
+  bash "$ma_path" mark-exhausted fable --reason "self-test probe" --hours 1 >/dev/null 2>&1
+  _rc_msg 2 "explicit model:fable + fable exhausted → BLOCK naming fallback" \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent","model":"fable"}}' "model: opus"
+  bash "$ma_path" clear fable >/dev/null 2>&1
+  _rc 0 "explicit model:fable + fable cleared → allow" '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent","model":"fable"}}'
 
   rm -rf "$fix" 2>/dev/null
   echo ""

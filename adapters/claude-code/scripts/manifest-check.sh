@@ -258,18 +258,24 @@ for (const e of manifest.entries || []) {
     //   <name>.sh          wired hook          -> hooks/<name>.sh
     //   lib/<name>.sh      SOURCED library     -> hooks/lib/<name>.sh
     //   scripts/<name>.sh  adapter script      -> scripts/<name>.sh
-    // MERGE NOTE 2026-07-30: the legacy spelling "../scripts/<name>.sh" is
-    // ALSO accepted at the SCHEMA rung only — the fd48741 remediation (desktop)
-    // standardized on it while this branch standardized on the clean form;
-    // both machines produced entries that must validate. NOTE the apostrophe
-    // ban: this whole program lives in a single-quoted shell string. The
-    // path-resolution rung still refuses ".." — entries are normalized to the
-    // clean form at merge time, so the legacy acceptance is transitional.
+    // MERGE NOTE 2026-07-30 (RETIRED 2026-07-30, same day): the legacy
+    // spelling "../scripts/<name>.sh" was accepted at the SCHEMA rung only,
+    // transitionally, for entries the fd48741 remediation (desktop) produced
+    // before the merge normalized them to the clean form. That acceptance
+    // drifted the three validators apart: hooks.items.pattern in the JSON
+    // schema file, and the jq fallback (which reads that pattern
+    // directly) both already rejected "../scripts/<name>.sh" — only this
+    // node branch had the extra exception, hardcoded independently of the
+    // schema it otherwise mirrors. grep-confirmed manifest.json carries ZERO
+    // "../scripts/" values (the merge already normalized every entry), so
+    // the transitional window is over: dropped here rather than carried as
+    // permanent drift risk for a shape nothing on disk still uses. NOTE the
+    // apostrophe ban: this whole program lives in a single-quoted shell
+    // string.
     const isBasename = /^[A-Za-z0-9._-]+\.sh$/.test(h);
     const isLibRef = /^lib\/[A-Za-z0-9._-]+\.sh$/.test(h);
     const isScriptRef = /^scripts\/[A-Za-z0-9._-]+\.sh$/.test(h);
-    const isLegacyScriptsRef = /^\.\.\/scripts\/[A-Za-z0-9._-]+\.sh$/.test(h);
-    if (typeof h !== "string" || !(isBasename || isLibRef || isScriptRef || isLegacyScriptsRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename, lib/<name>.sh, scripts/<name>.sh, or ../scripts/<name>.sh reference`);
+    if (typeof h !== "string" || !(isBasename || isLibRef || isScriptRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename, lib/<name>.sh, or scripts/<name>.sh reference`);
   }
   if (!Array.isArray(e.events)) problems.push(`${id}: events must be an array`);
   else for (const ev of e.events) {

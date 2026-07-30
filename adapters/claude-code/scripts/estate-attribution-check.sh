@@ -197,7 +197,7 @@ self_test() {
   ( source "$SCRIPT_DIR/../hooks/lib/estate-registration-lib.sh" && reg_register wt-old-closed "$T/wt-old-closed" wt-old-closed && reg_close wt-old-closed disposed )
 
   echo "Scenario 1: human report flags exactly the old+unregistered worktree"
-  local out; out="$(bash "${BASH_SOURCE[0]}" --repo "$repo" 2>&1)"
+  local out; out="$("${BASH:-bash}" "$SCRIPT_DIR/estate-attribution-check.sh" --repo "$repo" 2>&1)"
   echo "$out" | grep -q "wt-old-unreg" ; assert "old unregistered worktree flagged UNATTRIBUTABLE" "$?"
   echo "$out" | grep -q "wt-fresh-unreg" && fail=$((fail+1)) && echo "  FAIL: fresh unregistered worktree should NOT be flagged (too young)" \
     || { pass=$((pass+1)); echo "  PASS: fresh unregistered worktree NOT flagged (under the 48h threshold)"; }
@@ -207,13 +207,13 @@ self_test() {
     || { pass=$((pass+1)); echo "  PASS: worktree with only a CLOSED record NOT flagged (historical attribution counts)"; }
 
   echo "Scenario 2: --porcelain emits exactly one UNATTRIBUTABLE row, tab-delimited"
-  out="$(bash "${BASH_SOURCE[0]}" --repo "$repo" --porcelain 2>&1)"
+  out="$("${BASH:-bash}" "$SCRIPT_DIR/estate-attribution-check.sh" --repo "$repo" --porcelain 2>&1)"
   local n; n="$(printf '%s\n' "$out" | grep -c '^UNATTRIBUTABLE' || true)"
   [ "$n" = "1" ]; assert "exactly 1 porcelain UNATTRIBUTABLE row" "$?"
   printf '%s\n' "$out" | grep -q "^UNATTRIBUTABLE"$'\t'"$repo"$'\t'; assert "porcelain row carries the repo path in column 2" "$?"
 
   echo "Scenario 3: --age-hours override changes the threshold"
-  out="$(bash "${BASH_SOURCE[0]}" --repo "$repo" --age-hours 1000 2>&1)"
+  out="$("${BASH:-bash}" "$SCRIPT_DIR/estate-attribution-check.sh" --repo "$repo" --age-hours 1000 2>&1)"
   echo "$out" | grep -q "wt-old-unreg" && fail=$((fail+1)) && echo "  FAIL: a 1000h threshold should exclude a 72h-old worktree" \
     || { pass=$((pass+1)); echo "  PASS: raising --age-hours above the fixture's actual age excludes it"; }
 
@@ -221,13 +221,13 @@ self_test() {
   # column 2 is ALWAYS the repo path (every row for this repo carries it), so
   # the discriminating check is column 3 (the worktree's OWN path) equalling
   # the repo path — that combination is unique to the primary.
-  out="$(bash "${BASH_SOURCE[0]}" --repo "$repo" --porcelain --age-hours 0 2>&1)"
+  out="$("${BASH:-bash}" "$SCRIPT_DIR/estate-attribution-check.sh" --repo "$repo" --porcelain --age-hours 0 2>&1)"
   printf '%s\n' "$out" | grep -qF "UNATTRIBUTABLE"$'\t'"$repo"$'\t'"$repo"$'\t' \
     && fail=$((fail+1)) && echo "  FAIL: primary checkout itself appeared as a row (path == repo)" \
     || { pass=$((pass+1)); echo "  PASS: primary checkout never appears as its own row"; }
 
   echo "Scenario 5: a non-git repo path is skipped, not a hard failure (exit 0)"
-  bash "${BASH_SOURCE[0]}" --repo "$T/not-a-repo" >/dev/null 2>&1
+  "${BASH:-bash}" "$SCRIPT_DIR/estate-attribution-check.sh" --repo "$T/not-a-repo" >/dev/null 2>&1
   local rc=$?
   [ "$rc" = "0" ]; assert "non-repo path skipped, exit 0" "$?"
 
