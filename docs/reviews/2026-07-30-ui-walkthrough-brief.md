@@ -58,9 +58,13 @@ The scanning mechanism exists and is tested — it is ONE config file away.
 
 ### B. The Machines panel (cross-machine view)
 This Mac publishes its state every 60s. The panel stays honestly empty until the Windows
-desktop publishes too — which takes one command, once, on that machine:
-`powershell -File adapters/claude-code/scripts/install-coord-sync-task.ps1`
-(also sitting in your cockpit Inbox). **Decision: run it when you're at that machine.**
+desktop publishes too. **CORRECTION (2026-07-30): the instruction previously here was
+defective — the installer script `install-coord-sync-task.ps1` exists only on this Mac's
+unmerged branch, so it is NOT on the desktop's checkout and the command fails with
+file-not-found (operator proved this live).** The Inbox item is retracted. After the
+branch merges to master, the corrected ask will be re-issued with the full sequence
+(cd into the repo → git pull → the command, each step fenced separately). Nothing for
+you to do until then.
 
 ### C. The propose/accept flow — the ONE thing you asked for that was never built
 From your Round 4 sit-down (2026-07-17/18): work items sourced from meetings/suggestions
@@ -91,13 +95,22 @@ final task. Everything else in that plan is done and machine-verified.
 - The Requests tab has an untriaged 401-OAuth item visible — identified as some
   session's failed-auth request record; on the triage list, not yet diagnosed.
 
-## 7. Suggested walkthrough route (15 minutes, when you're ready)
+## 7. The walkthrough — REFRAMED per the operator (2026-07-30)
 
-1. Roadmap at 1400px: read the bands (In progress → Upcoming → Shipped); expand
-   Accountable Estate — confirm ✓ done-tasks, "T6 next", the running chip.
-2. Type `T6` in the filter — watch it reveal the matching task.
-3. Click a plan link — the popup should render FORMATTED markdown (Round 16's fix).
-4. Drag a plan row to reorder (Round 16) — confirm it sticks after a refresh.
-5. Inbox: open the one item; confirm full context renders (options + outcomes).
-6. Harness Health → Machines: this Mac fresh; the desktop appears once the ps1 runs.
-7. Say what's wrong. It becomes rows; rows become rounds; the ledger keeps score.
+The operator's words: "The purpose of the walkthrough is not for you to show me what's
+there; it's to review everything I've requested over the last couple months and see how
+much of it is still not there, and allow me to decide how much I truly want every item
+I've asked for in the past. There's a lot I've asked for that has regressed."
+
+So the walkthrough is an AUDIT SITTING, not a demo tour. Format:
+1. The instrument is the requirements ledger (docs/reviews/cockpit-ui-requirements-ledger.md,
+   all 77 rows) presented row by row IN CHAT with full content — never row numbers alone.
+2. Order: REGRESSED and rebuild-losses first, then PARTIAL/UNBUILT, then SUPERSEDED
+   (confirm each really was the operator's own direction), then spot-check the METs live.
+3. Per row the operator gives one of: KEEP (stays binding, gets rebuilt if not live) /
+   DROP (retired at operator direction, recorded like the phases row) / CHANGE (new
+   verbatim recorded as a new row).
+4. The rebuild history gets its own honest section: the 3-4 unrequested full rebuilds,
+   what each one silently lost, and which losses are now restored vs still missing.
+5. Output: an updated ledger where every row carries an operator disposition — THAT
+   closes the redesign plan's final task, not a tour.

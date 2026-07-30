@@ -39,7 +39,7 @@ history stays legible.
 ## Row count summary (the honest number)
 
 Computed by machine (grep against this file's own table, first-status-token classification —
-reproducible, not hand-tallied) against all 73 numbered rows below. Three of the 73 (rows 10,
+reproducible, not hand-tallied) against all 77 numbered rows below. Three of the 77 (rows 10,
 18, 19) are the SAME requirement restated by the operator in the same round and are cross-
 referenced rather than independently re-verified — they are still counted here since every row
 still carries its own verifiable status, not folded away to make the total look smaller.
@@ -49,11 +49,11 @@ still carries its own verifiable status, not folded away to make the total look 
 | MET — verified live or structurally sound this session | 52 |
 | MET (selftest) — real-execution suite proof, not re-verified live this session | 12 |
 | MET (carried) — not re-verified this session; citing a prior verified record | 4 |
-| PARTIAL — mechanism exists, real live gap found this session | 1 |
+| PARTIAL — mechanism exists, real live gap found this session | 3 |
 | SUPERSEDED — operator's own later direction replaced an earlier ask | 3 (see note) |
 | REGRESSED | 0 |
-| UNBUILT — explicitly out-of-scope elsewhere, not silently dropped | 1 |
-| **Total rows** | **73** |
+| UNBUILT — explicitly out-of-scope elsewhere, not silently dropped | 3 |
+| **Total rows** | **77** |
 
 Note on SUPERSEDED: rows 29, 37, and 45 are counted as SUPERSEDED (first status word). Rows 33
 and 43 also describe a superseded WORDING ("phases") while the underlying requirement they carry
@@ -218,6 +218,15 @@ Source: `docs/reviews/2026-07-17-cockpit-ux-design-input.md`
 | 73 | (Deliverable 6, coordinator mid-round) "the Workstreams UI still doesn't actually represent the actual order of building, at least not at the plan level" | MET | Fixed this round. Live sandbox :7799 this session, `get_page_text`: all 9 in-progress-ish plans render before all 7 upcoming ones (banding, rank-order preserved within each band); header reads "...in build order (7 in progress, 2 partially done, 7 upcoming)" (in-progress leads). Move up/down controls verified NOT regressed: live `read_page` this session shows `button "Move up in build order: ..."` / `button "Move down in build order: ..."` present and aria-labeled on every plan row. |
 
 ---
+
+## Round 17 queue (2026-07-30 afternoon — operator message during Round 16's build)
+
+| # | Verbatim | Status | Evidence |
+|---|---|---|---|
+| 74 | "is 'Cockpit' the same as the Workstreams UI? If so, that's great... I think I prefer it, but we need to keep consistency in terminology." | UNBUILT | Naming decision taken 2026-07-30: **Cockpit** is the canonical product name. Rename queued for Round 17: UI header/title (web/), server strings, docs, chat vocabulary (extends SE10's vocabulary lock). Until it lands, every surface saying "Workstreams" is a violation of this row. |
+| 75 | "the instruction on this page to run the ps command does not make it clear where the command itself begins and ends" | UNBUILT | Two halves: (a) Inbox/ask RENDERING — runnable commands must be visually fenced, copyable, never inline with prose (audit of every command-bearing surface dispatched to ux-ia-auditor this session); (b) ask COMPOSITION — needs-you.sh asks carry commands in a distinct field/fence. Neither built yet. |
+| 76 | "The purpose of the walkthrough is not for you to show me what's there; it's to review everything I've requested over the last couple months and see how much of it is still not there, and allow me to decide how much I truly want every item I've asked for in the past." | PARTIAL | This ledger IS the review instrument (all 77 rows, statuses live-verified), but the walkthrough deliverable is reframed: present EVERY row with a keep / drop / change decision column for the operator, regressions and rebuild-losses first — not a feature tour. Brief updated (docs/reviews/2026-07-30-ui-walkthrough-brief.md §7). |
+| 77 | "I keep having to nudge you for little UI improvements that any decent UX designer should have caught on their own. It's very burdensome." | PARTIAL | Proactive ux-ia-auditor audit of the live cockpit dispatched 2026-07-30 (report: docs/reviews/2026-07-30-cockpit-ux-audit.md when it lands). Standing rule queued: no UI round lands without a UX-agent pass over the changed surfaces — to be wired into the cockpit-redesign plan's acceptance so it is mechanical, not remembered. |
 
 ## Known gaps this ledger surfaces (logged to `docs/backlog.md`)
 
