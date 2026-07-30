@@ -558,7 +558,19 @@ cross-plan work.
 If no in-flight changes have occurred, leave empty or state `n/a` —
 empty is fine and common.
 -->
-(no in-flight changes yet)
+- 2026-07-30 (Task 4 real run): `adapters/claude-code/scripts/remap-placeholder-ask-events.sh`
+  was found, at Task-4 execution time, to already carry a SEPARATE,
+  already-landed, already-reviewed commit (0758232, review record
+  hcr-20260729-4586088a PASS) that this plan file never recorded —
+  extending `cmd_run` to a `--source` flag and draining BOTH `_id.jsonl`
+  AND `none.jsonl` (the "none" sentinel, a second live instance of the
+  same bug class, found by a re-review after this plan's Tasks 1-3 were
+  built). No file was edited by this task-4 run — the script was used
+  as-is, unmodified, since reverting an already-reviewed fix to match
+  this plan's stale text would itself be the wrong move. Running the
+  script's one supported invocation today necessarily drains both
+  sources; see Decisions Log for the full reconciliation and the
+  `_id.jsonl` provenance gap this surfaced.
 
 ## Assumptions
 - A legitimate ask-id never starts with `<` or contains `<`/`>` (verified
@@ -706,12 +718,22 @@ non-whitespace chars of non-placeholder content. See
   the one documented exception, unrelated to this fix); the real remap
   run prints a per-destination count summary and exits 0.
 - **On-disk artifact location:** this plan file's own Decisions Log
-  (self-test output summarized there); `~/.claude/state/progress-logs/
-  _id.jsonl.migrated` (the JSON receipt) once Task 4 runs for real.
+  (self-test output summarized there; Task-4 real-run findings dated
+  2026-07-30); `~/.claude/state/progress-logs/none.jsonl.migrated` (the
+  real receipt for the dual-drained `none.jsonl` source — 95 events, 77
+  moved, 18 dup, destinations `{"unlinked.jsonl":77}`) and its sibling
+  backup `none.jsonl.migrated-20260730T003100Z`. `_id.jsonl.migrated`
+  does NOT exist — see Decisions Log "Task 4 run for real" for the
+  provenance gap (the named source file itself is absent, unproven
+  whether ever remapped).
 - **Done when:** Tasks 1-3's self-tests all PASS (proven this session)
   AND Task 4 has been run for real with its receipt confirmed, OR Task 4
   is explicitly deferred to a follow-up plan/backlog entry with the real
-  blocker named (machine load / wall-clock, not a correctness gap).
+  blocker named (machine load / wall-clock, not a correctness gap). AS OF
+  2026-07-30: the script's own current scope (both sources) ran for real
+  with a confirmed receipt for `none.jsonl`; `_id.jsonl` itself is absent
+  with an unresolved provenance gap (Decisions Log) that the
+  orchestrator/task-verifier must weigh when judging this Done-when met.
 
 ## Testing Strategy
 <!--
@@ -797,6 +819,68 @@ one writer-lib guard); no new architectural layer or user-facing flow.
   against the actual production file. This is an honest gap, not a
   silent shortcut — Task 4 above is explicitly left unchecked and a
   follow-up is logged.
+- **Task 4 run for real (2026-07-30 session).** Full timestamped backup of
+  every file in `~/.claude/state/progress-logs/` taken first (18 files,
+  under this session's scratchpad, ahead of the script's own per-source
+  backup) — salvage-before-reset, matching the c1297d0 ask-registry
+  cleanup's bar. Findings, in order:
+  1. **`_id.jsonl` (the plan's own named target) does not exist on the
+     real machine and shows NO trace of ever being migrated.** Exhaustive
+     search (direct listing, `find ~/.claude/state -iname '*_id*'`,
+     `find ~/.claude/state -iname '*migrat*'`, Trash, all-branch git log
+     for any committed backup or commit message citing the real counts,
+     `docs/backlog.md`, `SCRATCHPAD.md`, `NEEDS-YOU.md`) found: no
+     `_id.jsonl`, no `_id.jsonl.migrated` marker, no
+     `_id.jsonl.migrated-<ts>` backup, and — the decisive check — ZERO
+     occurrences anywhere in `~/.claude/state/progress-logs/*.jsonl` of
+     the literal byte-preserved fingerprint `"ask_id":"<id"` outside the
+     26 NEW writer-backstop records in `unattributed.jsonl` (Task 2's
+     live guard catching fresh placeholder writes, not migrated legacy
+     ones — a migrated record would carry this exact fingerprint verbatim
+     per the script's own "byte-for-byte unchanged" contract, relocated
+     to `unlinked.jsonl` or a real ask file). PROVEN: the ~1090-1140
+     legacy events this plan was chartered to repair are not accounted
+     for by this script's own mechanism anywhere on this machine.
+     HYPOTHESIZED (not resolved): either (a) an earlier session deleted
+     `_id.jsonl` directly without running this script and without a
+     salvage backup — a process violation, not a defect in the script
+     itself — or (b) some other undiscovered repair path already moved
+     the data out in a form this fingerprint check cannot see. Refutable
+     by: any future discovery of a `_id.jsonl.migrated*` file, a git
+     commit, or a NEEDS-YOU/backlog entry documenting the real run,
+     anywhere. This is an honest, unresolved gap — not silently
+     dropped — and is called out to the orchestrator as its own finding,
+     separate from Task 4's mechanical completion below.
+  2. **`none.jsonl` (dual-drained by the already-landed 0758232 extension
+     — see In-flight scope updates) DID exist and was actively growing**
+     (a live pre-fix emitter — the fix isn't merged to master yet, so
+     `session-start-auto-install.sh`-installed hooks on this machine still
+     produce it; proven by two fresh events appearing mid-session with
+     `session_id` matching this very orchestrator's own dispatch calls).
+     Real run: before=94 lines (95 by the time the script's own
+     lines-before snapshot ran, confirming live growth), migrated 77,
+     18 already-duplicate, 0 lost; backup at
+     `none.jsonl.migrated-20260730T003100Z` (95 lines, verified intact);
+     receipt at `none.jsonl.migrated`; `unlinked.jsonl` 2652 -> 2737 lines
+     (+85; the +8 beyond the 77 moved is other concurrent sessions'
+     direct legitimate unlinked-lane writes during the same window, not
+     an artifact of this migration).
+  3. **Idempotency proof, 2 additional real invocations (no `--dry-run`):**
+     within the same minute, a NEW `none.jsonl` was reborn (2 fresh
+     legitimate events from the still-live pre-fix emitter). Runs 2 and 3
+     both hit the documented REBORN-SOURCE guard: loud warning, exit 1,
+     the reborn file left byte-for-byte untouched, `unlinked.jsonl` line
+     count unchanged (2737 both times) — proving the script neither
+     double-migrates nor loses data when re-run against a still-live bug
+     source. This is the designed idempotent-safe degradation, not a
+     failure.
+  4. Net result: Task 4's literal target (`_id.jsonl`) could not be run
+     for real because it no longer exists and its fate is unproven; the
+     script's OWN current (already-reviewed) scope was executed in full,
+     for real, with backup, with documented counts, and with a 2x
+     idempotency proof against a live concurrent writer. Whether this
+     satisfies Task 4 as originally scoped is left to the orchestrator/
+     task-verifier given the `_id.jsonl` provenance gap above.
 - **Timing flake in plan-lifecycle.sh's pre-existing Scenario 20d.**
   Observed once this session (`--self-test` reported "got 4" vs expected
   3 for an amendment-replay debounce-window race). PROVEN unrelated to

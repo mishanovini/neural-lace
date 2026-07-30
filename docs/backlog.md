@@ -1777,6 +1777,42 @@ this as a non-issue.
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
 
+## PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01 — the ~1090-1140 legacy `_id.jsonl` events have no provenance trail
+
+**Severity:** P2 (possible historical audit-trail data loss; no LIVE-data
+risk today since the writer-side backstop already quarantines new
+occurrences — this is about the OLD, pre-fix events only).
+**Finding (PROVEN, `progress-log-placeholder-ask-id-fix` Task 4 real run,
+2026-07-30):** `~/.claude/state/progress-logs/_id.jsonl` — the file this
+plan's whole Goal section is chartered around (1090 events at plan-author
+time, 1140 per commit 0758232's later count including 2 more affected
+extractor sites) — does not exist on the real machine, and no completion
+receipt (`_id.jsonl.migrated`) or timestamped backup
+(`_id.jsonl.migrated-<ts>`) exists anywhere under `~/.claude/state/`,
+Trash, or elsewhere searched. The decisive check: `remap-placeholder-
+ask-events.sh` preserves a migrated record's `ask_id` field BYTE-FOR-BYTE
+(so a real migration would leave the literal fingerprint `"ask_id":"<id"`
+sitting in `unlinked.jsonl` or a real ask file) — grepped for across
+every `*.jsonl` in the state dir; the ONLY hits are the 26 NEW records in
+`unattributed.jsonl` (Task 2's live writer-backstop catching fresh
+placeholder writes, not migrated legacy ones). No git commit, backlog
+row, SCRATCHPAD.md, or NEEDS-YOU.md entry documents a real run against
+this file. HYPOTHESIZED, unresolved: either an earlier session deleted
+`_id.jsonl` directly (bypassing this script and its mandatory backup —
+a salvage-before-reset process violation) or some other undiscovered
+repair path moved the data in a form this fingerprint check cannot see.
+**Action:** if this is genuinely unrecoverable, this is a closed loss —
+document as such and remove Task 4 of `progress-log-placeholder-ask-id-fix`
+from any future completion claim; if a backup exists somewhere not yet
+searched (another machine, a manual export, Time Machine), locate and
+re-run the migration against it. Either way, close the provenance
+question explicitly rather than leaving Task 4 ambiguously "done."
+**Fold-in point:** whoever closes `progress-log-placeholder-ask-id-fix`
+(task-verifier / orchestrator) should treat this as a required read
+before flipping or archiving; not a blocking gate on its own (no live
+risk), but the honest-completion bar for that plan.
+**Filed by:** plan-phase-builder, Task 4 real-run investigation, 2026-07-30.
+
 ## ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01 — full 161-plan LOE mine not yet run to completion on this machine
 
 **Severity:** P2 (tool correctness proven; only the full-corpus artifact is outstanding).
