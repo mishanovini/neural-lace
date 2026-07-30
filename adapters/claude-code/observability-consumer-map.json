@@ -191,6 +191,20 @@
         "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
         "digest:feed_ledger_summary"
       ]
+    },
+    "review-verdict": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event; emitted by adapters/claude-code/scripts/write-review-record.sh:_rrg_emit_verdict_ledger_event on EVERY cmd_capture call, PASS/REFORMULATE/REJECT alike -- status-event-ledger plan SE3, taxonomy event #6)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
+    },
+    "flip-verdict": {
+      "consumers": [
+        "cli:nl-why (hooks/lib/observability-derive.sh:od_why, scripts/nl.sh:cmd_why — renders any per-session ledger event; emitted by adapters/claude-code/hooks/plan-edit-validator.sh:emit_flip_ledger_event on every authorized checkbox-flip -- status-event-ledger plan SE4, taxonomy event #7)",
+        "doctor:check_obs_consumer_map (harness-doctor.sh — the C3 law-2 enforcing predicate itself)",
+        "digest:feed_ledger_summary"
+      ]
     }
   }
 }

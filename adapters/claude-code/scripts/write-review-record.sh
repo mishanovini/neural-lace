@@ -198,6 +198,39 @@ _rrg_maybe_ledger_log_consecutive_rejects() {
 }
 
 # ---------------------------------------------------------------------------
+# SE3 (status-event-ledger plan, taxonomy event #6 "review verdict INCLUDING
+# non-PASS") -- a deterministic per-verdict ledger emit.
+#
+# WHY HERE, NOT AT THE CALLER: cmd_capture is the ONE chokepoint every review
+# record funnels through, regardless of who calls it -- review-runner.sh's
+# `finalize` (the review-independence queue pathway, RI2/RI3) AND any direct
+# orchestrating-session `capture` invocation (the pre-RI manual pathway) both
+# resolve to this same function body. Emitting the status event HERE, keyed
+# only on "a capture just happened" and never gated on $verdict, is what
+# makes this a genuine deterministic trigger rather than "an agent
+# remembering to log it" -- the exact failure this plan's design law names.
+# It does NOT fix "some reviews never get captured at all" (no automatic
+# SubagentStop/TaskCompleted hook exists yet to force a capture call in the
+# first place -- see this file's own header ANTI-FABRICATION note); that
+# residual gap is honest and out of this task's scope, not implied covered.
+#
+# Never blocks (fail-open, logged) -- same contract as every other ledger
+# emitter in the harness (signal-ledger.sh's own header contract).
+# ---------------------------------------------------------------------------
+_rrg_emit_verdict_ledger_event() {
+  local record_id="$1" kind="$2" verdict="$3" reviewer="$4" plan_ref="$5"
+  local lib="$SCRIPT_DIR/../hooks/lib/signal-ledger.sh"
+  if [[ -f "$lib" ]]; then
+    # shellcheck disable=SC1090
+    if source "$lib" 2>/dev/null && command -v ledger_emit_typed >/dev/null 2>&1; then
+      ledger_emit_typed "review-record" "review-verdict" \
+        "record_id=${record_id} kind=${kind} verdict=${verdict} reviewer=${reviewer} plan_ref=${plan_ref}" 2>/dev/null || true
+    fi
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # capture
 # ---------------------------------------------------------------------------
 cmd_capture() {
@@ -394,6 +427,10 @@ cmd_capture() {
   # Index is ALWAYS fully rebuilt (never incrementally patched) -- it can
   # never drift from "a pure function of the records directory."
   _rrg_rebuild_index "$records_dir" > "$records_dir/index.json"
+
+  # SE3: unconditional per-verdict ledger emit -- see the function's own
+  # header comment for why this is the deterministic-trigger chokepoint.
+  _rrg_emit_verdict_ledger_event "$record_id" "$kind" "$verdict" "$reviewer" "$plan_ref"
 
   _rrg_maybe_ledger_log_consecutive_rejects "$records_dir" "$verdict" "$cov"
 
@@ -840,6 +877,51 @@ run_self_test() {
     PASSED=$((PASSED+1))
   else
     echo "self-test (S20) invalid-independence-rejects: FAIL (rc=$rc, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S21 (SE3, status-event-ledger plan): a non-PASS (REJECT) record's
+  # index row carries the ACTUAL verdict value, not merely "not COVERED" --
+  # closes the "index is structurally failure-blind" gap by proving the
+  # index itself, not just the coverage predicate, records the real
+  # non-PASS verdict for a fresh file. ----
+  mkdir -p "$REPO/adapters/claude-code/hooks"
+  printf '#!/bin/bash\necho gamma\n' > "$REPO/adapters/claude-code/hooks/gamma.sh"
+  "$SELF_PATH" capture --kind harness-change-review --reviewer harness-reviewer \
+    --verdict REJECT --plan-ref "docs/plans/status-event-ledger.md#SE3" \
+    --quote "REJECT -- missing fp_expectation (S21 fixture)." \
+    --file "adapters/claude-code/hooks/gamma.sh" --repo-root "$REPO" >/dev/null 2>&1
+  idx_verdict_s21=$(jq -r '[.entries[] | select(.path == "adapters/claude-code/hooks/gamma.sh")] | last | .verdict' \
+    "$REPO/docs/reviews/records/index.json" 2>/dev/null)
+  if [[ "$idx_verdict_s21" == "REJECT" ]]; then
+    echo "self-test (S21) index-row-carries-real-non-pass-verdict: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S21) index-row-carries-real-non-pass-verdict: FAIL (got verdict='$idx_verdict_s21', expected REJECT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S22 (SE3): cmd_capture emits ONE signal-ledger "review-verdict"
+  # event PER CAPTURE, regardless of verdict -- the deterministic trigger
+  # this task adds. Sandboxed via SIGNAL_LEDGER_PATH (signal-ledger.sh's own
+  # override convention) so this never touches a real ledger. ----
+  S22_LEDGER="$tmp/s22-ledger.jsonl"
+  rm -f "$S22_LEDGER"
+  SIGNAL_LEDGER_PATH="$S22_LEDGER" "$SELF_PATH" capture --kind harness-change-review \
+    --reviewer harness-reviewer --verdict PASS --plan-ref "docs/plans/status-event-ledger.md#SE3" \
+    --quote "PASS -- S22 fixture." \
+    --file "adapters/claude-code/hooks/alpha.sh" --repo-root "$REPO" >/dev/null 2>&1
+  SIGNAL_LEDGER_PATH="$S22_LEDGER" "$SELF_PATH" capture --kind harness-change-review \
+    --reviewer harness-reviewer --verdict REJECT --plan-ref "docs/plans/status-event-ledger.md#SE3" \
+    --quote "REJECT -- S22 fixture." \
+    --file "adapters/claude-code/hooks/gamma.sh" --repo-root "$REPO" >/dev/null 2>&1
+  if [[ -f "$S22_LEDGER" ]] \
+     && grep -q '"gate":"review-record".*"event":"review-verdict".*verdict=PASS' "$S22_LEDGER" \
+     && grep -q '"gate":"review-record".*"event":"review-verdict".*verdict=REJECT' "$S22_LEDGER"; then
+    echo "self-test (S22) ledger-emits-review-verdict-per-capture-any-verdict: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S22) ledger-emits-review-verdict-per-capture-any-verdict: FAIL (ledger: $(cat "$S22_LEDGER" 2>/dev/null))" >&2
     FAILED=$((FAILED+1))
   fi
 

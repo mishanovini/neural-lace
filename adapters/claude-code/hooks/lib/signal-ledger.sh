@@ -224,7 +224,20 @@ ledger_emit_typed() {
 #   throttle-detected | spawn-dispatched | spawn-concluded |
 #   bg-task-started | bg-task-finished | turn-trace
 #
-# Every one of the 18 types above MUST have >=1 entry in
+# status-event-ledger plan additions (SE3/SE4 — event taxonomy #6 "review
+# verdict INCLUDING non-PASS" and #7 "verification verdict + checkbox
+# flip"; docs/plans/status-event-ledger.md):
+#   review-verdict | flip-verdict
+# Both fire unconditionally on their host chokepoint (write-review-record.sh
+# cmd_capture; plan-edit-validator.sh's authorized checkbox-flip path) --
+# regardless of verdict value, which is the deterministic-trigger property
+# this plan's design law requires (never gated on "was it PASS").
+#
+# Every one of the 18 Wave-O/pre-Wave-O types above (plus the two SE
+# additions just above, and the further post-Wave-O ad-hoc additions this
+# comment registry has not yet been reconciled with — see
+# observability-consumer-map.json for the current authoritative list) MUST
+# have >=1 entry in
 # observability-consumer-map.json (adapters/claude-code/
 # observability-consumer-map.json) naming its real consumer(s) — see that
 # file's own header and O.6's check_obs_consumer_map (doctor-enforced).
