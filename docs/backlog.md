@@ -2012,3 +2012,10 @@ evidence files the same way.
 2026-07-30 (a pre-existing code comment at this callsite promised "see backlog" for this exact
 limitation with no corresponding entry ever filed; this entry closes that promise). Also logged
 via `nl-issue.sh` the same session for cross-project triage visibility.
+- **ESTATE-MERGE-GUARD-COMMENT-MOVED-PHRASE-01** (minor, review 2026-07-30): the F4-softened
+  static-guard comment still lists "or moved elsewhere" as caught; re-run MUT4 proves a moved
+  call leaves the guard green. Drop the phrase or qualify "moved out of this file".
+- **ESTATE-MERGE-ACK-SHA-VALIDATION-01** (minor, review 2026-07-30): --acknowledge's
+  rev-parse isn't pinned to ^{commit} nor checked as a merge commit in the target's history
+  (bounded by required --reason + audit row); acknowledged rows carry empty source_branch
+  ("acknowledged:  -> target" cosmetic). Two one-line fixes for a future pass.
