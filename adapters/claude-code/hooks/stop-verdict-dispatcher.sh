@@ -1179,7 +1179,7 @@ _svd_problems_persist_check() {
 #   if none). See the VOCABULARY-LOCK header comment above for why this
 #   exact denylist and not a broader one.
 # ----------------------------------------------------------------------
-_SVD_OFFVOCAB_RE='\bin[[:space:]]+flight\b|\bdone-ish\b|\bbasically[[:space:]]+(complete|done)\b|\bmostly[[:space:]]+done\b|\bkind[[:space:]]+of[[:space:]]+done\b|\bsort[[:space:]]+of[[:space:]]+(done|working)\b|\bwrapping[[:space:]]+up\b|\bshould[[:space:]]+be[[:space:]](done|working|fine)\b'
+_SVD_OFFVOCAB_RE='\bin[[:space:]]+flight\b|\bdone-ish\b|\bbasically[[:space:]]+(complete|done)\b|\bmostly[[:space:]]+done\b|\bkind[[:space:]]+of[[:space:]]+done\b|\bsort[[:space:]]+of[[:space:]]+(done|working)\b|\bwrapping[[:space:]]+up\b|\bshould[[:space:]]+be[[:space:]]+(done|working|fine)\b'
 _svd_text_offvocab_matches() {
   local text="$1"
   printf '%s' "$text" | grep -oiE "$_SVD_OFFVOCAB_RE" 2>/dev/null | tr '[:upper:]' '[:lower:]' | sort -u | tr '\n' ',' | sed 's/,$//'
@@ -2926,8 +2926,9 @@ STUBEOF
   # Scenario 35 (harness-change-review REFORMULATE finding 3(b)): the
   # "sort of done"/"sort of working" alternative in `_SVD_OFFVOCAB_RE` had
   # a `[[:space:]]` (exactly one whitespace char) between "of" and
-  # "(done|working)" where every sibling alternative uses `[[:space:]]+`
-  # (one-or-more) -- so "sort of  done" (two spaces, as real prose
+  # "(done|working)"; the re-review's class sweep then found the SAME bare
+  # quantifier in the "should be (done|working|fine)" alternative — both now
+  # use `[[:space:]]+` (one-or-more), so multi-space/wrapped prose
   # wrapping/copy-paste produces) never matched. Proves the `+` fix: the
   # SAME multi-space phrasing that a naive single-space regex would miss
   # now fires the warn.
@@ -2939,7 +2940,7 @@ STUBEOF
   ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
     git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
     echo seed > seed.txt; git add -A; git commit -q -m seed )
-  T35=$(_write_transcript "$tmproot/s35" $'SE3 is sort of  done, just polishing the edges.\n\nDONE: nothing else to report')
+  T35=$(_write_transcript "$tmproot/s35" $'SE3 is sort of  done, just polishing the edges. The rest should be  fine.\n\nDONE: nothing else to report')
   RC35=$(_run_dispatcher "$HOOKS" "$REPO" "$T35" "sess-s35")
   _expect "vocabulary-lock-sort-of-multispace-never-blocks" "$RC35" "0"
   if grep -q '"gate":"stop-verdict-dispatcher".*vocabulary-lock.*sort of' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
@@ -2947,6 +2948,13 @@ STUBEOF
     passed=$((passed+1))
   else
     echo "self-test (vocabulary-lock-sort-of-done-multispace-warns): FAIL (expected a vocabulary-lock warn naming 'sort of done' even with 2 spaces before 'done')" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q '"gate":"stop-verdict-dispatcher".*vocabulary-lock.*should be' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-should-be-multispace-warns): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-should-be-multispace-warns): FAIL (expected a vocabulary-lock warn naming 'should be fine' even with 2 spaces before 'fine' — the re-review's class-sweep sibling)" >&2
     failed=$((failed+1))
   fi
 
