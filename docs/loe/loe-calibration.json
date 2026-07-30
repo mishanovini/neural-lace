@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-30T07:27:12Z",
-  "plans_total": 166,
+  "generated_at": "2026-07-30T22:37:52Z",
+  "plans_total": 167,
   "coverage": {
     "wall_clock_pct": 100,
     "builder_sessions_pct": 1.2,
@@ -51,22 +51,22 @@
     },
     {
       "class": "harness-mechanism",
-      "count": 93,
+      "count": 94,
       "task_count": {
-        "p50": 4,
+        "p50": 3,
         "p90": 13,
-        "n": 93
+        "n": 94
       },
       "wall_clock_days": {
         "p50": 0.03,
         "p90": 6.62,
-        "n": 93
+        "n": 94
       },
       "builder_sessions": {
         "p50": 1,
         "p90": 1,
         "n": 2,
-        "coverage_pct": 2.2
+        "coverage_pct": 2.1
       },
       "concentration_flag": false
     },
@@ -566,9 +566,9 @@
       "mode": "code",
       "class": "harness-mechanism",
       "task_count": 3,
-      "wall_clock_days": 0.00,
+      "wall_clock_days": 0.30,
       "first_commit": "2026-07-30T00:26:51-07:00",
-      "last_commit": "2026-07-30T00:26:51-07:00",
+      "last_commit": "2026-07-30T07:32:56-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
@@ -1256,6 +1256,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
+    },
+    {
+      "slug": "limit-resume-watchdog-2026-07-30",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 1,
+      "wall_clock_days": 0.00,
+      "first_commit": "2026-07-30T15:37:30-07:00",
+      "last_commit": "2026-07-30T15:37:30-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
     },
     {
       "slug": "master-drift-autocorrection-2026-07",
