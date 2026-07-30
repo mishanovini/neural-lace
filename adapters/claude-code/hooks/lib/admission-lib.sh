@@ -941,11 +941,25 @@ _adm_self_test() {
   else fail "unknown pressure not recorded"; fi
 
   echo "Scenario 6: rate uses stamp-files-per-dispatch, not read-modify-write (F9)"
+  # WINDOW OVERRIDE -- pre-existing flake found INCIDENTALLY while verifying
+  # this session's 8 named findings (not one of them itself; reproduced
+  # byte-identically -- "rate 3 -> 3" -- on the UNMODIFIED baseline before
+  # any edit in this session, so it predates and is unrelated to this
+  # delta). By the time this scenario runs, Scenarios 1-5's own fork cost on
+  # this machine's documented Windows fork-taxed target can already exceed
+  # the 60s default rate window, so some of THEIR stamps age out of the
+  # window mid-scenario and can net-cancel the +2 stamps this scenario adds
+  # -- a suite-pacing artifact, not an admission-control defect. Same
+  # fragility class this file already defends against elsewhere (Scenario
+  # 9's `ADM_SNAPSHOT_MAX_AGE_SECS=99999999`): give this check its own
+  # generous window instead of depending on the whole preceding suite
+  # finishing inside 60s of wall-clock. Assertion strength is UNCHANGED --
+  # still requires exactly +2, never weakened to "at least" or skipped.
   local before after
-  before="$(adm_rate_in_window)"
-  adm_admit emit-feed >/dev/null
-  adm_admit emit-feed >/dev/null
-  after="$(adm_rate_in_window)"
+  before="$(ADM_RATE_WINDOW_SECS=999999 adm_rate_in_window)"
+  ADM_RATE_WINDOW_SECS=999999 adm_admit emit-feed >/dev/null
+  ADM_RATE_WINDOW_SECS=999999 adm_admit emit-feed >/dev/null
+  after="$(ADM_RATE_WINDOW_SECS=999999 adm_rate_in_window)"
   (( after == before + 2 )) && pass "two dispatches -> +2 stamps (no lost updates)" || fail "rate $before -> $after"
   local stamps; stamps=0
   local sf; for sf in "$(adm_rate_dir)"/*; do [[ -e "$sf" ]] && stamps=$((stamps+1)); done
