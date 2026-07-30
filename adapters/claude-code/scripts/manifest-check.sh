@@ -259,11 +259,12 @@ for (const e of manifest.entries || []) {
     //   lib/<name>.sh      SOURCED library     -> hooks/lib/<name>.sh
     //   scripts/<name>.sh  adapter script      -> scripts/<name>.sh
     // MERGE NOTE 2026-07-30: the legacy spelling "../scripts/<name>.sh" is
-    // ALSO accepted — the desktop's fd48741 remediation standardized on it
-    // while this branch standardized on the clean form; both resolve to the
-    // same file and both machines' manifest entries must validate. Converge
-    // on "scripts/<name>.sh" when entries are next touched. Name segments
-    // still forbid "/" so nothing can escape adapters/claude-code/.
+    // ALSO accepted at the SCHEMA rung only — the fd48741 remediation (desktop)
+    // standardized on it while this branch standardized on the clean form;
+    // both machines produced entries that must validate. NOTE the apostrophe
+    // ban: this whole program lives in a single-quoted shell string. The
+    // path-resolution rung still refuses ".." — entries are normalized to the
+    // clean form at merge time, so the legacy acceptance is transitional.
     const isBasename = /^[A-Za-z0-9._-]+\.sh$/.test(h);
     const isLibRef = /^lib\/[A-Za-z0-9._-]+\.sh$/.test(h);
     const isScriptRef = /^scripts\/[A-Za-z0-9._-]+\.sh$/.test(h);
