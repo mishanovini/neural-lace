@@ -5612,6 +5612,26 @@ EOF
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
   _assert "8-selftest-sweep-red" 1 "$RC" "RED selftest-sweep" "$OUT"
 
+  # ---- Check 8 DEDUP (mode-dispatch tail, harness-review Major): the
+  # dispatch tail previously called check_selftest_sweep AND
+  # check_master_drift_selftest TWICE in --full mode (a mis-indented stray
+  # `fi` split what should have been ONE MODE==full block into two
+  # sequential ones), doubling --full's dominant runtime cost and
+  # duplicating every sweep RED line. Presence-of-a-RED assertions (the one
+  # right above, and P7/c8 elsewhere) cannot catch duplication -- they pass
+  # whether the line appears once or twice. This counts it: ONE failing
+  # fixture hook must yield EXACTLY ONE "RED selftest-sweep ... failing.sh"
+  # line, never two. ----
+  local dup_count
+  dup_count=$(printf '%s\n' "$OUT" | grep -c "RED selftest-sweep.*failing\.sh")
+  if [[ "$dup_count" -eq 1 ]]; then
+    echo "self-test (8-selftest-sweep-not-duplicated): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (8-selftest-sweep-not-duplicated): FAIL (expected exactly 1 RED line for the one failing fixture hook, got ${dup_count} -- dispatch tail is calling check_selftest_sweep more than once in --full mode)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
   # ---- Check 8: GREEN fixture — a stub hook's --self-test passes ----
   D=$(_scenario_dir c7-green)
   _stamp_claim_honesty_green "$D"
@@ -6074,17 +6094,22 @@ if [[ "$MODE" == "portability" ]]; then
 else
   run_quick_checks "$LIVE_HOME" "$REPO_ROOT"
 
+  # SINGLE MODE==full block (harness-review Major, fixed): a mis-indented
+  # stray `fi` previously split what should have been ONE full-mode block
+  # into two sequential ones, so check_selftest_sweep and
+  # check_master_drift_selftest each ran TWICE per --full invocation --
+  # doubling --full's multi-minute dominant runtime cost and duplicating
+  # every sweep RED line. All four full-mode-only checks now run from
+  # exactly this one block, exactly once each. Self-test
+  # "8-selftest-sweep-not-duplicated" counts the RED lines a single failing
+  # fixture hook produces (must be exactly 1) so a future regression of
+  # this exact shape fails loudly instead of merely costing time.
   if [[ "$MODE" == "full" ]]; then
     check_selftest_sweep "$LIVE_HOME"
     check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
     check_portability_sweep "$LIVE_HOME" "$REPO_ROOT"
+    check_selftest_exclusions_selftest "$REPO_ROOT"
   fi
-  fi
-
-if [[ "$MODE" == "full" ]]; then
-  check_selftest_sweep "$LIVE_HOME"
-  check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
-  check_selftest_exclusions_selftest "$REPO_ROOT"
 fi
 
 if [[ "$RED_COUNT" -eq 0 ]]; then
