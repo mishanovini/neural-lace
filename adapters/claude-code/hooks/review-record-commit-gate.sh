@@ -360,6 +360,22 @@ _rrcg_main() {
     [[ -d "$gitdir/rebase-merge" || -d "$gitdir/rebase-apply" ]] && return 0
   fi
 
+  # review-independence plan RI1b (docs/plans/review-independence.md):
+  # "committing IS enqueueing" -- the authoring session never decides to
+  # enqueue a review; attempting to commit uncovered in-surface content IS
+  # the enqueue trigger. Placed BEFORE the override check below and BEFORE
+  # the uncovered-computation this function does further down, deliberately
+  # unconditional: an overridden commit still needs independent review just
+  # as much as a blocked one, so this must not depend on which exit path
+  # this function eventually takes. Fail-open, always -- a bug here can
+  # never affect this gate's exit code (rq_auto_enqueue_uncovered swallows
+  # every internal failure and never propagates a non-zero return that
+  # matters to this caller, which does not check it).
+  source "$_RRCG_SELF_DIR/lib/review-queue-auto-enqueue-lib.sh" 2>/dev/null
+  if command -v rq_auto_enqueue_uncovered >/dev/null 2>&1; then
+    rq_auto_enqueue_uncovered "$repo_root" 2>/dev/null
+  fi
+
   # Escape hatch — loud and logged, and only with a stated reason.
   #
   # ROUND-5 C1, second half. The block message tells the operator to run
@@ -879,6 +895,33 @@ EOF
   rc="$(runfrom "$R" "git -C \$REPO $SUB -m x")"
   [[ "$rc" == "2" ]] && pass "unresolvable \$REPO target still blocks (round-3 fail-open stays closed)" \
     || fail "FAIL-OPEN (rc=$rc): unexpanded variable target waved through"
+
+  echo "Scenario 23: review-independence RI1b — committing uncovered content"
+  echo "auto-enqueues a review-queue item (docs/plans/review-independence.md)"
+  if [[ -f "$_RRCG_SELF_DIR/lib/review-queue-auto-enqueue-lib.sh" ]] \
+     && [[ -f "$_RRCG_SELF_DIR/../scripts/review-queue.sh" ]]; then
+    local RQDIR="$T/review-queue-scenario23"
+    mkdir -p "$RQDIR"
+    ( cd "$R" && git reset -q ) >/dev/null 2>&1
+    mkdir -p "$R/adapters/claude-code/hooks/lib"
+    echo '# another unreviewed harness change, scenario 23 fixture' > "$R/adapters/claude-code/hooks/lib/ri1b-fixture.sh"
+    ( cd "$R" && git add adapters/claude-code/hooks/lib/ri1b-fixture.sh ) >/dev/null 2>&1
+    local payload23
+    payload23="$(jq -nc --arg c 'git commit -m "feat: ri1b fixture"' '{tool_name:"Bash",tool_input:{command:$c}}')"
+    RQ_AUTO_ENQUEUE_MODE=sync REVIEW_QUEUE_STATE_DIR="$RQDIR" \
+      bash -c 'export RQ_AUTO_ENQUEUE_MODE REVIEW_QUEUE_STATE_DIR; printf "%s" "$1" | (cd "$2" && bash "$3") >/dev/null 2>&1' \
+      _ "$payload23" "$R" "$SELF"
+    if ls "$RQDIR"/rq-*.json >/dev/null 2>&1 \
+       && grep -l "ri1b-fixture.sh" "$RQDIR"/rq-*.json >/dev/null 2>&1; then
+      pass "auto-enqueue wrote a review-queue.sh item naming the uncovered file"
+    else
+      fail "auto-enqueue did NOT write a review-queue item (RI1b splice broken or removed)"
+    fi
+    ( cd "$R" && git reset -q ) >/dev/null 2>&1
+    rm -f "$R/adapters/claude-code/hooks/lib/ri1b-fixture.sh"
+  else
+    fail "review-queue-auto-enqueue-lib.sh or scripts/review-queue.sh missing from this checkout — RI1b splice cannot be verified"
+  fi
 
   rm -rf "$T"
   echo

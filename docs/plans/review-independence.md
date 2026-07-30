@@ -354,9 +354,9 @@ Concrete, observable, demonstrable.]
 - IN: `review-queue.sh` (enqueue/list/get/claim/complete/mark-stale over a
   per-machine, optionally coord-repo-synced, state dir); the auto-enqueue mechanism
   that makes "attempting to commit uncovered content" mechanically trigger enqueue
-  (built as a standalone library, `review-queue-auto-enqueue-lib.sh`, plus the exact
-  splice documented for `review-record-commit-gate.sh` — see RI1b's Edge Case below
-  for why it is not spliced directly in this plan); `review-runner.sh` (claim →
+  (a standalone library, `review-queue-auto-enqueue-lib.sh`, spliced into
+  `review-record-commit-gate.sh` once a mid-build rebase reconciled this worktree's
+  branch — see RI1b's Edge Case below); `review-runner.sh` (claim →
   prepare → finalize, run by a genuinely different session/process than the
   author's, using the harness's existing adversarial reviewer agents); the fixed
   `config/review-instructions.md` template; `write-review-record.sh`'s schema
@@ -567,9 +567,14 @@ change without opening each one.
 -->
 - `adapters/claude-code/scripts/review-queue.sh` — CREATE (RI1): the queue.
 - `adapters/claude-code/hooks/lib/review-queue-auto-enqueue-lib.sh` — CREATE (RI1b):
-  the mechanical enqueue trigger, standalone (see Edge Cases).
+  the mechanical enqueue trigger, standalone (see Edge Cases). Also gained the
+  `HARNESS_SELFTEST` state-dir sandbox fix (see Decisions Log D6).
+- `adapters/claude-code/hooks/review-record-commit-gate.sh` — MODIFY (RI1b, applied
+  after the mid-build rebase reconciled this worktree's branch — see Edge Cases):
+  the 3-line splice + a new self-test Scenario 23.
 - `adapters/claude-code/scripts/lib/state-json-init.sh` — CREATE (RI1): imported,
-  absent from this worktree's branch base; byte-identical to the real one.
+  absent from this worktree's branch base at build start; byte-identical to the
+  real one (superseded by the real file once the mid-build rebase landed).
 - `adapters/claude-code/scripts/review-runner.sh` — CREATE (RI2): claim/prepare/finalize.
 - `adapters/claude-code/config/review-instructions.md` — CREATE (RI2): fixed reviewer template.
 - `adapters/claude-code/scripts/write-review-record.sh` — MODIFY (RI3, + an unrelated
@@ -633,17 +638,31 @@ empty is fine and common.
   added this path" lookup depends on that.
 
 ## Edge Cases
-- **RI1b's auto-enqueue is NOT spliced into `review-record-commit-gate.sh` in this
-  plan.** That file is entirely absent from this worktree's git history (`git
-  merge-base --is-ancestor HEAD wip/harness-hardening-2026-07-29` — false in both
-  directions; this worktree's HEAD predates that branch's V6 landing by several
-  commits). Splicing an edit into a file this worktree cannot see would mean
-  authoring a diff against content this session never actually read — exactly the
-  Chesterton's-Fence violation the build protocol prohibits. The mechanism is
-  instead built as a standalone, fully self-tested library
-  (`review-queue-auto-enqueue-lib.sh`) with the EXACT 3-line splice documented in
-  its own header and in task RI1b above, ready to apply the moment the branches
-  reconcile (tracked as a Decisions Log entry, not silently dropped).
+- **RI1b's auto-enqueue was initially built standalone, not spliced into
+  `review-record-commit-gate.sh`, because that file was entirely absent from this
+  worktree's git history at build start** (`git merge-base --is-ancestor HEAD
+  wip/harness-hardening-2026-07-29` — false in both directions at the time; this
+  worktree's HEAD predated that branch's V6 landing by several commits). Splicing
+  an edit into a file this worktree could not see would have meant authoring a
+  diff against content this session never actually read — the Chesterton's-Fence
+  violation the build protocol prohibits. **The branches were reconciled in this
+  same session** (`git rebase` onto `wip/harness-hardening-2026-07-29`'s tip, after
+  all four RI1-RI4 commits had already landed on the original base) and the
+  splice IS NOW APPLIED — the exact 3 lines from `review-queue-auto-enqueue-lib.sh`'s
+  header, inserted at the documented point. Mutation-proven, not merely present:
+  `review-record-commit-gate.sh --self-test` Scenario 23 stages an uncovered file,
+  commits, and asserts a `review-queue.sh` item was written; temporarily deleting
+  the splice drives Scenario 23 (and only Scenario 23, of 62) to FAIL — full
+  61-then-62-then-61-then-62 transcript in the Decisions Log D3.
+  **A real bug surfaced and was fixed during this integration:** the splice's first
+  version wrote real fixture-derived queue items into the operator's actual
+  `~/.claude/state/review-queue/` on every self-test run (no `HARNESS_SELFTEST`
+  sandbox), discovered by inspecting that directory after running the gate's
+  suite twice. Fixed at the source (`review-queue.sh`'s own state-dir resolver now
+  honors `HARNESS_SELFTEST=1` exactly like `hooks/lib/signal-ledger.sh` already
+  does), and the 8 polluting fixture files were deleted after confirming by content
+  (`account: t@example.com`, the fixture's own git identity) that none were real
+  operator data.
 - **A commit that is overridden via `REVIEW_RECORD_GATE_OVERRIDE` still needs
   independent review just as much as one that is blocked** — the auto-enqueue call
   site is documented to run BEFORE the override check, unconditionally, so
@@ -765,12 +784,14 @@ non-whitespace chars of non-placeholder content. See
   --self-test`; `bash adapters/claude-code/hooks/lib/review-queue-auto-enqueue-lib.sh
   --self-test`; `bash adapters/claude-code/scripts/review-runner.sh --self-test`;
   `bash adapters/claude-code/scripts/write-review-record.sh --self-test`; `bash
-  adapters/claude-code/hooks/harness-doctor.sh --self-test` — each run under BOTH
-  `/bin/bash` and `/opt/homebrew/bin/bash` by absolute path.
+  adapters/claude-code/hooks/harness-doctor.sh --self-test`; `bash
+  adapters/claude-code/hooks/review-record-commit-gate.sh --self-test` — each run
+  under BOTH `/bin/bash` and `/opt/homebrew/bin/bash` by absolute path.
 - **Expected outputs:** review-queue.sh 13/13 PASS; review-queue-auto-enqueue-lib.sh
   7/7 PASS; review-runner.sh 8/8 PASS; write-review-record.sh 20/20 PASS;
   harness-doctor.sh's three new scenarios (`review-reviewer-independence-red`,
-  `-green`, `-unresolvable-not-red`) PASS within its full suite.
+  `-green`, `-unresolvable-not-red`) PASS within its full suite;
+  review-record-commit-gate.sh 62/62 PASS (61 pre-existing + new Scenario 23).
 - **On-disk artifact location:** this plan file's own completion report (appended at
   close, per Definition of Done) plus the builder's structured evidence citing each
   suite's counts; acceptance-exempt so no `.claude/state/acceptance/` artifact applies.
@@ -822,11 +843,17 @@ conventions specific to this codebase.
   doctrine file) + manual re-read confirming the residual paragraph states the new
   mechanism honestly (still names what remains unsolved: quote-forgery,
   `REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01`).
+- RI1b (post-rebase integration): `review-record-commit-gate.sh --self-test` — 61
+  pre-existing scenarios (0 regressions from the splice) + new Scenario 23
+  (stages an uncovered file, commits, asserts a `review-queue.sh` item was
+  written), 62/62 total on both interpreters.
 - Mutation-tested (not just green-by-default): each self-test's core assertions were
   verified RED against the pre-fix/broken shape before being made GREEN (e.g.
   write-review-record.sh's `${reviewer,,}` bug reproduced verbatim on `/bin/bash`
   before the `tr`-based fix; the doctor's self-approval RED fixture confirmed to
-  trip before the GREEN fixture's differing-author commit was added).
+  trip before the GREEN fixture's differing-author commit was added; Scenario 23
+  temporarily neutered via a one-line mutation and confirmed to fail — exactly
+  Scenario 23, 61/62 — then restored to 62/62).
 
 ## Walking Skeleton
 The thinnest end-to-end slice is: an uncovered file gets enqueued (RI1) → a
@@ -886,15 +913,24 @@ constitution-tier-paths check is dropped (nothing left to warn about); the singl
 surviving RED compares git-commit authorship (the "unforgeable half"), not ephemeral
 session/account fields.
 
-**D3 — RI1b built as a standalone library, not spliced into
-`review-record-commit-gate.sh` (builder decision, Tier 1, reversible).** That file is
-absent from this worktree's git history entirely (confirmed:
-`git merge-base --is-ancestor HEAD wip/harness-hardening-2026-07-29` is false in both
-directions — a worktree-provisioning mismatch, not a design choice). Splicing an edit
-into a file this session cannot read would violate Chesterton's Fence. The exact
-3-line splice is documented in `review-queue-auto-enqueue-lib.sh`'s own header and in
-task RI1b, ready to apply once the branches reconcile — named as an explicit
-follow-up, not silently dropped. See Edge Cases.
+**D3 — RI1b built as a standalone library first, then spliced in once the branches
+reconciled (builder decision, Tier 1, reversible).** At build start
+`review-record-commit-gate.sh` was absent from this worktree's git history entirely
+(confirmed: `git merge-base --is-ancestor HEAD wip/harness-hardening-2026-07-29` was
+false in both directions — a worktree-provisioning mismatch, not a design choice).
+Splicing an edit into a file this session could not read would have violated
+Chesterton's Fence, so the mechanism was built standalone first. **Mid-build, the
+coordinator directed a rebase onto `wip/harness-hardening-2026-07-29`'s current tip**
+(after all four RI1-RI4 commits had already landed on the original base) — the
+rebase succeeded with one expected add/add conflict (`state-json-init.sh`, resolved
+by dropping this plan's now-redundant provenance comment and keeping the real file)
+and one INDEX.md content conflict (resolved by re-running the documented generator).
+Once `review-record-commit-gate.sh` existed in this worktree, the exact 3-line
+splice from `review-queue-auto-enqueue-lib.sh`'s header was applied for real,
+verified against the gate's own 61 pre-existing self-test scenarios (0 regressions)
+plus a new Scenario 23 proving the integration, mutation-tested (deleting the
+splice drives Scenario 23, and only Scenario 23, to FAIL). See Edge Cases for the
+real state-pollution bug this integration surfaced and fixed.
 
 **D4 — Fixed a pre-existing, unrelated bug in `write-review-record.sh` while editing
 it (builder decision, Tier 1, reversible).** `${reviewer,,}` (bash 4+-only lowercase
@@ -915,6 +951,24 @@ self-invocation convention — made every self-test run fail with "Permission de
 before any of the actual logic ran. Fixed alongside D4 (same file, same session).
 `review-queue.sh`/`review-runner.sh`/`review-queue-auto-enqueue-lib.sh` were created
 executable from the start.
+
+**D6 — Fixed a REAL state-pollution bug discovered while applying the RI1b splice
+for real (builder decision, Tier 1, reversible; found via direct inspection, not
+inferred).** The first application of the splice into the REAL
+`review-record-commit-gate.sh` wrote actual fixture-derived queue items into the
+operator's real `~/.claude/state/review-queue/` on every self-test run, because
+`review-queue.sh`'s state-dir default had no sandbox awareness and the gate's own
+self-test does not override `REVIEW_QUEUE_STATE_DIR`. Discovered by directly
+inspecting that directory after running the gate's suite twice (`ls
+~/.claude/state/review-queue/` showed 8 files with fixture-identifying content —
+`account: t@example.com`, the self-test's own git identity). Fixed at the source:
+`review-queue.sh`'s `_rq_state_dir_default` now honors `HARNESS_SELFTEST=1` exactly
+like `hooks/lib/signal-ledger.sh`'s pre-existing `_signal_ledger_path` convention
+(sandboxes under `$TMPDIR` when set and no explicit override is given) — the gate's
+own self-test already exports `HARNESS_SELFTEST=1` globally, so no change was
+needed in the gate itself. The 8 polluting files were deleted after confirming by
+content they were fixture garbage, not real operator data. Re-verified: both
+self-test runs post-fix leave `~/.claude/state/review-queue/` empty.
 
 ## Behavioral Contracts
 <!-- rung: 5 requires this section per plan-reviewer.sh Check 11. -->

@@ -121,7 +121,24 @@ EOF
 }
 
 _rq_state_dir_default() {
-  printf '%s' "${REVIEW_QUEUE_STATE_DIR:-$HOME/.claude/state/review-queue}"
+  if [[ -n "${REVIEW_QUEUE_STATE_DIR:-}" ]]; then
+    printf '%s' "$REVIEW_QUEUE_STATE_DIR"
+    return 0
+  fi
+  # Sandbox-by-default under HARNESS_SELFTEST (same convention as
+  # hooks/lib/signal-ledger.sh's _signal_ledger_path): a CALLER that forgets
+  # to override REVIEW_QUEUE_STATE_DIR during a self-test run (e.g.
+  # review-record-commit-gate.sh's own suite, which exercises the real
+  # review-queue-auto-enqueue-lib.sh splice against fixture repos) must
+  # never write fixture garbage into the operator's real
+  # ~/.claude/state/review-queue/ -- this defaulting is the backstop, not
+  # the primary control (every self-test in THIS repo's own suite still
+  # passes --state-dir explicitly).
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/review-queue-selftest-%s' "${TMPDIR:-/tmp}" "$$"
+    return 0
+  fi
+  printf '%s/.claude/state/review-queue' "${HOME:-$PWD}"
 }
 
 _rq_hostname() {

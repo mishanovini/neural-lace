@@ -2,24 +2,26 @@
 # review-queue-auto-enqueue-lib.sh — the mechanical "WHETHER a review
 # happens" splice (docs/plans/review-independence.md, RI1b).
 #
-# WHY THIS IS A SEPARATE LIBRARY, NOT INLINED INTO review-record-commit-gate.sh
-#   This worktree's branch base does not yet carry
-#   adapters/claude-code/hooks/review-record-commit-gate.sh (it landed on
-#   wip/harness-hardening-2026-07-29, 9 commits ahead of / 48 behind this
-#   worktree's HEAD -- a base mismatch from how this worktree was
-#   provisioned, named honestly in this build's report rather than papered
-#   over by importing another builder's 900-line file wholesale into this
-#   diff). Isolating the auto-enqueue LOGIC here means it is fully built,
-#   self-tested, and provably correct against the REAL review-record-gate-
-#   lib.sh (byte-identical between this worktree and wip/harness-hardening-
-#   2026-07-29 -- verified) without depending on a file this worktree does
-#   not have. The actual splice into review-record-commit-gate.sh is a
-#   THREE-LINE integration documented in docs/plans/review-independence.md's
-#   RI1b task and ready to apply the moment the branches reconcile:
+# WHY THIS IS A SEPARATE LIBRARY, NOT INLINED DIRECTLY INTO
+# review-record-commit-gate.sh's OWN uncovered-computation loop
+#   Built standalone because this worktree's branch base initially did not
+#   carry adapters/claude-code/hooks/review-record-commit-gate.sh at all (it
+#   had landed on wip/harness-hardening-2026-07-29 while this worktree's
+#   history had diverged before that point) -- editing a file this session
+#   could not read would have violated Chesterton's Fence. Isolating the
+#   auto-enqueue LOGIC here meant it was fully built and self-tested against
+#   the REAL review-record-gate-lib.sh before the branches reconciled. THE
+#   BRANCHES HAVE SINCE RECONCILED (a `git rebase` onto wip/harness-
+#   hardening-2026-07-29's tip, same session) and the splice below IS NOW
+#   APPLIED in review-record-commit-gate.sh -- kept as a standalone library
+#   rather than inlined, since that gate's own control flow is delicate
+#   (61+ pre-existing self-test scenarios) and a bug in THIS file must never
+#   be able to affect that gate's exit code:
 #
 #     source "$_RRCG_SELF_DIR/lib/review-queue-auto-enqueue-lib.sh" 2>/dev/null
-#     command -v rq_auto_enqueue_uncovered >/dev/null 2>&1 && \
-#       rq_auto_enqueue_uncovered "$repo_root" "$_rrcg_session_id_from_stdin"
+#     if command -v rq_auto_enqueue_uncovered >/dev/null 2>&1; then
+#       rq_auto_enqueue_uncovered "$repo_root" 2>/dev/null
+#     fi
 #
 #   Inserted right after the rebase/merge exemption check (after the
 #   `[[ -d "$gitdir/rebase-merge" ...` block) and BEFORE the
@@ -28,7 +30,11 @@
 #   ultimately overridden or blocked. This is deliberate: "committing IS
 #   enqueueing" (operator-directed 2026-07-29) must not depend on which exit
 #   path the gate eventually takes -- an overridden commit still needs
-#   independent review just as much as a blocked one.
+#   independent review just as much as a blocked one. Mutation-proven:
+#   review-record-commit-gate.sh's own self-test Scenario 23 stages an
+#   uncovered file, commits, and asserts a review-queue.sh item was written;
+#   temporarily deleting this splice drives Scenario 23 (and ONLY Scenario
+#   23, of 62) to FAIL.
 #
 # WHAT IT DOES
 #   Re-derives the SAME staged/in-surface/uncovered computation
