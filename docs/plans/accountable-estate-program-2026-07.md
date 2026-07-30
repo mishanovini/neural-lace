@@ -355,7 +355,12 @@ observe).
   types, `plan_outcome_recorded` and `plan_reopened` (added to progress-log-lib.sh's
   `_pl_natural_key` + `_PL_KNOWN_EMITTERS`), emitted from the SAME successful-close call site as the
   pre-existing `plan_completed`. Self-test grew from 21 to 25 scenarios (28 assertions incl. S7's
-  4 sub-parts), 28/0 on BOTH `/bin/bash` 3.2.57 and Homebrew bash 5.3.15.
+  4 sub-parts), 28/0 on BOTH `/bin/bash` 3.2.57 and Homebrew bash 5.3.15. UPDATED 2026-07-30
+  (harness-reviewer REFORMULATE remediation on close-plan.sh + plan-recheck-sweep.sh — this stale
+  "25 scenarios 28/0" record was itself a finding): the C1 default-date storm fix (Re-check dates
+  now marked `(default)` and refreshed at re-close), the M1 found_pass verdict-anchor fix, and
+  their regression scenarios (S28, S29) grew the suite to 29 scenarios / 32 assertions, 32/0 on
+  BOTH interpreters as of that remediation.
 - 2026-07-30: `adapters/claude-code/scripts/plan-recheck-sweep.sh` — NEW, T9's AUTO-REOPEN half.
   Sweeps `docs/plans/archive/*.md` for Status: COMPLETED plans carrying a `## Closure Outcome`
   section whose Re-check date has passed, or whose optional author-declared Recurrence check
@@ -371,7 +376,11 @@ observe).
   T1's `estate-janitor.sh` already disclosed), so the digest is the one chokepoint proven to fire on
   every real session today; the `--quick` entry point is fully decoupled from its caller so a future
   janitor/supervisor registration can invoke it with zero changes to this file. 8/8 self-test
-  scenarios, both interpreters green.
+  scenarios, both interpreters green. UPDATED 2026-07-30 (harness-reviewer REFORMULATE
+  remediation): the C1 default-date-skip fix and the M3 untrusted-repo trust gate (Recurrence
+  check commands now only auto-execute in the harness repo or an explicitly-trusted repo via a
+  `.claude/trust-recurrence-exec` marker) added 2 regression scenarios (S9, S10) — 10/10 self-test
+  scenarios, both interpreters green as of that remediation.
 - 2026-07-30: `adapters/claude-code/hooks/session-start-digest.sh` — T9: `feed_plan_recheck` (new
   feed, delegates to `plan-recheck-sweep.sh --quick` exactly like `feed_nl_issues` delegates to
   `nl-issue.sh --digest-feed`) + its call site alongside `feed_stale_plans`; 2 new self-test
