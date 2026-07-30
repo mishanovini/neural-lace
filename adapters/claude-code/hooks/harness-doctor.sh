@@ -2909,6 +2909,88 @@ check_review_grandfather_integrity() {
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
+# ------------------------------------------------------------
+# Check: review-reviewer-independence (docs/plans/review-independence.md,
+# RI3). A `harness-change-review` PASS record is a self-approval if the SAME
+# git identity both authored the reviewed content AND authored the commit
+# that added the record approving it -- the exact class this whole plan
+# exists to structurally eliminate (an authoring session dispatching
+# harness-reviewer and then writing its own PASS record).
+#
+# WHY GIT-COMMIT AUTHORSHIP, NOT THE JSON reviewer_principal FIELD: session
+# ids and hostnames live in the (uncommitted, per-machine)
+# ~/.claude/state/review-queue/ queue items, never in the repo -- a doctor
+# check that scans committed history cannot see them after the fact, and
+# post-pivot (docs/decisions/067-review-independence-same-session-pathway.
+# md) same-hostname/same-account review is the EXPECTED case, not a
+# violation, so comparing those JSON fields would false-positive on every
+# normal same-machine review. Git commit authorship is the one signal that
+# is BOTH durable (survives in history forever) AND per-content (not
+# per-account) -- exactly the "unforgeable half" named in the operator's
+# 2026-07-29 design-sharpening message.
+#
+# MECHANISM: for each `kind: harness-change-review`, `verdict: PASS` record,
+# compare the git author email of `change_ref.commit_sha` (the reviewed
+# commit, as recorded by write-review-record.sh at capture time) against
+# the git author email of the commit that ADDED the record file itself
+# (review-runner.sh's own commit, per RI2 -- the first, and by the
+# append-only convention the ONLY, commit to add that path).
+#
+#   RED  : both emails resolve and are IDENTICAL -- self-approval.
+#   WARN : either commit is unresolvable (a grandfathered/legacy record
+#          predating this convention, a missing change_ref, or the record
+#          file was never committed) -- cannot verify, not a violation.
+# ------------------------------------------------------------
+check_review_reviewer_independence() {
+  local live_home="$1" repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "review-reviewer-independence" "repo root unresolved -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local records_dir="${repo_root}/docs/reviews/records"
+  if [[ ! -d "$records_dir" ]]; then
+    _warn "review-reviewer-independence" "no docs/reviews/records/ directory yet -- skipped (pre-bootstrap checkout)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  command -v jq >/dev/null 2>&1 || { _warn "review-reviewer-independence" "jq unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  command -v git >/dev/null 2>&1 || { _warn "review-reviewer-independence" "git unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local f base kind verdict reviewed_commit record_relpath reviewed_author record_author
+  shopt -s nullglob
+  for f in "$records_dir"/*.json; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f")"
+    [[ "$base" == "index.json" || "$base" == "grandfather-manifest.json" ]] && continue
+
+    kind=$(jq -r '.kind // empty' "$f" 2>/dev/null)
+    verdict=$(jq -r '.verdict // empty' "$f" 2>/dev/null)
+    [[ "$kind" == "harness-change-review" && "$verdict" == "PASS" ]] || continue
+
+    reviewed_commit=$(jq -r '.change_ref.commit_sha // empty' "$f" 2>/dev/null)
+    if [[ -z "$reviewed_commit" ]]; then
+      _warn "review-reviewer-independence" "${base}: no change_ref.commit_sha recorded -- cannot verify independence, skipped"
+      continue
+    fi
+    reviewed_author=$(git -C "$repo_root" log -1 --format=%ae "$reviewed_commit" -- 2>/dev/null)
+    if [[ -z "$reviewed_author" ]]; then
+      _warn "review-reviewer-independence" "${base}: reviewed commit ${reviewed_commit} does not resolve in this checkout -- cannot verify independence, skipped"
+      continue
+    fi
+
+    record_relpath="docs/reviews/records/${base}"
+    record_author=$(git -C "$repo_root" log --diff-filter=A --format=%ae -- "$record_relpath" 2>/dev/null | tail -n 1)
+    if [[ -z "$record_author" ]]; then
+      _warn "review-reviewer-independence" "${base}: this record was never committed (or its adding commit is unresolvable) -- cannot verify independence, skipped"
+      continue
+    fi
+
+    if [[ "$reviewed_author" == "$record_author" ]]; then
+      _red "review-reviewer-independence" "${base}: SELF-APPROVAL -- the reviewed commit (${reviewed_commit}) and the commit that added this PASS record were both authored by ${reviewed_author}. A review-record must be committed by a genuinely different principal than the one who authored the reviewed content (docs/decisions/067-review-independence-same-session-pathway.md); route this content through docs/plans/review-independence.md's review-queue.sh + review-runner.sh pathway instead."
+    fi
+  done
+  shopt -u nullglob
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
 check_selftest_sweep() {
   local live_home="$1"
   # T2 origin guard (agent-efficiency-fixes-2026-07, docs/lessons/2026-07-20-
@@ -3168,6 +3250,7 @@ run_quick_checks() {
   check_review_surface_cross_check "$live_home" "$repo_root"
   check_review_index_consistency "$live_home" "$repo_root"
   check_review_grandfather_integrity "$live_home" "$repo_root"
+  check_review_reviewer_independence "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -5429,6 +5512,86 @@ EOF
     fi
   else
     echo "self-test (review-grandfather-integrity-green): SKIP (real tooling not found)" >&2
+  fi
+
+  # ---- review-reviewer-independence: RED fixture -- the SAME git author
+  # wrote the reviewed commit AND committed the PASS record approving it
+  # (docs/plans/review-independence.md RI3; self-approval, the class this
+  # whole plan exists to eliminate) ----
+  D=$(_scenario_dir review-reviewer-independence-red)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" && git init -q -b main )
+  ( cd "$D/repo" && git config user.email "author@example.com" && git config user.name "Author Session" )
+  mkdir -p "$D/repo/adapters/claude-code/hooks" "$D/repo/docs/reviews/records"
+  printf '#!/bin/bash\necho v1\n' > "$D/repo/adapters/claude-code/hooks/real.sh"
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: add real.sh" )
+  RI_REVIEWED_SHA=$(git -C "$D/repo" rev-parse HEAD)
+  RI_BLOB_SHA=$(git -C "$D/repo" rev-parse "HEAD:adapters/claude-code/hooks/real.sh")
+  cat > "$D/repo/docs/reviews/records/2026-07-30-harness-change-review-selfapproval.json" <<EOF
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-selfapproval","created_at":"2026-07-30T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"${RI_REVIEWED_SHA}","branch":"main"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"${RI_BLOB_SHA}"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","reviewer_principal":{"hostname":"h","account":"a","session_id":"same-session"},"independence":"pathway","payload":{}}
+EOF
+  printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+  # SAME author (Author Session) commits the record -- this is the
+  # self-approval shape.
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: self-approve real.sh" )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "review-reviewer-independence-red" 1 "$RC" "RED review-reviewer-independence" "$OUT"
+
+  # ---- review-reviewer-independence: GREEN fixture -- a DIFFERENT git
+  # author committed the PASS record than the one who authored the
+  # reviewed commit ----
+  D=$(_scenario_dir review-reviewer-independence-green)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" && git init -q -b main )
+  ( cd "$D/repo" && git config user.email "author@example.com" && git config user.name "Author Session" )
+  mkdir -p "$D/repo/adapters/claude-code/hooks" "$D/repo/docs/reviews/records"
+  printf '#!/bin/bash\necho v1\n' > "$D/repo/adapters/claude-code/hooks/real.sh"
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: add real.sh" )
+  RI_REVIEWED_SHA=$(git -C "$D/repo" rev-parse HEAD)
+  RI_BLOB_SHA=$(git -C "$D/repo" rev-parse "HEAD:adapters/claude-code/hooks/real.sh")
+  cat > "$D/repo/docs/reviews/records/2026-07-30-harness-change-review-independent.json" <<EOF
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-independent","created_at":"2026-07-30T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"${RI_REVIEWED_SHA}","branch":"main"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"${RI_BLOB_SHA}"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","reviewer_principal":{"hostname":"h","account":"a","session_id":"reviewer-session"},"independence":"pathway","payload":{}}
+EOF
+  printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+  # DIFFERENT author (Runner Process) commits the record -- the genuine
+  # independent-reviewer shape this plan builds toward.
+  ( cd "$D/repo" && git config user.email "runner@example.com" && git config user.name "Runner Process" )
+  ( cd "$D/repo" && git add -A && git commit -q -m "runner: PASS record for real.sh" )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"
+  if printf '%s' "$OUT" | grep -q "RED review-reviewer-independence"; then
+    echo "self-test (review-reviewer-independence-green): FAIL (unexpected RED: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (review-reviewer-independence-green): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- review-reviewer-independence: WARN-graceful fixture -- a record
+  # with no change_ref.commit_sha (e.g. a hand-authored or pre-RI3 record)
+  # never REDs; it is a "cannot verify," not a violation ----
+  D=$(_scenario_dir review-reviewer-independence-unresolvable)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" && git init -q -b main )
+  ( cd "$D/repo" && git config user.email "author@example.com" && git config user.name "Author Session" )
+  mkdir -p "$D/repo/docs/reviews/records"
+  cat > "$D/repo/docs/reviews/records/2026-07-30-harness-change-review-nocommitsha.json" <<'EOF'
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-nocommitsha","created_at":"2026-07-30T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"","branch":"main"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","payload":{}}
+EOF
+  printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+  ( cd "$D/repo" && git add -A && git commit -q -m "unresolvable fixture" )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"
+  if printf '%s' "$OUT" | grep -q "RED review-reviewer-independence"; then
+    echo "self-test (review-reviewer-independence-unresolvable-not-red): FAIL (unexpected RED: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (review-reviewer-independence-unresolvable-not-red): PASS" >&2
+    PASSED=$((PASSED + 1))
   fi
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----
