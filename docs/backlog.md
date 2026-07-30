@@ -1901,3 +1901,33 @@ task_8d243391 ("Fix retry-guard state leak in attic/decision-context-
 gate.sh").
 **Filed by:** macos-portability-2026-07 M6 build (S11-flake root-cause
 investigation).
+
+## ROADMAP-MULTI-PROJECT-CONFIG-NOT-SET-01 — the Roadmap's own multi-repo scan has no per-machine config on this machine; Circuit's real plans never reach the Roadmap tree
+
+**Severity:** P2 (the mechanism is built and selftest-proven; only a config file is missing —
+R9-8's "scan the operator's configured projects" ask is real practice on this machine, just
+never wired to this ONE feature)
+**What:** Live-verified 2026-07-30 (cockpit-roadmap-redesign Round 15, while building
+`docs/reviews/cockpit-ui-requirements-ledger.md`): `GET /api/roadmap` at :7733 returns items
+from exactly ONE project (`neural-lace`) — curl'd this session, 26/26 live items carry
+`"project":"neural-lace"`. `config/projects.json` (the file `ROADMAP_PROJECTS_CONFIG` defaults
+to, `neural-lace/workstreams-ui/server/roadmap-routes.js:494`) does not exist on this machine
+(confirmed via `ls`) — only the tracked `config/projects.example.json` placeholder. This is a
+DIFFERENT config file from the one the Docs browser already uses successfully
+(`config/projects.js`'s `loadProjects()`, which auto-discovers `Circuit` via its own sibling-repo
+scan independent of any config file) — the Docs button already lists 836 Circuit files
+correctly; the Roadmap tree simply never learned Circuit is a project worth scanning for
+`docs/plans/`.
+**Not fixed here** — Round 15's dispatched scope was five operator complaints + one coordinator
+addition (running-state roll-up, colour, plan links, Docs-button crash, the requirements ledger,
+build-order banding), none of which named this gap; it surfaced incidentally while live-verifying
+Round 9's R9-8 row for the ledger.
+**Fix:** copy `config/projects.example.json` to `config/projects.json` on this machine and add
+an entry pointing at the Circuit repo root (same shape `config/projects.js` already resolves for
+the Docs browser); OR, better, have `roadmap-routes.js`'s project loader reuse
+`config/projects.js#loadProjects()` directly instead of maintaining a second, differently-
+configured project map — the two config surfaces (Docs browser vs. Roadmap scan) currently
+require the SAME real information (project name -> repo root) entered twice, which is exactly
+the kind of drift this whole ledger effort exists to catch.
+**Filed by:** cockpit-roadmap-redesign Round 15 build, 2026-07-30 (discovered live while
+verifying R9-8 for `docs/reviews/cockpit-ui-requirements-ledger.md`).

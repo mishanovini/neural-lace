@@ -1004,6 +1004,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .dp-head input { flex: 1; background: var(--bg); border: 1px solid var(--border2); color: var(--text); border-radius: 6px; padding: 6px 8px; }
 .dp-body { overflow: auto; padding: 6px; }
 .doc-row { display: block; width: 100%; text-align: left; margin-bottom: 4px; font-size: 12px; }
+.doc-row-empty { color: var(--muted); font-size: 12px; padding: 6px 2px; }
 .doc-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel2); }
 .doc-title { flex: 1; font-weight: 600; font-size: 13px; }
 .doc-body { padding: 12px 14px; white-space: pre-wrap; font-family: monospace; font-size: 12px; overflow: auto; }
@@ -1139,9 +1140,21 @@ button, a, [role="button"] { min-height: 24px; }
    weight/colour, never colour-only. "next" is a POSITIONAL claim (weight
    only, same neutral the column already uses); "running" is a claim
    backed by a REAL live_sessions entry on this exact task, so it earns the
-   one loud colour (--info, same hue the in-progress fraction fill uses). */
+   one loud colour (--info, same hue the in-progress fraction fill uses).
+   Round 15 (operator, twice: "the running indicator is small and not
+   obvious"): promoted to a real `chip` (bordered pill, background tint —
+   the SAME loud treatment every other status signal in this view uses)
+   instead of plain inline text, and bumped a notch above the base chip's
+   11px. */
 .rm-task-next { font-weight: 600; color: var(--text); }
-.rm-task-running { font-weight: 600; color: var(--info); }
+.chip.rm-task-running {
+  font-weight: 700; font-size: 12px; color: var(--info); border-color: var(--info);
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+}
+/* the plan-row "<id> running" token (deriveTaskSpanLabel) — same colour as
+   the leaf chip above and the bright in-progress title, text-based (the
+   word "running" is the non-colour carrier, WCAG 1.4.1). */
+.rm-taskspan-running { color: var(--info); font-weight: 600; }
 .rm-cell-exglyph { font-size: 13px; text-align: center; }
 .rm-cell-exception { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .rm-cell-mastersummary { grid-column: 3 / 5; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
@@ -1160,8 +1173,16 @@ button, a, [role="button"] { min-height: 24px; }
    that stays the ONE dim state (var(--done), unchanged from Round 12,
    4.55:1). in-progress/stalled/merged-unverified/unknown are the loud
    exceptions and are UNCHANGED by this fix. ---- */
+/* Round 15 (operator, TWICE now — Round 12 asked for this exact thing and
+   it did not land): in-progress titles get the operator's colour (--info
+   blue), not merely brighter white — the same hue every other "active
+   right now" signal in this view uses (leaf running chip, taskspan token,
+   roll-up badge), so a bright title reads as PART OF ONE running-state
+   language instead of a shade of the neutral ladder. #60a5fa on --panel
+   #1f2937 measures 5.9:1 — comfortably above the 4.5:1 body-text floor,
+   let alone the 3:1 large/bold-text floor this is set at (600 weight). */
 .rm-title.rm-title-not-started { color: var(--text); font-weight: 400; }                /* 11.86:1 */
-.rm-title.rm-title-in-progress { color: #f9fafb; font-weight: 600; }                    /* 14.05:1 */
+.rm-title.rm-title-in-progress { color: var(--info); font-weight: 600; }                /* 5.9:1 */
 .rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note; the ONLY dim state now */
 .rm-title.rm-title-stalled { color: var(--interrupt); font-weight: 600; }               /* 5.45:1 */
 .rm-title.rm-title-merged-unverified { color: var(--warn); font-weight: 600; }          /* 8.79:1 */
@@ -1348,6 +1369,9 @@ button, a, [role="button"] { min-height: 24px; }
 .rm-rollups { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 details[open] > summary .rm-rollups { display: none; }
 .chip.rm-rollup-badge { cursor: pointer; }
+/* Round 15: "running" joins the roll-up badge machinery (same --info blue
+   every other active-right-now signal in this view uses). */
+.chip.rm-rollup-running { color: var(--info); border-color: var(--info); font-weight: 600; }
 .chip.rm-rollup-waiting-on-you, .chip.rm-rollup-crashed { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; }
 .chip.rm-rollup-blocked-on, .chip.rm-rollup-limit-parked { color: var(--warn); border-color: var(--warn); }
 .chip.rm-rollup-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; }
@@ -1706,6 +1730,19 @@ details[open] > summary .rm-rollups { display: none; }
    the browser default visited/unvisited blue (#0000EE), 1.56:1 on the
    dark panel — a hard WCAG 1.4.3 failure. */
 .rm-plan-link { overflow-wrap: anywhere; color: var(--info); }
+/* Round 15 (operator, verified live): the plan link is now a <button>
+   opening the in-page docs viewer (the old `file:///` href was dead —
+   confirmed live, no navigation/network on click) — reset UA button chrome
+   so it still READS as the same underlined-on-hover link, not a boxed
+   button; button.ghost's own `color: var(--text)` rule would otherwise
+   outrank the plain `.rm-plan-link` selector above on specificity
+   (type+class beats class-only), so this reset avoids `.ghost` entirely
+   rather than fighting the cascade. */
+.rm-plan-link-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.rm-plan-link-btn:hover { text-decoration: underline; }
 /* R10 (operator round 10, 2026-07-27) */
 .rm-chevron { display: inline-block; width: 12px; font-size: 10px; opacity: 0.6; transition: transform 0.12s; }
 details[open] > .rm-row > .rm-chevron { transform: rotate(90deg); }

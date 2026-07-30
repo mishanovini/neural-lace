@@ -1090,6 +1090,18 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     title_source: operatorTitle ? 'operator' : 'auto',
     project: (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath),
     plan_path: pf.absPath, // R9 follow-up (operator 2026-07-24): every phase IS a plan file — link it
+    // Round 15 (operator, verified live): the client's ONLY prior rendering
+    // of plan_path was a raw `file:///` href — a dead link from an http-
+    // served page (no navigation, no network activity, confirmed live at
+    // :7733). `plan_doc` reuses the EXISTING /api/doc {project,path}
+    // resolver (asks.js's plan-drilldown already does this — same
+    // deriveLib.projectDocRefFor helper, "no new link handling", ux-review
+    // amendment 6) so roadmap.js can open the SAME in-page docs viewer
+    // instead of growing a second one. null when the plan lives outside
+    // every configured/discovered project root (config/projects.json
+    // absent an entry, or the root not on this machine) — the client falls
+    // back to plain text + copy, never a fabricated link.
+    plan_doc: deriveLib.projectDocRefFor(pf.absPath),
     parent_plan: headerExtras.parentPlan, // R11-A: '' = standalone; slug = child of that master
     provenance: provClass.provenance, provenance_reason: provClass.provenance_reason,
     rank: null, added_ts: addedTs, added_mid_build: false,
@@ -1235,6 +1247,20 @@ function absorbOneChildRollUp(agg, child) {
     absorbIntoRollUp(agg, cls, 1, child.id);
   }
   if (st.value === 'unknown') absorbIntoRollUp(agg, 'unknown', 1, child.id);
+  // Round 15 (operator, repeated across rounds): "if I expand a plan I can
+  // see the tasks that are in progress, but the plan itself doesn't show
+  // there's anything in progress." A child genuinely carrying a live
+  // session (the SAME live_sessions signal the leaf task row already
+  // renders as "running") rolls up exactly like stalled/unknown do — C1's
+  // roll-up law applied to the running state, not just attention states:
+  // every collapsed ancestor gets a counted "N running" badge, one click
+  // from the active row. Independent of status.value === 'in-progress'
+  // (which also fires on mere recent-activity with no session currently
+  // attached, or on a done>0-but-idle plan — see derivePlanRootNode's own
+  // `anyInProgress || done > 0` branch) — only an ACTUALLY attached live
+  // session counts as "running" here, so a merely-partial plan is never
+  // mislabeled as actively worked on.
+  if (child.live_sessions && child.live_sessions.length) absorbIntoRollUp(agg, 'running', 1, child.id);
   Object.keys(child.roll_up || {}).forEach((cls) => {
     absorbIntoRollUp(agg, cls, child.roll_up[cls].count, child.roll_up[cls].exemplar);
   });

@@ -92,9 +92,15 @@
   };
 
   // Roll-up precedence (C1 + adjudication (b)): governs display ORDER only —
-  // one badge PER class present, never a masked class (delta R4).
-  var ROLLUP_ORDER = ['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown'];
+  // one badge PER class present, never a masked class (delta R4). Round 15
+  // (operator, repeated): "running" joins the SAME machinery the
+  // stalled/unknown attention badges already use (C1's roll-up law applied
+  // to the running state, not just attention states) — leads the order
+  // since "someone is actively working on this right now" is the loudest,
+  // most wanted-visible fact, ahead of the genuine problem states.
+  var ROLLUP_ORDER = ['running', 'waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown'];
   var ROLLUP_BADGE_LABEL = {
+    'running': 'running',
     'waiting-on-you': 'stalled — waiting on you',
     'crashed': 'stalled — crashed',
     'blocked-on': 'stalled — blocked on a predecessor',
@@ -363,11 +369,24 @@
     }
     return null;
   }
-  function deriveTaskSpanLabel(children) {
-    var kids = children || [];
+  // deriveTaskSpanLabel(item) — Round 15 (operator, repeated): "if I expand
+  // a plan I can see the tasks that are in progress, but the plan itself
+  // doesn't show there's anything in progress." When item.roll_up.running
+  // is populated (server's absorbOneChildRollUp: a REAL descendant
+  // live_sessions entry, the SAME signal taskSpanCell already renders as
+  // "running" on the leaf task row — never merely "in-progress status",
+  // which also fires on stale done>0-but-idle plans), the token becomes
+  // "<id> running" instead of "<id> next" — same id slot, one word swapped,
+  // never a fabricated claim this function cannot verify (the server
+  // already verified it via the roll-up law, C1 applied to running).
+  function deriveTaskSpanLabel(item) {
+    var kids = (item && item.children) || [];
     if (!kids.length) return '';
     var openId = firstOpenChildId(kids);
-    return openId === null ? 'all done' : shortTaskId(openId) + ' next';
+    var runningEntry = item && item.roll_up && item.roll_up.running;
+    var isRunning = !!(runningEntry && runningEntry.count);
+    if (openId === null) return isRunning ? 'running' : 'all done';
+    return shortTaskId(openId) + (isRunning ? ' running' : ' next');
   }
   // TASK-SPAN-END
 
@@ -442,10 +461,17 @@
       var v = (it.status && it.status.value) || 'unknown';
       counts[v] = (counts[v] || 0) + 1;
     });
+    // Round 15 (coordinator, operator verbatim: "the Workstreams UI still
+    // doesn't actually represent the actual order of building"): "in
+    // progress" leads the strip (immediately after "in build order") —
+    // matching the new render order (bandPlanItems, below) that now puts
+    // in-progress-ish plans before upcoming ones — instead of leading with
+    // "upcoming", which read as backwards next to a phrase claiming build
+    // order.
     var buckets = [
-      ['upcoming', (counts['not-started'] || 0)],
       ['in progress', (counts['in-progress'] || 0) + (counts['stalled'] || 0)],
       ['partially done', (counts['merged-unverified'] || 0)],
+      ['upcoming', (counts['not-started'] || 0)],
       ['complete', (counts['complete'] || 0)],
     ];
     var parts = buckets.filter(function (b) { return b[1]; }).map(function (b) {
@@ -461,6 +487,34 @@
       (parts.length ? ' (' + parts.join(', ') + ')' : '');
   }
   // PROJECT-GROUPING-END
+
+  // PLAN-BANDING-BEGIN
+  // bandPlanItems(items) — Round 15 (coordinator, operator verbatim: "the
+  // Workstreams UI still doesn't actually represent the actual order of
+  // building, at least not at the plan level"). roadmap_rank's DEFAULT is
+  // registry-insertion order (R11 adjudication (a), deliberately NOT
+  // recency — recency churn would reorder the list under the operator
+  // daily, so that reasoning still stands and is UNCHANGED here); but
+  // insertion order alone lets a not-started plan sit ABOVE one that is
+  // actively in-progress, which reads as "wrong order" even though rank
+  // itself never lied. THREE STABLE BANDS fix it: any plan that is NOT
+  // not-started (in-progress/stalled/merged-unverified/unknown — "any
+  // running or partially-done plan") renders before every not-started
+  // ("upcoming") plan; each band keeps its OWN existing rank order
+  // internally (a plain filter, never a re-sort) so membership is purely
+  // STATE-DERIVED and changes ONLY when a plan's own status changes, never
+  // a recency-driven reshuffle. Shipped (complete) is already its own
+  // separate band, unchanged (Round 12 item 6) — this only reorders what
+  // was previously the single flat "live" list. Pure, standalone-
+  // executable (same vm-sandbox test technique as groupItemsByProject/
+  // projectGroupHeaderText above — no outer-scope access).
+  function bandPlanItems(items) {
+    var arr = items || [];
+    var inProgress = arr.filter(function (it) { return it.status && it.status.value !== 'not-started'; });
+    var upcoming = arr.filter(function (it) { return !it.status || it.status.value === 'not-started'; });
+    return inProgress.concat(upcoming);
+  }
+  // PLAN-BANDING-END
 
   // ============================================================
   // status chip + roll-up badges + markers (shared by tree AND kanban)
@@ -669,13 +723,27 @@
     var cell = el('span', 'rm-cell rm-cell-taskspan');
     if (item.kind === 'task') {
       if (item.live_sessions && item.live_sessions.length) {
-        cell.appendChild(el('span', 'rm-task-running', 'running'));
+        // Round 15 (operator: "the running indicator is small and not
+        // obvious"): the `chip` base class gives it the same loud
+        // bordered-pill treatment every other status signal in this view
+        // uses, instead of plain inline text.
+        cell.appendChild(el('span', 'chip rm-task-running', 'running'));
       } else if (isNextTask) {
         cell.appendChild(el('span', 'rm-task-next', 'next'));
       }
       return cell;
     }
-    cell.textContent = deriveTaskSpanLabel(item.children);
+    // Round 15: the "<id> running" token (deriveTaskSpanLabel) earns the
+    // SAME loud --info blue + weight 600 the leaf task's own "running" chip
+    // and the bright in-progress title use — text + colour together (WCAG
+    // 1.4.1: the word "running" is the non-colour carrier, the blue is the
+    // reinforcement, never the only signal). "next"/"all done" stay the
+    // existing neutral (positional claim only).
+    var label = deriveTaskSpanLabel(item);
+    if (label) {
+      var isRunningLabel = label === 'running' || / running$/.test(label);
+      cell.appendChild(el('span', isRunningLabel ? 'rm-taskspan-running' : '', label));
+    }
     return cell;
   }
 
@@ -800,6 +868,47 @@
     return det;
   }
 
+  // openPlanDocModal(project, docPath) — reuses the EXISTING docModal DOM
+  // app.js already wires (Esc, docClose, docScrim all close it regardless
+  // of who opened it), the SAME small-duplicated-reader pattern asks.js's
+  // own openPlanDocModal already established (ux-review amendment 6: "no
+  // pane grows its own link handling"). Best-effort no-op if the shared
+  // modal elements are absent from this page for any reason.
+  function openPlanDocModal(project, docPath) {
+    var docModal = $('docModal'), docTitle = $('docTitle'), docBody = $('docBody'), docOpenEditor = $('docOpenEditor');
+    if (!docModal || !docTitle || !docBody) return;
+    docTitle.textContent = project + ' / ' + docPath;
+    docBody.textContent = 'loading…';
+    docModal.hidden = false;
+    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
+      .then(function (r) { return r.json(); })
+      .then(function (j) { docBody.textContent = j && j.ok ? j.content : ('error: ' + (j && j.error)); })
+      .catch(function (err) { docBody.textContent = 'error: ' + err; });
+    if (docOpenEditor) {
+      docOpenEditor.onclick = function () {
+        fetch('/api/doc/open', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: project, path: docPath }),
+        }).catch(function () {});
+      };
+    }
+  }
+  function makeCopyBtn(text, label) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost small copy-btn';
+    b.textContent = label || 'copy';
+    b.title = 'copy "' + text + '" to clipboard';
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(function () {});
+      var orig = b.textContent;
+      b.textContent = 'copied';
+      setTimeout(function () { b.textContent = orig; }, 1200);
+    });
+    return b;
+  }
+
   // ============================================================
   // drill-down body (C6 + C5 reasons + title edit + rank reorder)
   // ============================================================
@@ -807,17 +916,32 @@
     var box = el('div', 'rm-drill');
 
     // R9 follow-up (operator 2026-07-24: "is there a plan this is tied to?
-    // why don't I see a link?"): every phase IS a plan file — link it,
-    // absolute path (operator directive: links are always absolute).
+    // why don't I see a link?"): every phase IS a plan file — link it.
+    // ROUND 15 (operator, verified live): the OLD `file:///` href was a
+    // DEAD link from this http-served page (confirmed live at :7733 — no
+    // navigation, no network activity on click). Plan links now open the
+    // SAME in-page docs viewer the Docs button already renders markdown
+    // through (/api/doc {project,path}, reusing docModal) — never a
+    // second renderer (ux-review amendment 6). `plan_doc` is null only
+    // when the plan lives outside every configured/discovered project
+    // root; that (rare, should not occur for this repo's own plans) case
+    // falls back to plain text + copy, never a fabricated/dead link.
     if (item.kind === 'plan' && item.plan_path) {
       var planRow = el('div', 'rm-plan-link-row');
       planRow.appendChild(el('span', 'rm-drill-label', 'plan: '));
-      var a = document.createElement('a');
-      a.className = 'rm-plan-link';
-      a.textContent = item.plan_path.replace(/^.*[\\/](docs[\\/])/, '$1').replace(/\\/g, '/');
-      a.title = item.plan_path;
-      a.href = 'file:///' + String(item.plan_path).replace(/\\/g, '/').replace(/^\/+/, '');
-      planRow.appendChild(a);
+      var displayPath = item.plan_path.replace(/^.*[\\/](docs[\\/])/, '$1').replace(/\\/g, '/');
+      if (item.plan_doc && item.plan_doc.project && item.plan_doc.path) {
+        var planLinkBtn = btn('rm-plan-link rm-plan-link-btn', displayPath, function () {
+          openPlanDocModal(item.plan_doc.project, item.plan_doc.path);
+        });
+        planLinkBtn.title = item.plan_path + ' — open the rendered file in-page';
+        planRow.appendChild(planLinkBtn);
+      } else {
+        var planTextSpan = el('span', 'rm-plan-link', displayPath);
+        planTextSpan.title = item.plan_path;
+        planRow.appendChild(planTextSpan);
+        planRow.appendChild(makeCopyBtn(item.plan_path, 'copy path'));
+      }
       box.appendChild(planRow);
     }
 
@@ -1317,7 +1441,12 @@
         tree.appendChild(groupEl);
         container = groupEl;
       }
-      g.items.forEach(function (it) {
+      // Round 15: in-progress-ish plans render before upcoming ones WITHIN
+      // this project's own list (bandPlanItems) — rank order is preserved
+      // inside each band; `live.indexOf(it)`/`live.length` below still
+      // reference the ORIGINAL flat list, so reorder buttons keep operating
+      // on the true global build-order position exactly as before (R9-2d).
+      bandPlanItems(g.items).forEach(function (it) {
         // Round 12 item 3: no ordinal label passed (buildOrderLabel is
         // retired from rendering — see the PHASE-SERIES-BEGIN note); the
         // rm-phase-step wrapper stays for the series connector line only.

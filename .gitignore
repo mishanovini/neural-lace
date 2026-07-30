@@ -100,6 +100,14 @@ docs/reviews/*
 # descending into it to apply a per-file re-include).
 !docs/reviews/records/
 !docs/reviews/records/*.json
+# cockpit-roadmap-redesign Round 15: a LIVING canonical requirements ledger
+# (one row per operator-verbatim UI requirement, re-verified and updated
+# every build round — see the plan's task 9), deliberately NOT dated like a
+# one-time review snapshot; a stable name is the point (future rounds edit
+# this file in place rather than deciding whether to mint a new dated one).
+# Legitimate NL-self artifact, not downstream-project content — explicit
+# single-file re-include, same convention as docs/reviews/records/ above.
+!docs/reviews/cockpit-ui-requirements-ledger.md
 docs/sessions/*
 !docs/sessions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
 

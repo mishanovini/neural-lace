@@ -797,6 +797,11 @@
   // Docs browser (kept — link-resolver backend)
   // ============================================================
   var docsLoaded = false, docsCache = {};
+  // DOCS-LIST-RENDER-BEGIN (selftest real-execution extraction anchor —
+  // Round 15 regression: docsCache[proj] used to be treated as the files
+  // array itself; it is actually {root, missing, files}. Marker starts
+  // AFTER the var so a sandboxed extraction can inject its own docsCache
+  // without the re-declaration resetting it to {}.)
   function loadDocs() {
     return fetch('/api/docs').then(function (r) { return r.json(); }).then(function (j) {
       docsCache = (j && j.projects) || {};
@@ -804,12 +809,29 @@
       renderDocsList('');
     });
   }
+  // Round 15 (operator: "the Docs button in the corner doesn't show any
+  // files"): ROOT CAUSE, verified live — GET /api/docs returns
+  // { projects: { <key>: {root, missing, files:[...]} } } (server.js ->
+  // projects.js#listDocs), but this function treated docsCache[proj] as
+  // THE FILES ARRAY ITSELF. `files.filter(...)` on a plain object threw
+  // "files.filter is not a function" inside the forEach callback (confirmed
+  // live via direct eval against the real payload), which aborted the
+  // WHOLE render right after docsBody was cleared — an empty panel with no
+  // visible error. Fix reads `.files`; `missing` (project root not present
+  // on THIS machine) is skipped rather than rendering an empty/broken
+  // section for it; a real "no docs" empty state replaces the silent blank
+  // panel (four-UI-states discipline — never a bare emptiness that could
+  // be mistaken for "still loading" or a genuine zero).
   function renderDocsList(filterText) {
     docsBody.innerHTML = '';
+    var anyRendered = false;
     Object.keys(docsCache).forEach(function (proj) {
-      var files = docsCache[proj] || [];
+      var entry = docsCache[proj];
+      var files = (entry && Array.isArray(entry.files)) ? entry.files : (Array.isArray(entry) ? entry : []);
+      if (entry && entry.missing) return; // project root not on this machine -- nothing to browse
       files.filter(function (f) { return !filterText || f.toLowerCase().indexOf(filterText.toLowerCase()) !== -1; })
         .forEach(function (f) {
+          anyRendered = true;
           var row = document.createElement('button');
           row.className = 'doc-row ghost';
           row.textContent = proj + ' / ' + f;
@@ -817,7 +839,16 @@
           docsBody.appendChild(row);
         });
     });
+    if (!anyRendered) {
+      var empty = document.createElement('div');
+      empty.className = 'doc-row-empty';
+      empty.textContent = filterText ?
+        'no docs match "' + filterText + '"' :
+        'no docs found — no configured project has a readable docs/ tree on this machine';
+      docsBody.appendChild(empty);
+    }
   }
+  // DOCS-LIST-RENDER-END
   docsFilter.addEventListener('input', function () { renderDocsList(docsFilter.value); });
   docsBtn.addEventListener('click', function () {
     docScrim.hidden = false;

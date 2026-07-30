@@ -74,6 +74,7 @@ ok('R11 app.js contains NO POST to /api/event (the retired legacy write sink)',
 // --- docs browser KEPT (link-resolver backend, ux-review amendment 6) -----
 ok('R12 docs browser markup present (kept as the link-resolver backend)',
   /id="docsPanel"/.test(html) && /id="docModal"/.test(html));
+
 ok('R13 app.js has exactly ONE link-resolving function used by every pane (resolveLink)',
   (js.match(/function resolveLink/g) || []).length === 1 && /resolveLink\(/.test(js));
 
@@ -401,6 +402,72 @@ function runBadgeLaw(badgesArray) {
 function chipLabels(wrapNode) {
   return (wrapNode && wrapNode.children ? wrapNode.children : []).map((det) => det.children[0].textContent);
 }
+
+// Round 15 (operator: "the Docs button in the corner doesn't show any
+// files") — ROOT CAUSE, real execution against the REAL /api/docs shape
+// (verified live at :7733: GET /api/docs returns
+// {projects:{<key>:{root,missing,files}}}). renderDocsList used to treat
+// docsCache[proj] as the files ARRAY ITSELF — `files.filter(...)` threw
+// "files.filter is not a function" on the first project key, aborting the
+// whole render right after docsBody was cleared, leaving a silently empty
+// panel (no console-visible crash message reached the operator). A
+// source-regex checking for ".files" could pass while still reading it
+// from the wrong place, so this runs the REAL extracted function against
+// the REAL payload shape in a `vm` sandbox (same technique as the badge-law
+// section above), not a static check.
+(function () {
+  const docsSrc = extractMarkedBlock(js, '// DOCS-LIST-RENDER-BEGIN', '// DOCS-LIST-RENDER-END');
+  ok('R15-D0 selftest can locate the DOCS-LIST-RENDER extraction anchors in app.js', !!docsSrc);
+  if (!docsSrc) return;
+  function makeDocsFakeDom() {
+    function FakeNode(tag) {
+      this.tagName = tag;
+      this.className = '';
+      this._text = '';
+      this.children = [];
+    }
+    Object.defineProperty(FakeNode.prototype, 'textContent', {
+      get: function () { return this._text; },
+      set: function (v) { this._text = v; },
+    });
+    FakeNode.prototype.appendChild = function (c) { this.children.push(c); return c; };
+    FakeNode.prototype.addEventListener = function () {};
+    return { createElement: function (tag) { return new FakeNode(tag); } };
+  }
+  function runDocsRender(cacheObj, filterText) {
+    const dom = makeDocsFakeDom();
+    const docsBody = dom.createElement('div');
+    const sandbox = { document: dom, docsBody: docsBody, docsCache: cacheObj, openDoc: function () {} };
+    vmMod.createContext(sandbox);
+    try {
+      vmMod.runInContext(docsSrc + '\nrenderDocsList(' + JSON.stringify(filterText || '') + ');', sandbox);
+    } catch (err) {
+      return { __error: String(err), body: docsBody };
+    }
+    return { body: docsBody };
+  }
+  const realShapeCache = {
+    Circuit: { root: '/x/Circuit', missing: false, files: ['docs/a.md', 'docs/b.md'] },
+    'neural-lace': { root: '/x/neural-lace', missing: false, files: ['docs/c.md'] },
+  };
+  const r1 = runDocsRender(realShapeCache, '');
+  ok('R15-D1 renderDocsList against the REAL /api/docs payload shape ({root,missing,files}) renders one row per file, never throws',
+    !r1.__error && r1.body.children.length === 3,
+    JSON.stringify({ error: r1.__error, rowCount: r1.body.children.length }));
+  ok('R15-D2 each row names project + file (the same "proj / file" label the code produces when it actually works)',
+    r1.body.children.some(function (c) { return c.textContent === 'Circuit / docs/a.md'; }) &&
+    r1.body.children.some(function (c) { return c.textContent === 'neural-lace / docs/c.md'; }),
+    JSON.stringify(r1.body.children.map(function (c) { return c.textContent; })));
+  const missingCache = { Ghost: { root: '/nowhere', missing: true, files: [] } };
+  const r2 = runDocsRender(missingCache, '');
+  ok('R15-D3 a project whose root is missing on this machine renders the honest empty state, never a broken/blank section',
+    !r2.__error && r2.body.children.length === 1 && /no docs found/.test(r2.body.children[0].textContent),
+    JSON.stringify({ error: r2.__error, text: r2.body.children[0] && r2.body.children[0].textContent }));
+  const r3 = runDocsRender(realShapeCache, 'b.md');
+  ok('R15-D4 the filter still narrows correctly against the real shape (proves .files is actually being read, not a stray fallback masking the bug)',
+    !r3.__error && r3.body.children.length === 1 && r3.body.children[0].textContent === 'Circuit / docs/b.md',
+    JSON.stringify({ error: r3.__error, rows: r3.body.children.map(function (c) { return c.textContent; }) }));
+})();
 
 // --- FIX ROUND (task-verifier conf 7, Acceptance Scenario 4 literal shape):
 // 700 identical BOOKKEEPING (unmatched_dispatch) badges -> ZERO board chips,
@@ -847,9 +914,9 @@ ok('T3-13 progress bars ALWAYS carry the "n/m" text and are OMITTED for zero-tra
   /progress\.done \+ '\/' \+ .*progress\.total|done \+ '\/' \+ /.test(roadmapJs) && /progress\.total/.test(roadmapJsNoComments));
 ok('T3-14 the tree is nested native <details>/<summary> disclosure (C9 keyboard baseline)',
   /createElement\('details'\)/.test(roadmapJs) && /createElement\('summary'\)/.test(roadmapJs));
-ok('T3-15 roll-up badges render ONE PER attention class present (R4: precedence orders, never selects) in the pinned precedence order',
+ok('T3-15 roll-up badges render ONE PER attention class present (R4: precedence orders, never selects) in the pinned precedence order. Round 15: "running" joins the SAME machinery (C1 applied to the running state), leading the order',
   /ROLLUP_ORDER/.test(roadmapJs) &&
-  /'waiting-on-you',\s*'crashed',\s*'blocked-on',\s*'limit-parked',\s*'unknown'/.test(roadmapJs.replace(/\n\s*/g, ' ')));
+  /'running',\s*'waiting-on-you',\s*'crashed',\s*'blocked-on',\s*'limit-parked',\s*'unknown'/.test(roadmapJs.replace(/\n\s*/g, ' ')));
 ok('T3-16 roll-up badges are counted + labeled real buttons whose click expands the path to the item',
   /rm-rollup-badge/.test(roadmapJs) && /expandPathTo/.test(roadmapJs));
 ok('T3-17 CSS shows roll-up badges on COLLAPSED ancestors (hidden when the branch is open — the attention state is never masked while collapsed)',
@@ -1161,6 +1228,60 @@ ok('R11-C7 the substring filter (I4) also searches a master\'s resolved child pl
   ok('R11-L0 the strip maps not-started→upcoming, stalled→in progress (lifecycle position; the stall shows via badges), merged-unverified→partially done, and appends unknown separately when nonzero',
     /1 upcoming/.test(h2) && /1 in progress/.test(h2) && /1 partially done/.test(h2) && /1 status unknown/.test(h2));
 })();
+
+// --- Round 15 (coordinator, operator verbatim: "the Workstreams UI still
+// doesn't actually represent the actual order of building, at least not at
+// the plan level") — THREE STABLE BANDS: real execution, not source-regex,
+// since a wrong band membership silently reorders the whole tree. ---------
+(function () {
+  const bandSrc = extractMarkedBlock(roadmapJs, '// PLAN-BANDING-BEGIN', '// PLAN-BANDING-END');
+  ok('R15-B0 selftest can locate the PLAN-BANDING extraction anchors in roadmap.js', !!bandSrc);
+  if (!bandSrc) return;
+  function band(itemsExpr) { return runPure(bandSrc, 'bandPlanItems(' + itemsExpr + ')'); }
+  const b1 = band(JSON.stringify([
+    { id: 'a', status: { value: 'not-started' } },
+    { id: 'b', status: { value: 'in-progress' } },
+    { id: 'c', status: { value: 'not-started' } },
+    { id: 'd', status: { value: 'stalled' } },
+  ]));
+  ok('R15-B1 bandPlanItems renders every non-not-started plan BEFORE every not-started one, each band keeping its ORIGINAL relative (rank) order — never a re-sort within a band',
+    Array.isArray(b1) && b1.map((it) => it.id).join(',') === 'b,d,a,c',
+    JSON.stringify(b1 && b1.map((it) => it.id)));
+  const b2 = band(JSON.stringify([
+    { id: 'x', status: { value: 'merged-unverified' } },
+    { id: 'y', status: { value: 'unknown' } },
+  ]));
+  ok('R15-B2 merged-unverified and unknown both count as "in progress-ish" (any state that is not literally not-started) — they lead the band, never get pushed to upcoming',
+    Array.isArray(b2) && b2.map((it) => it.id).join(',') === 'x,y', JSON.stringify(b2 && b2.map((it) => it.id)));
+  ok('R15-B3 an item with NO status object at all is treated as upcoming (never thrown, never mis-banded as in-progress)',
+    band('[{id:"z"}]').map((it) => it.id).join(',') === 'z');
+  ok('R15-B4 empty/absent input -> empty array, never throws',
+    band('[]').length === 0 && band('null').length === 0);
+  ok('R15-B5 renderTree actually calls bandPlanItems on each group\'s items before iterating (the wiring, not just the pure function existing in isolation)',
+    /bandPlanItems\(g\.items\)\.forEach/.test(roadmapJsNoComments));
+  // R15-B6: mutation control — a stray identity function in place of the
+  // real band split would make R15-B1 fail (b/d would stay AFTER a/c,
+  // matching insertion order instead of the banded order), proving this
+  // suite is discriminating and not just checking "returns an array".
+  ok('R15-B6 mutation control: bandPlanItems is NOT a no-op passthrough — the banded order actually differs from plain insertion order for a mixed-state list',
+    b1.map((it) => it.id).join(',') !== ['a', 'b', 'c', 'd'].join(','));
+})();
+
+ok('R15-H1 projectGroupHeaderText leads with "in progress" (immediately after "in build order"), matching the new render order — the header used to lead with "upcoming", which read as backwards next to a phrase claiming build order',
+  (function () {
+    const bi = roadmapJs.indexOf('// PROJECT-GROUPING-BEGIN');
+    const ei = roadmapJs.indexOf('// PROJECT-GROUPING-END');
+    const src = (bi !== -1 && ei > bi) ? roadmapJs.slice(bi, ei) : null;
+    if (!src) return false;
+    const sandbox = { items: [{ status: { value: 'in-progress' } }, { status: { value: 'not-started' } }] };
+    vmMod.createContext(sandbox);
+    try { vmMod.runInContext(src + '\nout = projectGroupHeaderText("p", items);', sandbox); } catch (e) { return false; }
+    const h = sandbox.out || '';
+    return h.indexOf('in build order') !== -1 &&
+      h.indexOf('1 in progress') < h.indexOf('1 upcoming') &&
+      h.indexOf('in build order') < h.indexOf('1 in progress');
+  })());
+
 // R11 Critical 6 (orchestrator gap-closure): active-path default expansion.
 ok('R11-C6 containers default OPEN only when the SUBTREE holds active work (in-progress / live session / waiting-on-you); toggle stores true AND false so an explicit close survives re-renders; only user deviations recorded',
   /function subtreeHasActive/.test(roadmapJsNoComments) && /function defaultOpen/.test(roadmapJsNoComments) &&
@@ -1201,10 +1322,23 @@ ok('R9-6c pane collapsed-state persists (localStorage) and My-items never reload
   /rm\.side\.myitems\.open/.test(roadmapJsNoComments) && /rm\.side\.backlog\.open/.test(roadmapJsNoComments) &&
   /setInterval\(loadSideBacklog/.test(roadmapJsNoComments) && !/setInterval\(loadSideMyItems/.test(roadmapJsNoComments));
 // --- R9 follow-ups (operator re-walk 2026-07-24) ---
-ok('R9F-1 every plan phase links its plan FILE (absolute file:// href, plans only) in the drill-down',
-  // raw roadmapJs, not the no-comments variant: the comment-stripper eats
-  // the '//' INSIDE the 'file:///' string literal.
-  /plan_path/.test(roadmapJsNoComments) && /rm-plan-link/.test(roadmapJsNoComments) && /file:\/\/\//.test(roadmapJs));
+// Round 15 (operator, verified live at :7733): the OLD `file:///` href was
+// a DEAD link from this http-served page (confirmed live — clicking it
+// produced zero navigation and zero network activity). R9F-1 now asserts
+// the FIXED behavior: plan links open the SAME in-page docs viewer the
+// Docs button already renders through (openPlanDocModal -> /api/doc
+// {project,path}, reusing docModal — never a second renderer), falling
+// back to plain text + copy only when the server's plan_doc resolver
+// genuinely can't place the plan under any configured project root.
+ok('R9F-1 every plan phase links its plan FILE in the drill-down via the in-page docs viewer (plan_doc {project,path} -> openPlanDocModal -> /api/doc), never a dead file:// href',
+  /plan_path/.test(roadmapJsNoComments) && /rm-plan-link/.test(roadmapJsNoComments) &&
+  /function openPlanDocModal\(project, docPath\)/.test(roadmapJsNoComments) &&
+  /item\.plan_doc && item\.plan_doc\.project && item\.plan_doc\.path/.test(roadmapJsNoComments) &&
+  /openPlanDocModal\(item\.plan_doc\.project, item\.plan_doc\.path\)/.test(roadmapJsNoComments) &&
+  !/a\.href = 'file:\/\/\/'/.test(roadmapJsNoComments));
+ok('R9F-1b the no-plan_doc fallback is plain text + copy, never a fabricated or dead href',
+  /planTextSpan = el\('span', 'rm-plan-link', displayPath\)/.test(roadmapJsNoComments) &&
+  /makeCopyBtn\(item\.plan_path, 'copy path'\)/.test(roadmapJsNoComments));
 ok('R9F-2 the My-items pane surfaces the Inbox ANSWERABLE set (the real waiting-on-you), navigating #inbox/<id> — todo file alone was empty while 4 items waited',
   /\/api\/inbox/.test(roadmapJsNoComments) && /rm-side-waiting/.test(roadmapJsNoComments) &&
   /#inbox\/'\s*\+\s*encodeURIComponent/.test(roadmapJsNoComments.replace(/\n\s*/g, ' ')));
@@ -1735,7 +1869,12 @@ ok('R13-4 mutation control: the marker column\'s 56px width is GONE from the gri
 // pin the new next-only contract. R12-14/R12-16 are UNCHANGED (their
 // expected strings/behavior happen to still hold under the new function —
 // zero-done and empty-children were always next-only/empty).
-function taskSpan(childrenExpr) { return runPure(taskSpanSrc, 'deriveTaskSpanLabel(' + childrenExpr + ')'); }
+// Round 15: deriveTaskSpanLabel now takes the whole plan ITEM (not a bare
+// children array) so it can also read item.roll_up.running — the wrapper
+// below keeps every pre-existing call site's children-array literal
+// unchanged, just folding it into {children, roll_up} (roll_up:{} unless a
+// test explicitly wants to exercise the running case, e.g. R15-1 below).
+function taskSpan(childrenExpr, rollUpExpr) { return runPure(taskSpanSrc, 'deriveTaskSpanLabel({children: ' + childrenExpr + ', roll_up: ' + (rollUpExpr || '{}') + '})'); }
 ok('R13-10 deriveTaskSpanLabel: partial progress now names ONLY the next task — no done-range, no done-count (the operator\'s "same as the bar" redundancy is gone)',
   taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"complete"}},{id:"p/3",status:{value:"not-started"}}]') === '3 next');
 ok('R13-11 deriveTaskSpanLabel: a done task AFTER an open one never confuses which is "next" — still names the FIRST open task, ignoring a later complete one (the contiguity bookkeeping is gone, but the "first, not last" guarantee it protected is still real)',
@@ -1746,11 +1885,17 @@ ok('R13-13 deriveTaskSpanLabel: a SINGLE done task also reads "all done" (no deg
   taskSpan('[{id:"p/1",status:{value:"complete"}}]') === 'all done');
 ok('R12-14 deriveTaskSpanLabel: zero done -> just "<first> next", no "0 done ·" clutter',
   taskSpan('[{id:"p/1",status:{value:"not-started"}},{id:"p/2",status:{value:"not-started"}}]') === '1 next');
-ok('R13-15 deriveTaskSpanLabel: NEVER says "running" even when the first open task carries live_sessions (a real in-progress task with an attached agent) — the label names a POSITION, never a live state; taskSpanCell (DOM layer, R13-40 below) is the ONLY place "running" is ever honestly rendered, from the task\'s OWN live_sessions field',
+ok('R13-15 deriveTaskSpanLabel: a live_sessions entry on a CHILD alone is not enough to say "running" — only item.roll_up.running (the server\'s OWN verified roll-up, C1\'s law applied to the running state) earns the word, never a client-side re-derivation off item.children',
   (function () {
     var r = taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"in-progress"},live_sessions:[{title:"x"}]}]');
     return r === '2 next' && r.indexOf('running') === -1;
   })());
+ok('R15-1 deriveTaskSpanLabel: when item.roll_up.running is populated (a REAL descendant live session, server-verified), the token becomes "<id> running" instead of "<id> next" — same id slot, one word swapped (operator, repeated: "the plan itself doesn\'t show there\'s anything in progress")',
+  taskSpan('[{id:"p/1",status:{value:"complete"}},{id:"p/2",status:{value:"in-progress"}}]', '{running:{count:1,exemplar:"p/2"}}') === '2 running');
+ok('R15-2 deriveTaskSpanLabel: roll_up.running with EVERY task done still honestly says "running" alone (never silently drops the live signal just because nothing is nominally "next") rather than falling back to the now-inaccurate "all done"',
+  taskSpan('[{id:"p/1",status:{value:"complete"}}]', '{running:{count:1,exemplar:"p/1"}}') === 'running');
+ok('R15-3 deriveTaskSpanLabel: no roll_up at all (absent field, e.g. an older/degraded payload) degrades to the plain next/all-done wording, never throws',
+  runPure(taskSpanSrc, 'deriveTaskSpanLabel({children:[{id:"p/1",status:{value:"not-started"}}]})') === '1 next');
 ok('R12-16 deriveTaskSpanLabel: empty/absent children -> empty string (no fake column content)',
   taskSpan('[]') === '' && runPure(taskSpanSrc, 'deriveTaskSpanLabel(null)') === '');
 ok('R13-17 deriveTaskSpanLabel: task ids strip the plan-slug prefix (server emits "slug/T3"; the column shows only "T3") — next-only wording',
@@ -1767,7 +1912,7 @@ ok('R13-22 firstOpenChildId is not fooled by a LATER complete task after an open
 ok('R13-23 firstOpenChildId on empty/absent children -> null (never throws, never fabricates an id)',
   firstOpenId('[]') === null && runPure(taskSpanSrc, 'firstOpenChildId(null)') === null);
 ok('R13-24 deriveTaskSpanLabel and firstOpenChildId agree by CONSTRUCTION (deriveTaskSpanLabel calls firstOpenChildId internally) — the id renderChildList flags "next" on a child row is always the SAME id the parent\'s own task-span text names, never independently computed',
-  /function deriveTaskSpanLabel\(children\) \{[\s\S]*?firstOpenChildId\(kids\)/.test(roadmapJsNoComments));
+  /function deriveTaskSpanLabel\(item\) \{[\s\S]*?firstOpenChildId\(kids\)/.test(roadmapJsNoComments));
 
 // ---- item 3: redundancy deletions --------------------------------------
 ok('R12-20 the per-row "completed <age>" span (rm-completed-when) is GONE — it duplicated the status chip\'s own text, and the chip is gone for complete/merged-unverified too now (item 4)',
@@ -1805,8 +1950,8 @@ ok('R12-30 every one of the six states maps to a title CSS class (rm-title-<valu
 // that stayed green across this inversion would have been proving nothing;
 // R13-31 pins the NEW not-started rule specifically and R13-31b proves the
 // OLD rule is actually gone (not just an additional rule shadowing it).
-ok('R13-31 CSS pins the INVERTED ladder: not-started is now var(--text)/400 (normal reading colour, the ONLY change from Round 12), in-progress #f9fafb/600 unchanged, complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
-  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*#f9fafb;\s*font-weight:\s*600/.test(C) &&
+ok('R13-31 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--info)/600 (Round 15: the operator\'s own colour, twice requested — was #f9fafb bright-white, not actually the blue asked for), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
+  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--info\);\s*font-weight:\s*600/.test(C) &&
   /\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--text\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-complete\s*\{\s*color:\s*var\(--done\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-stalled\s*\{\s*color:\s*var\(--interrupt\);\s*font-weight:\s*600/.test(C) &&
@@ -1927,8 +2072,8 @@ ok('R13-61 taskSpanCell renders "running" for a TASK row that genuinely carries 
     var nextIdx = body.indexOf('isNextTask');
     return liveIdx !== -1 && nextIdx !== -1 && liveIdx < nextIdx && /rm-task-running/.test(body) && /rm-task-next/.test(body);
   })());
-ok('R13-62 taskSpanCell NEVER falls through to deriveTaskSpanLabel for a task-kind item (a leaf task has no children of its own — that branch is PLAN-only) — the function returns early inside the item.kind===\'task\' branch',
-  /function taskSpanCell\(item, isNextTask\) \{[\s\S]*?if \(item\.kind === 'task'\) \{[\s\S]*?return cell;[\s\S]*?\}[\s\S]*?cell\.textContent = deriveTaskSpanLabel\(item\.children\);/.test(roadmapJsNoComments));
+ok('R13-62 taskSpanCell NEVER falls through to deriveTaskSpanLabel for a task-kind item (a leaf task has no children of its own — that branch is PLAN-only) — the function returns early inside the item.kind===\'task\' branch. Round 15: deriveTaskSpanLabel now takes the whole item (not just item.children) so it can also read item.roll_up.running for the "running" token',
+  /function taskSpanCell\(item, isNextTask\) \{[\s\S]*?if \(item\.kind === 'task'\) \{[\s\S]*?return cell;[\s\S]*?\}[\s\S]*?deriveTaskSpanLabel\(item\)/.test(roadmapJsNoComments));
 ok('R13-63 renderChildList computes nextId via firstOpenChildId over the FULL unpartitioned children list, but ONLY for a task list — a phase-series (child-PLAN) list gets nextId=null, since "next" is a per-TASK affordance, not a per-plan one (plans get their own "n next" one level up, via the parent\'s own task-span text)',
   /var nextId = phaseSeries \? null : firstOpenChildId\(children\);/.test(roadmapJsNoComments));
 ok('R13-64 the SAME nextId is threaded into every child render path — the plain loop, renderTaskBatches, AND renderBatchRow — so a "next" task inside a batch run still gets its affordance, not just an un-batched one',
@@ -1936,10 +2081,10 @@ ok('R13-64 the SAME nextId is threaded into every child render path — the plai
   /renderTaskBatches\(live, nextId\)/.test(roadmapJsNoComments) &&
   /renderNode\(c, -1, -1, c\.id === nextId\)/.test(roadmapJsNoComments) && /renderBatchRow\(label, liveChildren\.slice\(i, runEnd\), nextId\)/.test(roadmapJsNoComments) &&
   /renderNode\(t, -1, -1, t\.id === nextId\)/.test(roadmapJsNoComments));
-ok('R13-65 CSS: .rm-task-check inherits the complete-dim colour (var(--done), reads as PART of the dimmed line); .rm-task-next is weight-only (text emphasis, never the ONLY signal); .rm-task-running earns the one loud colour (var(--info)) because it is a claim backed by real live_sessions evidence, not a position guess',
+ok('R13-65 CSS: .rm-task-check inherits the complete-dim colour (var(--done), reads as PART of the dimmed line); .rm-task-next is weight-only (text emphasis, never the ONLY signal); .rm-task-running earns the one loud colour (var(--info)) because it is a claim backed by real live_sessions evidence, not a position guess. Round 15: promoted to a real chip (bordered pill + background tint, "small and not obvious" per the operator) rather than plain text',
   /\.rm-task-check\s*\{\s*color:\s*var\(--done\)/.test(C) &&
   /\.rm-task-next\s*\{\s*font-weight:\s*600;\s*color:\s*var\(--text\)/.test(C) &&
-  /\.rm-task-running\s*\{\s*font-weight:\s*600;\s*color:\s*var\(--info\)/.test(C));
+  /\.chip\.rm-task-running\s*\{[^}]*color:\s*var\(--info\)/.test(C));
 
 // ---- fix 5: hierarchy legibility + spacing -------------------------------
 ok('R13-70 tasks render visibly SMALLER than the plan that owns them (12px vs the plan/base 14px) — a size ladder ON TOP of the existing indentation + rail, so "this is a child" is legible before reading a single word',

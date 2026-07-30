@@ -312,6 +312,17 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - [ ] 9. [serial] **Acceptance**: end-user-advocate runtime pass over the shell + three views
   (scenarios below) + the operator's own cold-start walkthrough ON THE NEW SURFACE (replaces the
   retired ask-p1 walkthrough) — Verification: full
+  - **STANDING REGRESSION CHECKLIST (Round 15, the anti-repeat mechanism):**
+    `docs/reviews/cockpit-ui-requirements-ledger.md` mines every operator-verbatim requirement
+    across all 15 build rounds into one row-per-requirement table (73 rows this round, statuses
+    verified against the live app, not memory). EVERY future acceptance pass on this task —
+    end-user-advocate runtime AND the operator's own walkthrough — re-verifies EVERY row in that
+    ledger, not just the round's own newly-reported complaints; a round that fixes the latest
+    complaint while silently regressing an older row is not done until the ledger is re-run and
+    updated with the new evidence. This is the fix for the root cause Round 9 itself already
+    named (this file, Round 9 section): each hop of the pipeline translates the verbatim record
+    and the translation leaks; the ledger is the durable, cumulative oracle that stops that leak
+    from resetting every round.
 
 ## Files to Modify/Create
 - `neural-lace/workstreams-ui/web/` — shell + hash routing in app.js; all three views + their
@@ -561,6 +572,32 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
      right next to it." — drop the span's done-half; keep only the NEXT-token ("6 next" /
      "T3 next"), which is the one fact the bar cannot carry.
 
+- 2026-07-30: ROUND 15 — six fixes (five operator complaints verbatim tonight + one
+  coordinator mid-round addition); full narrative in the Decisions Log entry below. Files:
+  `neural-lace/workstreams-ui/server/roadmap-routes.js` (running roll-up class, `plan_doc`
+  field), `neural-lace/workstreams-ui/web/roadmap.js` (running token + roll-up wiring,
+  `openPlanDocModal`, `bandPlanItems` + header reorder), `neural-lace/workstreams-ui/web/app.js`
+  (Docs-panel `renderDocsList` shape-mismatch fix), `neural-lace/workstreams-ui/web/app.css`
+  (in-progress title colour, running-chip/roll-up-badge styling, plan-link button reset),
+  `neural-lace/workstreams-ui/web/cockpit.selftest.js` (+17: R15-B*/R15-D*/R15-1..3/R15-H1 +
+  R9F-1/R9F-1b rewrite + R13-62/65/31 signature updates),
+  `neural-lace/workstreams-ui/server/roadmap-routes.selftest.js` (+4: S20/S20b/S21/S21b).
+- 2026-07-30: `docs/reviews/cockpit-ui-requirements-ledger.md` — task 9's new standing
+  regression checklist (NEW file, Round 15 deliverable 5): 73 rows mining every operator-
+  verbatim requirement across all 15 build rounds, statuses live-verified this session. Wired
+  into task 9's own line above.
+- 2026-07-30: `docs/backlog.md` — Round 15 files one follow-up:
+  `ROADMAP-MULTI-PROJECT-CONFIG-NOT-SET-01` (the Roadmap's own multi-repo scan has no
+  per-machine config on this machine; Circuit's plans never reach the Roadmap tree even though
+  the Docs browser already knows about Circuit) — found live while verifying the ledger's R9-8
+  row, not part of the round's own dispatched scope.
+- 2026-07-30: `.gitignore` — a single-file re-include (`!docs/reviews/cockpit-ui-requirements-ledger.md`)
+  for the new standing ledger above: the repo's own `docs/reviews/*` convention gitignores
+  everything except dated `YYYY-MM-DD-*.md` review snapshots, but this ledger is deliberately a
+  STABLE-named, continuously-updated living document (the whole point — future rounds edit it in
+  place rather than deciding whether to mint a new dated file), same pattern already established
+  for `docs/reviews/records/`.
+
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
   (Fable proposal §7) — WITH the A3 caveat: the plain last-non-empty-wins fold is insufficient
@@ -744,3 +781,62 @@ Task 1 first, alone: the derived status of ONE real archived plan rendering corr
   verified live against a sandboxed :7799 instance (real HTTP + real browser screenshots), zero
   regressions across inbox-routes/roadmap-routes/server/plan-parse/cockpit suites (see the T9
   round-14 evidence for exact before/after counts).
+- (2026-07-30) **ROUND 15 — six fixes (five operator complaints + one coordinator mid-round
+  addition), closing tonight's "how many times do I have to repeat myself" round.**
+  (1) RUNNING ROLL-UP (C1 applied to the running state, not just attention states):
+  `roadmap-routes.js#absorbOneChildRollUp` now absorbs a `running` class whenever a descendant
+  task carries a REAL `live_sessions` entry (never merely `status.value==='in-progress'`, which
+  also fires on a stale-but-partial plan with nobody currently working on it — the exact
+  merely-partial-vs-actively-running conflation this fix protects, S20b in
+  `roadmap-routes.selftest.js` pins the negative case against a real fixture). Client:
+  `deriveTaskSpanLabel` now reads `item.roll_up.running` and flips the parent row's next-token
+  from "`<id> next`" to "`<id> running`"; `ROLLUP_ORDER`/`ROLLUP_BADGE_LABEL` gained a `running`
+  entry (leads the precedence order) so a COLLAPSED plan also shows a counted "N running" badge.
+  (2) COLOR + LOUDNESS: `.rm-title-in-progress` changed from `#f9fafb` (bright white) to
+  `var(--info)` (#60a5fa blue) — the operator's own repeatedly-named colour, not merely
+  brightness; `.rm-task-running` promoted from plain 600-weight text to a real bordered `chip`
+  with a blue background tint, matching the "small and not obvious" complaint. WCAG 1.4.1 held:
+  the word ("running"/token text) is always present, colour is reinforcement only.
+  (3) PLAN LINKS: ROOT CAUSE was a `file:///` href on an http-served page — a dead link,
+  live-verified (zero navigation, zero network activity on click). Server:
+  `derivePlanRootNode` now emits `plan_doc: deriveLib.projectDocRefFor(pf.absPath)` (the SAME
+  `{project,path}` resolver `computePlanRows`/asks.js already use — no new link handling, per
+  the plan's own ux-review amendment 6). Client: the plan-link row is now a `<button>` calling a
+  new `openPlanDocModal` (mirrors asks.js's own function, the established small-duplicated-
+  reader convention) that reuses app.js's EXISTING `docModal`/`docBody` — the same in-page
+  viewer the Docs button already renders through, never a second renderer. `plan_doc: null`
+  (path outside every configured project root) falls back to plain text + copy, never a
+  fabricated/dead link.
+  (4) DOCS BUTTON: ROOT CAUSE was a payload-shape mismatch — `GET /api/docs` returns
+  `{projects:{key:{root,missing,files}}}`; `web/app.js#renderDocsList` treated `docsCache[proj]`
+  as the files ARRAY ITSELF, so `.filter is not a function` threw inside the render loop,
+  aborting the whole panel silently right after it was cleared. Fixed to read `.files`; a
+  `missing` project root is skipped; a real empty-state message replaces the silent blank panel.
+  Renderer-side bug, NOT a config gap (confirmed: `/api/docs` already returns real data for both
+  configured projects on this machine).
+  (5) THE LEDGER: `docs/reviews/cockpit-ui-requirements-ledger.md` — 73 rows mined from every
+  operator-verbatim source across 15 rounds, each status verified against the live app this
+  session (not carried from memory); wired into this task's own line above as the standing
+  regression checklist for every future acceptance pass. Row-count summary: 52 MET (live/
+  structural) + 12 MET(selftest) + 4 MET(carried) + 1 PARTIAL + 3 SUPERSEDED + 1 UNBUILT + 0
+  REGRESSED. Live-verified gap found IN THE COURSE of building the ledger (not previously
+  tracked): `ROADMAP-MULTI-PROJECT-CONFIG-NOT-SET-01` — the Roadmap's own multi-repo scan has no
+  per-machine config on this machine, so Circuit's real plans never reach the Roadmap even
+  though the Docs browser already knows about Circuit; logged to backlog.
+  (6) BUILD-ORDER BANDING (coordinator mid-round, operator verbatim: "the Workstreams UI still
+  doesn't actually represent the actual order of building, at least not at the plan level"):
+  `roadmap.js#bandPlanItems` (new pure function, real-execution vm-sandbox tested) splits each
+  project group's items into two STABLE bands — any non-not-started plan (in-progress/stalled/
+  merged-unverified/unknown) before every not-started ("upcoming") one — preserving each band's
+  existing rank order internally (a filter, never a re-sort); `roadmap_rank`'s registry-insertion
+  DEFAULT (adjudication (a), still binding — recency would churn the list daily) is unchanged,
+  banding is a render-order layer on top of it, not a replacement. `projectGroupHeaderText`'s
+  four-bucket strip reordered to lead with "in progress" (previously led with "upcoming", which
+  read backwards next to a phrase claiming build order). Move up/down reorder controls verified
+  NOT regressed: live at :7733 this session, both buttons present + aria-labeled on every row.
+  All six: TDD'd where behavior-bearing (RED confirmed via source mutation + revert, transcripts
+  in the session record), verified live against a fixture-seeded sandbox at :7799 (real HTTP,
+  real browser screenshots + computed-style measurements) AND spot-checked against the real
+  production instance at :7733 (read-only checks only — no real state mutated). Suites: 397/0
+  cockpit (+17 from the 380 baseline), 110/0 roadmap-routes (+4 from the 106 baseline), 25/0
+  requests-routes, 47/0 inbox-routes, 173/0 server — zero regressions.

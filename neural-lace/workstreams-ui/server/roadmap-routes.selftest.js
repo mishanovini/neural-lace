@@ -822,6 +822,42 @@ async function main() {
       demoT1 && Array.isArray(demoT1.live_sessions) && demoT1.live_sessions.length === 0,
       demoT1 && JSON.stringify(demoT1.live_sessions));
 
+    // ---- Round 15 (operator, repeated): "if I expand a plan I can see the
+    // tasks in progress, but the plan itself doesn't show anything is in
+    // progress" — rich-plan/1 genuinely carries a live_sessions entry
+    // (S18 above), so the OWNING PLAN (rich-plan) must roll that up as a
+    // counted "running" attention class (C1's roll-up law applied to the
+    // running state, real execution against the SAME fixture S18 uses —
+    // not a synthetic one). ----
+    const richPlan = findItem(items, 'rich-plan');
+    ok('S20 the running roll-up propagates from a live task to its OWNING PLAN (rich-plan.roll_up.running.count >= 1, exemplar names the actual running task)',
+      richPlan && richPlan.roll_up && richPlan.roll_up.running && richPlan.roll_up.running.count >= 1 &&
+      richPlan.roll_up.running.exemplar === 'rich-plan/1',
+      richPlan && JSON.stringify(richPlan.roll_up));
+    // redesign-plan is PARTIALLY DONE (task 1 checked, task 2 never
+    // started — status.value='in-progress' purely from done>0) but has NO
+    // live task anywhere: exactly the distinction this whole fix protects
+    // — merely-partial must never be confused with actively-running.
+    ok('S20b a merely-partial plan (redesign-plan: 1/2 done, task 2 never started, no live session anywhere) carries NO running roll-up entry — status.value can be "in-progress" from done>0 alone, which must NOT be confused with a REAL live session',
+      redesign && redesign.status && redesign.status.value === 'in-progress' &&
+      redesign.roll_up && !redesign.roll_up.running,
+      redesign && JSON.stringify({ status: redesign.status, roll_up: redesign.roll_up }));
+
+    // ---- Round 15: plan_doc {project,path} — the plan-link fix (the old
+    // client-side `file:///` href was a DEAD link, live-verified; plan_doc
+    // reuses the EXISTING /api/doc resolver, same helper server.selftest.js
+    // S25d already proves resolves a REAL project root). This sandbox's
+    // fixture plans live under a mktemp repo no project config maps to, so
+    // the HONEST value here is null — the "never a fabricated link"
+    // fallback path this suite CAN exercise; the happy-path resolution
+    // itself is S25d's job (same deriveLib.projectDocRefFor call).
+    ok('S21 plan_doc is present (possibly null) on every plan node — a fixture repo outside every configured project root resolves null, never a guessed/fabricated {project,path}',
+      richPlan && ('plan_doc' in richPlan) && richPlan.plan_doc === null,
+      richPlan && JSON.stringify(richPlan.plan_doc));
+    ok('S21b plan_path is unchanged (still the absolute path) — plan_doc is an ADDITION, not a replacement',
+      richPlan && typeof richPlan.plan_path === 'string' && richPlan.plan_path.indexOf('rich-plan.md') !== -1,
+      richPlan && richPlan.plan_path);
+
     // ============================================================
     // ROUND 9 (2026-07-23) — the operator's cold-start walkthrough FAIL,
     // docs/reviews/2026-07-17-cockpit-ux-design-input.md "Round 9" — the
