@@ -641,6 +641,15 @@
       "created_at": "2026-07-29T22:36:51Z"
     },
     {
+      "path": "adapters/claude-code/rules/constitution.md",
+      "blob_sha": "b7e91f0714cc8228cf19b5d67ee59d2b6303fdae",
+      "record_id": "hcr-20260730-03414616",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T12:57:54Z"
+    },
+    {
       "path": "adapters/claude-code/scripts/ask-registry.sh",
       "blob_sha": "a35720f808eea685a10a10739ad63171b00e7310",
       "record_id": "hcr-20260723-37623e59",
@@ -792,6 +801,24 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-21T00:47:39Z"
+    },
+    {
+      "path": "adapters/claude-code/scripts/session-resumer.sh",
+      "blob_sha": "e9973c9d529b8d4fdafacd82598449d2d66306e5",
+      "record_id": "hcr-20260730-3ea32f11",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T12:56:44Z"
+    },
+    {
+      "path": "adapters/claude-code/scripts/spawn-worktree.sh",
+      "blob_sha": "b6a3313c77a9231c10f4daa35f5a2012f507268f",
+      "record_id": "hcr-20260730-68c52683",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T12:57:17Z"
     },
     {
       "path": "adapters/claude-code/scripts/supervisor-tick.sh",

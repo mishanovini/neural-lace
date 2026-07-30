@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-3ea32f11",
+  "created_at": "2026-07-30T12:56:44Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/plans/accountable-estate-program-2026-07.md (T3 splices, post-hoc deploy-unblock)",
+  "change_ref": {
+    "commit_sha": "6ffe534",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/session-resumer.sh",
+      "blob_sha": "e9973c9d529b8d4fdafacd82598449d2d66306e5"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "The two admission-observation splices at :1637 and :1665 are observe-only as claimed — they cannot propagate a nonzero status, they sit after the host's real work on both arms, and a two-line A/B self-test (splice active vs neutered) produced an identical 63-passed/6-failed result with a byte-identical failure set, proving the 6 failures are pre-existing and environment-induced rather than splice-induced; session-resumer.sh PASSES.",
+    "findings_summary": "PASS; 1 Major follow-up: brace-group splice idiom has a set-u hole — change to subshell (queued next batch); 1 Major HYPOTHESIZED pass-budget note (resumer unarmed today)"
+  },
+  "written_by": "orchestrator session d3059d78 via write-review-record.sh",
+  "payload": {}
+}
