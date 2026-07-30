@@ -271,6 +271,56 @@ Mandatory", for the full rule. Verbose planning is mandatory regardless
 of plan size.
 -->
 
+## Intended Functionality
+<!--
+REQUIRED ON EVERY PLAN. Stage 0 of `docs/designs/end-to-end-process.md`.
+Enforced by `plan-reviewer.sh` Check 19, SCOPED: a NEW plan cannot become ACTIVE
+without a statement that passes `scripts/if-statement-check.sh` (blocking at
+pre-commit). Plans already ACTIVE in HEAD get a non-blocking WARN. Plans whose
+`Status:` is not ACTIVE are not checked at all. An UNDECIDABLE verdict currently
+WARNs rather than blocks (warn-mode cycle).
+
+THE ANTI-RESTATEMENT RULE. A statement that names only artifacts ("the script
+exists", "the gate is wired", "the field renders") is REJECTED. The test:
+
+    could this sentence be true while the operator's situation is unchanged?
+
+If yes, it is a component description, not a functionality. The operator's own
+counter-example: "the watchdog script exists and runs" — true the moment the
+file lands, while the operator is still manually restarting everything.
+
+IF YOU CANNOT WRITE A STATEMENT THAT PASSES, ASK THE OPERATOR. Do not invent
+one to clear the gate. Ambiguity here is surfaced, never resolved by
+assumption — that is the whole point of stage 0 having a human in it.
+
+Relationship to `## User-facing Outcome` below: that section is the prose
+argument for why this work matters. THIS section is the contract every
+downstream reviewer validates against, in five fixed fields.
+
+Worked examples from five real 2026-07-30 defects, each with the WRONG version
+that would have passed a component-level review:
+  ~/.claude/doctrine/intended-functionality.md
+Check a draft sentence:
+  bash ~/.claude/scripts/if-statement-check.sh --outcome "<sentence>"
+-->
+
+**Outcome (operator's terms):** [What becomes true for them. Must name an
+observable surface AND a state change. Write it as the operator would say it,
+not as the implementer would.]
+
+**Observation:** [How anyone tells it happened, without reading code.]
+
+**Deterministic pass/fail:** [The rule that decides, with no judgement call.
+Needs a threshold, count, or comparator. "Looks healthy" / "works properly" /
+"good enough" are judgement, not rules, and are rejected.]
+
+**Explicitly NOT included:** [What this does not promise.]
+
+**Human dependencies:** [Every human action the outcome requires, each marked
+INTENDED or DEFECT. Any dependency marked DEFECT fails stage 0 immediately —
+an unintended human step means the outcome is not actually delivered.]
+- [dependency] — INTENDED | DEFECT
+
 ## Goal
 [What we're building/changing and why. One or two paragraphs. State the
 user-observable outcome this plan produces, not just the mechanism.]

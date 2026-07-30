@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-672b255a",
+  "created_at": "2026-07-30T23:50:47Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/plans/intended-functionality-stage-0-2026-07-30.md",
+  "change_ref": {
+    "commit_sha": "PENDING",
+    "branch": "worktree-agent-a78f76e4a2b9c7a02"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/if-statement-check.sh",
+      "blob_sha": "219779c2cd164ff329b7ab81acfebcb1647e31be"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-reviewer.sh",
+      "blob_sha": "03bcd31f2263ab7e59d30efb7f6f93d85882bace"
+    },
+    {
+      "path": "adapters/claude-code/agents/functionality-verifier.md",
+      "blob_sha": "c62237ca00ae3a174e81f962eca93f346d995067"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "43377d847aa2be0fea53820ee0c73348286fe80f"
+    },
+    {
+      "path": "adapters/claude-code/doctrine/intended-functionality.md",
+      "blob_sha": "7bca4ccbf9ad38f740f35a7cc5c021d2124c51f7"
+    },
+    {
+      "path": "adapters/claude-code/templates/plan-template.md",
+      "blob_sha": "13d04191892c8b22ed8a73b4041a7ee76a1ff3ce"
+    },
+    {
+      "path": "adapters/claude-code/tests/if-statement-check/run-tests.sh",
+      "blob_sha": "5df73695fcd0920b29ac062a96e0e704f1a76d21"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "CONDITIONAL-PASS (round 2, after REJECT in round 1). Conditions: (1) BLOCKING - amendments were unstaged, the index still held the rejected draft; (2) MAJOR - the suffix escape survives, one appended clause flips REJECT to ACCEPT, take documentation option (b); (3) MINOR - self-test is 22/22 not 20/20; (4) MINOR - fixture A7 rejects for the wrong reason. All four addressed before commit.",
+    "findings_summary": "Round 1 REJECT: 3 Criticals, all PROVEN by execution, all fixed - C1 golden scenario defeated by \"I see \" prefix (veto changed from human-referent to absence-of-state-change; perception verbs excluded); C2 DRAFT->ACTIVE permanent grandfather bypass (grandfather is now a HEAD-content test); C3 UNDECIDABLE blocked with no reachable remedy (now warn-mode). Majors fixed: 7 check19 scoping self-tests added (which caught a real pwd vs pwd -P bug silently SKIPping the check under /tmp-rooted repos), unscoped enforcement banners corrected, \"reliably catches\" overclaim downgraded, all measured numbers corrected and pinned to reproducing commands, 53-vs-46 population conflation fixed, bypass enumeration 4->7, noun-dominant delivery imperatives removed, non-{0,1,2} exits now fail open as harness defects, INDEX regenerated, judgement veto now handles negation, digit-free binary rules UNDECIDABLE not REJECT. Round 2 CONDITIONAL-PASS: staging verified via git show :<path> per amendment; suffix escape NOT closed by design (the obvious closure false-blocks legitimate outcomes) and instead documented as a second worked example with its true one-clause cost in manifest bypass path 5; counts corrected to 22/22; fixture A7 corrected to reject on gate+wired."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}
