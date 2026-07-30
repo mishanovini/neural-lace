@@ -1767,6 +1767,74 @@ check_pin_f_waiver_purpose_clauses() {
 }
 
 # ------------------------------------------------------------
+# Check: limit-resume-watchdog (2026-07-30, manifest entry "limit-resume")
+#
+# Makes a NON-FIRING or STUCK watchdog VISIBLE instead of silent (the
+# operator's own build requirement: "a doctor check or an honest_status
+# line that makes a NON-FIRING watchdog visible instead of silent").
+# Reads ${live_home}/state/limit-resume/armed/*.json — ONE file per
+# TRACKED SESSION (per-session keying, harness-reviewer REJECT finding
+# F3 fix: a single machine-global marker let two concurrent sessions in
+# different repos clobber each other's tracked state) — HARNESS_DOCTOR_
+# HOME/NL_REPO_ROOT-overridable, exactly like check_obs_cockpit_fresh's
+# heartbeat-dir read, so this check is fixture-testable the same way.
+#
+# Per tracked session, two WARN conditions (both WARN, not RED — they
+# report a real-world operational fact, not a structural harness defect
+# the doctor can prove; matches check_obs_cockpit_fresh's own
+# WARN-not-RED precedent for "expected-but-not-currently-up"):
+#
+#   1. <key>.giveup present -> the watchdog tried MAX_RETRIES times and
+#      gave up; that session likely never got resumed. The single most
+#      important thing this check exists to surface — a silent giveup is
+#      exactly "non-firing but nobody notices."
+#   2. no .attempts file yet AND armed_at is older than
+#      LIMIT_RESUME_STALE_ARMED_MINUTES (default 70 -- comfortably past
+#      limit-resume.sh's own MIN_SILENCE_SECONDS floor, default 1800s/
+#      30min, plus roughly two 15-minute tick intervals of margin, so a
+#      HEALTHY watchdog respecting its own floor never false-positives
+#      here) -> the LaunchAgent is very likely not ticking at all (not
+#      loaded, a PATH-resolution defect recurring, etc.), since a healthy
+#      watchdog would have made its first attempt by now. This is the
+#      DEFECT-1-CLASS regression detector: the exact "every tick fails
+#      silently" shape that motivated this whole build.
+# ------------------------------------------------------------
+check_limit_resume_watchdog() {
+  local live_home="$1"
+  local armed_dir="${live_home}/state/limit-resume/armed"
+  [[ -d "$armed_dir" ]] || { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local f
+  for f in "$armed_dir"/*.json; do
+    [[ -e "$f" ]] || continue
+    local key="${f##*/}"; key="${key%.json}"
+    local giveup_f="${armed_dir}/${key}.giveup"
+    local attempts_f="${armed_dir}/${key}.attempts"
+    local sid; sid="$(sed -nE 's/.*"session_id"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$f" 2>/dev/null | head -1)"
+
+    if [[ -f "$giveup_f" ]]; then
+      local detail; detail="$(cat "$giveup_f" 2>/dev/null | tr -d '\n')"
+      _warn "limit-resume-giveup" "the limit-resume watchdog gave up on session '${sid:-unknown}' (${detail}) — it may still be waiting on a usage-limit reset; disarm (rm ${f}) once you've confirmed it's no longer needed, or investigate why ${LIMIT_RESUME_MAX_RETRIES:-8} attempts all failed (${live_home}/state/limit-resume/log.txt)"
+    elif [[ ! -f "$attempts_f" ]]; then
+      local armed_at now_epoch armed_epoch age_min stale_min
+      armed_at="$(sed -nE 's/.*"armed_at"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$f" 2>/dev/null | head -1)"
+      stale_min="${LIMIT_RESUME_STALE_ARMED_MINUTES:-70}"
+      if [[ -n "$armed_at" ]]; then
+        now_epoch=$(date -u +%s 2>/dev/null || echo 0)
+        armed_epoch=$(date -u -d "$armed_at" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$armed_at" +%s 2>/dev/null || echo 0)
+        if [[ "$armed_epoch" -gt 0 ]]; then
+          age_min=$(( (now_epoch - armed_epoch) / 60 ))
+          if [[ "$age_min" -ge "$stale_min" ]]; then
+            _warn "limit-resume-stale-armed" "watchdog marker for session '${sid:-unknown}' has been armed for ${age_min}m with zero recorded attempts (>= ${stale_min}m threshold -- comfortably past the watchdog's own 30min initial-silence floor) — the LaunchAgent may not be ticking at all (check: launchctl list | grep local.neurallace.limit-resume), OR (round-5 review finding, instance-only) a SIGKILLed tick left a wedged attempt.lock whose recorded owner pid was later reused by an unrelated process (check: cat ~/.claude/state/limit-resume/attempt.lock/owner, then whether that pid is this watchdog); this is the exact 'every tick fails silently' shape (DEFECT 1) this build exists to catch"
+          fi
+        fi
+      fi
+    fi
+  done
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: budget-chains (Wave F, task F.1, specs-f §F.1 item 1)
 # Stop <= 6, SessionStart <= 8 chain entries, checked against BOTH the
 # committed template and the live settings.json. A single check id
@@ -3302,6 +3370,7 @@ run_quick_checks() {
   check_obs_ask_capture_completeness "$live_home" "$repo_root"
   check_needs_you_headers "$live_home" "$repo_root"
   check_pin_f_waiver_purpose_clauses "$live_home" "$repo_root"
+  check_limit_resume_watchdog "$live_home"
   check_line_endings "$live_home" "$repo_root"
   check_budget_chains "$live_home" "$repo_root"
   check_budget_blocking_gates "$live_home" "$repo_root"
@@ -3896,6 +3965,83 @@ EOF
   _write_chain_settings "$D" "SessionStart" 9 "ss-dummy"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-chains-sessionstart-red" 1 "$RC" "RED budget-chains.*SessionStart chain has 9" "$OUT"
+
+  # ---- Check: limit-resume-watchdog. No state dir at all -> silent
+  # (WARN-free), RC 0. ----
+  D=$(_scenario_dir lr-clean)
+  _stamp_claim_honesty_green "$D"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if [[ "$RC" == "0" ]] && ! printf '%s' "$OUT" | grep -q "limit-resume"; then
+    echo "self-test (limit-resume-watchdog-clean-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (limit-resume-watchdog-clean-silent): FAIL (rc=${RC}, unexpected output)" >&2
+    printf '%s\n' "$OUT" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- Check: limit-resume-watchdog. giveup sentinel present -> WARN
+  # (never RED -- an operational fact, not a harness defect), RC still 0.
+  # Per-session layout (F3 fix): armed/<key>.json + sibling <key>.giveup. ----
+  D=$(_scenario_dir lr-giveup)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/limit-resume/armed"
+  echo 'gave up after 8 attempts at 2026-07-30T10:00:00Z' > "$D/live/state/limit-resume/armed/selftest-sid.giveup"
+  printf '{"session_id":"selftest-sid","cwd":"/tmp/x","armed_at":"2026-07-30T10:00:00Z"}\n' > "$D/live/state/limit-resume/armed/selftest-sid.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "limit-resume-watchdog-giveup-warn" 0 "$RC" "WARN limit-resume-giveup.*selftest-sid" "$OUT"
+
+  # ---- Check: limit-resume-watchdog. Armed, zero attempts, armed_at
+  # 90 minutes ago (>= 70m stale threshold, comfortably past the
+  # watchdog's own 30min initial-silence floor) -> stale-armed WARN, the
+  # DEFECT-1-CLASS ("every tick fails silently") regression detector. ----
+  D=$(_scenario_dir lr-stale-armed)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/limit-resume/armed"
+  STALE_TS="$(date -u -v-90M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-90 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"session_id":"stale-sid","cwd":"/tmp/x","armed_at":"%s"}\n' "$STALE_TS" > "$D/live/state/limit-resume/armed/stale-sid.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "limit-resume-watchdog-stale-armed-warn" 0 "$RC" "WARN limit-resume-stale-armed.*stale-sid" "$OUT"
+
+  # ---- Check: limit-resume-watchdog. Armed, zero attempts, armed_at only
+  # 5 minutes ago -> too fresh to be suspicious (well within the
+  # watchdog's own 30min floor), no WARN. ----
+  D=$(_scenario_dir lr-fresh-armed)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/limit-resume/armed"
+  FRESH_TS="$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"session_id":"fresh-sid","cwd":"/tmp/x","armed_at":"%s"}\n' "$FRESH_TS" > "$D/live/state/limit-resume/armed/fresh-sid.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if [[ "$RC" == "0" ]] && ! printf '%s' "$OUT" | grep -q "limit-resume"; then
+    echo "self-test (limit-resume-watchdog-fresh-armed-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (limit-resume-watchdog-fresh-armed-silent): FAIL (rc=${RC}, unexpected output)" >&2
+    printf '%s\n' "$OUT" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- Check: limit-resume-watchdog. Per-session isolation (F3 fix): TWO
+  # tracked sessions, only ONE has given up -> exactly one WARN, naming
+  # the RIGHT session, and the healthy one's own id never appears in a
+  # WARN line. ----
+  D=$(_scenario_dir lr-two-sessions)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/limit-resume/armed"
+  echo 'gave up after 8 attempts at 2026-07-30T10:00:00Z' > "$D/live/state/limit-resume/armed/bad-sid.giveup"
+  printf '{"session_id":"bad-sid","cwd":"/tmp/x","armed_at":"2026-07-30T10:00:00Z"}\n' > "$D/live/state/limit-resume/armed/bad-sid.json"
+  FRESH_TS2="$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"session_id":"healthy-sid","cwd":"/tmp/y","armed_at":"%s"}\n' "$FRESH_TS2" > "$D/live/state/limit-resume/armed/healthy-sid.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if [[ "$RC" == "0" ]] && printf '%s' "$OUT" | grep -q "WARN limit-resume-giveup.*bad-sid" \
+     && ! printf '%s' "$OUT" | grep -q "healthy-sid"; then
+    echo "self-test (limit-resume-watchdog-two-session-isolation): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (limit-resume-watchdog-two-session-isolation): FAIL (rc=${RC})" >&2
+    printf '%s\n' "$OUT" >&2
+    FAILED=$((FAILED + 1))
+  fi
 
   # ---- Check: budget-blocking-gates. Counting rule (specs-d §D.0.4, fixed
   # during Wave-F integration): blocking:true AND wired_template:true AND
