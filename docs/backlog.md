@@ -2043,3 +2043,63 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
   fixture servers (:7799); the operator finds the bugs at :7733 against real data. Round 16's blue
   sweep, the Inbox links, and the requests pipeline all passed in sandbox and were broken live.
   A UI round's acceptance must require evidence from the real deployed app.
+
+## ROADMAP-FALSE-ETERNAL-RUNNING-01 — green "running" chips no longer mean a session merely touched the task once (FIXED); root architectural gap named for follow-up
+
+**Severity:** was HIGH (operator-reported: "The green items are supposed to indicate something
+is actively running. I see several green plans that aren't running."); the reported instance is
+FIXED this build.
+**Root cause, PROVEN against real deployed data (2026-07-30):** `roadmap-routes.js`'s
+`absorbOneChildRollUp` rolled a task up as `running` whenever `child.live_sessions.length` was
+merely non-empty — independent of whether the attached session's heartbeat was actually fresh.
+Deeper cause: a `task_started` event's `session_id` field records the **dispatching**
+(orchestrator) session, never a distinct per-task worker session — and an orchestrator session
+commonly stays heartbeating for many hours across dozens of unrelated dispatches, so "the
+attached session is alive" can never by itself prove THIS task has current activity. Real
+progress-log evidence: `progress-log-placeholder-ask-id-fix/4`, `status-event-ledger/SE3`, and
+`cockpit-roadmap-redesign/9` all rendered `running` for a 2h43m gap (16:57Z-19:40Z) during which
+the SAME dispatching session (`a3fcb6ea-...`) never touched any of them but stayed alive doing
+unrelated estate work.
+**Fix (this build):** `deriveLib.deriveItemStatus` gained a `startedAtMs`/`taskStartedIdleMs`
+axis (default 60min, env `COCKPIT_TASK_STARTED_IDLE_MIN`) — a task_started event older than the
+window no longer renders in-progress even with a live attached-session heartbeat.
+`deriveLiveAgentLeaves` and `absorbOneChildRollUp`'s rollup gate (the reported line) now both
+require an ACTUALLY-running leaf, not merely a non-empty array. Proven two ways: (1) unit —
+`derive-lib.js --self-test` 7i-7n, `roadmap-routes.selftest.js` S20c-e, all RED-then-GREEN
+verified against the real bug; (2) live — a temporary side-by-side instance (`CTREE_PORT=7799`,
+reading the REAL `~/.claude/state/progress-logs` + heartbeats, `COCKPIT_TASK_STARTED_IDLE_MIN=5`
+for the demo only) flipped the exact 3 reported tasks from `running`/`in-progress` to
+`stalled`/`crashed` while the same production instance (:7733, unfixed) still showed `running`
+for the same tasks at the same real timestamps.
+**Residual gap (HYPOTHESIZED, not fixed this build):** the idle-window is a mitigation, not a
+structural fix — it bounds trust in a signal that is still architecturally the wrong one
+(dispatching-session heartbeat, not per-task-worker heartbeat). A task genuinely re-dispatched
+(or swept/nudged) more often than the idle window, with no real work happening between
+dispatches, would still show `running` forever under this fix, exactly as observed live today:
+at demonstration time, an ongoing estate-wide sweep was re-touching these same 3 tasks roughly
+every 13-16 minutes (task_started re-fired at 19:40, 19:56, 20:09), which is inside the 60min
+default window, so the CURRENT live snapshot still (correctly, per the fix's own logic) shows
+them running — the fix could only be shown flipping the reported instance by temporarily
+shrinking the window for the demo. REFUTED by: recording the dispatched CHILD's own session id
+(not the dispatcher's) in `task_started`'s `session_id` field and deriving from ITS heartbeat —
+would require dispatch-provenance.sh to learn the child's session id before/at dispatch time,
+which it does not currently have (the child session doesn't exist yet at PreToolUse time). Out
+of scope for this task; flagged for a future round.
+**Filed by:** plan-phase-builder, false-eternal-running-fix build, 2026-07-30.
+
+## PROGRESS-LOG-ID-PLACEHOLDER-STILL-LIVE-CHECK-01 — "<id" ask_id placeholder bug: checked, currently quarantined and NOT growing
+
+**Severity:** informational (re-confirms `PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` above, checked
+fresh per an explicit ask to verify the emitter bug is "still live").
+**Finding (PROVEN, 2026-07-30 live check):** `~/.claude/state/progress-logs/unattributed.jsonl`
+holds exactly 26 records with the literal `"ask_id":"<id"` fingerprint, ALL `type:"merged"`
+(emitted by `auditor.js`'s merge-scan path, not by `task_started`/`task_done`'s emitters), most
+recent write 2026-07-29T16:23:30Z — no new occurrence appeared on 2026-07-30 (today) as of this
+check. `grep -rl '"<id' ~/.claude/state/progress-logs/*.jsonl` matches only that one file. The
+Task-2 writer-side backstop (this same plan) is quarantining occurrences as designed; the legacy
+`_id.jsonl` provenance question is the separate, already-tracked, unresolved item above. This bug
+is UNRELATED to ROADMAP-FALSE-ETERNAL-RUNNING-01 above (different event type, different emitter)
+and does not explain it.
+**Action:** none required beyond what `PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` already tracks.
+**Filed by:** plan-phase-builder, false-eternal-running-fix build, 2026-07-30 (investigation
+requested alongside the roadmap rollup fix).

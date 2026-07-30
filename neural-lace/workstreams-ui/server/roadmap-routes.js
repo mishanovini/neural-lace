@@ -682,11 +682,24 @@ function statusFromDerived(derived, opts) {
   });
 }
 
-// deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) -> [AgentLeaf]
+// deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs,
+// startedIdleExpired) -> [AgentLeaf]
 // Round 7B-i: currently-running background agents/sessions render as live
 // sub-task leaves under the task they serve. A session with NO matching
 // heartbeat record renders 'unknown' (named-absence, C5) — never guessed.
-function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) {
+//
+// `startedIdleExpired` (false-eternal-running fix, 2026-07-30) — the SAME
+// flag deriveLib.deriveItemStatus already computed for this task (see its
+// own header): the attached session's heartbeat can be genuinely live
+// (that session — almost always the DISPATCHING orchestrator, not a
+// per-task worker — really is alive) while STILL being worthless evidence
+// that this specific task has any current activity, once its own
+// task_started is older than the idle window. Without this, a session leaf
+// would render 'running' by heartbeat alone even when the task-level
+// status (deriveTaskNode, above) has already downgraded to 'stalled' for
+// the identical reason — an inconsistency between the task's own badge and
+// its child leaf that this parameter closes.
+function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdleExpired) {
   const th = deriveLib.activityThresholdsMs();
   const ids = (sessionIds || []).filter(Boolean);
   return ids.map((sid) => {
@@ -701,14 +714,19 @@ function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) {
     }
     const ageMs = nowMs - Date.parse(hb.last_activity_ts);
     const ageCls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
-    const value = ageCls === 'crashed' ? 'stalled' : 'running';
+    const value = (ageCls === 'crashed' || startedIdleExpired) ? 'stalled' : 'running';
+    const label = value === 'running'
+      ? 'running'
+      : (startedIdleExpired && ageCls !== 'crashed'
+        ? 'stalled — this task has not been (re-)dispatched in a while, even though the session that touched it is still alive'
+        : 'stalled — no recent heartbeat');
     return {
       id: taskId + '/agent/' + sid,
       kind: 'agent',
       title: 'session ' + sid + (hb.branch ? ' (' + hb.branch + ')' : ''),
       status: {
         value: value,
-        label: value === 'running' ? 'running' : 'stalled — no recent heartbeat',
+        label: label,
         reason: '', since: hb.last_activity_ts || '',
       },
     };
@@ -838,6 +856,7 @@ function buildWaitingOnYouMap(scanRoot) {
 function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabel) {
   let status;
   let completedAt = '';
+  let startedIdleExpired = false;
   const taskSessionIds = (sessionsByTask && sessionsByTask[t.id]) || [];
   if (t.done) {
     completedAt = doneTs[t.id] || '';
@@ -847,9 +866,17 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     // ('<slug>/<task_id>') is the key buildWaitingOnYouMap's producer
     // above keys the map by — an EXACT match, never a substring/fuzzy one.
     const waitingOnYouId = (hbCtx.waitingOnYou && hbCtx.waitingOnYou[slug + '/' + t.id]) || null;
+    // False-eternal-running fix (2026-07-30): startedAtMs is THIS task's
+    // own most-recent task_started event age — see deriveLib.deriveItemStatus's
+    // header for why the attached session's heartbeat alone (sessionIds/
+    // heartbeats below) can never prove this SPECIFIC task has current
+    // activity (that session is the DISPATCHING session, not a per-task
+    // worker, and stays alive across many unrelated dispatches).
+    const startedAtMsRaw = startedTs[t.id] ? Date.parse(startedTs[t.id]) : NaN;
     const derived = deriveLib.deriveItemStatus({
       done: false,
       startedEvent: !!startedTs[t.id],
+      startedAtMs: isNaN(startedAtMsRaw) ? null : startedAtMsRaw,
       sessionIds: taskSessionIds,
       heartbeats: hbCtx.heartbeats,
       heartbeatsStoreOk: hbCtx.heartbeatsStoreOk,
@@ -857,6 +884,7 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
       stalledSignals: waitingOnYouId ? { waitingOnYouId: waitingOnYouId } : undefined,
     });
     status = statusFromDerived(derived, { since: startedTs[t.id] || '' });
+    startedIdleExpired = !!derived.startedIdleExpired;
     // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (S6's "clicking it expands the
     // path; the #inbox/<id> link lands focused + highlighted" leg): feeds
     // the PRE-EXISTING, previously-never-populated `status.unblock
@@ -881,7 +909,7 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     body_points: deriveLib.splitIntoSentences(s.body),
   }));
   const liveSessions = (!t.done && taskSessionIds.length)
-    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs)
+    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs, startedIdleExpired)
     : [];
   // R9-7b bookkeeping: a session id ATTACHED to a not-done task is
   // "attributed" regardless of whether a matching heartbeat file exists —
@@ -1311,7 +1339,23 @@ function absorbOneChildRollUp(agg, child) {
   // `anyInProgress || done > 0` branch) — only an ACTUALLY attached live
   // session counts as "running" here, so a merely-partial plan is never
   // mislabeled as actively worked on.
-  if (child.live_sessions && child.live_sessions.length) absorbIntoRollUp(agg, 'running', 1, child.id);
+  //
+  // FALSE-ETERNAL-RUNNING FIX (2026-07-30, operator-reported: green roadmap
+  // chips for tasks nobody was actively working): the ORIGINAL check here
+  // was `child.live_sessions.length` alone — merely NON-EMPTY, independent
+  // of whether those sessions are alive, stalled, or crashed. live_sessions
+  // can (and, on the real deployed roadmap, routinely does) hold entries
+  // whose OWN status.value is 'stalled' or 'unknown' (deriveLiveAgentLeaves
+  // renders those explicitly, right above) — counting the array's mere
+  // presence rolled up "running" for a task whose only evidence was a
+  // session that had gone quiet or was never heartbeat-confirmed at all.
+  // Require an ACTUALLY-running leaf: at least one live_sessions entry
+  // whose own status.value is 'running' (deriveLiveAgentLeaves already
+  // folds the task_started idle-expiry into that value — see its header —
+  // so this one check also inherits that fix, with no separate age math
+  // needed here).
+  const hasRunningLeaf = (child.live_sessions || []).some((s) => s && s.status && s.status.value === 'running');
+  if (hasRunningLeaf) absorbIntoRollUp(agg, 'running', 1, child.id);
   Object.keys(child.roll_up || {}).forEach((cls) => {
     absorbIntoRollUp(agg, cls, child.roll_up[cls].count, child.roll_up[cls].exemplar);
   });

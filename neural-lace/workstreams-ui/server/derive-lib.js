@@ -657,10 +657,37 @@ function envMinutes(varName, defaultMinutes) {
 // — wide specifically so an AV-pressure throttle or a long API-retry pause
 // (session-heartbeat-lib.sh's own throttled/stale states) cannot flap a
 // long-running build between in-progress and "stalled: crashed" (F6).
+//
+// `taskStartedIdleMs` (roadmap-routes.js false-eternal-running fix,
+// 2026-07-30) — a DIFFERENT axis from the two above: those classify a
+// SESSION's own heartbeat age; this bounds how long a TASK's own
+// `task_started` event (with no matching `task_done`) is trusted as
+// evidence that the task is being worked on right now. The two are not
+// interchangeable: `task_started`'s `session_id` field records the
+// DISPATCHING session (the orchestrator that fired the builder dispatch),
+// not a per-task worker's own session — and a live orchestrator commonly
+// stays heartbeating for many hours across dozens of unrelated dispatches,
+// so "the attached session's heartbeat is fresh" can NEVER by itself prove
+// THIS task is what it is doing right now (the exact defect: three roadmap
+// tasks rendered "running" for hours because the SAME long-lived
+// orchestrator session had touched each of them at some point and was
+// still alive, not because any of them had active work). Default (60min)
+// picked from REAL evidence in this machine's own progress-log
+// (`~/.claude/state/progress-logs/*.jsonl`, 2026-07-30): a genuinely-
+// iterated-on task's own re-dispatch cadence never exceeded a ~12min gap
+// between consecutive `task_started` events for the same task_id across a
+// 50-minute active stretch, while the operator's actually-reported false-
+// positive (progress-log-placeholder-ask-id-fix/4) sat IDLE for 2h43m
+// (16:57Z to 19:40Z) between dispatches with its dispatching session's
+// heartbeat live the entire time. 60min sits with ample margin above the
+// observed real-iteration cadence and well below the observed abandonment
+// gap, so it separates the two regimes without being tuned to either
+// boundary exactly.
 function activityThresholdsMs() {
   return {
     activeMs: envMinutes('COCKPIT_SESSION_ACTIVE_MIN', 30) * 60 * 1000,
     activityWindowMs: envMinutes('COCKPIT_SESSION_ACTIVITY_WINDOW_MIN', 24 * 60) * 60 * 1000,
+    taskStartedIdleMs: envMinutes('COCKPIT_TASK_STARTED_IDLE_MIN', 60) * 60 * 1000,
   };
 }
 
@@ -811,7 +838,23 @@ function deriveStalledReason(signals) {
 //   nowMs              - number (defaults to Date.now(); pass explicitly
 //                        for deterministic tests).
 //   thresholds         - override for activityThresholdsMs() (tests).
+//   startedAtMs        - number|null (false-eternal-running fix,
+//                        2026-07-30): epoch ms of this item's OWN most
+//                        recent `task_started` event (null/omitted when
+//                        unknown). Bounds trust in a live/quiet session
+//                        heartbeat: past `th.taskStartedIdleMs` with no
+//                        newer `task_started`/`task_done`, the item no
+//                        longer renders in-progress even while its
+//                        attached (dispatching) session stays heartbeating
+//                        — see activityThresholdsMs's own header for why
+//                        heartbeat freshness alone cannot prove this.
 //   stalledSignals     - see deriveStalledReason.
+//
+// Return shape also carries `startedIdleExpired` (bool, false when
+// `startedAtMs` was not supplied or is within the window) so a caller that
+// separately renders per-session leaves (roadmap-routes.js's
+// deriveLiveAgentLeaves) can make the SAME idle judgment without
+// re-deriving the age math itself.
 function deriveItemStatus(input) {
   input = input || {};
 
@@ -860,27 +903,38 @@ function deriveItemStatus(input) {
     return { status: 'unknown', reason: 'unreadable heartbeat (heartbeat store could not be read)' };
   }
   const activity = sessionActivityForIds(input.sessionIds, input.heartbeats || [], nowMs, th);
-  if (activity === 'live' || activity === 'quiet') {
-    return { status: 'in-progress', reason: null };
+
+  // ---- task_started idle-expiry (false-eternal-running fix, 2026-07-30):
+  // computed BEFORE the live/quiet early-return below so a stale
+  // task_started can veto it — see activityThresholdsMs's own header for
+  // the full rationale (a live/quiet SESSION heartbeat proves the
+  // DISPATCHING session is alive, never that THIS task is what it is
+  // doing right now).
+  const startedAtMs = typeof input.startedAtMs === 'number' && !isNaN(input.startedAtMs) ? input.startedAtMs : null;
+  const startedIdleExpired = startedAtMs !== null && (nowMs - startedAtMs > th.taskStartedIdleMs);
+
+  if ((activity === 'live' || activity === 'quiet') && !startedIdleExpired) {
+    return { status: 'in-progress', reason: null, startedIdleExpired: false };
   }
   if (activity === 'invalid') {
     // Present-but-schema-invalid record (matched this item, but its own
     // last_activity_ts didn't parse) — DISTINCT from genuinely-absent
     // ('no-heartbeat', handled below): a real derivation-input failure.
-    return { status: 'unknown', reason: 'unreadable heartbeat (present but schema-invalid last_activity_ts)' };
+    return { status: 'unknown', reason: 'unreadable heartbeat (present but schema-invalid last_activity_ts)', startedIdleExpired: startedIdleExpired };
   }
 
   // ---- stalled: derive the reason. `crashed` is real here (heartbeat-
-  // backed); the other three ride whatever the caller supplied (see
-  // deriveStalledReason) and fall back to 'crashed' — the one reason this
-  // task can always prove — when nothing more specific is known.
-  // NOTE: activity is 'crashed' or 'no-heartbeat' at this point (both
-  // genuinely-absent-or-past-window cases) — 'invalid' already returned
-  // above, so it can never reach this fold.
+  // backed, OR the task_started idle-expiry above); the other three ride
+  // whatever the caller supplied (see deriveStalledReason) and fall back
+  // to 'crashed' — the one reason this task can always prove — when
+  // nothing more specific is known.
+  // NOTE: activity is 'crashed'/'no-heartbeat' OR (a live/quiet session
+  // whose task_started is idle-expired) at this point — 'invalid' already
+  // returned above, so it can never reach this fold.
   const reason = deriveStalledReason(Object.assign({}, input.stalledSignals, {
-    crashed: activity === 'crashed' || activity === 'no-heartbeat',
+    crashed: activity === 'crashed' || activity === 'no-heartbeat' || startedIdleExpired,
   }));
-  return { status: 'stalled', reason: reason || 'crashed' };
+  return { status: 'stalled', reason: reason || 'crashed', startedIdleExpired: startedIdleExpired };
 }
 
 // attentionClassOf(item) -> a member of ATTENTION_PRECEDENCE | null
@@ -989,7 +1043,7 @@ async function selfTest() {
     else { failed++; console.log('  FAIL: ' + name + (detail ? ' (' + detail + ')' : '')); }
   }
 
-  const TH = { activeMs: 30 * 60 * 1000, activityWindowMs: 24 * 60 * 60 * 1000 };
+  const TH = { activeMs: 30 * 60 * 1000, activityWindowMs: 24 * 60 * 60 * 1000, taskStartedIdleMs: 60 * 60 * 1000 };
 
   // ---- classifyHeartbeatAge boundaries.
   ok('1. classifyHeartbeatAge: fresh (0ms) -> live', classifyHeartbeatAge(0, TH) === 'live');
@@ -1081,6 +1135,51 @@ async function selfTest() {
   const doneIgnoresStoreFailure = deriveItemStatus({ done: true, projectKey: 'neural-lace', heartbeatsStoreOk: false });
   ok('7e. deriveItemStatus: a DONE item ignores heartbeatsStoreOk entirely (heartbeat evidence is never consulted once done short-circuits)',
     doneIgnoresStoreFailure.status === 'complete');
+
+  // ---- deriveItemStatus: task_started idle-expiry (false-eternal-running
+  // fix, 2026-07-30) — the DISPATCHING session's own heartbeat staying
+  // live/quiet is NOT sufficient once the task's own task_started event is
+  // older than taskStartedIdleMs; this is the exact defect the real
+  // roadmap showed (a long-lived orchestrator session's heartbeat never
+  // goes stale, so a task it dispatched hours ago and never revisited
+  // rendered "running" forever).
+  const ipFreshStart = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
+    startedAtMs: now - 5 * 60 * 1000, // task_started 5min ago — well within the 60min window
+  });
+  ok('7i. deriveItemStatus: live heartbeat + a RECENT task_started (5min ago) -> in-progress, startedIdleExpired:false',
+    ipFreshStart.status === 'in-progress' && ipFreshStart.startedIdleExpired === false, JSON.stringify(ipFreshStart));
+  const stStaleStartLiveHb = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
+    startedAtMs: now - 65 * 60 * 1000, // task_started 65min ago — past the 60min window
+  });
+  ok('7j. deriveItemStatus: a LIVE session heartbeat does NOT override a STALE task_started (65min ago, past the 60min idle window) -> stalled:crashed, never in-progress (the real defect this fixes: the orchestrator session is genuinely alive, but THIS task has not been touched in over an hour)',
+    stStaleStartLiveHb.status === 'stalled' && stStaleStartLiveHb.reason === 'crashed' && stStaleStartLiveHb.startedIdleExpired === true,
+    JSON.stringify(stStaleStartLiveHb));
+  const stStaleStartQuietHb = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-quiet'], nowMs: now, thresholds: TH,
+    heartbeats: [{ session_id: 'sess-quiet', last_activity_ts: new Date(now - 2 * 60 * 60 * 1000).toISOString() }],
+    startedAtMs: now - 65 * 60 * 1000,
+  });
+  ok('7k. deriveItemStatus: same idle-expiry applies on the QUIET branch (not just live) — a stale task_started still wins -> stalled:crashed',
+    stStaleStartQuietHb.status === 'stalled' && stStaleStartQuietHb.reason === 'crashed');
+  const ipBoundaryStart = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
+    startedAtMs: now - TH.taskStartedIdleMs, // exactly AT the boundary
+  });
+  ok('7l. deriveItemStatus: task_started exactly AT the idle-window boundary -> still in-progress (only STRICTLY past the window expires, matching this file\'s <= boundary convention elsewhere)',
+    ipBoundaryStart.status === 'in-progress');
+  const ipNoStartedAtMs = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
+  });
+  ok('7m. deriveItemStatus: startedAtMs omitted entirely -> unaffected by idle-expiry (backward compatible; a caller with no task_started timestamp evidence keeps the pre-existing heartbeat-only behavior), still in-progress',
+    ipNoStartedAtMs.status === 'in-progress' && ipNoStartedAtMs.startedIdleExpired === false);
+  const stWaitingBeatsIdleExpiry = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
+    startedAtMs: now - 65 * 60 * 1000, stalledSignals: { waitingOnYouId: 'ny-99' },
+  });
+  ok('7n. deriveItemStatus: a caller-supplied waiting-on-you signal still outranks the idle-expiry-derived crashed reason (precedence unchanged)',
+    stWaitingBeatsIdleExpiry.status === 'stalled' && stWaitingBeatsIdleExpiry.reason === 'waiting-on-you');
 
   // ---- deriveItemStatus: missing/non-boolean `done` (comprehension-review
   // fix — a required-input guard in the function whose header bans
@@ -1183,9 +1282,11 @@ async function selfTest() {
   // envMinutes (falls back to the default on NaN/invalid, not just unset).
   const savedActiveEnv = process.env.COCKPIT_SESSION_ACTIVE_MIN;
   const savedWindowEnv = process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN;
+  const savedTaskIdleEnv = process.env.COCKPIT_TASK_STARTED_IDLE_MIN;
   try {
     process.env.COCKPIT_SESSION_ACTIVE_MIN = 'not-a-number';
     process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN = 'also-garbage';
+    process.env.COCKPIT_TASK_STARTED_IDLE_MIN = 'still-garbage';
     const thPoisoned = activityThresholdsMs();
     ok('18. activityThresholdsMs: a non-numeric env override falls back to the DEFAULT (30min), never NaN',
       thPoisoned.activeMs === 30 * 60 * 1000, JSON.stringify(thPoisoned));
@@ -1193,6 +1294,8 @@ async function selfTest() {
       thPoisoned.activityWindowMs === 24 * 60 * 60 * 1000);
     ok('18c. classifyHeartbeatAge with the recovered (non-NaN) thresholds correctly classifies a fresh (0ms) session live, NOT crashed',
       classifyHeartbeatAge(0, thPoisoned) === 'live');
+    ok('18d. activityThresholdsMs: same NaN guard applies to the NEW task-started-idle var (falls back to the 60min default)',
+      thPoisoned.taskStartedIdleMs === 60 * 60 * 1000, JSON.stringify(thPoisoned));
 
     process.env.COCKPIT_SESSION_ACTIVE_MIN = '15';
     const thValid = activityThresholdsMs();
@@ -1203,11 +1306,18 @@ async function selfTest() {
     const thZero = activityThresholdsMs();
     ok('19b. activityThresholdsMs: an explicit "0" override is honored as 0 (not treated as unset/falsy)',
       thZero.activeMs === 0);
+
+    process.env.COCKPIT_TASK_STARTED_IDLE_MIN = '90';
+    const thTaskIdleValid = activityThresholdsMs();
+    ok('19c. activityThresholdsMs: COCKPIT_TASK_STARTED_IDLE_MIN is honored verbatim (90min, not the 60min default) — the new window is independently tunable, matching the existing two',
+      thTaskIdleValid.taskStartedIdleMs === 90 * 60 * 1000);
   } finally {
     if (savedActiveEnv === undefined) delete process.env.COCKPIT_SESSION_ACTIVE_MIN;
     else process.env.COCKPIT_SESSION_ACTIVE_MIN = savedActiveEnv;
     if (savedWindowEnv === undefined) delete process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN;
     else process.env.COCKPIT_SESSION_ACTIVITY_WINDOW_MIN = savedWindowEnv;
+    if (savedTaskIdleEnv === undefined) delete process.env.COCKPIT_TASK_STARTED_IDLE_MIN;
+    else process.env.COCKPIT_TASK_STARTED_IDLE_MIN = savedTaskIdleEnv;
   }
 
   // ---- Comprehension-review fix (R-1): listRawHeartbeatsResult()

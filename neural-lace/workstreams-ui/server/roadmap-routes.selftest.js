@@ -112,6 +112,20 @@ async function main() {
   const RECENT_ASK_TS = new Date(Date.now() - 2 * 86400000).toISOString(); // 2 days ago
   const ANCIENT_ASK_TS = new Date(Date.now() - 400 * 86400000).toISOString(); // well over a year ago
 
+  // RECENT_TASK_STARTED_TS_* (false-eternal-running fix, 2026-07-30):
+  // task_started fixture timestamps must now be relative to the ACTUAL
+  // test-run time, not a fixed 2026-07-15 date — deriveItemStatus's new
+  // task_started idle-expiry (COCKPIT_TASK_STARTED_IDLE_MIN, default
+  // 60min) would otherwise treat every pre-existing "in-progress" fixture
+  // below as stale-by-construction regardless of when this suite runs
+  // (same worktree-mtime-independence concern RECENT_ASK_TS/ANCIENT_ASK_TS
+  // already solve for plan-archival recency, applied to this new axis).
+  // Two distinct values (10min, 9min ago) preserve rich-plan/1's original
+  // two-events-in-order shape (the second event is the more recent one).
+  const RECENT_TASK_STARTED_TS = new Date(Date.now() - 10 * 60000).toISOString(); // 10 min ago
+  const RECENT_TASK_STARTED_TS_2 = new Date(Date.now() - 9 * 60000).toISOString(); // 9 min ago
+  const STALE_TASK_STARTED_TS = new Date(Date.now() - 2 * 60 * 60000).toISOString(); // 2h ago — past the 60min default idle window
+
   // ---- fixture plan files -------------------------------------------------
   // demo-plan: 3 tasks — 1 done, 1 started-in-flight, 1 untouched. Linked
   // to ask-alpha.
@@ -200,6 +214,21 @@ async function main() {
     '    a confident bucket.',
     '  - **Complete oracle (A4):** per-project completion-oracle config with',
     '    three named classes.',
+    '',
+  ].join('\n'));
+  // stale-dispatch-plan (false-eternal-running fix, 2026-07-30 — the
+  // OPERATOR-REPORTED real defect: three roadmap tasks rendered "running"
+  // for hours because the DISPATCHING session that once touched them was
+  // still alive, even though none of them had been re-dispatched in a
+  // while). ONE task, task_started attached to sess-op-1 — the SAME
+  // fixture session rich-plan/1 uses, whose heartbeat file is written
+  // fresh at suite-start (genuinely live the whole run) — but its
+  // task_started event (below) is deliberately STALE (2h ago, well past
+  // the 60min default idle window), unlike rich-plan/1's recent one. This
+  // is the exact real-world shape: alive dispatcher, abandoned task.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'stale-dispatch-plan.md'), [
+    '# Plan: Stale Dispatch', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task dispatched once, hours ago, never revisited',
     '',
   ].join('\n'));
   // waiting-plan (ROADMAP-WAITING-ON-YOU-SIGNAL-01, round 14): ONE task,
@@ -408,7 +437,7 @@ async function main() {
 
   // ---- fixture progress events ------------------------------------------
   fs.writeFileSync(path.join(progressDir, 'ask-alpha.jsonl'), [
-    JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:00:00Z', plan_slug: 'demo-plan', task_id: '2', session_id: 'sess-op-1' }),
+    JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'demo-plan', task_id: '2', session_id: 'sess-op-1' }),
     JSON.stringify({ type: 'task_done', ts: '2026-07-14T18:00:00Z', plan_slug: 'demo-plan', task_id: '1', session_id: 'sess-op-1', evidence_link: '' }),
   ].join('\n') + '\n');
   // rich-plan's task 1 is in-progress with TWO attached sessions — sess-op-1
@@ -416,8 +445,8 @@ async function main() {
   // session with NO heartbeat file at all) — the 7B-i fixture, covering
   // both the "running" and the "unknown, no heartbeat evidence" leaf.
   fs.writeFileSync(path.join(progressDir, 'ask-rich.jsonl'), [
-    JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:00:00Z', plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-op-1' }),
-    JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:05:00Z', plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-ghost' }),
+    JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-op-1' }),
+    JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS_2, plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-ghost' }),
   ].join('\n') + '\n');
   // redesign-plan and recent-plan are both UNLINKED — their task_done
   // events land in the shared "unlinked" orphan lane (progress-log-lib.sh's
@@ -432,6 +461,12 @@ async function main() {
     // -- sessionActivityForIds returns 'no-heartbeat' (never 'crashed' via
     // an old timestamp; genuinely absent), reaching the stalled branch.
     JSON.stringify({ type: 'task_started', ts: '2026-07-10T09:00:00Z', plan_slug: 'waiting-plan', task_id: '1', session_id: 'sess-waiting-ghost' }),
+    // stale-dispatch-plan/1 (false-eternal-running fix): task_started
+    // attached to sess-op-1 — the SAME live-heartbeat session rich-plan/1
+    // uses — but 2h in the past, well past the 60min default idle window.
+    // The "alive dispatcher, abandoned task" shape the real deployed
+    // roadmap showed for hours (operator report, 2026-07-30).
+    JSON.stringify({ type: 'task_started', ts: STALE_TASK_STARTED_TS, plan_slug: 'stale-dispatch-plan', task_id: '1', session_id: 'sess-op-1' }),
   ].join('\n') + '\n');
 
   // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (round 14): the needs-you ledger
@@ -514,8 +549,8 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 22 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
-      items.length === 22, topIds.join(','));
+    ok('S1e exactly 23 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture] + stale-dispatch-plan [false-eternal-running fix, 2026-07-30]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
+      items.length === 23, topIds.join(','));
     ok('R11 child-a-fixture no longer appears in the TOP-LEVEL list (it renders once, nested under its master)',
       topIds.indexOf('child-a-fixture') === -1, topIds.join(','));
 
@@ -847,6 +882,26 @@ async function main() {
     // started — status.value='in-progress' purely from done>0) but has NO
     // live task anywhere: exactly the distinction this whole fix protects
     // — merely-partial must never be confused with actively-running.
+    // ---- S20c-e: false-eternal-running fix (2026-07-30, operator-reported
+    // real defect) — stale-dispatch-plan/1 is attached to sess-op-1, the
+    // SAME live-heartbeat session rich-plan/1 uses (S18/S20 above prove
+    // that session genuinely renders "running" when its task_started is
+    // recent). The ONLY difference here is task_started age (2h vs
+    // ~10min) — isolating that this is what the fix keys on, not merely
+    // "sess-op-1 is somehow different." ----
+    const staleTask = findItem(items, 'stale-dispatch-plan/1');
+    ok('S20c a task whose ONLY attached session has a LIVE heartbeat, but whose own task_started is 2h stale (past the 60min default idle window), renders status.value=stalled — NOT in-progress (the exact operator-reported defect: dispatching session alive, task itself abandoned)',
+      staleTask && staleTask.status && staleTask.status.value === 'stalled' && staleTask.status.reason_class === 'crashed',
+      staleTask && JSON.stringify(staleTask.status));
+    ok('S20d that same task\'s live_sessions leaf for sess-op-1 ALSO renders stalled (not "running") despite the session\'s heartbeat genuinely being live — the leaf and the task-level badge must agree',
+      staleTask && Array.isArray(staleTask.live_sessions) && staleTask.live_sessions.length === 1 &&
+      staleTask.live_sessions[0].status.value === 'stalled',
+      staleTask && JSON.stringify(staleTask.live_sessions));
+    const staleDispatchPlan = findItem(items, 'stale-dispatch-plan');
+    ok('S20e the OWNING PLAN carries NO running roll-up entry for the stale-dispatched task (this is the actual rollup-gate fix: a merely non-empty live_sessions array no longer counts as "running" by itself — line 1314\'s original bug)',
+      staleDispatchPlan && (!staleDispatchPlan.roll_up || !staleDispatchPlan.roll_up.running),
+      staleDispatchPlan && JSON.stringify(staleDispatchPlan.roll_up));
+
     ok('S20b a merely-partial plan (redesign-plan: 1/2 done, task 2 never started, no live session anywhere) carries NO running roll-up entry — status.value can be "in-progress" from done>0 alone, which must NOT be confused with a REAL live session',
       redesign && redesign.status && redesign.status.value === 'in-progress' &&
       redesign.roll_up && !redesign.roll_up.running,
