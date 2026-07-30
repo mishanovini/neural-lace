@@ -890,12 +890,125 @@ cmd_expire() {
 # (so a multi-line --text value stays a single TSV row). Reverse that after
 # `read` splits the row back into fields, so a §3 block's line breaks render
 # as real line breaks again, not literal backslash-n.
+#
+# ORDER MATTERS (nl-issues 2026-07-29 "needs-you.sh render corrupts paths"):
+# a literal backslash in the ORIGINAL text (e.g. a Windows path segment like
+# "Pocket Technician\neural-lace") is jq-@tsv-encoded as TWO backslash chars
+# ("\\") immediately followed by the literal 'n' -- i.e. \\n. Unescaping \t
+# and \n BEFORE restoring \\ (the previous implementation's order) makes the
+# second half of that escaped backslash look exactly like a real \n newline
+# token, so it got converted to an actual newline and silently ATE the 'n' --
+# splitting the path mid-word ("Pocket Technician\" / "eural-lace"). Fix:
+# swap every escaped backslash out for a placeholder byte FIRST, so it can
+# never be misread as half of a \t/\n token; only restore the real backslash
+# at the very end, after \t/\n have already been expanded from what's left.
 _ny_tsv_unescape() {
   local s="$1"
+  local placeholder=$'\x01'
+  s="${s//\\\\/$placeholder}"
   s="${s//\\t/$'\t'}"
   s="${s//\\n/$'\n'}"
-  s="${s//\\\\/\\}"
+  s="${s//$placeholder/\\}"
   printf '%s' "$s"
+}
+
+# ----------------------------------------------------------------------
+# Liveness check (same nl-issues entry, defect class (c) "dead references"):
+# a rendered entry can point at a local file path that no longer exists by
+# the time the operator reads it (e.g. a scratchpad script that aged out 10+
+# days ago). This NEVER deletes or edits the ledger entry or its original
+# text -- it only appends one extra informational line at render time.
+# Read-only, best-effort, and deliberately narrow: a candidate that isn't
+# confidently a local path (a URL, an ambiguous bare word) is left alone
+# rather than risking a false "dead" claim on something that's actually fine.
+# ----------------------------------------------------------------------
+
+# _ny_local_path_candidates_from_text <text>
+#   Extract local-path-shaped tokens embedded in free text: (a) Windows
+#   absolute paths (C:\...), unquoted or quoted, terminated at whitespace or
+#   a closing quote/paren; (b) POSIX absolute paths, but ONLY inside double
+#   quotes. Deliberately narrow: a broader unquoted slash-based scan risks
+#   matching inside a URL (https://host/path/file.md) or ordinary unquoted
+#   repo-relative prose (which should use the structured links[] field
+#   instead) and mislabeling either a dead local path. Every real "run this
+#   file" pointer actually seen in this ledger is double-quoted
+#   (`bash "C:\...\foo.sh"` / `bash "/tmp/.../foo.sh"`), so scoping the POSIX
+#   half to quotes matches the real shape without widening the net. A single
+#   leading slash (not "//") also keeps it from matching a scheme-relative
+#   URL fragment.
+_ny_local_path_candidates_from_text() {
+  local text="$1"
+  {
+    printf '%s' "$text" | grep -oE '[A-Za-z]:\\[^ "'"'"')]+' 2>/dev/null
+    printf '%s' "$text" | grep -oE '"/[^/"][^"]*"' 2>/dev/null | sed -E 's/^"//; s/"$//'
+  } | sort -u
+}
+
+# _ny_path_is_dead <path>
+#   True (exit 0) iff <path> looks like a local filesystem reference (not a
+#   URL) and does not exist. Absolute paths are checked as-is; anything else
+#   is resolved relative to the MAIN-CHECKOUT root (nl_main_checkout_root --
+#   same resolver _ny_md_path uses above) since a repo-relative path in
+#   ledger text/links is always meant relative to the repo, never this
+#   script's own cwd.
+_ny_path_is_dead() {
+  local p="$1"
+  # Strip a trailing \r: jq -r on this Windows/Git-Bash build emits CRLF line
+  # endings (same quirk cmd_resolve already works around below), so a path
+  # read line-by-line from `jq -r '.links[]?'` via a `while read` loop picks
+  # up a trailing carriage return that makes `[[ -e ... ]]` spuriously fail
+  # on a file that DOES exist -- caught by self-test T34c (false positive on
+  # a live path) before this guard was added.
+  p="${p%$'\r'}"
+  [[ -n "$p" ]] || return 1
+  case "$p" in
+    http://*|https://*) return 1 ;;
+  esac
+  [[ -e "$p" ]] && return 1
+  local root=""
+  if command -v nl_main_checkout_root >/dev/null 2>&1; then
+    root="$(nl_main_checkout_root)"
+  fi
+  if [[ -n "$root" && -e "$root/$p" ]]; then
+    return 1
+  fi
+  return 0
+}
+
+# _ny_liveness_note <text> [link]...
+#   Scans <text> for embedded Windows-absolute-path tokens and checks every
+#   passed link; returns ONE rendered annotation line naming every dead
+#   reference found (or nothing at all if everything resolves / nothing
+#   path-shaped was found). Never mutates its inputs.
+_ny_liveness_note() {
+  local text="$1"; shift
+  local -a dead=()
+  local p
+  while IFS= read -r p; do
+    [[ -n "$p" ]] || continue
+    _ny_path_is_dead "$p" && dead+=("$p")
+  done < <(_ny_local_path_candidates_from_text "$text")
+  for p in "$@"; do
+    [[ -n "$p" ]] || continue
+    _ny_path_is_dead "$p" && dead+=("$p")
+  done
+  [[ "${#dead[@]}" -eq 0 ]] && return 0
+  local -a uniq_dead=()
+  local seen="|" already
+  for p in "${dead[@]}"; do
+    case "$seen" in *"|$p|"*) already=1 ;; *) already=0 ;; esac
+    if [[ "$already" == "0" ]]; then
+      uniq_dead+=("$p")
+      seen="${seen}${p}|"
+    fi
+  done
+  local joined="" p2
+  for p2 in "${uniq_dead[@]}"; do
+    if [[ -z "$joined" ]]; then joined="$p2 [path no longer exists]"
+    else joined="$joined; $p2 [path no longer exists]"
+    fi
+  done
+  printf '_(liveness: %s)_\n' "$joined"
 }
 
 # Render a single "Awaiting your decision" block (compact §3-style).
@@ -907,6 +1020,11 @@ _ny_render_decision_block() {
   fields=$(echo "$it" | jq -r '[.text, (.session // "unknown"), .id, (.created_at | split("T")[0]), (.links // [] | if length == 0 then "(none)" else join(" ") end)] | @tsv')
   IFS=$'\t' read -r text session id created links_line <<< "$fields"
   text="$(_ny_tsv_unescape "$text")"
+  # links_line went through the SAME jq @tsv escaping as text (backslashes
+  # doubled) but was never unescaped -- a repo path in Links: rendered as
+  # literal doubled backslashes ("C:\\Users\\...") instead of a real single
+  # backslash. Same fix, same helper.
+  links_line="$(_ny_tsv_unescape "$links_line")"
   local title
   title=$(printf '%s' "$text" | head -1)
   [[ -n "$title" ]] || title="(untitled decision)"
@@ -914,15 +1032,44 @@ _ny_render_decision_block() {
   printf '%s\n' "$text"
   printf 'Links: %s\n' "$links_line"
   printf '*(added %s, session `%s`, id `%s`)*\n' "$created" "$session" "$id"
+
+  local -a raw_links=()
+  local _ny_rl
+  while IFS= read -r _ny_rl; do
+    _ny_rl="${_ny_rl%$'\r'}"
+    [[ -n "$_ny_rl" ]] && raw_links+=("$_ny_rl")
+  done < <(echo "$it" | jq -r '.links[]?')
+  local note; note="$(_ny_liveness_note "$text" "${raw_links[@]}")"
+  [[ -n "$note" ]] && printf '%s\n' "$note"
 }
 
 _ny_render_bullet() {
   local it="$1"
-  local fields text session created
-  fields=$(echo "$it" | jq -r '[.text, (.session // "unknown"), (.created_at | split("T")[0])] | @tsv')
-  IFS=$'\t' read -r text session created <<< "$fields"
+  local fields text session created dedup_count
+  fields=$(echo "$it" | jq -r '[.text, (.session // "unknown"), (.created_at | split("T")[0]), (._dedup_count // 1)] | @tsv')
+  IFS=$'\t' read -r text session created dedup_count <<< "$fields"
   text="$(_ny_tsv_unescape "$text")"
-  printf -- '- %s — *(added %s, session `%s`)*\n' "$text" "$created" "$session"
+  # Dedup collapse (nl-issues 2026-07-29, defect class (b) "duplicate
+  # noise"): cmd_render's caller groups identical-text open bullets before
+  # calling this, stamping ._dedup_count == the group size and picking the
+  # FIRST-SEEN (earliest created_at) item as the representative -- so
+  # `created`/`session` here are already the first occurrence's. When the
+  # group has more than one member, name the repeat count instead of
+  # silently rendering N near-identical lines.
+  if [[ "${dedup_count:-1}" -gt 1 ]]; then
+    printf -- '- %s — *(added %s, session `%s`; x%s since %s)*\n' "$text" "$created" "$session" "$dedup_count" "$created"
+  else
+    printf -- '- %s — *(added %s, session `%s`)*\n' "$text" "$created" "$session"
+  fi
+
+  local -a raw_links=()
+  local _ny_rl
+  while IFS= read -r _ny_rl; do
+    _ny_rl="${_ny_rl%$'\r'}"
+    [[ -n "$_ny_rl" ]] && raw_links+=("$_ny_rl")
+  done < <(echo "$it" | jq -r '.links[]?')
+  local note; note="$(_ny_liveness_note "$text" "${raw_links[@]}")"
+  [[ -n "$note" ]] && printf '%s\n' "$note"
 }
 
 _ny_render_decided_line() {
@@ -1065,7 +1212,18 @@ cmd_render() {
 
     printf '## Open questions\n\n'
     local questions
-    questions=$(echo "$cur" | jq -c '.items[] | select(.section == "question" and .state == "open")')
+    # Dedup collapse (defect class (b)): group open items by identical text,
+    # keep the first-seen (earliest created_at) item as representative +
+    # stamp ._dedup_count with the group size; _ny_render_bullet renders the
+    # count instead of one line per near-identical repeat. Never touches the
+    # underlying ledger -- this is render-time-only collapsing.
+    questions=$(echo "$cur" | jq -c '
+      [.items[] | select(.section == "question" and .state == "open")]
+      | group_by(.text)
+      | map((sort_by(.created_at)) as $g | $g[0] + {_dedup_count: ($g | length)})
+      | sort_by(.created_at)
+      | .[]
+    ')
     if [[ -z "$questions" ]]; then
       printf '_None open._\n\n'
     else
@@ -1078,7 +1236,16 @@ cmd_render() {
 
     printf '## In flight (sessions + waves)\n\n'
     local inflight
-    inflight=$(echo "$cur" | jq -c '.items[] | select(.section == "inflight" and .state == "open")')
+    # Same dedup collapse as Open questions above -- this is the section that
+    # actually accumulated ~30 near-identical unresolved stop-gate rows in
+    # production (nl-issues 2026-07-29).
+    inflight=$(echo "$cur" | jq -c '
+      [.items[] | select(.section == "inflight" and .state == "open")]
+      | group_by(.text)
+      | map((sort_by(.created_at)) as $g | $g[0] + {_dedup_count: ($g | length)})
+      | sort_by(.created_at)
+      | .[]
+    ')
     if [[ -z "$inflight" ]]; then
       printf '_Nothing in flight._\n\n'
     else
@@ -1732,6 +1899,88 @@ cmd_selftest() {
   else
     fail_ "T31: ask-lint behavior wrong (see T31 FAIL lines above)"
   fi
+
+  # ----------------------------------------------------------------------
+  # T32-T34: nl-issues 2026-07-29 "needs-you.sh render corrupts paths" — one
+  # scenario per defect class fixed in this task. Fresh sandbox: T30
+  # rm -rf'd sandbox7, so a new one is needed for any cmd_add/cmd_render call.
+  # ----------------------------------------------------------------------
+  local sandbox10; sandbox10=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox10/state"
+  export NEEDS_YOU_MD_PATH="$sandbox10/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox10/progress-logs"
+  export OPERATOR_TODO_PATH="$sandbox10/operator-todo.md"
+
+  echo "Scenario T32: escape-safe rendering — a backslash-n Windows path renders intact byte-for-byte (the reported operator incident: 'Pocket Technician\\neural-lace' rendered split across two lines with the 'n' silently eaten)"
+  local t32_text='Reference path: C:\Users\misha\dev\Pocket Technician\neural-lace\docs\backlog.md (path check fixture)'
+  cmd_add --section inflight --text "$t32_text" --session "sess-t32" >/dev/null
+  cmd_render >/dev/null
+  if grep -qF 'Pocket Technician\neural-lace\docs\backlog.md' "$NEEDS_YOU_MD_PATH"; then
+    ok "T32 backslash-n path rendered intact, byte-for-byte (no mid-word split, no eaten 'n')"
+  else
+    fail_ "T32 backslash-n path was corrupted in the rendered file (expected literal 'Pocket Technician\\neural-lace\\docs\\backlog.md' on one line)"
+  fi
+  if grep -qE '^Reference path: C:\\Users\\misha\\dev\\Pocket Technician\\$' "$NEEDS_YOU_MD_PATH"; then
+    fail_ "T32b the corrupted split form (path cut off after 'Technician\\') is present — regression"
+  else
+    ok "T32b no corrupted split-line form present"
+  fi
+
+  echo "Scenario T33: dedup collapse — 3 identical-text inflight rows (different sessions, same gap) collapse to ONE rendered bullet naming the repeat count"
+  local t33_text="Unresolved Stop-gate gap (dedup fixture): identical gap reported by 3 different sessions"
+  cmd_add --section inflight --text "$t33_text" --session "sess-t33-a" >/dev/null
+  cmd_add --section inflight --text "$t33_text" --session "sess-t33-b" >/dev/null
+  cmd_add --section inflight --text "$t33_text" --session "sess-t33-c" >/dev/null
+  cmd_render >/dev/null
+  local t33_line_count
+  t33_line_count=$(grep -cF "$t33_text" "$NEEDS_YOU_MD_PATH")
+  if [[ "$t33_line_count" == "1" ]]; then
+    ok "T33 3 identical-text inflight rows collapsed to exactly 1 rendered bullet"
+  else
+    fail_ "T33 expected exactly 1 rendered bullet for identical-text rows, found $t33_line_count"
+  fi
+  if grep -qE -- '- Unresolved Stop-gate gap \(dedup fixture\).*x3 since' "$NEEDS_YOU_MD_PATH"; then
+    ok "T33b collapsed bullet names the repeat count (x3 since <first-seen-date>)"
+  else
+    fail_ "T33b expected an 'x3 since <date>' annotation on the collapsed bullet"
+  fi
+
+  echo "Scenario T34: dead-path annotation — an entry referencing a local path that does not exist gets a '[path no longer exists]' note, WITHOUT the original entry text being altered or dropped"
+  local t34_dead_path="$sandbox10/definitely-not-a-real-file-xyz123.sh"
+  local t34_text="Run the drill: bash \"$t34_dead_path\" from the main checkout (dead-path fixture)."
+  cmd_add --section inflight --text "$t34_text" --session "sess-t34" >/dev/null
+  cmd_render >/dev/null
+  if grep -qF "$t34_text" "$NEEDS_YOU_MD_PATH"; then
+    ok "T34 original entry text preserved verbatim (never deleted/altered by the liveness check)"
+  else
+    fail_ "T34 original entry text missing/altered in the rendered file"
+  fi
+  # Co-located check (not just "somewhere in the file"): the annotation must
+  # appear on the line immediately after THIS entry's own bullet, naming
+  # THIS entry's dead path -- a prior version of this assertion checked the
+  # two greps independently and could pass by coincidence (e.g. a DIFFERENT
+  # entry's annotation satisfying the "[path no longer exists]" half).
+  local t34_block
+  t34_block=$(grep -A1 -F "$t34_text" "$NEEDS_YOU_MD_PATH" || true)
+  if printf '%s' "$t34_block" | grep -qF "path no longer exists" \
+     && printf '%s' "$t34_block" | grep -qF "$t34_dead_path"; then
+    ok "T34b dead-path annotation present immediately after the entry, naming the specific missing path"
+  else
+    fail_ "T34b expected a '[path no longer exists]' annotation naming $t34_dead_path right after the entry; got: $t34_block"
+  fi
+  # Negative case: a link/path that DOES exist gets no dead-path annotation.
+  local t34b_text="See adapters/claude-code/scripts/needs-you.sh for the implementation (live-path fixture)."
+  cmd_add --section inflight --text "$t34b_text" --session "sess-t34b" --link "adapters/claude-code/scripts/needs-you.sh" >/dev/null
+  cmd_render >/dev/null
+  local t34c_block
+  t34c_block=$(grep -A1 -F "$t34b_text" "$NEEDS_YOU_MD_PATH" || true)
+  if printf '%s' "$t34c_block" | grep -qF "path no longer exists"; then
+    fail_ "T34c a live (existing) path was incorrectly flagged as dead — false positive"
+  else
+    ok "T34c a live path gets no dead-path annotation (no false positive)"
+  fi
+
+  rm -rf "$sandbox10"
 
   echo ""
   echo "RESULT: $pass passed, $fail failed"
