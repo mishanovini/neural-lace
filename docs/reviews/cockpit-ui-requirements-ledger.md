@@ -41,7 +41,7 @@ history stays legible.
 Computed by machine (grep against this file's own table, first-status-token classification —
 reproducible, not hand-tallied) against all 87 numbered rows below (73 through Round 15 + 6 new
 Round 16 rows + 4 Round-17-queue rows + 4 Round-17 live catches, all 2026-07-30). Three
-of the 83 (rows 10, 18, 19) are the SAME requirement restated by the operator in the same round
+of the 87 (rows 10, 18, 19) are the SAME requirement restated by the operator in the same round
 and are cross-referenced rather than independently re-verified — they are still counted here
 since every row still carries its own verifiable status, not folded away to make the total look
 smaller.
