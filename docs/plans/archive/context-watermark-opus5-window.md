@@ -153,7 +153,25 @@ satisfied before allowing closure.
 _Written by close-plan.sh at closure (2026-07-30T07:26:51Z)._
 
 Outcome metric: `context-watermark.sh` reports `claude-opus-5` (bare and dated-snapshot forms)
-Re-check date: 2026-09-28T00:00:00Z (60 days — this is an instance fix for one model family, not
+against the correct 1,000,000-token window, never the 200,000 ASSUMED fallback; the T17b regression
+scenario stays green (21/0, both `/bin/bash` and Homebrew bash) and no operator-visible premature-
+checkpointing incident recurs from this SPECIFIC model entry being absent.
+Re-check date: 2026-09-28T00:00:00Z
+(60 days — this is an instance fix for one model family, not the class fix;
+CONTEXT-WATERMARK-WINDOW-TABLE-STALENESS-01 in docs/backlog.md tracks the structural options. A
+re-check this far out is a low-cost sanity check that the instance fix itself hasn't regressed, not
+a substitute for the class fix's own timeline.)
+
+CORRECTION (2026-07-30, T9 follow-up): the ORIGINAL close-plan.sh write truncated both fields above
+to their first physical line (a real multi-line-field bug in extract_closure_outcome_field_cp,
+fixed same-session — see close-plan.sh's own header comment on that function) and this plan's own
+FIRST-AUTHORED Re-check date line wrapped commentary onto the date's own line, which would have
+broken plan-recheck-sweep.sh's date parsing (BSD `date -j -f` requires an exact format match; a
+trailing comment fragment on the date line fails the parse entirely, silently disabling this
+plan's re-check). Both are corrected here: the extractor now preserves full multi-line prose
+end-to-end, and the Re-check date's OWN line above is now a clean, bare, machine-parseable
+ISO-8601 timestamp with all commentary moved to continuation lines/this note — matching the
+convention now documented in close-plan.sh's generate_closure_outcome_section.
 
 Evidence pointers:
 - 00293c4 docs(discoveries): triage remaining pending — 4 status flips + 1 current-state note + HARNESS-GAP-50

@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-30T00:55:25Z",
-  "plans_total": 163,
+  "generated_at": "2026-07-30T07:27:12Z",
+  "plans_total": 166,
   "coverage": {
     "wall_clock_pct": 100,
     "builder_sessions_pct": 1.2,
@@ -51,16 +51,16 @@
     },
     {
       "class": "harness-mechanism",
-      "count": 90,
+      "count": 93,
       "task_count": {
         "p50": 4,
         "p90": 13,
-        "n": 90
+        "n": 93
       },
       "wall_clock_days": {
-        "p50": 0.04,
-        "p90": 6.90,
-        "n": 90
+        "p50": 0.03,
+        "p90": 6.62,
+        "n": 93
       },
       "builder_sessions": {
         "p50": 1,
@@ -200,6 +200,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
+    },
+    {
+      "slug": "anti-vaporware-config-controls-generalization",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 1,
+      "wall_clock_days": 0.01,
+      "first_commit": "2026-07-29T22:59:44-07:00",
+      "last_commit": "2026-07-29T23:08:56-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
     },
     {
       "slug": "architecture-simplification-gate-relaxation",
@@ -545,6 +557,18 @@
       "wall_clock_days": 0.02,
       "first_commit": "2026-05-09T14:11:08-07:00",
       "last_commit": "2026-05-09T14:38:34-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
+    },
+    {
+      "slug": "context-watermark-opus5-window",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 3,
+      "wall_clock_days": 0.00,
+      "first_commit": "2026-07-30T00:26:51-07:00",
+      "last_commit": "2026-07-30T00:26:51-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
@@ -1592,6 +1616,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
+    },
+    {
+      "slug": "problems-persist-mechanism",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 0,
+      "wall_clock_days": 0.00,
+      "first_commit": "2026-07-29T14:15:57-07:00",
+      "last_commit": "2026-07-29T14:18:47-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
     },
     {
       "slug": "register-driven-session-enforcement-2026-06-13",
