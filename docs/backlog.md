@@ -1076,6 +1076,8 @@ Anthropic-side" theme).
 
 **Cross-refs:** `docs/design-notes/review-record-primitive.md` (Writer + anti-fabrication residual section, Amendment C), `adapters/claude-code/manifest.json`'s `review-before-deploy` entry `honesty_rationale` field, `adapters/claude-code/doctrine/review-before-deploy.md`.
 
+**Adjacent gap CLOSED (2026-07-30, `docs/plans/review-independence.md`):** a related but distinct gap — the orchestrating/authoring session being the ONE dispatching the reviewer AND writing its own PASS record (self-approval) — is now structurally prevented: `scripts/review-queue.sh claim` mechanically refuses when the claimant's session matches the enqueuer's, and `harness-doctor.sh`'s `check_review_reviewer_independence` REDs on matching git-commit authorship between a PASS record and its reviewed content. This does NOT close the gap above — a genuinely different session can still paste a fabricated quote; the two gaps are orthogonal (WHO reviews vs. IS the quote real) and this backlog item stays open for the second one.
+
 ## REVIEW-RECORD-SURFACE-EXCLUDES-CARRIERS-01 — install.sh + session-start-auto-install.sh themselves are not in their own gate's trigger surface (added 2026-07-16, harness-governance-batch task 2)
 
 **Severity:** P3 (self-referential blind spot, low near-term risk — noticed while implementing, not fixed unilaterally since it would expand the architecture-reviewed Amendment A surface without a second review pass).

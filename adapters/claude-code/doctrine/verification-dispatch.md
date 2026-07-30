@@ -14,7 +14,7 @@ takes precedence over it. It is never a valid explanation for unverified work.
 **Triggers (dispatch without asking):**
 | Trigger | Agent |
 |---|---|
-| An in-surface harness change (`hooks/**`, `scripts/**`, `agents/*.md`, `rules/**`, `manifest.json`, `settings.json.template`) before it is committed | `harness-reviewer` -> record via `scripts/write-review-record.sh` |
+| An in-surface harness change (`hooks/**`, `scripts/**`, `agents/*.md`, `rules/**`, `manifest.json`, `settings.json.template`) before it is committed | `harness-reviewer` — but NEVER dispatched by the authoring session itself (docs/plans/review-independence.md): enqueue via `scripts/review-queue.sh enqueue`, a genuinely different session claims + dispatches + records via `scripts/review-runner.sh` |
 | A plan task ready for its checkbox | `task-verifier` (the only checkbox-flipper) |
 | A plan before build dispatch | the plan-time panel (`plan-evidence-reviewer`, `architecture-reviewer`) |
 | A user-facing feature claimed done | `functionality-verifier` |

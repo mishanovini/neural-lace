@@ -32,10 +32,13 @@ hole.
 **Posture differs by carrier (Amendment F):** see header Enforcement line
 for the hard-block-vs-skip+warn split.
 
-**HONEST RESIDUAL (Amendment C, NOT gate-able today).** The gate checks
-record EXISTENCE + content-match only — it cannot verify the quoted verdict
-is genuine. Audit/honesty anchor only, NOT anti-fabrication. Follow-up:
-`REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01`, `docs/backlog.md`.
+**HONEST RESIDUAL (Amendment C).** Checks record EXISTENCE + content-match
+only — cannot verify the quoted verdict is genuine (quote-forgery, open:
+`REVIEW-RECORD-ANTI-FABRICATION-ANCHOR-01`). WHO reviews is separate, now
+closed: `docs/plans/review-independence.md` — `review-queue.sh enqueue`
+is the author's only legal move; `review-runner.sh` claims/finalizes
+under a different session; doctor check `review-reviewer-independence`
+REDs on matching git-commit authorship.
 
 **Grandfather manifest + records dir are TRUST ANCHORS, not self-verifying.**
 Doctor check `review-grandfather-integrity` re-derives the manifest and
