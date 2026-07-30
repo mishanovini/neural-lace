@@ -2027,3 +2027,19 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
 - **PRS-DISABLE-SKIP-ENV-GATING-01** (advisory, closure re-review 2026-07-30): gate
   _PRS_SELFTEST_DISABLE_DEFAULT_SKIP on HARNESS_SELFTEST=1 per the S7c precedent (currently
   any exporter re-arms the default-date skip; only-more-aggressive + loud, so advisory).
+- **COCKPIT-NEVER-REVIEWED-01** (HIGH, operator 2026-07-30, MEASURED): `jq -r '.entries[].path'
+  docs/reviews/records/index.json | grep -c workstreams-ui` = **0** of 255 review records. The
+  review-before-deploy surface (`rrg_in_surface`) matches only `adapters/claude-code/**`, so the
+  cockpit UI — the surface the operator actually uses — has never been adversarially reviewed and
+  no mechanism requires it. EVERY operator-reported UI defect this week (green-means-running,
+  drag no-op, dead Inbox file:// links, empty Requests tab, raw stderr panels) lived in unreviewed
+  code. Builder dispatched to extend the surface + propose the two sibling controls below.
+- **SHAPE-ONLY-ASSERTIONS-FALSE-GREEN-01** (HIGH, operator 2026-07-30, PROVEN today): a
+  behavioural claim asserted by a source-text regex can pass while the feature is broken live —
+  cockpit.selftest.js R17-DRAG-2 matched `insertBefore(...)` and passed while the optimistic drag
+  move was a live no-op. Fixed instance-wise by R17-DRAG-3 (real-execution + mutation-proven);
+  the CLASS needs a mechanism (lint/doctor check flagging behavioural claims backed only by regex).
+- **UI-ACCEPTANCE-SANDBOX-ONLY-01** (HIGH, operator 2026-07-30): UI builders verify against
+  fixture servers (:7799); the operator finds the bugs at :7733 against real data. Round 16's blue
+  sweep, the Inbox links, and the requests pipeline all passed in sandbox and were broken live.
+  A UI round's acceptance must require evidence from the real deployed app.
