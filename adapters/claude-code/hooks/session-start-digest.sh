@@ -603,6 +603,29 @@ feed_ledger_summary() {
 # ----------------------------------------------------------------------
 # Feed 10: nl-issues untriaged count (§E.8). Tolerate absent file.
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# T9 feed (accountable-estate-program-2026-07): auto-reopen sweep. Delegate
+# to plan-recheck-sweep.sh --quick (mirrors feed_nl_issues's delegation
+# pattern exactly): that script owns the actual re-check-date/recurrence-
+# check logic, the reopen mechanics, and its own sandboxed self-test. This
+# is the ONLY chokepoint that invokes it on this machine today — see
+# plan-recheck-sweep.sh's own header ("DETERMINISTIC TRIGGER") for why
+# session-start-digest.sh (not supervisor-tick.sh/health-tick.sh, neither
+# of which is actually registered here) was picked, and the honest gap
+# that leaves open (no true session-independent periodic tick yet).
+# --quick is bounded + exit-0-always (constraint 5: never blocks a
+# session start) and prints nothing when no plan needs reopening.
+# ----------------------------------------------------------------------
+feed_plan_recheck() {
+  local cwd="${1:-$PWD}"
+  local sweep="$HOOKS_DIR/../scripts/plan-recheck-sweep.sh"
+  [[ -f "$sweep" ]] || return 0
+  local out
+  out="$(cd "$cwd" 2>/dev/null && bash "$sweep" --quick 2>/dev/null || true)"
+  [[ -z "$out" ]] && return 0
+  printf '%s\n' "$out"
+}
+
 feed_nl_issues() {
   # Delegate to nl-issue.sh --digest-feed (E.8): it owns the ledger's field
   # schema ("triage_status":"untriaged", NOT "triaged":false — the inline grep
@@ -1326,6 +1349,8 @@ run_digest() {
   body="$(feed_discoveries "$seen_path" "$cwd")"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_stale_plans "$seen_path" "$cwd")"
+  [[ -n "$body" ]] && lines+=("$body")
+  body="$(feed_plan_recheck "$cwd")"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_monitor_alerts "$seen_path" "$alert_dir")"
   [[ -n "$body" ]] && lines+=("$body")
@@ -2390,6 +2415,55 @@ EOF
       bash "$s20_script" </dev/null 2>&1
   )"
   _ck_contains "S20c explicit invocation (no NL_SESSIONSTART_ORIGIN) never suppressed by a held lock" "$out20c" "doctor:"
+
+  # ---- S21: feed_plan_recheck() (T9, accountable-estate-program-2026-07)
+  #          delegates to plan-recheck-sweep.sh --quick. A sandboxed fixture
+  #          repo with an archived, Closure-Outcome-bearing, PAST-re-check-
+  #          date plan must surface a "plan-recheck: ... reopened" digest
+  #          line; a repo with no such plan must be silent (empty). ----
+  local s21_clean="$tmp/s21-clean"
+  mkdir -p "$s21_clean/docs/plans/archive"
+  ( cd "$s21_clean" && git init -q && git config user.email t@t.test && git config user.name T )
+  local out21a
+  out21a="$(feed_plan_recheck "$s21_clean")"
+  if [[ -z "$out21a" ]]; then
+    echo "PASS: S21a feed_plan_recheck silent when no plan needs reopening"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: S21a feed_plan_recheck expected empty output, got: $out21a" >&2
+    fail=$((fail + 1))
+  fi
+
+  local s21_dirty="$tmp/s21-dirty"
+  mkdir -p "$s21_dirty/docs/plans/archive"
+  (
+    cd "$s21_dirty" || exit 1
+    git init -q
+    git config user.email t@t.test
+    git config user.name T
+    cat > docs/plans/archive/p-digest-recheck.md <<'EOF'
+# Plan: P Digest Recheck
+Status: COMPLETED
+Backlog items absorbed: none
+
+## Goal
+test
+
+## Files to Modify/Create
+- `docs/plans/archive/p-digest-recheck.md`
+
+## Closure Outcome
+Outcome metric: test metric
+Re-check date: 2020-01-01T00:00:00Z
+Evidence pointers:
+- (none)
+EOF
+    printf '# Backlog\n\n## Open work\n' > docs/backlog.md
+    git add . && git commit -q -m init
+  )
+  local out21b
+  out21b="$(feed_plan_recheck "$s21_dirty")"
+  _ck_contains "S21b feed_plan_recheck surfaces a reopened-plan digest line" "$out21b" "plan-recheck: p-digest-recheck reopened"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
