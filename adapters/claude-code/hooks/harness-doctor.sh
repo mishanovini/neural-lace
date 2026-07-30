@@ -2936,11 +2936,38 @@ check_review_grandfather_integrity() {
 # (review-runner.sh's own commit, per RI2 -- the first, and by the
 # append-only convention the ONLY, commit to add that path).
 #
-#   RED  : both emails resolve and are IDENTICAL -- self-approval.
-#   WARN : either commit is unresolvable (a grandfathered/legacy record
-#          predating this convention, a missing change_ref, or the record
-#          file was never committed) -- cannot verify, not a violation.
+#   RED  : both emails resolve and are IDENTICAL, AND the record's own
+#          introducing commit is at-or-after the CUTOVER commit below --
+#          self-approval that happened after independent review was
+#          actually available as a mechanism.
+#   WARN : either commit is unresolvable (a missing change_ref, or the
+#          record file was never committed) -- cannot verify, not a
+#          violation; OR the self-approval shape is present but the
+#          record PRE-DATES the cutover (grandfathered).
+#
+# CUTOVER (Amendment-E-style bootstrap, same "never brick a fresh/stale
+# checkout" principle grandfather-manifest.json already established for
+# review-before-deploy): a 2026-07-29 harness-change-review sweep, run
+# under the operator's OWN direct authorization BEFORE review-queue.sh/
+# review-runner.sh existed, wrote ~58+ self-authored PASS records as a
+# deliberate, known stopgap -- not a silently-smuggled violation. Flagging
+# all of them RED the instant this check ships would be a mechanically
+# "correct" but operationally false signal (it reads as "58 NEW problems
+# just appeared," when nothing changed about those records -- the
+# MECHANISM to avoid self-approval simply did not exist yet when they were
+# written). `_RRI_CUTOVER_COMMIT` pins the commit that introduced this
+# check (RI3, docs/plans/review-independence.md) -- a record whose own
+# introducing commit is NOT a descendant of that commit predates the
+# mechanism and is grandfathered (WARN, not RED). This is a real design
+# decision, documented in docs/plans/review-independence.md's Decisions
+# Log, not silently applied.
 # ------------------------------------------------------------
+# Overridable (REVIEW_REVIEWER_INDEPENDENCE_CUTOVER) so self-test fixtures --
+# each a from-scratch temp repo whose history obviously never contains this
+# specific SHA -- can point the cutover at their OWN fixture's first commit
+# instead. Production always uses the real, fixed default.
+_RRI_CUTOVER_COMMIT="${REVIEW_REVIEWER_INDEPENDENCE_CUTOVER:-b68e27cc3a985831f80f9c7e520af64169d24b13}"
+
 check_review_reviewer_independence() {
   local live_home="$1" repo_root="$2"
   [[ -z "$repo_root" ]] && { _warn "review-reviewer-independence" "repo root unresolved -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
@@ -2954,7 +2981,11 @@ check_review_reviewer_independence() {
   command -v jq >/dev/null 2>&1 || { _warn "review-reviewer-independence" "jq unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
   command -v git >/dev/null 2>&1 || { _warn "review-reviewer-independence" "git unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
 
-  local f base kind verdict reviewed_commit record_relpath reviewed_author record_author
+  local cutover_resolvable=1
+  git -C "$repo_root" cat-file -e "${_RRI_CUTOVER_COMMIT}^{commit}" 2>/dev/null || cutover_resolvable=0
+
+  local f base kind verdict reviewed_commit record_relpath reviewed_author
+  local record_commit_sha record_author post_cutover
   shopt -s nullglob
   for f in "$records_dir"/*.json; do
     [[ -f "$f" ]] || continue
@@ -2977,14 +3008,25 @@ check_review_reviewer_independence() {
     fi
 
     record_relpath="docs/reviews/records/${base}"
+    record_commit_sha=$(git -C "$repo_root" log --diff-filter=A --format=%H -- "$record_relpath" 2>/dev/null | tail -n 1)
     record_author=$(git -C "$repo_root" log --diff-filter=A --format=%ae -- "$record_relpath" 2>/dev/null | tail -n 1)
-    if [[ -z "$record_author" ]]; then
+    if [[ -z "$record_author" ]] || [[ -z "$record_commit_sha" ]]; then
       _warn "review-reviewer-independence" "${base}: this record was never committed (or its adding commit is unresolvable) -- cannot verify independence, skipped"
       continue
     fi
 
-    if [[ "$reviewed_author" == "$record_author" ]]; then
+    [[ "$reviewed_author" == "$record_author" ]] || continue
+
+    post_cutover=0
+    if [[ "$cutover_resolvable" -eq 1 ]] \
+       && git -C "$repo_root" merge-base --is-ancestor "$_RRI_CUTOVER_COMMIT" "$record_commit_sha" 2>/dev/null; then
+      post_cutover=1
+    fi
+
+    if [[ "$post_cutover" -eq 1 ]]; then
       _red "review-reviewer-independence" "${base}: SELF-APPROVAL -- the reviewed commit (${reviewed_commit}) and the commit that added this PASS record were both authored by ${reviewed_author}. A review-record must be committed by a genuinely different principal than the one who authored the reviewed content (docs/decisions/067-review-independence-same-session-pathway.md); route this content through docs/plans/review-independence.md's review-queue.sh + review-runner.sh pathway instead."
+    else
+      _warn "review-reviewer-independence" "${base}: self-approval shape present (${reviewed_author} authored both the reviewed commit and this record) but the record PRE-DATES the review-independence cutover (${_RRI_CUTOVER_COMMIT}) -- grandfathered, not enforced retroactively (docs/plans/review-independence.md Decisions Log)"
     fi
   done
   shopt -u nullglob
@@ -5536,7 +5578,15 @@ EOF
   ( cd "$D/repo" && git add -A && git commit -q -m "author: self-approve real.sh" )
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # Cutover override (this fixture's OWN first commit is an ancestor of the
+  # self-approval commit, so it counts as post-cutover) -- the production
+  # default SHA obviously does not exist in a from-scratch fixture repo, so
+  # WITHOUT this override every self-approval fixture would read as
+  # pre-cutover (WARN, not RED) -- see the dedicated pre-cutover-warn
+  # scenario below for that path tested on its own.
+  export REVIEW_REVIEWER_INDEPENDENCE_CUTOVER="$RI_REVIEWED_SHA"
   OUT="$(_run_quick "$D")"; RC=$?
+  unset REVIEW_REVIEWER_INDEPENDENCE_CUTOVER
   _assert "review-reviewer-independence-red" 1 "$RC" "RED review-reviewer-independence" "$OUT"
 
   # ---- review-reviewer-independence: GREEN fixture -- a DIFFERENT git
@@ -5592,6 +5642,43 @@ EOF
   else
     echo "self-test (review-reviewer-independence-unresolvable-not-red): PASS" >&2
     PASSED=$((PASSED + 1))
+  fi
+
+  # ---- review-reviewer-independence: PRE-CUTOVER GRANDFATHER fixture --
+  # the exact self-approval shape (same author on both the reviewed commit
+  # and the record's commit), but using the REAL production
+  # _RRI_CUTOVER_COMMIT default (no override) -- which cannot exist in a
+  # from-scratch fixture repo, so the record correctly reads as PRE-cutover.
+  # Must WARN, never RED: this is the 2026-07-29 sweep's exact shape
+  # (docs/plans/review-independence.md Decisions Log) -- a deliberate,
+  # operator-authorized stopgap predating the mechanism, not a violation to
+  # flag retroactively. ----
+  D=$(_scenario_dir review-reviewer-independence-pre-cutover-warn)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" && git init -q -b main )
+  ( cd "$D/repo" && git config user.email "author@example.com" && git config user.name "Author Session" )
+  mkdir -p "$D/repo/adapters/claude-code/hooks" "$D/repo/docs/reviews/records"
+  printf '#!/bin/bash\necho v1\n' > "$D/repo/adapters/claude-code/hooks/real.sh"
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: add real.sh" )
+  RI_REVIEWED_SHA=$(git -C "$D/repo" rev-parse HEAD)
+  RI_BLOB_SHA=$(git -C "$D/repo" rev-parse "HEAD:adapters/claude-code/hooks/real.sh")
+  cat > "$D/repo/docs/reviews/records/2026-07-30-harness-change-review-precutover.json" <<EOF
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-precutover","created_at":"2026-07-29T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"${RI_REVIEWED_SHA}","branch":"main"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"${RI_BLOB_SHA}"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","payload":{}}
+EOF
+  printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: self-approve real.sh (pre-cutover sweep shape)" )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"
+  if printf '%s' "$OUT" | grep -q "RED review-reviewer-independence"; then
+    echo "self-test (review-reviewer-independence-pre-cutover-warn): FAIL (unexpected RED -- pre-cutover content must be grandfathered: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  elif printf '%s' "$OUT" | grep -q "WARN review-reviewer-independence.*PRE-DATES the review-independence cutover"; then
+    echo "self-test (review-reviewer-independence-pre-cutover-warn): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (review-reviewer-independence-pre-cutover-warn): FAIL (expected the grandfather WARN line, got: $OUT)" >&2
+    FAILED=$((FAILED + 1))
   fi
 
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----

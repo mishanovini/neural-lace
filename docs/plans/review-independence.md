@@ -970,6 +970,44 @@ needed in the gate itself. The 8 polluting files were deleted after confirming b
 content they were fixture garbage, not real operator data. Re-verified: both
 self-test runs post-fix leave `~/.claude/state/review-queue/` empty.
 
+**D7 — `check_review_reviewer_independence` gets an Amendment-E-style cutover, added
+after discovering it REDs 58 real, pre-existing records (builder decision, Tier 1,
+reversible — a doctor-check gating change, no data mutation).** Running the check
+against this repo's REAL `docs/reviews/records/` (not a fixture) after RI3 landed
+showed 58 `RED review-reviewer-independence` lines — every record from the 2026-07-29
+harness-change-review sweep the operator ran directly (mentioned by the coordinator
+mid-build: "the review sweep RAN under the operator's direct authorization and wrote
+~91+ records"; this checkout shows 58 `harness-change-review` records tripping the
+self-approval predicate specifically, out of more records overall). Those records are
+a deliberate, operator-authorized stopgap that predates `review-queue.sh`/
+`review-runner.sh` existing at all — flagging them RED the instant this check ships
+would read as "58 NEW problems just appeared" when nothing about them changed. This
+is the SAME class of problem `grandfather-manifest.json`'s Amendment E already solved
+for `review-before-deploy` ("never brick a fresh/stale machine" — enforcement applies
+only to content that postdates a cutover). Applied the same principle here: a fixed
+constant `_RRI_CUTOVER_COMMIT` (pinned to the commit that introduced this check,
+overridable via `REVIEW_REVIEWER_INDEPENDENCE_CUTOVER` for self-test fixtures, which
+obviously cannot contain a real production SHA in their own from-scratch history) —
+a self-approved record whose OWN introducing commit is NOT a descendant of the
+cutover WARNs (grandfathered) instead of REDing. Re-verified against the real repo
+post-fix: 0 RED, 58 WARN (all naming the grandfather reason explicitly), confirmed by
+a new dedicated self-test scenario (`review-reviewer-independence-pre-cutover-warn`,
+alongside the pre-existing RED/GREEN/unresolvable scenarios, now 4 total, updated to
+pass a fixture-local cutover override so the RED scenario still genuinely tests RED).
+**Answers the coordinator's backfill question directly: the sweep's records stand
+AS-IS** (grandfathered, not retroactively re-reviewed or backfilled into the queue
+model — the queue has no retroactive role once a record already exists and covers
+content, since coverage-checking (`rrg_is_covered`) reads `index.json` directly and
+was never queue-aware) — **this plan's pipeline governs commits from the cutover
+commit forward, not before it.**
+
+Also refreshed the committed `docs/reviews/records/index.json` via
+`write-review-record.sh rebuild-index` (a direct, mechanical consequence of RI3's own
+schema extension — the committed index was built by the pre-RI3 writer and lacked the
+two new fields entirely on every row, which is exactly the divergence
+`review-index-consistency` exists to catch; confirmed RED before the rebuild, GREEN
+after).
+
 ## Behavioral Contracts
 <!-- rung: 5 requires this section per plan-reviewer.sh Check 11. -->
 - **Idempotency:** `review-queue.sh enqueue` is idempotent for identical
