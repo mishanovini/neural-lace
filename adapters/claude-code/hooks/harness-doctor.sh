@@ -2962,11 +2962,17 @@ check_review_grandfather_integrity() {
 # decision, documented in docs/plans/review-independence.md's Decisions
 # Log, not silently applied.
 # ------------------------------------------------------------
-# Overridable (REVIEW_REVIEWER_INDEPENDENCE_CUTOVER) so self-test fixtures --
-# each a from-scratch temp repo whose history obviously never contains this
-# specific SHA -- can point the cutover at their OWN fixture's first commit
-# instead. Production always uses the real, fixed default.
-_RRI_CUTOVER_COMMIT="${REVIEW_REVIEWER_INDEPENDENCE_CUTOVER:-b68e27cc3a985831f80f9c7e520af64169d24b13}"
+# CUTOVER REDESIGN (delta-sweep reviewer 2026-07-30, PROVEN dead arm): the
+# original cutover was a pinned COMMIT SHA (b68e27cc...) tested via
+# merge-base --is-ancestor. That SHA existed only on the builder worktree
+# branch -- the RI3 work was rebased in as different SHAs -- so on master the
+# ancestry test could never succeed and every future self-approval would
+# read as grandfathered WARN forever: documented enforcement that cannot
+# fire (constitution s10 theatre). Cutover is now an ISO-8601 DATE compared
+# against the record's own created_at field: rebases and cherry-picks cannot
+# invalidate a date, and records are append-only with created_at stamped by
+# write-review-record.sh. Overridable for self-test fixtures.
+_RRI_CUTOVER_ISO="${REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO:-2026-07-30T09:00:00Z}"
 
 check_review_reviewer_independence() {
   local live_home="$1" repo_root="$2"
@@ -2981,11 +2987,17 @@ check_review_reviewer_independence() {
   command -v jq >/dev/null 2>&1 || { _warn "review-reviewer-independence" "jq unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
   command -v git >/dev/null 2>&1 || { _warn "review-reviewer-independence" "git unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
 
-  local cutover_resolvable=1
-  git -C "$repo_root" cat-file -e "${_RRI_CUTOVER_COMMIT}^{commit}" 2>/dev/null || cutover_resolvable=0
+  # QUICK-PATH COST (same review): two full-history git-log walks per PASS
+  # record measured ~0.077s x 93 records in --quick (25.7s against its <2s
+  # contract), growing linearly forever. The authorship walk now runs ONLY
+  # in --full; --quick does the O(1) date classification and emits the
+  # single grandfather summary below.
+  local _rri_deep=0
+  [[ "${MODE:-}" == "--full" || "${MODE:-}" == "full" ]] && _rri_deep=1
 
   local f base kind verdict reviewed_commit record_relpath reviewed_author
-  local record_commit_sha record_author post_cutover
+  local record_commit_sha record_author post_cutover created_at
+  local _rri_grandfathered=0
   shopt -s nullglob
   for f in "$records_dir"/*.json; do
     [[ -f "$f" ]] || continue
@@ -3007,29 +3019,38 @@ check_review_reviewer_independence() {
       continue
     fi
 
+    created_at=$(jq -r '.created_at // empty' "$f" 2>/dev/null)
+    post_cutover=0
+    # ISO-8601 strings compare correctly as strings; empty created_at is
+    # treated as post-cutover (a record missing its stamp should be LOOKED AT,
+    # never silently amnestied).
+    if [[ -z "$created_at" || ! "$created_at" < "$_RRI_CUTOVER_ISO" ]]; then
+      post_cutover=1
+    fi
+    if [[ "$post_cutover" -eq 0 ]]; then
+      _rri_grandfathered=$((_rri_grandfathered + 1))
+      continue
+    fi
+    # Post-cutover: the expensive authorship walk, --full only.
+    if [[ "$_rri_deep" -ne 1 ]]; then
+      continue
+    fi
     record_relpath="docs/reviews/records/${base}"
     record_commit_sha=$(git -C "$repo_root" log --diff-filter=A --format=%H -- "$record_relpath" 2>/dev/null | tail -n 1)
     record_author=$(git -C "$repo_root" log --diff-filter=A --format=%ae -- "$record_relpath" 2>/dev/null | tail -n 1)
     if [[ -z "$record_author" ]] || [[ -z "$record_commit_sha" ]]; then
-      _warn "review-reviewer-independence" "${base}: this record was never committed (or its adding commit is unresolvable) -- cannot verify independence, skipped"
+      _warn "review-reviewer-independence" "${base}: post-cutover record never committed (or adding commit unresolvable) -- cannot verify independence"
       continue
     fi
-
     [[ "$reviewed_author" == "$record_author" ]] || continue
-
-    post_cutover=0
-    if [[ "$cutover_resolvable" -eq 1 ]] \
-       && git -C "$repo_root" merge-base --is-ancestor "$_RRI_CUTOVER_COMMIT" "$record_commit_sha" 2>/dev/null; then
-      post_cutover=1
-    fi
-
-    if [[ "$post_cutover" -eq 1 ]]; then
-      _red "review-reviewer-independence" "${base}: SELF-APPROVAL -- the reviewed commit (${reviewed_commit}) and the commit that added this PASS record were both authored by ${reviewed_author}. A review-record must be committed by a genuinely different principal than the one who authored the reviewed content (docs/decisions/067-review-independence-same-session-pathway.md); route this content through docs/plans/review-independence.md's review-queue.sh + review-runner.sh pathway instead."
-    else
-      _warn "review-reviewer-independence" "${base}: self-approval shape present (${reviewed_author} authored both the reviewed commit and this record) but the record PRE-DATES the review-independence cutover (${_RRI_CUTOVER_COMMIT}) -- grandfathered, not enforced retroactively (docs/plans/review-independence.md Decisions Log)"
-    fi
+    _red "review-reviewer-independence" "${base}: SELF-APPROVAL -- the reviewed commit (${reviewed_commit}) and the commit that added this PASS record were both authored by ${reviewed_author}. A review-record must be committed by a genuinely different principal (docs/decisions/067-review-independence-same-session-pathway.md); route through review-queue.sh + review-runner.sh."
   done
   shopt -u nullglob
+  # ONE summary line for the whole grandfathered population (was one WARN per
+  # record: 94 WARNs drowning 10 real REDs in a single run).
+  if [[ "$_rri_grandfathered" -gt 0 ]]; then
+    _warn "review-reviewer-independence" "${_rri_grandfathered} pre-cutover record(s) grandfathered (created_at < ${_RRI_CUTOVER_ISO}) -- not enforced retroactively; post-cutover records are RED on self-approval (authorship walk runs in --full)"
+  fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 

@@ -31,8 +31,12 @@
 # ---------------------------------------------------------------------------
 
 NL_CHECKOUT_OVERRIDE  hooks/session-start-auto-install.sh:219 discover_nl_checkout() reads it as "1. Explicit override (self-test / power user)" -- intentionally producer-less; a human operator or a self-test subshell exports it, never repo code.
-NL_CROSS_REPO_TOUCH_OK  hooks/cross-repo-nl-touch-warn.sh:83 is a WARN-only silence switch documented inline ("how to silence it if the cross-repo touch is deliberate") -- meant to be set by hand in the terminal, not produced by any script.
-NL_EXCLUSIONS_VERIFY_TIMEOUT  scripts/selftest-sweep-exclusions.sh:232,362 read as "${NL_EXCLUSIONS_VERIFY_TIMEOUT:-300}" -- an operator-tunable timeout override for a slow machine; the 300s default is the real behavior when unset, not a dead branch.
+# NL_CROSS_REPO_TOUCH_OK row DELETED 2026-07-30 (delta-sweep reviewer, PROVEN): the env var is
+# never consumed anywhere -- hooks/cross-repo-nl-touch-warn.sh:83 is a COMMENT explicitly saying
+# the env-var prefix "is not possible for a hook" and the real silencing mechanism is a state
+# marker file. Advertising a non-functional lever inside the anti-vaporware ledger violated the
+# file's own audit promise (negation-blindness: the clause was quoted, its continuation missed).
+NL_EXCLUSIONS_VERIFY_TIMEOUT  scripts/selftest-sweep-exclusions.sh:239,399,449 read as "${NL_EXCLUSIONS_VERIFY_TIMEOUT:-300}" -- an operator-tunable timeout override for a slow machine; the 300s default is the real behavior when unset, not a dead branch.
 NL_ISSUES_BACKLOG_PATH  scripts/nl-issue.sh:89,141 documented "wins (self-test / explicit override); else the [repo default]" -- self-test and power-user path override, not a production-set lever.
 NL_ISSUE_CLI_OVERRIDE  hooks/workstreams-read.sh:432 _nli_capture_cli_path() self-test-only override (exercised via inline env-prefixed invocation in that file's own --self-test, never a standalone producer).
 NL_SELFTEST_EXCLUSIONS_FILE  scripts/selftest-sweep-exclusions.sh:117 ledger_path() documented "Override with NL_SELFTEST_EXCLUSIONS_FILE (used by --self-test)" -- self-test-only fixture-path override.

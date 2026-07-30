@@ -307,7 +307,7 @@ cmd_finalize() {
     --repo-root "$repo_root" --reviewer-principal "$claimant_json" --independence "$independence")
   [[ -n "$reviewer_model" ]] && wargs+=(--reviewer-model "$reviewer_model")
   [[ -n "$findings_summary" ]] && wargs+=(--findings-summary "$findings_summary")
-  wargs+=("${files_args[@]}")
+  wargs+=(${files_args[@]+"${files_args[@]}"})
 
   local wout wrc
   wout=$(bash "$WRITER_SH" "${wargs[@]}" 2>&1)
@@ -327,8 +327,21 @@ cmd_finalize() {
   # script does not override it.
   local index_file="$repo_root/docs/reviews/records/index.json"
   git -C "$repo_root" add "$record_file" "$index_file" >/dev/null 2>&1
+  # ONLY-THE-RECORD GUARANTEE (delta-sweep reviewer 2026-07-30, PROVEN by
+  # fixture): an UNSCOPED commit here swept any pre-staged content into the
+  # record commit under the REVIEWER identity — invisible to the commit gate
+  # (a PreToolUse hook sees only this script invocation, never the inner git
+  # call). Two layers: refuse when anything outside docs/reviews/records/ is
+  # staged, and scope the commit to exactly the record artifacts regardless.
+  local _stray
+  _stray=$(git -C "$repo_root" diff --cached --name-only 2>/dev/null | grep -v '^docs/reviews/records/' || true)
+  if [[ -n "$_stray" ]]; then
+    echo "$SCRIPT_NAME: REFUSING finalize — the index holds staged content outside docs/reviews/records/ (a record commit must contain ONLY the record):" >&2
+    printf '%s\n' "$_stray" | head -5 >&2
+    return 2
+  fi
   local commit_msg="review-record(${item_id}): ${verdict} on ${n} file(s) by ${reviewer} (independence: ${independence})"
-  if ! git -C "$repo_root" commit -q -m "$commit_msg" >/dev/null 2>&1; then
+  if ! git -C "$repo_root" commit -q -m "$commit_msg" -- "$record_file" "$index_file" >/dev/null 2>&1; then
     echo "$SCRIPT_NAME: git commit of the review record failed (nothing to commit, or no git identity configured)" >&2
     return 2
   fi
@@ -504,6 +517,43 @@ run_self_test() {
     PASSED=$((PASSED+1))
   else
     echo "self-test (S8) stale-content-refused-and-marked: FAIL (rc=$rc status=$st3 out=$out3)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S9: ONLY-THE-RECORD guarantee (delta-sweep reviewer 2026-07-30) --
+  # PROVEN pre-fix: an unscoped commit swept pre-staged content into the
+  # record commit under the reviewer identity. Two assertions: finalize
+  # REFUSES with a stray staged file; and after a clean finalize the record
+  # commit's file list contains ONLY docs/reviews/records/ paths.
+  local out4 item_id4
+  out4=$(bash "$SCRIPT_DIR/review-queue.sh" enqueue --branch main --file "adapters/claude-code/hooks/beta.sh" \
+    --blob-sha "$(git -C "$REPO" rev-parse HEAD:adapters/claude-code/hooks/beta.sh)" \
+    --enqueuer-session-id "session-author-4" --state-dir "$QD" 2>&1)
+  item_id4=$(printf '%s\n' "$out4" | tail -1)
+  "$SELF_PATH" claim --item-id "$item_id4" --repo-root "$REPO" --claimant-session-id "session-reviewer-4" --state-dir "$QD" >/dev/null 2>&1
+  printf '#!/bin/bash\necho leftover\n' > "$REPO/adapters/claude-code/hooks/leftover.sh"
+  ( cd "$REPO" && git add adapters/claude-code/hooks/leftover.sh )
+  out4=$("$SELF_PATH" finalize --item-id "$item_id4" --repo-root "$REPO" --verdict PASS \
+    --quote "PASS -- only-the-record probe" --plan-ref x --state-dir "$QD" 2>&1)
+  rc=$?
+  if [[ "$rc" -eq 2 ]] && printf '%s' "$out4" | grep -q "REFUSING finalize"; then
+    echo "self-test (S9a) stray-staged-content-refused: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S9a) stray-staged-content-refused: FAIL (rc=$rc out=$out4)" >&2
+    FAILED=$((FAILED+1))
+  fi
+  ( cd "$REPO" && git reset -q HEAD adapters/claude-code/hooks/leftover.sh && rm -f adapters/claude-code/hooks/leftover.sh )
+  out4=$("$SELF_PATH" finalize --item-id "$item_id4" --repo-root "$REPO" --verdict PASS \
+    --quote "PASS -- only-the-record probe clean" --plan-ref x --state-dir "$QD" 2>&1)
+  rc=$?
+  local rec_files
+  rec_files=$(git -C "$REPO" diff-tree --no-commit-id --name-only -r HEAD 2>/dev/null | grep -cv '^docs/reviews/records/' || true)
+  if [[ "$rc" -eq 0 ]] && [[ "${rec_files:-1}" -eq 0 ]]; then
+    echo "self-test (S9b) record-commit-contains-only-record-paths: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S9b) record-commit-contains-only-record-paths: FAIL (rc=$rc non-record-files=$rec_files)" >&2
     FAILED=$((FAILED+1))
   fi
 
