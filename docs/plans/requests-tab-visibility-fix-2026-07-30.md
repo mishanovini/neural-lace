@@ -49,7 +49,7 @@ The operator opens the Requests tab and sees their own actual recent requests, w
 REAL text, as distinct rows — not a stale 2-3-item list from days/weeks ago while
 dozens of real requests sit invisible. Demonstrated end-to-end against a REPAIRED
 COPY of the live registry: `before=3` visible top-level requests (`record_type:
-"created"`), `after=41` after running the backfill script for real, verified both via
+"created"`), `after=35` after running the backfill script for real, verified both via
 the raw `/api/requests` JSON payload and visually in a sandboxed cockpit instance
 (`CTREE_PORT=7799`, never the orchestrator's `:7733`).
 
@@ -90,11 +90,11 @@ the raw `/api/requests` JSON payload and visually in a sandboxed cockpit instanc
        backfill-classify-amendment-candidates.sh --dry-run` reports the projected
        classify/promote decisions with zero changes on disk.
     3. `ASK_REGISTRY_STATE_DIR=<tmp>/state bash adapters/claude-code/scripts/
-       backfill-classify-amendment-candidates.sh --apply` — before=3, after=41
+       backfill-classify-amendment-candidates.sh --apply` — before=3, after=35
        visible top-level (`record_type:"created"`) requests.
     4. `CTREE_PORT=7799 ASK_REGISTRY_STATE_DIR=<tmp>/state node
        neural-lace/workstreams-ui/server/server.js` — `curl
-       127.0.0.1:7799/api/requests` returns 41 open+closed items with real operator
+       127.0.0.1:7799/api/requests` returns 35+ open+closed items with real operator
        text as their titles (e.g. "Why did the green line items change to purple?",
        "I want Claude to clean up the organization of the dev/claude folders on all
        my computers.", "Who the hell gave you a standing instruction not to dispatch
@@ -189,7 +189,7 @@ the raw `/api/requests` JSON payload and visually in a sandboxed cockpit instanc
   colliding all such records into one entry.
 
 ## Testing Strategy
-- `neural-lace/workstreams-ui/server/verbatim-resolver.selftest.js`: 24/24 (resolution,
+- `neural-lace/workstreams-ui/server/verbatim-resolver.selftest.js`: 29/29 (resolution,
   cache invalidation, tie-break, classification, synthetic-content guard, CLI).
 - `neural-lace/workstreams-ui/server/requests-routes.selftest.js`: 36/36 (30
   pre-existing baseline unchanged + 6 new T1-T5 assertions).
@@ -201,16 +201,16 @@ the raw `/api/requests` JSON payload and visually in a sandboxed cockpit instanc
   unchanged).
 - `neural-lace/workstreams-ui/server/inbox-routes.selftest.js`: 47/47 (baseline,
   unchanged).
-- `adapters/claude-code/scripts/ask-registry.sh --self-test`: 103 passed / 5 failed —
+- `adapters/claude-code/scripts/ask-registry.sh --self-test`: 105 passed / 5 failed —
   the 5 failures PROVEN pre-existing (reproduced identically against `git show
   HEAD:...ask-registry.sh` before any change in this plan) and unrelated
   (`_ar_strip_markdown`, `cmd_amend`, `cmd_set_deadline`, `sla` classification x2);
   filed via `nl-issue.sh`, not fixed here. Run on BOTH `/bin/bash` (3.2.57) and
   `/opt/homebrew/bin/bash` (5.3.15), sequentially — identical 103/5 on both.
 - `adapters/claude-code/scripts/backfill-classify-amendment-candidates.sh
-  --self-test`: 10/10 on both bash binaries.
+  --self-test`: 12/12 on both bash binaries.
 - Live acceptance: backfill `--dry-run` then `--apply` against a real COPY of the
-  live, damaged `~/.claude/state/ask-registry.jsonl` (before=3, after=41 visible
+  live, damaged `~/.claude/state/ask-registry.jsonl` (before=3, after=35 visible
   top-level requests), a real sandboxed `server.js` instance on `CTREE_PORT=7799`
   (never the orchestrator's `:7733`), `curl 127.0.0.1:7799/api/requests` returning
   real operator text, and a Browser-pane visual check of the rendered Requests tab.
@@ -256,7 +256,18 @@ the raw `/api/requests` JSON payload and visually in a sandboxed cockpit instanc
 - [x] Completion report appended to this plan file
 
 ## Completion report
-Diagnosed, built, self-tested (see Testing Strategy), and demonstrated live against
-a real copy of the operator's own damaged registry (before=3, after=41 visible
-top-level requests). Commits: see this plan's governing commit series in the
-worktree at `.claude/worktrees/agent-a465831e5b8168bdc`.
+Diagnosed, built, self-tested (see Testing Strategy), reviewed (three harness-reviewer
+passes, all PASS after fixing the first pass's 3 Major findings — see review records
+below), and demonstrated live against a real copy of the operator's own damaged
+registry (before=3, after=35 visible top-level requests, final calibration after the
+promotion-threshold fix). Commits (worktree `agent-a465831e5b8168bdc`):
+- `84d0684` — this governing plan.
+- `fdd433a` — the fix itself (verbatim-resolver.js, ask-registry.sh, backfill script,
+  requests-routes.js/requests.js, manifest.json addendum, 3 review records).
+
+Review records: `docs/reviews/records/2026-07-30-harness-change-review-05284b04.json`
+(ask-registry.sh + backfill, opus CONDITIONAL-PASS → fixed → haiku PASS),
+`docs/reviews/records/2026-07-30-harness-change-review-28112fca.json`
+(requests-routes.js + requests.js, haiku PASS),
+`docs/reviews/records/2026-07-30-harness-change-review-61174097.json`
+(verbatim-resolver.js, haiku PASS).
