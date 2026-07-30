@@ -123,3 +123,160 @@ dispatch never asked for.
   process, not caller-controlled, so two genuinely concurrent failed attempts always get
   distinct tokens; this assumption is not violated anywhere in the diff (each `_em_log_merge`
   call happens inside its own top-level script invocation, never forked internally).
+
+## Task SE4
+
+### Status
+
+Flip-time ledger emit at `adapters/claude-code/hooks/plan-edit-validator.sh`'s checkbox-flip
+authorization chokepoint. Two commits on `wip/harness-hardening-2026-07-29`: the original
+mechanism, **930a369eb0502832cad63c5166d7d8d8445a895c** (930a369, "feat(status-event-ledger
+SE3/SE4/SE10)"), which added `emit_flip_ledger_event`/`flip_ledger_fields`/
+`_pev_extract_prose_flip_fields`/`_pev_extract_json_flip_fields` and wired the emit into both
+the mechanical/contract and full authorization branches; and a follow-on fix,
+**8dd8c7f3c0ff829dfbb361f8ddca119edb7beff4** (8dd8c7f, "fix(plan-edit-validator SE4):
+flip-ledger emit reads the LAST matching evidence block + the level-authorizer's own evidence
+source"), closing two defects a harness-change-review REFORMULATE found in 930a369's design:
+(a) the prose extractor reported the FIRST matching evidence block instead of the LAST on a
+FAIL-then-fix-then-PASS re-verification, and (b) the field extractor always tried prose
+before structured JSON regardless of the task's `VERIFICATION_LEVEL`, so a mechanical/
+contract flip authorized by structured JSON could report a stale/unrelated prose block
+instead. I am the author of both commits (930a369 as part of building SE3/SE4/SE10 together;
+8dd8c7f as the harness-review fix); this entry covers the mechanism as it stands now — 930a369
+plus 8dd8c7f's corrections, not 930a369 in isolation, since 930a369 alone had exactly the two
+defects (a)/(b) above and would give a materially incomplete account of what the CURRENT code
+does. All file:line citations below are against the current file on
+`wip/harness-hardening-2026-07-29` (HEAD 69f00d97ed29abc476de7f1831da0b9d139de5b4), where both
+commits are landed.
+
+`plan-edit-validator.sh --self-test`: 14 passed, 5 failed (of 19 scenarios) on both `/bin/bash`
+3.2.57 and `/opt/homebrew/bin/bash` 5.3.15, absolute path, re-run at this HEAD immediately
+before writing this entry. The 5 failures (F5-F9) are a pre-existing, unrelated `stat -c %Y`
+portability bug (docs/backlog.md HARNESS-GAP-63 territory's sibling issue, tracked separately
+under PORTABILITY-STAT-SED-SWEEP-01/02), confirmed unchanged by either commit. Mutation-proven
+at 8dd8c7f's own build time: reverting `_pev_extract_prose_flip_fields`'s last-match fix to
+its original `emit(); exit 0` form turned scenario F18 red (reporting the stale first block's
+`verdict=FAIL confidence=3` instead of the real `verdict=PASS confidence=8`) while F16/F17/F19
+stayed green; restoring the fix returned all four to green.
+
+## Comprehension Articulation
+
+### Spec meaning
+
+Taxonomy row 7 ("verification verdict + checkbox flip") and task bullet SE4
+(`docs/plans/status-event-ledger.md:67-70`) ask for a **deterministic, mechanism-emitted**
+ledger event recording the real verification outcome at the moment a task's checkbox is
+authorized to flip — "plan-edit-validator already gates the flip; add emit at validation."
+`plan-edit-validator.sh` is already the sole chokepoint every checkbox flip must pass through
+(its own docstring: "the only entity allowed to flip a checkbox is task-verifier"), and by the
+time either authorization path (`check_mechanical_or_contract_evidence`,
+`plan-edit-validator.sh:1452`, or `check_evidence_first`, `:1522`) returns success the decision
+to allow the flip has already been made — so the spec is satisfied by RE-READING that same
+evidence at the moment of `exit 0` and emitting `{plan, task, verdict, confidence, verifier}`,
+never by changing the authorization decision itself (`emit_flip_ledger_event` is called inside
+`{ ... } 2>/dev/null || true`, `:1946`/`:1954`, so it can never turn an authorized flip into a
+blocked one). The plan's own design law — "One vocabulary everywhere... never by an agent
+remembering" — is why I read the spec as requiring the REPORTED verdict/confidence to be the
+REAL, current one, not merely SOME verdict from SOME evidence block for that task id: a ledger
+row that faithfully emits on every flip but reports a stale or mismatched-source verdict would
+satisfy the letter of "add emit at validation" while violating the same design law's actual
+intent (a status event that doesn't match reality is the exact drift class taxonomy row 7
+exists to prevent). That reading is what turned 930a369's SE4 addition, correct as far as its
+own two self-tests (F16/F17) proved, into 8dd8c7f's fix once a FAIL-then-fix-then-PASS
+re-verification and a mechanical-level task with a stale co-resident prose file were
+constructed as fixtures and shown to report the wrong fields.
+
+### Edge cases covered
+
+- **FAIL-then-fix-then-PASS re-verification reports the LAST block, not the first.**
+  `_pev_extract_prose_flip_fields` (`plan-edit-validator.sh:1741-1777`) tracks
+  `record_if_match()` (`:1751-1753`) at every `EVIDENCE BLOCK` header (`:1755-1758`) and again
+  at the true `END` (`:1775`), overwriting `lv/lc/lr` each time a block's `Task ID:` matches
+  `wanted_id` — so whichever matching block is LAST in file order is what gets emitted, exactly
+  once. Scenario F18 (`plan-edit-validator.sh:1164-1230`) constructs a real evidence.md with two
+  `Task ID: SE.4.3` blocks (an earlier FAIL, a later PASS confidence 8) and asserts the emitted
+  ledger row says `verdict=PASS confidence=8`, never `FAIL`.
+- **Mechanical/contract-level flips read the structured `.evidence.json` first, never a
+  stale co-resident prose block.** `flip_ledger_fields` (`:1809-1847`) branches on `level`
+  (`:1817`): mechanical/contract tries the structured file first (`:1818-1821`), falling back
+  to prose only if absent (`:1822-1829`) — mirroring `check_mechanical_or_contract_evidence`'s
+  own Path-A-structured/Path-B-prose preference (`:1452-1465` is Path A); `full` keeps the
+  original prose-first/structured-fallback order (`:1834-1846`), mirroring
+  `check_evidence_first`'s own Path-A-prose/Path-B-structured preference (`:1527`
+  is Path A). Scenario F19 (`:1232-1285`) constructs a mechanical-level task with BOTH a stale
+  prose block (verdict FAIL, verifier "stale-source-must-not-be-read") and a valid PASS
+  structured JSON, and asserts the ledger reports the structured file's fields
+  (`verdict=PASS confidence=unknown verifier=write-evidence.sh`), never the stale prose's.
+- **Structured `.evidence.json` has no `confidence` field, so mechanical/contract flips
+  honestly report `confidence=unknown`, never a fabricated number.**
+  `_pev_extract_json_flip_fields` (`:1779-1791`) hardcodes the middle field as the literal
+  string `unknown` in its `printf` (`:1790`, `'%s|unknown|%s'`) since the schema
+  (`adapters/claude-code/schemas/evidence.schema.json`) carries no such field. Proven by F17
+  (`:1127-1163`, unchanged from 930a369) and F19 alike.
+- **The emit never fires on a blocked flip.** Both call sites (`:1946`, `:1954`) sit inside the
+  `if check_mechanical_or_contract_evidence ... then` / `if check_evidence_first ... then`
+  bodies that lead to `exit 0` — a denied authorization never reaches either line, so there is
+  never a "verdict" reported for a rejected edit, honestly matching the taxonomy's own "verdict
+  + checkbox flip" framing (no flip, no verdict to log).
+- **A missing/unloaded `ledger_emit_typed` (e.g. `lib/signal-ledger.sh` failed to source)
+  never blocks the flip.** `emit_flip_ledger_event`'s first line (`:1855`,
+  `command -v ledger_emit_typed >/dev/null 2>&1 || return 0`) fails open before touching
+  anything else, and both call sites additionally wrap the whole call in
+  `{ ... } 2>/dev/null || true` (`:1946`, `:1954`) as a second layer of the same guarantee.
+
+### Edge cases NOT covered
+
+- **`check_evidence_first`'s own awk (the AUTHORIZER, not the emitter) double-prints "MATCH"
+  under the same two-same-id-block shape this task's fixtures exercise, wrongly BLOCKING an
+  otherwise-authorized flip.** Its `exit 0` at `plan-edit-validator.sh:1557` runs inside the
+  main body, not `END`, but POSIX awk still executes the `END` rule afterward against the
+  pre-reset state, so a block that already satisfies `(task_id==wanted_id && has_runtime)`
+  followed by another `EVIDENCE BLOCK` header prints `MATCH` twice, and the caller's exact
+  `[[ "$result" == "MATCH" ]]` comparison then fails, blocking a flip that real evidence
+  should authorize. Found while building F18, filed as `docs/backlog.md` HARNESS-GAP-63, not
+  fixed by either 930a369 or 8dd8c7f (out of SE4's own scope — it lives in the AUTHORIZER, not
+  the ledger-emit code SE4 is about). F18's own fixture sidesteps it (its first block omits
+  `Runtime verification:` so it never satisfies check_evidence_first's condition) rather than
+  papering over it.
+- **The checkbox-flip `TASK_ID` extraction regex (`:1902`,
+  `grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*'`) still requires a dotted id and rejects the fused
+  `<Key><TaskId>` format (`SE3`, `RI1`, and this very plan's own `SE4`) outright** — filed as
+  HARNESS-GAP-62 during 930a369's build, not fixed by either commit (out of scope, another
+  session owns it per that entry). Practical consequence for THIS entry: a real flip of THIS
+  plan's own `SE4` checkbox is refused today regardless of how much genuine evidence exists,
+  which is also why F16-F19's fixtures all use the dotted form (`SE.4.1`-`SE.4.4`) to stay
+  in scope rather than reproducing the blocked case.
+- **Two verifiers racing to append evidence blocks to the SAME `evidence.md` concurrently**
+  is not tested by F16-F19 (each fixture writes its evidence file once, synchronously, before
+  the flip). `acquire_plan_lock` (`plan-edit-validator.sh:90`) serializes concurrent flips on
+  the same plan file, but the ledger-emit's own read of `evidence.md` happens after
+  authorization already succeeded and is not itself lock-protected against a THIRD process
+  appending a block mid-read; not exercised here.
+- **`flip_ledger_fields`/`_pev_extract_prose_flip_fields` apply no freshness (mtime) check of
+  their own** — unlike the authorizers, which gate on a <=120s mtime window
+  (`:1534-1537` full path, structured-file mtime check inside `check_mechanical_or_contract_
+  evidence`). The ledger-emit trusts that if authorization just succeeded, the evidence it
+  re-reads moments later is still the same evidence; a pathological reordering where the
+  evidence file is rewritten in the instant between authorization and emit is not guarded
+  against or tested.
+
+### Assumptions
+
+- **task-verifier APPENDS a new evidence block for a re-verification rather than replacing
+  the old one.** This is the load-bearing assumption behind the last-match fix's entire
+  premise (and behind F18's fixture): if a re-verification instead overwrote/truncated the
+  prior block, first-match and last-match would coincide and 930a369's original bug would
+  never have manifested. Grounded in the real 3404be2 T7 FLIP history the harness-review cited
+  as precedent, not invented for this fix.
+- **`VERIFICATION_LEVEL` is always a valid non-empty value (`mechanical`/`contract`/`full`) by
+  the time either call site (`:1946`, `:1954`) is reached.** Both call sites are inside
+  branches already guarded by `[[ -n "$TASK_ID" ]]` (`:1941`, `:1952`), and
+  `extract_verification_level` (`:1410`) always returns one of the three literal strings,
+  defaulting to `full` when it cannot determine a level — so `flip_ledger_fields`'s own
+  `level="${3:-full}"` default (`:1810`) is a belt-and-suspenders fallback that should never
+  actually trigger via these call sites, only via direct/test invocation.
+- **The structured `.evidence.json`'s `task_id` field, once matched by
+  `check_mechanical_or_contract_evidence`, is the SAME file `flip_ledger_fields` re-resolves.**
+  Both derive `structured_file` identically from `plan_dir`/`plan_slug`/`task_id`
+  (`:1461-1462` in the authorizer, `:1811-1814` in the emit path) — no race is assumed between
+  the two reads beyond what the "no freshness check of its own" gap above already names.
