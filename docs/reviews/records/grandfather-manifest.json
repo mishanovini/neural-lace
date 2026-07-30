@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
-  "cutover_ref": "3ab7fa50c7386e08357de4b9eda98ae01b9de7be",
-  "generated_at": "2026-07-16T05:49:47Z",
+  "cutover_ref": "44ef271d54c73014bb413ff4f99b4509bd3d6d6d",
+  "generated_at": "2026-07-30T20:30:24Z",
   "entries": [
     {
       "path": "adapters/claude-code/agents/architecture-reviewer.md",
@@ -85,7 +85,7 @@
     },
     {
       "path": "adapters/claude-code/agents/task-verifier.md",
-      "blob_sha": "0afa82891a3adc4b400063916be181d2689ceea3"
+      "blob_sha": "c9d7fa39bc8c652c5862bc7d4e244aad326c407e"
     },
     {
       "path": "adapters/claude-code/agents/test-writer.md",
@@ -104,6 +104,10 @@
       "blob_sha": "1fd7343fe1a2f3dc9d0e638ca0b21cda0919ade8"
     },
     {
+      "path": "adapters/claude-code/config/config-control-allowlist.txt",
+      "blob_sha": "3b8b92f925e9d0a4837fd154d34134b237952377"
+    },
+    {
       "path": "adapters/claude-code/config/model-policy.json",
       "blob_sha": "5d63ea00022b47f06a922dffb096c41c68660361"
     },
@@ -112,16 +116,32 @@
       "blob_sha": "e156e546d1834801d8f33b51543365dfa3c6a07e"
     },
     {
+      "path": "adapters/claude-code/config/review-instructions.md",
+      "blob_sha": "4762005c0d9a35dde356ad9aa4058cb1c3011fd4"
+    },
+    {
+      "path": "adapters/claude-code/config/selftest-sweep-exclusions.txt",
+      "blob_sha": "69b42409b87af762e477a05a92c45be7ab318a2f"
+    },
+    {
+      "path": "adapters/claude-code/hooks/agent-commit-gate.sh",
+      "blob_sha": "4757bc79b4182976aebe392ef502ca7d4cff2066"
+    },
+    {
+      "path": "adapters/claude-code/hooks/agent-design-gate.sh",
+      "blob_sha": "5950c07b455d530203fd60b468de2295ad2a4e61"
+    },
+    {
       "path": "adapters/claude-code/hooks/automation-mode-gate.sh",
-      "blob_sha": "cd92765d03829d43036991584e678b430112d586"
+      "blob_sha": "65ab95bb32ddaefeb73a61965b15b94f6f43b520"
     },
     {
       "path": "adapters/claude-code/hooks/backlog-plan-atomicity.sh",
-      "blob_sha": "95a61ca1f86e590cb53989c2043d0b5f4346c51f"
+      "blob_sha": "9b7b024d2a99a8d0974bbed960a37af785cb6749"
     },
     {
       "path": "adapters/claude-code/hooks/bug-persistence-gate.sh",
-      "blob_sha": "64f55d57f47038c9335b6f18ef0474d0432b3ff9"
+      "blob_sha": "775dd5451814ad563b28985ca60102f4508879ba"
     },
     {
       "path": "adapters/claude-code/hooks/check-harness-sync.sh",
@@ -129,7 +149,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/claude-md-hygiene-gate.sh",
-      "blob_sha": "7eb12a88a18f10e0f71d87a945841e8350ad1d6b"
+      "blob_sha": "20f2fb1691b66771001e56ea436a925c22947d18"
     },
     {
       "path": "adapters/claude-code/hooks/completion-criteria-gate.sh",
@@ -137,11 +157,11 @@
     },
     {
       "path": "adapters/claude-code/hooks/concurrent-ownership-gate.sh",
-      "blob_sha": "7b42123982ca0b304b5eb0ad8f1d118718ac31f5"
+      "blob_sha": "6a27dc279ce5ea58ddb49b95c164d1259e43b7e1"
     },
     {
       "path": "adapters/claude-code/hooks/context-watermark.sh",
-      "blob_sha": "364a3ed1d289677cdb96871587848d1eb323de65"
+      "blob_sha": "6a20d2fcad93da703d4c9f770bc45d8aecd40d80"
     },
     {
       "path": "adapters/claude-code/hooks/continuation-enforcer.sh",
@@ -157,7 +177,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/cross-repo-nl-touch-warn.sh",
-      "blob_sha": "8965d0e4a1234d17159fcfb812037348dcd99681"
+      "blob_sha": "789d90f6d5a2047f1120e748d39fea2490913763"
     },
     {
       "path": "adapters/claude-code/hooks/customer-facing-review-gate.sh",
@@ -185,7 +205,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/decisions-index-gate.sh",
-      "blob_sha": "4ca6fb8177d3f6e9c8c2ba7da127be4ea9acc3d8"
+      "blob_sha": "3aa1983aff1d15c18432ed4e700edad54f33f73d"
     },
     {
       "path": "adapters/claude-code/hooks/deferral-counter.sh",
@@ -201,11 +221,11 @@
     },
     {
       "path": "adapters/claude-code/hooks/doc-gate.sh",
-      "blob_sha": "e17196356d4ea5c3bf120772f6c623d50ef26a12"
+      "blob_sha": "e98443ee7be7f5c28d57b6b85b6864ea518024ca"
     },
     {
       "path": "adapters/claude-code/hooks/docs-freshness-gate.sh",
-      "blob_sha": "7ce31f6496e4d25c3594e40212a71084f1b5345c"
+      "blob_sha": "0fb97c8998a4a1e149c1a7b897cb16fcbc7d1b8f"
     },
     {
       "path": "adapters/claude-code/hooks/doctrine-jit.sh",
@@ -217,15 +237,19 @@
     },
     {
       "path": "adapters/claude-code/hooks/env-local-protection.sh",
-      "blob_sha": "0eaba1e472239a7d73c798e7e2552d296d458c9c"
+      "blob_sha": "6d89e2184519d65adf52a80ad17d6eb200c1bf3e"
     },
     {
       "path": "adapters/claude-code/hooks/evidence-before-fix-gate.sh",
-      "blob_sha": "3b96ed5a506f5b33999a79bc5cb923f43778c0d1"
+      "blob_sha": "b25a7b544b039d44371caeaba2d8da933bf34f46"
     },
     {
       "path": "adapters/claude-code/hooks/external-monitor-alert-surfacer.sh",
       "blob_sha": "991e5967e1bc35a77bec9338c480a5415d868447"
+    },
+    {
+      "path": "adapters/claude-code/hooks/find-disk-scan-gate.sh",
+      "blob_sha": "b20fee18aca5616d92b151e5961aba8afe4dcb60"
     },
     {
       "path": "adapters/claude-code/hooks/find-scan-warn.sh",
@@ -233,7 +257,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/findings-ledger-schema-gate.sh",
-      "blob_sha": "4ac0135ae3d403f616711612b74a2b7669516bed"
+      "blob_sha": "698caedbc48c2c7cb40148e636edf7f9adb4f1c0"
     },
     {
       "path": "adapters/claude-code/hooks/gh-account-autoswitch.sh",
@@ -245,7 +269,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/gh-merge-canonical-gate.sh",
-      "blob_sha": "0ec32aa83b5e23773f34f17f1e48f9f921d3f5e1"
+      "blob_sha": "a59bfa1d737aa6d5b96ef6996a88c9ea42263ebe"
     },
     {
       "path": "adapters/claude-code/hooks/goal-coverage-on-stop.sh",
@@ -256,16 +280,28 @@
       "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
     },
     {
+      "path": "adapters/claude-code/hooks/harness-claim-lint.sh",
+      "blob_sha": "58517e86835a3527bf95ec8ebfff5701e047c075"
+    },
+    {
       "path": "adapters/claude-code/hooks/harness-doctor.sh",
-      "blob_sha": "4b152d5c081523aba7f8809a21c0472c73eb3e1a"
+      "blob_sha": "b6967aa2acde2f4d600d0cf0e1ecff6e67420447"
     },
     {
       "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
-      "blob_sha": "2d2c8b92ec1381421403872837bdbcedac003ac6"
+      "blob_sha": "6e94ebe7432fc59d5251dea698d24001776a0582"
     },
     {
       "path": "adapters/claude-code/hooks/imperative-evidence-linker.sh",
       "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/admission-lib.sh",
+      "blob_sha": "cf750c0f70022c6f5f7ee7748ac093b217781312"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/estate-registration-lib.sh",
+      "blob_sha": "d3178aa2c4f373d4536e44413f3736a49a572bb7"
     },
     {
       "path": "adapters/claude-code/hooks/lib/extract-backtick-paths.sh",
@@ -276,44 +312,72 @@
       "blob_sha": "3850c2a6aab7db12ab973c2e9c25cba9b8d022ad"
     },
     {
+      "path": "adapters/claude-code/hooks/lib/git-command-parse.sh",
+      "blob_sha": "7fdff820205024fdf81b8444023c9824541cd3f9"
+    },
+    {
       "path": "adapters/claude-code/hooks/lib/hook-reentry-guard.sh",
       "blob_sha": "883eaae050e4fd07b0127a19aadd29cf390cfb9f"
     },
     {
       "path": "adapters/claude-code/hooks/lib/interactive-session-lock.sh",
-      "blob_sha": "c9772f7b3e6d612c5af5e240b6fbbd7f26853829"
+      "blob_sha": "b873468fa86d3888ba988b2e5a0ba98aaa4ff2a3"
     },
     {
       "path": "adapters/claude-code/hooks/lib/merge-scan-lib.sh",
-      "blob_sha": "e1d06da63ed60677241c33a3fad87a7bf80ff16d"
+      "blob_sha": "673cebfbbe91d54727646e100879efdcd6bd20fc"
     },
     {
       "path": "adapters/claude-code/hooks/lib/nl-paths.sh",
-      "blob_sha": "707680db86734c318499b2afb41c7b83993debf1"
+      "blob_sha": "3be1ab9e631f345bab12976fed96841ca7755879"
     },
     {
       "path": "adapters/claude-code/hooks/lib/observability-derive.sh",
-      "blob_sha": "b022259e7653cf68a0b24e9701c99bab4e2422bd"
+      "blob_sha": "6678c2e30dc9e96f58aa16209f7900c8e0b57fcd"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/perf-ledger.sh",
+      "blob_sha": "28f619e55885c517cb0cfc094da837fb290a9304"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/perf-tick-snapshot.sh",
+      "blob_sha": "d968d099018dafea6027d986d787b725a595d93e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/portable-time.sh",
+      "blob_sha": "3d68f30b9749ed5ba2e954c94ea731f00c3c7dba"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/portable-timeout.sh",
+      "blob_sha": "ee5d08491b30f09652ecb8a68daaa4c19d85d7e6"
     },
     {
       "path": "adapters/claude-code/hooks/lib/progress-log-lib.sh",
-      "blob_sha": "9e2e6849bbf10ef3e553b1d8716fcf8ab4d5c21b"
+      "blob_sha": "f992b2e1174e12d2e4139fd89cf4960abc7aeff9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-queue-auto-enqueue-lib.sh",
+      "blob_sha": "26f17b843f81f6acd76bc51428fc478b84771549"
     },
     {
       "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
-      "blob_sha": "33341d94311a2296463e6eb7b5755a92e016cbb4"
+      "blob_sha": "97ca2ebb7ece2ab9caf46adef93aad445ad9f881"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/self-sync-guard.sh",
+      "blob_sha": "9d1704faf2636918b1f0c945e8e831f293288f52"
     },
     {
       "path": "adapters/claude-code/hooks/lib/session-heartbeat-lib.sh",
-      "blob_sha": "27045f8de968af623eeeb340f5f34f05b2f9a9fb"
+      "blob_sha": "efdd8a104c9ca14769539ce6775e84c044000ddf"
     },
     {
       "path": "adapters/claude-code/hooks/lib/sessionstart-singleflight.sh",
-      "blob_sha": "49ae50478e624cffcd1753b75c07fe03be38543e"
+      "blob_sha": "ebf5ff047fd4db016b94ebb47cf3098c82690386"
     },
     {
       "path": "adapters/claude-code/hooks/lib/signal-ledger.sh",
-      "blob_sha": "4a92d352d93b8933dc99f257376972dd6a1d3bc3"
+      "blob_sha": "a95b789b2ae34e3e07559f3099be1939d7c2ba0f"
     },
     {
       "path": "adapters/claude-code/hooks/lib/stop-hook-retry-guard.sh",
@@ -329,19 +393,19 @@
     },
     {
       "path": "adapters/claude-code/hooks/local-edit-gate.sh",
-      "blob_sha": "0cc1ca314ec91a095d952c432acd092fefceff47"
+      "blob_sha": "bfe85419bb544ae7d5295f7e1952b2a7d67d25c4"
     },
     {
       "path": "adapters/claude-code/hooks/migration-claude-md-gate.sh",
-      "blob_sha": "f7dba1612d952591c6268e35117dc87862de0a8c"
+      "blob_sha": "26e7b0c07d3a0ec636bfdb23b8fa40a6bcadfd31"
     },
     {
       "path": "adapters/claude-code/hooks/migration-naming-gate.sh",
-      "blob_sha": "eae69ed17a832227214ffc048a982dc5ccba049d"
+      "blob_sha": "a8e2af2ff2c44a5dac5c572066658b2129162a10"
     },
     {
       "path": "adapters/claude-code/hooks/model-pin-gate.sh",
-      "blob_sha": "a5c80516038470fb22be7406a7be3e63182e7214"
+      "blob_sha": "738ef87a2cb5629266b0aaae4c7c0b7a1708326f"
     },
     {
       "path": "adapters/claude-code/hooks/narrate-and-wait-gate.sh",
@@ -349,7 +413,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/no-test-skip-gate.sh",
-      "blob_sha": "3927f1f98e459a34cf1c4de4d52a260f559a5c88"
+      "blob_sha": "ecf9bd760c8be23da3b729b83f2daf9fc50ef971"
     },
     {
       "path": "adapters/claude-code/hooks/observed-errors-gate.sh",
@@ -365,19 +429,19 @@
     },
     {
       "path": "adapters/claude-code/hooks/plan-deletion-protection.sh",
-      "blob_sha": "9fe46e273bfd849ba34181314fe8ea12913b57fc"
+      "blob_sha": "0c2617684f3e1969006f24896eb4b760bb6109ce"
     },
     {
       "path": "adapters/claude-code/hooks/plan-edit-validator.sh",
-      "blob_sha": "707865903bb4e28ca3de008d8b649f0eb89b4126"
+      "blob_sha": "1254ce25718db2a8ff0032315d9352f1048da649"
     },
     {
       "path": "adapters/claude-code/hooks/plan-lifecycle.sh",
-      "blob_sha": "1891d26e6a066bae1ed331b4db9d19f4c44b31c3"
+      "blob_sha": "f6572afefec154ef65f92c86dbb50b1fafd44f32"
     },
     {
       "path": "adapters/claude-code/hooks/plan-reviewer.sh",
-      "blob_sha": "b136882ed1b80454b8eb80926e3141527495ccc2"
+      "blob_sha": "1d5de563487883515d847a4730b82855d6201844"
     },
     {
       "path": "adapters/claude-code/hooks/plan-status-archival-sweep.sh",
@@ -393,19 +457,19 @@
     },
     {
       "path": "adapters/claude-code/hooks/pr-template-inline-gate.sh",
-      "blob_sha": "17d1754c54148ea86774452a16d9ccad90998420"
+      "blob_sha": "056774670e4805d89563d0da919079fb63d6f3e8"
     },
     {
       "path": "adapters/claude-code/hooks/prd-validity-gate.sh",
-      "blob_sha": "a6715f73b06a398e67db8f63effc2cfb11fc8098"
+      "blob_sha": "63c8e77f943e03bdc783f844036a6e2e88b31c35"
     },
     {
       "path": "adapters/claude-code/hooks/pre-commit-gate.sh",
-      "blob_sha": "7c705f3f69b844bddf104f1d075bfc54624b8dc6"
+      "blob_sha": "d22a497b59559f37f6f314d04cb9648ef3c66a3f"
     },
     {
       "path": "adapters/claude-code/hooks/pre-commit-tdd-gate.sh",
-      "blob_sha": "fb915719f714b064a3b73f5c84a8a3bed2580666"
+      "blob_sha": "1b53bdf7cf7f6c6c848de99f8177198584b336b2"
     },
     {
       "path": "adapters/claude-code/hooks/pre-compact-continuity.sh",
@@ -413,15 +477,15 @@
     },
     {
       "path": "adapters/claude-code/hooks/pre-push-divergence-check.sh",
-      "blob_sha": "6e62deb31ae2e7c6518540f54abc6da22b359ab4"
+      "blob_sha": "b83ff4d81545cfe6b4a39f677835ba22edff92cf"
     },
     {
       "path": "adapters/claude-code/hooks/pre-push-scan.sh",
-      "blob_sha": "6797deca08b8e7944d05c10b40f40d84c0b871bd"
+      "blob_sha": "7f8cb255c38c2654471554274b547f53ac483374"
     },
     {
       "path": "adapters/claude-code/hooks/pre-push-test-gate.sh",
-      "blob_sha": "6a1880e2d1efce74af39336bb4529b82c87a3141"
+      "blob_sha": "fa72b810a7491568fa6797d0ac8e1a2f2798ad69"
     },
     {
       "path": "adapters/claude-code/hooks/pre-stop-verifier.sh",
@@ -437,7 +501,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/propagation-trigger-router.sh",
-      "blob_sha": "6213ec76e18c89b74752da31431b5bf509975165"
+      "blob_sha": "2ba4d07f4d9f01da69c52faa3ca8a993e13fb14f"
     },
     {
       "path": "adapters/claude-code/hooks/register-progress-gate.sh",
@@ -449,31 +513,35 @@
     },
     {
       "path": "adapters/claude-code/hooks/review-finding-fix-gate.sh",
-      "blob_sha": "e92e16a7e29fc86808498ff2c588663b89911439"
+      "blob_sha": "1ca7a77cbbfc1f08a682835ab45664ec34900d5f"
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-commit-gate.sh",
+      "blob_sha": "5b83da2eb31a97b59a5b474d7ead930e591f6036"
     },
     {
       "path": "adapters/claude-code/hooks/runtime-verification-executor.sh",
-      "blob_sha": "eeb28a99b0e82bdc0dddf08f2870a47db514a793"
+      "blob_sha": "4a75d6f722389302a0170556688ec743c88c0076"
     },
     {
       "path": "adapters/claude-code/hooks/runtime-verification-reviewer.sh",
-      "blob_sha": "aa0ca151fe54a57d30f3ead5dd28c4339ea600c7"
+      "blob_sha": "1eec3102fd75ea46d4fecc9633a676f5ef958369"
     },
     {
       "path": "adapters/claude-code/hooks/scope-enforcement-gate.sh",
-      "blob_sha": "ac9e97f808e879add7cc8cc88971be419a37de79"
+      "blob_sha": "e448f8d917ba0f2ee8f7cd858f0cf4d6c27c704b"
     },
     {
       "path": "adapters/claude-code/hooks/session-honesty-gate.sh",
-      "blob_sha": "3fef649e8683e1651cda4e397cf966b8ff1d37f7"
+      "blob_sha": "04ccb65a10a0af8e91f6e887abeb1cc1c1f01439"
     },
     {
       "path": "adapters/claude-code/hooks/session-start-auto-install.sh",
-      "blob_sha": "80af5ecc365fa6c4e9c588c4c25ff5d929a4e726"
+      "blob_sha": "33209f9bbe1ca3f1e8d7eed1c207c5ba3b6369e5"
     },
     {
       "path": "adapters/claude-code/hooks/session-start-digest.sh",
-      "blob_sha": "757d77db3984f515194ad0be9bc9b846081c0fcd"
+      "blob_sha": "bc05328ef8e38d42b85680846efd87f38b8e412f"
     },
     {
       "path": "adapters/claude-code/hooks/session-start-discovery-cheatsheet.sh",
@@ -481,7 +549,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/session-start-git-freshness.sh",
-      "blob_sha": "1b687146bf28527211c20249448932940d6943d2"
+      "blob_sha": "07e87d16c029c57937f0c6428c8e636a8e0b5d49"
     },
     {
       "path": "adapters/claude-code/hooks/session-start-surfacer-pack.sh",
@@ -505,19 +573,19 @@
     },
     {
       "path": "adapters/claude-code/hooks/spec-freeze-gate.sh",
-      "blob_sha": "827067b3547ee28d44b9d9e03a56c1e7009ae2a9"
+      "blob_sha": "6c5e55533f6e50a9fab5a66c2c75f3b777e5fa29"
     },
     {
       "path": "adapters/claude-code/hooks/stale-active-plan-surfacer.sh",
-      "blob_sha": "3d4ae6aaf4f051473eaad6cafaa9142a6827094c"
+      "blob_sha": "bc27299a190fd1b05f9c7fad73046554dff23cc0"
     },
     {
       "path": "adapters/claude-code/hooks/stalled-work-surfacer.sh",
-      "blob_sha": "2f4868bd2e3d54f40d155578fdae4a4dab0b65ae"
+      "blob_sha": "7eee6aa65cc07c86fd8d123b817d6ce06ae94fc3"
     },
     {
       "path": "adapters/claude-code/hooks/stop-verdict-dispatcher.sh",
-      "blob_sha": "ad8a474065540de95a27498fa1941366e7833f75"
+      "blob_sha": "6c5f14735c4dc16af421329ad0683bc6bd2a826f"
     },
     {
       "path": "adapters/claude-code/hooks/systems-design-gate.sh",
@@ -525,15 +593,15 @@
     },
     {
       "path": "adapters/claude-code/hooks/task-completed-evidence-gate.sh",
-      "blob_sha": "5e5d63230fb62a25f4fd129e66c9ef0b156d460b"
+      "blob_sha": "e1bc2a5681af8aee85410d79904bacd5bceedec9"
     },
     {
       "path": "adapters/claude-code/hooks/task-created-validator.sh",
-      "blob_sha": "1fd18e621f3eb50411717584d7674d11bf546814"
+      "blob_sha": "bd9db32cc6d37fe5d8924f3451f31ce1830dbe9b"
     },
     {
       "path": "adapters/claude-code/hooks/teammate-spawn-validator.sh",
-      "blob_sha": "90eb68b0a592edbc6acca655ccf78413d1b77e12"
+      "blob_sha": "1faacef88d4e12e82761bfd48fe400deb60f1a2d"
     },
     {
       "path": "adapters/claude-code/hooks/tool-call-budget.sh",
@@ -549,11 +617,11 @@
     },
     {
       "path": "adapters/claude-code/hooks/wire-check-gate.sh",
-      "blob_sha": "57d192f77c224af519ef1d4b99c839f73fa230b0"
+      "blob_sha": "51e3834878b9dde4cb22f35abcda048978e79f6b"
     },
     {
       "path": "adapters/claude-code/hooks/work-integrity-gate.sh",
-      "blob_sha": "95b99a9c2695b66578b371f02762cfe92c17e6a1"
+      "blob_sha": "b00d53bc4961fb38e00b975dea3fc430eb590f1b"
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-emit-reconciler.sh",
@@ -561,7 +629,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-emit.sh",
-      "blob_sha": "31b1d6180f19ca85a01773ff6ed4773d6433c6a1"
+      "blob_sha": "e36a925d3fef982516a50cc355a5ce84e062e50c"
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-extract-pending.sh",
@@ -573,15 +641,11 @@
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-read.sh",
-      "blob_sha": "b7becdd28dd2638658e05ab41dd4cde80ee630e9"
-    },
-    {
-      "path": "adapters/claude-code/hooks/workstreams-state-gate.sh",
-      "blob_sha": "44ea2b13cb5585f24d31cef81de18ec4d3f4c796"
+      "blob_sha": "d1164056090db0a299f3d1a62e7ed0b08b1eee44"
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-stop-gate.sh",
-      "blob_sha": "be898bbae21c1813944737b2916773a5c627b7e1"
+      "blob_sha": "08485ec24ae77c6a25b60de0848c59c20795308b"
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-stop-writer.sh",
@@ -589,7 +653,7 @@
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-task-binding.sh",
-      "blob_sha": "7726a68a90b32020b18fd1d93f9f292794dca0b5"
+      "blob_sha": "6d395b457e2520aa56357d740a6cf5c56ee5ef5b"
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-turn-emit.sh",
@@ -601,15 +665,15 @@
     },
     {
       "path": "adapters/claude-code/manifest.json",
-      "blob_sha": "6414125ed9031ce2f89467c8286a717241c8eaf1"
+      "blob_sha": "4f935e51711e00018d099d245a32ce273086fbb8"
     },
     {
       "path": "adapters/claude-code/rules/constitution.md",
-      "blob_sha": "7d34b3f1271da9e5140a3f0ef581828ce4f1ee40"
+      "blob_sha": "b7e91f0714cc8228cf19b5d67ee59d2b6303fdae"
     },
     {
       "path": "adapters/claude-code/scripts/agent-heartbeat.sh",
-      "blob_sha": "a5c4eb3fc58a25f447aa6ac97001732a64f79f1a"
+      "blob_sha": "10241d98b56416d69f989bd9447b044ab2d5ec02"
     },
     {
       "path": "adapters/claude-code/scripts/analyze-propagation-audit-log.sh",
@@ -621,7 +685,7 @@
     },
     {
       "path": "adapters/claude-code/scripts/ask-registry.sh",
-      "blob_sha": "42d49f98a48fd23652b1f942237db2f68fc543a6"
+      "blob_sha": "78ecaa6bc25ea46d09f1361576a60574beb27464"
     },
     {
       "path": "adapters/claude-code/scripts/audit-merged-prs.sh",
@@ -629,7 +693,7 @@
     },
     {
       "path": "adapters/claude-code/scripts/broadcast-active-session.sh",
-      "blob_sha": "1023f2b9c6d95c9467b8860170e249d862b386d3"
+      "blob_sha": "f541de5e67d099cdef82945c4e4cc38626ef680e"
     },
     {
       "path": "adapters/claude-code/scripts/check-cross-repo-drift.sh",
@@ -637,7 +701,15 @@
     },
     {
       "path": "adapters/claude-code/scripts/close-plan.sh",
-      "blob_sha": "10e0e4ca610466e63a948fa627d1fe7b2c427203"
+      "blob_sha": "e38e358189a81b88089474a735f45549bd36b18e"
+    },
+    {
+      "path": "adapters/claude-code/scripts/close-worktree.sh",
+      "blob_sha": "2cd1560ca5c5733313f5e8b2c7374c3225805918"
+    },
+    {
+      "path": "adapters/claude-code/scripts/config-control-producer-scan.sh",
+      "blob_sha": "d0222bfa2bdf4fa14187816473539f21a749ef1a"
     },
     {
       "path": "adapters/claude-code/scripts/coord-pull.sh",
@@ -645,11 +717,15 @@
     },
     {
       "path": "adapters/claude-code/scripts/coord-push.sh",
-      "blob_sha": "8d74979df0dc1d9033d9054f7380d7720dcecf59"
+      "blob_sha": "79245cdb892a6679cc3d4d3a2e578a9c999d3a00"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-sync.sh",
+      "blob_sha": "5a9ba6b8be22d9ab4f17111d1ef7de56f272b018"
     },
     {
       "path": "adapters/claude-code/scripts/decision-queue.sh",
-      "blob_sha": "94f07d77f07354f4f9124ddd1e46b2c271aedba4"
+      "blob_sha": "7ffcd70d615fa98a5bc1dfdaca8ff1f751ba5423"
     },
     {
       "path": "adapters/claude-code/scripts/deploy-preflight.sh",
@@ -661,7 +737,7 @@
     },
     {
       "path": "adapters/claude-code/scripts/dispatch-provenance.sh",
-      "blob_sha": "958d564f663889640e25a5dd52df1d4b550f1e2d"
+      "blob_sha": "a9ac29a18fa43a51deafee9f5c0234b3d69aa929"
     },
     {
       "path": "adapters/claude-code/scripts/end-manifest.sh",
@@ -669,11 +745,31 @@
     },
     {
       "path": "adapters/claude-code/scripts/ensure-cockpit.sh",
-      "blob_sha": "58bf25b61d6fea724a7d2d96c23104d6ab9ef042"
+      "blob_sha": "3cdd8523ec4e7d49ed8d5e3e36fccfbfaa964c4e"
+    },
+    {
+      "path": "adapters/claude-code/scripts/ensure-coord-sync.sh",
+      "blob_sha": "e6997b7f3fae87dca1cae60e0281ba66b5142759"
+    },
+    {
+      "path": "adapters/claude-code/scripts/estate-attribution-check.sh",
+      "blob_sha": "4566f96b3935eb6d78d32abd588271ae32f73ba8"
+    },
+    {
+      "path": "adapters/claude-code/scripts/estate-brief.sh",
+      "blob_sha": "9f3e5ca8d284fa4ddb395014022491d4e7ac4732"
+    },
+    {
+      "path": "adapters/claude-code/scripts/estate-janitor.sh",
+      "blob_sha": "916efce147086fb80bdfacb0f40dfe8aa891e41b"
+    },
+    {
+      "path": "adapters/claude-code/scripts/estate-merge.sh",
+      "blob_sha": "466a3eaa4fa453c6bc2abe772ff35a6be0cc2ffb"
     },
     {
       "path": "adapters/claude-code/scripts/f4-retro.sh",
-      "blob_sha": "ebd11b1a50d4945aed8d5419ff6f7d5636913ff6"
+      "blob_sha": "fa6d1db454e4d5094528aedf2483a401c41f01c2"
     },
     {
       "path": "adapters/claude-code/scripts/find-plan-file.sh",
@@ -721,7 +817,7 @@
     },
     {
       "path": "adapters/claude-code/scripts/health-tick.sh",
-      "blob_sha": "ad1804cbf751b4e8d2e725daba6d819116c5e8ff"
+      "blob_sha": "686e35ddc4fca990e76f9791896ebf21991c3621"
     },
     {
       "path": "adapters/claude-code/scripts/install-git-friction.sh",
@@ -740,28 +836,44 @@
       "blob_sha": "13ebac3e9a90e1a1949e35e9457ac8848898db91"
     },
     {
+      "path": "adapters/claude-code/scripts/lib/state-json-init.sh",
+      "blob_sha": "d832b195c895852e7f8c865a67f2dcdd1fbe4eb7"
+    },
+    {
+      "path": "adapters/claude-code/scripts/loe-backfill.sh",
+      "blob_sha": "583d919c3b5103477d2e57112f26cb28bdedb6d0"
+    },
+    {
       "path": "adapters/claude-code/scripts/manifest-check.sh",
-      "blob_sha": "368ea1155a938cd19640746b8747479598e24d49"
+      "blob_sha": "6cc91d3aa7db8c862a035507755420e85b70a139"
     },
     {
       "path": "adapters/claude-code/scripts/master-drift-autocorrect.sh",
-      "blob_sha": "fb3b79ffc566fc94066899472aeeefe1cc16e54a"
+      "blob_sha": "405b45c6a3a5405476a4af97348923716428dad8"
     },
     {
       "path": "adapters/claude-code/scripts/measure-claim-reviewer-rate.sh",
-      "blob_sha": "8d236c59404a450af1711834d6fe52443aa746c0"
+      "blob_sha": "34d5c7fa407453947fecdba4678a6d429cb365a6"
+    },
+    {
+      "path": "adapters/claude-code/scripts/measure-review-gate-fp.sh",
+      "blob_sha": "1768b3b5f6ecbdff8f1a52247a95b1b651aa7e6c"
     },
     {
       "path": "adapters/claude-code/scripts/mine-misha-asked.sh",
-      "blob_sha": "ba279670d17142ca24275344012051233759ffd6"
+      "blob_sha": "dadbe87afa530f0fba0ba820b2225508520aaf11"
+    },
+    {
+      "path": "adapters/claude-code/scripts/model-availability.sh",
+      "blob_sha": "d47f4b520750249ef75bc9d23c5df131a44c833c"
     },
     {
       "path": "adapters/claude-code/scripts/needs-you.sh",
-      "blob_sha": "83d1c51e8af2c9496c1b050b1104e9183ace62d9"
+      "blob_sha": "dd5697b8e16a42db10d99e7814c79919ad0079f2"
     },
     {
       "path": "adapters/claude-code/scripts/nl-issue.sh",
-      "blob_sha": "b84c6d8ddc0440138b5710dda09d1fd668460ace"
+      "blob_sha": "be3f38fdad3836e09d733942d75650b352d3a2a4"
     },
     {
       "path": "adapters/claude-code/scripts/nl.sh",
@@ -769,11 +881,19 @@
     },
     {
       "path": "adapters/claude-code/scripts/ntfy-push.sh",
-      "blob_sha": "531d037be488832b7a4028bb4818a2fce2bdf188"
+      "blob_sha": "b475ce95f3afdd45ade99758502bc85a8451a624"
     },
     {
       "path": "adapters/claude-code/scripts/page-doc-accuracy-audit.sh",
       "blob_sha": "d729784a94bd19c2ef7985491aeda9748a408623"
+    },
+    {
+      "path": "adapters/claude-code/scripts/plan-recheck-sweep.sh",
+      "blob_sha": "70d64d6810a6032d820f5c4a86989c6aba3d6e8d"
+    },
+    {
+      "path": "adapters/claude-code/scripts/portability-sweep.sh",
+      "blob_sha": "ebdb63ef61621fdf47fd0ebe2f70bed0d7387d5b"
     },
     {
       "path": "adapters/claude-code/scripts/pr-health-snapshot.sh",
@@ -796,8 +916,24 @@
       "blob_sha": "1a2b5c4e85b10c875397534cfdad90d53d147ad8"
     },
     {
+      "path": "adapters/claude-code/scripts/remap-placeholder-ask-events.sh",
+      "blob_sha": "39f7b7b01bab302238e776e8966b96368a803eb4"
+    },
+    {
+      "path": "adapters/claude-code/scripts/review-queue.sh",
+      "blob_sha": "416fbd1940d3277ac01c236819841db17c386d0c"
+    },
+    {
+      "path": "adapters/claude-code/scripts/review-runner.sh",
+      "blob_sha": "2cfd6a858059bcb1645087374963908f07c91c39"
+    },
+    {
       "path": "adapters/claude-code/scripts/scheduled-task-health.sh",
       "blob_sha": "00b38d5aa87263568e7c0d5eb9ebb2bc46658cf2"
+    },
+    {
+      "path": "adapters/claude-code/scripts/selftest-sweep-exclusions.sh",
+      "blob_sha": "d9938e7c65c6b2bdade54fce450d8e3b84b0ebf5"
     },
     {
       "path": "adapters/claude-code/scripts/session-heartbeat.sh",
@@ -805,19 +941,19 @@
     },
     {
       "path": "adapters/claude-code/scripts/session-resumer.sh",
-      "blob_sha": "6479cbd5a1640e7bdb98757a1b50a7ae1dd3ca55"
+      "blob_sha": "9e581aaed6770c12dc5982c5894868eefdf5f208"
     },
     {
       "path": "adapters/claude-code/scripts/session-snapshot.sh",
-      "blob_sha": "7eb2bf5903ca94ea3d09b072537c67a39a2fe2cd"
+      "blob_sha": "bfd0f6df9500b15c06bab05341c00e1f446b4a97"
     },
     {
       "path": "adapters/claude-code/scripts/session-wrap.sh",
-      "blob_sha": "9c0c0147f40e3d00e8c5be232389a765423c545d"
+      "blob_sha": "63129264e74bc072065fe552c286ece8947eb42f"
     },
     {
       "path": "adapters/claude-code/scripts/spawn-worktree.sh",
-      "blob_sha": "461f101f18928084b117082f1c3b7fbbd51af261"
+      "blob_sha": "2e8943f200f32fc382eee0a7a05246a171487225"
     },
     {
       "path": "adapters/claude-code/scripts/start-plan.sh",
@@ -832,6 +968,10 @@
       "blob_sha": "5d4939b48588b75347b26c369b051d49e33f7733"
     },
     {
+      "path": "adapters/claude-code/scripts/supervisor-tick.sh",
+      "blob_sha": "c0cf4729414c1117d5051712abb2b9293291af61"
+    },
+    {
       "path": "adapters/claude-code/scripts/tool-call-counter.sh",
       "blob_sha": "19670afcb655f40f2468ef259a210338a67921dc"
     },
@@ -841,7 +981,7 @@
     },
     {
       "path": "adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
-      "blob_sha": "d4132bef5bbc9ac50aefd19b657f5ec57af35aa2"
+      "blob_sha": "38956d03b964882d26585e99c40d7aa9cc363326"
     },
     {
       "path": "adapters/claude-code/scripts/worktree-prune.sh",
@@ -853,11 +993,115 @@
     },
     {
       "path": "adapters/claude-code/scripts/write-review-record.sh",
-      "blob_sha": "59559fdd3804bdf62c5a7f11df69cf175c80d383"
+      "blob_sha": "30ad89c357cbf1c0473262d1432e21d22aac7521"
     },
     {
       "path": "adapters/claude-code/settings.json.template",
-      "blob_sha": "de765570ae6d3082a5573b8199dc8205e391c938"
+      "blob_sha": "5de5b93d397c6ac5fd5b3ba4e30004b883fa1474"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/auditor.js",
+      "blob_sha": "294e0ce404b6d567634714983a36cc10873550d5"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/completion-oracle.js",
+      "blob_sha": "45f8b08f9983ec37b339d15218740693f2f52a22"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/derive-cache.js",
+      "blob_sha": "80e57be4eeddb7a026b11425e55aaf060eb4d522"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/derive-lib.js",
+      "blob_sha": "1144bbb38e3555cf9b00c16b54fd38541b0de60f"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/export-state.js",
+      "blob_sha": "0290589a91d36f46364bd7d8b072a691c9c44af9"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/inbox-routes.js",
+      "blob_sha": "ffee748bebc49352f4e31287b191a6383bfda30a"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/inbox-routes.selftest.js",
+      "blob_sha": "d96cab8d7b6d4c5cfaa045079c72744cb9fefa65"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/payload-schema.js",
+      "blob_sha": "2f18aca69263928fe967a93957742aa6fb0b72a0"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/peer-view.js",
+      "blob_sha": "e845434875aba9cd5daf32f5e42b992535112f86"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/plan-parse.js",
+      "blob_sha": "b77ad3d43a0b9b74c885abc695bb3fc44b34240a"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/reconciler.js",
+      "blob_sha": "dedd54ddfcb686540e16bcacb4ab32a7afc1b583"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/requests-routes.js",
+      "blob_sha": "ba86aab08603ce9f0ad6cb3a11893fa1a2566b42"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/requests-routes.selftest.js",
+      "blob_sha": "2a510bf90e208ac26005e7de56d1d2eb219b9391"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/roadmap-routes.js",
+      "blob_sha": "d9e522315f5dbc99ebd56ec73cb7f934df937e2b"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/roadmap-routes.selftest.js",
+      "blob_sha": "ee64216841db4dd46e9f541ac20bd82e85885ef2"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/server.js",
+      "blob_sha": "4e1168f8aad126246f2ac10a52c86c4267a6202b"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/server.selftest.js",
+      "blob_sha": "ba128188b1edb3ef02e8c39d1451c2c75f5398c7"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/app.js",
+      "blob_sha": "a794bacbcf729540a07f8b9433f6fbb6e082e105"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/asks.js",
+      "blob_sha": "3031d1efd269b32e03e4ca1b1a00c9a528151f98"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/backlog.js",
+      "blob_sha": "96fc23a2319f2bb531e422122a8a4201e8bd8f6e"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/cockpit.selftest.js",
+      "blob_sha": "38014df37b8e55962c831b0053a66587c41db77a"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/command-render.js",
+      "blob_sha": "a9898a59afb22afabbf1df9ffa0bdf1ce07064b8"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/inbox.js",
+      "blob_sha": "4652333bc99b2a94a5eefb6d4e5d283cb122e838"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/md-render.js",
+      "blob_sha": "429945efb2f5fbc0c562c82800764a460cfeada8"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/requests.js",
+      "blob_sha": "e16e67652e5f81935d8c419499f4f5d783ef15da"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/roadmap.js",
+      "blob_sha": "885a13effad5cea3baf594506ea3ac2804d8152d"
     }
   ]
 }

@@ -92,7 +92,7 @@ Class 1 marked SHIPPED and Classes 2/3 marked PROPOSED.
 
 ## Tasks
 
-- [x] 1. Extend `rrg_in_surface` (`hooks/lib/review-record-gate-lib.sh`) with
+- [ ] 1. Extend `rrg_in_surface` (`hooks/lib/review-record-gate-lib.sh`) with
   two additive, repo-root-relative case arms —
   `neural-lace/workstreams-ui/server/*.js` and
   `neural-lace/workstreams-ui/web/*.js` (case `*` matches `/`, so both are
@@ -121,7 +121,7 @@ Class 1 marked SHIPPED and Classes 2/3 marked PROPOSED.
     (pre-existing wiring, unchanged); re-ran each consumer's own self-test
     unchanged (`write-review-record.sh` 22/22, `review-record-commit-gate.sh`
     62/62) to confirm the widened surface didn't regress anything downstream.
-- [x] 2. Update `doctrine/review-before-deploy.md` (compact, Amendment A →
+- [ ] 2. Update `doctrine/review-before-deploy.md` (compact, Amendment A →
   A+G, kept ≤3000 bytes) and `-full.md` (full Amendment G rationale: the
   measured gap, the cost, the `*.selftest.js` inclusion decision, the
   corrected commit-time-only enforcement scope, and the named residual)
@@ -133,7 +133,7 @@ Class 1 marked SHIPPED and Classes 2/3 marked PROPOSED.
     this file — unchanged pointer, content updated in place.
   - **Integration points:** none external — a doctrine JIT-routing read, not
     a runtime call.
-- [x] 3. Update `manifest.json`'s `review-before-deploy` entry
+- [ ] 3. Update `manifest.json`'s `review-before-deploy` entry
   (`jit_triggers.paths` gains the two workstreams-ui directories;
   `honest_status`/`fp_expectation` gain an Amendment G addendum with the
   measured 26-file cost) and `review-record-commit-gate` entry (short
@@ -150,28 +150,30 @@ Class 1 marked SHIPPED and Classes 2/3 marked PROPOSED.
   - **Integration points:** `harness-doctor.sh --quick`'s
     `review-surface-cross-check` line — re-ran, no new RED.
 - [ ] 4. Re-bootstrap `docs/reviews/records/grandfather-manifest.json` at a
-  NEW `cutover_ref` (this plan's task-1-4 commit SHA) via
-  `write-review-record.sh bootstrap-grandfather`, exactly the same
-  operational pattern as the three prior re-bootstrap commits in this
-  file's own git history (`59e338f`, `df787e6`, `04c8bfc`) — so the 26
-  currently-matching cockpit files (measured: `find
+  NEW `cutover_ref` (`44ef271d54c73014bb413ff4f99b4509bd3d6d6d`, the
+  task-1-3/5 commit SHA) via `write-review-record.sh bootstrap-grandfather`,
+  exactly the same operational pattern as the three prior re-bootstrap
+  commits in this file's own git history (`59e338f`, `df787e6`, `04c8bfc`)
+  — so the 26 currently-matching cockpit files (measured: `find
   neural-lace/workstreams-ui/{server,web} -name '*.js' | wc -l`) are
   grandfathered rather than retroactively blocked. Verification:
   mechanical — Docs impact: none (generated artifact, not hand-authored).
-  - **Prove it works:** BEFORE re-bootstrapping,
-    `harness-doctor.sh --quick` shows `RED review-grandfather-integrity`
-    (measured in-session: the OLD cutover_ref re-derives divergently once
+  - **Prove it works:** BEFORE re-bootstrapping (on commit `44ef271`),
+    `harness-doctor.sh --quick` showed `RED review-grandfather-integrity`
+    (measured: the OLD cutover_ref `3ab7fa5` re-derives divergently once
     `rrg_in_surface` is wider, because workstreams-ui files already existed
-    at that historical ref). AFTER re-bootstrapping at the new cutover_ref,
-    the same doctor line is silent (PASS).
+    at that historical ref). AFTER `bootstrap-grandfather --ref 44ef271...`
+    (275 entries, 26 of them `workstreams-ui/**`, confirmed via `jq -r
+    '.entries[].path' | grep -c workstreams-ui`), the same doctor line is
+    silent (PASS) — re-verified.
   - **Wire checks:** `write-review-record.sh bootstrap-grandfather` →
     `rrg_in_surface` (same lib, same function) → `git ls-tree -r` at the
     new ref → `grandfather-manifest.json`.
   - **Integration points:** `harness-doctor.sh`'s
     `check_review_grandfather_integrity`, which re-derives the manifest at
     its own recorded `cutover_ref` and REDs on divergence — the actual
-    oracle for this task.
-- [x] 5. Write `docs/harness-improvements/cockpit-review-surface-and-verification-gaps.md`
+    oracle for this task, confirmed GREEN after the re-bootstrap.
+- [ ] 5. Write `docs/harness-improvements/cockpit-review-surface-and-verification-gaps.md`
   following the existing format (`model-pin-mandatory-gate.md` precedent):
   class name, 5-Whys to the latent cause, existing-controls audit (each
   control's actual trigger verified in this session, not assumed), the
@@ -192,7 +194,8 @@ Class 1 marked SHIPPED and Classes 2/3 marked PROPOSED.
     176/0, `roadmap-routes.selftest.js` 113/0, `requests-routes.selftest.js`
     30/0, `inbox-routes.selftest.js` 47/0 (all baselines held, none of this
     plan's files touch `neural-lace/workstreams-ui/**` product code itself)
-    — run on the real `node` interpreter, sequential.
+    — run on the real `node` interpreter, sequential, re-confirmed after
+    task 4's re-bootstrap commit.
   - **Wire checks:** n/a (regression-confirmation task, not a new wire).
   - **Integration points:** `harness-doctor.sh --quick` full re-run,
     confirming no NEW red beyond this session's pre-existing baseline
@@ -374,15 +377,20 @@ never receive a cockpit path to act on in the first place.
 
 ## Definition of Done
 - [ ] All 6 tasks checked off
-- [x] All self-tests pass (`review-record-gate-lib.sh` 36/36,
+- [ ] All self-tests pass (`review-record-gate-lib.sh` 36/36,
   `write-review-record.sh` 22/22, `review-record-commit-gate.sh` 62/62,
   `manifest-check.sh` GREEN, product baselines unchanged 499/0, 176/0,
   113/0, 30/0, 47/0)
 - [ ] `harness-doctor.sh --quick` shows no NEW red beyond this session's
-  pre-existing baseline; `review-surface-cross-check` GREEN now,
-  `review-grandfather-integrity` EXPECTED red until task 4's re-bootstrap
-  commit lands (by design — see Decisions Log), then GREEN
-- [x] Proposal doc `docs/harness-improvements/cockpit-review-surface-and-verification-gaps.md`
+  pre-existing baseline; `review-surface-cross-check` GREEN;
+  `review-grandfather-integrity` GREEN after task 4's re-bootstrap commit
+  (was RED in between the two commits, by design — see Decisions Log)
+- [ ] Proposal doc `docs/harness-improvements/cockpit-review-surface-and-verification-gaps.md`
   exists with §10 credentials for all three gap classes
 - [ ] SCRATCHPAD.md updated with final state
-- [ ] Completion report appended to this plan file
+- [ ] Completion report appended to this plan file (at actual closure,
+  by task-verifier/close-plan — see the builder's own return to the
+  orchestrator for the interim evidence summary: commits
+  `44ef271d54c73014bb413ff4f99b4509bd3d6d6d` (tasks 1-3+5) and the
+  follow-up grandfather re-bootstrap commit (task 4), review record
+  `docs/reviews/records/2026-07-30-harness-change-review-18003980.json`)
