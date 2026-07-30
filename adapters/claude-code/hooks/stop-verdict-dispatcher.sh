@@ -301,10 +301,16 @@
 # FP ESTIMATE (honest, measured, per constitution §10): the shipped
 # off-vocabulary denylist (`_SVD_OFFVOCAB_RE` below) against this same
 # corpus: `git log --oneline | grep -ciE "$_SVD_OFFVOCAB_RE"` returns 2/1673
-# (~0.12%) — both are literal false positives worth naming, not hidden: one
-# commit subject legitimately uses "should be" in an unrelated sense. This
-# WARN-only posture means even a wrongly-fired warn costs a glance, never a
-# block.
+# (~0.12%) — both hits are "in flight" status-claim usages (re-checked
+# directly, 2026-07-30: neither hit contains "should be" at all; an earlier
+# version of this comment mischaracterized one as such). Commit subjects
+# are a PROXY corpus, not the real target text — this check scans the
+# final assistant chat message, not commit messages — chosen here only
+# because it is a large, readily-greppable sample already on hand. The
+# real false-positive rate is the live signal ledger's warn/session ratio
+# for `gate: stop-verdict-dispatcher, check: vocabulary-lock` (see
+# RETIREMENT CONDITION immediately below). This WARN-only posture means
+# even a wrongly-fired warn costs a glance, never a block.
 #
 # RETIREMENT CONDITION: same shape as PROBLEMS-PERSIST — if the ledger's
 # warn/session ratio for `gate: stop-verdict-dispatcher, check:
@@ -1173,7 +1179,7 @@ _svd_problems_persist_check() {
 #   if none). See the VOCABULARY-LOCK header comment above for why this
 #   exact denylist and not a broader one.
 # ----------------------------------------------------------------------
-_SVD_OFFVOCAB_RE='\bin[[:space:]]+flight\b|\bdone-ish\b|\bbasically[[:space:]]+(complete|done)\b|\bmostly[[:space:]]+done\b|\bkind[[:space:]]+of[[:space:]]+done\b|\bsort[[:space:]]+of[[:space:]](done|working)\b|\bwrapping[[:space:]]+up\b|\bshould[[:space:]]+be[[:space:]](done|working|fine)\b'
+_SVD_OFFVOCAB_RE='\bin[[:space:]]+flight\b|\bdone-ish\b|\bbasically[[:space:]]+(complete|done)\b|\bmostly[[:space:]]+done\b|\bkind[[:space:]]+of[[:space:]]+done\b|\bsort[[:space:]]+of[[:space:]]+(done|working)\b|\bwrapping[[:space:]]+up\b|\bshould[[:space:]]+be[[:space:]](done|working|fine)\b'
 _svd_text_offvocab_matches() {
   local text="$1"
   printf '%s' "$text" | grep -oiE "$_SVD_OFFVOCAB_RE" 2>/dev/null | tr '[:upper:]' '[:lower:]' | sort -u | tr '\n' ',' | sed 's/,$//'
@@ -2913,6 +2919,34 @@ STUBEOF
     passed=$((passed+1))
   else
     echo "self-test (vocabulary-lock-warn-channel-separate-from-block-json): FAIL (expected the vocabulary-lock WARN to stay out of the block-JSON reason string on stdout)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 35 (harness-change-review REFORMULATE finding 3(b)): the
+  # "sort of done"/"sort of working" alternative in `_SVD_OFFVOCAB_RE` had
+  # a `[[:space:]]` (exactly one whitespace char) between "of" and
+  # "(done|working)" where every sibling alternative uses `[[:space:]]+`
+  # (one-or-more) -- so "sort of  done" (two spaces, as real prose
+  # wrapping/copy-paste produces) never matched. Proves the `+` fix: the
+  # SAME multi-space phrasing that a naive single-space regex would miss
+  # now fires the warn.
+  # ================================================================
+  _setup_scenario s35
+  HOOKS=$(_build_dispatcher_repo s35)
+  REPO="$tmproot/s35/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T35=$(_write_transcript "$tmproot/s35" $'SE3 is sort of  done, just polishing the edges.\n\nDONE: nothing else to report')
+  RC35=$(_run_dispatcher "$HOOKS" "$REPO" "$T35" "sess-s35")
+  _expect "vocabulary-lock-sort-of-multispace-never-blocks" "$RC35" "0"
+  if grep -q '"gate":"stop-verdict-dispatcher".*vocabulary-lock.*sort of' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-sort-of-done-multispace-warns): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-sort-of-done-multispace-warns): FAIL (expected a vocabulary-lock warn naming 'sort of done' even with 2 spaces before 'done')" >&2
     failed=$((failed+1))
   fi
 
