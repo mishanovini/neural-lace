@@ -454,12 +454,18 @@ fi
 
 _AR_VALID_STATUSES=(active done dismissed merged)
 # Amendment-candidate classification vocabulary (cockpit-roadmap-redesign
-# Task 2, A2/I6): pending is the birth state stamped by capture-candidate
-# itself; these three are the only values classify-candidate accepts.
+# Task 2, A2/I6; `promoted` added 2026-07-30 — see DETERMINISTIC CLASSIFIER
+# below). pending is the birth state stamped by capture-candidate itself;
+# these four are the only values classify-candidate accepts.
 #   amendment — the prompt changed/extended the ask's scope or direction
 #   noise     — conversational (acks, questions, tangents); hidden by default
 #   detached  — operator correction: "not an amendment" (I6 detach)
-_AR_VALID_CLASSIFICATIONS=(amendment noise detached)
+#   promoted  — the prompt was a SUBSTANTIVELY DIFFERENT request; it was
+#               spun off into its own top-level ask (record_type "created")
+#               rather than staying buried as a pending amendment of an
+#               unrelated parent forever. `summary` on the candidate_classified
+#               record holds the NEW ask_id it became (not a distilled label).
+_AR_VALID_CLASSIFICATIONS=(amendment noise detached promoted)
 
 # ----------------------------------------------------------------------
 # ar_state_dir — resolve the ask-registry state directory per the order
@@ -793,6 +799,155 @@ _ar_async_classify_candidate() {
       _ar_append_record "candidate_classified" "$ask_id" "" "" "" "" \
         "" "" "" "" "" "" "ask-registry-classifier" "" "$candidate_id" "noise" >/dev/null
     fi
+    exit 0
+  ) >/dev/null 2>&1 &
+  disown 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------
+# DETERMINISTIC CLASSIFIER (2026-07-30 — URGENT operator-facing defect fix)
+#
+# PROVEN root cause: the LLM lane above (_ar_classify_candidate_text via
+# `claude --model haiku`) hangs EVERY TIME it runs from a hook firing inside
+# an already-live Claude Code session — `env -u CLAUDECODE claude --model
+# haiku -p ...` does not fail fast; it hangs until nl_run_bounded's 20s
+# bound kills it (reproduced directly: `timeout 25 env -u CLAUDECODE claude
+# --model haiku -p "..." </dev/null` -> rc=124). Zero of the 114 real
+# amendment_candidate records captured 2026-07-28..30 on this machine ever
+# got a candidate_classified verdict — the LLM lane's own self-tests never
+# caught this because they inject a FAKE _AR_CLASSIFY_CMD instead of ever
+# shelling out to the real `claude` binary.
+#
+# This is the deterministic replacement: no model call, no network, no hang
+# risk. It resolves both the candidate's and the parent ask's REAL verbatim
+# text from their Claude Code session transcripts (workstreams-ui/server/
+# verbatim-resolver.js — the registry itself never stores raw text, by this
+# file's own long-standing design; resolution happens transiently here, in
+# memory, never persisted) and classifies by lexical overlap:
+#   - near-zero overlap + a substantive candidate -> "new-topic": the
+#     candidate is spun off into its OWN top-level ask (record_type
+#     "created") instead of staying buried as a pending amendment of an
+#     unrelated parent forever (the operator's core complaint: a long
+#     session accumulates dozens of unrelated requests, all silently filed
+#     under the session's FIRST ask because pl_ask_id_for_session derives
+#     ask_id 1:1 from session_id for the session's whole lifetime).
+#   - a short/conversational candidate -> "noise" (hidden by default, same
+#     as the pre-existing LLM-path vocabulary).
+#   - otherwise -> "amendment" (extends the parent ask).
+# A candidate whose text cannot be resolved (transcript missing/unreadable,
+# timestamp out of tolerance) is left UNTOUCHED here — it falls through,
+# SEQUENTIALLY (never as a second parallel writer — see LANE SEQUENCING on
+# `_ar_async_deterministic_classify_candidate` below), to the (empirically
+# dead, but still wired for the day the CLI's nested-session bug is fixed)
+# LLM attempt, an honest degrade identical to today's behavior for anything
+# this new path cannot decide.
+# ----------------------------------------------------------------------
+_ar_resolver_cli_path() {
+  if [[ -n "${ASK_VERBATIM_RESOLVER_OVERRIDE:-}" ]]; then
+    printf '%s' "$ASK_VERBATIM_RESOLVER_OVERRIDE"
+    return 0
+  fi
+  # Prefer the copy that ships in the SAME checkout as this ask-registry.sh
+  # (SCRIPT_DIR-relative: adapters/claude-code/scripts -> repo root ->
+  # neural-lace/workstreams-ui/server/). Guarantees version parity between
+  # this file's classifier wiring and the resolver's CLI contract, and —
+  # unlike nl_workstreams_ui, which resolves via the per-machine
+  # ~/.claude/local/nl-repo-path config and so points at the MAIN checkout
+  # even when this script is running from a builder's worktree — it finds a
+  # worktree-local resolver BEFORE that worktree is ever merged.
+  local local_path="$SCRIPT_DIR/../../../neural-lace/workstreams-ui/server/verbatim-resolver.js"
+  if [[ -f "$local_path" ]]; then
+    printf '%s' "$local_path"
+    return 0
+  fi
+  local ui_root=""
+  if command -v nl_workstreams_ui >/dev/null 2>&1; then
+    ui_root="$(nl_workstreams_ui)"
+  fi
+  [[ -n "$ui_root" ]] || { printf ''; return 0; }
+  printf '%s/server/verbatim-resolver.js' "$ui_root"
+}
+
+# ----------------------------------------------------------------------
+# _ar_async_deterministic_classify_candidate <ask_id> <candidate_id>
+#   <verbatim_ref> <capture_ts> <session_id> <raw_text>
+# Backgrounds resolution + classification + (on a confident verdict) the
+# candidate_classified append, or a full `register` for a promoted
+# new-topic candidate; NEVER blocks the calling `capture-candidate`.
+# Degrades silently (leaves the candidate untouched, honest pending) on ANY
+# failure: missing node, missing resolver script, missing registry file,
+# unresolvable text, or a malformed JSON reply.
+#
+# LANE SEQUENCING (harness-reviewer Major 1, 2026-07-30): the (empirically
+# 100%-dead-in-production) LLM lane is invoked HERE, sequentially, ONLY when
+# this function's own resolution genuinely fails — never as a second,
+# independently-scheduled writer racing this one on the same candidate_id
+# fold key. Two async lanes appending candidate_classified for the SAME
+# candidate_id under a latest-wins fold is a real corruption surface: if the
+# CLI's nested-session bug is ever fixed upstream, an LLM verdict landing
+# ~20s after a `promoted` deterministic verdict would silently override it,
+# orphaning the freshly-registered top-level ask. Sequencing here (instead
+# of `cmd_capture_candidate` firing both independently) makes that
+# structurally impossible: the LLM attempt only ever runs AFTER this
+# function has already given up, in the SAME subshell, never in parallel.
+# ----------------------------------------------------------------------
+_ar_async_deterministic_classify_candidate() {
+  local ask_id="$1" candidate_id="$2" verbatim_ref="$3" capture_ts="$4" session_id="$5" raw_text="${6:-}"
+  (
+    _ar_llm_fallback() {
+      if [[ "${ASK_SUMMARIZER:-}" == "haiku" && -n "$raw_text" ]]; then
+        _ar_async_classify_candidate "$ask_id" "$candidate_id" "$raw_text"
+      fi
+    }
+    command -v node >/dev/null 2>&1 || { _ar_llm_fallback; exit 0; }
+    command -v jq >/dev/null 2>&1 || { _ar_llm_fallback; exit 0; }
+    local resolver; resolver="$(_ar_resolver_cli_path)"
+    [[ -n "$resolver" && -f "$resolver" ]] || { _ar_llm_fallback; exit 0; }
+    local reg_file; reg_file="$(ar_registry_file)"
+    [[ -f "$reg_file" ]] || { _ar_llm_fallback; exit 0; }
+
+    local verdict_json
+    verdict_json="$(nl_run_bounded 15s node "$resolver" classify "$reg_file" "$ask_id" "$verbatim_ref" "$capture_ts" 2>/dev/null)" || { _ar_llm_fallback; exit 0; }
+    [[ -n "$verdict_json" ]] || { _ar_llm_fallback; exit 0; }
+    local vok; vok="$(printf '%s' "$verdict_json" | jq -r '.ok // false' 2>/dev/null)"
+    if [[ "$vok" != "true" ]]; then
+      # Unresolved candidate text — the deterministic path has nothing to
+      # decide on. Fall through to the LLM attempt (sequential, same
+      # subshell) exactly as this function's header describes.
+      _ar_llm_fallback
+      exit 0
+    fi
+
+    local classification candidate_text
+    classification="$(printf '%s' "$verdict_json" | jq -r '.classification // ""' 2>/dev/null)"
+    candidate_text="$(printf '%s' "$verdict_json" | jq -r '.candidate_text // ""' 2>/dev/null)"
+    [[ -n "$classification" ]] || exit 0
+
+    case "$classification" in
+      noise)
+        _ar_append_record "candidate_classified" "$ask_id" "" "" "" "" \
+          "" "" "" "" "" "" "ask-registry-classifier-deterministic" "" "$candidate_id" "noise" >/dev/null
+        ;;
+      new-topic)
+        [[ -n "$candidate_text" ]] || exit 0
+        local promo_summary; promo_summary="$(_ar_heuristic_summarize "$candidate_text")"
+        [[ -n "$promo_summary" ]] || exit 0
+        local new_ask_id; new_ask_id="$(_ar_gen_ask_id "$promo_summary")"
+        cmd_register --ask-id "$new_ask_id" --summary "$promo_summary" \
+          --session-id "$session_id" --verbatim-ref "$verbatim_ref" >/dev/null
+        _ar_append_record "candidate_classified" "$ask_id" "" "" "" "$new_ask_id" \
+          "" "" "" "" "" "" "ask-registry-classifier-deterministic" "" "$candidate_id" "promoted" >/dev/null
+        ;;
+      amendment)
+        local label=""
+        [[ -n "$candidate_text" ]] && label="$(_ar_heuristic_summarize "$candidate_text")"
+        _ar_append_record "candidate_classified" "$ask_id" "" "" "" "$label" \
+          "" "" "" "" "" "" "ask-registry-classifier-deterministic" "" "$candidate_id" "amendment" >/dev/null
+        ;;
+      *)
+        exit 0
+        ;;
+    esac
     exit 0
   ) >/dev/null 2>&1 &
   disown 2>/dev/null || true
@@ -1189,11 +1344,18 @@ cmd_set_title() {
 # cmd_capture_candidate — A2 layer (a), mechanical capture: append one
 # operator prompt of an ask-attached session as a timeline CANDIDATE.
 # Stores the transcript ref + minted candidate_id ONLY — never the raw
-# text (the registry stays small). --text, when given, is handed to the
-# async classifier lane (layer (b)) and then discarded; classification
-# runs only under ASK_SUMMARIZER=haiku (the SAME gate as the title
-# distiller — one lane, one switch). Without it, the candidate stays
-# classification=pending: a named honest state, never a guess.
+# text (the registry stays small). Classification (layer (b), 2026-07-30
+# update) is now UNCONDITIONAL and gate-free: `_ar_async_deterministic_
+# classify_candidate` always attempts the deterministic (no model call)
+# classifier first, sequentially falling back to the ASK_SUMMARIZER=haiku
+# LLM lane (the SAME gate as the title distiller — proven dead in
+# production, kept wired as a fallback) ONLY when its own resolution
+# genuinely fails — see that function's own LANE SEQUENCING comment for
+# why the two lanes never run as independent, racing writers. --text, when
+# given, is passed through for that fallback and otherwise unused (the
+# deterministic lane resolves its own text from the transcript). A
+# candidate neither lane can decide stays classification=pending: a named
+# honest state, never a guess.
 # ----------------------------------------------------------------------
 cmd_capture_candidate() {
   local ask_id="" candidate_id="" session_id="" verbatim_ref="" text=""
@@ -1212,12 +1374,22 @@ cmd_capture_candidate() {
     return 0
   fi
   [[ -n "$candidate_id" ]] || candidate_id="$(_ar_gen_candidate_id)"
+  local capture_ts; capture_ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo 'unknown')"
   _ar_append_record "amendment_candidate" "$ask_id" "" "" "" "" \
     "$verbatim_ref" "" "" "$session_id" "" "" "ask-capture" \
     "" "$candidate_id" "pending"
-  if [[ "${ASK_SUMMARIZER:-}" == "haiku" && -n "$text" ]]; then
-    _ar_async_classify_candidate "$ask_id" "$candidate_id" "$text"
-  fi
+  # Deterministic classification (2026-07-30 fix) ALWAYS attempted — no
+  # model call, no ASK_SUMMARIZER gate needed (that gate is specifically
+  # about the LLM lane, invoked ONLY as a sequential fallback INSIDE this
+  # same call when resolution genuinely fails — see LANE SEQUENCING on
+  # `_ar_async_deterministic_classify_candidate`'s own header: two
+  # independently-scheduled async writers appending candidate_classified
+  # for the same candidate_id under a latest-wins fold is a real corruption
+  # surface, so `$text` is threaded through here rather than the old
+  # separate `_ar_async_classify_candidate` call site racing this one).
+  # Runs async/backgrounded so a slow/growing transcript never adds latency
+  # to this hot UserPromptSubmit-adjacent path.
+  _ar_async_deterministic_classify_candidate "$ask_id" "$candidate_id" "$verbatim_ref" "$capture_ts" "$session_id" "$text"
   return 0
 }
 
@@ -1244,7 +1416,7 @@ cmd_classify_candidate() {
     return 0
   fi
   if ! _ar_in_list "$classification" "${_AR_VALID_CLASSIFICATIONS[@]}"; then
-    echo "ask-registry.sh classify-candidate: invalid --classification '$classification' (must be one of: amendment|noise|detached) — no-op, never blocks caller" >&2
+    echo "ask-registry.sh classify-candidate: invalid --classification '$classification' (must be one of: amendment|noise|detached|promoted) — no-op, never blocks caller" >&2
     return 0
   fi
   [[ -n "$summary" ]] && summary="$(_ar_truncate140 "$summary")"
@@ -2012,6 +2184,52 @@ cmd_list() {
   return 0
 }
 
+# ----------------------------------------------------------------------
+# cmd_heuristic_summarize --text <raw> — read-only, pure-function verb
+# (2026-07-30, backfill-classify-candidates.sh): prints the SAME
+# markdown-stripped/first-sentence/140-char-capped label `register` and the
+# deterministic classifier already use, so a one-shot backfill process
+# (which cannot call this file's internal bash functions directly — it's a
+# separate script/process) produces IDENTICAL labels to the live capture
+# path instead of a second, subtly-different summarization. No registry
+# read, no write, no side effect.
+# ----------------------------------------------------------------------
+cmd_heuristic_summarize() {
+  local text=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --text) text="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  _ar_heuristic_summarize "$text"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# cmd_gen_ask_id --summary <text> — read-only, pure-function verb
+# (2026-07-30, harness-reviewer Minor: backfill-classify-amendment-
+# candidates.sh's promote path used to `register` first and then re-derive
+# the new ask_id by grepping the registry for a matching verbatim_ref —
+# workable (proven unique on live data) but a needless lookup-failure/race
+# surface). Exposes the SAME `_ar_gen_ask_id` the live deterministic
+# classifier already calls directly (in-process), so the backfill script
+# can mint the id UP FRONT and pass `--ask-id` explicitly to `register`,
+# exactly like the live lane — no post-write lookup, no failure mode. No
+# registry read, no write, no side effect.
+# ----------------------------------------------------------------------
+cmd_gen_ask_id() {
+  local summary=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --summary) summary="${2:-}"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  _ar_gen_ask_id "$summary"
+  return 0
+}
+
 # ============================================================
 # --self-test
 # ============================================================
@@ -2185,6 +2403,38 @@ cmd_selftest() {
     pass "list prints multiple registered/mutated entries"
   else
     fail "list did not print the expected entries"
+  fi
+
+  echo "Scenario J2 (2026-07-30): heuristic-summarize is a pure, read-only verb (no registry write) producing the SAME label register/the deterministic classifier use"
+  local hs_before hs_after hs_out
+  hs_before=$(wc -l < "$REG" 2>/dev/null | tr -d ' ')
+  hs_out="$(cmd_heuristic_summarize --text 'Please fix the login page so the submit button actually submits the form. Also do X.')"
+  hs_after=$(wc -l < "$REG" 2>/dev/null | tr -d ' ')
+  if [[ "$hs_out" == "Please fix the login page so the submit button actually submits the form." ]]; then
+    pass "heuristic-summarize takes the first sentence (140-char cap), matching register's own summarizer"
+  else
+    fail "heuristic-summarize returned unexpected output: '$hs_out'"
+  fi
+  if [[ "$hs_before" == "$hs_after" ]]; then
+    pass "heuristic-summarize never touches the registry file (pure function)"
+  else
+    fail "heuristic-summarize unexpectedly changed the registry line count ($hs_before -> $hs_after)"
+  fi
+
+  echo "Scenario J3 (2026-07-30): gen-ask-id is a pure, read-only verb producing the SAME id shape register mints when --ask-id is omitted"
+  local gid_before gid_after gid_out
+  gid_before=$(wc -l < "$REG" 2>/dev/null | tr -d ' ')
+  gid_out="$(cmd_gen_ask_id --summary 'Fix the login page')"
+  gid_after=$(wc -l < "$REG" 2>/dev/null | tr -d ' ')
+  if [[ "$gid_out" == ask-*-fix-the-login-page-* ]]; then
+    pass "gen-ask-id prints an ask-<date>-<slug>-<4hex> id matching register's own auto-generation shape"
+  else
+    fail "gen-ask-id returned unexpected output: '$gid_out'"
+  fi
+  if [[ "$gid_before" == "$gid_after" ]]; then
+    pass "gen-ask-id never touches the registry file (pure function)"
+  else
+    fail "gen-ask-id unexpectedly changed the registry line count ($gid_before -> $gid_after)"
   fi
 
   echo "Scenario K: mirror append lands at ASK_REGISTRY_MIRROR_PATH (explicit override)"
@@ -2477,6 +2727,90 @@ cmd_selftest() {
   else
     fail "expected candidate '$r4_cid' to remain pending after a failing classifier"
   fi
+
+  echo "Scenario R5-R8 (2026-07-30 fix): the DETERMINISTIC classifier — no ASK_SUMMARIZER gate, no model call, resolves REAL text from a REAL transcript, and PROMOTES a genuinely new topic into its own ask"
+  local DET_TRANSCRIPT="$TMP/det-transcript.jsonl"
+  : > "$DET_TRANSCRIPT"
+  _det_append_line() {
+    local ts; ts="$(date -u '+%Y-%m-%dT%H:%M:%S.000Z' 2>/dev/null)"
+    printf '{"type":"user","timestamp":"%s","isSidechain":false,"message":{"role":"user","content":"%s"}}\n' "$ts" "$1" >> "$DET_TRANSCRIPT"
+    printf '%s' "$ts"
+  }
+
+  local det_ts0; det_ts0="$(_det_append_line "Please fix the login page so the submit button actually submits the form.")"
+  cmd_register --ask-id "ask-selftest-detclass" --summary "Please fix the login page so the submit button actually submits the form." \
+    --verbatim-ref "${DET_TRANSCRIPT}#0" --session-id "sess-detclass" >/dev/null
+  sleep 2
+
+  echo "  R5: a candidate sharing real vocabulary with the parent is classified 'amendment' via resolved text — NO ASK_SUMMARIZER, NO --text needed"
+  local det_ts1; det_ts1="$(_det_append_line "also please disable the submit button while the form is submitting")"
+  cmd_capture_candidate --ask-id "ask-selftest-detclass" --candidate-id "cand-det-amend" \
+    --session-id "sess-detclass" --verbatim-ref "${DET_TRANSCRIPT}#1" >/dev/null
+  local det_waited=0 det_ok=0
+  while [[ "$det_waited" -lt 30 ]]; do
+    if grep -q '"record_type":"candidate_classified".*"candidate_id":"cand-det-amend".*"classification":"amendment"' "$REG" 2>/dev/null; then
+      det_ok=1; break
+    fi
+    sleep 0.2; det_waited=$((det_waited + 1))
+  done
+  if [[ "$det_ok" == "1" ]] \
+     && grep '"candidate_id":"cand-det-amend"' "$REG" 2>/dev/null | grep -q '"classification":"amendment"' \
+     && grep '"candidate_id":"cand-det-amend"' "$REG" 2>/dev/null | grep -q '"summary":"[^"]*submit'; then
+    pass "R5 deterministic classifier marked a real-vocabulary-overlap candidate 'amendment' with a real distilled label (no model call, no ASK_SUMMARIZER)"
+  else
+    fail "R5 expected a deterministic 'amendment' candidate_classified record for cand-det-amend with a real label"
+  fi
+
+  echo "  R6: a candidate SUBSTANTIVELY UNRELATED to the parent is PROMOTED into its own new top-level ask, carrying its real resolved text as the new ask's summary"
+  sleep 2
+  local det_ts2; det_ts2="$(_det_append_line "Completely unrelated: can you also set up weekly backups for the database?")"
+  cmd_capture_candidate --ask-id "ask-selftest-detclass" --candidate-id "cand-det-promote" \
+    --session-id "sess-detclass" --verbatim-ref "${DET_TRANSCRIPT}#2" >/dev/null
+  local det_waited2=0 det_ok2=0
+  while [[ "$det_waited2" -lt 30 ]]; do
+    if grep -q '"record_type":"candidate_classified".*"candidate_id":"cand-det-promote".*"classification":"promoted"' "$REG" 2>/dev/null; then
+      det_ok2=1; break
+    fi
+    sleep 0.2; det_waited2=$((det_waited2 + 1))
+  done
+  local new_ask_id=""
+  if [[ "$det_ok2" == "1" ]]; then
+    new_ask_id="$(grep '"candidate_id":"cand-det-promote"' "$REG" | grep '"classification":"promoted"' | sed -E 's/.*"summary":"([^"]*)".*/\1/' | head -n1)"
+  fi
+  if [[ -n "$new_ask_id" ]] && grep -q '"ask_id":"'"$new_ask_id"'".*"record_type":"created".*"summary":"Completely unrelated' "$REG" 2>/dev/null; then
+    pass "R6 a genuinely new topic mid-session was spun off into its OWN ask ($new_ask_id) with its real resolved text as the title — the operator's core complaint (buried forever as a pending amendment) is fixed"
+  else
+    fail "R6 expected cand-det-promote to be promoted into a new top-level ask carrying its real resolved text"
+  fi
+
+  echo "  R7: a short conversational ack (real, resolvable text) is classified 'noise' by the deterministic path"
+  sleep 2
+  local det_ts3; det_ts3="$(_det_append_line "thanks, looks good so far")"
+  cmd_capture_candidate --ask-id "ask-selftest-detclass" --candidate-id "cand-det-noise" \
+    --session-id "sess-detclass" --verbatim-ref "${DET_TRANSCRIPT}#3" >/dev/null
+  local det_waited3=0 det_ok3=0
+  while [[ "$det_waited3" -lt 30 ]]; do
+    if grep -q '"record_type":"candidate_classified".*"candidate_id":"cand-det-noise".*"classification":"noise"' "$REG" 2>/dev/null; then
+      det_ok3=1; break
+    fi
+    sleep 0.2; det_waited3=$((det_waited3 + 1))
+  done
+  if [[ "$det_ok3" == "1" ]]; then
+    pass "R7 deterministic classifier marked a real short acknowledgement 'noise'"
+  else
+    fail "R7 expected a deterministic 'noise' candidate_classified record for cand-det-noise"
+  fi
+
+  echo "  R8: regression safety — an UNRESOLVABLE (fake-path) verbatim_ref never produces a deterministic candidate_classified record (falls through, honest degrade, matches Scenario R/R2/R3/R4's pre-existing fake-ref behavior)"
+  cmd_capture_candidate --ask-id "ask-selftest-detclass" --candidate-id "cand-det-unresolvable" \
+    --session-id "sess-detclass" --verbatim-ref "/transcripts/does-not-exist.jsonl#0" >/dev/null
+  sleep 1.5
+  if ! grep -q '"record_type":"candidate_classified".*"candidate_id":"cand-det-unresolvable"' "$REG" 2>/dev/null; then
+    pass "R8 an unresolvable verbatim_ref leaves the candidate pending — no fabricated classification"
+  else
+    fail "R8 expected NO candidate_classified record for an unresolvable ref"
+  fi
+  unset -f _det_append_line
 
   echo "Scenario S: classify-candidate rejects an invalid classification vocabulary value (no-op)"
   before_lines=$(wc -l < "$REG" | tr -d ' ')
@@ -3362,6 +3696,16 @@ case "${1:-}" in
     cmd_list "$@"
     exit 0
     ;;
+  heuristic-summarize)
+    shift
+    cmd_heuristic_summarize "$@"
+    exit 0
+    ;;
+  gen-ask-id)
+    shift
+    cmd_gen_ask_id "$@"
+    exit 0
+    ;;
   --self-test|--selftest|selftest|self-test)
     # NOTE: this host does NOT need `export HARNESS_SELFTEST=1` here — cmd_selftest
     # already exports it as its first act (see the export beside the tempdir
@@ -3454,6 +3798,20 @@ OPERATOR-REQUIREMENT LEDGER (the operator's words as a checkable artifact):
                           unverified; 3 = nothing registered in scope; 4 =
                           cannot evaluate. 3 and 4 are NOT passes.
   list                    Print the raw registry JSONL (read-only).
+  heuristic-summarize --text <raw>
+                          Read-only: prints the markdown-stripped/first-
+                          sentence/140-char-capped label (no registry
+                          access, no side effect) — the SAME summarizer
+                          `register` and the deterministic classifier use,
+                          exposed for backfill-classify-amendment-candidates.sh.
+  gen-ask-id --summary <text>
+                          Read-only: prints a deterministic-shaped
+                          ask-<date>-<slug>-<4hex> id (no registry access,
+                          no side effect) — the SAME id generator `register`
+                          uses when --ask-id is omitted, exposed so a
+                          caller can mint the id UP FRONT and pass it back
+                          to `register --ask-id` explicitly (backfill-
+                          classify-amendment-candidates.sh's promote path).
   --self-test             Run the self-test suite (sandboxed, incl. a
                           from-worktree in-repo-mirror fixture).
 

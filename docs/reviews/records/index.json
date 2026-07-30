@@ -2927,6 +2927,94 @@
       "created_at": "2026-07-30T20:28:27Z",
       "reviewer_principal": null,
       "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "a45aa72956533815f93448468303c21c033718cb",
+      "record_id": "hcr-20260730-28112fca",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T21:01:46Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/ask-registry.sh",
+      "blob_sha": "fe9745ef7163b1b60a2b3ec03b04e1ed9fd22d3e",
+      "record_id": "hcr-20260730-05284b04",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T20:59:37Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/backfill-classify-amendment-candidates.sh",
+      "blob_sha": "64f6efef1ecd5131fcddfba1d4b3c9f3160183e2",
+      "record_id": "hcr-20260730-05284b04",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T20:59:37Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/requests-routes.js",
+      "blob_sha": "737c0d2e8f7a8374352c28bf8641ee09487229cd",
+      "record_id": "hcr-20260730-28112fca",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T21:01:46Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/requests-routes.selftest.js",
+      "blob_sha": "0e1ed1601d8cd8910f8c6d3d60f9729fabb6950d",
+      "record_id": "hcr-20260730-28112fca",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T21:01:46Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/verbatim-resolver.js",
+      "blob_sha": "a35f62010d7c69832d2456bf9c9e842e4584490d",
+      "record_id": "hcr-20260730-61174097",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T21:02:29Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/verbatim-resolver.selftest.js",
+      "blob_sha": "9c39e0cf77d2fbe356e50a79647318f6d34df3c6",
+      "record_id": "hcr-20260730-61174097",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T21:02:29Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/requests.js",
+      "blob_sha": "07244d0c99cdaf22a56ce4131c85720cf3b3f8e3",
+      "record_id": "hcr-20260730-28112fca",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T21:01:46Z",
+      "reviewer_principal": null,
+      "independence": null
     }
   ]
 }

@@ -42,11 +42,14 @@
 //   timeline: [TimelineEvent],       // OLDEST-FIRST; origin always first (I6 timeline anatomy)
 // }
 // TimelineEvent = {
-//   type: 'origin'|'title_changed'|'amendment'|'decision'|'project_changed'|'promoted',
-//   ts, text,                        // text is ALWAYS a hardcoded/reviewed literal + operator data
+//   type: 'origin'|'title_changed'|'amendment'|'decision'|'project_changed'|'promoted'|'candidate_promoted',
+//   ts, text,                        // text is a resolved-verbatim excerpt when available (2026-07-30
+//                                    // fix), else a hardcoded/reviewed literal + operator data
 //                                    // (asks.js's anti-noise law precedent) — never a gate/hook name
 //   detachable,                      // true only for an undetached, non-noise 'amendment' event
 //   event_key,                       // correlator for the detach call (see CONTRACT below)
+//   candidate_id,                    // 'amendment'/'candidate_promoted' events only (2026-07-30)
+//   became_request,                  // 'candidate_promoted' only: the ask_id it was spun off into
 //   plan_slug, verbatim_ref,         // present only on the event types that carry them
 // }
 //
@@ -67,29 +70,47 @@
 // with the reciprocal #roadmap/<id> link (C6).
 //
 // ============================================================
-// AMENDMENTS — forward-compatible STUB (task 2's capture/classification lane
-// is IN FLIGHT; NO record_type:"amendment_candidate" is produced by anything
-// today). This reader folds the record type honestly if/when it appears
-// (task 2's own schema decision; this fold is this task's best-effort
-// documented guess, reconciled at task-2 merge per the fragment) so the
-// timeline anatomy + detach affordance are provably wired NOW against real
-// fixture data, without fabricating amendments that were never captured
-// (HONEST LIMIT — A2: "amendment detection is best-effort, not a
-// guarantee"). Pinned shapes:
+// AMENDMENTS (2026-07-30 fix — was a forward-compatible stub; task 2's
+// capture/classification lane HAS since landed in production, and two
+// separate bugs made its output invisible: (1) the async LLM classifier
+// hangs 100% of the time when invoked from a hook running inside an
+// already-live Claude Code session — proven: `env -u CLAUDECODE claude
+// --model haiku -p ...` never fails fast, it hangs until the 20s bound
+// kills it, so zero of 114 real amendment_candidate records captured
+// 2026-07-28..30 ever got a candidate_classified verdict; (2) THIS reader
+// never read candidate_classified records at all — it only ever consulted
+// the permanently-"pending" birth record's own `classification` field. Both
+// are fixed here: `verbatim-resolver.js`'s deterministic classifier now runs
+// synchronously-cheap (no model, no hang risk) from ask-registry.sh, and
+// this fold now overlays the LATEST candidate_classified verdict per
+// candidate_id (the documented fold contract — ask-registry.sh header,
+// AMENDMENT TIMELINE section), and resolves each candidate's REAL verbatim
+// text for display instead of the generic "possible amendment captured"
+// placeholder. Real shapes actually produced:
 //   {record_type:"amendment_candidate", ask_id, ts, verbatim_ref,
-//    classification:""|"amendment"|"noise"}
+//    candidate_id, classification:"pending"}
+//   {record_type:"candidate_classified", ask_id, candidate_id,
+//    classification:"amendment"|"noise"|"detached"|"promoted", summary}
 //   {record_type:"amendment_detached", ask_id, ts, detach_ref:<candidate ts>,
-//    emitter}
+//    emitter}  -- legacy correlator, superseded by candidate_id but still
+//    honored for any record that predates candidate_id.
 // A candidate classified "noise" or ever detached never renders (I6:
-// detach "marks not-an-amendment" — same effect as classifier noise).
-// event_key correlates a candidate to its detach call: "<candidate ts>"
-// (documented risk: two candidates sharing the same second-granularity ts
-// for one ask would collide — accepted at this granularity, same convention
-// used elsewhere in this codebase for ts-keyed correlation).
+// detach "marks not-an-amendment" — same effect as classifier noise). A
+// candidate classified "promoted" was spun off into its OWN top-level
+// request (record_type:"created") — its timeline entry links there rather
+// than rendering inline (HONEST LIMIT — A2: "amendment detection is
+// best-effort classification, not a guarantee").
+// event_key correlates a candidate to its detach call. Real records always
+// carry candidate_id, which is the primary key; a legacy/fixture record
+// missing candidate_id falls back to its ts (documented risk: two such
+// candidates sharing the same second-granularity ts for one ask would
+// collide — accepted at this granularity, same convention used elsewhere in
+// this codebase for ts-keyed correlation).
 
 const fs = require('fs');
 const path = require('path');
 const deriveLib = require('./derive-lib.js');
+const verbatimResolver = require('./verbatim-resolver.js');
 
 const WEB_DIR = path.join(__dirname, '..', 'web');
 
@@ -129,7 +150,7 @@ function foldRegistryForRequests() {
         ask_id: id, plan_slugs: [], status: 'active', status_ts: '', status_emitter: '',
         created_ts: '', origin_session: '', repo: '', project: '',
         summary: '', verbatim_ref: '', auto_title: '', operator_title: '',
-        merged_into: '', timeline: [], _amendments: {}, _detached: {},
+        merged_into: '', timeline: [], _amendments: {}, _detached: {}, _classifications: {},
       };
     }
     return byAsk[id];
@@ -205,10 +226,28 @@ function foldRegistryForRequests() {
       });
       return;
     }
-    // ---- forward-compatible amendment lane (see header STUB note) ----
+    // ---- amendment lane (2026-07-30 fix — see header note) ----
     if (rec.record_type === 'amendment_candidate') {
-      const key = String(rec.ts || '');
-      cur._amendments[key] = { ts: rec.ts || '', verbatim_ref: rec.verbatim_ref || '', classification: rec.classification || '' };
+      // candidate_id is the real primary key (every production record has
+      // one); a legacy/fixture record lacking it falls back to its own ts so
+      // two such records never silently collide into one.
+      const key = rec.candidate_id || String(rec.ts || '');
+      cur._amendments[key] = {
+        ts: rec.ts || '', verbatim_ref: rec.verbatim_ref || '',
+        classification: rec.classification || '', candidate_id: rec.candidate_id || '',
+      };
+      return;
+    }
+    // candidate_classified OVERLAYS the birth record's classification — the
+    // documented fold contract (ask-registry.sh header, AMENDMENT TIMELINE):
+    // "a candidate's CURRENT classification is the LATEST candidate_classified
+    // record for its candidate_id, else its birth pending." Lines are already
+    // ts-sorted, so a later record here simply overwrites an earlier one
+    // (last-write-wins via forward iteration).
+    if (rec.record_type === 'candidate_classified' && rec.candidate_id) {
+      cur._classifications[rec.candidate_id] = {
+        classification: rec.classification || '', summary: rec.summary || '', ts: rec.ts || '',
+      };
       return;
     }
     if (rec.record_type === 'amendment_detached' && rec.detach_ref) {
@@ -221,20 +260,75 @@ function foldRegistryForRequests() {
     const cur = byAsk[askId];
     Object.keys(cur._amendments).forEach((key) => {
       const a = cur._amendments[key];
-      if (a.classification === 'noise') return; // classifier said not-an-amendment
-      if (cur._detached[key]) return; // detached = treated as not-an-amendment (I6)
-      const pending = !a.classification;
+      const override = a.candidate_id ? cur._classifications[a.candidate_id] : null;
+      // Legacy fixtures set classification directly on the birth record
+      // (no separate candidate_classified event) — honored only when no
+      // override exists, so real production data (which always classifies
+      // via a SEPARATE candidate_classified record) takes the override path.
+      const classification = (override && override.classification) || a.classification || '';
+      if (classification === 'noise') return; // classifier said not-an-amendment
+      if (classification === 'detached') return; // I6 correction: not-an-amendment
+      if (cur._detached[key]) return; // legacy ts-keyed detach correlator
+
+      const resolved = resolveCandidateText(a.verbatim_ref, a.ts);
+      const pending = !classification;
+
+      if (classification === 'promoted') {
+        const becameAskId = (override && override.summary) || '';
+        cur.timeline.push({
+          type: 'candidate_promoted', ts: a.ts, verbatim_ref: a.verbatim_ref,
+          text: resolved ? 'spun off as its own request: "' + truncateForDisplay(resolved.text) + '"' : 'spun off as its own request',
+          became_request: becameAskId, detachable: false, event_key: key,
+        });
+        return;
+      }
+
+      let text;
+      if (resolved) {
+        text = (pending ? '' : '') + truncateForDisplay(resolved.text);
+      } else if (classification === 'amendment' && override && override.summary) {
+        text = override.summary; // the classifier's own distilled label, when text isn't resolvable
+      } else {
+        text = pending ? 'possible amendment captured (not yet classified)' : 'amendment captured';
+      }
       cur.timeline.push({
         type: 'amendment', ts: a.ts, verbatim_ref: a.verbatim_ref,
-        text: pending ? 'possible amendment captured (not yet classified)' : 'amendment captured',
-        detachable: true, event_key: key,
+        text: text, detachable: true, event_key: key, candidate_id: a.candidate_id || '',
+        pending_classification: pending,
       });
     });
     cur.timeline.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
     delete cur._amendments;
     delete cur._detached;
+    delete cur._classifications;
   });
   return byAsk;
+}
+
+// ----------------------------------------------------------------------
+// resolveCandidateText(verbatimRef, ts) — best-effort read-time resolution
+// of an amendment candidate's REAL operator text from its own Claude Code
+// session transcript (see verbatim-resolver.js's header for the full
+// rationale + algorithm). NEVER throws — a resolution failure (missing
+// transcript, out-of-tolerance timestamp, corrupt JSON) degrades to null,
+// and callers fall back to the pre-existing generic placeholder text (S10:
+// this payload builder must never 500 on bad input).
+// ----------------------------------------------------------------------
+function resolveCandidateText(verbatimRef, ts) {
+  if (!verbatimRef) return null;
+  try {
+    const r = verbatimResolver.resolveVerbatimRef(verbatimRef, ts);
+    return r && r.ok ? r : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+const DISPLAY_TEXT_MAX = 280;
+function truncateForDisplay(text) {
+  const s = String(text || '');
+  if (s.length <= DISPLAY_TEXT_MAX) return s;
+  return s.slice(0, DISPLAY_TEXT_MAX - 1).trim() + '…';
 }
 
 // classifyRequestState(cur) — see header precedence note.
@@ -318,6 +412,7 @@ function buildRequestItem(cur) {
       type: e.type, ts: e.ts || '', text: e.text || '',
       detachable: !!e.detachable, event_key: e.event_key || '',
       plan_slug: e.plan_slug || '', verbatim_ref: e.verbatim_ref || '',
+      candidate_id: e.candidate_id || '', became_request: e.became_request || '',
     })),
   };
 }

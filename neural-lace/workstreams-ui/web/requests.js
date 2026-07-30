@@ -368,6 +368,17 @@
         }));
       }
     }
+    // 2026-07-30 fix: a candidate the deterministic classifier judged
+    // substantively unrelated to its parent gets spun off into its OWN
+    // top-level request (server/requests-routes.js) rather than staying
+    // buried as a pending amendment forever — this is the operator-facing
+    // link to go find it, same navigate-by-id pattern as the roadmap link
+    // above (#request/<id> addressing — this view's own C2 rule).
+    if (ev.type === 'candidate_promoted' && shell && ev.became_request) {
+      li.appendChild(btn('ghost small rl-became-link', 'open the new request', function () {
+        shell.navigate('#request/' + ev.became_request);
+      }));
+    }
     if (ev.detachable) {
       var feedback = el('span', 'rl-event-feedback', '');
       feedback.setAttribute('aria-live', 'polite');

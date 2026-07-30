@@ -79,6 +79,17 @@ async function main() {
   // endpoints must return a NAMED error, never a silent success.
   process.env.ASK_REGISTRY_CLI = path.join(tmp, 'no-such-cli.sh');
 
+  // 2026-07-30 fix fixture: a REAL transcript file (not the fake unresolvable
+  // "/t/transcript.jsonl#N" paths the pre-existing fixtures use) so the new
+  // resolveCandidateText() path has something genuine to resolve — proves
+  // the Requests tab renders ACTUAL operator text, not a generic placeholder.
+  const realTranscript = path.join(tmp, 'real-transcript.jsonl');
+  fs.writeFileSync(realTranscript, [
+    JSON.stringify({ type: 'user', timestamp: '2026-07-28T09:00:00.000Z', isSidechain: false, message: { role: 'user', content: 'Please fix the login page so the submit button actually submits the form.' } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-07-28T09:05:00.000Z', isSidechain: false, message: { role: 'user', content: 'also please disable the submit button while the form is submitting' } }),
+    JSON.stringify({ type: 'user', timestamp: '2026-07-28T09:10:00.000Z', isSidechain: false, message: { role: 'user', content: 'Completely unrelated: can you also set up weekly backups for the database?' } }),
+  ].join('\n') + '\n');
+
   const reg = [
     // ask-open: registered, never touched again -> state=open, never amended.
     { ask_id: 'ask-open', record_type: 'created', ts: '2026-07-15T10:00:00Z', summary: 'A fresh idea', repo: '/r', project: 'demo', origin_session: 'sess-1', status: 'active', emitter: 'ask-registry' },
@@ -149,6 +160,25 @@ async function main() {
     { ask_id: 'ask-noisy-amend', record_type: 'amendment_candidate', ts: '2026-07-22T11:02:00Z', verbatim_ref: '', classification: 'amendment' },
     { ask_id: 'ask-noisy-amend', record_type: 'amendment_candidate', ts: '2026-07-22T11:03:00Z', verbatim_ref: '', classification: 'amendment' },
     { ask_id: 'ask-noisy-amend', record_type: 'amendment_candidate', ts: '2026-07-22T11:04:00Z', verbatim_ref: '', classification: 'amendment' },
+
+    // 2026-07-30 fix — ask-resolved: a candidate whose verbatim_ref points at
+    // a REAL, resolvable transcript, classified "amendment" via a SEPARATE
+    // candidate_classified record (the real production shape — birth record
+    // stays "pending" forever; the verdict is a later, separate append).
+    // Proves BOTH halves of the fix: (a) candidate_classified is actually
+    // read (was silently ignored before), (b) the rendered text is the
+    // REAL resolved operator text, not the generic placeholder.
+    { ask_id: 'ask-resolved', record_type: 'created', ts: '2026-07-28T09:00:00Z', summary: 'Please fix the login page so the submit button actually submits the form.', verbatim_ref: realTranscript + '#0', repo: '/r', project: 'demo', origin_session: 'sess-13', status: 'active', emitter: 'ask-registry' },
+    { ask_id: 'ask-resolved', record_type: 'amendment_candidate', ts: '2026-07-28T09:05:00Z', verbatim_ref: realTranscript + '#1', candidate_id: 'cand-resolved-1', classification: 'pending' },
+    { ask_id: 'ask-resolved', record_type: 'candidate_classified', ts: '2026-07-28T09:05:05Z', candidate_id: 'cand-resolved-1', classification: 'amendment', summary: 'disable submit while submitting', emitter: 'ask-registry-classifier-deterministic' },
+
+    // ask-promoted-candidate — a genuinely new, unrelated request captured
+    // mid-session gets PROMOTED into its own top-level ask (record_type
+    // "created" for ask-spun-off) rather than staying buried as a pending
+    // amendment of an unrelated parent (the operator's core complaint).
+    { ask_id: 'ask-resolved', record_type: 'amendment_candidate', ts: '2026-07-28T09:10:00Z', verbatim_ref: realTranscript + '#2', candidate_id: 'cand-resolved-2', classification: 'pending' },
+    { ask_id: 'ask-resolved', record_type: 'candidate_classified', ts: '2026-07-28T09:10:05Z', candidate_id: 'cand-resolved-2', classification: 'promoted', summary: 'ask-spun-off', emitter: 'ask-registry-classifier-deterministic' },
+    { ask_id: 'ask-spun-off', record_type: 'created', ts: '2026-07-28T09:10:05Z', summary: 'Completely unrelated: can you also set up weekly backups for the database?', verbatim_ref: realTranscript + '#2', repo: '/r', project: 'demo', origin_session: 'sess-13', status: 'active', emitter: 'ask-registry' },
   ];
   fs.writeFileSync(path.join(stateDir, 'ask-registry.jsonl'), reg.map((r) => JSON.stringify(r)).join('\n') + '\n');
 
@@ -230,6 +260,28 @@ async function main() {
     const detachedItem = findItem(items, 'ask-detached');
     ok('S7c a DETACHED amendment is excluded from the timeline (detach marks it not-an-amendment, I6)',
       detachedItem.timeline.filter((e) => e.type === 'amendment').length === 0);
+
+    // ---- 2026-07-30 fix: candidate_classified is honored + real text resolves ----
+    const resolvedItem = findItem(items, 'ask-resolved');
+    const resolvedAmendEvents = resolvedItem.timeline.filter((e) => e.type === 'amendment');
+    ok('T1 a candidate_classified "amendment" record (a SEPARATE append, not baked into the birth record) is actually read — this was SILENTLY IGNORED before the fix',
+      resolvedAmendEvents.length === 1, JSON.stringify(resolvedAmendEvents));
+    ok('T2 the rendered amendment text is the REAL resolved operator text from the transcript, not the generic "amendment captured" placeholder',
+      resolvedAmendEvents[0] && /disable the submit button while the form is submitting/.test(resolvedAmendEvents[0].text),
+      resolvedAmendEvents[0] && resolvedAmendEvents[0].text);
+    ok('T3 the resolved event carries its candidate_id (needed for a working Detach affordance)',
+      resolvedAmendEvents[0] && resolvedAmendEvents[0].candidate_id === 'cand-resolved-1');
+
+    const promotedCandidateEvents = resolvedItem.timeline.filter((e) => e.type === 'candidate_promoted');
+    ok('T4 a candidate classified "promoted" renders its own timeline entry type (not a generic amendment) naming what it became',
+      promotedCandidateEvents.length === 1 && /ask-spun-off/.test(promotedCandidateEvents[0].became_request || ''),
+      JSON.stringify(promotedCandidateEvents));
+    ok('T4b the promoted candidate is REMOVED from the plain "amendment" count (it is its own request now, not buried in the parent\'s timeline)',
+      resolvedAmendEvents.length === 1);
+
+    const spunOffItem = findItem(items, 'ask-spun-off');
+    ok('T5 the genuinely-new request promoted mid-session appears as its OWN top-level Requests item with its real text as the title — the operator\'s core complaint (a substantively new request buried forever as a pending amendment) is fixed',
+      spunOffItem && /weekly backups for the database/.test(spunOffItem.title), spunOffItem && spunOffItem.title);
 
     // ---- R17 deliverable 2b (audit F4): render defenses ----------------
     const errorRetitle = findItem(items, 'ask-error-retitle');
