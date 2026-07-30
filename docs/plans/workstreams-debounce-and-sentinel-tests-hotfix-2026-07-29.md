@@ -77,7 +77,14 @@ machine (Part 1's actual regression target).
 - `docs/backlog.md` — close ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01
 
 ## In-flight scope updates
-n/a
+- 2026-07-30: `AMENDMENT_REPLAY_DEBOUNCE_SECONDS` (the sibling mechanism
+  named OUT of scope above, in `plan-lifecycle.sh`'s
+  `_amendment_replay_token`) landed in commit `b314255` ("fix(harness):
+  T6-prereq REJECT C1+C2 amendments + sibling debounce-window mirror"),
+  raising its default 30s -> 120s to mirror this plan's Task 1 fix. Recorded
+  here for traceability since it was explicitly declared out-of-scope in
+  this plan and a reader following that OUT note should be able to find
+  where it actually landed.
 
 ## Assumptions
 - The machine's current ~9-bash baseline load (per dispatch prompt) is
