@@ -1446,6 +1446,23 @@ ok('R17-T8 a top-group is a real <details> (keyboard-native disclosure, C9 basel
     })());
 })();
 
+// --- R17 deliverable 7 (audit F9 — the app's own cross-view-link law
+// applied everywhere except the Health tab): interrupt chips + Q2 cards
+// that name an inbox-addressable item become real links to #inbox/<id>.
+// Source-regex wiring checks (same convention as T4-16 above) — the
+// click-handler wiring itself, not a full DOM click simulation. --------
+ok('R17-H1 Q2\'s needs-me card renders a real <button> that navigates to #inbox/<id> using the item\'s OWN ledger id (it.id) — the SAME id inbox.js\'s #inbox/<id> addressing resolves (both /api/pane/needs-me and /api/inbox read the same NEEDS-YOU ledger)',
+  /nm-open-inbox-btn/.test(js) &&
+  /window\.WorkstreamsShell\.navigate\('#inbox\/' \+ encodeURIComponent\(it\.id\)\)/.test(js));
+ok('R17-H2 the Q2 open-in-Inbox button is a REAL <button> (never a bare div click handler, this app\'s own C9 baseline) and is only rendered when it.id genuinely exists — never a fabricated link',
+  /if \(it\.id\) \{\s*\n\s*var openInboxBtn = document\.createElement\('button'\)/.test(js));
+ok('R17-H3 the interrupt-strip\'s needs-me chip is ALSO now a real <button> navigating to the same #inbox/<id>, with an honest disabled+tooltip fallback when the item genuinely carries no id (never a fake link)',
+  /var chip = document\.createElement\('button'\)/.test(js) &&
+  (js.match(/window\.WorkstreamsShell\.navigate\('#inbox\/' \+ encodeURIComponent\(it\.id\)\)/g) || []).length === 2 &&
+  /chip\.disabled = true;/.test(js) && /cannot link to the Inbox/.test(js));
+ok('R17-H4 the waiting-ON-ME SESSION chip (a different class of interrupt item — no NEEDS-YOU ledger id, no roadmap-task binding exposed to this pane) is deliberately UNCHANGED this round — still plain text, never a fabricated/dead link',
+  /chip\.textContent = 'session ' \+ s\.session_id \+ ' \(waiting-on-me\)'/.test(js));
+
 // --- Round 15 (coordinator, operator verbatim: "the Workstreams UI still
 // doesn't actually represent the actual order of building, at least not at
 // the plan level") — THREE STABLE BANDS: real execution, not source-regex,

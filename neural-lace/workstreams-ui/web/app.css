@@ -218,6 +218,13 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   border: 1px solid var(--interrupt);
   color: var(--text);
 }
+/* R17 deliverable 7 (audit F9): the needs-me interrupt chip is now a real
+   <button> navigating to #inbox/<id> (session-waiting chips stay plain
+   text — out of scope this round, no roadmap-task binding is exposed to
+   this pane yet). Cursor + a visibly inert disabled state for the honest
+   no-id fallback. */
+.chip.interrupt-chip:not([disabled]) { cursor: pointer; }
+.chip.interrupt-chip[disabled] { opacity: 0.6; cursor: default; }
 
 /* ---- ask-tree landing — ask-rooted-workstreams-p1 Task 13 (REPLACES the
    Task 1 walking-skeleton block wholesale). Project sections (collapsible,
@@ -884,6 +891,9 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 }
 .needs-me-card:last-child { margin-bottom: 0; }
 .nm-head { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+/* R17 deliverable 7 (audit F9): trailing action, right-aligned in the row
+   (same pattern as .why-btn's own margin-left: auto). */
+.nm-open-inbox-btn { margin-left: auto; }
 .chip.section-chip { color: var(--accent); border-color: var(--accent); } /* R16 row 79: blue = links only */
 .nm-session { font-size: 11px; color: var(--muted); }
 .nm-session.session-gone { color: var(--warn); font-style: italic; }

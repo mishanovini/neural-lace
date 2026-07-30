@@ -419,6 +419,21 @@
         sessSpan.textContent = 'session: ' + (it.session || 'unknown');
       }
       head.appendChild(sessSpan);
+      // R17 deliverable 7 (audit F9): this card NAMES an inbox-addressable
+      // item (it.id — the SAME NEEDS-YOU ledger id inbox.js's #inbox/<id>
+      // addressing resolves) but offered no way to reach it there; the
+      // app's own cross-view law ("every element that NAMES an
+      // addressable item links to it") applied everywhere except here.
+      if (it.id) {
+        var openInboxBtn = document.createElement('button');
+        openInboxBtn.type = 'button';
+        openInboxBtn.className = 'ghost small nm-open-inbox-btn';
+        openInboxBtn.textContent = 'open in Inbox →';
+        openInboxBtn.addEventListener('click', function () {
+          window.WorkstreamsShell.navigate('#inbox/' + encodeURIComponent(it.id));
+        });
+        head.appendChild(openInboxBtn);
+      }
       card.appendChild(head);
       var text = document.createElement('div');
       text.className = 'nm-text';
@@ -674,8 +689,22 @@
       interruptStrip.appendChild(chip);
     });
     openNeedsMe.forEach(function (it) {
-      var chip = document.createElement('span');
+      // R17 deliverable 7 (audit F9): this chip NAMES an inbox-addressable
+      // item (it.id is the SAME NEEDS-YOU ledger id inbox.js's #inbox/<id>
+      // addressing resolves — od_needs_me and the Inbox's own /api/inbox
+      // both read the same ledger) — a real <button> navigating there,
+      // never inert text the operator must re-find by hand in another tab.
+      var chip = document.createElement('button');
+      chip.type = 'button';
       chip.className = 'chip interrupt-chip';
+      if (it.id) {
+        chip.addEventListener('click', function () {
+          window.WorkstreamsShell.navigate('#inbox/' + encodeURIComponent(it.id));
+        });
+      } else {
+        chip.disabled = true;
+        chip.title = 'no id on this item — cannot link to the Inbox';
+      }
       chip.appendChild(document.createTextNode('[' + it.section + '] '));
       // R17 deliverable 2 (audit F1): fence a command inside the (still
       // truncated-at-60-chars) preview text.
