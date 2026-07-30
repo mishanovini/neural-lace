@@ -1260,6 +1260,47 @@ EOP
     exit 1
   fi
 
+  # ---- Scenario 13c (ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01, site-local
+  # none-sentinel regression): a plan header carrying the literal SPELLED-
+  # OUT no-ask value (`ask-id: none — no linked ask`, the template's
+  # documented substitution when start-plan.sh is run with no --ask-id) must
+  # ALSO resolve to the unlinked lane, same as no header at all (13) and the
+  # unsubstituted `<id | ...>` placeholder (13b). This is the OTHER sentinel
+  # branch in extract_ask_id's `'<'* | none` case arm -- 13b never exercised
+  # it (its header starts with `<`, matching the first arm only). Real-id
+  # preservation through this SAME extractor is already covered by Scenario
+  # 14 below (`ask-id: ask-selftest-case14` routes to its own per-ask log,
+  # not unlinked) -- no separate fixture needed for that half. ----
+  cat > docs/plans/case13c.md <<'EOP'
+# Plan: Case 13c (spelled-out none-sentinel ask-id header)
+Status: ACTIVE
+ask-id: none — no linked ask
+
+## Tasks
+- [ ] 1. only task
+EOP
+  git add docs/plans/case13c.md
+  git commit -q -m "plan: case13c"
+  PRE13C=$(git show HEAD:docs/plans/case13c.md)
+  cat > docs/plans/case13c.md <<'EOP'
+# Plan: Case 13c (spelled-out none-sentinel ask-id header)
+Status: ACTIVE
+ask-id: none — no linked ask
+
+## Tasks
+- [x] 1. only task
+EOP
+  POST13C=$(cat docs/plans/case13c.md)
+  process_lifecycle_event "$TMP/docs/plans/case13c.md" "Edit" "$PRE13C" "$POST13C" >/dev/null 2>&1 || true
+  if [ ! -f "$F13" ] || ! grep -q '"plan_slug":"case13c"' "$F13"; then
+    echo "FAIL scenario 13c: expected the none-sentinel plan's task_done event in the SAME unlinked log as scenarios 13/13b" >&2
+    exit 1
+  fi
+  if [ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]; then
+    echo "FAIL scenario 13c: none.jsonl was created — extract_ask_id is still handing the literal 'none' sentinel to pl_emit unresolved" >&2
+    exit 1
+  fi
+
   # ---- Scenario 14: a newly-introduced task line on an ACTIVE plan emits a
   # plan_amended event summarizing "+task <id>" (Task 6a) ----
   cat > docs/plans/case14.md <<'EOP'

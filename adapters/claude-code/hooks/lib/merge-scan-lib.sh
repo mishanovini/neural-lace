@@ -1140,6 +1140,105 @@ EOF
     fail "Scenario 20: unexpected real cursor file under \${HOME}/.claude/state/merge-scan-cursors/$cur_repo_key"
   fi
 
+  echo ""
+  echo "---- ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01 fixtures: _ms_resolve_ask_id's none-sentinel guard, exercised on BOTH resolution arms ----"
+  # Restore the ORIGINAL (non-cursor) progress-log state dir -- scenarios
+  # 15-20 above pointed PROGRESS_LOG_STATE_DIR at $TMP/pl-state-cursor for
+  # the incremental-cursor fixtures on $REPO2; $REPO (plan-a/b/c) and the
+  # already-computed $unlinked/$fa/$fb paths below belong to $TMP/pl-state.
+  export PROGRESS_LOG_STATE_DIR="$TMP/pl-state"
+
+  echo "Scenario 21 (file-lookup arm, none-sentinel -> empty): a plan file ON DISK carrying the literal 'ask-id: none -- no linked ask' header lands in the unlinked orphan lane, never a literal none.jsonl"
+  (
+    cd "$REPO" || exit 1
+    mkdir -p docs/plans
+    cat > docs/plans/plan-e.md <<'EOF'
+# Plan: E (none-sentinel header, on disk)
+Status: ACTIVE
+ask-id: none — no linked ask
+
+## Tasks
+- [ ] 1. first task
+EOF
+    git add docs/plans/plan-e.md
+    echo "task 1 done" >> docs/plans/plan-e.md
+    git commit -q -am "$(printf 'fix(plan-e): flip task 1\n\nplan: plan-e\n')"
+  )
+  sha21="$(git -C "$REPO" rev-parse HEAD)"
+  ms_emit_merged_for_commit "$REPO" "$sha21" --emitter post-commit
+  if [[ -f "$unlinked" ]] && grep -qF "\"sha\":\"$sha21\"" "$unlinked" && grep -qF '"plan_slug":"plan-e"' "$unlinked" && grep -qF '"ask_id":""' "$unlinked"; then
+    pass "Scenario 21: file-lookup arm's none-sentinel header resolves to the unlinked orphan lane with empty ask_id"
+  else
+    fail "Scenario 21: expected sha21/plan-e in $unlinked with empty ask_id"
+  fi
+  if [[ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]]; then
+    fail "Scenario 21: none.jsonl was created -- the file-lookup arm is handing the literal 'none' sentinel to pl_emit unresolved"
+  else
+    pass "Scenario 21: no none.jsonl (the historical misfiled-events shape) was created"
+  fi
+
+  echo "Scenario 22 (git-fallback arm, real-id preserved): a plan file that existed WITH A REAL ask-id at a historical commit, then deleted entirely from disk (not archived), still resolves that real ask-id via the git-show fallback (~line 340)"
+  (
+    cd "$REPO" || exit 1
+    mkdir -p docs/plans
+    cat > docs/plans/plan-f.md <<'EOF'
+# Plan: F (real ask-id, deleted after the fact)
+Status: ACTIVE
+ask-id: ask-fixture-f
+
+## Tasks
+- [ ] 1. first task
+EOF
+    git add docs/plans/plan-f.md
+    git commit -q -m "$(printf 'fix(plan-f): flip task 1\n\nplan: plan-f\n')"
+  )
+  sha22="$(git -C "$REPO" rev-parse HEAD)"
+  (
+    cd "$REPO" || exit 1
+    git rm -q docs/plans/plan-f.md
+    git commit -q -m "chore: remove plan-f.md entirely (not archived)"
+  )
+  ms_emit_merged_for_commit "$REPO" "$sha22" --emitter post-commit
+  ff="$PROGRESS_LOG_STATE_DIR/ask-fixture-f.jsonl"
+  if [[ -f "$ff" ]] && grep -qF "\"sha\":\"$sha22\"" "$ff" && grep -qF '"plan_slug":"plan-f"' "$ff"; then
+    pass "Scenario 22: git-fallback arm resolved the real ask-id from a plan file no longer on disk"
+  else
+    fail "Scenario 22: expected sha22/plan-f's merged event in $ff (git-fallback resolution)"
+  fi
+
+  echo "Scenario 23 (git-fallback arm, none-sentinel -> empty): a plan file that existed WITH the none-sentinel header at a historical commit, then deleted entirely from disk, ALSO resolves to empty via the git-show fallback -- not just the file-lookup arm (Scenario 21)"
+  (
+    cd "$REPO" || exit 1
+    mkdir -p docs/plans
+    cat > docs/plans/plan-g.md <<'EOF'
+# Plan: G (none-sentinel, deleted after the fact)
+Status: ACTIVE
+ask-id: none — no linked ask
+
+## Tasks
+- [ ] 1. first task
+EOF
+    git add docs/plans/plan-g.md
+    git commit -q -m "$(printf 'fix(plan-g): flip task 1\n\nplan: plan-g\n')"
+  )
+  sha23="$(git -C "$REPO" rev-parse HEAD)"
+  (
+    cd "$REPO" || exit 1
+    git rm -q docs/plans/plan-g.md
+    git commit -q -m "chore: remove plan-g.md entirely (not archived)"
+  )
+  ms_emit_merged_for_commit "$REPO" "$sha23" --emitter post-commit
+  if [[ -f "$unlinked" ]] && grep -qF "\"sha\":\"$sha23\"" "$unlinked" && grep -qF '"plan_slug":"plan-g"' "$unlinked" && grep -qF '"ask_id":""' "$unlinked"; then
+    pass "Scenario 23: git-fallback arm resolved the none-sentinel header to empty (unlinked lane)"
+  else
+    fail "Scenario 23: expected sha23/plan-g in $unlinked with empty ask_id (git-fallback none-sentinel)"
+  fi
+  if [[ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]]; then
+    fail "Scenario 23: none.jsonl was created via the git-fallback arm -- sentinel guard missing on that branch"
+  else
+    pass "Scenario 23: no none.jsonl was created via the git-fallback arm either"
+  fi
+
   rm -rf "$TMP" 2>/dev/null || true
 
   echo ""

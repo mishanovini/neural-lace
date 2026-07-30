@@ -1947,6 +1947,44 @@ PLANEOF
     echo "PASS: PL4d no _id.jsonl (the historical garbage filename) was created"; pass=$((pass+1))
   fi
 
+  # PL4e (ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01, site-local none-sentinel
+  # regression): a fixture plan whose header carries the SPELLED-OUT no-ask
+  # value (`ask-id: none — no linked ask`, the template's documented
+  # substitution) must ALSO resolve the dispatch's task_started event into
+  # the "unlinked" per-ask log -- the OTHER sentinel branch
+  # _resolve_ask_id_for_plan_slug guards ('<'* | none), never exercised by
+  # PL4d above (that fixture's header starts with `<`, hitting only the
+  # first arm). Real-id preservation through this SAME extractor is already
+  # covered by PL1 (`ask-id: ask-pl-fixture-1` resolves to its own per-ask
+  # log, not unlinked) -- no separate fixture needed for that half.
+  local plfixnone="$tmp/planfix-none"
+  mkdir -p "$plfixnone/docs/plans"
+  cat >"$plfixnone/docs/plans/pl-fixture-none.md" <<'PLANEOF'
+# Plan: PL fixture (spelled-out none-sentinel)
+Status: ACTIVE
+ask-id: none — no linked ask
+PLANEOF
+  if command -v git >/dev/null 2>&1; then
+    ( cd "$plfixnone" && git init -q . && git config core.hooksPath "" \
+        && git config user.email t@e.test && git config user.name t \
+        && git add -A && git commit -qm init ) >/dev/null 2>&1
+  fi
+  local plog4e="$tmp/pl-progresslog-4e"
+  ( cd "$plfixnone" && PROGRESS_LOG_STATE_DIR="$plog4e" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dispatch-provenance-4e" \
+      CONV_TREE_STATE_PATH="$tmp/pl-4e.json" CLAUDE_SESSION_ID="sess-pl-4e" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-none.md","prompt":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-none.md in your worktree."},"session_id":"sess-pl-4e"}' >/dev/null 2>&1 )
+  if [[ -f "$plog4e/unlinked.jsonl" ]] && grep -q '"plan_slug":"pl-fixture-none"' "$plog4e/unlinked.jsonl"; then
+    echo "PASS: PL4e a plan header carrying the spelled-out none-sentinel resolves to the unlinked log, same as no ask-id header at all"; pass=$((pass+1))
+  else
+    echo "FAIL: PL4e expected the none-sentinel plan's task_started event in $plog4e/unlinked.jsonl"; fail=$((fail+1))
+    ls -la "$plog4e" 2>/dev/null
+  fi
+  if [[ -f "$plog4e/none.jsonl" ]]; then
+    echo "FAIL: PL4e none.jsonl was created — _resolve_ask_id_for_plan_slug is still handing the literal 'none' sentinel to pl_emit unresolved"; fail=$((fail+1))
+  else
+    echo "PASS: PL4e no none.jsonl (the historical misfiled-events shape) was created"; pass=$((pass+1))
+  fi
+
   # PL5: failure isolation — missing progress-log.sh/dispatch-provenance.sh
   # CLIs (simulated via the override env vars) never blocks the caller.
   local rcPL5

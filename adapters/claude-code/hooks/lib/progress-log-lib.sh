@@ -227,10 +227,11 @@ _pl_is_placeholder_ask_id() {
 # _pl_is_placeholder_ask_id because the destinations differ: placeholder
 # shapes quarantine to unattributed.jsonl (bug signature — investigate
 # the caller); `none` is a VALID header value that simply means unlinked.
-# Guarded sibling extractor sites (keep this list current):
-#   plan-lifecycle.sh extract_ask_id · workstreams-emit.sh
-#   _resolve_ask_id_for_plan_slug · merge-scan-lib.sh _ms_resolve_ask_id ·
-#   close-plan.sh extract_ask_id_cp · remap-placeholder-ask-events.sh
+# Guarded sibling extractor sites: the canonical, kept-current list lives
+# in adapters/claude-code/templates/plan-template.md's SENTINEL COUPLING
+# comment (this function is the writer-side map it names) -- ONE inventory,
+# not two, to remove the silent-drift risk of hand-keeping the same list in
+# both places (re-review 2026-07-29, Minor-2).
 _pl_is_none_sentinel() {
   [[ "${1:-}" == "none" ]]
 }

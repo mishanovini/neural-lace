@@ -1330,7 +1330,7 @@ estate-brief.sh next (T8 consumes T1 data and is the natural carrier), or a
 standalone micro-plan if the estate program closes first.
 **Filed by:** ask-id emitter-fix reformulation (re-review 2026-07-28, Minor-4).
 
-## ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01 — sentinel guard replicated at 6 sites, test-enforced at only 2
+## ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01 — IMPLEMENTED 2026-07-29 (site-local regression tests added at all 4 remaining extractors; dual inventory collapsed)
 
 **Severity:** P3 (all six sites PROVEN correct today by the delta re-review's isolation tests; this is future-regression hardening).
 **Context:** the `'<'* | none` ask-id sentinel guard (commit 0758232, review
@@ -1345,8 +1345,21 @@ progress-log-lib.sh _pl_is_none_sentinel) — currently consistent, drift is
 silent; prefer one canonical list + reference, or a doctor grep check.
 **Action:** add a none-header→empty (and real→preserved) assertion to each of
 the four uncovered suites; collapse the dual inventory to one canonical list.
-**Fold-in point:** same carrier as [[ASK-SENTINEL-QUARANTINE-SURFACER-01]]
-(any slice touching these files next), or batch both rows as one micro-plan.
+**Resolution (2026-07-29):** added a site-local none-header→empty assertion
+to each of the four uncovered suites, exercising that site's OWN extractor
+(real-id→preserved already existed at all four via pre-existing scenarios,
+cited inline): plan-lifecycle.sh Scenario 13c (`extract_ask_id`; real-id
+already covered by Scenario 14), workstreams-emit.sh PL4e
+(`_resolve_ask_id_for_plan_slug`; real-id already covered by PL1),
+merge-scan-lib.sh Scenarios 21-23 (`_ms_resolve_ask_id` — added BOTH the
+file-lookup arm, Scenario 21, and the previously-untested git-fallback arm
+at ~line 340, Scenarios 22-23, covering both none→empty and real-id→
+preserved since neither existed there before), close-plan.sh S22
+(`extract_ask_id_cp`; real-id already covered by S20/S21). Collapsed the
+dual-maintained inventory: progress-log-lib.sh's `_pl_is_none_sentinel`
+comment now points to plan-template.md's SENTINEL COUPLING comment as the
+single canonical list instead of hand-duplicating it. All touched suites
+green (plan-lifecycle, close-plan, merge-scan-lib, remap, progress-log-lib).
 **Filed by:** emitter-fix delta re-review PASS (2026-07-29, Minor advisories 1+2).
 
 
