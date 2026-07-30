@@ -710,13 +710,21 @@ _adm_decide() {
   if adm_halt_active; then printf 'would-block:halt'; return 0; fi
   if adm_drain_active; then printf 'would-block:drain'; return 0; fi
 
-  local color; color="$(adm_pressure_color)"
+  # Reuse the caller's single measurement when it supplied one (adm_admit
+  # does — 2026-07-30 delta re-review finding 5), so the verdict and the
+  # ledger's recorded pressure/live_sessions fields can never disagree AND
+  # adm_pressure_color/adm_live_sessions each run only ONCE per adm_admit
+  # instead of once here and once again for the ledger. Mirrors the
+  # pre-existing _ADM_RATE_PRECOMPUTED idiom just below.
+  local color="${_ADM_COLOR_PRECOMPUTED:-}"
+  [[ -n "$color" ]] || color="$(adm_pressure_color)"
   case "$color" in
     black) printf 'would-block:pressure-black'; return 0 ;;
     red)   printf 'would-block:pressure-red';   return 0 ;;
   esac
 
-  local live; live="$(adm_live_sessions)"
+  local live="${_ADM_LIVE_PRECOMPUTED:-}"
+  [[ -n "$live" ]] || live="$(adm_live_sessions)"
   if [[ "$live" != "-1" ]] && (( live >= $(_adm_session_cap) )); then
     printf 'would-block:session-backstop'; return 0
   fi
@@ -792,7 +800,27 @@ adm_admit() {
   # once inside _adm_decide, once for the ledger field — so the value that drove
   # the verdict could differ from the value recorded beside it.
   local rate; rate="$(adm_rate_in_window)"
-  local verdict; verdict="$(_ADM_RATE_PRECOMPUTED="$rate" _adm_decide)"
+
+  # Compute pressure color and occupancy ONCE too (2026-07-30 delta
+  # re-review finding 5, MAJOR — measured +13.7%/dispatch). The C2 reader-
+  # side age bound added one `stat` fork to adm_pressure_color; before this
+  # fix that function ran TWICE per admit (once here for the ledger, once
+  # again inside _adm_decide), so the C2 fix alone cost +2 unconditional
+  # stat execs/dispatch. Same double-read existed for adm_live_sessions.
+  # Fixed the same way the rate field already was: compute once, hand the
+  # value into _adm_decide via a precomputed global (mirrors
+  # _ADM_RATE_PRECOMPUTED) so the verdict and the ledger field can never
+  # disagree AND each helper runs exactly once.
+  #
+  # adm_pressure_color is called DIRECTLY here (no $(...) command
+  # substitution) so its _ADM_PRESSURE_REASON side-channel (finding 4,
+  # below) survives into this shell — $(...) forks a subshell and the
+  # global would be lost the instant it returned.
+  local color; adm_pressure_color >/dev/null; color="$_ADM_PRESSURE_COLOR"
+  local live; live="$(adm_live_sessions)"
+
+  local verdict
+  verdict="$(_ADM_COLOR_PRECOMPUTED="$color" _ADM_LIVE_PRECOMPUTED="$live" _ADM_RATE_PRECOMPUTED="$rate" _adm_decide)"
   _ADM_LAST_VERDICT="$verdict"
 
   # --- assemble the line (labels are enum-keyed and scrubbed) ---
@@ -806,29 +834,27 @@ adm_admit() {
     labels="$labels,\"$k\":\"$v\""
   done
 
-  local color live mono mono_src pressure_src
-  color="$(adm_pressure_color)"
-  live="$(adm_live_sessions)"
   # LEDGER NUMERIC CLAMP (review REJECT C1): live/rate land in unquoted JSON
   # numeric positions — a non-numeric value would corrupt the 7-day
   # calibration ledger this program exists to produce. Unknown -> -1.
   [[ "$live" =~ ^-?[0-9]+$ ]] || live=-1
   [[ "$rate" =~ ^-?[0-9]+$ ]] || rate=-1
-  # $rate is already computed above and was the value the verdict used.
+  local mono mono_src
   read -r mono mono_src <<< "$(_adm_mono)"
-  # pressure_src is tick | tick-stale | absent (review REJECT C2): existence
-  # alone is NOT a staleness signal; a calibration reader must be able to
-  # discount lines whose color outlived the reader-side age bound.
-  local p_f="${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}"
-  if [[ -r "$p_f" ]]; then
-    if [[ "$color" == "unknown" ]]; then
-      pressure_src="tick-stale"
-    else
-      pressure_src="tick"
-    fi
-  else
-    pressure_src="absent"
-  fi
+  # pressure_src (2026-07-30 delta re-review finding 4): "unknown" alone
+  # used to conflate THREE distinct causes into one "tick-stale" label — a
+  # genuine AGE staleness, a present-but-garbled color value, and no tick
+  # file at all — so a calibration reader could not tell a dead tick (age)
+  # from a corrupt one (content) from never-ran (absent). Sourced straight
+  # from adm_pressure_color's own _ADM_PRESSURE_REASON (set by the direct
+  # call above), never re-derived here from a second file check.
+  local pressure_src
+  case "$_ADM_PRESSURE_REASON" in
+    fresh)      pressure_src="tick" ;;
+    stale)      pressure_src="tick-stale" ;;
+    unreadable) pressure_src="tick-unreadable" ;;
+    *)          pressure_src="absent" ;;
+  esac
 
   local d; d="$(adm_ledger_dir)"
   [[ -d "$d" ]] || mkdir -p "$d" 2>/dev/null || { printf '%s' "$verdict"; return 0; }
