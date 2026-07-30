@@ -106,6 +106,21 @@
     return b;
   }
 
+  // R17 deliverable 2 (audit F1): renders server-authored prose that CAN
+  // carry a runnable command as fenced, copyable chips (window.CommandRender,
+  // command-render.js — loaded before this file, index.html). Degrades to
+  // plain textContent (never a throw, never raw HTML injection) if the
+  // shared module failed to load — same defensive convention as this
+  // file's own MdRender fallback (openDoc, below).
+  function renderCat(node, text) {
+    if (window.CommandRender && typeof window.CommandRender.renderCommandAwareText === 'function') {
+      node.innerHTML = window.CommandRender.renderCommandAwareText(text);
+    } else {
+      node.textContent = String(text == null ? '' : text);
+    }
+    return node;
+  }
+
   // resolveLink(raw) -> DOM node. raw may be a URL, a repo-relative path, or
   // a bare SHA. Never throws; unresolvable input still renders as visible
   // text + a copy affordance rather than disappearing.
@@ -357,7 +372,7 @@
       card.appendChild(head);
       var text = document.createElement('div');
       text.className = 'nm-text';
-      text.textContent = it.text;
+      renderCat(text, it.text); // R17 deliverable 2 (audit F1): fence any command it.text carries
       card.appendChild(text);
       // Cold-reader anatomy (constitution §3 amendment 53d3bee, operator
       // directive 2026-07-07): render lint_warnings HONESTLY when present —
@@ -611,7 +626,12 @@
     openNeedsMe.forEach(function (it) {
       var chip = document.createElement('span');
       chip.className = 'chip interrupt-chip';
-      chip.textContent = '[' + it.section + '] ' + (it.text || '').split('\n')[0].slice(0, 60);
+      chip.appendChild(document.createTextNode('[' + it.section + '] '));
+      // R17 deliverable 2 (audit F1): fence a command inside the (still
+      // truncated-at-60-chars) preview text.
+      var chipText = document.createElement('span');
+      renderCat(chipText, (it.text || '').split('\n')[0].slice(0, 60));
+      chip.appendChild(chipText);
       interruptStrip.appendChild(chip);
     });
   }
@@ -1188,6 +1208,14 @@
     whyScrim.addEventListener('click', closeWhyDrawer);
     markSeenBtn.addEventListener('click', onMarkSeenClick);
     refreshBtn.addEventListener('click', forceRefresh);
+
+    // R17 deliverable 2: ONE event-delegated copy-button listener per
+    // persistent container (both cloned once here, never recreated — only
+    // their children are wiped/rebuilt on each poll render).
+    if (window.CommandRender && typeof window.CommandRender.wireCommandCopyButtons === 'function') {
+      window.CommandRender.wireCommandCopyButtons(needsMeBody);
+      window.CommandRender.wireCommandCopyButtons(interruptStrip);
+    }
 
     var storedSince = getStoredLastLook();
     lastLookAnchor.dataset.since = storedSince || new Date(Date.now() - 24 * 3600 * 1000).toISOString();

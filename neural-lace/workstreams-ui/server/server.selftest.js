@@ -1025,6 +1025,34 @@ async function main() {
       goodPointer && goodPointer.session_id === 'sess-orig-1' && goodPointer.tier === 'untiered' && goodPointer.section === 'decision',
       JSON.stringify(goodPointer));
 
+    // ---- R17 deliverable 2a (operator, live: "the links on the Inbox tab
+    // don't work") — doc_ref is the server-resolved {project,path} pair the
+    // client now opens through the in-page doc modal instead of a dead
+    // `file://` href (raw_link, unchanged, stays the absolute path).
+    ok('R17-L1 doc_ref is honestly null when NEEDS-YOU.md lives outside every configured/discovered project root (this sandbox\'s NEEDS_YOU_MD_PATH is a bare temp dir) — never a fabricated resolution',
+      goodPointer && Object.prototype.hasOwnProperty.call(goodPointer, 'doc_ref') && goodPointer.doc_ref === null,
+      JSON.stringify(goodPointer && goodPointer.doc_ref));
+    // Positive case: point NEEDS_YOU_MD_PATH at a file INSIDE the real
+    // self-repo root (same technique planAbsPath above uses for plan_doc)
+    // — the ONLY way to exercise doc_ref's resolution positively, since an
+    // arbitrary temp dir is correctly unresolvable by design. Restored
+    // immediately after so no other scenario inherits the override.
+    const priorNyMdPath = process.env.NEEDS_YOU_MD_PATH;
+    const realNyMdPath = path.join(planRepoRoot, 'NEEDS-YOU-selftest-r17-fixture.md');
+    fs.writeFileSync(realNyMdPath, '# needs you\n\nfixture\n');
+    try {
+      process.env.NEEDS_YOU_MD_PATH = realNyMdPath;
+      const todoResolved = await todoGet();
+      const resolvedPointer = todoResolved.json && todoResolved.json.pointer_items && todoResolved.json.pointer_items[0];
+      ok('R17-L2 when raw_link resolves under a known project root, doc_ref carries {project, path} — the SAME deriveLib.projectDocRefFor plan_doc already uses, never a per-surface reimplementation',
+        resolvedPointer && resolvedPointer.doc_ref && typeof resolvedPointer.doc_ref.project === 'string' && resolvedPointer.doc_ref.project &&
+        resolvedPointer.doc_ref.path === 'NEEDS-YOU-selftest-r17-fixture.md',
+        JSON.stringify(resolvedPointer && resolvedPointer.doc_ref));
+    } finally {
+      process.env.NEEDS_YOU_MD_PATH = priorNyMdPath;
+      try { fs.rmSync(realNyMdPath, { force: true }); } catch (_) {}
+    }
+
     // ---- S30/S31/S32: operator add/toggle/edit round-trip, each persisted
     // to the REAL file (never a parallel store) and visible on the next GET.
     const addRes = await todoPost({ action: 'add', text: 'buy more coffee' });

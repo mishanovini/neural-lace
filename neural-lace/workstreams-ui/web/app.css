@@ -601,6 +601,17 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .todo-pointer-body { flex: 1; min-width: 0; }
 .todo-pointer-title { font-size: 13px; }
 .todo-pointer-link { color: var(--info); text-decoration: underline; }
+/* R17 deliverable 2a (operator, live: "the links on the Inbox tab don't
+   work") — the pointer row's title is now sometimes a <button> opening
+   the in-page doc modal (the old `file://` href was dead — a browser
+   loading this page over http silently blocks it, same class as the
+   Round 15 roadmap plan-link fix above); reset UA button chrome so it
+   still READS as the same underlined link, not a boxed button. */
+.todo-pointer-link-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.todo-pointer-link-btn:hover { text-decoration: underline; }
 .todo-pointer-preview {
   font-size: 12px;
   color: var(--muted);
@@ -1711,6 +1722,28 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-edit-feedback { font-size: 12px; margin-top: 3px; }
 .ib-edit-feedback.ib-feedback-ok { color: var(--ok); }
 .ib-edit-feedback.ib-feedback-err { color: var(--err); }
+
+/* ---- R17 deliverable 2 (audit F1 — the operator's own top complaint:
+   "it's not clear where the command begins and ends") — shared fenced-
+   command chip (web/command-render.js). Generalizes the ONE surface that
+   already got this right (.ib-resume-cmd-input above: readonly monospace
+   input + Copy button) into a single reusable pattern: a monospace <code>
+   + an inline Copy button, visually distinct from surrounding prose so a
+   command's start/end is never ambiguous. .cat-line is the per-line
+   wrapper renderCommandAwareText() emits (one per input line — narrative
+   prose lines have no chip at all, only a genuinely-detected command). ---- */
+.cat-line { margin: 1px 0; }
+.cmd-fence {
+  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 4px; padding: 2px 4px; margin: 1px 0;
+}
+.cmd-fence-code { font-family: monospace; font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-all; }
+.cmd-copy-btn {
+  font-size: 11px; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid var(--border2); background: var(--panel); color: var(--text); cursor: pointer;
+}
+.cmd-copy-btn:hover { background: var(--panel2); }
 
 /* ---- below-the-fold raw verbatim + session lineage ---- */
 .ib-raw-details { margin-top: 6px; }

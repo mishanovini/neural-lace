@@ -99,6 +99,15 @@
   myItemsWrap.className = 'ib-my-items-wrap';
   body.appendChild(myItemsWrap);
 
+  // R17 deliverable 2: ONE event-delegated copy-button listener per
+  // persistent container — both wraps are created once above and never
+  // recreated (only their children are wiped/rebuilt on each render), so
+  // wiring here catches every cmd-copy-btn a future render adds, forever.
+  if (window.CommandRender && typeof window.CommandRender.wireCommandCopyButtons === 'function') {
+    window.CommandRender.wireCommandCopyButtons(inboxSectionsWrap);
+    window.CommandRender.wireCommandCopyButtons(myItemsWrap);
+  }
+
   function $(id) { return document.getElementById(id); }
   var shell = window.WorkstreamsShell || null;
   var formatAge = (shell && shell.formatAge) || function (iso) {
@@ -138,6 +147,20 @@
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).catch(function () {});
     }
+  }
+  // R17 deliverable 2 (audit F1): renders server-authored prose that CAN
+  // carry a runnable command as fenced, copyable chips instead of plain
+  // prose (window.CommandRender, command-render.js — loaded before this
+  // file, index.html). Degrades to plain textContent (never a throw, never
+  // raw HTML injection) if the shared module failed to load, same
+  // defensive convention as roadmap.js/app.js's MdRender fallback.
+  function renderCat(node, text) {
+    if (window.CommandRender && typeof window.CommandRender.renderCommandAwareText === 'function') {
+      node.innerHTML = window.CommandRender.renderCommandAwareText(text);
+    } else {
+      node.textContent = String(text == null ? '' : text);
+    }
+    return node;
   }
 
   // ============================================================
@@ -189,7 +212,15 @@
     var wrap = el('div', 'ib-reply');
     wrap.appendChild(el('div', 'ib-reply-channel', 'How to answer: ' + item.reply_channel));
     if (item.reply_with) {
-      wrap.appendChild(el('div', 'ib-reply-with', 'Reply with: ' + item.reply_with));
+      // R17 deliverable 2 (audit F1): reply_with can itself be/contain a
+      // command the operator is meant to run — fenced + copyable, never
+      // plain prose indistinguishable from the "Reply with: " label.
+      var replyWithBox = el('div', 'ib-reply-with');
+      replyWithBox.appendChild(document.createTextNode('Reply with: '));
+      var replyWithInline = document.createElement('span');
+      renderCat(replyWithInline, item.reply_with);
+      replyWithBox.appendChild(replyWithInline);
+      wrap.appendChild(replyWithBox);
     }
     var stubRow = el('div', 'ib-reply-stub-row');
     var input = document.createElement('input');
@@ -281,8 +312,11 @@
     var tbody = document.createElement('tbody');
     options.forEach(function (o) {
       var tr = document.createElement('tr');
-      tr.appendChild(el('td', '', o.option));
-      tr.appendChild(el('td', '', o.outcome));
+      // R17 deliverable 2 (audit F1): option/outcome cells can carry a
+      // command (e.g. an outcome reading "run: powershell -File ...") —
+      // fence it, never plain prose.
+      tr.appendChild(renderCat(document.createElement('td'), o.option));
+      tr.appendChild(renderCat(document.createElement('td'), o.outcome));
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -330,7 +364,10 @@
     // see Raw verbatim below") instead of just stopping with no note.
     if (item.context && item.context.length) {
       var ctxBox = el('div', 'ib-context');
-      item.context.slice(0, 5).forEach(function (line) { ctxBox.appendChild(el('div', 'ib-context-line', line)); });
+      // R17 deliverable 2 (audit F1): a context line can itself BE a
+      // command (the live defect: "run: powershell -File ... -> the task
+      // registers…" rendered as one prose run with no delimiter).
+      item.context.slice(0, 5).forEach(function (line) { ctxBox.appendChild(renderCat(el('div', 'ib-context-line'), line)); });
       if (item.context.length > 5) {
         ctxBox.appendChild(el('div', 'ib-context-more', '+' + (item.context.length - 5) + ' more line(s) — see "Raw verbatim" below'));
       }
@@ -342,7 +379,15 @@
     if (table) box.appendChild(table);
 
     // 4. My pick.
-    if (item.my_pick) box.appendChild(el('div', 'ib-my-pick', 'My pick: ' + item.my_pick));
+    // R17 deliverable 2 (audit F1): my_pick, fenced when it's/contains a command.
+    if (item.my_pick) {
+      var pickBox = el('div', 'ib-my-pick');
+      pickBox.appendChild(document.createTextNode('My pick: '));
+      var pickInline = document.createElement('span');
+      renderCat(pickInline, item.my_pick);
+      pickBox.appendChild(pickInline);
+      box.appendChild(pickBox);
+    }
 
     // 4b. Links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 part b) —
     // producer `--link` entries PLUS anchors extracted from the raw text
@@ -566,16 +611,53 @@
     myItemsFeedbackTimer = setTimeout(function () { myItemsFeedbackEl.hidden = true; }, isError ? 8000 : 3000);
   }
 
-  // duplicated absolute-href helper (this codebase's own convention — see
-  // asks.js/attic/todo.js precedent; no shared client-side module system).
+  // R17 deliverable 2a (operator, live: "the links on the Inbox tab don't
+  // work") — PROVEN root cause: this used to also emit a `file://` href for
+  // an absolute local path, which a browser loading this page over http
+  // silently blocks (the link LOOKED clickable and did nothing — the exact
+  // class row 70 already fixed for roadmap plan links). A repo-file path is
+  // now routed through the in-page doc modal instead (openInboxDocModal,
+  // below) via item.doc_ref (server-resolved {project,path}, the SAME
+  // deriveLib.projectDocRefFor plan_doc already uses); this helper now only
+  // ever returns a REAL, openable href — an http(s) URL — never file://.
   function myItemsFileUrl(p) {
     if (typeof p !== 'string' || p === '') return null;
     if (/^https?:\/\//i.test(p)) return p;
-    var norm = p.replace(/\\/g, '/');
-    if (/^[A-Za-z]:\//.test(norm)) return 'file:///' + norm;
-    if (/^\/\//.test(norm)) return null; // UNC — copy-only is the honest fallback
-    if (/^\//.test(norm)) return 'file://' + norm;
-    return null;
+    return null; // local path — never a fabricated file:// href; see doc_ref above
+  }
+
+  // openInboxDocModal(project, docPath) — reuses the EXISTING docModal DOM
+  // + /api/doc + the shared window.MdRender pipeline (roadmap.js's
+  // openPlanDocModal is the same pattern, duplicated per this codebase's
+  // own small-shared-helper convention — see this file's header).
+  function openInboxDocModal(project, docPath) {
+    var docModal = $('docModal'), docTitle = $('docTitle'), docBody = $('docBody'), docOpenEditor = $('docOpenEditor');
+    if (!docModal || !docTitle || !docBody) return;
+    docTitle.textContent = project + ' / ' + docPath;
+    docBody.textContent = 'loading…';
+    docModal.hidden = false;
+    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) {
+          if (window.MdRender && typeof window.MdRender.renderMarkdown === 'function') {
+            docBody.innerHTML = window.MdRender.renderMarkdown(j.content);
+          } else {
+            docBody.textContent = j.content;
+          }
+        } else {
+          docBody.textContent = 'error: ' + (j && j.error);
+        }
+      })
+      .catch(function (err) { docBody.textContent = 'error: ' + err; });
+    if (docOpenEditor) {
+      docOpenEditor.onclick = function () {
+        fetch('/api/doc/open', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: project, path: docPath }),
+        }).catch(function () {});
+      };
+    }
   }
 
   // operator item row — editable + checkable (ports attic/todo.js's
@@ -604,7 +686,10 @@
     });
     row.appendChild(cb);
 
-    var textSpan = el('span', 'todo-item-text' + (item.checked ? ' todo-item-checked' : ''), item.text);
+    // R17 deliverable 2 (audit F1): My-items text can quote a command
+    // verbatim (that's exactly what noise_flag items already are) — fence it.
+    var textSpan = el('span', 'todo-item-text' + (item.checked ? ' todo-item-checked' : ''));
+    renderCat(textSpan, item.text);
     if (item.noise_flag) {
       var noiseMark = el('span', 'todo-noise-flag', ' ⚑ quotes internal identifiers');
       noiseMark.title = 'This item quotes harness-internal command/script names. Rendered in full — flagged for awareness only.';
@@ -671,21 +756,38 @@
 
     var pbody = el('div', 'todo-pointer-body');
     var titleRow = el('div', 'todo-pointer-title');
-    var link = document.createElement('a');
-    link.className = 'todo-pointer-link';
-    link.title = 'resolves when you answer the underlying item — click to go there';
-    link.textContent = item.title || ('(untitled ' + (item.section || 'item') + ')');
-    var href = myItemsFileUrl(item.raw_link);
-    if (href) {
-      link.href = href;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
+    var titleText = item.title || ('(untitled ' + (item.section || 'item') + ')');
+    // R17 deliverable 2a: a repo-file link (item.doc_ref, server-resolved)
+    // opens the SAME in-page doc modal roadmap.js's plan links use — a
+    // REAL <button> (this file's own "no click-only divs/dead hrefs"
+    // convention), never a `file://` anchor a browser silently blocks.
+    // Only when doc_ref cannot be resolved (raw_link outside every known
+    // project root) does this fall back to an http(s) href, or — with
+    // neither — an honest disabled affordance (never a fabricated link).
+    if (item.doc_ref && item.doc_ref.project && item.doc_ref.path) {
+      var docBtn = btn('todo-pointer-link todo-pointer-link-btn', titleText, function () {
+        openInboxDocModal(item.doc_ref.project, item.doc_ref.path);
+      });
+      docBtn.title = 'open ' + item.doc_ref.path;
+      titleRow.appendChild(docBtn);
     } else {
-      link.href = '#';
-      link.setAttribute('aria-disabled', 'true');
-      link.addEventListener('click', function (e) { e.preventDefault(); });
+      var link = document.createElement('a');
+      link.className = 'todo-pointer-link';
+      link.textContent = titleText;
+      var href = myItemsFileUrl(item.raw_link);
+      if (href) {
+        link.title = 'resolves when you answer the underlying item — click to go there';
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      } else {
+        link.title = 'no openable link for this item';
+        link.href = '#';
+        link.setAttribute('aria-disabled', 'true');
+        link.addEventListener('click', function (e) { e.preventDefault(); });
+      }
+      titleRow.appendChild(link);
     }
-    titleRow.appendChild(link);
     pbody.appendChild(titleRow);
 
     if (item.body) {

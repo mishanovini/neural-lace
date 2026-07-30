@@ -1921,6 +1921,23 @@ ok('T4-19 "My items" preserves the retired pane\'s FULL interaction set: checkbo
 ok('T4-20 "My items" is loaded ONCE at boot + after every write, deliberately NOT on the Inbox\'s 30s poll (so an in-progress edit is never destroyed by an unrelated tick) — the same load-once-then-reload-on-write discipline the retired pane used',
   /loadMyItems\(\);/.test(inboxJs) && !/setInterval\(function \(\) \{ loadMyItems/.test(inboxJs));
 
+// --- R17 deliverable 2a (operator, live: "the links on the Inbox tab
+// don't work") — PROVEN root cause: a pointer row's title used to be a
+// real <a href="file:///...">, which a browser loading this page over
+// http silently blocks. Source-regex, not vm execution (this file has no
+// jsdom/headless browser to actually click a rendered <a>, per its own
+// header), matching this file's established convention for DOM-shape
+// assertions (see T4-16..T4-20 above). ------------------------------------
+ok('R17-L3 myItemsFileUrl NEVER constructs a file:// href — the local-path branches that used to (see the git history this fix replaces) are gone entirely',
+  !/'file:\/\/'/.test(inboxJs) && !/'file:\/\/\/'/.test(inboxJs));
+ok('R17-L4 a resolvable item.doc_ref routes the pointer row\'s title through openInboxDocModal (the in-page doc viewer), never a raw href, before falling back to an http(s) link or an honest disabled affordance',
+  /item\.doc_ref && item\.doc_ref\.project && item\.doc_ref\.path/.test(inboxJs) &&
+  /openInboxDocModal\(item\.doc_ref\.project, item\.doc_ref\.path\)/.test(inboxJs));
+ok('R17-L5 openInboxDocModal reuses the EXISTING docModal DOM + /api/doc + the shared window.MdRender pipeline (the SAME pattern roadmap.js\'s openPlanDocModal already uses for plan links) — no second renderer',
+  /function openInboxDocModal\(project, docPath\)/.test(inboxJs) &&
+  /fetch\('\/api\/doc\?project=' \+ encodeURIComponent\(project\)/.test(inboxJs) &&
+  /window\.MdRender && typeof window\.MdRender\.renderMarkdown === 'function'/.test(inboxJs));
+
 // ============================================================
 // ROUND 12 (2026-07-29) — ux-ia-auditor LIVE AUDIT of the running cockpit
 // (headless Chrome against :7733, geometry/colour measured from computed
@@ -2391,6 +2408,91 @@ ok('R16-MD17 the Docs panel/plan-doc modal CSS (.doc-body) scopes monospace to c
   !/\.doc-body\s*\{[^}]*white-space:\s*pre-wrap/.test(C) &&
   !/\.doc-body\s*\{[^}]*font-family:\s*monospace/.test(C) &&
   /\.doc-body code\s*\{[^}]*font-family:/.test(C));
+
+// ============================================================
+// R17 deliverable 2 (audit F1 — the operator's own top complaint: "it's
+// not clear where the command begins and ends"): the shared fenced-command
+// renderer (web/command-render.js), real-executed via require() (dual-mode,
+// no DOM dependency in its pure half — same technique as md-render.js's
+// R16-MD block above), plus source-regex wiring checks for every caller.
+// ============================================================
+let cmdRender = null;
+try { cmdRender = require(path.join(D, 'command-render.js')); } catch (_) { /* R17-C checks fail honestly below */ }
+ok('R17-C0 command-render.js loads as a plain Node module (dual-mode: browser global AND require()) and exports renderCommandAwareText',
+  !!cmdRender && typeof cmdRender.renderCommandAwareText === 'function');
+if (cmdRender) {
+  const rc = cmdRender.renderCommandAwareText;
+  ok('R17-C1 plain prose with no command shape and no backticks renders as escaped plain text, no fence chip at all',
+    rc('just an ordinary sentence') === 'just an ordinary sentence' && !/cmd-fence/.test(rc('just an ordinary sentence')));
+  ok('R17-C2 an inline `backtick span` inside prose becomes a fenced, copyable chip — the surrounding prose stays plain',
+    (function () {
+      const out = rc('run: `nl status --json` to check');
+      return /^run: /.test(out) && /<span class="cmd-fence">/.test(out) &&
+        /<code class="cmd-fence-code">nl status --json<\/code>/.test(out) &&
+        /data-copy-text="nl status --json"/.test(out) && / to check$/.test(out);
+    })());
+  ok('R17-C3 a WHOLE LINE recognized as a command shape (starts "powershell ") fences the ENTIRE line, no backticks needed',
+    (function () {
+      const out = rc('powershell -File adapters/claude-code/scripts/install-coord-sync-task.ps1');
+      return /<span class="cmd-fence">/.test(out) &&
+        /<code class="cmd-fence-code">powershell -File adapters\/claude-code\/scripts\/install-coord-sync-task\.ps1<\/code>/.test(out);
+    })());
+  ['$ nl status --json', 'claude --resume abc123', 'nl status --json', 'git status', 'bash script.sh'].forEach(function (line, idx) {
+    ok('R17-C4.' + idx + ' recognized command-shape line "' + line + '" fences the whole line',
+      /<span class="cmd-fence">/.test(rc(line)));
+  });
+  ok('R17-C5 a capitalized prose sentence that happens to START with the word "Claude" (referring to the assistant, not a CLI invocation) does NOT false-positive — case-sensitive, lowercase-anchored match only',
+    !/cmd-fence/.test(rc('Claude Fable will now handle the rest.')));
+  ok('R17-C6 the live defect this fixes: "run: powershell -File ... -> the task registers…" — the narrative "run:" and "-> the task registers…" stay plain prose; ONLY the command portion between them is fenced, so start/end is unambiguous',
+    (function () {
+      const out = rc('run: `powershell -File install.ps1` -> the task registers…');
+      return /^run: /.test(out) && /cmd-fence/.test(out) && /-&gt; the task registers…$/.test(out);
+    })());
+  ok('R17-C7 SECURITY: a backtick-fenced command containing a literal "<script>alert(1)</script>" renders fully escaped/inert inside the chip, never a live tag (same escaping-first discipline as md-render.js)',
+    (function () {
+      const out = rc('`<script>alert(1)</script>`');
+      return /&lt;script&gt;alert\(1\)&lt;\/script&gt;/.test(out) && !/<script>alert/.test(out);
+    })());
+  ok('R17-C8 a genuinely multi-line block (a raw §3-format text, e.g. app.js\'s Q2 nm-text) renders ONE <div class="cat-line"> per line; a SINGLE-line input (the common case: an option outcome, my-pick, a to-do item) renders INLINE with no wrapping block element, so it still sits naturally after a caller\'s own "label: " prefix text node',
+    (function () {
+      const multi = rc('line one\nline two `cmd`');
+      const single = rc('just one line');
+      return (multi.match(/<div class="cat-line">/g) || []).length === 2 && !/<div class="cat-line">/.test(single);
+    })());
+  ok('R17-C9 empty/absent input never throws, renders empty string',
+    rc('') === '' && rc(null) === '' && rc(undefined) === '');
+  ok('R17-C10 isCommandLine is exported and agrees with the fencing decision (real function, not a private inline-only check)',
+    typeof cmdRender.isCommandLine === 'function' && cmdRender.isCommandLine('git status') === true &&
+    cmdRender.isCommandLine('an ordinary sentence') === false);
+}
+ok('R17-C11 command-render.js is served by server.js at /command-render.js (same static-mount convention as md-render.js) and loaded in index.html BEFORE app.js/roadmap.js/inbox.js (every caller needs window.CommandRender defined by the time it runs)',
+  (function () {
+    const serverSrc = fs.readFileSync(path.join(D, '..', 'server', 'server.js'), 'utf8');
+    const mountIdx = serverSrc.indexOf("url === '/command-render.js'");
+    const htmlCmdIdx = html.indexOf('<script src="/command-render.js">');
+    const htmlAppIdx = html.indexOf('<script src="/app.js">');
+    const htmlInboxIdx = html.indexOf('<script src="/inbox.js">');
+    return mountIdx !== -1 && htmlCmdIdx !== -1 && htmlAppIdx !== -1 && htmlInboxIdx !== -1 &&
+      htmlCmdIdx < htmlAppIdx && htmlCmdIdx < htmlInboxIdx;
+  })());
+
+// ---- wiring: every caller named in the deliverable actually calls
+// renderCat/CommandRender, not just the shared module existing in isolation.
+ok('R17-C12 inbox.js applies command-aware rendering to context lines, option outcomes, my-pick, and reply-with (audit F1\'s own enumerated surfaces)',
+  /ctxBox\.appendChild\(renderCat\(el\('div', 'ib-context-line'\), line\)\)/.test(inboxJs) &&
+  /renderCat\(document\.createElement\('td'\), o\.option\)/.test(inboxJs) &&
+  /renderCat\(document\.createElement\('td'\), o\.outcome\)/.test(inboxJs) &&
+  /renderCat\(pickInline, item\.my_pick\)/.test(inboxJs) &&
+  /renderCat\(replyWithInline, item\.reply_with\)/.test(inboxJs));
+ok('R17-C13 inbox.js ALSO applies it to "My items" row text (todo text) and wires the copy-button delegation once on each of its two persistent containers',
+  /renderCat\(textSpan, item\.text\)/.test(inboxJs) &&
+  /wireCommandCopyButtons\(inboxSectionsWrap\)/.test(inboxJs) && /wireCommandCopyButtons\(myItemsWrap\)/.test(inboxJs));
+ok('R17-C14 app.js applies it to the Q2 "what needs me" card text (.nm-text) AND the interrupt-strip chips, wiring the copy-button delegation on both persistent containers',
+  /renderCat\(text, it\.text\)/.test(js) && /renderCat\(chipText,/.test(js) &&
+  /wireCommandCopyButtons\(needsMeBody\)/.test(js) && /wireCommandCopyButtons\(interruptStrip\)/.test(js));
+ok('R17-C15 both renderCat wrappers (inbox.js and app.js) degrade to plain textContent when window.CommandRender failed to load — never a throw, never raw HTML injection from an absent global',
+  (inboxJs.match(/node\.textContent = String\(text == null \? '' : text\)/g) || []).length >= 1 &&
+  (js.match(/node\.textContent = String\(text == null \? '' : text\)/g) || []).length >= 1);
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

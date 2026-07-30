@@ -1088,6 +1088,9 @@ const server = http.createServer((req, res) => {
   // Round 16 deliverable 2: the shared markdown renderer both the Docs
   // panel (app.js) and the plan-doc modal (roadmap.js) call.
   if (url === '/md-render.js') return serveStatic(res, 'md-render.js');
+  // Round 17 deliverable 2: the shared fenced-command renderer (inbox.js +
+  // app.js's Q2 "what needs me" cards both call it).
+  if (url === '/command-render.js') return serveStatic(res, 'command-render.js');
   if (url === '/app.js') return serveStatic(res, 'app.js');
   if (url === '/app.css') return serveStatic(res, 'app.css');
   if (url === '/asks.js') return serveStatic(res, 'asks.js');
@@ -1191,6 +1194,16 @@ const server = http.createServer((req, res) => {
 
     const operatorItemsOut = parsed.operatorItems.map((it) => ({ index: it.index, text: it.text, checked: it.checked }));
     const rawLinkAbs = payloadSchema.isAbsoluteHref(needsYouMdPath()) ? needsYouMdPath() : '';
+    // R17 deliverable 2a (operator, live: "the links on the Inbox tab don't
+    // work"): PROVEN root cause — the client rendered raw_link as a real
+    // `file://` href, which a browser loading this page over http silently
+    // blocks (the same class row 70 already fixed for roadmap plan links,
+    // via the in-page doc modal + /api/doc instead of a file:// anchor).
+    // doc_ref resolves the SAME rawLinkAbs against the SAME project map
+    // plan_doc already uses (deriveLib.projectDocRefFor) — null when the
+    // path lies outside every configured/discovered project root, so the
+    // client can degrade to an honest no-op rather than a fabricated link.
+    const rawLinkDocRef = rawLinkAbs ? deriveLib.projectDocRefFor(rawLinkAbs) : null;
     const pointerItemsOut = parsed.pointerItems.map((p) => {
       const dec = byId[p.needsYouId];
       return {
@@ -1203,6 +1216,7 @@ const server = http.createServer((req, res) => {
         operator_override: p.operatorOverride,
         body: (dec && dec.body) || '',
         raw_link: rawLinkAbs,
+        doc_ref: rawLinkDocRef,
       };
     });
 
