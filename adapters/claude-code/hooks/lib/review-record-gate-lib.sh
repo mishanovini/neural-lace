@@ -124,23 +124,167 @@
 # Trigger surface
 # ------------------------------------------------------------
 
+# ===========================================================================
+# PATH NORMALISATION — the predicate's equivalence relation must be at least
+# as wide as the DELIVERY LAYER's (harness-reviewer CRITICAL, round 5).
+# ===========================================================================
+#
+# THE CLASS, stated so it generalizes past this gate: a membership predicate
+# that decides from a path STRING answers a question about the string. The
+# surface it protects is realised by a DELIVERY LAYER -- a filesystem checkout
+# -- which collapses whole families of byte-distinct strings onto ONE file. If
+# the predicate's equivalence relation is NARROWER than the delivery layer's,
+# every string in the gap is a silent hole: the predicate says OUT, the gate
+# stays quiet, and the delivery layer puts the file INSIDE the protected
+# directory anyway.
+#
+# This is the SAME class as round 4's CRITICAL 2, which asked the predicate
+# about git's C-quoted RENDERING of a path rather than the path. There the
+# gap was between the enumerator and the predicate; here it is between the
+# predicate and the checkout. Both breach the same headline claim.
+#
+# PROVEN end-to-end against a real bare remote with git-hooks/pre-push
+# installed as the actual pre-push hook, BEFORE this fix:
+#   BLOB=$(printf '#!/bin/bash\necho INJECTED\n' | git hash-object -w --stdin)
+#   git update-index --add --cacheinfo 100755,$BLOB,adapters/claude-code/Hooks/injected.sh
+#   git commit && git push
+# returned rc=0 with ZERO gate bytes and LANDED on the remote. `git clone` +
+# `git checkout master` then materialised it at
+#   adapters/claude-code/hooks/injected.sh   (mode 755)
+# inside the real carrier directory, beside review-record-push-gate.sh itself.
+# `git update-index --cacheinfo` is what makes it reachable: it writes the
+# index entry directly, so the capital-H path never has to survive a
+# case-insensitive working tree. Same silent rc=0 for Git-Hooks/pre-push,
+# SCRIPTS/evil.sh, adapters/Claude-Code/hooks/evil.sh and Manifest.json --
+# and, re-probed here, for EVERY ONE of the thirteen surface arms, not just
+# the five reported.
+#
+# WHICH EQUIVALENCES THIS FILESYSTEM ACTUALLY COLLAPSES -- MEASURED on the
+# APFS volume this repo lives on, by creating two byte-distinct names and
+# checking whether the second overwrote the first (scratch probe, 2026-07-30):
+#   ASCII case          hooks_x    vs Hooks_x           COLLAPSED
+#   Unicode case        café_x     vs CAFÉ_X            COLLAPSED
+#   long s   U+017F     scripts_a  vs ſcripts_a         COLLAPSED
+#   Kelvin   U+212A     hooks_y    vs hooKs_y           COLLAPSED
+#   NFC vs NFD          café_z     vs cafe+U0301_z      COLLAPSED
+#   trailing dot        trail.sh   vs trail.sh.         DISTINCT
+#   trailing space      sp.sh      vs "sp.sh "          DISTINCT
+#
+# WHAT THAT MEANS FOR THIS PREDICATE, derived rather than assumed. Every
+# string this predicate tests against is PURE ASCII (hooks/, scripts/,
+# git-hooks/, schemas/, agents/, config/, rules/, install.sh, sync.sh,
+# manifest.json, settings.json.template, adapters/claude-code/,
+# neural-lace/workstreams-ui/{server,web}/). Therefore:
+#   - ASCII case IS exploitable -> closed by the fold below.
+#   - Unicode case is exploitable ONLY through the two code points whose
+#     simple case-fold IS an ASCII letter: U+017F LATIN SMALL LETTER LONG S
+#     -> "s" and U+212A KELVIN SIGN -> "k". That set is complete, not a
+#     sample: U+212B ANGSTROM folds to U+00E5 (not ASCII) and the fullwidth
+#     forms fold to fullwidth, not ASCII. Every surface string contains an
+#     "s" or a "k", so both are live -> closed by the two substitutions below.
+#   - NFC/NFD is collapsed by the filesystem but is NOT exploitable here:
+#     canonical decomposition never maps a non-ASCII sequence onto a BARE
+#     ASCII string (é -> e + U+0301 is LONGER, not equal to "e"), so no
+#     normalisation variant of a pure-ASCII prefix exists. Tested anyway
+#     (self-test n1/n2) so the claim is pinned rather than argued.
+#   - Trailing dot / trailing space are a WINDOWS-checkout equivalence; this
+#     filesystem keeps them distinct (measured above) and no Windows checkout
+#     of this repo exists to test against. NOT closed here, enumerated in
+#     manifest.json bypass_paths[16](vi) rather than dropped.
+#
+# WHY ONLY THE INJECTION DIRECTION MATTERS. There are two directions: INJECT a
+# new case-variant path with no lowercase competitor, or CLOBBER an existing
+# in-surface file by pushing a case variant of it. The CLOBBER direction is
+# NOT exploitable and that is MEASURED, not assumed: 0 of the 311 in-surface
+# canonical paths contain an uppercase ASCII letter (and 0 contain a non-ASCII
+# byte), so the all-lowercase real path always sorts last in the index and
+# wins the checkout race. Re-derive with scripts-free bash: source this lib,
+# pipe `git ls-files` through rrg_in_surface, and count matches of
+# *[ABCDEFGHIJKLMNOPQRSTUVWXYZ]*. The exploitable direction is INJECTION.
+#
+# RULE FOR THE NEXT GATE (extends the enumeration rule in
+# review-record-push-gate.sh's own header): every harness consumer of git path
+# output must disable quoting AND use NUL separation before feeding a path to
+# a predicate, AND normalise the path to the DELIVERY FILESYSTEM's equivalence
+# class before the predicate decides membership. Enumerating correctly and
+# then asking the wrong equivalence relation is the same bug one layer down.
+# The harness-wide sibling audit is filed as PATH-EQUIVALENCE-CLASS-01 in
+# docs/backlog.md with its full enumeration.
+# ---------------------------------------------------------------------------
+
+_RRG_UPPER="ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_RRG_LOWER="abcdefghijklmnopqrstuvwxyz"
+_RRG_FOLDED=""
+
+# _rrg_casefold <path> -- result in the GLOBAL _RRG_FOLDED (deliberately not
+# echoed: a command substitution would fork a subshell per candidate path, and
+# this runs once per changed file on every push).
+#
+# PURE BASH, NO FORK, bash 3.2.57-SAFE. `${v,,}` is banned by the portability
+# floor -- which is precisely why this exists -- and `tr` was rejected for two
+# reasons beyond the fork: BSD `tr` under a UTF-8 locale mangles multi-byte
+# input with [:upper:], and byte-wise `tr 'A-Z' 'a-z'` cannot express the two
+# multi-byte -> single-byte foldings above. 26 parameter expansions on a short
+# string are microseconds; measured at 400 folds in under one second on
+# /bin/bash 3.2.57.
+#
+# GLOB METACHARACTERS IN THE INPUT ARE SAFE: the PATTERN in each substitution
+# is a single fixed ASCII letter, so a path containing * ? [ ] or a backslash
+# passes through byte-identical (pinned by self-test cf7-cf10).
+_rrg_casefold() {
+  local s="$1" i=0
+  # The two non-ASCII code points whose simple case-fold is an ASCII letter.
+  s="${s//$'\xc5\xbf'/s}"   # U+017F LATIN SMALL LETTER LONG S -> s
+  s="${s//$'\xe2\x84\xaa'/k}"  # U+212A KELVIN SIGN            -> k
+  while [ "$i" -lt 26 ]; do
+    s="${s//${_RRG_UPPER:$i:1}/${_RRG_LOWER:$i:1}}"
+    i=$((i+1))
+  done
+  _RRG_FOLDED="$s"
+}
+
 # rrg_in_surface <path> -- accepts either a path relative to repo root
 # (adapters/claude-code/hooks/foo.sh) or already relative to the adapter dir
 # (hooks/foo.sh); the adapters/claude-code/ prefix is stripped if present.
+#
+# TWO PATH VARIABLES, AND THEY ARE NOT INTERCHANGEABLE:
+#   rel  -- the ORIGINAL bytes. Used ONLY by the exact-path EXEMPTION arms
+#           (the `return 1`s). An exemption must NOT be widenable by case:
+#           if `hooks/Sensitive-Patterns.local.example` could match the
+#           exemption, an attacker would re-open by case exactly the hole the
+#           exact-path rule exists to close.
+#   lrel -- the FOLDED bytes. Used by every INCLUSION arm (the `return 0`s).
+#           Folding here can only ever make the surface WIDER, which is the
+#           safe direction.
+# The strip is done on BOTH, because `adapters/Claude-Code/hooks/evil.sh`
+# defeats a case-sensitive strip and would otherwise reach no arm at all.
 rrg_in_surface() {
-  local full="$1" rel
+  local full="$1" rel lfull lrel
+  _rrg_casefold "$full"; lfull="$_RRG_FOLDED"
   # Amendment G (cockpit product surface) matches the REPO-ROOT-RELATIVE
   # path directly -- checked BEFORE the adapters/claude-code/ prefix strip
   # below, since these paths never carry that prefix and stripping is a
   # no-op for them anyway. Case-pattern `*` matches `/` (the same property
   # Amendment A's hooks/*.sh already relies on to match hooks/lib/*.sh), so
-  # both arms are recursive with no `**` token needed.
-  case "$full" in
+  # both arms are recursive with no `**` token needed. Matched on the FOLDED
+  # path: `neural-lace/workstreams-ui/Server/x.js` was PROBED OUT before this
+  # fix, and the cockpit tree lives on the same case-insensitive checkout.
+  case "$lfull" in
     neural-lace/workstreams-ui/server/*.js) return 0 ;;
     neural-lace/workstreams-ui/web/*.js) return 0 ;;
   esac
   rel="${full#adapters/claude-code/}"
+  lrel="${lfull#adapters/claude-code/}"
+  # EXEMPTIONS FIRST, AND CASE-SENSITIVELY, on the ORIGINAL bytes. A case
+  # variant of an exempted path therefore falls THROUGH to the inclusion arms
+  # below and lands IN surface -- the safe direction, pinned by self-test
+  # cs-ex1..cs-ex3.
   case "$rel" in
+    hooks/sensitive-patterns.local.example) return 1 ;;
+    scripts/schedule-weekly-eval.md) return 1 ;;
+    scripts/spawn-worktree-selftest-evidence.md) return 1 ;;
+  esac
+  case "$lrel" in
     # ------------------------------------------------------------
     # CARRIER-CHAIN ARMS: UNFILTERED, WITH AN EXACT-PATH EXEMPTION LIST.
     # (harness-reviewer MAJOR 2, round 3.)
@@ -164,6 +308,16 @@ rrg_in_surface() {
     # shape failed the other way: a new extension fell out silently, with no
     # edit and no reviewer ever seeing it.
     #
+    # CORRECTED 2026-07-30 (harness-reviewer CRITICAL, round 5). "A new file of
+    # ANY KIND under these trees is IN surface by default" was FALSE as written
+    # for the second time: false for C-quoted paths until round 4, and false
+    # for CASE VARIANTS until this commit -- `adapters/claude-code/Hooks/x.sh`
+    # answered OUT while landing inside this very directory on checkout. The
+    # sentence is true now only because these arms are matched on $lrel, the
+    # CASE-FOLDED path (see the normalisation header above). Twice burned: a
+    # by-default claim is a claim about EVERY string the delivery layer maps
+    # into the tree, not about every string the author happened to picture.
+    #
     # git-hooks/ additionally CANNOT be extension-filtered at all: its
     # load-bearing members are EXTENSIONLESS (pre-push, pre-commit, post-commit,
     # pre-merge-commit) -- including the dispatcher that decides whether this
@@ -179,9 +333,11 @@ rrg_in_surface() {
     # zero newly dropped. A pure drift-resistance change at zero present-day
     # false-positive cost. Self-test scenarios h1-h6 pin both halves.
     # ------------------------------------------------------------
-    hooks/sensitive-patterns.local.example) return 1 ;;
-    scripts/schedule-weekly-eval.md) return 1 ;;
-    scripts/spawn-worktree-selftest-evidence.md) return 1 ;;
+    # NOTE the three exact-path exemptions are NOT repeated here. They are
+    # tested above, against the UNFOLDED bytes, on purpose: repeating them in
+    # this folded `case` would let `hooks/Sensitive-Patterns.local.example`
+    # fold onto an exemption and fall OUT of surface -- re-opening by case
+    # exactly the widening the exact-path rule exists to prevent.
     hooks/*) return 0 ;;
     scripts/*) return 0 ;;
     git-hooks/*) return 0 ;;
@@ -200,7 +356,14 @@ rrg_in_surface() {
     agents/*.md)
       # top-level only (agents/*.md, not agents/**/*.md) -- no further slash
       # after the agents/ prefix.
-      [[ "${rel#agents/}" == */* ]] && return 1
+      #
+      # THIS STRIP MUST USE THE FOLDED PATH. It read $rel in the first draft of
+      # this fix and `adapters/claude-code/Agents/x.md` came back OUT while
+      # every other arm had gone IN: the arm matched on $lrel, then the strip
+      # failed on $rel's capital A, left the whole string intact, saw its
+      # remaining slash and returned 1. A folded arm with an unfolded body is
+      # the same predicate/delivery mismatch one level down.
+      [[ "${lrel#agents/}" == */* ]] && return 1
       return 0
       ;;
     config/*) return 0 ;;
@@ -862,6 +1025,149 @@ _rrg_self_test() {
     echo "PASS: _rrg_is_harness_repo honours a surviving pre-deletion anchor"; pass=$((pass+1))
   else
     echo "FAIL: _rrg_is_harness_repo lost identity — C2-B re-opens on manifest deletion"; fail=$((fail+1))
+  fi
+
+  # ---- CRITICAL (round 5): PATH CASE. The surface arms are matched on a
+  # case-INSENSITIVE delivery layer, so a case variant that the predicate calls
+  # OUT still lands INSIDE the protected directory on checkout. Each path below
+  # was PROVEN to push rc=0 with the gate SILENT before the fold landed; the
+  # first four are the reviewer's own reported list, the rest are the other
+  # nine arms, which were never reported and were broken identically. ----
+  for p in \
+    "adapters/claude-code/Hooks/x.sh" \
+    "adapters/claude-code/Git-Hooks/pre-push" \
+    "adapters/claude-code/SCRIPTS/x.sh" \
+    "adapters/Claude-Code/hooks/x.sh" \
+    "adapters/claude-code/Manifest.json" \
+    "adapters/claude-code/HOOKS/lib/x.sh" \
+    "adapters/claude-code/GIT-HOOKS/pre-push" \
+    "adapters/claude-code/Schemas/x.json" \
+    "adapters/claude-code/Install.sh" \
+    "adapters/claude-code/Sync.sh" \
+    "adapters/claude-code/Agents/x.md" \
+    "adapters/claude-code/Config/x.json" \
+    "adapters/claude-code/Rules/x.md" \
+    "adapters/claude-code/Settings.json.template" \
+    "ADAPTERS/CLAUDE-CODE/hooks/x.sh" \
+    "Neural-Lace/workstreams-ui/server/x.js" \
+    "neural-lace/workstreams-ui/Web/x.js" \
+  ; do
+    if rrg_in_surface "$p"; then
+      echo "PASS: case-variant in-surface($p)"; pass=$((pass+1))
+    else
+      echo "FAIL: case-variant OUT of surface($p) — it lands inside the real directory on a case-insensitive checkout"; fail=$((fail+1))
+    fi
+  done
+
+  # ---- ...and the two non-ASCII code points whose simple case-fold IS an
+  # ASCII letter. MEASURED: this APFS volume collapses both onto the ASCII
+  # name, so they are live injection paths, not theory. ----
+  if rrg_in_surface "$(printf 'adapters/claude-code/\xc5\xbfcripts/x.sh')"; then
+    echo "PASS: U+017F long-s variant of scripts/ is in-surface"; pass=$((pass+1))
+  else
+    echo "FAIL: U+017F long-s variant of scripts/ is OUT — APFS folds it onto scripts/"; fail=$((fail+1))
+  fi
+  if rrg_in_surface "$(printf 'adapters/claude-code/hoo\xe2\x84\xaas/x.sh')"; then
+    echo "PASS: U+212A Kelvin variant of hooks/ is in-surface"; pass=$((pass+1))
+  else
+    echo "FAIL: U+212A Kelvin variant of hooks/ is OUT — APFS folds it onto hooks/"; fail=$((fail+1))
+  fi
+
+  # ---- cs-ex1..cs-ex3: EXEMPTIONS ARE CASE-SENSITIVE. The exact three paths
+  # stay OUT (asserted above); a CASE VARIANT of each must be IN, or an
+  # attacker widens an exemption by case -- the exact failure the exact-path
+  # rule exists to prevent, re-entering through the door this fix opened. ----
+  for p in \
+    "adapters/claude-code/hooks/Sensitive-Patterns.local.example" \
+    "adapters/claude-code/scripts/Schedule-Weekly-Eval.md" \
+    "adapters/claude-code/SCRIPTS/spawn-worktree-selftest-evidence.md" \
+  ; do
+    if rrg_in_surface "$p"; then
+      echo "PASS: case-variant of an exemption is NOT exempt ($p)"; pass=$((pass+1))
+    else
+      echo "FAIL: a case variant widened an exemption ($p)"; fail=$((fail+1))
+    fi
+  done
+
+  # ---- FALSE-POSITIVE BUDGET: folding widens the surface, so the arms that
+  # must stay OUT are re-asserted in their case-variant form too. If doctrine/
+  # or templates/ start matching, the fold has swallowed a tree. ----
+  for p in \
+    "adapters/claude-code/Doctrine/x.md" \
+    "adapters/claude-code/Templates/plan-template.md" \
+    "adapters/claude-code/Skills/foo/SKILL.md" \
+    "adapters/claude-code/Agents/sub/nested.md" \
+    "Neural-Lace/other-project/web/app.js" \
+  ; do
+    if rrg_in_surface "$p"; then
+      echo "FAIL: fold overshot — $p should stay OUT of surface"; fail=$((fail+1))
+    else
+      echo "PASS: NOT in-surface($p) — fold did not swallow a neighbouring tree"; pass=$((pass+1))
+    fi
+  done
+
+  # ---- n1/n2: NFC vs NFD. This filesystem COLLAPSES them (measured), but the
+  # dimension is NOT exploitable against these arms, because canonical
+  # decomposition never maps a non-ASCII sequence onto a BARE ASCII string.
+  # Pinned rather than argued: an NFD path must behave EXACTLY as its NFC form
+  # does -- both OUT here, since neither is under a surface tree. If a future
+  # arm ever contains a non-ASCII character these two go red together and the
+  # claim gets re-derived instead of inherited. ----
+  local nfc nfd r1 r2
+  nfc="$(printf 'adapters/claude-code/caf\xc3\xa9/x.sh')"
+  nfd="$(printf 'adapters/claude-code/cafe\xcc\x81/x.sh')"
+  if rrg_in_surface "$nfc"; then r1=IN; else r1=OUT; fi
+  if rrg_in_surface "$nfd"; then r2=IN; else r2=OUT; fi
+  if [[ "$r1" == "$r2" ]]; then
+    echo "PASS: NFC and NFD forms agree ($r1) — no normalisation-shaped split"; pass=$((pass+1))
+  else
+    echo "FAIL: NFC=$r1 but NFD=$r2 — a normalisation variant changes the verdict"; fail=$((fail+1))
+  fi
+  if [[ "$r1" == "OUT" ]]; then
+    echo "PASS: the NFC/NFD probe pair is genuinely outside the surface (the test is not vacuous the other way)"; pass=$((pass+1))
+  else
+    echo "FAIL: NFC/NFD probe unexpectedly in-surface — re-derive the non-exploitability argument"; fail=$((fail+1))
+  fi
+
+  # ---- cf1..cf10: the fold itself. Glob metacharacters and non-ASCII bytes
+  # must pass through BYTE-IDENTICAL: mangling a path here would reintroduce
+  # round 4's CRITICAL 2 (a predicate answering about a string that is not the
+  # path) from the opposite side. ----
+  local fin fwant
+  _rrg_casefold "adapters/claude-code/Hooks/X.SH"; fin="$_RRG_FOLDED"
+  [[ "$fin" == "adapters/claude-code/hooks/x.sh" ]] \
+    && { echo "PASS: fold lowercases ASCII"; pass=$((pass+1)); } \
+    || { echo "FAIL: fold ASCII (got '$fin')"; fail=$((fail+1)); }
+  for fwant in 'hooks/back\slash.sh' 'hooks/two words.sh' 'hooks/star*.sh' 'hooks/brack[et].sh' 'hooks/q?.sh'; do
+    _rrg_casefold "$fwant"
+    [[ "$_RRG_FOLDED" == "$fwant" ]] \
+      && { echo "PASS: fold is byte-identical on a metacharacter path ($fwant)"; pass=$((pass+1)); } \
+      || { echo "FAIL: fold mangled '$fwant' -> '$_RRG_FOLDED'"; fail=$((fail+1)); }
+  done
+  fwant="$(printf 'adapters/claude-code/hooks/pr\xc3\xa9-push.sh')"
+  _rrg_casefold "$fwant"
+  [[ "$_RRG_FOLDED" == "$fwant" ]] \
+    && { echo "PASS: fold leaves a non-ASCII (UTF-8) path byte-identical"; pass=$((pass+1)); } \
+    || { echo "FAIL: fold mangled non-ASCII bytes"; fail=$((fail+1)); }
+
+  # ---- MUTATION PROOF: reverting the fold must RE-OPEN the push. A mutation
+  # proof that does not make its own attack pass again proves nothing, so this
+  # asserts BOTH that the mutation applied AND that the mutant is exploitable.
+  # Executed in a SUBSHELL against a mutated COPY, so the live definition in
+  # this process is untouched. ----
+  local MUTLIB="$tmp/mutant-lib.sh"
+  sed 's#^  _rrg_casefold "\$full"; lfull="\$_RRG_FOLDED"#  lfull="$full"#' "${BASH_SOURCE[0]}" > "$MUTLIB"
+  if grep -q '^  lfull="\$full"$' "$MUTLIB"; then
+    echo "PASS: mutation applied (the fold call is gone from the mutant)"; pass=$((pass+1))
+    local mut_rc
+    mut_rc=$( . "$MUTLIB" >/dev/null 2>&1; rrg_in_surface "adapters/claude-code/Hooks/injected.sh"; echo $? )
+    if [[ "$mut_rc" != "0" ]]; then
+      echo "PASS: MUTATION-PROOF — without the fold, Hooks/injected.sh is OUT of surface again (the attack re-opens)"; pass=$((pass+1))
+    else
+      echo "FAIL: mutant still reports the case variant IN — this proof proves nothing"; fail=$((fail+1))
+    fi
+  else
+    echo "FAIL: mutation did not apply — the mutation proof is vacuous"; fail=$((fail+1))
   fi
 
   echo ""

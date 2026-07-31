@@ -281,7 +281,19 @@ _rrpg_fresh_override() {
 # take an outfile rather than echoing.
 #
 # RULE FOR THE NEXT GATE: every harness consumer of git path output must
-# disable quoting AND use NUL separation before feeding a path to a predicate.
+# disable quoting AND use NUL separation before feeding a path to a predicate,
+# AND NORMALISE THE PATH TO THE DELIVERY FILESYSTEM'S EQUIVALENCE CLASS BEFORE
+# THE PREDICATE DECIDES MEMBERSHIP (third clause added 2026-07-30, round 5).
+# The two encoding tokens only guarantee the predicate receives THE PATH; they
+# say nothing about whether the predicate's equivalence relation is as wide as
+# the checkout's. It was not: `adapters/claude-code/Hooks/injected.sh` pushed
+# rc=0 with this gate SILENT and materialised inside the real hooks/ directory
+# on a case-insensitive clone. Enumerating correctly and then asking the wrong
+# equivalence relation is the same bug one layer down. See rrg_in_surface's own
+# header in lib/review-record-gate-lib.sh for the measured equivalence table
+# (ASCII case, Unicode case, U+017F, U+212A and NFC/NFD all collapse on APFS;
+# trailing dot and space do not) and PATH-EQUIVALENCE-CLASS-01 in
+# docs/backlog.md for the harness-wide sibling audit.
 # The sibling consumers that feed THIS gate's surface predicate
 # (review-record-commit-gate.sh, lib/review-queue-auto-enqueue-lib.sh) are
 # fixed in the same commit; the wider harness-wide audit is filed as
