@@ -1246,6 +1246,27 @@ _self_test() {
     case "$n" in ''|*[!0-9]*) n=0 ;; esac
     printf '%s' "$n"
   }
+  # _ts_grep_dir <dir> <extended-regex> -> count of matching lines, whole dir.
+  #
+  # THE VACUOUS-ABSENCE CLASS (harness-reviewer, 2026-07-30 — the class behind
+  # F7, swept here rather than fixed one instance at a time). An assertion of
+  # the form `! grep -q <pattern> "$one_named_file"` passes for TWO different
+  # reasons: the event genuinely was not emitted (what the test means), or the
+  # event WAS emitted and landed in a different file (what the test cannot
+  # tell apart). The second is not hypothetical in this codebase — PL4d exists
+  # precisely because a placeholder ask-id once routed real events to
+  # `_id.jsonl`, and pl_path_for's orphan lane (`unlinked.jsonl`) is a
+  # standing second destination for anything whose ask-id does not resolve.
+  # So an absence assertion, and equally a "no FURTHER emission" count
+  # assertion, is only meaningful over the WHOLE progress-log directory.
+  # Every such assertion in this suite is directory-scoped; presence
+  # assertions may stay file-scoped, since naming the exact destination is a
+  # STRONGER claim rather than a vacuous one.
+  _ts_grep_dir() {
+    local n; n=$(cat "$1"/*.jsonl 2>/dev/null | grep -cE "$2" 2>/dev/null | tr -d ' \n')
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    printf '%s' "$n"
+  }
 
   # ST1-ST2: each Dispatch spawn tool emits a branch-opened titled by the
   # spawn title. ST3-ST4: sub-agent Task/Agent are AI-internal mechanics
@@ -1932,7 +1953,7 @@ PLANEOF
   ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1a" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1a" \
       CONV_TREE_STATE_PATH="$tmp/pl-1a.json" CLAUDE_SESSION_ID="sess-pl-1a" \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=3 role=builder\nBuild Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1a"}' >/dev/null 2>&1 )
-  local ts_count_pl1; ts_count_pl1=$(grep -c '"type":"task_started"' "$plfile1a" 2>/dev/null || echo 0)
+  local ts_count_pl1; ts_count_pl1=$(_ts_count_dir "$plog1a")
   _ck "PL1b true double-fire (same session_id, same dispatch identity, back-to-back) emits exactly 1 task_started" "$ts_count_pl1" "1"
 
   # PL1c (FINDING 2 REGRESSION, half 2 -- THE LOAD-BEARING TEST, REFORMULATED
@@ -1958,7 +1979,7 @@ PLANEOF
       CONV_TREE_STATE_PATH="$tmp/pl-1a.json" CLAUDE_SESSION_ID="sess-pl-1a" \
       DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md (retry)","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=3 role=builder\nBuild Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1a"}' >/dev/null 2>&1 )
-  local ts_count_pl1c; ts_count_pl1c=$(grep -c '"type":"task_started"' "$plfile1a" 2>/dev/null || echo 0)
+  local ts_count_pl1c; ts_count_pl1c=$(_ts_count_dir "$plog1a")
   _ck "PL1c a GENUINE re-dispatch of the same task from the same dispatching session_id (distinct dispatch identity, past the debounce window) is NOT dropped (2 task_started events total)" "$ts_count_pl1c" "2"
 
   # PL1d (THE ACCEPTED COST, pinned so it can never regress silently): a
@@ -1972,7 +1993,7 @@ PLANEOF
       CONV_TREE_STATE_PATH="$tmp/pl-1a.json" CLAUDE_SESSION_ID="sess-pl-1a" \
       DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md (retry)","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=3 role=builder\nBuild Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1a"}' >/dev/null 2>&1 )
-  local ts_count_pl1d; ts_count_pl1d=$(grep -c '"type":"task_started"' "$plfile1a" 2>/dev/null || echo 0)
+  local ts_count_pl1d; ts_count_pl1d=$(_ts_count_dir "$plog1a")
   _ck "PL1d an identical-identity re-fire past the debounce window is treated as a replay and emits nothing further (still 2, never 3) -- the deliberate miss-a-green-before-faking-one trade" "$ts_count_pl1d" "2"
 
   # PL2: the SAME dispatch also writes a dispatch-provenance marker file
@@ -2070,7 +2091,7 @@ PLANEOF
       CONV_TREE_STATE_PATH="$tmp/rpl-1.json" CLAUDE_SESSION_ID="sess-rpl-1" \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Round 3 orchestration","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=11 role=builder\nContext for you: Task 5 of docs/plans/pl-fixture-plan.md already landed, Task 6 of docs/plans/pl-fixture-plan.md is with the verifier, and Task 9 of docs/plans/pl-fixture-plan.md is blocked on the operator walkthrough. Do not touch any of them."},"session_id":"sess-rpl-1"}' >/dev/null 2>&1 )
   local plfile_rpl1="$plog_rpl1/ask-pl-fixture-1.jsonl"
-  local rpl1_n; rpl1_n=$(grep -c '"type":"task_started"' "$plfile_rpl1" 2>/dev/null || echo 0)
+  local rpl1_n; rpl1_n=$(_ts_count_dir "$plog_rpl1")
   _ck "RPL1 a prompt mentioning THREE tasks with a header naming ONE emits exactly 1 task_started (mention != dispatch)" "$rpl1_n" "1"
   if [[ -f "$plfile_rpl1" ]] && grep -q '"task_id":"11"' "$plfile_rpl1" 2>/dev/null; then
     echo "PASS: RPL1b the single event names the HEADER's task (11), not the first task the prose mentions (5)"; pass=$((pass+1))
@@ -2078,12 +2099,11 @@ PLANEOF
     echo "FAIL: RPL1b expected task_id=11 (the header's task) in $plfile_rpl1"; fail=$((fail+1))
     [[ -f "$plfile_rpl1" ]] && cat "$plfile_rpl1"
   fi
-  if [[ -f "$plfile_rpl1" ]] && ! grep -qE '"task_id":"(5|6|9)"' "$plfile_rpl1" 2>/dev/null; then
-    echo "PASS: RPL1c none of the three merely-MENTIONED tasks (5, 6, 9) was marked started"; pass=$((pass+1))
-  else
-    echo "FAIL: RPL1c a merely-mentioned task (5/6/9) was marked started in $plfile_rpl1"; fail=$((fail+1))
-    [[ -f "$plfile_rpl1" ]] && cat "$plfile_rpl1"
-  fi
+  # Directory-scoped (vacuous-absence class, see _ts_grep_dir): the old form
+  # asserted absence in ONE named file, so a 5/6/9 event routed to the orphan
+  # lane would have passed it while the defect was live.
+  _ck "RPL1c none of the three merely-MENTIONED tasks (5, 6, 9) was marked started ANYWHERE under the progress-log dir" \
+    "$(_ts_grep_dir "$plog_rpl1" '"task_id":"(5|6|9)"')" "0"
 
   # RPL2 (REPLAY SUPPRESSION, the production shape): fire three DISTINCT
   # header-attributed dispatches, then replay ALL THREE identities the way
@@ -2099,7 +2119,7 @@ PLANEOF
         bash "$SELF" --on-builder-dispatch <<<"{\"tool_name\":\"Task\",\"tool_input\":{\"description\":\"Build item $rpl2_task\",\"prompt\":\"NL-ATTRIBUTION: plan=pl-fixture-plan task=$rpl2_task role=builder\\nbody\"},\"session_id\":\"sess-rpl-2\"}" >/dev/null 2>&1 )
   done
   local plfile_rpl2="$plog_rpl2/ask-pl-fixture-1.jsonl"
-  local rpl2_first; rpl2_first=$(grep -c '"type":"task_started"' "$plfile_rpl2" 2>/dev/null || echo 0)
+  local rpl2_first; rpl2_first=$(_ts_count_dir "$plog_rpl2")
   _ck "RPL2 three distinct header-attributed dispatches emit 3 task_started (one each)" "$rpl2_first" "3"
   local rpl2_markers_before; rpl2_markers_before=$(ls "$dpdir_rpl2"/*.json 2>/dev/null | wc -l | tr -d ' ')
   # The replay: same session, same identities, past the debounce window so
@@ -2111,7 +2131,7 @@ PLANEOF
         DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
         bash "$SELF" --on-builder-dispatch <<<"{\"tool_name\":\"Task\",\"tool_input\":{\"description\":\"Build item $rpl2_task\",\"prompt\":\"NL-ATTRIBUTION: plan=pl-fixture-plan task=$rpl2_task role=builder\\nbody\"},\"session_id\":\"sess-rpl-2\"}" >/dev/null 2>&1 )
   done
-  local rpl2_after; rpl2_after=$(grep -c '"type":"task_started"' "$plfile_rpl2" 2>/dev/null || echo 0)
+  local rpl2_after; rpl2_after=$(_ts_count_dir "$plog_rpl2")
   _ck "RPL2b replaying all three dispatch identities past the debounce window emits NOTHING further (still 3, not 6) -- a replay is not a start" "$rpl2_after" "3"
   # And the marker sink is replay-gated too: the replay pass must add ZERO
   # new marker files (a replayed marker is byte-identical in every field its
@@ -2177,7 +2197,7 @@ PLANEOF
       CONV_TREE_STATE_PATH="$tmp/rpl-5.json" CLAUDE_SESSION_ID="sess-rpl-5" \
       DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
       bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn RPL5","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=31 role=builder\nbody"},"session_id":"sess-rpl-5"}' >/dev/null 2>&1 )
-  local rpl5_after; rpl5_after=$(grep -c '"type":"task_started"' "$plfile_rpl5" 2>/dev/null || echo 0)
+  local rpl5_after; rpl5_after=$(_ts_count_dir "$plog_rpl5")
   _ck "RPL5b a replayed spawn identity emits nothing further (still 1, not 2)" "$rpl5_after" "1"
 
   # ------------------------------------------------------------------------
@@ -2254,7 +2274,71 @@ PLANEOF
       CONV_TREE_STATE_PATH="$tmp/rpl-7b.json" CLAUDE_SESSION_ID="sess-rpl-7b" \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Review","prompt":"Review the failed run from the prior session.\n\nContext: the orchestrator dispatched a builder and it returned PARTIAL.\n\nHere is the prompt it was given, verbatim:\n\nNL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\nBuild the thing.\n\nDo not build anything. Only report what went wrong."},"session_id":"sess-rpl-7b"}' >/dev/null 2>&1 )
   local rpl7b_n; rpl7b_n=$(_ts_count_dir "$plog_rpl7b")
-  _ck "RPL7b a pasted header buried below the handoff prose that introduces it emits 0 task_started" "$rpl7b_n" "0"
+  _ck "RPL7b a pasted header on line 8 (well past the window) emits 0 task_started" "$rpl7b_n" "0"
+
+  # ------------------------------------------------------------------------
+  # RPL7d/RPL7e/RPL7f — THE BOUNDARY TRIPLE (harness-reviewer REFORMULATE,
+  # 2026-07-30). RPL7b above is a TRUE assertion that was certifying a FALSE
+  # generalization, and the mechanism of that error is worth naming because it
+  # is reusable: its preamble happens to run eight lines, so it clears the
+  # 5-line window by a wide margin and passes for a reason its own name does
+  # not state ("buried below the handoff prose"). Prose written from it then
+  # claimed quoted headers are inert generally -- which is FALSE for every
+  # preamble shorter than the window, i.e. for the shape a real handoff prompt
+  # actually has. A positional guard tested only COMFORTABLY BEYOND its
+  # threshold certifies nothing about the threshold.
+  #
+  # GENERALIZATION (carry this to every threshold/positional guard in this
+  # harness): pin n-1, n AND n+1. The n-1 and n cases document what the guard
+  # does NOT catch as precisely as n+1 documents what it does, so the prose
+  # residual can be written from the EXECUTED boundary instead of from the
+  # motivating anecdote.
+  #
+  # These three pin the ACCEPTED, DOCUMENTED residual -- RPL7d/RPL7f assert
+  # EMISSION deliberately. They are not aspirational: if a future change
+  # tightens the anchor they must be updated in the same commit, which is the
+  # point (the residual cannot drift silently in either direction).
+  #
+  # RPL7f: n-1. Header on line 4, INDENTED (4 spaces, as a fenced or quoted
+  # paste indents it) -- proves the leading-whitespace tolerance is part of the
+  # residual, not just line position.
+  local plog_rpl7f="$tmp/pl-rpl7f"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7f" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7f" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7f.json" CLAUDE_SESSION_ID="sess-rpl-7f" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Handoff","prompt":"Handoff from the prior run.\n\nThe prompt it was given:\n    NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\n    Build it.\nJust report what went wrong."},"session_id":"sess-rpl-7f"}' >/dev/null 2>&1 )
+  _ck "RPL7f (n-1, RESIDUAL) an INDENTED quoted header on line 4 still EMITS -- leading whitespace does not defeat the anchor" "$(_ts_count_dir "$plog_rpl7f")" "1"
+
+  # RPL7d: n. Header on line 5 -- the LAST position the window admits. A
+  # three-line preamble plus a fence lands exactly here, which is why a real
+  # handoff prompt trips this and RPL7b's eight-line one does not.
+  local plog_rpl7d="$tmp/pl-rpl7d"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7d" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7d" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7d.json" CLAUDE_SESSION_ID="sess-rpl-7d" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Review","prompt":"Review the failed run.\n\nThe prompt it got:\n```\nNL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\nBuild it.\n```"},"session_id":"sess-rpl-7d"}' >/dev/null 2>&1 )
+  _ck "RPL7d (n, RESIDUAL) a fenced paste landing the header on line 5 -- the last admitted line -- still EMITS" "$(_ts_count_dir "$plog_rpl7d")" "1"
+
+  # RPL7e: n+1. Header on line 6 -- the FIRST position the window excludes.
+  # This is the tight negative RPL7b should have been.
+  local plog_rpl7e="$tmp/pl-rpl7e"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7e" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7e" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7e.json" CLAUDE_SESSION_ID="sess-rpl-7e" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Review","prompt":"Review the failed run.\n\nContext line.\n\nThe prompt it got:\nNL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\nBuild it."},"session_id":"sess-rpl-7e"}' >/dev/null 2>&1 )
+  _ck "RPL7e (n+1) a quoted header on line 6 -- one line past the window -- emits 0 (the tight negative that actually pins the threshold)" "$(_ts_count_dir "$plog_rpl7e")" "0"
+
+  # RPL7g/RPL7h: THE DOCUMENTED ESCAPE HATCHES MUST ACTUALLY WORK. The
+  # doctrine now instructs authors quoting a header to prefix it with `> ` or
+  # `- `. That instruction is a load-bearing claim, and an untested one would
+  # repeat F4 exactly (a claim in prose with no detector). Both are pinned.
+  local plog_rpl7g="$tmp/pl-rpl7g"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7g" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7g" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7g.json" CLAUDE_SESSION_ID="sess-rpl-7g" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Handoff","prompt":"Here is what was dispatched:\n> NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\nJust report."},"session_id":"sess-rpl-7g"}' >/dev/null 2>&1 )
+  _ck "RPL7g the doctrine's blockquote escape works: a '> '-prefixed header on line 2 emits 0" "$(_ts_count_dir "$plog_rpl7g")" "0"
+  local plog_rpl7h="$tmp/pl-rpl7h"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7h" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7h" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7h.json" CLAUDE_SESSION_ID="sess-rpl-7h" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Handoff","prompt":"Here is what was dispatched:\n- NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\nJust report."},"session_id":"sess-rpl-7h"}' >/dev/null 2>&1 )
+  _ck "RPL7h the doctrine's list-prefix escape works: a '- '-prefixed header on line 2 emits 0" "$(_ts_count_dir "$plog_rpl7h")" "0"
 
   # RPL7c: THE LANE IS NOT COLLATERAL DAMAGE. A real dispatch -- whose prompt
   # OPENS with the header, which is what doctrine/orchestrator-pattern.md
@@ -2266,7 +2350,7 @@ PLANEOF
       CONV_TREE_STATE_PATH="$tmp/rpl-7c.json" CLAUDE_SESSION_ID="sess-rpl-7c" \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Build","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=71 role=builder\n\nBuild the thing. The prior attempt was dispatched with NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder and failed."},"session_id":"sess-rpl-7c"}' >/dev/null 2>&1 )
   local plfile_rpl7c="$plog_rpl7c/ask-pl-fixture-1.jsonl"
-  if [[ -f "$plfile_rpl7c" ]] && grep -q '"task_id":"71"' "$plfile_rpl7c" 2>/dev/null && ! grep -q '"task_id":"9"' "$plfile_rpl7c" 2>/dev/null; then
+  if [[ -f "$plfile_rpl7c" ]] && grep -q '"task_id":"71"' "$plfile_rpl7c" 2>/dev/null && [[ "$(_ts_grep_dir "$plog_rpl7c" '"task_id":"9"')" == "0" ]]; then
     echo "PASS: RPL7c a real dispatch OPENING with its header still emits exactly one event naming ITS task (71), not the task quoted later in the same prompt (9)"; pass=$((pass+1))
   else
     echo "FAIL: RPL7c expected exactly task_id=71 (never 9) in $plfile_rpl7c"; fail=$((fail+1))
@@ -3110,12 +3194,34 @@ _extract_nl_attribution() {
   # text"; that looser wording was the bug's charter and is corrected in the
   # same commit.)
   #
-  # RESIDUAL, STATED NOT HIDDEN: a positional anchor is a heuristic, not a
-  # proof of intent. A prompt that LITERALLY BEGINS with a quoted header is
-  # still indistinguishable from a real dispatch and will still emit. Closing
-  # that needs an out-of-band channel (a dispatch field the prose cannot
-  # forge), which this hook cannot reach from PreToolUse tool_input alone --
-  # filed as a residual in docs/backlog.md rather than papered over here.
+  # RESIDUAL, STATED FROM THE EXECUTED BOUNDARY (restated 2026-07-30 after a
+  # harness-reviewer REFORMULATE; the previous wording here was UNDERSTATED and
+  # its doctrine counterpart was outright FALSE).
+  #
+  # THE RESIDUAL IS: any quoted header that STARTS A LINE -- with arbitrary
+  # leading whitespace, including the indentation a fenced or indented paste
+  # adds -- ANYWHERE within the first NL_ATTRIBUTION_MAX_LINE lines still
+  # emits. It is NOT limited to "a prompt that literally begins with a quoted
+  # header". Measured against this exact code: a 2-line preamble + fenced
+  # paste EMITS; a 4-space-indented paste EMITS; a TAB-indented header on line
+  # 2 EMITS; a 3-line preamble + fence (header on line 5, the last admitted
+  # line) EMITS. Silent: header on line 6, and any `> ` or `- ` prefix.
+  # Pinned by RPL7d/RPL7e/RPL7f (the n-1 / n / n+1 boundary triple) and
+  # RPL7g/RPL7h (the documented escapes).
+  #
+  # WHY THE EARLIER WORDING WAS WRONG, because the mechanism generalizes:
+  # RPL7b passes with a preamble that happens to run EIGHT lines, clearing the
+  # 5-line window by a wide margin. Prose written from that single test
+  # generalized to "a quoted header below the prose that introduces it is
+  # inert" -- false for every preamble shorter than the window, which is the
+  # shape a real handoff prompt has. A positional guard exercised only
+  # comfortably beyond its threshold certifies nothing about the threshold.
+  # RULE: every threshold guard ships n-1, n AND n+1, and the prose residual
+  # is written from the executed boundary, never from the motivating anecdote.
+  #
+  # Closing the residual entirely needs an out-of-band channel (a dispatch
+  # field the prose cannot forge), which this hook cannot reach from
+  # PreToolUse tool_input alone -- filed in docs/backlog.md, not papered over.
   #
   # The window is overridable so a caller can compress or widen it without
   # editing the parser; 5 lines allows a blank line or a short preamble ahead
