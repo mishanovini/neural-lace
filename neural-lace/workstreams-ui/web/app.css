@@ -456,6 +456,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .ask-artifact-ts { color: var(--muted); font-size: 11px; }
 
 .ask-link-resolved a { color: var(--info); }
+/* COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — a repo-file reference in the ask
+   tree is now a <button> opening the in-page docs viewer instead of a dead
+   `file://` anchor. Same UA-chrome reset + link appearance as
+   .todo-pointer-link-btn / .rm-plan-link-btn. */
+.ask-link-doc-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer; color: var(--info);
+}
+.ask-link-doc-btn:hover { text-decoration: underline; }
 .ask-copy-btn { margin-left: 2px; }
 
 .ask-lifecycle-row { margin-top: 8px; }
@@ -678,6 +687,17 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .backlog-header-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .backlog-counts-summary { color: var(--muted); }
 .backlog-open-file-link { color: var(--info); }
+/* COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — "open backlog.md" is now a <button>
+   opening the in-page docs viewer (the old `file://` href was dead: a
+   browser loading this page over http silently refuses it — PROVEN live at
+   :7733, it was the only file:// anchor in the whole DOM). Reset UA button
+   chrome so it still READS as the same link it always was, matching
+   .todo-pointer-link-btn / .rm-plan-link-btn above. */
+.backlog-open-file-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer; color: var(--info);
+}
+.backlog-open-file-btn:hover { text-decoration: underline; }
 .backlog-toggle-btn { margin-left: auto; }
 
 .backlog-tier-group { margin-bottom: 8px; }

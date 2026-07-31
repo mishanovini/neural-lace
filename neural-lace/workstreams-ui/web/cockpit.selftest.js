@@ -251,8 +251,14 @@ ok('T13-7 asks.js mirrors payload-schema.js\'s 5-shape isAbsoluteHref check (htt
   /function isAbsoluteHref/.test(asksJs) &&
   /\^https\?/.test(asksJs) && /file:\\\/\\\//.test(asksJs) && /A-Za-z\]:/.test(asksJs));
 const hrefAssignCount = (asksJs.match(/\.href\s*=/g) || []).length;
-ok('T13-8 asks.js sets .href only inside the two guarded branches of absoluteLinkNode (http(s) passthrough + best-effort file:// conversion) — never a bare/relative href',
-  hrefAssignCount === 2);
+// T13-8 FLIPS here (COCKPIT-DEAD-FILE-HREF-RESIDUAL-01). It used to pin
+// hrefAssignCount === 2 — the http(s) passthrough PLUS the "best-effort
+// file:// conversion" branch. That second branch was the operator-facing
+// bug ("the links don't work"): a file:// href is dead from an http-served
+// page. It is deleted, so the count is now 1, and a REGRESSION back to 2
+// fails this assertion.
+ok('T13-8 asks.js sets .href exactly ONCE — the http(s) passthrough branch of absoluteLinkNode. The old file:// conversion branch is gone (a repo-file path routes through the doc modal instead), so no bare, relative, or dead href can be assigned',
+  hrefAssignCount === 1);
 
 // --- plan-doc links reuse the EXISTING docModal (ux-review amendment 6:
 // "no pane grows its own link handling") — no second modal/viewer. ------
@@ -2883,6 +2889,274 @@ ok('R20-13 the client roll-up vocabulary matches the server\'s: "idle-dispatch" 
   })() &&
   /'idle-dispatch': 'stalled — no recent dispatch'/.test(roadmapJs) &&
   /\.chip\.rm-rollup-idle-dispatch/.test(C));
+
+// ============================================================
+// COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — the dead-`file://`-href CLASS SWEEP.
+//
+// Operator, live: "The links on the Inbox tab don't work." Root cause
+// (PROVEN): a client helper converted an absolute local path into a
+// `file://` href, which a browser loading this page over http silently
+// refuses to navigate — the link LOOKS clickable and does nothing. That was
+// fixed for roadmap.js (round 15) and inbox.js (R17) but the byte-identical
+// idiom survived in asks.js and backlog.js. Live probe of the running
+// cockpit at :7733 before this fix found exactly ONE anchor in the whole
+// rendered DOM whose href began `file:` — backlog.js's "open backlog.md".
+//
+// These assertions EXECUTE the real function bodies in a fake DOM (the
+// T6/T3-33 technique) and assert on the PRODUCED HREF — never on source
+// text. A source-regex assertion here would be exactly the weak check that
+// let this class survive two previous fixes: it proves a string is absent,
+// not that no code path can build one.
+// ============================================================
+function makeLinkFakeDom() {
+  function FakeNode(tag) {
+    this.tagName = tag; this.className = ''; this._text = ''; this.children = [];
+    this.attrs = {}; this.listeners = {};
+  }
+  Object.defineProperty(FakeNode.prototype, 'textContent', {
+    get: function () { return this._text; },
+    set: function (v) { this._text = v; this.children = []; },
+  });
+  FakeNode.prototype.appendChild = function (c) { this.children.push(c); return c; };
+  FakeNode.prototype.addEventListener = function (ev, fn) {
+    (this.listeners[ev] = this.listeners[ev] || []).push(fn);
+  };
+  FakeNode.prototype.setAttribute = function (k, v) { this.attrs[k] = v; };
+  return {
+    createElement: function (tag) { return new FakeNode(tag); },
+    createTextNode: function (t) { var n = new FakeNode('#text'); n._text = t; return n; },
+  };
+}
+// Walk a produced node tree and collect every href actually assigned.
+function collectHrefs(node, out) {
+  out = out || [];
+  if (!node || typeof node !== 'object') return out;
+  if (typeof node.href === 'string' && node.href) out.push(node.href);
+  (node.children || []).forEach(function (c) { collectHrefs(c, out); });
+  return out;
+}
+function collectTags(node, out) {
+  out = out || [];
+  if (!node || typeof node !== 'object') return out;
+  if (node.tagName) out.push(node.tagName);
+  (node.children || []).forEach(function (c) { collectTags(c, out); });
+  return out;
+}
+
+// ---- asks.js: absoluteLinkNode, REALLY EXECUTED ------------------------
+const askLinkSrc = extractMarkedBlock(asksJs, '// ABSOLUTE-LINK-NODE-BEGIN', '// ABSOLUTE-LINK-NODE-END');
+ok('CDFH-0 selftest can locate the ABSOLUTE-LINK-NODE extraction anchors in asks.js (source-execution harness precondition)',
+  !!askLinkSrc);
+function runAskLink(value, docRef) {
+  if (!askLinkSrc) return { __error: 'extraction anchors missing' };
+  const opened = [];
+  const sandbox = {
+    document: makeLinkFakeDom(),
+    // stubs for the two helpers the extracted block calls but does not own
+    makeCopyBtn: function (text, label) {
+      const n = makeLinkFakeDom().createElement('button');
+      n.textContent = label || 'copy'; n.copyPayload = text; return n;
+    },
+    openPlanDocModal: function (p, d) { opened.push(p + '/' + d); },
+    __opened: opened,
+  };
+  vmMod.createContext(sandbox);
+  const code = askLinkSrc + '\nvar __result = absoluteLinkNode(' +
+    JSON.stringify(value === undefined ? null : value) + ', ' +
+    JSON.stringify(docRef === undefined ? null : docRef) + ');';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return { node: sandbox.__result, opened: opened };
+}
+// The REAL values these four call sites carry (from the live server and the
+// real ask-registry.jsonl), not invented ones.
+const REAL_RAW_LINK = '/Users/misha/Claude/neural-lace/NEEDS-YOU.md';          // server.js needsYouMdPath()
+const REAL_VERBATIM = '/Users/misha/.claude/projects/-Users-misha-Claude-neural-lace/a3fcb6ea.jsonl#0'; // real registry row
+const REAL_EVIDENCE = '/Users/misha/Claude/neural-lace/docs/plans/some-plan.md';
+const REAL_WIN_PATH = 'C:/Users/misha/docs/backlog.md';                         // drive-letter branch
+
+ok('CDFH-1 asks.js absoluteLinkNode produces ZERO file:// hrefs for the REAL absolute paths its four call sites carry (raw_link, verbatim_ref, evidence_link, a Windows drive-letter path) — executed, asserting on the produced href, with NO doc_ref available',
+  (function () {
+    return [REAL_RAW_LINK, REAL_VERBATIM, REAL_EVIDENCE, REAL_WIN_PATH].every(function (v) {
+      const r = runAskLink(v, null);
+      if (r.__error) return false;
+      const hrefs = collectHrefs(r.node);
+      return hrefs.filter(function (h) { return /^file:/i.test(h); }).length === 0;
+    });
+  })());
+ok('CDFH-2 with no doc_ref, an absolute path degrades to PLAIN TEXT + a copy affordance — no <a> element at all is produced (an honest non-link, never a fabricated one)',
+  (function () {
+    const r = runAskLink(REAL_VERBATIM, null);
+    if (r.__error) return false;
+    const tags = collectTags(r.node);
+    return tags.indexOf('a') === -1 && tags.indexOf('button') !== -1 &&
+      collectHrefs(r.node).length === 0;
+  })());
+ok('CDFH-3 with a server-resolved doc_ref, the path becomes a real <button> whose click OPENS THE IN-PAGE DOC VIEWER with that {project, path} — the click handler is invoked and observed, not merely present',
+  (function () {
+    const r = runAskLink(REAL_RAW_LINK, { project: 'neural-lace', path: 'NEEDS-YOU.md' });
+    if (r.__error) return false;
+    const tags = collectTags(r.node);
+    if (tags.indexOf('button') === -1 || tags.indexOf('a') !== -1) return false;
+    if (collectHrefs(r.node).length !== 0) return false;
+    // actually fire the click handler the code registered
+    const btn = (r.node.children || []).filter(function (c) { return c.tagName === 'button'; })[0];
+    if (!btn || !btn.listeners.click || !btn.listeners.click.length) return false;
+    btn.listeners.click[0]();
+    return r.opened.length === 1 && r.opened[0] === 'neural-lace/NEEDS-YOU.md';
+  })());
+ok('CDFH-4 a genuine http(s) link is STILL an ordinary navigable anchor (the cure must not break real links) — href assigned verbatim, target/rel preserved',
+  (function () {
+    const r = runAskLink('https://github.com/x/y/pull/1', null);
+    if (r.__error) return false;
+    const hrefs = collectHrefs(r.node);
+    return hrefs.length === 1 && hrefs[0] === 'https://github.com/x/y/pull/1' &&
+      collectTags(r.node).indexOf('a') !== -1;
+  })());
+ok('CDFH-5 an http(s) link WINS over a doc_ref (the http branch is checked first) and an empty/absent value renders the literal "(none)" with no href — the two edge branches still behave',
+  (function () {
+    const withBoth = runAskLink('https://example.com/a', { project: 'p', path: 'q.md' });
+    const empty = runAskLink('', null);
+    const nul = runAskLink(null, null);
+    if (withBoth.__error || empty.__error || nul.__error) return false;
+    return collectHrefs(withBoth.node).length === 1 &&
+      collectTags(withBoth.node).indexOf('button') === -1 &&
+      empty.node.textContent === '(none)' && collectHrefs(empty.node).length === 0 &&
+      nul.node.textContent === '(none)' && collectHrefs(nul.node).length === 0;
+  })());
+ok('CDFH-6 a RELATIVE reference (the common real shape in a §3 Links: line, e.g. "docs/backlog.md") is never turned into an href, with or without a doc_ref present',
+  (function () {
+    const r = runAskLink('docs/backlog.md', null);
+    return !r.__error && collectHrefs(r.node).length === 0 && collectTags(r.node).indexOf('a') === -1;
+  })());
+
+// ---- backlog.js: absoluteLinkHref + the open-file affordance, EXECUTED --
+const backlogHrefSrc = extractMarkedBlock(backlogJs, '// ABSOLUTE-LINK-HREF-BEGIN', '// ABSOLUTE-LINK-HREF-END');
+const backlogAffordanceSrc = extractMarkedBlock(backlogJs, '// OPEN-FILE-AFFORDANCE-BEGIN', '// OPEN-FILE-AFFORDANCE-END');
+ok('CDFH-7 selftest can locate backlog.js\'s ABSOLUTE-LINK-HREF and OPEN-FILE-AFFORDANCE extraction anchors (source-execution harness precondition)',
+  !!backlogHrefSrc && !!backlogAffordanceSrc);
+function runBacklogHref(value) {
+  if (!backlogHrefSrc) return { __error: 'anchors missing' };
+  const sandbox = {};
+  vmMod.createContext(sandbox);
+  try {
+    vmMod.runInContext(backlogHrefSrc + '\nvar __r = absoluteLinkHref(' +
+      JSON.stringify(value === undefined ? null : value) + ');', sandbox);
+  } catch (err) { return { __error: String(err) }; }
+  return sandbox.__r;
+}
+// The REAL file_path the LIVE server returns from GET /api/backlog.
+const REAL_BACKLOG_PATH = '/Users/misha/Claude/neural-lace/docs/backlog.md';
+ok('CDFH-8 backlog.js absoluteLinkHref returns NULL (never a file:// URL) for the REAL absolute file_path the live server serves, and for a Windows drive-letter path — executed, asserting on the returned href',
+  runBacklogHref(REAL_BACKLOG_PATH) === null && runBacklogHref(REAL_WIN_PATH) === null &&
+  runBacklogHref('/any/absolute/path.md') === null && runBacklogHref('\\\\host\\share\\x.md') === null);
+ok('CDFH-9 backlog.js absoluteLinkHref still passes a genuine http(s) URL through unchanged (real links keep working)',
+  runBacklogHref('https://example.com/backlog.md') === 'https://example.com/backlog.md' &&
+  runBacklogHref('') === null && runBacklogHref(null) === null);
+
+function runBacklogAffordance(payload) {
+  if (!backlogAffordanceSrc) return { __error: 'anchors missing' };
+  const dom = makeLinkFakeDom();
+  const header = dom.createElement('div');
+  const opened = [];
+  const sandbox = {
+    document: dom, header: header, payload: payload,
+    absoluteLinkHref: function (v) { return runBacklogHref(v); },
+    openBacklogDocModal: function (p, d) { opened.push(p + '/' + d); },
+  };
+  vmMod.createContext(sandbox);
+  try { vmMod.runInContext(backlogAffordanceSrc, sandbox); }
+  catch (err) { return { __error: String(err) }; }
+  return { header: header, opened: opened };
+}
+ok('CDFH-10 the "open backlog.md" affordance produces ZERO file:// hrefs for the REAL live payload — executed against the exact {file_path, file_doc_ref} shape GET /api/backlog now returns',
+  (function () {
+    const r = runBacklogAffordance({
+      file_path: REAL_BACKLOG_PATH,
+      file_doc_ref: { project: 'neural-lace', path: 'docs/backlog.md' },
+    });
+    if (r.__error) return false;
+    return collectHrefs(r.header).filter(function (h) { return /^file:/i.test(h); }).length === 0;
+  })());
+ok('CDFH-11 that affordance is a real <button> that OPENS THE IN-PAGE DOC VIEWER at the resolved {project, path} — the registered click handler is fired and its effect observed, not merely asserted present',
+  (function () {
+    const r = runBacklogAffordance({
+      file_path: REAL_BACKLOG_PATH,
+      file_doc_ref: { project: 'neural-lace', path: 'docs/backlog.md' },
+    });
+    if (r.__error) return false;
+    const tags = collectTags(r.header);
+    if (tags.indexOf('button') === -1 || tags.indexOf('a') !== -1) return false;
+    const btn = r.header.children[0];
+    if (!btn.listeners.click || !btn.listeners.click.length) return false;
+    btn.listeners.click[0]();
+    return r.opened.length === 1 && r.opened[0] === 'neural-lace/docs/backlog.md' &&
+      btn.textContent === 'open backlog.md';
+  })());
+ok('CDFH-12 with an UNRESOLVABLE file_doc_ref (path outside every known project root) the affordance is OMITTED entirely rather than rendered as a link that cannot work — zero children, zero hrefs',
+  (function () {
+    const r = runBacklogAffordance({ file_path: REAL_BACKLOG_PATH, file_doc_ref: null });
+    if (r.__error) return false;
+    return r.header.children.length === 0 && collectHrefs(r.header).length === 0;
+  })());
+ok('CDFH-13 an http(s) file_path (a remotely-served backlog) still renders an ordinary navigable anchor — the cure does not remove genuine links',
+  (function () {
+    const r = runBacklogAffordance({ file_path: 'https://example.com/backlog.md', file_doc_ref: null });
+    if (r.__error) return false;
+    const hrefs = collectHrefs(r.header);
+    return hrefs.length === 1 && hrefs[0] === 'https://example.com/backlog.md' &&
+      collectTags(r.header).indexOf('a') !== -1;
+  })());
+
+// ---- the class predicate itself, asserted over the whole client tree ----
+// This is the assertion that would have caught the residual: it is not
+// scoped to the two files this round cured, so a THIRD surface reintroducing
+// the idiom fails here too. Comments/strings are stripped first, so the
+// explanatory prose above (which necessarily says "file://") does not
+// self-satisfy or self-trip the check.
+// NOTE on the stripper below: this assertion deliberately does NOT reuse the
+// shared stripJsComments(). That helper strips `//`-to-end-of-line, and the
+// `//` inside the very literal we are hunting (`'file:///' + norm`) looks
+// exactly like a comment start to it — it rewrites `'file:///' + norm` down
+// to `'file:` and the predicate then matches nothing. That was caught by
+// mutation: with the old dead-href helper restored, a stripJsComments-based
+// version of this check stayed GREEN, i.e. it was theater. The line-based
+// stripper here removes only whole comment LINES (and block comments),
+// leaving string literals on code lines intact.
+function stripCommentLinesOnly(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .filter(function (l) { const t = l.trim(); return t.slice(0, 2) !== '//' && t.slice(0, 1) !== '*'; })
+    .join('\n');
+}
+const cdfhOffenders = (function () {
+  const files = fs.readdirSync(D).filter(function (f) { return /\.js$/.test(f) && f !== 'cockpit.selftest.js'; });
+  const offenders = [];
+  files.forEach(function (f) {
+    const stripped = stripCommentLinesOnly(fs.readFileSync(path.join(D, f), 'utf8'));
+    // a CONSTRUCTION is a file:// opening a string literal or template
+    if (/['"`]file:\/\//.test(stripped)) offenders.push(f);
+  });
+  return offenders;
+})();
+ok('CDFH-14 CLASS PREDICATE: no client-side source file anywhere under web/ CONSTRUCTS a file:// string literal (whole comment lines stripped; the isAbsoluteHref RECOGNIZER, which only .test()s the shape and builds nothing, is exempt and asserted separately below). Not scoped to the two files this round cured — a THIRD surface reintroducing the idiom fails HERE',
+  cdfhOffenders.length === 0, 'offenders: ' + JSON.stringify(cdfhOffenders));
+ok('CDFH-15 the ONE surviving file:// mention in live client code is asks.js\'s isAbsoluteHref RECOGNIZER — it only ever returns a boolean, and executing it proves it classifies rather than constructs',
+  (function () {
+    const r = runAskLink('file:///Users/misha/x.md', null);
+    if (r.__error) return false;
+    // A value that ALREADY arrives as a file:// URL is still not turned into
+    // an anchor by this module — it degrades to text + copy like any other
+    // unopenable reference.
+    return collectHrefs(r.node).length === 0 && collectTags(r.node).indexOf('a') === -1;
+  })());
+
+ok('CDFH-16 ALL FOUR in-page doc openers render through the shared window.MdRender pipeline — asks.js was the last one still dumping raw markdown via textContent, and this round routes four more link kinds through it, so a newly-cured link would otherwise open a visibly worse view than an already-cured one',
+  ['asks.js', 'roadmap.js', 'inbox.js', 'backlog.js'].every(function (f) {
+    const s = fs.readFileSync(path.join(D, f), 'utf8');
+    return /window\.MdRender && typeof window\.MdRender\.renderMarkdown === 'function'/.test(s) &&
+      /docBody\.innerHTML = window\.MdRender\.renderMarkdown\(j\.content\)/.test(s);
+  }));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

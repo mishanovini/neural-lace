@@ -21,16 +21,27 @@
  * reaches the wire. This module never fabricates copy that mentions a
  * script, hook, or oracle name.
  *
- * Absolute-links law (hard constraint 2): the ONE place this module ever
- * sets a real `<a href>` is `absoluteLinkNode()`, which only accepts
- * http(s)/file:// /drive-letter/UNC/POSIX-absolute strings (mirrors
- * `server/payload-schema.js`'s `isAbsoluteHref`) — anything else renders as
- * plain text + a copy button, never a relative href. Plan-doc links are the
- * ONE documented exception (ux-review amendment 6): they resolve through
- * the EXISTING `/api/doc` + `/api/doc/open` handlers via the shared
- * `docModal` DOM (app.js already wires its close affordances — Esc,
- * docClose, docScrim — this module reuses those elements/handlers rather
- * than growing its own modal).
+ * Absolute-links law (hard constraint 2, TIGHTENED by
+ * COCKPIT-DEAD-FILE-HREF-RESIDUAL-01): the ONE place this module ever sets
+ * a real `<a href>` is `absoluteLinkNode()`, and the only href it can now
+ * produce is an http(s) one. It used to best-effort convert a local
+ * absolute path to `file://`; that href is DEAD from an http-served page
+ * (the browser silently refuses to navigate it), so the conversion helper
+ * is deleted outright. A repo-file path now resolves through the EXISTING
+ * `/api/doc` + `/api/doc/open` handlers via the shared `docModal` DOM
+ * (app.js already wires its close affordances — Esc, docClose, docScrim —
+ * this module reuses those elements/handlers rather than growing its own
+ * modal), driven by the server-supplied `{project, path}` doc refs
+ * (`doc_ref`, `link_refs[i]`, `verbatim_doc_ref`, `evidence_doc_ref`) that
+ * mirror the `plan_doc` ref this module already consumed. Anything that
+ * resolves to neither an http(s) URL nor a doc ref renders as plain text +
+ * a copy button — never a relative, fabricated, or dead href.
+ *
+ * NOTE `isAbsoluteHref()` below still RECOGNIZES the `file://` shape (it
+ * mirrors payload-schema.js's five accepted shapes, and a value that
+ * already arrives as a file:// URL is still absolute). Recognizing that
+ * shape is not the same as CONSTRUCTING one — this module no longer
+ * constructs any.
  */
 (function () {
   var root = document.getElementById('askTreeBody');
@@ -78,9 +89,13 @@
     return b;
   }
 
+  // ABSOLUTE-LINK-NODE-BEGIN
   // isAbsoluteHref — mirrors server/payload-schema.js's isAbsoluteHref
   // exactly (same five accepted shapes) so this module never sets a
-  // relative `<a href>` regardless of what a future field carries.
+  // relative `<a href>` regardless of what a future field carries. This is
+  // a RECOGNIZER (it answers "is this string already absolute?"), never a
+  // constructor — see the file header's note on why the `file://` shape is
+  // still listed here even though nothing builds one any more.
   function isAbsoluteHref(v) {
     if (typeof v !== 'string' || v === '') return false;
     if (/^https?:\/\//i.test(v)) return true;
@@ -91,21 +106,27 @@
     return false;
   }
 
-  function toFileUrl(p) {
-    var norm = String(p).replace(/\\/g, '/');
-    if (/^[A-Za-z]:\//.test(norm)) return 'file:///' + norm;
-    if (/^\/\//.test(norm)) return null; // UNC — not worth the encoding risk; copy-only is the honest fallback
-    if (/^\//.test(norm)) return 'file://' + norm;
-    return null;
-  }
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 (operator, live: "the links … don't
+  // work"): `toFileUrl` USED TO LIVE HERE and turned every absolute local
+  // path into a `file://` href — which a browser loading this page over
+  // http silently refuses to navigate (the link LOOKED clickable and did
+  // nothing). It is DELETED, not patched: the same class row 70 fixed for
+  // roadmap plan links and R17 fixed for inbox pointer rows, swept here.
+  // A repo-file path now routes through the in-page doc viewer instead
+  // (openPlanDocModal, below, already present in this file for plan docs).
 
-  // absoluteLinkNode(value) — the ONE function in this module that ever
-  // assigns a real `<a href>`. Any non-empty string reaches here (evidence
-  // links, raw NEEDS-YOU.md links, needs-you.sh §3 `links[]` entries); only
-  // an absolute shape becomes a clickable anchor (http(s) as-is, a local
-  // absolute path best-effort converted to `file://`) — everything else is
-  // plain text + a copy affordance, never a relative href (constraint 2).
-  function absoluteLinkNode(value) {
+  // absoluteLinkNode(value, docRef) — the ONE function in this module that
+  // ever assigns a real `<a href>`, and it now only EVER assigns an http(s)
+  // one. Any non-empty string reaches here (evidence links, raw
+  // NEEDS-YOU.md links, §3 `links[]` entries, capture references):
+  //   - http(s)            -> a real anchor (genuinely navigable)
+  //   - server-resolved
+  //     docRef {project,path} -> a real <button> opening the EXISTING
+  //                          /api/doc viewer (never a second renderer)
+  //   - anything else      -> plain text + a copy affordance
+  // No branch can produce `file://` any more — that is the invariant this
+  // function exists to hold (constraint 2, tightened).
+  function absoluteLinkNode(value, docRef) {
     var wrap = document.createElement('span');
     wrap.className = 'ask-link-resolved';
     if (typeof value !== 'string' || value === '') {
@@ -119,25 +140,26 @@
       wrap.appendChild(a);
       return wrap;
     }
-    if (isAbsoluteHref(value)) {
-      var fileUrl = toFileUrl(value);
-      if (fileUrl) {
-        var fa = document.createElement('a');
-        fa.href = fileUrl; fa.target = '_blank'; fa.rel = 'noopener noreferrer';
-        fa.textContent = value;
-        wrap.appendChild(fa);
-      } else {
-        wrap.appendChild(document.createTextNode(value));
-      }
+    if (docRef && docRef.project && docRef.path) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'ask-link-doc-btn';
+      b.textContent = value;
+      b.title = 'open ' + docRef.project + '/' + docRef.path + ' in the docs viewer';
+      b.addEventListener('click', function () { openPlanDocModal(docRef.project, docRef.path); });
+      wrap.appendChild(b);
       wrap.appendChild(makeCopyBtn(value, 'copy path'));
       return wrap;
     }
-    // Not absolute — never rendered as a clickable href (constraint 2).
-    // Plain text + copy so the reference is never silently dropped.
+    // Absolute but outside every known project root (e.g. a capture
+    // reference under ~/.claude/projects), or not absolute at all: plain
+    // text + copy, so the reference is never silently dropped and never
+    // fabricated into a link that cannot work.
     wrap.appendChild(document.createTextNode(value));
-    wrap.appendChild(makeCopyBtn(value));
+    wrap.appendChild(makeCopyBtn(value, isAbsoluteHref(value) ? 'copy path' : 'copy'));
     return wrap;
   }
+  // ABSOLUTE-LINK-NODE-END
 
   // openPlanDocModal(project, path) — reuses the EXISTING docModal DOM
   // app.js already renders/wires (docClose click, docScrim click, Escape
@@ -153,7 +175,26 @@
     docModal.hidden = false;
     fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
       .then(function (r) { return r.json(); })
-      .then(function (j) { docBody.textContent = j && j.ok ? j.content : ('error: ' + (j && j.error)); })
+      .then(function (j) {
+        // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: this opener was the ONE of the
+        // four in this app still dumping raw markdown as textContent —
+        // roadmap.js, inbox.js and backlog.js all render through the shared
+        // window.MdRender pipeline. Swept here too, because this round
+        // routes four MORE link kinds (raw_link, links[], evidence_link,
+        // verbatim_ref) through this exact function; leaving it would have
+        // made the newly-fixed links open a visibly worse view than the
+        // already-fixed ones. Falls back to plain text when MdRender is
+        // absent, exactly as the other three do.
+        if (j && j.ok) {
+          if (window.MdRender && typeof window.MdRender.renderMarkdown === 'function') {
+            docBody.innerHTML = window.MdRender.renderMarkdown(j.content);
+          } else {
+            docBody.textContent = j.content;
+          }
+        } else {
+          docBody.textContent = 'error: ' + (j && j.error);
+        }
+      })
       .catch(function (err) { docBody.textContent = 'error: ' + err; });
     if (docOpenEditor) {
       docOpenEditor.onclick = function () {
@@ -481,7 +522,7 @@
       var label = document.createElement('span');
       label.textContent = 'Raw ledger entry: ';
       recovery.appendChild(label);
-      recovery.appendChild(absoluteLinkNode(item.raw_link));
+      recovery.appendChild(absoluteLinkNode(item.raw_link, item.doc_ref));
       box.appendChild(recovery);
       if (item.session_id) {
         var sessRow = document.createElement('div');
@@ -503,7 +544,8 @@
     if (item.links && item.links.length) {
       var linksRow = document.createElement('div');
       linksRow.className = 'ask-waiting-links';
-      item.links.forEach(function (l) { linksRow.appendChild(absoluteLinkNode(l)); });
+      var linkRefs = item.link_refs || [];
+      item.links.forEach(function (l, i) { linksRow.appendChild(absoluteLinkNode(l, linkRefs[i])); });
       box.appendChild(linksRow);
     }
     if (item.session_id) {
@@ -570,7 +612,7 @@
         var ev = document.createElement('span');
         ev.className = 'ask-task-evidence';
         ev.appendChild(document.createTextNode('evidence: '));
-        ev.appendChild(absoluteLinkNode(t.evidence_link));
+        ev.appendChild(absoluteLinkNode(t.evidence_link, t.evidence_doc_ref));
         li.appendChild(ev);
       }
       // cockpit-roadmap-redesign Task 8 (absorbed UI-polish item 3, render
@@ -729,7 +771,7 @@
       // architecture cannot actually produce.
       label.textContent = 'Capture reference (transcript path + prompt offset):';
       row.appendChild(label);
-      row.appendChild(absoluteLinkNode(detail.verbatim_ref));
+      row.appendChild(absoluteLinkNode(detail.verbatim_ref, detail.verbatim_doc_ref));
       container.appendChild(row);
     });
   }

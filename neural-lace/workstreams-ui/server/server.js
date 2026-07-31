@@ -703,10 +703,21 @@ function buildBacklogPayload() {
   };
   const bp = backlogMdPath();
   const filePathAbs = payloadSchema.isAbsoluteHref(bp) ? bp : '';
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 (class sweep of the operator's "the
+  // links don't work"): backlog.js used to turn `file_path` into a real
+  // `file://` anchor, which a browser loading this page over http silently
+  // refuses to navigate — PROVEN dead live at :7733 (the ONE file:// anchor
+  // in the whole rendered DOM was this pane's "open backlog.md"). Same cure
+  // as inbox.js/roadmap.js: resolve the SAME absolute path against the SAME
+  // project map (deriveLib.projectDocRefFor) so the client drills through
+  // the EXISTING /api/doc viewer instead. null when the file lies outside
+  // every configured/discovered project root — the client then degrades to
+  // plain text + copy, never a fabricated link.
   return {
     ok: true,
     generated_at: new Date().toISOString(),
     file_path: filePathAbs,
+    file_doc_ref: filePathAbs ? deriveLib.projectDocRefFor(filePathAbs) : null,
     compact_cap: BACKLOG_COMPACT_CAP,
     counts: counts,
     compact: compact,
@@ -863,13 +874,24 @@ function buildWaitingItems(events) {
     if (block && hasGenuineContext(block.body)) {
       out.push({
         needs_you_id: e.needs_you_id, defect: false, title: block.title, body: block.body,
-        links: block.links, session_id: e.session_id || block.session || '', added: block.added,
+        links: block.links,
+        // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: parallel to `links` — entry i
+        // is {project, path} when links[i] is an absolute path under a known
+        // project root (so the client opens it in the EXISTING /api/doc
+        // viewer), else null (plain text + copy). Never a `file://` href.
+        link_refs: (block.links || []).map((l) => (
+          payloadSchema.isAbsoluteHref(l) && !/^https?:\/\//i.test(l) ? deriveLib.projectDocRefFor(l) : null
+        )),
+        session_id: e.session_id || block.session || '', added: block.added,
       });
     } else {
       out.push({
         needs_you_id: e.needs_you_id, defect: true,
         message: 'context missing — session violated §3',
-        raw_link: needsYouMdPath(), session_id: e.session_id || '',
+        raw_link: needsYouMdPath(),
+        // Same cure inbox.js's pointer rows already use for this EXACT path.
+        doc_ref: deriveLib.projectDocRefFor(needsYouMdPath()),
+        session_id: e.session_id || '',
       });
     }
   });
@@ -990,7 +1012,14 @@ function buildAskDetailPayload(askId) {
   reg.ask_id = askId;
   const events = deriveLib.readAskEvents(askId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
   const planRows = deriveLib.computePlanRows(reg, events, auditor.getBadgesForAsk);
-  const narrative = events.map((e) => ({ ts: e.ts || '', summary: narrativeSummary(e), evidence_link: e.evidence_link || '' }));
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: every absolute-path link the ask
+  // detail carries gets a doc_ref alongside it, so asks.js can route it
+  // through the EXISTING /api/doc viewer instead of a dead `file://` anchor.
+  const narrative = events.map((e) => ({
+    ts: e.ts || '', summary: narrativeSummary(e), evidence_link: e.evidence_link || '',
+    evidence_doc_ref: e.evidence_link && !/^https?:\/\//i.test(e.evidence_link)
+      ? deriveLib.projectDocRefFor(e.evidence_link) : null,
+  }));
   const waitingItems = buildWaitingItems(events);
   const artifacts = buildArtifacts(events);
   const markers = deriveLib.readDispatchProvenanceMarkers();
@@ -1004,6 +1033,14 @@ function buildAskDetailPayload(askId) {
     repo: reg.repo || '',
     status: reg.status || 'active',
     verbatim_ref: reg.verbatim_ref || '',
+    // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: a capture reference is
+    // `<abs transcript path>#<prompt offset>`; the `#…` fragment is stripped
+    // before resolution (it addresses an offset WITHIN the file, not a
+    // different file). In practice these live under ~/.claude/projects and
+    // resolve to null — the client then renders plain text + copy, which is
+    // the honest fallback, never a dead `file://` anchor.
+    verbatim_doc_ref: reg.verbatim_ref && !/^https?:\/\//i.test(reg.verbatim_ref)
+      ? deriveLib.projectDocRefFor(String(reg.verbatim_ref).replace(/#.*$/, '')) : null,
     plan_slugs: reg.plan_slugs || [],
     narrative: narrative,
     plan_rows: planRows,

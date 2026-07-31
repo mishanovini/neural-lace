@@ -440,8 +440,14 @@ function computePlanRows(reg, events, getBadgesForAsk) {
     const tasks = (planTasks || []).map((t) => {
       const inFlight = !t.done && !!startedSet[t.id] && !doneMap[t.id];
       const rowBadges = askBadges.filter((b) => b.plan_slug === slug && b.task_id === t.id);
+      const evLink = doneMap[t.id] || '';
       return {
-        id: t.id, done: t.done, in_flight: inFlight, evidence_link: doneMap[t.id] || '',
+        id: t.id, done: t.done, in_flight: inFlight, evidence_link: evLink,
+        // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: the SAME projectDocRefFor
+        // `plan_doc` (one line below) already uses — so asks.js can open an
+        // absolute evidence path in the EXISTING /api/doc viewer instead of
+        // emitting a `file://` anchor a browser silently refuses.
+        evidence_doc_ref: evLink && !/^https?:\/\//i.test(evLink) ? projectDocRefFor(evLink) : null,
         drift_badges: rowBadges, description: clampTaskDescription(t.description),
       };
     });
