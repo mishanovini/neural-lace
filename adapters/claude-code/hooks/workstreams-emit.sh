@@ -2810,11 +2810,15 @@ _run_on_builder_dispatch() {
   # lib is called by session-resumer.sh (hookless scheduled dispatcher) and
   # spawn-worktree.sh. Best-effort by construction — a missing or broken lib
   # leaves this hook's behavior byte-identical. See hooks/lib/admission-lib.sh.
-  {
+  (
+    # SUBSHELL, not brace group (round-3 review M1: 4th sibling of the same
+    # containment sweep — a set -u abort inside the lib escapes
+    # `{...} || true` and would kill this hook before the correlation-ledger
+    # write below).
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/admission-lib.sh" 2>/dev/null \
       && declare -F adm_admit >/dev/null 2>&1 \
       && adm_admit emit-feed kind="$([[ "${bg:-0}" == "1" ]] && printf bg || printf fg)" >/dev/null 2>&1
-  } || true
+  ) || true
 
   # Builder correlation ledger (observability + reconciler hint):
   # item_id \t child_id \t tool \t bg \t title \t ts — append once per item.

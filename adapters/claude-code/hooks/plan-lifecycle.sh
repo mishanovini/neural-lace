@@ -1560,7 +1560,7 @@ EOP
   # Cross _amendment_replay_token's debounce window so the 3rd transition
   # counts as a NEW amendment rather than a hook re-fire of 20a's edit.
   # AMENDMENT_REPLAY_DEBOUNCE_SECONDS=1 compresses the clock instead of
-  # sleeping past the real 30s production window (a 31s sleep in a self-test
+  # sleeping past the real 120s production window (a past-window sleep in a self-test
   # is not worth it) -- same mechanism, same boundary, only the width is
   # parameterized via the documented knob. Scenario 20d below then runs at
   # the PRODUCTION DEFAULT to assert the other side of the window (a replay
