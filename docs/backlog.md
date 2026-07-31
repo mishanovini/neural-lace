@@ -2793,3 +2793,87 @@ requested alongside the roadmap rollup fix).
   or needs-you.sh instead"; (b) anything genuinely needing the operator goes to NEEDS-YOU.md
   AND is stated in chat the same turn — the durable ledger is the deterministic surface,
   the chip is not.
+
+## SURFACE-PREDICATE-NARROWER-THAN-DELIVERY-IDENTITY-01 — the same class, caught twice in one day
+
+**Severity:** CRITICAL, OPEN (fix in flight)
+**Confidence:** PROVEN — reproduced end-to-end against a real bare remote with the gate
+installed as the actual pre-push hook, by an independent harness-reviewer.
+
+**The class.** A harness predicate decides membership by comparing a path STRING under an
+equivalence relation NARROWER than the one the delivery layer actually applies. The predicate
+answers truthfully about the string it was given, and the wrong thing lands anyway.
+
+**Instance 1 (closed, round 4).** `rrg_in_surface` was asked about git's C-quoted *rendering*
+of a path rather than the path. `hooks/pré-push-gate.sh` classified out-of-surface → rc=0,
+silent, unreviewed hook landed. Closed in 802a937.
+
+**Instance 2 (OPEN, found in round 5).** The same predicate matches tree prefixes
+case-SENSITIVELY (`case "$rel" in hooks/*)`, review-record-gate-lib.sh:138-211) while the
+surface it protects is realised on a case-INSENSITIVE filesystem. PROVEN:
+`git update-index --add --cacheinfo 100755,<blob>,adapters/claude-code/Hooks/injected.sh`
+(capital H) + commit + push → **rc=0, gate SILENT, LANDS on the remote**, and a later clone
+materialises it at `adapters/claude-code/hooks/injected.sh`, inside the real carrier directory
+alongside the genuine hooks. Same silent rc=0 for `Git-Hooks/pre-push`, `SCRIPTS/evil.sh`,
+`adapters/Claude-Code/hooks/evil.sh`, `Manifest.json`.
+Direction matters: the CLOBBER direction is NOT exploitable (0 of 311 in-surface canonical
+paths contain an uppercase letter, so the all-lowercase real path sorts last in the index and
+wins the checkout race). The exploitable direction is INJECTION of a new path with no
+lowercase competitor. `review-record-gate-lib.sh:161` currently claims "a new file of any kind
+under these trees is IN surface by default" — false for case variants, exactly as it was false
+for C-quoted paths before round 4.
+
+**Still untested, same class:** Unicode NFC/NFD normalisation on APFS; trailing dot/space
+stripping on Windows checkouts.
+
+**The generalization (this is the point of the row).** Every predicate deciding membership
+from a path string must normalise on EVERY equivalence the delivery layer collapses —
+encoding (closed), case (in flight), Unicode normalisation (untested), Windows trailing
+characters (untested). The round-4 rule "disable quoting AND use NUL separation" is
+insufficient and must be extended with "AND normalise to the delivery filesystem's equivalence
+class before the predicate."
+**Sweep:** `rg -n 'case "\$(rel|full|path|f)" in' adapters/claude-code/hooks/lib/ adapters/claude-code/hooks/ adapters/claude-code/scripts/ | rg -v 'tr .A-Z..a-z.|casefold|nocasematch'`
+
+## RUNTIME-VERIFICATION-EXECUTES-MARKDOWN-AT-SESSION-END-01 — arbitrary write + exfil path
+
+**Severity:** CRITICAL, OPEN (fix in flight). **Current exposure: NONE** — the gate is not
+installed (live `~/.claude/hooks/runtime-verification-gate.sh` absent; live dispatcher still
+lists 3 member gates). It becomes live if `worktree-wf_795d2726-dc4-5` reaches master.
+**Confidence:** PROVEN by execution, by an independent harness-reviewer.
+
+The rewired Stop gate executes `curl` command lines harvested from MARKDOWN at every session
+end, unattended. A fixture whose only evidence line was
+`Runtime verification: curl -o <path> file:///etc/hosts` caused the file to be created (213
+bytes of /etc/hosts); a second run **overwrote an executable hook script** — i.e. next-session
+code execution. The only filter is a metacharacter regex
+(`runtime-verification-executor.sh:413`); there is NO curl-flag filtering, so `-o` (arbitrary
+write), `-T` (upload/exfiltrate any readable file) and `-K` (arbitrary curl config) all pass.
+
+**Two further delivery paths, both PROVEN:** (i) a CLEAN working tree with someone else's
+branch checked out executes THEIR committed curl lines via the base..HEAD diff; (ii) an
+UNTRACKED `.md` is read whole-file (`:170`), so a postmortem or review that merely QUOTES an
+evidence line executes it.
+
+**The boundary this violates, stated positively:** verify by READING files, never by RUNNING
+content. The gate's own header at `:44-49` ALREADY CLAIMS it does this — the claim is true for
+three branches and false for `curl` and `sql`.
+
+**Do not resolve this by retiring the gate.** Operator directive 2026-07-31, verbatim: "Are
+you seriously suggesting that the solution is to simply give in to the theater? Rewire it!
+Make it work!" The fix is to classify curl/sql UNVERIFIABLE like `command`/`bash`, which also
+collapses the companion defect below.
+
+**Companion — fp_expectation measured on a filtered corpus.** The entry claims "Near-zero on
+added lines, by construction and by measurement," but the measurement covered only "the 1344
+NON-CURL Runtime verification: lines" — it excluded the single format with the highest FP
+rate. Re-measured over the 25 real curl/sql lines in docs/: **16 failures / 9 passes = 64%
+failure on real, largely TRUE evidence.** A corpus filtered to remove the failing class is not
+a measurement. Class: `fp-measurement-excludes-the-failing-population`.
+
+**Companion — a stale date evades the §10 evidence bar.** `manifest.json` `runtime-verification`
+carries `added_after: "2026-04"` while `harness-doctor.sh:2354` does
+`if (addedAfter < "2026-07") continue;`, so the doctor SKIPS the new-gate bar entirely and never
+validates golden_scenario / fp_expectation / retirement_condition — on an enforcing artifact
+written 2026-07-31 that has never fired. `harness-doctor.sh:2288-2295` says grandfathering must
+go via `PRE_BAR_GRANDFATHERED`, "never by under-dating." Generalization: `added_after` tracks
+the landing month of the ENFORCING ARTIFACT, not the unit's inception.
