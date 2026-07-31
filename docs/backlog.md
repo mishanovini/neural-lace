@@ -2877,3 +2877,48 @@ validates golden_scenario / fp_expectation / retirement_condition — on an enfo
 written 2026-07-31 that has never fired. `harness-doctor.sh:2288-2295` says grandfathering must
 go via `PRE_BAR_GRANDFATHERED`, "never by under-dating." Generalization: `added_after` tracks
 the landing month of the ENFORCING ARTIFACT, not the unit's inception.
+
+## INBOX-EXPLAINS-THE-SYSTEM-NOT-THE-DECISION-01 — the card answers the wrong question
+
+**Severity:** HIGH, PARTIALLY FIXED 2026-07-31 (client ordering landed; the producer
+half is untouched). **Source:** operator, verbatim: "the info that's presented to me in
+the Inbox doesn't do a fantastic job of providing context to help me understand the
+issue and determine what to do about it."
+
+**LANDED this round (client, `inbox.js`):** actions hoisted into a "Run this" block
+above the prose; labelled commands (`STEP 3: powershell ...`) now fence with their own
+Copy button carrying the command ONLY; the 5-line cap no longer drops action lines; the
+trade-offs table and My-pick now render ABOVE the background instead of below it; the
+30s tick no longer re-renders when nothing changed. Live-verified: 2 ticks, 0 DOM
+mutations, scroll held at 900.
+
+**STILL OPEN — the producer half, which is where the real defect lives.** The card
+faithfully renders what `needs-you.sh` was given, and what it is given is an explanation
+of the SYSTEM rather than the material for a DECISION. Concretely, on the operator's own
+live item NY-1785425479-0d4d:
+
+1. **Process noise occupies the most prominent text.** The title ends "(supersedes
+   retracted NY-1785394095-d8ec; corrected after a wrong diagnosis)". A retracted id and
+   the author's own wrong turn are provenance, not decision content, and they sit in the
+   headline. FIX: the cold-reader lint should REJECT retracted-id references and
+   self-referential correction notes in `--text` titles; provenance belongs in the
+   collapsed "Raw verbatim + session lineage" block that already exists.
+2. **Double labelling.** Renders as "Decision needed: Action needed: register the ...".
+   The server strips ONE redundant prefix; the producer wrote two.
+3. **No "why does this need ME" field.** This is the single highest-value missing datum —
+   the operator's first question is always "can't you just do it?". One item answers it
+   well (the settings.json row names the grant-local-edit bar); the others do not. FIX:
+   make it a REQUIRED field, lint-enforced, alongside the existing five.
+4. **No effort estimate.** "three commands" appears only inside My-pick prose. FIX:
+   required field, rendered as a chip next to the age.
+5. **No currency signal.** The item is 14h old and nothing says whether it is still true.
+   FIX: re-derive at render and show "still current as of <t>", or flag it stale.
+6. **Background explains architecture, not consequence.** "coord-sync pushes each
+   machine's live session state ... every 60s" is how the system works; what the operator
+   needs is what they gain and what they lose. The options table already carries that and
+   is now rendered first — the background should be SHORTER, not merely later.
+
+**The generalization:** an inbox card is a decision surface, not a status report. Every
+field must earn its place by changing what the operator would DO. The producer's lint
+currently checks that fields are PRESENT and cold-readable; it does not check that they
+are DECISION-RELEVANT, which is why a structurally-perfect card can still be unusable.
