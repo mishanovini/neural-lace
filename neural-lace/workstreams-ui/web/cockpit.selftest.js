@@ -2806,8 +2806,15 @@ if (cmdRender) {
 // The refresh-jump fix (inbox.js load()): source checks — the guard lives
 // inside a fetch .then() in a browser IIFE, so it is not requireable here.
 // Labelled as a wiring check, not a behavioural proof.
-ok('R18-IB8 wiring: the 30s tick no longer re-renders unconditionally — an unchanged item set skips renderAll() entirely, and the signature EXCLUDES generated_at (which changes every tick and would defeat the guard)',
-  /lastRenderSig/.test(inboxJs) && /if \(unchanged\)/.test(inboxJs) &&
+// HONEST SCOPE: this is a source-shape check, not a behavioural proof — the
+// guard lives inside a fetch .then() in a browser IIFE and is not requireable
+// here. A first draft asserted only that `if (unchanged)` appeared in the
+// source, and a mutation (`var unchanged = false`, i.e. the guard fully
+// neutered) left it GREEN — the exact assert-on-source weakness this repo
+// keeps shipping. It now pins the guard EXPRESSION, so neutering it reddens.
+ok('R18-IB8 wiring: the 30s tick no longer re-renders unconditionally — the skip is driven by comparing the item signature to what is already rendered, and that signature EXCLUDES generated_at (which changes every tick and would defeat the guard)',
+  /var unchanged = \(sig !== null && lastPayload && sig === lastRenderSig\);/.test(inboxJs) &&
+  /if \(unchanged\)/.test(inboxJs) &&
   /JSON\.stringify\(\{ a: j\.answerable \|\| \[\], q: j\.quarantined \|\| \[\] \}\)/.test(inboxJs) &&
   !/generated_at[^\n]*sig/.test(inboxJs));
 ok('R18-IB9 wiring: when the item set HAS changed, scroll position is preserved across the rebuild instead of being reset to the top',
