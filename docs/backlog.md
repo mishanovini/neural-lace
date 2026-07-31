@@ -2598,6 +2598,32 @@ requested alongside the roadmap rollup fix).
   Tracked alongside `docs/plans/review-independence.md`.
   CLASS LESSON (the reason this is HIGH and not a one-off): a gate whose verdict depends
   on repo-resident state must treat that state as part of its own trust boundary.
+- **REVIEW-SURFACE-OMITS-ITS-OWN-DISPATCHER-01** (HIGH, PROVEN 2026-07-30 while
+  fixing harness-reviewer M8): `adapters/claude-code/git-hooks/pre-push` — the
+  dispatcher that DECIDES WHETHER the authoritative review gate runs at all — is NOT
+  in the review-record trigger surface. `rrg_in_surface` matches `hooks/**/*.sh`,
+  `scripts/**/*.sh`, `agents/*.md`, `config/**`, `manifest.json`,
+  `settings.json.template`, `rules/**`; `git-hooks/pre-push` matches none of them
+  (it is extensionless and under `git-hooks/`, not `hooks/`). PROVEN by sourcing the
+  lib and running `rrg_in_surface` over this very commit's changed files: the
+  dispatcher came back "not gated" while the five `hooks/*.sh` + `manifest.json`
+  files came back in-surface, and the live gate's own block message listed exactly
+  those five. So an edit to the dispatcher — including deleting the stage that
+  invokes the review gate — reaches master with ZERO review coverage. This is the
+  sharpest form of harness-reviewer M8 ("the enforcing bytes are mutable"): M8 is
+  about a checkout/stash disarming the gate locally, this is about an unreviewed
+  COMMIT disarming it permanently for everyone.
+  ALSO NOT IN SURFACE, same root cause: `adapters/claude-code/schemas/
+  manifest.schema.json` (governs what every manifest entry may declare, including
+  the chokepoint/bypass_paths proof obligation) and `adapters/claude-code/
+  doctrine/**` (the doctrine the gates cite as their authority).
+  TO CLOSE: extend `rrg_in_surface` to cover `git-hooks/*` and `schemas/*.json` at
+  minimum, then re-bootstrap the grandfather manifest so existing content is
+  covered. Note the cost is real and should be measured first (the Amendment G
+  precedent measured 26 newly in-surface files before landing).
+  CLASS LESSON: the trigger surface of a review gate must include every file that
+  can change whether that gate runs — enumerate the gate's own carrier chain, not
+  just the code it inspects.
 - **DOCTOR-BUDGET-BLOCKING-GATES-RED-15-OF-14-01** (MEDIUM, PROVEN pre-existing
   2026-07-30): `harness-doctor.sh --quick` REDs `budget-blocking-gates: blocking
   session-event units: 15/14`. Reproduced identically against HEAD's manifest with the
