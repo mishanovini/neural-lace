@@ -2208,3 +2208,33 @@ requested alongside the roadmap rollup fix).
   args / use the post-add tree), not the pre-command index; (b) Scenario 4 must
   distinguish "genuinely empty commit" from "empty index because add has not run yet";
   (c) AUDIT what landed via this route historically.
+  **RESOLVED** (builder aff45ca5, same commit as this entry's update): hooks/
+  review-record-push-gate.sh landed as the authoritative pre-push carrier (wired into
+  git-hooks/pre-push); review-record-commit-gate.sh demoted to blocking:false
+  (advisory-only, REVIEW_RECORD_GATE_OVERRIDE removed entirely — nothing left to
+  waive). Self-test 1b on the commit gate proves a builder with no override set makes
+  forward progress; Scenarios 1-13b on the push gate prove the same content is still
+  refused at push time. harness-reviewer PASS obtained on the full diff (Critical/Major
+  findings fixed in the same commit: a range-diff fail-open at push-gate.sh, a missing
+  bypass_paths enumeration entry for self-issued override markers, and stale doctrine/
+  review-before-deploy.md claims that the commit gate "IS the enforcement").
+
+- **PRE-PUSH-SCAN-RANGE-DIFF-FAIL-OPEN-01** (Major, found 2026-07-30 by harness-reviewer
+  during the above review, spawned as task_28b9098f): hooks/pre-push-scan.sh (the
+  credential/secret scanner) line ~218 scores a failed `git diff --name-only "$range"`
+  (e.g. an unresolvable `remote_sha`, PROVEN reachable on both a plain push and a
+  `--force` push) as "zero files changed" via `2>/dev/null || echo ""`, silently
+  skipping the scan instead of falling back to a wider range. Same bug class already
+  fixed in hooks/review-record-push-gate.sh's `_rrpg_main` (see the `diff_rc` handling
+  and self-test Scenario 13b) — apply the identical empty-tree fallback here. Flagged
+  as a spawned task rather than fixed in-line to keep this commit's diff reviewable.
+
+- **RQ-AUTO-ENQUEUE-NOT-RANGE-AWARE-01** (Minor, found 2026-07-30 by harness-reviewer):
+  hooks/lib/review-queue-auto-enqueue-lib.sh's rq_auto_enqueue_uncovered reads `git diff
+  --cached` (the INDEX) — correct for review-record-commit-gate.sh's commit-time call,
+  but a hypothetical push-time caller would find the index normally equal to HEAD and the
+  call would be wired-but-permanently-inert. review-record-push-gate.sh deliberately does
+  NOT call it (see the gate's own comment at its RI1b section) rather than wire an inert
+  step. A RANGE-aware entry point (taking an explicit path+blob-sha list rather than
+  re-deriving from the index) would let the push gate auto-enqueue independent review for
+  content it blocks or overrides too — not built in this pass.

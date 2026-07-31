@@ -1,8 +1,59 @@
 #!/bin/bash
-# review-record-commit-gate.sh — BLOCK a commit/push of an unreviewed harness change.
+# review-record-commit-gate.sh — ADVISORY early feedback on an unreviewed
+# harness change at commit time. Demoted from BLOCKING to ADVISORY 2026-07-30
+# (see "THE 2026-07-30 DEMOTION" below) — hooks/review-record-push-gate.sh
+# (pre-push) is now the AUTHORITATIVE carrier.
 #
 # ============================================================================
-# THE GAP THIS CLOSES (golden case, PROVEN)
+# THE 2026-07-30 DEMOTION (read this FIRST — it supersedes "BLOCKS" below)
+# ============================================================================
+# This gate blocked (exit 2) from 2026-07-29 until 2026-07-30. Measured over
+# that window (docs/backlog.md REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01):
+# 78 REVIEW_RECORD_GATE_OVERRIDE events in
+# ~/.claude/state/review-record-gate-overrides.log (68 on 2026-07-29, 10 on
+# 2026-07-30), and EVERY ONE of the ten from 2026-07-30 states the identical
+# reason — a builder subagent has no Task/Agent-dispatch tool and so cannot
+# itself invoke harness-reviewer, the gate's own prescribed remedy. That is a
+# remedy-chain deadlock (ADR 059 D5 class): the gate demanded an action the
+# actor it fires on is structurally unable to perform. The only two exits
+# were "never commit" or "override" — not agent misconduct, a gate built at
+# the wrong layer for the actor present there.
+#
+# adapters/claude-code/doctrine/deterministic-process.md Rule 1: enforce at
+# the narrowest CHOKEPOINT EVERY PATH TRAVERSES. This PreToolUse hook is a
+# convenient layer, not the funnel — cherry-pick/rebase/amend/commit-time-
+# override all reach `git push` regardless. The funnel is `git push` itself,
+# and — separately from the funnel argument — it is ALSO the right layer on
+# remedy-reachability grounds: the actor at push time is the ORCHESTRATOR
+# (scripts/estate-merge.sh's real push, or an operator's own push), which
+# DOES have Task/Agent-dispatch capability. Enforcement belongs where the
+# required action is possible.
+#
+# So: hooks/review-record-push-gate.sh (wired via git-hooks/pre-push, the
+# same core.hooksPath dispatcher pre-push-divergence-check.sh and
+# pre-push-test-gate.sh already use) is now AUTHORITATIVE. THIS gate stays —
+# per the operator's explicit direction, "the commit-time gate STAYS as fast
+# early feedback" — but it no longer blocks: it prints the exact same
+# detection (uncovered in-surface files) as a WARNING and always exits 0.
+# A builder with no dispatch tool can now commit and make forward progress
+# without ever touching an override; the SAME content is still refused when
+# it actually tries to reach the remote, because nothing downstream reviewed
+# it yet. Golden scenario REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01 is
+# asserted across TWO files: this file's self-test Scenario 1b ("GOLDEN —
+# REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01") proves forward progress with no
+# override set; hooks/review-record-push-gate.sh's Scenario 1 proves the same
+# content is still refused at push.
+#
+# The REVIEW_RECORD_GATE_OVERRIDE escape hatch (env var, no operator
+# authorization checked — deterministic-process.md Rule 2's own counter-
+# example) is REMOVED from this file: there is nothing left to override once
+# the gate never blocks. It is NOT honored at the push-gate layer either —
+# that gate requires a SEPARATE, operator-authorized, SHA-scoped marker
+# (scripts/authorize-review-record-push-override.sh), because Rule 2
+# requires the authorization artifact at the layer that actually enforces.
+#
+# ============================================================================
+# THE GAP THIS ORIGINALLY CLOSED (golden case, PROVEN, 2026-07-29 history)
 # ============================================================================
 # 2026-07-28, commit f6562b2: a session wrote adapters/claude-code/hooks/lib/
 # admission-lib.sh (664 lines, spliced into three live dispatch paths), committed
@@ -23,87 +74,62 @@
 # (rrg_in_surface / rrg_is_covered) plus scripts/write-review-record.sh already
 # existed, unwired.
 #
-# This hook is that carrier. It BLOCKS (exit 2) rather than warns, at the
-# operator's explicit direction 2026-07-29 ("Why are you suggesting warn mode?
-# If it's valuable, then build and deploy it").
+# This hook WAS that carrier, and blocked (exit 2) from 2026-07-29 to
+# 2026-07-30 at the operator's explicit direction ("Why are you suggesting
+# warn mode? If it's valuable, then build and deploy it"). Superseded by "THE
+# 2026-07-30 DEMOTION" above: hooks/review-record-push-gate.sh is now the one
+# that blocks; this file's evidence-bar fields below are historical.
 #
 # ============================================================================
-# CONSTITUTION §10 EVIDENCE BAR
+# CONSTITUTION §10 EVIDENCE BAR (historical — this gate no longer blocks; see
+# hooks/review-record-push-gate.sh's own header for the current evidence bar)
 # ============================================================================
-# §10 requires a named golden scenario, an expected false-positive rate, and a
-# retirement condition before a new BLOCKING gate ships. All three:
-#
-#   GOLDEN SCENARIO : commit f6562b2 above. Replaying this gate against that
-#                     commit's staged set MUST block. Self-test scenario 1
-#                     asserts exactly that shape.
-#   FP EXPECTATION  : measured retroactively rather than by a warn period —
-#                     see scripts/measure-review-gate-fp.sh, which replays this
-#                     gate's predicate over the last N commits and reports how
-#                     many would have blocked, broken down by commit class.
-#                     The gate's exemptions (below) were derived FROM that
-#                     measurement, not guessed.
-#   RETIREMENT      : retire when review-before-deploy's deploy-time carriers
-#                     become redundant (a single continuously-reconciling sync
-#                     path), or when a native review gate ships upstream, or if
-#                     the measured FP rate exceeds the operator's tolerance.
+#   GOLDEN SCENARIO : commit f6562b2 above. Self-test scenario 1 replays that
+#                     exact staged set and now asserts it is DETECTED
+#                     (advisory warning printed) and ALLOWED (rc=0).
+#   FP EXPECTATION  : measured retroactively — scripts/measure-review-gate-fp.sh
+#                     replays this gate's predicate over historical commits.
+#                     Moot for false-positives now (advisory never blocks),
+#                     kept for the detection-accuracy signal it still gives.
+#   RETIREMENT      : this file retires (or shrinks to a thin wrapper) once
+#                     every builder session gains Task/Agent-dispatch
+#                     capability, closing the deadlock this demotion worked
+#                     around at its actual root cause.
 #
 # ============================================================================
-# WHAT IT BLOCKS, AND WHAT IT DELIBERATELY DOES NOT
+# WHAT IT WARNS ON, AND WHAT IT DELIBERATELY DOES NOT (never blocks, either way)
 # ============================================================================
-# BLOCKS: a `git commit` or `git push` when a STAGED, ADDED-OR-MODIFIED file is
-# in-surface for harness review (rrg_in_surface: hooks/*.sh, scripts/*.sh,
-# agents/*.md top-level, config/*, manifest.json, settings.json.template,
-# rules/*) and its blob is NOT covered by a grandfather entry or a PASS record.
+# WARNS: a `git commit` when a STAGED, ADDED-OR-MODIFIED file is in-surface
+# for harness review (rrg_in_surface: hooks/*.sh, scripts/*.sh, agents/*.md
+# top-level, config/*, manifest.json, settings.json.template, rules/*) and
+# its blob is NOT covered by a grandfather entry or a PASS record. The commit
+# still proceeds (rc=0) — this is advisory-only; see "THE 2026-07-30
+# DEMOTION" above for why.
 #
-# NEVER BLOCKS (the false-positive budget — each of these is a real commit class
-# that a naive version would have obstructed):
+# NEVER WARNS (same false-positive budget the blocking version measured, kept
+# because a noisy advisory is still a cost even though it cannot block):
 #   1. No staged in-surface file           -> silent allow, the common case.
 #   2. Pure DELETIONS                       -> a removed file has no blob to
 #      review; --diff-filter excludes D.
-#   3. Mid-rebase / mid-merge / cherry-pick -> you cannot stop a rebase to get a
-#      review; .git/REBASE_HEAD, MERGE_HEAD, CHERRY_PICK_HEAD short-circuit.
+#   3. Mid-rebase / mid-merge / cherry-pick -> irrelevant to warn about;
+#      .git/REBASE_HEAD, MERGE_HEAD, CHERRY_PICK_HEAD short-circuit.
 #   4. Not a git repo, no git, no jq        -> fail-open, never brick a machine.
 #   5. Bootstrap                            -> rrg_is_covered itself fail-opens
 #      when NEITHER coverage file exists on the checkout (Amendment E).
 #   6. A record staged in the SAME commit   -> coverage is read with ref="" (the
 #      working tree/index), so fixing the review and committing together works.
-#      This is what makes the gate satisfiable in one pass.
 #
-# REMEDY-CHAIN (ADR 059 D5): the remedy this gate prescribes must not walk the
-# operator into another gate. Writing a record via scripts/write-review-record.sh
-# is a plain script call that commits nothing. The re-commit is a SEPARATE Bash
-# call by NL-FINDING-016's rule (a fix and its retry are never one compound
-# command), and the block message says so explicitly.
+# REMEDY: writing a record via scripts/write-review-record.sh is the same
+# remedy as before; it is no longer REQUIRED to commit (this gate never
+# blocks), only to satisfy hooks/review-record-push-gate.sh before the
+# content can reach master/main.
 #
-# ROUND-5 M4 CORRECTION: that paragraph was FALSE as written. The remedy's third
-# step is "stage the record and re-run your commit" — and scope-enforcement-gate
-# then BLOCKED the re-commit, because docs/reviews/records/index.json is never in
-# a plan's Files to Modify/Create. PROVEN on this tree: rc=2, naming
-# `docs/reviews/records/index.json` as out of scope. The operator was handed a
-# remedy that could not be completed. Fixed at the source rather than by
-# softening this claim: docs/reviews/records/* is now in that gate's
-# _is_system_managed_path, alongside archive/deferred/discoveries. Re-verified
-# rc=0. The paragraph above is now true.
-#
-# ESCAPE HATCH (constitution §7 — a gate that cannot be waived gets routed
-# around silently, which is worse): REVIEW_RECORD_GATE_OVERRIDE="<reason>"
-# allows the commit AND appends the reason to
-# ~/.claude/state/review-record-gate-overrides.log for periodic audit. An empty
-# or missing reason does NOT override — the waiver must say why.
-#
-# ROUND-5 C1 CORRECTION: "in the environment" was the whole problem. This is a
-# PreToolUse hook: it runs BEFORE the shell that would apply a command-scoped
-# `VAR=value cmd` assignment, so getenv() can never see the inline form the block
-# message prints. PROVEN before the fix — inline: rc=2, 0 lines logged; exported:
-# rc=0, 1 line logged. The inline form nonetheless appeared to "work", because
-# the quote-blind env stripper desynced the parse on a reason containing spaces
-# and the gate returned not-a-commit: a silent, unvalidated, unlogged bypass,
-# printed verbatim in this gate's own block message. Meanwhile a SHORT reason
-# parsed fine and blocked, so the validation was inverted — the more substantive
-# the waiver, the more silently it passed. BOTH halves are closed: the waiver is
-# now read from the PARSED command when absent from the environment, and either
-# way goes through the same >=20-char check, placeholder rejection, and audit
-# log. Scenario 20 is the regression, including the negative cases.
+# REMOVED 2026-07-30: the REVIEW_RECORD_GATE_OVERRIDE escape hatch. It existed
+# to waive a BLOCK; there is no block left here to waive. It is deliberately
+# NOT honored at hooks/review-record-push-gate.sh either — Rule 2 of
+# deterministic-process.md requires an operator-authorized artifact at the
+# layer that actually enforces (scripts/authorize-review-record-push-
+# override.sh), not an inline env var an agent can set unilaterally.
 #
 # Self-test: bash review-record-commit-gate.sh --self-test
 # ============================================================================
@@ -133,27 +159,13 @@ _RRCG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 source "$_RRCG_SELF_DIR/lib/git-command-parse.sh" 2>/dev/null || true
 
 # This writer is HOST-LOCAL — it is not one of the shared libs, so it carried no
-# sandbox guard of its own and `export HARNESS_SELFTEST=1` alone would not have
-# stopped it. Resolution order matches the shared libs (signal-ledger.sh:116):
-#   1. explicit REVIEW_RECORD_GATE_LOG  2. HARNESS_SELFTEST=1 -> tmp sandbox
-#   3. the real ~/.claude/state/review-record-gate-overrides.log
-# PROVEN: without arm 2, a --self-test scenario that trips the override arm
-# appended real rows to the operator's audit log (clean-HOME probe, 2026-07-29).
-_rrcg_log_override() {
-  local reason="$1" repo="$2"
-  local log="${REVIEW_RECORD_GATE_LOG:-}"
-  if [[ -z "$log" ]]; then
-    if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
-      log="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/review-record-commit-gate-selftest/$$}/review-record-gate-overrides.log"
-    else
-      log="$HOME/.claude/state/review-record-gate-overrides.log"
-    fi
-  fi
-  mkdir -p "$(dirname "$log")" 2>/dev/null || return 0
-  printf '%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)" \
-    "${repo:-unknown}" "$reason" >> "$log" 2>/dev/null || true
-}
-
+# REMOVED 2026-07-30: _rrcg_log_override (and the REVIEW_RECORD_GATE_OVERRIDE
+# escape hatch it served) — this gate no longer blocks, so there is nothing
+# left to override. ~/.claude/state/review-record-gate-overrides.log remains
+# on disk as a historical audit trail of the 78 pre-demotion override events
+# (docs/backlog.md REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01); nothing writes
+# to it anymore.
+#
 # NOTE ON `push`: it was REMOVED from the verb set (harness-review Major). The
 # push arm checked the INDEX, which is the wrong subject — it blocked pushes over
 # unrelated staged work while giving zero protection against pushing
@@ -205,37 +217,41 @@ _rrcg_is_harness_repo() {
   [[ -f "$1/adapters/claude-code/manifest.json" ]]
 }
 
-_rrcg_block_message() {
+# _rrcg_advisory_message — ADVISORY ONLY (2026-07-30 demotion). This commit
+# is NOT blocked; the message is printed and the commit proceeds regardless.
+# hooks/review-record-push-gate.sh is the gate that actually enforces before
+# this content can reach master/main.
+_rrcg_advisory_message() {
   local repo_root="$1"; shift
   local files=("$@")
   {
     echo "================================================================"
-    echo "REVIEW-RECORD GATE — COMMIT BLOCKED"
+    echo "REVIEW-RECORD GATE — ADVISORY (commit NOT blocked)"
     echo "================================================================"
     echo
-    echo "These staged files change harness BEHAVIOR and have no review record:"
+    echo "These staged files change harness BEHAVIOR and have no review record"
+    echo "yet. This commit proceeds anyway — this gate is advisory-only since"
+    echo "2026-07-30 (a builder subagent typically has no Task/Agent-dispatch"
+    echo "tool and cannot itself invoke harness-reviewer; docs/backlog.md"
+    echo "REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01). The push to master/main"
+    echo "IS still enforced — hooks/review-record-push-gate.sh will refuse it"
+    echo "until one of the files below is reviewed and recorded:"
     local f
     for f in "${files[@]}"; do echo "  • $f"; done
     echo
-    echo "Why this gate exists: on 2026-07-28 commit f6562b2 put a 664-line lib"
-    echo "onto master with no harness-reviewer. Both reviewers, run afterwards,"
-    echo "returned REJECT and FAIL — a parser that read 3379 for a true value of"
-    echo "3, a self-test that only passed where the feature did not work, and an"
-    echo "environment variable that silently bypassed the HALT kill switch. The"
-    echo "review-before-deploy rule already required a PASS; its only carriers"
-    echo "ran at DEPLOY time, so the commit sailed through."
+    echo "Why review-record coverage exists at all: on 2026-07-28 commit"
+    echo "f6562b2 put a 664-line lib onto master with no harness-reviewer."
+    echo "Both reviewers, run afterwards, returned REJECT and FAIL — a parser"
+    echo "that read 3379 for a true value of 3, a self-test that only passed"
+    echo "where the feature did not work, and an environment variable that"
+    echo "silently bypassed the HALT kill switch."
     echo
-    echo "NOTE: this block prevented the ENTIRE command from running — including"
-    echo "anything before an && or ;. If you chained a fix in front of the commit,"
-    echo "that fix did NOT execute (NL-FINDING-016: a builder retried a"
-    echo "never-executed fix three times before noticing)."
-    echo ""
-    echo "TO PROCEED — three steps, as SEPARATE tool calls (never one compound"
-    echo "command; a fix and its retry are separate calls by NL-FINDING-016):"
+    echo "TO SATISFY THE PUSH GATE BEFORE YOU (or the orchestrator) PUSH THIS:"
     echo
     echo "  1. Dispatch harness-reviewer on this change and get a verdict."
-    echo "     Pass an explicit model — the default review tier can be budget-"
-    echo "     exhausted, and a dead dispatch is a skipped review."
+    echo "     (The orchestrator has Task/Agent-dispatch capability even when"
+    echo "     this builder session does not — that is WHY enforcement moved"
+    echo "     to push time; see hooks/review-record-push-gate.sh.)"
     echo
     echo "  2. Record the verdict:"
     echo "       bash adapters/claude-code/scripts/write-review-record.sh capture \\"
@@ -244,14 +260,8 @@ _rrcg_block_message() {
     for f in "${files[@]}"; do echo "         --file $f \\"; done
     echo "         --commit-sha PENDING"
     echo
-    echo "  3. Stage the record and re-run your commit. Coverage is read from the"
-    echo "     index, so the record and the change can land in the SAME commit."
-    echo
-    echo "If the reviewer returned REFORMULATE or REJECT, the fix is to amend the"
-    echo "change — not to record a PASS you did not get (constitution §1)."
-    echo
-    echo "Genuine emergency waiver (audit-logged, requires a reason):"
-    echo "  REVIEW_RECORD_GATE_OVERRIDE=\"why this cannot wait\" git commit ..."
+    echo "  3. Stage the record and commit/push again. Coverage is read from"
+    echo "     the commit content, so the record can land in the same push."
     echo "================================================================"
   } >&2
 }
@@ -376,46 +386,14 @@ _rrcg_main() {
     rq_auto_enqueue_uncovered "$repo_root" 2>/dev/null
   fi
 
-  # Escape hatch — loud and logged, and only with a stated reason.
-  #
-  # ROUND-5 C1, second half. The block message tells the operator to run
-  #   REVIEW_RECORD_GATE_OVERRIDE="why this cannot wait" git commit ...
-  # That is a COMMAND-SCOPED assignment: the shell applies it to the `git`
-  # process, which is started AFTER this PreToolUse hook has already run and
-  # exited. The hook's own environment therefore never contains it, so reading
-  # only getenv() means the documented remedy can never reach this branch.
-  # PROVEN on this tree before the fix: inline form -> rc=2, 0 lines logged;
-  # exported form -> rc=0, 1 line logged.
-  #
-  # Until round 5 that was invisible, because the quote-blind stripper made the
-  # inline form desync the parse and bypass the gate entirely — unvalidated and
-  # unlogged. Fixing the parser turned an accidental silent bypass into a dead
-  # end. Both halves are closed here: the inline assignment is read from the
-  # PARSED command, and it then goes through the same length and placeholder
-  # validation and the same audit log as an exported one.
-  local ovr="${REVIEW_RECORD_GATE_OVERRIDE:-}"
-  if [[ -z "$ovr" ]] && command -v gcp_commit_env_value >/dev/null 2>&1; then
-    if gcp_commit_env_value REVIEW_RECORD_GATE_OVERRIDE; then
-      ovr="${GCP_ENV_VALUE:-}"
-    fi
-  fi
-  # A one-character reason is not a reason (harness-review Major:
-  # silent-self-waiver). Demand something substantive, and reject the obvious
-  # placeholders, so a waiver is a statement the operator can audit rather than
-  # a keystroke the agent can emit in-band.
-  case "$(printf '%s' "$ovr" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
-    x|test|testing|temp|tmp|skip|bypass|because|na|n/a|bypassbypassbypassbypass)
-      echo "review-record-commit-gate: placeholder waiver reason rejected." >&2; ovr="" ;;
-  esac
-  if [[ -n "$ovr" ]] && [[ "${#ovr}" -lt 20 ]]; then
-    echo "review-record-commit-gate: REVIEW_RECORD_GATE_OVERRIDE rejected — a waiver must state WHY (>=20 chars), got '${ovr}'." >&2
-    ovr=""
-  fi
-  if [[ -n "$ovr" ]]; then
-    _rrcg_log_override "$ovr" "$repo_root"
-    echo "review-record-commit-gate: OVERRIDDEN — \"$ovr\" (logged for audit)" >&2
-    return 0
-  fi
+  # REMOVED 2026-07-30: the REVIEW_RECORD_GATE_OVERRIDE escape-hatch branch.
+  # This gate never blocks any more (see header), so an override has nothing
+  # left to waive — keeping it would be exactly the "step nothing invokes
+  # changes anything" theatre adapters/claude-code/doctrine/
+  # deterministic-process.md Rule 3 names. REVIEW_RECORD_GATE_OVERRIDE is
+  # deliberately NOT read by hooks/review-record-push-gate.sh either (Rule 2:
+  # that authoritative layer requires scripts/authorize-review-record-push-
+  # override.sh's operator-authorized, sha-scoped marker instead).
 
   # shellcheck source=/dev/null
   source "$_RRCG_SELF_DIR/lib/review-record-gate-lib.sh" 2>/dev/null || return 0
@@ -470,18 +448,22 @@ _rrcg_main() {
     if [[ "$covered_count" -gt 0 ]] && ! _rrcg_record_is_staged "$repo_root"; then
       {
         echo "================================================================"
-        echo "REVIEW-RECORD GATE — RECORD NOT STAGED"
+        echo "REVIEW-RECORD GATE — ADVISORY: record not staged"
         echo "================================================================"
         echo "$covered_count staged in-surface file(s) are covered ONLY by"
         echo "docs/reviews/records/index.json as it exists in your WORKING TREE."
         echo "That file is not staged, so it will NOT be part of this commit: the"
         echo "change would land with no review record in the tree, and a later"
         echo "\`git clean -fd\` or worktree teardown would discard the only evidence."
+        echo "This commit proceeds anyway (advisory-only, see header) — but"
+        echo "hooks/review-record-push-gate.sh will re-derive coverage at push"
+        echo "time and will NOT see this unstaged record either."
         echo ""
         echo "FIX (separate call): git add docs/reviews/records/"
         echo "================================================================"
       } >&2
-      return 2
+      # ADVISORY ONLY — see header "THE 2026-07-30 DEMOTION". Never blocks.
+      return 0
     fi
     return 0
   fi
@@ -491,9 +473,16 @@ _rrcg_main() {
   # Major: write-only observability). Source it, then emit.
   source "$_RRCG_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
   command -v ledger_emit >/dev/null 2>&1 && \
-    ledger_emit "review-record-commit-gate" "block" "files=${#uncovered[@]}"
-  _rrcg_block_message "$repo_root" "${uncovered[@]}"
-  return 2
+    # "warn" (not a new "advisory" vocabulary word) -- reuses the EXISTING
+    # signal-ledger event-type taxonomy (observability-consumer-map.json)
+    # rather than introducing a new one that would need its own consumer
+    # entries; semantically this commit-time gate is exactly a warn now.
+    ledger_emit "review-record-commit-gate" "warn" "files=${#uncovered[@]}"
+  _rrcg_advisory_message "$repo_root" "${uncovered[@]}"
+  # ADVISORY ONLY (2026-07-30 demotion) — this gate never blocks; the
+  # authoritative enforcement is hooks/review-record-push-gate.sh at push
+  # time. See this file's header "THE 2026-07-30 DEMOTION" for why.
+  return 0
 }
 
 # ===========================================================================
@@ -537,19 +526,55 @@ _rrcg_self_test() {
     echo $?
   }
 
-  echo "Scenario 1: GOLDEN CASE — staging an unreviewed hooks/lib/*.sh blocks the commit"
+  # run_capture <command-string> -- echoes rc; sets global RUN_MSG to stderr.
+  # ADVISORY-demotion note: this gate is rc=0 on every path now, so "does the
+  # detection actually fire" can no longer be read off the exit code — every
+  # scenario below that used to assert rc=2 now asserts rc=0 (never blocks)
+  # AND checks RUN_MSG for the specific advisory text, so a regression that
+  # silently stops detecting uncovered content (as opposed to one that merely
+  # stops blocking, which is now correct) still turns these tests RED.
+  # NOT invoked via `x="$(run_capture ...)"` -- that would run the whole
+  # function in a subshell (command substitution forks one), and RUN_MSG
+  # assigned inside would never propagate back out. Call it as a plain
+  # statement; read RUN_RC / RUN_MSG (true globals) afterward.
+  run_capture() {
+    local payload
+    payload="$(jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}')"
+    RUN_MSG="$(printf '%s' "$payload" | ( cd "$R" && bash "$SELF" ) 2>&1 1>/dev/null)"
+    RUN_RC=$?
+  }
+
+  echo "Scenario 1: GOLDEN CASE — staging an unreviewed hooks/lib/*.sh is DETECTED and ALLOWED (advisory)"
   mkdir -p "$R/adapters/claude-code/hooks/lib"
   echo '# unreviewed harness change' > "$R/adapters/claude-code/hooks/lib/admission-lib.sh"
   ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
-  local rc; rc="$(run 'git commit -m "feat: admission lib"')"
-  [[ "$rc" == "2" ]] && pass "f6562b2-shaped commit BLOCKED (rc=2)" || fail "expected rc 2, got $rc — the golden case does not fire"
+  local rc
+  run_capture 'git commit -m "feat: admission lib"'
+  rc="$RUN_RC"
+  [[ "$rc" == "0" ]] && pass "f6562b2-shaped commit ALLOWED (rc=0, advisory-only since 2026-07-30)" || fail "expected rc 0, got $rc — the commit-time gate must never block any more"
+  case "$RUN_MSG" in *admission-lib.sh*) pass "advisory message still names the offending file" ;; *) fail "detection silently stopped firing — advisory message omits the file" ;; esac
 
-  echo "Scenario 2: the block message names the file and the remedy"
-  local msg; msg="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | ( cd "$R" && bash "$SELF" ) 2>&1 >/dev/null)"
+  echo "Scenario 1b (GOLDEN — REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01): a builder with NO"
+  echo "  Task/Agent-dispatch tool and NO override set makes forward progress at commit time"
+  ( cd "$R" && git reset -q ) >/dev/null 2>&1
+  echo '# unreviewed harness change, no dispatch tool available' > "$R/adapters/claude-code/hooks/lib/no-dispatch-tool.sh"
+  ( cd "$R" && git add adapters/claude-code/hooks/lib/no-dispatch-tool.sh ) >/dev/null 2>&1
+  rc="$(unset REVIEW_RECORD_GATE_OVERRIDE; run 'git commit -m "feat: cannot invoke harness-reviewer here"')"
+  [[ "$rc" == "0" ]] && pass "GOLDEN: commit succeeds with NO override set — the builder deadlock is resolved" \
+    || fail "GOLDEN REGRESSION: a builder with no dispatch tool and no override is still blocked (rc=$rc)"
+
+  echo "Scenario 2: the advisory message names the file, the remedy, AND says the commit is NOT blocked"
+  ( cd "$R" && git reset -q ) >/dev/null 2>&1
+  ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
+  run_capture 'git commit -m x'
+  rc="$RUN_RC"
+  local msg="$RUN_MSG"
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
   case "$msg" in *admission-lib.sh*) pass "message names the offending file" ;; *) fail "message omits the file" ;; esac
   case "$msg" in *write-review-record.sh*) pass "message names the exact remedy command" ;; *) fail "message omits the remedy" ;; esac
-  case "$msg" in *"ENTIRE command"*) pass "message carries the NL-FINDING-016 whole-command-discarded banner" ;; *) fail "banner missing (deleting it must turn this test RED)" ;; esac
-  case "$msg" in *NL-FINDING-016*) pass "message cites NL-FINDING-016 by name" ;; *) fail "NL-FINDING-016 citation missing" ;; esac
+  case "$msg" in *"ADVISORY"*) pass "message is clearly labeled ADVISORY" ;; *) fail "ADVISORY label missing"; esac
+  case "$msg" in *"review-record-push-gate.sh"*) pass "message points at the authoritative push gate" ;; *) fail "message omits the authoritative-gate pointer"; esac
+  case "$msg" in *"REVIEW_RECORD_GATE_OVERRIDE"*) fail "message still advertises the removed REVIEW_RECORD_GATE_OVERRIDE escape hatch" ;; *) pass "message does not advertise a removed mechanism"; esac
 
   echo "Scenario 3: FP budget — a NON-surface file does not block"
   ( cd "$R" && git reset -q ) >/dev/null 2>&1
@@ -585,21 +610,25 @@ _rrcg_self_test() {
   [[ "$rc" == "0" ]] && pass "commit during rebase allowed" || fail "blocked mid-rebase (rc=$rc) — would strand the operator"
   rm -f "$R/$gd/REBASE_HEAD" "$gd/REBASE_HEAD" 2>/dev/null
 
-  echo "Scenario 8: escape hatch requires a REASON, and is logged"
-  export REVIEW_RECORD_GATE_LOG="$T/ovr.log"
-  rc="$(REVIEW_RECORD_GATE_OVERRIDE="" bash -c "printf '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"}}' | cd '$R' 2>/dev/null; true"; \
-        printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | ( cd "$R" && REVIEW_RECORD_GATE_OVERRIDE="" bash "$SELF" ) >/dev/null 2>&1; echo $?)"
-  [[ "$rc" == "2" ]] && pass "EMPTY override does NOT waive the gate" || fail "empty override waived the gate (rc=$rc)"
-  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | ( cd "$R" && REVIEW_RECORD_GATE_OVERRIDE="production is down and this hotfix cannot wait for review" bash "$SELF" ) >/dev/null 2>&1; echo $?)"
-  [[ "$rc" == "0" ]] && pass "override WITH a substantive reason allows the commit" || fail "reasoned override did not allow (rc=$rc)"
-  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | ( cd "$R" && REVIEW_RECORD_GATE_OVERRIDE="x" bash "$SELF" ) >/dev/null 2>&1; echo $?)"
-  [[ "$rc" == "2" ]] && pass "a one-character 'reason' is REJECTED (waivers must state why)" || fail "trivial reason waived the gate (rc=$rc)"
-  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | ( cd "$R" && REVIEW_RECORD_GATE_OVERRIDE="testing" bash "$SELF" ) >/dev/null 2>&1; echo $?)"
-  [[ "$rc" == "2" ]] && pass "placeholder reason 'testing' is REJECTED" || fail "placeholder waived the gate (rc=$rc)"
-  if grep -q 'production is down and this hotfix cannot wait' "$T/ovr.log" 2>/dev/null; then
-    pass "override written to the audit log with its reason"
-  else fail "override not logged — a silent waiver is worse than no gate"; fi
-  unset REVIEW_RECORD_GATE_LOG
+  echo "Scenario 8: REVIEW_RECORD_GATE_OVERRIDE is INERT — the removed mechanism changes nothing"
+  # RETIRED 2026-07-30 (was: "escape hatch requires a REASON, and is logged").
+  # The override branch this scenario tested no longer exists — the commit
+  # never blocks regardless, so there is nothing left to waive. What is still
+  # worth proving: setting the old env var (any shape — empty, substantive,
+  # placeholder) has NO differential effect any more, and nothing is logged
+  # to the old override log (a stale mechanism must not silently keep firing).
+  rm -f "$T/ovr.log" 2>/dev/null
+  for v in "" "production is down and this hotfix cannot wait for review" "x" "testing"; do
+    rc="$(REVIEW_RECORD_GATE_LOG="$T/ovr.log" REVIEW_RECORD_GATE_OVERRIDE="$v" bash -c \
+      "printf '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"}}' | ( cd '$R' && bash '$SELF' ) >/dev/null 2>&1; echo \$?")"
+    [[ "$rc" == "0" ]] && pass "REVIEW_RECORD_GATE_OVERRIDE=\"$v\" -> commit still allowed (rc=0, as it would be regardless)" \
+      || fail "REVIEW_RECORD_GATE_OVERRIDE=\"$v\" changed the outcome (rc=$rc) — the removed branch is somehow still live"
+  done
+  if [[ -f "$T/ovr.log" ]]; then
+    fail "the retired override-audit log was written to — REVIEW_RECORD_GATE_OVERRIDE is not actually inert"
+  else
+    pass "no override audit log entry written — the mechanism is genuinely gone, not just unreachable"
+  fi
 
   echo "Scenario 9: coverage staged in the SAME commit satisfies the gate (one-pass fix)"
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
@@ -632,9 +661,11 @@ _rrcg_self_test() {
   echo '# EVIL unreviewed' > "$R/adapters/claude-code/hooks/lib/covered.sh"
   ( cd "$R" && git add adapters/claude-code/hooks/lib/covered.sh ) >/dev/null 2>&1   # stage EVIL
   echo '# reviewed good' > "$R/adapters/claude-code/hooks/lib/covered.sh"            # worktree back to GOOD
-  rc="$(run 'git commit -m sneak')"
-  [[ "$rc" == "2" ]] && pass "staged-unreviewed + covered-worktree BLOCKS (gate reads the index)" \
-    || fail "INDEX/WORKTREE HOLE: unreviewed staged content committed (rc=$rc)"
+  run_capture 'git commit -m sneak'
+  rc="$RUN_RC"
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  case "$RUN_MSG" in *covered.sh*) pass "staged-unreviewed + covered-worktree still DETECTED (gate reads the index, not the worktree)" ;; \
+    *) fail "INDEX/WORKTREE HOLE: the sneaky staged content was never flagged — detection silently reads the worktree now"; esac
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
 
   echo "Scenario 12: substring-as-intent — merely MENTIONING the phrase is not a commit (E13)"
@@ -645,14 +676,20 @@ _rrcg_self_test() {
     rc="$(run "$m")"
     [[ "$rc" == "0" ]] && pass "allowed (mention only): $m" || fail "blocked a mere mention: $m (rc=$rc)"
   done
-  rc="$(run 'git commit -m real')"
-  [[ "$rc" == "2" ]] && pass "a REAL commit in command position still blocks" || fail "anchoring broke the real case (rc=$rc)"
+  run_capture 'git commit -m real'
+  rc="$RUN_RC"
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  case "$RUN_MSG" in *mention.sh*) pass "a REAL commit in command position is still detected/warned" ;; \
+    *) fail "anchoring broke the real case — mention.sh no longer flagged"; esac
 
   echo "Scenario 12b: a -C target from an EARLIER segment must not repoint the gate"
   # harness-reviewer proved four fail-open shapes where `git -C <path>` anywhere
   # in the raw command repointed repo_root at another repo; if that path was not
   # a harness repo (or did not exist) the gate returned 0 with an unreviewed blob
-  # staged. The worst was the orchestrator's OWN cherry-pick shape.
+  # staged AND UNDETECTED. The worst was the orchestrator's OWN cherry-pick shape.
+  # Now that this gate never blocks, "blocks despite a -C mention" becomes "warns
+  # despite a -C mention" — rc=0 either way, so the message is the only signal
+  # that detection actually ran against the CORRECT (harness) target.
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
   echo '# unreviewed' > "$R/adapters/claude-code/hooks/lib/leak.sh"
   ( cd "$R" && git add adapters/claude-code/hooks/lib/leak.sh ) >/dev/null 2>&1
@@ -665,9 +702,11 @@ _rrcg_self_test() {
     "git -C /no/such/path fetch && $_v -m x" \
     "echo \"git -C $_sib status\" && $_v -m x" \
     "$_v -m 'use git -C /tmp/other next time'"; do
-    rc="$(run "$_shape")"
-    [[ "$rc" == "2" ]] && pass "blocks despite a -C mention: ${_shape:0:46}..." \
-      || fail "FAIL-OPEN (rc=$rc): $_shape"
+    run_capture "$_shape"
+    rc="$RUN_RC"
+    [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc): $_shape"
+    case "$RUN_MSG" in *leak.sh*) pass "detects despite a -C mention: ${_shape:0:46}..." ;; \
+      *) fail "FAIL-OPEN (undetected): $_shape"; esac
   done
 
   echo "Scenario 13: foreign repo is not governed by this gate (E12)"
@@ -688,7 +727,7 @@ _rrcg_self_test() {
   # resolver landed — verified by running the probe against the pre-fix gate.
   # `runfrom` runs the gate from an arbitrary cwd, because the whole point of
   # four of these shapes is that the commit targets a repo the caller is not in.
-  echo "Scenario 14: the seven PROVEN fail-opens must all BLOCK"
+  echo "Scenario 14: the seven PROVEN fail-opens must all still be DETECTED (was: BLOCK)"
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
   # Content must DIFFER from whatever earlier scenarios committed, or `git add`
   # stages nothing, `git diff --cached` is empty, and every shape below returns
@@ -703,6 +742,14 @@ _rrcg_self_test() {
     printf '%s' "$payload" | ( cd "$1" && bash "$SELF" ) >/dev/null 2>&1
     echo $?
   }
+  # Same subshell-scoping caveat as run_capture above -- call as a plain
+  # statement, then read RUN_RC / RUN_MSG.
+  runfrom_capture() { # $1 = cwd, $2 = command string; sets RUN_RC, RUN_MSG
+    local payload
+    payload="$(jq -nc --arg c "$2" '{tool_name:"Bash",tool_input:{command:$c}}')"
+    RUN_MSG="$(printf '%s' "$payload" | ( cd "$1" && bash "$SELF" ) 2>&1 1>/dev/null)"
+    RUN_RC=$?
+  }
   # `git commit` is assembled at runtime so this suite's own source does not
   # contain the phrase in command position (the harness gates read hook source).
   # TWO forms are needed: CV for a segment that starts the command, SUB for the
@@ -714,8 +761,11 @@ _rrcg_self_test() {
   local _lbl _cwd _cmd
   while IFS='|' read -r _lbl _cwd _cmd; do
     [[ -n "$_lbl" ]] || continue
-    rc="$(runfrom "$_cwd" "$_cmd")"
-    [[ "$rc" == "2" ]] && pass "BLOCKS: $_lbl" || fail "FAIL-OPEN (rc=$rc): $_lbl"
+    runfrom_capture "$_cwd" "$_cmd"
+    rc="$RUN_RC"
+    [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc): $_lbl"
+    case "$RUN_MSG" in *admission-lib.sh*) pass "DETECTS: $_lbl" ;; \
+      *) fail "FAIL-OPEN (undetected): $_lbl"; esac
   done <<EOF
 B2 git -C "quoted path"|$OUT|git -C "$R" $SUB -m x
 B3 git -C 'single-quoted path'|$OUT|git -C '$R' $SUB -m x
@@ -763,109 +813,82 @@ EOF
   printf '{"entries":[{"path":"adapters/claude-code/hooks/lib/covered.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}]}\n' "$cblob" \
     > "$R/docs/reviews/records/index.json"
   ( cd "$R" && git add adapters/claude-code/hooks/lib/covered.sh ) >/dev/null 2>&1   # stage the CHANGE only
-  rc="$(run "$CV -m 'feat: covered but record unstaged'")"
-  [[ "$rc" == "2" ]] && pass "covered-by-an-UNSTAGED-record -> BLOCKED (record must be in the commit)" \
-    || fail "allowed a commit whose only review record is unstaged (rc=$rc)"
+  run_capture "$CV -m 'feat: covered but record unstaged'"
+  rc="$RUN_RC"
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  case "$RUN_MSG" in *"record not staged"*|*"RECORD NOT STAGED"*) pass "covered-by-an-UNSTAGED-record still DETECTED as advisory (record must be in the commit to truly count)" ;; \
+    *) fail "unstaged-record case no longer detected — advisory message silent"; esac
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
 
-  echo "Scenario 17: the placeholder-waiver case actually fires"
-  # This case was UNTESTED: deleting it left the suite at 30/30. "bypass bypass
-  # bypass bypass" is 27 chars, so it CLEARS the >=20 length check — only the
-  # placeholder case can reject it. Deleting that case turns this RED.
-  echo '# unreviewed' > "$R/adapters/claude-code/hooks/lib/admission-lib.sh"
-  ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
-  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' \
-        | ( cd "$R" && REVIEW_RECORD_GATE_OVERRIDE="bypass bypass bypass bypass" bash "$SELF" ) >/dev/null 2>&1; echo $?)"
-  [[ "$rc" == "2" ]] && pass "a long-but-placeholder waiver ('bypass bypass ...') is REJECTED" \
-    || fail "placeholder waiver of >=20 chars waived the gate (rc=$rc) — the case is dead code"
-  # control: a genuinely substantive reason of similar length still works
-  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' \
-        | ( cd "$R" && REVIEW_RECORD_GATE_OVERRIDE="rollback of a bad deploy, reviewer unavailable" bash "$SELF" ) >/dev/null 2>&1; echo $?)"
-  [[ "$rc" == "0" ]] && pass "a substantive waiver of similar length still allows" \
-    || fail "the placeholder case is over-broad — it rejected a real reason (rc=$rc)"
+  echo "Scenario 17: RETIRED — was 'the placeholder-waiver case actually fires'"
+  # This scenario tested REVIEW_RECORD_GATE_OVERRIDE's placeholder-rejection
+  # branch, which no longer exists (see Scenario 8). Nothing to test here any
+  # more; kept as a numbered marker so the scenario count/history stays legible.
 
   echo "Scenario 18: rebase state is read from the TARGET repo, not the cwd"
-  # A rebase in some unrelated repo you happen to be standing in must NOT disarm
-  # the gate for a commit targeting the harness.
+  # A rebase in some unrelated repo you happen to be standing in must NOT
+  # silently disarm detection for a commit targeting the harness — it should
+  # still warn. A rebase IN THE TARGET repo still exempts (silently, no
+  # message at all) from any cwd, because you cannot stop a rebase to get a
+  # review; this half of the scenario is unaffected by the demotion.
+  # Retiring Scenario 17 removed the incidental staged-uncovered-file it used
+  # to leave behind for this scenario to inherit — stage one explicitly now.
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  echo '# unreviewed, scenario 18 fixture' > "$R/adapters/claude-code/hooks/lib/scenario18.sh"
+  ( cd "$R" && git add adapters/claude-code/hooks/lib/scenario18.sh ) >/dev/null 2>&1
   local RB="$T/rebasing"; mkdir -p "$RB"
   ( cd "$RB" && git init -q . && git config user.email t@example.com && git config user.name T ) >/dev/null 2>&1
   local rbgd; rbgd="$(cd "$RB" && git rev-parse --git-dir)"
   case "$rbgd" in /*) : ;; *) rbgd="$RB/$rbgd" ;; esac
   : > "$rbgd/REBASE_HEAD"
-  rc="$(runfrom "$RB" "git -C $R $SUB -m x")"
-  [[ "$rc" == "2" ]] && pass "a FOREIGN repo's rebase does not disarm the gate" \
-    || fail "foreign rebase state disarmed the gate (rc=$rc)"
-  # ...and a genuine rebase IN THE TARGET still exempts, from any cwd.
+  runfrom_capture "$RB" "git -C $R $SUB -m x"
+  rc="$RUN_RC"
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  case "$RUN_MSG" in *scenario18.sh*) pass "a FOREIGN repo's rebase does not disarm DETECTION" ;; \
+    *) fail "foreign rebase state silently disarmed detection (no advisory message)"; esac
+  rm -f "$rbgd/REBASE_HEAD"
+  # ...and a genuine rebase IN THE TARGET still exempts SILENTLY, from any cwd
+  # (distinguishing "exempted before ever checking" from "checked, warned,
+  # allowed anyway" — both are rc=0 now, so the message is what proves which).
   local tgd; tgd="$(cd "$R" && git rev-parse --git-dir)"
   case "$tgd" in /*) : ;; *) tgd="$R/$tgd" ;; esac
   : > "$tgd/REBASE_HEAD"
-  rc="$(runfrom "$RB" "git -C $R $SUB -m x")"
-  [[ "$rc" == "0" ]] && pass "a rebase IN THE TARGET repo exempts from any cwd" \
-    || fail "genuine target-repo rebase not exempted (rc=$rc) — strands the operator"
-  rm -f "$tgd/REBASE_HEAD" "$rbgd/REBASE_HEAD"
+  runfrom_capture "$RB" "git -C $R $SUB -m x"
+  rc="$RUN_RC"
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  [[ -z "$RUN_MSG" ]] && pass "a rebase IN THE TARGET repo exempts SILENTLY (no advisory message at all)" \
+    || fail "genuine target-repo rebase produced a message ('${RUN_MSG:0:60}...') — the exemption no longer short-circuits before detection"
+  rm -f "$tgd/REBASE_HEAD"
 
-  echo "Scenario 19: PowerShell tool input is gated too"
+  echo "Scenario 19: PowerShell tool input is warned on too"
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
   echo '# unreviewed' > "$R/adapters/claude-code/hooks/lib/admission-lib.sh"
   ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
-  rc="$(printf '%s' "$(jq -nc --arg c "$CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')" \
-        | ( cd "$R" && bash "$SELF" ) >/dev/null 2>&1; echo $?)"
-  [[ "$rc" == "2" ]] && pass "a PowerShell-tool commit is gated" || fail "PowerShell bypass open (rc=$rc)"
-  rc="$(printf '%s' "$(jq -nc --arg c "Set-Location $R; $CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')" \
-        | ( cd "$OUT" && bash "$SELF" ) >/dev/null 2>&1; echo $?)"
-  [[ "$rc" == "2" ]] && pass "PowerShell Set-Location + commit is gated" || fail "PowerShell Set-Location bypass open (rc=$rc)"
+  local ps_payload
+  ps_payload="$(jq -nc --arg c "$CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')"
+  RUN_MSG="$(printf '%s' "$ps_payload" | ( cd "$R" && bash "$SELF" ) 2>&1 1>/dev/null)"; rc=$?
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  case "$RUN_MSG" in *admission-lib.sh*) pass "a PowerShell-tool commit is still detected/warned" ;; *) fail "PowerShell detection silently stopped"; esac
+  ps_payload="$(jq -nc --arg c "Set-Location $R; $CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')"
+  RUN_MSG="$(printf '%s' "$ps_payload" | ( cd "$OUT" && bash "$SELF" ) 2>&1 1>/dev/null)"; rc=$?
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  case "$RUN_MSG" in *admission-lib.sh*) pass "PowerShell Set-Location + commit is still detected/warned" ;; *) fail "PowerShell Set-Location detection silently stopped"; esac
 
-  echo "Scenario 20: C1 — the INLINE waiver from the block message must reach the override branch AND log"
-  # This is the NEGATIVE test round 4 was missing. Two defects met here:
-  #  (a) the quote-blind env stripper made
-  #      REVIEW_RECORD_GATE_OVERRIDE="production is down and this cannot wait" git commit
-  #      desync the parse, so the gate returned not-a-commit and the commit landed
-  #      with an unreviewed file staged, NO >=20-char check, NO placeholder check
-  #      and NOTHING in the override log. A SHORT reason (no spaces) parsed fine
-  #      and blocked — the validation was inverted, and the block message printed
-  #      the exact shape that defeated it.
-  #  (b) even with the parse fixed, the waiver STILL could not work: a PreToolUse
-  #      hook runs BEFORE the shell that applies a command-scoped assignment, so
-  #      the hook's environment never contains it. PROVEN on the pre-fix tree:
-  #      inline -> rc=2 and 0 lines logged; exported -> rc=0 and 1 line logged.
-  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
-  echo '# unreviewed change, scenario 20 marker' > "$R/adapters/claude-code/hooks/lib/admission-lib.sh"
-  ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
-  ( cd "$R" && git diff --cached --quiet ) && fail "scenario 20 fixture staged NOTHING — every case below would pass vacuously"
-  local OVLOG="$T/overrides.log"
-  runwaiver() { # $1 = command string; echoes "<rc>:<log line count>"
-    local payload rcx
-    rm -f "$OVLOG"
-    payload="$(jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}')"
-    printf '%s' "$payload" | ( cd "$R" && REVIEW_RECORD_GATE_LOG="$OVLOG" bash "$SELF" ) >/dev/null 2>&1
-    rcx=$?
-    printf '%s:%s' "$rcx" "$( [[ -f "$OVLOG" ]] && wc -l < "$OVLOG" | tr -d ' ' || echo 0)"
-  }
-  local wr
-  wr="$(runwaiver "REVIEW_RECORD_GATE_OVERRIDE=\"production is down and this cannot wait\" $CV -m x")"
-  [[ "$wr" == "0:1" ]] && pass "inline waiver allows AND writes exactly one audit line ($wr)" \
-    || fail "inline waiver did not reach the override branch (rc:logged = $wr, want 0:1)"
-  # ...and the validation must still bite on the inline path, or the fix would
-  # have turned a silent bypass into a loud one that anybody can emit in-band.
-  wr="$(runwaiver "REVIEW_RECORD_GATE_OVERRIDE=short $CV -m x")"
-  [[ "$wr" == "2:0" ]] && pass "inline waiver under 20 chars is REJECTED and not logged ($wr)" \
-    || fail "short inline waiver was accepted (rc:logged = $wr, want 2:0)"
-  wr="$(runwaiver "REVIEW_RECORD_GATE_OVERRIDE=\"bypass bypass bypass bypass\" $CV -m x")"
-  [[ "$wr" == "2:0" ]] && pass "inline placeholder waiver is REJECTED and not logged ($wr)" \
-    || fail "placeholder inline waiver was accepted (rc:logged = $wr, want 2:0)"
-  # A quoted env assignment that is NOT a waiver must not disturb the gate.
-  wr="$(runwaiver "GIT_AUTHOR_NAME=\"A B\" $CV -m x")"
-  [[ "$wr" == "2:0" ]] && pass "unrelated quoted env assignment still BLOCKS ($wr)" \
-    || fail "quoted env assignment bypassed the gate (rc:logged = $wr, want 2:0)"
+  echo "Scenario 20: RETIRED — was 'the INLINE waiver from the block message must reach the override branch AND log'"
+  # This scenario tested the REVIEW_RECORD_GATE_OVERRIDE inline-vs-exported
+  # parsing/logging path, which no longer exists (see Scenario 8). Nothing to
+  # test here any more; kept as a numbered marker for scenario-count legibility.
 
-  echo "Scenario 21: C3 — command-position shapes must all BLOCK"
+  echo "Scenario 21: C3 — command-position shapes must all still be DETECTED (was: BLOCK)"
   # Command position was tested as "the segment starts with the literal string
   # git". `( cd X && git <verb> )` occurs 210 times in adapters/ on this tree, and
   # work-integrity-gate.sh:1093 is literally that shape.
   while IFS='|' read -r _lbl _cwd _cmd; do
     [[ -n "$_lbl" ]] || continue
-    rc="$(runfrom "$_cwd" "$_cmd")"
-    [[ "$rc" == "2" ]] && pass "BLOCKS: $_lbl" || fail "FAIL-OPEN (rc=$rc): $_lbl"
+    runfrom_capture "$_cwd" "$_cmd"
+    rc="$RUN_RC"
+    [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc): $_lbl"
+    case "$RUN_MSG" in *admission-lib.sh*) pass "DETECTS: $_lbl" ;; *) fail "FAIL-OPEN (undetected): $_lbl"; esac
   done <<EOF
 subshell with cd|$OUT|( cd $R && $CV -m x )
 subshell glued|$R|($CV -m x)
@@ -878,9 +901,11 @@ EOF
   # The backslash-newline shape cannot ride in the line-oriented table above —
   # the command itself contains a newline, which `read` would split into a
   # second, malformed row (it did, and read as a fail-open).
-  rc="$(runfrom "$R" "git \\"$'\n'"$SUB -m x")"
-  [[ "$rc" == "2" ]] && pass "BLOCKS: backslash-newline line continuation" \
-    || fail "FAIL-OPEN (rc=$rc): backslash-newline line continuation"
+  runfrom_capture "$R" "git \\"$'\n'"$SUB -m x"
+  rc="$RUN_RC"
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  case "$RUN_MSG" in *admission-lib.sh*) pass "DETECTS: backslash-newline line continuation" ;; \
+    *) fail "FAIL-OPEN (undetected): backslash-newline line continuation"; esac
 
   echo "Scenario 22: M1 — the cwd-fallback must not over-fire on another repo"
   # Round 4 fell back to the cwd for EVERY unresolvable target, claiming
@@ -890,11 +915,13 @@ EOF
   rc="$(runfrom "$R" "W=$T/elsewhere; git -C \"\$W\" $SUB -m x")"
   [[ "$rc" == "0" ]] && pass "commit targeting an unrelated repo is NOT blocked by our staged file" \
     || fail "OVER-FIRE (rc=$rc): blocked a commit aimed at another repo"
-  # ...but a genuinely UNKNOWN target (no visible assignment) must still block,
-  # or the round-3 fail-open reopens.
-  rc="$(runfrom "$R" "git -C \$REPO $SUB -m x")"
-  [[ "$rc" == "2" ]] && pass "unresolvable \$REPO target still blocks (round-3 fail-open stays closed)" \
-    || fail "FAIL-OPEN (rc=$rc): unexpanded variable target waved through"
+  # ...but a genuinely UNKNOWN target (no visible assignment) must still be
+  # DETECTED (was: blocked), or the round-3 fail-open reopens undetected.
+  runfrom_capture "$R" "git -C \$REPO $SUB -m x"
+  rc="$RUN_RC"
+  [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
+  case "$RUN_MSG" in *admission-lib.sh*) pass "unresolvable \$REPO target still DETECTS (round-3 fail-open stays closed)" ;; \
+    *) fail "FAIL-OPEN (undetected): unexpanded variable target"; esac
 
   echo "Scenario 23: review-independence RI1b — committing uncovered content"
   echo "auto-enqueues a review-queue item (docs/plans/review-independence.md)"
@@ -933,11 +960,13 @@ EOF
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "${1:-}" in
     # `export HARNESS_SELFTEST=1` arms the sandbox guard in signal-ledger.sh
-    # (and in _rrcg_log_override above) for the whole run and for every
-    # re-invocation the self-test spawns. Without it this self-test wrote the
-    # operator's real ~/.claude/state/signal-ledger.jsonl AND
-    # ~/.claude/state/review-record-gate-overrides.log. PROVEN behaviorally:
-    # clean-HOME probe created both without it, nothing under .claude/ with it.
+    # for the whole run and for every re-invocation the self-test spawns.
+    # Without it this self-test wrote the operator's real
+    # ~/.claude/state/signal-ledger.jsonl. PROVEN behaviorally: clean-HOME
+    # probe created it without this arm, nothing under .claude/ with it.
+    # (Historically also guarded _rrcg_log_override's real override-log write
+    # — that function was removed 2026-07-30 along with the mechanism it
+    # served; Scenario 8 below now proves the retired log path stays untouched.)
     --self-test) export HARNESS_SELFTEST=1; _rrcg_self_test; exit $? ;;
     *) _rrcg_main; exit $? ;;
   esac

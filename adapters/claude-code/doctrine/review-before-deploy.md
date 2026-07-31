@@ -2,12 +2,23 @@
 
 > Enforcement: `install.sh` hard-blocks an uncovered changed in-surface file
 > before any file is touched; `session-start-auto-install.sh` fail-open
-> skips + loudly warns on an uncovered file (never blocks). Shared surface +
-> coverage logic: `hooks/lib/review-record-gate-lib.sh`. Writer:
+> skips + loudly warns on an uncovered file (never blocks). AS OF 2026-07-30
+> (Amendment H, deterministic-process.md): `hooks/review-record-push-gate.sh`
+> is the AUTHORITATIVE runtime carrier — wired into `git-hooks/pre-push`
+> (core.hooksPath dispatcher), it BLOCKS `git push` to master/main when the
+> pushed range introduces an uncovered in-surface file, reading coverage at
+> the COMMITTED blob (not the working tree). `review-record-commit-gate.sh`
+> (PreToolUse, commit time) is ADVISORY ONLY as of the same amendment — it
+> warns but never blocks, because a builder subagent typically has no
+> Task/Agent-dispatch tool and cannot itself satisfy the remedy (docs/
+> backlog.md REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01); the orchestrator,
+> which DOES have dispatch capability, is the actor at push time. Shared
+> surface + coverage logic: `hooks/lib/review-record-gate-lib.sh`. Writer:
 > `scripts/write-review-record.sh`. Design: `docs/design-notes/review-record-
 > primitive.md` (architecture-reviewer verdict SOUND-WITH-AMENDMENTS,
 > 2026-07-16). Full: review-before-deploy-full.md.
-> Applies: every harness deploy (install.sh run, or auto-install sync).
+> Applies: every harness deploy (install.sh run, or auto-install sync) AND
+> every `git push` to master/main from a machine with this harness installed.
 
 **The gap this closes.** No mechanism required a `harness-reviewer` PASS
 before a change reached live `~/.claude/`.
@@ -17,9 +28,10 @@ before a change reached live `~/.claude/`.
 agents/*.md | config/** | manifest.json | settings.json.template |
 rules/**` (config/** residual: never deployed by either carrier), OR
 repo-root path matches `neural-lace/workstreams-ui/{server,web}/**/*.js`
-(Amendment G, cockpit surface incl. `*.selftest.js`; enforced ONLY at
-commit-time — no deploy step exists for the cockpit, so
-`review-record-commit-gate.sh` IS the enforcement, not a backstop;
+(Amendment G, cockpit surface incl. `*.selftest.js`; no INSTALL-time deploy
+step exists for the cockpit, so `review-record-push-gate.sh` — not
+`review-record-commit-gate.sh`, demoted to advisory by Amendment H — is the
+enforcement for this surface too, since it reads the SAME `rrg_in_surface`;
 residual `scripts/|state/|config/|web/*.{html,css}`, -full.md). Manifest
 is a CROSS-CHECK only — every `hooks[]` entry must resolve in-surface
 (doctor `review-surface-cross-check`), else RED.
@@ -33,6 +45,20 @@ lands (cutover_ref = the Amendment-G commit's SHA); `review-grandfather-
 integrity` REDs for that one commit BY DESIGN, not a regression.
 
 **Carrier posture (F):** header line has the hard-block-vs-skip+warn split.
+
+**Amendment H (2026-07-30, deterministic-process.md):** the commit-time
+carrier's block was UNSATISFIABLE from the layer it fired at — 78 override
+events (docs/backlog.md REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01), every
+2026-07-30 one citing the same builder-has-no-dispatch-tool deadlock.
+`review-record-push-gate.sh` moves the authoritative check to `git push`
+(the funnel every commit reaches the remote through, AND the layer where the
+actor — the orchestrator — can actually satisfy the remedy). Its own
+override is NOT `REVIEW_RECORD_GATE_OVERRIDE` (removed from the commit gate
+entirely) but an operator-authorized, sha-scoped, 900s-TTL marker written by
+`scripts/authorize-review-record-push-override.sh` (Rule 2: an override the
+acting agent authors unilaterally is not an override). Manifest proof
+obligation (Rule to self): every `blocking:true` entry declares `chokepoint`
++ `bypass_paths`, mechanized by doctor `check_deterministic_process_proof`.
 
 **HONEST RESIDUAL (Amendment C).** Existence + content-match only — cannot
 verify the quoted verdict is genuine (quote-forgery, open:

@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-30797d1d",
+  "created_at": "2026-07-30T23:57:29Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "deterministic-process-gate (operator directive 2026-07-30, adapters/claude-code/doctrine/deterministic-process.md)",
+  "change_ref": {
+    "commit_sha": "PENDING",
+    "branch": "worktree-agent-aff45ca5e64f855de"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "dd4c9915006bbf79ea60cd4c214b93eea16b61c7"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "1441b8ddc8791b7cad1255a46731ac50e4c6918c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-commit-gate.sh",
+      "blob_sha": "819249d2e4c2964400a998f702ba0cd881d6da7d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-push-gate.sh",
+      "blob_sha": "abf2854be50a302670e8183b42d0905eccfd0654"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "61140198531d438f85cf2d45f8d9747dbb23d9dc"
+    },
+    {
+      "path": "adapters/claude-code/scripts/authorize-review-record-push-override.sh",
+      "blob_sha": "a1c94d18ca23673b6a99f6faab73010401205fcd"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Change pending -> queued and this is a PASS; no other re-review is needed beyond confirming that string.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

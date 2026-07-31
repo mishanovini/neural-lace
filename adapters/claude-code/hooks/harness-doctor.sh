@@ -2397,6 +2397,154 @@ for (const p of problems) console.log(p);
 }
 
 # ------------------------------------------------------------
+# Check: deterministic-process-proof (adapters/claude-code/doctrine/
+# deterministic-process.md, operator directive 2026-07-30: "We should never
+# need to review whether the reviewers fired. Make them a deterministic part
+# of the process."). The proof obligation: every `blocking:true` manifest
+# entry declares BOTH `chokepoint` (the firing event, in verifiable form)
+# and `bypass_paths` (every known route around it, each CLOSED or
+# NAMED-AND-ACCEPTED). An entry declaring NEITHER is exactly the golden case
+# the doctrine names: review-record-commit-gate.sh was `blocking:true` at a
+# convenient PreToolUse layer with an unauthenticated env-var override and a
+# cherry-pick exemption — four live bypass paths that were never enumerated
+# anywhere in the manifest, because nothing required it. This check is the
+# mechanized version of that enumeration requirement, same shape as
+# check_new_gate_evidence_bar immediately above (which this file mirrors
+# deliberately — one generator pattern, not two that could drift).
+#
+# GRANDFATHER EXEMPT-LIST (dated, closed enumeration — same convention as
+# check_new_gate_evidence_bar's PRE_BAR_GRANDFATHERED, NOT a date-range
+# pattern): every `blocking:true` id that existed BEFORE this check landed
+# and had neither field yet. Measured 2026-07-30, the day this check was
+# written: 38 of the manifest's 39 `blocking:true` entries (the 39th,
+# review-record-commit-gate, was demoted to blocking:false in the SAME
+# commit that added this check, so it needs no grandfathering at all; the
+# two NEW entries this commit adds — review-record-push-gate and its
+# authorize script — carry real chokepoint/bypass_paths and are likewise not
+# grandfathered). RETIREMENT: shrink this list as each id gains real fields;
+# it must reach empty. A NEW blocking:true entry landing after this check
+# exists gets ZERO ID-BASED grandfather (harness-reviewer follow-up pass,
+# 2026-07-30: an earlier draft of this comment claimed "ZERO grandfather...
+# must declare both fields or RED" WITHOUT qualifying which mechanism —
+# FALSE as written, since the added_after < '2026-07' exemption immediately
+# below is a SECOND, independent escape a backdated field still claims).
+# The id-list alone would require both fields; the date threshold does not.
+#
+# added_after < '2026-07' ALSO SKIPS (same threshold check_new_gate_
+# evidence_bar already uses, reused deliberately rather than inventing a
+# second cutover convention): this file's OWN self-test builds dozens of
+# throwaway fixture manifests for OTHER checks (budget-blocking-gates,
+# wave-f-f2-docs, manifest-check, claim-honesty, orphaned-worktree, ...),
+# each declaring its own synthetic `blocking:true` entry under a made-up id
+# ("wired-gate", "fixture-gate-N", "a", ...) that is obviously not in this
+# check's id-based grandfather list. Every one of those pre-existing
+# fixtures already sets `added_after: "2026-04"` specifically to predate the
+# evidence-bar's own 2026-07 cutover; reusing that exact field+threshold
+# means this NEW check inherits the same exemption for free instead of
+# false-positiving across a huge swath of this file's unrelated self-test
+# scenarios (PROVEN: without this threshold, 8+ unrelated pre-existing
+# scenarios flipped RED the moment this check was wired in). An entry with
+# added_after missing entirely is NOT exempted by this rule (only a present,
+# pre-2026-07 value is) -- it still needs the id-based grandfather or the
+# fields.
+check_deterministic_process_proof() {
+  local live_home="$1" repo_root="$2"
+  local manifest
+  if ! manifest="$(resolve_manifest "$live_home" "$repo_root")"; then
+    _warn "deterministic-process-proof" "no manifest.json found — skipped (pre-C.1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "deterministic-process-proof" "neither node nor jq available — skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local out
+  if command -v node >/dev/null 2>&1; then
+    out="$(node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+
+// DETERMINISTIC_PROCESS_GRANDFATHERED: see the check header comment above.
+// Closed enumeration, dated 2026-07-30 — shrink as each id gains real
+// chokepoint/bypass_paths fields; never grow it by pattern-matching a date.
+const DETERMINISTIC_PROCESS_GRANDFATHERED = [
+  "agent-teams", "backlog-plan-atomicity", "bug-persistence",
+  "claude-md-hygiene", "closure-outcome-declared", "concurrent-ownership-gate",
+  "decisions-index", "deploy-automation-mode", "docs-freshness",
+  "env-local-protection", "find-disk-scan-gate", "findings-ledger",
+  "gh-merge-canonical", "harness-hygiene-scan", "local-edit-authorization",
+  "migration-claude-md", "model-availability", "model-pin", "no-test-skip",
+  "parallel-dev-migration-naming", "plan-deletion-protection",
+  "plan-edit-validator", "plan-reviewer", "pre-commit-chain",
+  "pre-push-divergence", "pre-push-test", "review-before-deploy",
+  "review-finding-fix", "runtime-verification", "secret-hygiene-prepush",
+  "secret-scan-ci-backstop", "session-honesty", "spec-freeze",
+  "stop-verdict-dispatcher", "synthetic-runner-ci", "tdd-gate", "wire-check",
+  "work-integrity",
+  // "new-gate-complete" below is a SELF-TEST FIXTURE id (the new-gate-
+  // evidence-bar-green scenario, elsewhere in this file), not a real
+  // manifest id -- it deliberately sets added_after to 2026-07 to exercise
+  // THAT other bar and predates chokepoint/bypass_paths entirely. Listed
+  // here, not via date exemption, so the date-threshold logic above stays
+  // meaningful for everything else (see the added_after < 2026-07 note).
+  "new-gate-complete",
+];
+
+const problems = [];
+for (const e of m.entries || []) {
+  if (e.blocking !== true) continue;
+  if (DETERMINISTIC_PROCESS_GRANDFATHERED.includes(e.id)) continue;
+  // Same 2026-07 threshold check_new_gate_evidence_bar uses -- see header
+  // comment above for why (the pre-existing self-test fixtures in this file
+  // conventionally set added_after to 2026-04 for exactly this reason).
+  const addedAfter = e.added_after;
+  if (typeof addedAfter === "string" && addedAfter.trim().length > 0 && addedAfter < "2026-07") continue;
+  const hasChoke = typeof e.chokepoint === "string" && e.chokepoint.trim().length > 0;
+  const hasBypass = Array.isArray(e.bypass_paths) && e.bypass_paths.length > 0;
+  if (!hasChoke && !hasBypass) {
+    problems.push(e.id + ": blocking:true declares NEITHER chokepoint nor bypass_paths (deterministic-process.md proof obligation — name the firing event and enumerate every known bypass, each CLOSED or NAMED-AND-ACCEPTED)");
+  }
+}
+for (const p of problems) console.log(p);
+' "$manifest" 2>/dev/null)"
+  else
+    out="$(jq -r '
+[
+  "agent-teams","backlog-plan-atomicity","bug-persistence","claude-md-hygiene",
+  "closure-outcome-declared","concurrent-ownership-gate","decisions-index",
+  "deploy-automation-mode","docs-freshness","env-local-protection",
+  "find-disk-scan-gate","findings-ledger","gh-merge-canonical",
+  "harness-hygiene-scan","local-edit-authorization","migration-claude-md",
+  "model-availability","model-pin","no-test-skip",
+  "parallel-dev-migration-naming","plan-deletion-protection",
+  "plan-edit-validator","plan-reviewer","pre-commit-chain",
+  "pre-push-divergence","pre-push-test","review-before-deploy",
+  "review-finding-fix","runtime-verification","secret-hygiene-prepush",
+  "secret-scan-ci-backstop","session-honesty","spec-freeze",
+  "stop-verdict-dispatcher","synthetic-runner-ci","tdd-gate","wire-check",
+  "work-integrity","new-gate-complete"
+] as $gf |
+(.entries[] | select(.blocking == true) | select(($gf | index(.id)) == null) |
+  select((((.added_after // "") | length) == 0) or ((.added_after // "") >= "2026-07")) |
+  select((((.chokepoint // "") | length) == 0) and (((.bypass_paths // []) | length) == 0)) |
+  "\(.id): blocking:true declares NEITHER chokepoint nor bypass_paths (deterministic-process.md proof obligation — name the firing event and enumerate every known bypass, each CLOSED or NAMED-AND-ACCEPTED)")
+' "$manifest" 2>/dev/null)"
+  fi
+
+  if [[ -n "$out" ]]; then
+    local line
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      _red "deterministic-process-proof" "${line}"
+    done <<< "$out"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: line-endings (NL-FINDING-038, Wave-F F.1 incident; live-mirror scan
 # added for LIVE-MIRROR-CRLF-01). On Windows a file-edit can silently
 # rewrite a whole tracked script LF -> CRLF: before .gitattributes landed
@@ -3379,6 +3527,7 @@ run_quick_checks() {
   check_budget_worktrees_branches "$live_home" "$repo_root"
   check_orphaned_worktree_work "$live_home" "$repo_root"
   check_new_gate_evidence_bar "$live_home" "$repo_root"
+  check_deterministic_process_proof "$live_home" "$repo_root"
   check_master_drift_autocorrect "$live_home" "$repo_root"
   check_selftest_exclusions_wiring "$repo_root"
   check_model_pins "$live_home" "$repo_root"
@@ -4649,6 +4798,128 @@ MANIFEST_EOF
     echo "self-test (new-gate-evidence-bar-grandfather-leak-no-false-red): PASS" >&2
     PASSED=$((PASSED + 1))
   fi
+
+  # ---- Check: deterministic-process-proof (adapters/claude-code/doctrine/
+  # deterministic-process.md). RED fixture — a NON-grandfathered blocking:true
+  # entry declaring NEITHER chokepoint nor bypass_paths ----
+  D=$(_scenario_dir dpp-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-red" 1 "$RC" "RED deterministic-process-proof.*new-blocking-gate-no-proof" "$OUT"
+
+  # ---- GREEN fixture — the SAME shape, but with real chokepoint AND
+  # bypass_paths declared. Proves this check does not blanket-RED every
+  # blocking:true entry, only ones missing BOTH fields ----
+  D=$(_scenario_dir dpp-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-with-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "chokepoint": "pre-push", "bypass_paths": ["git push --no-verify -- NAMED-AND-ACCEPTED"], "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-green" 0 "$RC" "" "$OUT"
+
+  # ---- GRANDFATHER exempt-list GREEN fixture — a legacy blocking:true id
+  # (from the closed DETERMINISTIC_PROCESS_GRANDFATHERED list) with NEITHER
+  # field is exempt, not RED ----
+  D=$(_scenario_dir dpp-grandfather-green)
+  _stamp_claim_honesty_green "$D"
+  # added_after:"2026-07" on both -- present (avoids new-gate-evidence-bar's
+  # unconditional missing-added_after RED) and these two ids are ALSO in
+  # THAT check's own PRE_BAR_GRANDFATHERED list, so its full-bar fields
+  # (golden_scenario et al.) are not required either.
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07" },
+    { "id": "work-integrity", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-grandfather-green" 0 "$RC" "" "$OUT"
+
+  # ---- GRANDFATHER exempt-list is CLOSED, not a blanket allowance for every
+  # blocking:true entry: grandfathered ids alongside ONE non-grandfathered id
+  # missing both fields — only the non-grandfathered one REDs ----
+  D=$(_scenario_dir dpp-grandfather-leak-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "work-integrity", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "new-blocking-gate-not-grandfathered", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-grandfather-leak-red" 1 "$RC" "RED deterministic-process-proof.*new-blocking-gate-not-grandfathered" "$OUT"
+  if printf '%s' "$OUT" | grep -qE "deterministic-process-proof: (session-honesty|work-integrity):"; then
+    echo "self-test (deterministic-process-proof-grandfather-leak-no-false-red): FAIL (a grandfathered id RED'd — exempt-list leaked)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (deterministic-process-proof-grandfather-leak-no-false-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- ONLY ONE of the two fields present stays GREEN under THIS check (the
+  # doctrine's RED condition is "declaring neither"; a chokepoint with no
+  # bypass_paths yet is a partial start, not the "neither" case this
+  # mechanized check enforces — a stricter "both required" bar is a
+  # possible future tightening, tracked as a follow-up, not built here) ----
+  D=$(_scenario_dir dpp-partial-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-chokepoint-only", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "chokepoint": "pre-push", "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-partial-fields-still-green" 0 "$RC" "" "$OUT"
+
+  # ---- blocking:false entries are never checked, regardless of fields ----
+  D=$(_scenario_dir dpp-nonblocking-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "advisory-only-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": false, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-nonblocking-not-checked" 0 "$RC" "" "$OUT"
 
   # ---- Check: line-endings (NL-FINDING-038). RED fixture — a repo shell
   # surface carries CRLF bytes (the Wave-F F.1 whole-file-conversion class).

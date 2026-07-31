@@ -83,8 +83,9 @@ that trusts "self-test PASS" as evidence. Reviewing selftest files at the
 same bar as product code is the only position consistent with that
 finding.
 
-**Enforcement — commit-time only, honestly (harness-review REFORMULATE
-fixup, finding 1).** All three consumers of `rrg_in_surface` source the ONE
+**Enforcement — commit-time at Amendment G, push-time as of Amendment H
+(harness-review REFORMULATE fixup, finding 1; superseded 2026-07-30, see
+Amendment H below).** All three consumers of `rrg_in_surface` source the ONE
 shared `hooks/lib/review-record-gate-lib.sh` — that part is true, and means
 there is only one surface definition to keep in sync — but sharing the
 function is NOT the same as sharing the enforcement, and the first draft of
@@ -99,17 +100,23 @@ hardcodes the `adapters/claude-code/$full_rel` prefix) — same story. Both
 carriers exist to sync `adapters/claude-code/` into `~/.claude/`; the
 cockpit is not part of that sync surface and never has been, because the
 cockpit runs live from the git checkout with no separate deploy step to
-sync at all. So Amendment G's two new case arms are **live at exactly one
-place: `review-record-commit-gate.sh`'s commit-time PreToolUse block**
-(plus its sibling `review-queue-auto-enqueue-lib.sh`, which files an
-auto-enqueue remedy item off the same staged-path list). That is not a
-weaker guarantee than the harness side's — for a target with no deploy
-step, the commit gate blocking an uncovered change IS the complete
-enforcement, not a backstop for a deploy-time carrier that will also catch
-it. Naming this precisely matters: claiming carrier parity that cannot
+sync at all. So Amendment G's two new case arms were, at the time Amendment
+G landed, **live at exactly one place: `review-record-commit-gate.sh`'s
+commit-time PreToolUse block** (plus its sibling `review-queue-auto-enqueue-
+lib.sh`, which files an auto-enqueue remedy item off the same staged-path
+list). AMENDMENT H (2026-07-30) SUPERSEDES THE ENFORCEMENT CLAIM, NOT THE
+SURFACE DEFINITION: the commit gate was demoted to advisory-only (see
+review-before-deploy.md's own Amendment H note) because its block was
+unsatisfiable from a builder session with no Task/Agent-dispatch tool.
+`hooks/review-record-push-gate.sh` — wired at `git push` via `git-hooks/
+pre-push` — now enforces the SAME `rrg_in_surface` surface (it sources the
+identical `hooks/lib/review-record-gate-lib.sh`, unmodified by Amendment H)
+for cockpit content too, since the cockpit still has no separate deploy
+step. Naming this precisely matters: claiming carrier parity that cannot
 fire is exactly the "documented enforcement that does not fire" defect
 this doctrine's own constitution treats as cardinal (harness-reviewer
-caught this in the amendment's first draft).
+caught the ORIGINAL version of this gap in Amendment G's first draft, and
+caught THIS doc going stale relative to Amendment H in review).
 
 **Named residual (Amendment G).** The two case arms cover
 `{server,web}/**/*.js` only, per the operator dispatch that motivated this

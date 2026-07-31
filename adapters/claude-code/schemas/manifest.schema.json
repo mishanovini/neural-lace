@@ -176,6 +176,19 @@
             "type": ["string", "null"],
             "minLength": 1,
             "description": "OPTIONAL (required by the new-gate-evidence-bar when added_after >= '2026-07'): the condition under which this gate/check should be retired or demoted (ADR 059 D7 gate-demotion.sh reads this class of signal)."
+          },
+          "chokepoint": {
+            "type": ["string", "null"],
+            "minLength": 1,
+            "description": "OPTIONAL per adapters/claude-code/doctrine/deterministic-process.md: the firing event this unit's enforcement runs at, in verifiable form (e.g. 'pre-push', 'Stop', 'PreToolUse Bash'). Names the NARROWEST chokepoint every path to the outcome traverses — not merely a convenient layer (Rule 1). harness-doctor.sh's check_deterministic_process_proof flags a blocking:true entry ONLY when BOTH this field AND bypass_paths are absent (a closed DETERMINISTIC_PROCESS_GRANDFATHERED exempt-list covers legacy entries predating this field) — declaring only one of the two is not yet flagged; a both-required bar is a possible future tightening, not enforced today."
+          },
+          "bypass_paths": {
+            "type": ["array", "null"],
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": "OPTIONAL per adapters/claude-code/doctrine/deterministic-process.md: every known route to the outcome that skips this unit's chokepoint, each entry stating its own CLOSED (with how) or NAMED-AND-ACCEPTED (with why) disposition inline — an empty list claims none exist and is a lie unless someone enumerated them. harness-doctor.sh's check_deterministic_process_proof flags a blocking:true entry ONLY when BOTH this field AND chokepoint are absent (same grandfather exempt-list as chokepoint) — see that field's description for the current both-missing-only enforcement scope."
           }
         },
         "allOf": [

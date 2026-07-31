@@ -187,6 +187,36 @@ rrg_is_covered() {
   return 1
 }
 
+# ------------------------------------------------------------
+# Shared waiver/authorization-reason validation
+# ------------------------------------------------------------
+
+# rrg_validate_waiver_reason <reason> -- rc 0 iff <reason> is a substantive,
+# non-placeholder operator-authorization reason: >=20 chars (after
+# whitespace-stripping) and not on the placeholder denylist. Shared by every
+# gate/script that consumes an operator-authorized reason string, so the bar
+# cannot drift between callers.
+#
+# review-record-commit-gate.sh (the now-ADVISORY commit-time gate,
+# adapters/claude-code/doctrine/deterministic-process.md) predates this
+# extraction and keeps its OWN inline copy of the same check -- deliberately
+# left untouched rather than refactored to call this, to avoid touching a
+# 900+-line, 20+-scenario self-tested file for a change with zero behavior
+# delta there. This function is the ONE shared copy for every NEW caller:
+# review-record-push-gate.sh (the authoritative pre-push gate) and
+# scripts/authorize-review-record-push-override.sh (the operator-facing
+# authorization writer it consumes).
+rrg_validate_waiver_reason() {
+  local reason="$1"
+  [[ -z "$reason" ]] && return 1
+  [[ "${#reason}" -ge 20 ]] || return 1
+  case "$(printf '%s' "$reason" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')" in
+    x|test|testing|temp|tmp|skip|bypass|because|na|n/a|bypassbypassbypassbypass)
+      return 1 ;;
+  esac
+  return 0
+}
+
 # rrg_uncovered_reason <repo_root> <ref-or-empty> <full_relpath> <blob_sha>
 # echoes a one-line human reason a file is NOT covered (for teaching messages).
 rrg_uncovered_reason() {
@@ -346,6 +376,28 @@ _rrg_self_test() {
     echo "PASS: blob_sha_of_ref matches working-tree sha"; pass=$((pass+1))
   else
     echo "FAIL: blob_sha_of_ref (got '$refsha', want '$sha')"; fail=$((fail+1))
+  fi
+
+  # ---- rrg_validate_waiver_reason ----
+  if rrg_validate_waiver_reason "production is down and this cannot wait for review"; then
+    echo "PASS: substantive reason validates"; pass=$((pass+1))
+  else
+    echo "FAIL: substantive reason should validate"; fail=$((fail+1))
+  fi
+  if rrg_validate_waiver_reason "short"; then
+    echo "FAIL: a <20-char reason should be rejected"; fail=$((fail+1))
+  else
+    echo "PASS: a <20-char reason is rejected"; pass=$((pass+1))
+  fi
+  if rrg_validate_waiver_reason "bypass bypass bypass bypass"; then
+    echo "FAIL: a placeholder-shaped (but long) reason should be rejected"; fail=$((fail+1))
+  else
+    echo "PASS: a placeholder-shaped reason is rejected despite length"; pass=$((pass+1))
+  fi
+  if rrg_validate_waiver_reason ""; then
+    echo "FAIL: an empty reason should be rejected"; fail=$((fail+1))
+  else
+    echo "PASS: an empty reason is rejected"; pass=$((pass+1))
   fi
 
   echo ""

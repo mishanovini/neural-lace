@@ -11,7 +11,13 @@
 #      .claude/pre-push-test-gate.enabled marker file)
 #   3. Runs the divergence check (blocks pushes to master/main when the
 #      remote target ref has advanced since the local fetch)
-#   4. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
+#   4. Runs the review-record push gate (blocks pushes to master/main that
+#      would land unreviewed harness content on the remote — the
+#      AUTHORITATIVE carrier of review-before-deploy; see hooks/
+#      review-record-push-gate.sh's own header for the full rationale.
+#      review-record-commit-gate.sh, the PreToolUse commit-time carrier, is
+#      advisory-only — this is the layer that actually enforces)
+#   5. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
 #
 # To bypass everything: git push --no-verify
 # To bypass test-gate only: PT_PUSH_NO_TEST_GATE=1 git push
@@ -66,7 +72,23 @@ if [ -n "$DIV_CHECK" ] && [ -f "$DIV_CHECK" ]; then
   echo "$REF_INPUT" | bash "$DIV_CHECK" "$@"
 fi
 
-# 4. Run any local repo-specific pre-push hook
+# 4. Run the review-record push gate (AUTHORITATIVE — blocks unreviewed
+#    harness content from reaching master/main; deterministic-process.md)
+REVIEW_GATE="$HOOK_DIR/../hooks/review-record-push-gate.sh"
+if [ ! -f "$REVIEW_GATE" ]; then
+  if [ -f "$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/review-record-push-gate.sh" ]; then
+    REVIEW_GATE="$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/review-record-push-gate.sh"
+  else
+    REVIEW_GATE=""
+  fi
+fi
+if [ -n "$REVIEW_GATE" ] && [ -f "$REVIEW_GATE" ]; then
+  echo "$REF_INPUT" | bash "$REVIEW_GATE" "$@"
+else
+  echo "WARNING: review-record-push-gate.sh not found — the AUTHORITATIVE review-record gate did NOT run for this push" >&2
+fi
+
+# 5. Run any local repo-specific pre-push hook
 LOCAL_HOOK="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/pre-push.local"
 if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
   echo "$REF_INPUT" | "$LOCAL_HOOK" "$@"
