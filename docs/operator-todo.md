@@ -29,4 +29,6 @@ _(add your own free-form to-do items in this section — never overwritten)_
 - [x] AUTO: decision waiting on operator — "### Decision needed: false-positive probe — does a bogus task reference fabricate a correlation (docs/plans/fx-active.md)." (needs-you `NY-1785390341-e54e`, tier untiered, session `unknown`) — see NEEDS-YOU.md
 - [x] AUTO: decision waiting on operator — "Action needed: register the coordination publisher on the Windows desktop (one command, one time)." (needs-you `NY-1785394095-d8ec`, tier untiered, session `a3fcb6ea`) — see NEEDS-YOU.md
 - [ ] AUTO: decision waiting on operator — "Action needed: register the coordination publisher on the Windows desktop (supersedes retracted NY-1785394095-d8ec; corrected after a wrong diagnosis)." (needs-you `NY-1785425479-0d4d`, tier untiered, session `a3fcb6ea`) — see NEEDS-YOU.md
+- [ ] AUTO: decision waiting on operator — "Decision needed: rewire the runtime-verification Stop gate, or formally retire it to attic/?" (needs-you `NY-1785446110-33f6`, tier untiered, session `unknown`) — see NEEDS-YOU.md
+- [ ] AUTO: decision waiting on operator — "A NEW BLOCKING GATE IS LIVE ON EVERY SUBAGENT DISPATCH — you may want to veto it." (needs-you `NY-1785461708-830f`, tier 2, session `unknown`) — see NEEDS-YOU.md
 <!-- AUTO:END -->
