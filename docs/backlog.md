@@ -2078,7 +2078,8 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
 
 **Severity:** HIGH. Emitter fix WRITTEN (see below); the entry stays OPEN both because the fix
 is not yet live AND because the honest replacement signal then depends on `NL-ATTRIBUTION`
-header adoption, which is at ~12%.
+header adoption, which sits in a LOW BAND (see `NL-ATTRIBUTION-ADOPTION-12-PERCENT-01` for why
+no single percentage is quotable — the log rotates, so the denominator is not monotonic).
 (Operator-reported: "The green items are supposed to indicate something is actively running.
 I see several green plans that aren't running.")
 
@@ -2138,31 +2139,52 @@ reads as a green chip, while the dispatch-provenance marker is a correlation hin
    defect this entry exists for, surviving inside the source the fix had just declared
    authoritative — and a LIVE vector, since handoff/review/post-mortem prompts routinely paste
    the builder prompt they are about. The header must now start a line AND sit within the first
-   `NL_ATTRIBUTION_MAX_LINE` (default 5) lines, which is what `doctrine/orchestrator-pattern.md`
-   already required in words ("MUST open with"). Pinned by RPL7/RPL7b, with RPL7c pinning that
-   a real dispatch is not collateral damage.
+   `NL_ATTRIBUTION_MAX_LINE` (default 5) lines **of the JOINED `prompt + description + content`**
+   (NOT of the prompt alone — see the residual note below), which is what
+   `doctrine/orchestrator-pattern.md` already required in words ("MUST open with"). Pinned by
+   RPL7/RPL7b, with RPL7c pinning that a real dispatch is not collateral damage.
 No-header policy is **honest silence**: an unattributed event names no task, so it can turn no
 chip green — it could only pollute the orphan lane (the
 `PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` class), and the WARN counter already logs every
 unattributed dispatch with a running total. Falling back to scraping was never an option:
 scraping is the bug.
-**Proven by:** `workstreams-emit.sh --self-test` **113 passed / 1 failed** on BOTH `/bin/bash`
-(3.2.57) and `/opt/homebrew/bin/bash` (the 1 is pre-existing ST11, failing identically at
-baseline 92/1); **20 new executing assertions** (RPL1-RPL8b, PL1a, PL1d) — never a regex over
+**Proven by** (every figure below RE-EXECUTED at the current HEAD, not carried forward — see
+the standing rule at the end of this block): `workstreams-emit.sh --self-test`
+**120 passed / 1 failed**, identical on BOTH `/bin/bash` (3.2.57) and
+`/opt/homebrew/bin/bash` (the 1 is pre-existing ST11, failing identically at baseline 92/1);
+**+28 executing assertions over baseline** (PL1a, PL1d, RPL1-RPL8b) — never a regex over
 source text, every one drives the real hook. Siblings green on both interpreters:
 `progress-log-lib.sh` 48/0, `dispatch-provenance.sh` 17/0; Node `roadmap-routes` 116/0,
-`derive-lib` 65/0. **Eight mutations, all with non-empty and mutually disjoint kill sets:**
-M1 restore-the-scrape → PL1/RPL3/RPL4; M2 scrape-beats-header → RPL1b/RPL1c; M3
-replay-gate-off → PL1d/RPL2b/RPL2c/RPL5b; M4 spawn-gate-keyed-on-the-deleted-ledger →
-RPL6b/RPL6c; M5 header-matched-anywhere → RPL7/RPL7b; M5b line-start-kept/window-removed →
-RPL7b only; M5c window-kept/line-start-removed → RPL7 only (M5b+M5c prove EACH HALF of the
-anchor is independently load-bearing, not one redundant with the other); M6 awk-field-equality
-→ `grep -qF` substring → RPL8/RPL8b.
+`derive-lib` 65/0. **Mutations — every kill set non-empty, and identical on both
+interpreters:**
+| mutation | kill set at HEAD | suite |
+|---|---|---|
+| M1 restore-the-scrape | PL1, RPL3, RPL4 | — |
+| M2 scrape-beats-header | PL1, RPL1b, RPL1c, RPL3, RPL4 | — |
+| M3 replay-gate-off | PL1d, RPL2b, RPL2c, RPL5b | — |
+| M4 spawn-gate-keyed-on-the-deleted-ledger | RPL6b, RPL6c | 118/3 |
+| M5 header-matched-anywhere | RPL7, RPL7b, RPL7e, RPL7g, RPL7h, RPL7j | 114/7 |
+| M5b line-start-kept / window-removed | RPL7b, RPL7e, RPL7j | 117/4 |
+| M5c window-kept / line-start-removed | RPL7, RPL7g, RPL7h | 117/4 |
+| M6 awk-field-equality → `grep -qF` | RPL8, RPL8b | 118/3 |
+| M8 TIGHTENING (window → 2 *or* → 1) | RPL7d, RPL7f, RPL7i | 117/4 |
+M5b + M5c prove EACH HALF of the anchor is independently load-bearing. M8 is the opposite
+direction: loosening reddens six scenarios, tightening reddens the three that assert the
+residual, so the residual cannot move silently either way. (M1-M3 predate the per-mutation
+suite-count capture and are listed by kill set only.)
+**STANDING RULE, learned the hard way three times in this entry (F8, then the M8 kill set,
+then this block): a numeric claim about a suite is invalidated by ANY change to that suite —
+INCLUDING one's own. Every commit that adds or renames an assertion must, in the same commit,
+re-run and restate every count and every kill set in every artifact quoting one.** The
+recurring failure was always the same shape: a figure measured at the PARENT commit, restated
+as current. Concretely, this block once read 113/1 and "M5b → RPL7b only" — both true at
+`d0430ca`, both false the moment RPL7e/RPL7i/RPL7j were added.
 
 **RESIDUAL — WHAT IS STILL WRONG AFTER THIS FIX (honest):**
-- **The cockpit now UNDER-reports, and this is the big one.** Only 12 of 103 distinct dispatch
-  identities in the whole log carried an `NL-ATTRIBUTION` header (~12%); the WARN counter is at
-  4090+ unattributed dispatches for that one session. Real work in progress will show NOTHING
+- **The cockpit now UNDER-reports, and this is the big one.** Only a LOW BAND of dispatches
+  carry an `NL-ATTRIBUTION` header, and the WARN counter only climbs — see
+  `NL-ATTRIBUTION-ADOPTION-12-PERCENT-01` for the measurement commands and why a single
+  percentage is NOT quotable here (the log rotates). Real work in progress will show NOTHING
   until orchestrators actually emit the header that `doctrine/orchestrator-pattern.md` already
   calls MANDATORY. Silence is the correct direction (a missing green is not a lie) but it is
   not the destination. **Next action: make the header a dispatch-time requirement, not a WARN.**
@@ -2219,7 +2241,9 @@ anchor is independently load-bearing, not one redundant with the other); M6 awk-
   (RPL7g), `- ` prefix (RPL7h).
   **THE WINDOW IS OVER THE JOINED TEXT, NOT OVER THE PROMPT** (corrected in round 3; every
   earlier statement here said "the first 5 lines of your prompt", which is advice an author
-  cannot act on). `_dispatch_text` (`workstreams-emit.sh:3110`) joins `[prompt, description,
+  cannot act on). `_dispatch_text` (in `adapters/claude-code/hooks/workstreams-emit.sh` — cited
+  by SYMBOL, not line number, because the same commit edits that file and a line citation goes
+  stale the moment it does; it was written as `:3110` and was already wrong by one edit) joins `[prompt, description,
   content]` with newlines BEFORE the window applies, so the admitted region spans a SECOND
   INPUT FIELD whenever the prompt is short: a 3-line prompt with the header alone in
   `description` lands on JOINED line 4 and EMITS (RPL7i), while the same description behind a
@@ -2238,13 +2262,19 @@ anchor is independently load-bearing, not one redundant with the other); M6 awk-
   threshold or positional guard ships a negative case ADJACENT to the threshold (n-1, n, n+1),
   never one comfortably beyond it, and the prose residual is written from the executed
   boundary rather than the motivating anecdote.** Now pinned by RPL7f/RPL7d/RPL7e.
-  **The residual is pinned in BOTH directions**, so it cannot drift silently either way:
-  loosening the anchor reddens RPL7/RPL7b/RPL7e/RPL7g/RPL7h (mutations M5/M5b/M5c), and
-  TIGHTENING it reddens the two residual-asserting pins RPL7d/RPL7f (mutation M8).
-  **TIGHTENING LEVER — evaluated at 5 / 2 / 1, decision recorded (round 3).** Measured, both
-  interpreters: `NL_ATTRIBUTION_MAX_LINE=2` and `=1` each redden **exactly RPL7d + RPL7f**
-  (the two residual pins) and nothing else — identical kill sets, 116 passed / 3 failed
-  (the third being pre-existing ST11). **`=2` was the missing middle option:** an earlier
+  **The residual is pinned in BOTH directions**, so it cannot drift silently either way
+  (kill sets RE-EXECUTED at HEAD, identical on both interpreters): loosening the anchor
+  reddens RPL7/RPL7b/RPL7e/RPL7g/RPL7h/**RPL7j** (M5, 114/7; M5b → RPL7b/RPL7e/RPL7j, 117/4;
+  M5c → RPL7/RPL7g/RPL7h, 117/4), and TIGHTENING it reddens the three residual-asserting pins
+  RPL7d/RPL7f/**RPL7i** (M8, 117/4).
+  **TIGHTENING LEVER — evaluated at 5 / 2 / 1, decision recorded (round 3).** Measured at
+  HEAD, both interpreters: `NL_ATTRIBUTION_MAX_LINE=2` and `=1` each redden **exactly
+  RPL7d + RPL7f + RPL7i** and nothing else — identical kill sets, **117 passed / 4 failed**
+  (the fourth being pre-existing ST11). *(This figure was previously written as "RPL7d+RPL7f,
+  116/3" — true at `3c18c0d`, wrong at HEAD, because the very commit that recorded it added
+  RPL7i, which asserts EMISSION at joined line 4 and therefore reddens under any tightening.
+  Same measurement-from-a-prior-commit class as the F8 retraction; see the standing rule in
+  the Proven-by block above.)* **`=2` was the missing middle option:** an earlier
   revision of this entry framed the choice as 5-vs-1, which was a false dichotomy — `=2`
   eliminates the fence-paste shapes that land at joined lines 3-5 while still admitting the
   one cost case that argued against `=1` (a real header under a title or blank line).
@@ -2254,7 +2284,8 @@ anchor is independently load-bearing, not one redundant with the other); M6 awk-
   dispatches would fall outside a 2-line window; once a constructor emits the header, position
   becomes uniform by construction and the cost goes to zero, at which point `=2` (or `=1`) is
   free. Tightening first would trade a measurable false-green reduction for an unmeasurable
-  missing-green increase, against an adoption rate already at ~10-14%.
+  missing-green increase, against an adoption rate already in the low band
+  (`NL-ATTRIBUTION-ADOPTION-12-PERCENT-01`).
   **FRAMING ERROR CORRECTED:** the previous revision called this "an operator call, not a
   builder's". That was wrong — a one-line-reversible env default is **decide-and-go under
   constitution §8** (undoing it is a single edit), so it is mine to decide with a trail, which
@@ -2298,7 +2329,9 @@ prescription was right):**
   fifteen unrelated tasks.
 - CORRECT FIX (upstream, not downstream): `--on-builder-dispatch` must emit exactly ONE
   task_started for the task actually dispatched — the `NL-ATTRIBUTION` header already carries
-  it (workstreams-emit.sh:2001) — instead of one per prompt-text mention.
+  it (`_extract_nl_attribution` in workstreams-emit.sh — cited by symbol; the original
+  `:2001` line citation is long stale, this file having been edited many times since) —
+  instead of one per prompt-text mention.
 - WHAT DID LAND AND IS KEPT: the rollup gate (`live_sessions.length` -> `hasRunningLeaf`) is an
   unambiguous correctness improvement independent of the window, mutation-proven (3 disjoint
   mutations each kill the correct disjoint test subset), and demonstrably fires in production.
@@ -2414,25 +2447,26 @@ of scope for this task; flagged for a future round.
 ## NL-ATTRIBUTION-ADOPTION-12-PERCENT-01 — the honest green signal now depends on a header almost nobody sends
 
 **Severity:** HIGH, OPEN. Direct consequence of ROADMAP-FALSE-ETERNAL-RUNNING-01's fix above.
-**Measured 2026-07-30** (`~/.claude/logs/conversation-tree-emit.log`, session
-a3fcb6ea-7fab-460d-8506-e2a655016f09): of **103** distinct dispatch identities, only **12**
-carried an `NL-ATTRIBUTION: plan=… task=…` header — ~12%. The hook's own WARN counter reached
-**4090** unattributed dispatches in that single session.
 
-**THE PERCENTAGE IS NOT A STABLE FACT — DO NOT QUOTE ONE.** Three measurements the same day:
-~12% (distinct identities in one window), 10.2% (822/8081 lines), 13.8% (899/6522, an
-independent reviewer). They disagree partly on numerator/denominator choice and partly
-because **`~/.claude/logs/conversation-tree-emit.log` ROTATES — the denominator is not
-monotonic**, so a later reading can legitimately be over a SMALLER log. Record the command
-and BOTH terms, never a bare rate:
+**THE PERCENTAGE IS NOT A STABLE FACT — DO NOT QUOTE ONE** (this rule is stated FIRST,
+deliberately: an earlier revision put a headline `~12%` above it and then left two more copies
+elsewhere in this file, which is a rule its own document violates and therefore teaches
+nothing). FOUR readings the same day, each correct when taken: ~12% (12 of 103 distinct
+identities in one window, WARN 4090), 10.2% (822/8081 lines, WARN 5146), 13.8% (899/6522,
+independent reviewer, WARN 5623), 10.6% (960/9084, WARN 6011). They disagree partly on
+numerator/denominator choice and partly because **`~/.claude/logs/conversation-tree-emit.log`
+ROTATES — the denominator is not monotonic**, so a later reading can legitimately be over a
+SMALLER log. Record the command and BOTH terms, never a bare rate:
 ```
 L=~/.claude/logs/conversation-tree-emit.log
 grep -c 'builder-dispatch item=' "$L"                          # denominator (rotates!)
 grep 'builder-dispatch item=' "$L" | grep -c 'attributed=1'    # numerator
 grep -o 'unattributed dispatch #[0-9]*' "$L" | grep -o '[0-9]*' | sort -n | tail -1
 ```
-All readings agree on the only durable conclusion: **adoption is ~10-14% and the WARN counter
-(4090 → 4963 → 5146 → 5623 across the day) only climbs.**
+All readings agree on the only durable conclusion: **adoption sits in a low band (roughly
+10-14%) and the WARN counter (4090 → 4963 → 5146 → 5623 → 6011 across the day) only climbs.**
+The WARN series is the honest metric precisely because it IS monotonic — it survives log
+rotation, while the rate does not.
 
 **THE ADOPTION MECHANISM DOES NOT EXIST — this is the load-bearing finding, not the
 percentage.** `grep -rn 'NL-ATTRIBUTION'` over `agents/`, `templates/`, `skills/`,

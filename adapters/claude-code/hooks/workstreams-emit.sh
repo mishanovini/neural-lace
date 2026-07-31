@@ -3183,8 +3183,18 @@ _extract_task_id() {
 # reads "N running, unattributed to a task" all day. This is the convention
 # (doctrine: doctrine/orchestrator-pattern.md) + parser closing that gap.
 #
-# CONVENTION: a dispatch prompt MAY include a line anywhere in its text:
+# CONVENTION: a dispatch prompt MUST OPEN WITH this line -- it must START A
+# LINE (leading whitespace only) and sit within the first
+# NL_ATTRIBUTION_MAX_LINE (default 5) lines of the JOINED
+# prompt+description+content that _dispatch_text produces:
 #   NL-ATTRIBUTION: plan=<slug> task=<id> role=<builder|verifier|reviewer|advocate>
+# (CORRECTED 2026-07-30. This header previously read "MAY include a line
+# ANYWHERE in its text" -- the retracted charter of the quoted-header defect,
+# still sitting 40 lines above the corrected comment that says the opposite.
+# It survived two sweeps because it is a PARAPHRASE: greps for `inert` and for
+# "anywhere in the prompt text" both missed "anywhere in its text". A
+# retraction sweep is scoped by the CLAIM, not by one lexical form of it --
+# re-run it with every wording the claim has ever had.)
 # Same key=value vocabulary as admission-lib.sh's adm_admit labels and
 # estate-registration-lib.sh's reg_register labels (plan=/task= already
 # closed-enum keys in both) -- one vocabulary across all three attribution
