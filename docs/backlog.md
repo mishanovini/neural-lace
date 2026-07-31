@@ -2185,3 +2185,26 @@ requested alongside the roadmap rollup fix).
   TO CLOSE: (1) schema gains both properties; (2) a real doctor check; (3) backfill the
   39 blocking units (dated grandfather acceptable, per the review-record precedent);
   only then does the Enforcement line come back.
+- **REVIEW-RECORD-GATE-STAGE-AND-COMMIT-FAIL-OPEN-01** (CRITICAL, PROVEN 2026-07-30 by a
+  builder that self-reported it, orchestrator-confirmed by code read):
+  `review-record-commit-gate.sh:427-428` reads the index at PreToolUse:
+  `staged="$(git -C "$repo_root" diff --cached --name-only ...)"` then
+  `[[ -n "$staged" ]] || return 0   # exemption 1: nothing staged`.
+  For the command `git add -A && git commit ...` the `git add` HAS NOT RUN YET at
+  PreToolUse, so the index is empty, `$staged` is empty, and the gate SILENTLY ALLOWS
+  (exit 0, zero output). Builder's executed matrix:
+    staged   + `git commit -m x`                     -> exit 2 (BLOCKED)
+    staged   + `git add -A && ... && git commit -F`  -> exit 2 (BLOCKED)
+    UNSTAGED + `git add -A && ... && git commit -F`  -> exit 0, SILENT ALLOW
+  `git add -A && git commit` is the single most common commit idiom; the builder reached
+  for it unprompted. No bypass env is needed or set — this is invisible in the override
+  audit log, so the 78 logged overrides UNDERSTATE unreviewed landings.
+  WORSE: the gate's own self-test Scenario 4 ASSERTS the hole as correct behaviour
+  (`[[ "$rc" == "0" ]] && pass "no staged files -> allowed"`), so the suite defends it.
+  This is deterministic-process rule 1 exactly: the gate is at a layer where it cannot
+  see what will actually be committed. At pre-push the commits already exist, so the
+  class cannot occur — further evidence for moving authority to the funnel.
+  TO CLOSE: (a) the gate must evaluate what the COMMAND WILL STAGE (parse `git add`
+  args / use the post-add tree), not the pre-command index; (b) Scenario 4 must
+  distinguish "genuinely empty commit" from "empty index because add has not run yet";
+  (c) AUDIT what landed via this route historically.
