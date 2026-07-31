@@ -102,9 +102,39 @@
 #   directory-prefix match (bullet ending in `/`).
 #
 # Multiple active plans:
-#   Required behavior is intersection — a file in scope of plan A but not
-#   plan B is out of scope. The error message names which plan rejects
-#   which file.
+#   UNION OF THE PLANS' SCOPES. A staged file is IN scope if AT LEAST ONE
+#   active plan declares it; it is out of scope only when EVERY active plan
+#   rejects it. The error message names which plan rejected which file, and
+#   separately names any plan that could not judge the file because its own
+#   scope section failed to parse.
+#
+#   This header used to claim the opposite ("required behavior is
+#   intersection — a file in scope of plan A but not plan B is out of
+#   scope"), which the code has never implemented. Corrected 2026-07-30
+#   (SCOPE-GATE-HEADER-CLAIMS-INTERSECTION-IMPLEMENTS-UNION-01) in favour of
+#   the CODE, because intersection is the wrong semantics for this gate:
+#
+#   1. Plans are independent concurrent workstreams, not conjunctive
+#      constraints. This repo routinely carries ~20 ACTIVE plans at once.
+#      Under intersection a file would have to be declared by ALL of them to
+#      be committable, so essentially every commit would block. Intersection
+#      is not merely stricter than union — at N>1 plans it is degenerate.
+#   2. It would falsify the gate's own remedy. Option 2 of the block message
+#      tells the operator to OPEN A NEW PLAN listing the staged files and
+#      re-commit. Under intersection that provably cannot work: the new plan
+#      claims the file, but the other active plans still do not, so the file
+#      stays out of scope and the commit blocks again. Handing the operator a
+#      remedy that cannot be completed is exactly the defect recorded for the
+#      review-record remedy chain in _is_system_managed_path above.
+#   3. Union is the pre-existing tested oracle. Self-test scenario 12
+#      ("new plan staged alongside out-of-scope file claims it") asserts a
+#      file is in scope iff at least one active plan claims it, and has
+#      passed since the gate was written.
+#
+#   Scope discipline is preserved because the union is over DECLARED scopes:
+#   every in-scope file is still named by some plan, so no commit escapes
+#   plan governance. Union picks WHICH plan governs it; it never lets an
+#   undeclared file through.
 #
 # Waivers:
 #   REMOVED 2026-05-04. The block-message no longer offers a waiver
@@ -639,8 +669,10 @@ Test.
   # ---- Scenario 12: PASS — new plan staged alongside out-of-scope file claims it ----
   # The hook iterates docs/plans/*.md from the filesystem, so a freshly-staged
   # plan file is visible as soon as it lives at the path. The new plan claims
-  # `unrelated.md` in its `## Files to Modify/Create`. Multi-plan intersection
-  # rules: a file is in-scope iff at least one active plan claims it.
+  # `unrelated.md` in its `## Files to Modify/Create`. Multi-plan UNION-of-
+  # scopes rule: a file is in-scope iff at least one active plan claims it.
+  # (Mislabelled "intersection" until 2026-07-30; the rule stated on the next
+  # line was always the one asserted here and always the one implemented.)
   PLAN_PRIMARY_OOS='# Plan: primary
 Status: ACTIVE
 
@@ -1420,8 +1452,231 @@ Test goal.
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # Scenarios 39-42 — SCOPE-GATE-HEADER-CLAIMS-INTERSECTION-IMPLEMENTS-UNION-01
+  # (2026-07-30). Three defects, all reproduced by execution before the fix:
+  #   D1 header documented intersection while the code implemented union;
+  #   D2 the scope parser read BULLETS ONLY, so a TABLE-form section declared
+  #      zero paths and the block message named innocent plans as the cause;
+  #   D3 the `RAWLEN < 20` emptiness heuristic ran BEFORE the parsed-entry
+  #      check, so a short-but-valid section was reported "empty".
+  # ============================================================
+
+  # Helper: like _run_hook_cmd but ALSO captures stderr to $4 for assertions.
+  _run_hook_cmd_err() {
+    local cwd="$1" cmd="$2" errfile="$3"
+    (
+      cd "$cwd" || exit 99
+      local input
+      input=$(jq -cn --arg c "$cmd" '{tool_name:"Bash",tool_input:{command:$c}}')
+      printf '%s' "$input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>"$errfile"
+      echo $?
+    )
+  }
+  # Helper: drop a SECOND active plan into an already-built fixture repo.
+  _add_plan() {
+    local dir="$1" name="$2" body="$3"
+    mkdir -p "$dir/docs/plans"
+    printf '%s' "$body" > "$dir/docs/plans/$name.md"
+    ( cd "$dir" && git add "docs/plans/$name.md" >/dev/null 2>&1 )
+  }
+
+  PLAN_TABLE_FORM='# Plan: tableplan
+Status: ACTIVE
+
+## Goal
+Scope declared as a markdown table rather than a bullet list.
+
+## Files to Modify/Create
+| File | Change |
+| --- | --- |
+| `src/foo.ts` | the primary file this plan rewrites |
+| `src/bar.ts` | the secondary file this plan touches |
+
+## Tasks
+- [ ] 1. test
+'
+
+  # ---- Scenario 39: a TABLE-form scope section declares real paths ----
+  # 39 proves the table parses; 39b is the DISCRIMINATOR that proves it parses
+  # into a real scope rather than degrading to "allow everything" — without it,
+  # a mutation that made table plans blanket-permissive would still pass 39.
+  _build_repo "$TMPROOT/s39" "$PLAN_TABLE_FORM" "src/foo.ts"
+  RC=$(_run_hook_cmd "$TMPROOT/s39" "git commit -m \"x\"")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (39) table-form-scope-parsed: PASS (path named in a table row is in scope)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (39) table-form-scope-parsed: FAIL (rc=$RC, expected 0 — table rows declared nothing)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  _build_repo "$TMPROOT/s39b" "$PLAN_TABLE_FORM" "unrelated/other.ts"
+  RC=$(_run_hook_cmd "$TMPROOT/s39b" "git commit -m \"x\"")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (39b) table-form-scope-still-rejects: PASS (path absent from the table is out of scope)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (39b) table-form-scope-still-rejects: FAIL (rc=$RC, expected 2 — table parsing became a blanket allow)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 40: a section that yields ZERO paths is LOUD and names itself ----
+  PLAN_ZERO_PATHS='# Plan: zeroplan
+Status: ACTIVE
+
+## Goal
+A scope section made entirely of prose, declaring no path at all.
+
+## Files to Modify/Create
+Everything under the hooks directory will be adjusted as needed during
+this work, together with whatever documentation turns out to be affected.
+
+## Tasks
+- [ ] 1. test
+'
+  _build_repo "$TMPROOT/s40" "$PLAN_ZERO_PATHS" "src/foo.ts"
+  RC=$(_run_hook_cmd_err "$TMPROOT/s40" "git commit -m \"x\"" "$TMPROOT/s40.err")
+  S40_ERR=$(cat "$TMPROOT/s40.err" 2>/dev/null || echo "")
+  S40_OK=1
+  [[ "$RC" == "2" ]] || { S40_OK=0; echo "self-test (40) zero-paths-is-loud: FAIL (rc=$RC, expected 2)" >&2; }
+  case "$S40_ERR" in
+    *"yields NO paths"*) ;;
+    *) S40_OK=0; echo "self-test (40) zero-paths-is-loud: FAIL (stderr never says the section yields NO paths)" >&2 ;;
+  esac
+  case "$S40_ERR" in
+    *"test-scope-plan"*) ;;
+    *) S40_OK=0; echo "self-test (40) zero-paths-is-loud: FAIL (stderr does not NAME the offending plan)" >&2 ;;
+  esac
+  if [[ "$S40_OK" -eq 1 ]]; then
+    echo "self-test (40) zero-paths-is-loud: PASS (blocked, and the plan whose section declares nothing is named)" >&2
+    PASSED=$((PASSED+1))
+  else
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 40b: a broken plan must not be reported as a SCOPE rejection ----
+  # Two active plans: one whose scope section yields nothing (structural), one
+  # healthy plan that legitimately does not claim the staged file. The message
+  # must attribute each cause to the right plan — the pre-fix message listed
+  # both under "Rejected by plan(s)", which sent the reader to edit the healthy
+  # plan's scope when the real fault was the other plan's unparseable section.
+  _build_repo "$TMPROOT/s40b" "$PLAN_ZERO_PATHS" "src/foo.ts"
+  _add_plan "$TMPROOT/s40b" "healthy-plan" '# Plan: healthyplan
+Status: ACTIVE
+
+## Goal
+A healthy plan whose scope is parseable and simply does not cover the file.
+
+## Files to Modify/Create
+- `src/entirely/different-file.ts` — the only file this plan governs
+
+## Tasks
+- [ ] 1. test
+'
+  RC=$(_run_hook_cmd_err "$TMPROOT/s40b" "git commit -m \"x\"" "$TMPROOT/s40b.err")
+  S40B_ERR=$(cat "$TMPROOT/s40b.err" 2>/dev/null || echo "")
+  S40B_OK=1
+  [[ "$RC" == "2" ]] || { S40B_OK=0; echo "self-test (40b) broken-plan-attribution: FAIL (rc=$RC, expected 2)" >&2; }
+  case "$S40B_ERR" in
+    *"NOT judged on scope by plan(s):"*"test-scope-plan"*) ;;
+    *) S40B_OK=0; echo "self-test (40b) broken-plan-attribution: FAIL (the unparseable plan is not reported as unable-to-judge)" >&2 ;;
+  esac
+  # The healthy plan DID judge the file, so it belongs on the rejection line...
+  case "$S40B_ERR" in
+    *"Rejected by plan(s):"*"healthy-plan"*) ;;
+    *) S40B_OK=0; echo "self-test (40b) broken-plan-attribution: FAIL (the healthy plan's genuine scope rejection is missing)" >&2 ;;
+  esac
+  # ...and the unparseable plan must NOT be conflated into that same line.
+  S40B_REJECT_LINE=$(printf '%s\n' "$S40B_ERR" | grep "Rejected by plan(s):" || true)
+  case "$S40B_REJECT_LINE" in
+    *"test-scope-plan"*) S40B_OK=0; echo "self-test (40b) broken-plan-attribution: FAIL (unparseable plan conflated into 'Rejected by plan(s)')" >&2 ;;
+  esac
+  if [[ "$S40B_OK" -eq 1 ]]; then
+    echo "self-test (40b) broken-plan-attribution: PASS (structural fault and scope rejection attributed to the right plans)" >&2
+    PASSED=$((PASSED+1))
+  else
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 41: multi-plan aggregation is UNION of the plans' scopes ----
+  # This is the behaviour the header claimed was "intersection". 41 pins the
+  # union half (one plan claiming the file is enough); 41b pins the half that
+  # keeps union from being a blanket allow (no plan claims it -> blocked).
+  PLAN_UNION_A='# Plan: unionA
+Status: ACTIVE
+
+## Goal
+First independent workstream.
+
+## Files to Modify/Create
+- `src/alpha/module-one.ts` — the only file the first plan governs
+
+## Tasks
+- [ ] 1. test
+'
+  PLAN_UNION_B='# Plan: unionB
+Status: ACTIVE
+
+## Goal
+Second independent workstream.
+
+## Files to Modify/Create
+- `src/beta/module-two.ts` — the only file the second plan governs
+
+## Tasks
+- [ ] 1. test
+'
+  _build_repo "$TMPROOT/s41" "$PLAN_UNION_A" "src/alpha/module-one.ts"
+  _add_plan "$TMPROOT/s41" "union-b" "$PLAN_UNION_B"
+  RC=$(_run_hook_cmd "$TMPROOT/s41" "git commit -m \"x\"")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (41) multiplan-union-of-scopes: PASS (one active plan claiming the file is sufficient)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (41) multiplan-union-of-scopes: FAIL (rc=$RC, expected 0 — aggregation is not union; under intersection every multi-plan commit blocks and the gate's own 'open a new plan' remedy cannot work)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  _build_repo "$TMPROOT/s41b" "$PLAN_UNION_A" "src/gamma/unclaimed.ts"
+  _add_plan "$TMPROOT/s41b" "union-b" "$PLAN_UNION_B"
+  RC=$(_run_hook_cmd "$TMPROOT/s41b" "git commit -m \"x\"")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (41b) multiplan-union-still-rejects-unclaimed: PASS (a file no active plan claims is still blocked)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (41b) multiplan-union-still-rejects-unclaimed: FAIL (rc=$RC, expected 2 — union degraded into a blanket allow)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 42: a parsed entry outranks the RAWLEN emptiness heuristic ----
+  # `- \`a/b.ts\`` is 18 non-whitespace chars — under the `RAWLEN < 20` check
+  # this valid, in-scope commit was blocked and told its plan was "empty /
+  # placeholder-only", naming a defect the plan did not have.
+  PLAN_SHORT_VALID='# Plan: shortplan
+Status: ACTIVE
+
+## Goal
+Short but entirely valid scope section.
+
+## Files to Modify/Create
+- `a/b.ts`
+
+## Tasks
+- [ ] 1. test
+'
+  _build_repo "$TMPROOT/s42" "$PLAN_SHORT_VALID" "a/b.ts"
+  RC=$(_run_hook_cmd "$TMPROOT/s42" "git commit -m \"x\"")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (42) short-but-valid-scope-not-called-empty: PASS (a parsed path outranks the byte-count heuristic)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (42) short-but-valid-scope-not-called-empty: FAIL (rc=$RC, expected 0 — a valid one-bullet section was misreported as empty)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 38 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 42 scenarios)" >&2
   echo "  interpreter exercised: ${SELF_TEST_BASH:-${BASH:-unknown}} (${BASH_VERSION:-unknown})" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
@@ -1757,7 +2012,61 @@ for plan in "$REPO_ROOT"/docs/plans/*.md; do
   fi
 done
 
-# --- Helper: parse a single section's bullet body and emit extracted paths.
+# --- Helper: extract declared paths from ONE markdown table row. ---
+#
+# SCOPE-GATE-HEADER-CLAIMS-INTERSECTION-IMPLEMENTS-UNION-01 (2026-07-30).
+# Appends to SECTION_ENTRIES (the caller's accumulator), same contract as the
+# bullet branch of _parse_one_section.
+#
+# CELL SCAN, not first-cell-only. A plan may legally put the path column
+# anywhere (`| # | File | Change |` is as valid as `| File | Change |`), so
+# every cell is offered to the SAME path filters the bullet branch uses
+# (backticked tokens win; a bare token must contain `/` or `.` and must not
+# contain a space). Prose cells ("adds the parser", "renamed") fail those
+# filters and drop out on their own.
+#
+# The scan can OVER-capture: a description cell that backticks another real
+# path contributes that path to the plan's scope. That is deliberate and
+# matches the established bullet behaviour (§D.0.7 loops ALL backtick pairs on
+# a bullet, including ones in its trailing prose). For a BLOCKING gate the
+# widening direction is the safe one — it can only ever allow a commit the
+# plan's own text names, never block one it declares.
+_parse_table_row() {
+  local row="$1"
+  # Delimiter rows (`|---|---|`, `| :--- | ---: |`) carry no paths. If the row
+  # holds nothing but pipes, colons, dashes and whitespace, it is a delimiter.
+  if ! [[ "$row" =~ [^|:[:space:]-] ]]; then
+    return 0
+  fi
+  local rest="${row#|}" cell tok
+  while [[ -n "$rest" ]]; do
+    cell="${rest%%|*}"
+    if [[ "$rest" == *'|'* ]]; then rest="${rest#*|}"; else rest=""; fi
+    cell="${cell#"${cell%%[![:space:]]*}"}"
+    cell="${cell%"${cell##*[![:space:]]}"}"
+    [[ -z "$cell" ]] && continue
+    case "$cell" in
+      "[populate me]"*|"[TODO]"*|"TODO"*|"..."*) continue ;;
+    esac
+    if [[ "$cell" == *'`'* ]]; then
+      while IFS= read -r tok; do
+        [[ -z "$tok" ]] && continue
+        if [[ "$tok" != */* ]] && [[ "$tok" != *.* ]]; then
+          continue
+        fi
+        SECTION_ENTRIES+=("$tok")
+      done < <(extract_backtick_paths "$cell")
+      continue
+    fi
+    [[ "$cell" == *" "* ]] && continue
+    if [[ "$cell" != */* ]] && [[ "$cell" != *.* ]]; then
+      continue
+    fi
+    SECTION_ENTRIES+=("$cell")
+  done
+}
+
+# --- Helper: parse a single section's bullet/table body and emit paths.
 _parse_one_section() {
   local plan_file="$1"
   local section_awk_match="$2"
@@ -1785,11 +2094,17 @@ _parse_one_section() {
   while IFS= read -r line; do
     line="${line#"${line%%[![:space:]]*}"}"
     [[ -z "$line" ]] && continue
+    # SCOPE-GATE-HEADER-CLAIMS-INTERSECTION-IMPLEMENTS-UNION-01 (2026-07-30),
+    # defect 2. This loop used to accept BULLET LINES ONLY. A plan whose
+    # `## Files to Modify/Create` section is written as a MARKDOWN TABLE
+    # therefore parsed to ZERO declared paths, and the gate then rejected
+    # every staged file. The table form is legitimate plan-authoring markdown,
+    # so it is now a first-class scope declaration alongside bullets.
     case "$line" in
-      "- "*|"* "*) ;;
+      "- "*|"* "*) line="${line:2}" ;;
+      "|"*) _parse_table_row "$line"; continue ;;
       *) continue ;;
     esac
-    line="${line:2}"
     case "$line" in
       "[populate me]"*|"[TODO]"*|"TODO"*|"..."*) continue ;;
     esac
@@ -1949,7 +2264,9 @@ if [[ "${#ACTIVE_PLANS[@]}" -eq 0 ]]; then
   exit 0
 fi
 
-# --- Process each active plan: parse scope, intersect with staged ---
+# --- Process each active plan: parse scope, match against staged ---
+# (Per-plan rejection lists only. They are combined by UNION below — see the
+#  "Multiple active plans" header section.)
 declare -a PLAN_ERRORS=()
 OOS_FILES_PER_PLAN=()
 
@@ -1963,14 +2280,28 @@ for plan in "${ACTIVE_PLANS[@]}"; do
     continue
   fi
 
-  if [[ "$PLAN_SCOPE_RAWLEN" -lt 20 ]]; then
-    PLAN_ERRORS+=("$slug:EMPTY_SCOPE:$plan")
-    OOS_FILES_PER_PLAN+=("__STRUCTURAL__")
-    continue
-  fi
-
+  # ZERO DECLARED PATHS IS ALWAYS LOUD, AND PARSED-ENTRIES WIN OVER RAWLEN.
+  # SCOPE-GATE-HEADER-CLAIMS-INTERSECTION-IMPLEMENTS-UNION-01 (2026-07-30).
+  #
+  # A `## Files to Modify/Create` section that yields no paths is a PLAN-
+  # AUTHORING defect, and the gate must NAME the plan rather than let it
+  # degrade into "this plan declares nothing" — a silent zero makes the plan
+  # reject every staged file while the block message points at scope, which
+  # sends the reader to fix the wrong thing.
+  #
+  # ORDER MATTERS. The `RAWLEN < 20` emptiness heuristic used to run FIRST and
+  # `continue` out, so a section that was SHORT BUT VALID (e.g. a single
+  # `- \`a/b.ts\`` bullet — 18 non-whitespace chars, one perfectly good path)
+  # was reported as "empty / placeholder-only" and blocked a commit that was
+  # genuinely in scope. Successfully-parsed entries are direct evidence and now
+  # win over the byte-count proxy: RAWLEN is consulted ONLY to explain WHY a
+  # zero-path section is empty, never to overrule a non-zero parse.
   if [[ "${#PLAN_SCOPE_ENTRIES[@]}" -eq 0 ]]; then
-    PLAN_ERRORS+=("$slug:NO_PARSEABLE_ENTRIES:$plan")
+    if [[ "$PLAN_SCOPE_RAWLEN" -lt 20 ]]; then
+      PLAN_ERRORS+=("$slug:EMPTY_SCOPE:$plan")
+    else
+      PLAN_ERRORS+=("$slug:NO_PARSEABLE_ENTRIES:$plan")
+    fi
     OOS_FILES_PER_PLAN+=("__STRUCTURAL__")
     continue
   fi
@@ -2011,18 +2342,29 @@ done
 # because the enclosing loop visits each STAGED entry exactly once.
 FINAL_OOS_KEYS=()
 FINAL_OOS_VALS=()
+# Third parallel array (same idiom + same invariant as the pair above).
+# SCOPE-GATE-HEADER-CLAIMS-INTERSECTION-IMPLEMENTS-UNION-01 (2026-07-30):
+# a plan whose scope section failed to parse (`__STRUCTURAL__`) rejects every
+# staged file, and it used to be listed in the SAME "Rejected by plan(s)" line
+# as plans that genuinely evaluated the path and found it out of scope. With
+# one broken plan and one healthy one, the block message named BOTH — so the
+# reader went and edited the innocent plan's scope. Keeping the two causes in
+# separate lists lets the message say which plan actually judged the file and
+# which one merely could not be read.
+FINAL_OOS_STRUCT=()
 
 NUM_PLANS="${#ACTIVE_PLANS[@]}"
 for sf in "${STAGED[@]}"; do
   reject_count=0
   rejecting_plans=""
+  unreadable_plans=""
   for ((i=0; i<NUM_PLANS; i++)); do
     plan="${ACTIVE_PLANS[$i]}"
     oos_list="${OOS_FILES_PER_PLAN[$i]}"
     slug=$(plan_slug "$plan")
     if [[ "$oos_list" == "__STRUCTURAL__" ]]; then
       reject_count=$((reject_count+1))
-      rejecting_plans="$rejecting_plans $slug"
+      unreadable_plans="$unreadable_plans $slug"
       continue
     fi
     case "|$oos_list|" in
@@ -2035,6 +2377,7 @@ for sf in "${STAGED[@]}"; do
   if [[ "$reject_count" -eq "$NUM_PLANS" ]]; then
     FINAL_OOS_KEYS+=("$sf")
     FINAL_OOS_VALS+=("$rejecting_plans")
+    FINAL_OOS_STRUCT+=("$unreadable_plans")
   fi
 done
 
@@ -2093,14 +2436,21 @@ fi
           echo "    Fix: add the section listing every file the plan touches."
           ;;
         EMPTY_SCOPE)
-          echo "  • $slug: '## Files to Modify/Create' section is empty / placeholder-only"
+          echo "  • $slug: declares a '## Files to Modify/Create' section that yields NO paths"
+          echo "    (the section is empty / placeholder-only)"
           echo "    Plan: $relpath"
-          echo "    Fix: replace placeholders with real bullet entries."
+          echo "    Effect: a plan that declares no paths rejects EVERY staged file."
+          echo "    Fix: replace the placeholder with real entries — a bullet"
+          echo "         (- \`path\` — reason) or a table row (| \`path\` | reason |)."
           ;;
         NO_PARSEABLE_ENTRIES)
-          echo "  • $slug: '## Files to Modify/Create' has content but no parseable bullets"
+          echo "  • $slug: declares a '## Files to Modify/Create' section that yields NO paths"
+          echo "    (the section has content, but no line in it parsed to a path)"
           echo "    Plan: $relpath"
-          echo "    Fix: each entry should be a bullet (- or *) with a path (backticked or plain)."
+          echo "    Effect: a plan that declares no paths rejects EVERY staged file."
+          echo "    Fix: each entry must be a bullet (- or *) or a table row (| … |),"
+          echo "         and must carry a path — backticked or plain — containing a"
+          echo "         '/' or a '.'. Prose-only lines declare nothing."
           ;;
       esac
     done
@@ -2112,8 +2462,16 @@ fi
       f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "  • $f"
       rejected_by="${FINAL_OOS_VALS[$_oos_i]}"
+      unreadable_by="${FINAL_OOS_STRUCT[$_oos_i]}"
       if [[ -n "$rejected_by" ]]; then
         echo "    Rejected by plan(s):${rejected_by}"
+      fi
+      if [[ -n "$unreadable_by" ]]; then
+        echo "    NOT judged on scope by plan(s):${unreadable_by}"
+        echo "      ^ those plans have a structural error listed above. They did not"
+        echo "        evaluate this file at all — a plan whose scope section yields no"
+        echo "        paths rejects everything. Fix the plan(s) above FIRST; this file"
+        echo "        may well already be in scope once they parse."
       fi
     done
     echo ""
