@@ -1,12 +1,14 @@
 # Harness Evaluation Suite
 
+<!-- last-verified: 2026-07-05 (doctor-checked) -->
+
 ## Overview
 
-These tests verify that Neural Lace's own security and quality mechanisms work correctly. Run them after any change to hooks, settings, risk profiles, or adapters.
+These tests verify that Neural Lace's own security and quality mechanisms work correctly. Run them after any change to hooks, settings, risk profiles, or adapters. Run in CI by `.github/workflows/evals.yml` on every push and PR.
 
 ## Golden Tests (`golden/`)
 
-Behavioral tests that verify critical permission boundaries:
+Behavioral tests that verify critical permission boundaries (6 as of this writing):
 
 | Test | What it verifies |
 |------|-----------------|
@@ -15,6 +17,7 @@ Behavioral tests that verify critical permission boundaries:
 | `public-repo-blocked.sh` | Public repo creation/conversion → blocked |
 | `env-edit-blocked.sh` | Editing .env/credentials/secrets files → blocked |
 | `safe-read-allowed.sh` | Read-only operations → allowed |
+| `rules-index-coverage.sh` | Post-Wave-C doctrine invariants (filename kept for CI continuity): `rules/` contains only `constitution.md`; `doctrine/INDEX.md` exists; every non-`-full` `doctrine/*.md` has a row in it; every compact doctrine file stays ≤ 3000 bytes |
 
 ## Running Tests
 

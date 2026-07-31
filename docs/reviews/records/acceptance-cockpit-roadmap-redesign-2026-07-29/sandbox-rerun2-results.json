@@ -1,0 +1,20 @@
+{
+  "at": "2026-07-30T05:52:11.501Z",
+  "results": [
+    {
+      "id": "R2-S6-ancestor-badge-visible-collapsed",
+      "verdict": "PASS",
+      "detail": "geometry+hit-test oracle (offsetParent is unreliable inside closed details in current Chrome): {\"rowClosed\":true,\"rowHeightClosed\":36,\"badgeText\":\"1 stalled — waiting on you\",\"badgeRect\":{\"w\":132,\"h\":30},\"hitIsBadge\":true,\"groupIsSection\":true,\"groupCollapsible\":false}"
+    },
+    {
+      "id": "R2-S6-back-restores",
+      "verdict": "PASS",
+      "detail": "landed=#inbox/NY-1785366694-f68a; after Back: hash=#roadmap roadmap visible=true, fx-active expanded=true, stalled task still visible=true, row position pre=175px post=175px (delta 0px)"
+    },
+    {
+      "id": "R2b-console-clean",
+      "verdict": "PASS",
+      "detail": "[]"
+    }
+  ]
+}

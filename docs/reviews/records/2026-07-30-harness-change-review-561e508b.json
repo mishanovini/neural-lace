@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-561e508b",
+  "created_at": "2026-07-30T00:29:35Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29#hooks-4 operator-authorized adversarial review sweep 2026-07-29",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/decision-context-pending-surfacer.sh",
+      "blob_sha": "88217525ccc1e4d7eb97f000f43322b727b811b0"
+    },
+    {
+      "path": "adapters/claude-code/hooks/definition-on-first-use-gate.sh",
+      "blob_sha": "38ebd962dd820e242bd72ab77e14cdd55444382e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/effort-policy-warn.sh",
+      "blob_sha": "c790f63ce4dc8fbf52144cfb2a54afaf4052c3c9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/find-scan-warn.sh",
+      "blob_sha": "c8a86661d9161b26b8f254dd23ddd9e4cb7fa42d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/goal-extraction-on-prompt.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/imperative-evidence-linker.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/observed-errors-gate.sh",
+      "blob_sha": "1e86795dda96884f9680f485c48cb296b447e9e1"
+    },
+    {
+      "path": "adapters/claude-code/hooks/principles-compliance-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/register-surfacer.sh",
+      "blob_sha": "78e36f72a58e4d110113dd815b2205fbc192105c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-surfacer-pack.sh",
+      "blob_sha": "6918aaed6cd033b733552892b34fe918cdbce4b0"
+    },
+    {
+      "path": "adapters/claude-code/hooks/spawned-task-result-surfacer.sh",
+      "blob_sha": "c152522ade26a16ea3d39a8a6d7110431a8b4463"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-orchestrator-queue.sh",
+      "blob_sha": "d6cd9e537abdcec4d5b1359581e70d61ba6e8015"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-turn-emit.sh",
+      "blob_sha": "52dd29118c6586f993a4db8a664333fd9ec6aa11"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — exec-bit-only change (100644 -> 100755), content byte-identical to master; all invocations go through an explicit bash interpreter (settings template / surfacer-pack run_member), so the mode change activates no new code path; self-tests where present are green under /bin/bash 3.2.57.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

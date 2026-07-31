@@ -1,0 +1,14 @@
+# Testing — compact
+> Enforcement: pre-commit-tdd-gate.sh, no-test-skip-gate.sh, narrate-and-wait-gate.sh, review-finding-fix-gate.sh; else Pattern — self-applied. Full: doctrine/testing-full.md
+> Applies: every commit; every user-facing task; every session end.
+
+- **Every test verifies functionality, not components** (constitution §4). Three layers, NOT interchangeable: unit (components — necessary, not sufficient), integration (wiring — necessary, not sufficient), functionality (user-observable outcome end-to-end — REQUIRED for any user-facing task). "All tests pass" ≠ "the feature works."
+- Mocking discipline by layer: mocked LLM/API/DB/time OK for unit tests. NOT OK for functionality tests of AI features — mocking the LLM defeats the test; use the smallest real model instead. **Never mock the SUT** at any layer (pre-commit-tdd-gate.sh Layer 3).
+- Prefer runtime-verification formats that exercise the user path (`playwright <spec>`, `curl`) over component-only formats (`test <file>`, `file <path>`, "typecheck clean") — the latter FAILs task-verifier's primary axis.
+- Keep going when authorized: don't narrate-and-wait between work units. Permission stops (`shall I continue?`) are eliminated by keep-going; VERIFICATION stops (pre-stop-verifier, product-acceptance-gate, wire-check) are NOT — riding a block via retry-guard downgrade or a friction waiver is a completion lie. End with `PAUSING:`/`BLOCKED:`, never `DONE:`, when a gate is genuinely unmet.
+- **Bug persistence, same response:** any observed bug/gap goes to `docs/backlog.md`, `docs/reviews/YYYY-MM-DD-*.md`, or the active plan's Evidence Log — in the SAME response it's noticed, not later. Trigger phrases ("we should also...", "I'll document this later", "turns out X doesn't work") mean stop and persist now.
+- **No `test.skip()` / `it.skip()` / `xtest()` / excluding `.only()`.** Make the path reachable (seed data inline, use real API setup) instead. Only legitimate skip: known upstream bug with an issue number (`test.skip('Blocked by #NNN — ...')`).
+- **E2E boundary rule:** after any commit touching a system boundary (DB, external API, webhook, env var, API route) run E2E against live deployment. Skip only for type-only/docs/pure-UI/pure-refactor changes.
+- Pre-commit review: auth/security, error handling, integration, edge cases — via code-reviewer before every commit.
+- After substantial UI builds, run all three audience-aware agents (UX End-User Tester, Domain Expert Tester, Audience Content Reviewer); persist findings to `docs/reviews/` immediately, before analysis. Sweep findings get one sub-task per file, never one checkbox for N files. Fix-commits cite `<TAG>-NNN` and mark `Fixed: <SHA>` in the review file (review-finding-fix-gate.sh).
+- Deploy validation: PR not done until CI + deploy both green and the feature is verified live; never dismiss a failing check as unrelated.

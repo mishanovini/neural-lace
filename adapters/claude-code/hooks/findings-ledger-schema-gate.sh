@@ -304,6 +304,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
     (
       cd "$repo" || exit 99
       git init -q 2>/dev/null || true
+      git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
       git config user.email "test@example.com" 2>/dev/null
       git config user.name "Test" 2>/dev/null
       git config commit.gpgsign false 2>/dev/null
@@ -611,6 +612,12 @@ if ! _VALIDATE_FILE "$FINDINGS_FILE"; then
     echo ""
     echo "[findings-schema] entries=$ENTRY_COUNT verdict=FAIL field='$_FIRST_FAIL_REASON' entry='$_FIRST_FAIL_ID'"
     echo "================================================================"
+    echo ""
+    echo "NOTE: this block prevented the ENTIRE command from running — including any"
+    echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run"
+    echo "the non-commit part as its own call first, then commit separately."
+    echo ""
+    echo "This gate: ~/.claude/hooks/findings-ledger-schema-gate.sh (source: adapters/claude-code/hooks/findings-ledger-schema-gate.sh)"
   } >&2
 
   cat <<'JSON'

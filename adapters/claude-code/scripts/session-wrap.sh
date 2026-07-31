@@ -316,7 +316,22 @@ cmd_refresh() {
     local stamp="<!-- session-wrap.sh: handoff verified $(date -u +%Y-%m-%dT%H:%M:%SZ) -->"
     # If a session-wrap stamp already exists, replace it; else append
     if grep -q '^<!-- session-wrap.sh:' "$scratchpad"; then
-      sed -i "s|^<!-- session-wrap.sh:.*|$stamp|" "$scratchpad"
+      # PORTABLE IN-PLACE EDIT (macos-portability M1, 2026-07-29).
+      # `sed -i "s|...|"` is GNU-only. BSD sed REQUIRES a backup-suffix argument
+      # after -i, so on macOS it consumed the script as the suffix and treated
+      # the PATH as the sed command:
+      #   sed: 1: "/Users/.../SCRATCHPAD.md": invalid command code m
+      # The stamp then never refreshed, so the Stop hook reported
+      # "SCRATCHPAD.md is N min stale" forever and no agent could clear it —
+      # it fired 3+ times in a single session and had to be hand-patched.
+      # NOT fixed with `sed -i ''`: that is the macOS-only form and breaks GNU
+      # sed, inverting the bug onto the Windows machines. tmp+mv works on both.
+      local _sw_tmp="${scratchpad}.tmp.$$"
+      if sed "s|^<!-- session-wrap.sh:.*|$stamp|" "$scratchpad" > "$_sw_tmp" 2>/dev/null; then
+        mv -f "$_sw_tmp" "$scratchpad" 2>/dev/null || rm -f "$_sw_tmp" 2>/dev/null
+      else
+        rm -f "$_sw_tmp" 2>/dev/null
+      fi
     else
       echo "" >> "$scratchpad"
       echo "$stamp" >> "$scratchpad"
@@ -344,6 +359,13 @@ cmd_self_test() {
   TMPROOT=$(mktemp -d 2>/dev/null || mktemp -d -t session-wrap)
   trap 'rm -rf "$TMPROOT"' EXIT
   local PASSED=0 FAILED=0
+
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  local _sw_pt
+  _sw_pt="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks/lib/portable-time.sh"
+  # shellcheck source=../hooks/lib/portable-time.sh
+  . "$_sw_pt" 2>/dev/null || {
+    echo "self-test: cannot source hooks/lib/portable-time.sh ($_sw_pt)" >&2; return 1; }
 
   # Setup synthetic repo
   cd "$TMPROOT"
@@ -384,8 +406,14 @@ cmd_self_test() {
   rm -f SCRATCHPAD.md
   echo "# SCRATCHPAD" > SCRATCHPAD.md
   echo "test-plan-1" >> SCRATCHPAD.md
-  # Force ancient mtime
-  touch -d "2 hours ago" SCRATCHPAD.md 2>/dev/null || touch -t "200001010000" SCRATCHPAD.md
+  # Age SCRATCHPAD past the 30-minute freshness window (cmd_verify's `age >
+  # 1800`). Pre-sweep the GNU-only `touch -d "2 hours ago"` failed on macOS
+  # and the fallback stamped the year 2000 — still stale, so S3 passed, but it
+  # proved only "a 26-year-old file is stale", which no wrong threshold
+  # constant could ever fail. 2h is a real probe of the 30m contract.
+  nl_touch_age SCRATCHPAD.md 7200 || {
+    echo "self-test (S3) stale-mtime: FAIL (could not age SCRATCHPAD.md)"
+    FAILED=$((FAILED + 1)); }
   if cmd_verify "$TMPROOT" >/dev/null 2>&1; then
     echo "self-test (S3) stale-mtime: FAIL (should have detected stale)"
     FAILED=$((FAILED + 1))
@@ -488,9 +516,11 @@ EOF
     echo "self-test (S8) non-git-exits-zero: SKIP (could not resolve script path: '$SELF_SCRIPT_PATH')"
   else
     VERIFY_EXIT=0
-    bash "$SELF_SCRIPT_PATH" verify >/dev/null 2>&1 || VERIFY_EXIT=$?
+    # "${BASH:-bash}", never bare `bash`: re-invoking under whichever bash
+    # leads PATH means a 3.2 run can report 5.x results (SWEEP-01).
+    "${BASH:-bash}" "$SELF_SCRIPT_PATH" verify >/dev/null 2>&1 || VERIFY_EXIT=$?
     REFRESH_EXIT=0
-    bash "$SELF_SCRIPT_PATH" refresh >/dev/null 2>&1 || REFRESH_EXIT=$?
+    "${BASH:-bash}" "$SELF_SCRIPT_PATH" refresh >/dev/null 2>&1 || REFRESH_EXIT=$?
     if [ "$VERIFY_EXIT" -eq 0 ] && [ "$REFRESH_EXIT" -eq 0 ]; then
       echo "self-test (S8) non-git-exits-zero: PASS"
       PASSED=$((PASSED + 1))
@@ -531,7 +561,9 @@ EOF
     # Parent backlog STALE (pre-fix this is what Signal 5 wrongly read).
     mkdir -p docs
     echo "# Backlog (parent, stale)" > docs/backlog.md
-    touch -d "3 hours ago" docs/backlog.md 2>/dev/null || touch -t "200001010000" docs/backlog.md
+    nl_touch_age docs/backlog.md 10800 || {
+      echo "self-test (S9a) worktree-backlog-fresh: FAIL (could not age the parent backlog)"
+      FAILED=$((FAILED + 1)); }
 
     # Post-fix: cmd_verify(parent, wt) reads the worktree's FRESH backlog → PASS.
     if cmd_verify "$TMPROOT" "$WT9" >/dev/null 2>&1; then
@@ -544,7 +576,9 @@ EOF
 
     # Negative control: make the WORKTREE backlog genuinely stale → must STALE.
     # Proves the fix did NOT mask real staleness; it just reads the right copy.
-    touch -d "3 hours ago" "$WT9/docs/backlog.md" 2>/dev/null || touch -t "200001010000" "$WT9/docs/backlog.md"
+    nl_touch_age "$WT9/docs/backlog.md" 10800 || {
+      echo "self-test (S9b) worktree-backlog-stale: FAIL (could not age the worktree backlog)"
+      FAILED=$((FAILED + 1)); }
     if cmd_verify "$TMPROOT" "$WT9" >/dev/null 2>&1; then
       echo "self-test (S9b) worktree-backlog-stale: FAIL (should STALE on a genuinely stale worktree backlog)"
       FAILED=$((FAILED + 1))
@@ -607,6 +641,43 @@ EOF
   fi
   cd "$TMPROOT"
   rm -rf "$R1ROOT"
+
+  # ---- scenario 12 (D.4, §D.0.8): caller-cwd outside any repo — BOTH
+  # resolvers must fail safe TOGETHER, never silently collapse WT_REPO->REPO.
+  # §D.0.8 REFUTED the dual-path split as a bug (it's deliberate: SCRATCHPAD
+  # resolves to the MAIN checkout via find_repo_root/git-common-dir, while
+  # backlog/roadmap/discoveries resolve to the CURRENT worktree via
+  # find_worktree_root/show-toplevel). The one gap this locks: called from a
+  # cwd with NO git ancestry at all, find_repo_root and find_worktree_root
+  # must BOTH fail (non-zero) rather than one succeeding while the other
+  # fails and some caller falls back to treating WT_REPO as REPO (which
+  # would silently point worktree-scoped reads at the wrong root — the one
+  # path that could produce the reported cross-resolver symptom).
+  cd "$TMPROOT"
+  NONGIT_DIR12=$(mktemp -d 2>/dev/null || mktemp -d -t nongit12)
+  cd "$NONGIT_DIR12"
+  if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    echo "self-test (S12) caller-cwd-outside-repo-fails-safe-together: SKIP (mktemp dir is unexpectedly inside a git repo)"
+  else
+    FRR_OUT=""; FRR_EXIT=0
+    FRR_OUT=$(find_repo_root 2>&1) || FRR_EXIT=$?
+    FWR_OUT=""; FWR_EXIT=0
+    FWR_OUT=$(find_worktree_root 2>&1) || FWR_EXIT=$?
+    # Both must fail (non-zero exit, empty stdout) — neither may return a
+    # fabricated path, and critically neither may succeed while the other
+    # fails (that asymmetry is exactly what would let a caller collapse
+    # WT_REPO to a bogus REPO or vice versa).
+    if [ "$FRR_EXIT" -ne 0 ] && [ "$FWR_EXIT" -ne 0 ] \
+       && [ -z "$FRR_OUT" ] && [ -z "$FWR_OUT" ]; then
+      echo "self-test (S12) caller-cwd-outside-repo-fails-safe-together: PASS"
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (S12) caller-cwd-outside-repo-fails-safe-together: FAIL (find_repo_root exit=$FRR_EXIT out='$FRR_OUT'; find_worktree_root exit=$FWR_EXIT out='$FWR_OUT' — expected both non-zero/empty)"
+      FAILED=$((FAILED + 1))
+    fi
+  fi
+  cd "$TMPROOT"
+  rm -rf "$NONGIT_DIR12"
 
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED + FAILED)) scenarios)"

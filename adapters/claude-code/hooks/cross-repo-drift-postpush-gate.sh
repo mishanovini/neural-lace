@@ -40,6 +40,10 @@
 
 set -u
 
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+{ source "$SELF_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
+
 # ============================================================
 # Resolve the poller (prefer runtime mirror, fall back to repo source)
 # ============================================================
@@ -47,11 +51,14 @@ _resolve_poller() {
   if [ -n "${POLLER_OVERRIDE:-}" ]; then
     printf '%s\n' "$POLLER_OVERRIDE"; return 0
   fi
+  local nl_root=""
+  command -v nl_repo_root >/dev/null 2>&1 && nl_root="$(nl_repo_root 2>/dev/null)"
   local cand
   for cand in \
       "$HOME/.claude/scripts/check-cross-repo-drift.sh" \
-      "$HOME/claude-projects/neural-lace/adapters/claude-code/scripts/check-cross-repo-drift.sh" \
+      "${nl_root:+$nl_root/adapters/claude-code/scripts/check-cross-repo-drift.sh}" \
       "$(dirname "$0")/../scripts/check-cross-repo-drift.sh"; do
+    [ -z "$cand" ] && continue
     if [ -f "$cand" ]; then printf '%s\n' "$cand"; return 0; fi
   done
   printf '%s\n' ""
@@ -115,8 +122,10 @@ run_postpush_check() {
       echo ""
       echo "Reconcile NOW (never force-push):"
       echo "  - Simple case (one remote strictly ahead): cherry-pick the missing"
-      echo "    commit(s) onto the other remote's master + non-force push, OR run"
-      echo "    scripts/sync-pt-to-personal.sh <commit> (tree-verifies before+after)."
+      echo "    commit(s) onto the other remote's master + non-force push. Full"
+      echo "    procedure: docs/runbooks/master-reconcile-and-estate-cleanup.md"
+      echo "    (sync-pt-to-personal.sh was retired 2026-07-16 to attic/ — decision"
+      echo "    064 — this runbook supersedes it as the manual recovery tool)."
       echo "  - Bidirectional divergence: reconcile both sides into a union first"
       echo "    (do NOT one-directional-overwrite — that destroys the other side's"
       echo "    work). Verify both remotes report identical tree hashes when done."

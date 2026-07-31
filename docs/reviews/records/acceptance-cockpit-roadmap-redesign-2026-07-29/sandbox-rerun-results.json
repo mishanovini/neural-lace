@@ -1,0 +1,111 @@
+{
+  "at": "2026-07-30T05:50:19.978Z",
+  "base": "http://127.0.0.1:7799",
+  "results": [
+    {
+      "id": "R2-S7a-corrupt2-unknown",
+      "verdict": "PASS",
+      "detail": "unrecognized-Status reason rendered=true, confident not-started on corrupt2=false"
+    },
+    {
+      "id": "R2-S7a-unreadable-unknown",
+      "verdict": "PASS",
+      "detail": "EACCES unknown rendered=true"
+    },
+    {
+      "id": "R2-S7a-rollup-count",
+      "verdict": "PASS",
+      "detail": "group-header unknown roll-up: \"3 status unknown\""
+    },
+    {
+      "id": "R2-S7b-statusless-corrupt-not-vanished",
+      "verdict": "FAIL",
+      "detail": "fx-corrupt3 (binary body, Status header destroyed) visible=false; fx-corrupt (pure binary) visible=false — R14 deliberately keeps header-less files excluded (commit msg), caller's bar says must-not-vanish"
+    },
+    {
+      "id": "R2-S6-producer-payload",
+      "verdict": "PASS",
+      "detail": "{\"v\":\"stalled\",\"rc\":\"waiting-on-you\",\"unblock\":{\"label\":\"open in Inbox\",\"hash\":\"#inbox/NY-1785366694-f68a\"}}"
+    },
+    {
+      "id": "R2-S6-plan-rollup-payload",
+      "verdict": "PASS",
+      "detail": "fx-active.roll_up={\"waiting-on-you\":{\"count\":1,\"exemplar\":\"fx-active/3\"}}"
+    },
+    {
+      "id": "R2-S6-falsepos-no-fabrication",
+      "verdict": "PASS",
+      "detail": "fx-active/99 exists=false (task-99 probe item must not fabricate); fx-active/2=in-progress (resolved item must not stall)"
+    },
+    {
+      "id": "R2-S6-ancestor-badges-collapsed",
+      "verdict": "FAIL",
+      "detail": "collapsed=true; plan-row badge=\"1 stalled — waiting on you\"; other-ancestor (group) badge=\"undefined\"; all=[{\"text\":\"1 stalled — waiting on you\",\"inRow\":true}]"
+    },
+    {
+      "id": "R2-S6-badge-click-expands",
+      "verdict": "PASS",
+      "detail": "badge clicked=true, plan row open=true, stalled task visible=true/true, \"open in Inbox\" unblock link=true"
+    },
+    {
+      "id": "R2-S6-inbox-lands-focused",
+      "verdict": "PASS",
+      "detail": "hash=#inbox/NY-1785366694-f68a inbox-visible=true item-present=true highlighted=true (el: 🗳decisionkeep or drop the fx-active compatibility shim (docs/plans/fx-active.md).no session recorde) focus=ib-row ib-row-answerable landing-highlight"
+    },
+    {
+      "id": "R2-S6-back-restores",
+      "verdict": "FAIL",
+      "detail": "roadmap visible=true, fx-active still expanded=undefined, scroll pre=0 post=0"
+    },
+    {
+      "id": "R2-S6-reverse-blocks-chip",
+      "verdict": "PASS",
+      "detail": "f68a blocks chip=\"blocks: fx-active/3\" (want fx-active/3); false-positive item chip=null (want none)"
+    },
+    {
+      "id": "R2-INBOX-arrow-anatomy-full",
+      "verdict": "PASS",
+      "detail": "{\"found\":true,\"doubled\":false,\"optRows\":true,\"outcomes\":true,\"pick\":true,\"reply\":true,\"linksLabel\":true,\"deadLinks\":[],\"copyBtns\":2,\"ctxPresent\":true}"
+    },
+    {
+      "id": "R2-S7c-api-unavailable",
+      "verdict": "PASS",
+      "detail": "{\"http\":200,\"ok\":false,\"status\":\"unavailable\",\"ledger_present\":true,\"error\":\"ledger.json exists but could not be read (EACCES)\"}"
+    },
+    {
+      "id": "R2-S7c-pane-error-not-win",
+      "verdict": "PASS",
+      "detail": "tab=(!) pane-error=true Retry=true win-state=false"
+    },
+    {
+      "id": "R2-S7c-retry-recovers",
+      "verdict": "PASS",
+      "detail": "retry=true tab=(3) (expect (3)) error-cleared=true"
+    },
+    {
+      "id": "R2-S5-sandbox-peer-renders",
+      "verdict": "PASS",
+      "detail": "payload entries=[\"peer-laptop:fresh-ish\"]; Machines DOM=\"unassigned: peer-laptop (fresh, 9m ago)\""
+    },
+    {
+      "id": "R2-S8-title-fold",
+      "verdict": "PASS",
+      "detail": "POST -> 200; after newer auto: title=\"Rerun operator title (must win)\" source=operator"
+    },
+    {
+      "id": "R2-S2-merged-unverified",
+      "verdict": "PASS",
+      "detail": "payload=merged-unverified chip-rendered=true"
+    },
+    {
+      "id": "R2-console-clean",
+      "verdict": "PASS",
+      "detail": "0 errors []"
+    },
+    {
+      "id": "R2-network-clean",
+      "verdict": "PASS",
+      "detail": "0 non-2xx []"
+    }
+  ]
+}

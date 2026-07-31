@@ -1,0 +1,30 @@
+{
+  "at": "2026-07-29T22:52:33.808Z",
+  "results": [
+    {
+      "id": "P1r-chore-toggle-shipped",
+      "verdict": "FAIL",
+      "detail": "default: \"neural-lace — 21 plans, in build order (13 upcoming, 4 in progress, 4 complete)\" + \"Shipped (4)\" + hidden-note \"\"; chores ON (aria-pressed=true): \"neural-lace — 23 plans, in build order (13 upcoming, 4 in progress, 6 complete)\" + \"Shipped (6)\" (expect 22 plans / Shipped (6))"
+    },
+    {
+      "id": "P2r-next-token-exact",
+      "verdict": "PASS",
+      "detail": "plan-row task tokens: [{\"title\":\"Flat-skills → directory-form migration\",\"tok\":\"6 next\"},{\"title\":\"task 6: Registration confirmation in a fresh sched\",\"tok\":\"next\"},{\"title\":\"Cockpit UI polish — the operator's four usability \",\"tok\":\"1 next\"},{\"title\":\"task 1: Resizable + independently scrollable panes\",\"tok\":\"next\"},{\"title\":\"context-watermark.sh window auto-detection + never\",\"tok\":\"1 next\"},{\"title\":\"task 1: Auto-detect the context window from the tr\",\"tok\":\"next\"},{\"title\":\"Orphaned Worktree Guard Reformulation\",\"tok\":\"1 next\"},{\"title\":\"task 1: Rebase the salvaged WIP (`a4b6876`) onto c\",\"tok\":\"next\"},{\"title\":\"PS 5.1 em-dash parse hotfix (scheduled-task instal\",\"tok\":\"1 next\"},{\"title\":\"task 1: Replace the em-dash with `--` inside the d\",\"tok\":\"next\"},{\"title\":\"Performance telemetry: passive metering, biting bu\",\"tok\":\"P1 next\"},{\"title\":\"task P1: — Per-call chain latency ledger: wrap the\",\"tok\":\"next\"}]; cockpit-roadmap-redesign row token=\"9 next\""
+    },
+    {
+      "id": "P8r-next-chip-row",
+      "verdict": "PASS",
+      "detail": "✓=8, chips=[{\"chip\":\"next\",\"row\":\"task 9: Acceptance\"}] (expect the task-9 acceptance row)"
+    },
+    {
+      "id": "P10r-spacing",
+      "verdict": "PASS",
+      "detail": "\"▸Cockpit roadmap redesign — one registry\": parent→child 28px < plan→next-plan 30px"
+    },
+    {
+      "id": "P16-console-clean-2",
+      "verdict": "PASS",
+      "detail": "errors during re-probe: []"
+    }
+  ]
+}

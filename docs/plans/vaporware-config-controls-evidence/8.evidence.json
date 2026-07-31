@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "task_id": "8",
+  "verdict": "PASS",
+  "commit_sha": "7926030002b81d6606411739a5e1c944a30bde50",
+  "files_modified": [
+    "docs/plans/vaporware-config-controls-evidence/1.evidence.json",
+    "docs/plans/vaporware-config-controls-evidence/2.evidence.json",
+    "docs/plans/vaporware-config-controls-evidence/3.evidence.json",
+    "docs/plans/vaporware-config-controls-evidence/4.evidence.json",
+    "docs/plans/vaporware-config-controls-evidence/5.evidence.json",
+    "docs/plans/vaporware-config-controls-evidence/6.evidence.json",
+    "docs/plans/vaporware-config-controls-evidence/7.evidence.json",
+    "docs/plans/vaporware-config-controls.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q \"^## Review record (task 8)\" docs/plans/vaporware-config-controls.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"^## Review record (task 8)\" docs/plans/vaporware-config-controls.md",
+      "exit_code": 0
+    },
+    "command:grep -qF \"harness-reviewer round 1 (agent aa2460edec78938df): REFORMULATE\" docs/plans/vaporware-config-controls.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qF \"harness-reviewer round 1 (agent aa2460edec78938df): REFORMULATE\" docs/plans/vaporware-config-controls.md",
+      "exit_code": 0
+    },
+    "command:test $(grep -cE \"\\*\\*F[1-4] (Critical|Major|Minor)\" docs/plans/vaporware-config-controls.md) -eq 4": {
+      "passed": true,
+      "detail": "",
+      "command": "test $(grep -cE \"\\*\\*F[1-4] (Critical|Major|Minor)\" docs/plans/vaporware-config-controls.md) -eq 4",
+      "exit_code": 0
+    },
+    "command:grep -qF \"re-verified at cf35399): PASS\" docs/plans/vaporware-config-controls.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qF \"re-verified at cf35399): PASS\" docs/plans/vaporware-config-controls.md",
+      "exit_code": 0
+    },
+    "command:grep -qF \"no remaining findings\" docs/plans/vaporware-config-controls.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -qF \"no remaining findings\" docs/plans/vaporware-config-controls.md",
+      "exit_code": 0
+    },
+    "command:! grep -rq \"runtime-verification Stop chain\" adapters/": {
+      "passed": true,
+      "detail": "",
+      "command": "! grep -rq \"runtime-verification Stop chain\" adapters/",
+      "exit_code": 0
+    },
+    "command:! grep -rq \"UI / API / AI / Data)\" adapters/claude-code/agents/": {
+      "passed": true,
+      "detail": "",
+      "command": "! grep -rq \"UI / API / AI / Data)\" adapters/claude-code/agents/",
+      "exit_code": 0
+    },
+    "command:git cat-file -e \"cf35399^{commit}\"": {
+      "passed": true,
+      "detail": "",
+      "command": "git cat-file -e \"cf35399^{commit}\"",
+      "exit_code": 0
+    },
+    "command:test $(git diff-tree --no-commit-id --name-only -r cf35399 | wc -l) -eq 8": {
+      "passed": true,
+      "detail": "",
+      "command": "test $(git diff-tree --no-commit-id --name-only -r cf35399 | wc -l) -eq 8",
+      "exit_code": 0
+    },
+    "command:grep -q \"runtime-verification\" \"$HOME/.claude/state/nl-issues.jsonl\"": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"runtime-verification\" \"$HOME/.claude/state/nl-issues.jsonl\"",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T01:07:08Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/vaporware-config-controls.md"
+}

@@ -3,6 +3,8 @@
 > **Audience:** Developers using this harness  
 > **Purpose:** Understand how the Claude Code AI harness is configured, what each file does, and how the automation works
 
+**Structural note (2026-07-23):** `hooks/workstreams-state-gate.sh` (an already-attic'd Wave O.4 exit-0 shim that had been mistakenly re-wired into `settings.json.template` by a later drift fix) was hard-deleted from `hooks/` — see `docs/backlog.md` `HOOK-SHIM-RETIRE-01` and the generated `docs/harness-architecture.md` for the current, authoritative hook inventory.
+
 ---
 
 ## Quick Start
@@ -550,3 +552,8 @@ These Claude Code plugins are typically active (configured in `settings.json.tem
 | `explanatory-output-style` | Provides educational insights alongside code changes |
 | `frontend-design` | Production-grade frontend component generation |
 | `security-guidance` | Proactive security recommendations |
+
+<!-- 2026-07-12: orchestrator-prime skill removed from the inventory (plan ABANDONED →
+docs/plans/archive/orchestrator-prime.md). It was built for the Claude Dispatch direction,
+which the operator has abandoned; harness-native orchestration is the worktree
+orchestrator-pattern + ask-rooted workstreams. -->

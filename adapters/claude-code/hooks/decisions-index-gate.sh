@@ -3,7 +3,7 @@
 #
 # Classification: Mechanism (hook-enforced pre-commit blocker)
 #
-# Enforces the rule from `~/.claude/rules/planning.md` ("Decision Records"
+# Enforces the rule from `~/.claude/doctrine/planning.md` ("Decision Records"
 # section): every Tier 2+ decision gets a standalone `docs/decisions/NNN-*.md`
 # file AND an index row in `docs/DECISIONS.md`, both committed together. This
 # gate blocks commits that stage a new decision record without also updating
@@ -50,6 +50,7 @@ if [ "${1:-}" = "--self-test" ]; then
   (
     cd "$TMPDIR_ST" || exit 1
     git init -q . >/dev/null 2>&1
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "selftest@example.test"
     git config user.name "selftest"
     mkdir -p docs/decisions
@@ -229,7 +230,7 @@ if [ "$HAS_RECORD_ADD_OR_MOD" -eq 1 ] && [ "$HAS_INDEX" -eq 0 ]; then
     echo ""
     echo "Every new decision record must be accompanied by an index entry in"
     echo "docs/DECISIONS.md in the SAME commit. This is the rule from"
-    echo "~/.claude/rules/planning.md 'Decision Records' section: decision"
+    echo "~/.claude/doctrine/planning.md 'Decision Records' section: decision"
     echo "records are permanent artifacts and must be discoverable via the"
     echo "index the moment they land."
     echo ""
@@ -244,6 +245,8 @@ if [ "$HAS_RECORD_ADD_OR_MOD" -eq 1 ] && [ "$HAS_INDEX" -eq 0 ]; then
     echo "the index."
     echo ""
     echo "To bypass (not recommended): git commit --no-verify"
+    echo ""
+    echo "This gate: ~/.claude/hooks/decisions-index-gate.sh (source: adapters/claude-code/hooks/decisions-index-gate.sh)"
     echo "================================================================"
   } >&2
   exit 1

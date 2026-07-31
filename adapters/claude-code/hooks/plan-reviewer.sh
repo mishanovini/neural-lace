@@ -1187,7 +1187,7 @@ HARNESS_HEAD
   # Scenario (hi3): live-mirror ~/.claude/ paths recognized — expect PASS
   write_harness_carveout_plan "$TMPDIR_SELFTEST/hi3.md" \
     "- \`~/.claude/hooks/plan-reviewer.sh\` — live-mirror edit
-- \`~/.claude/rules/planning.md\` — live-mirror rule update"
+- \`~/.claude/doctrine/planning.md\` — live-mirror rule update"
   if bash "$SCRIPT" "$TMPDIR_SELFTEST/hi3.md" > /dev/null 2>&1; then
     echo "self-test (hi3) check4b-live-mirror-recognized: PASS (expected)" >&2
   else
@@ -1277,8 +1277,10 @@ CHECK13_HI4
   #   $3 = owner_line      (full line, e.g. "owner: Misha"; "" to omit)
   #   $4 = target_line     (full line, e.g. "target-completion-date: 2026-07-15"; "" to omit)
   #   $5 = contract_mode   ("populated" | "missing" | "placeholder")
+  #   $6 = ask_id_line     (full line, e.g. "ask-id: ask-selftest-1"; "" to omit —
+  #                         Check 16, ask-rooted-workstreams-p1 Task 10)
   write_lifecycle_plan() {
-    local out="$1" schema_line="$2" owner_line="$3" target_line="$4" contract_mode="$5"
+    local out="$1" schema_line="$2" owner_line="$3" target_line="$4" contract_mode="$5" ask_id_line="${6:-}"
     {
       echo "# Plan: Self-test Check 14/15 lifecycle fixture"
       echo "Status: ACTIVE"
@@ -1292,6 +1294,7 @@ CHECK13_HI4
       [[ -n "$owner_line" ]] && echo "$owner_line"
       [[ -n "$target_line" ]] && echo "$target_line"
       echo "prd-ref: n/a — harness-development"
+      [[ -n "$ask_id_line" ]] && echo "$ask_id_line"
       echo ""
       echo "## Goal"
       echo "Exercise Check 14 (accountability fields) and Check 15 (Closure"
@@ -1416,6 +1419,407 @@ CHECK13_HI4
     FAILED=1
   else
     echo "self-test (cc7) check15-v2-placeholder-closure-contract: FAIL (expected)" >&2
+  fi
+
+  # ============================================================
+  # Check 16 scenarios (cc8..cc10) — ask<->plan linkage convention
+  # (ask-rooted-workstreams-p1 Task 10, planning.md: "plan headers record
+  # ask-id:"). WARN only — never blocks the commit, unlike Checks 14/15.
+  # ============================================================
+
+  # (cc8) v2 ACTIVE plan, owner/target/contract all populated, ask-id line
+  #       OMITTED → Check 16 WARNs on stderr but the exit code stays 0
+  #       (non-blocking is the whole point of this check).
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc8.md" "lifecycle-schema: v2" \
+    "owner: Misha" "target-completion-date: 2026-07-15" "populated" ""
+  CC8_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/cc8.md" 2>&1 >/dev/null)
+  CC8_RC=$?
+  if [[ $CC8_RC -eq 0 ]] && printf '%s' "$CC8_OUT" | grep -q "Check 16"; then
+    echo "self-test (cc8) check16-ask-id-missing-warns-non-blocking: PASS (expected)" >&2
+  else
+    echo "self-test (cc8) check16-ask-id-missing-warns-non-blocking: FAIL (rc=$CC8_RC)" >&2
+    printf '%s\n' "$CC8_OUT" >&2
+    FAILED=1
+  fi
+
+  # (cc9) v2 ACTIVE plan with ask-id POPULATED → Check 16 stays silent, exit 0.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc9.md" "lifecycle-schema: v2" \
+    "owner: Misha" "target-completion-date: 2026-07-15" "populated" "ask-id: ask-selftest-1"
+  CC9_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/cc9.md" 2>&1 >/dev/null)
+  CC9_RC=$?
+  if [[ $CC9_RC -eq 0 ]] && ! printf '%s' "$CC9_OUT" | grep -q "Check 16"; then
+    echo "self-test (cc9) check16-ask-id-populated-silent: PASS (expected)" >&2
+  else
+    echo "self-test (cc9) check16-ask-id-populated-silent: FAIL (rc=$CC9_RC)" >&2
+    printf '%s\n' "$CC9_OUT" >&2
+    FAILED=1
+  fi
+
+  # (cc10) Grandfathered: no lifecycle-schema: v2 marker at all (mirrors cc1)
+  #        → Check 16 is gated on v2 exactly like Checks 14/15 and must stay
+  #        silent even though ask-id is also omitted here — no false-positive
+  #        nagging on legacy pre-Task-10 plans.
+  write_lifecycle_plan "$TMPDIR_SELFTEST/cc10.md" "" "" "" "missing" ""
+  CC10_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/cc10.md" 2>&1 >/dev/null)
+  CC10_RC=$?
+  if [[ $CC10_RC -eq 0 ]] && ! printf '%s' "$CC10_OUT" | grep -q "Check 16"; then
+    echo "self-test (cc10) check16-grandfathered-no-v2-silent: PASS (expected)" >&2
+  else
+    echo "self-test (cc10) check16-grandfathered-no-v2-silent: FAIL (rc=$CC10_RC)" >&2
+    printf '%s\n' "$CC10_OUT" >&2
+    FAILED=1
+  fi
+
+  # ============================================================
+  # Check 17 scenarios (aa1..aa7) — GATE 1: architecture-review-before-build
+  # (2026-07-14, artifact-evidence-bar enforcement)
+  # ============================================================
+  #
+  # (aa1) ACTIVE plan, no architecture keyword anywhere — expect PASS
+  #       (gate does not fire; nothing to review).
+  # (aa2) ACTIVE plan matches an architecture keyword, links NO review
+  #       artifact — expect FAIL (the missing-review case).
+  # (aa3) ACTIVE plan matches a keyword, links a review file that exists
+  #       on disk with verdict SOUND — expect PASS.
+  # (aa4) ACTIVE plan matches a keyword, links a review file that exists
+  #       with verdict NEEDS-RESHAPING — expect FAIL. This is the real-world
+  #       golden case: docs/plans/cockpit-v2-push-materialized-store.md
+  #       links docs/reviews/2026-07-14-cockpit-v2-architecture-review.md
+  #       whose verdict is NEEDS-RESHAPING; a NEEDS-RESHAPING verdict must
+  #       NOT satisfy this gate.
+  # (aa5) ACTIVE plan matches a keyword, links a review file that does NOT
+  #       exist on disk — expect FAIL.
+  # (aa6) Status: DRAFT plan matches a keyword, links no review — expect
+  #       PASS. Check 17 is gated to ACTIVE (or unset) exactly like Check
+  #       10/14/15 so iterative design-time drafting is never blocked; the
+  #       gate bites only at the ACTIVE transition that precedes builder
+  #       dispatch.
+  # (aa7) ACTIVE plan matches a keyword, links a review file with verdict
+  #       SOUND-WITH-AMENDMENTS — expect PASS (the second legal verdict).
+
+  write_check17_plan() {
+    # $1 = output path, $2 = status, $3 = extra Goal-section line
+    # (injects/omits the architecture keyword), $4 = extra line placed
+    # after Tasks (injects/omits the review-artifact reference).
+    local out="$1" status="${2:-ACTIVE}" arch_line="${3:-}" review_line="${4:-}"
+    {
+      echo "# Plan: Self-test Check 17 architecture-review fixture"
+      echo "Status: $status"
+      echo "Mode: code"
+      echo "Backlog items absorbed: none"
+      echo "tier: 1"
+      echo "rung: 0"
+      echo "architecture: coding-harness"
+      echo "frozen: false"
+      echo "prd-ref: n/a — harness-development"
+      echo ""
+      echo "## Goal"
+      echo "Exercise Check 17 (architecture-review-before-build) in isolation."
+      [[ -n "$arch_line" ]] && echo "$arch_line"
+      echo ""
+      echo "## Scope"
+      echo "- IN: Check 17 enforcement in plan-reviewer.sh"
+      echo "- OUT: anything else; fixture is single-purpose"
+      echo ""
+      echo "## Tasks"
+      echo "- [ ] 1. Synthetic task placeholder for the self-test runner."
+      echo ""
+      if [[ -n "$review_line" ]]; then
+        echo "## Architecture Review"
+        echo "$review_line"
+        echo ""
+      fi
+      echo "## Files to Modify/Create"
+      echo '- `hooks/plan-reviewer.sh` — Check 17 under exercise'
+      echo ""
+      echo "## Assumptions"
+      echo "- Assumes Check 6b passes for this fixture so Check 17 is the"
+      echo "  only variable across the aa1-aa7 scenarios."
+      echo ""
+      echo "## Edge Cases"
+      echo "- The fixture must satisfy Check 6b's required sections so the"
+      echo "  only failing path available is Check 17 itself."
+      echo ""
+      echo "## Testing Strategy"
+      echo "- Run plan-reviewer.sh against this fixture; observe the exit"
+      echo "  code matches the scenario expectation."
+      echo ""
+      echo "Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice."
+      echo ""
+      echo "## Definition of Done"
+      echo "- [ ] Self-test reports the expected verdict per scenario."
+    } > "$out"
+  }
+
+  write_check17_review() {
+    # $1 = output path, $2 = verdict word (SOUND | SOUND-WITH-AMENDMENTS |
+    # NEEDS-RESHAPING). Mirrors the real artifact's title-line convention:
+    # docs/reviews/2026-07-14-cockpit-v2-architecture-review.md opens with
+    # "# ... (verdict: NEEDS-RESHAPING)".
+    mkdir -p "$(dirname "$1")"
+    {
+      echo "# Fixture architecture review (verdict: $2)"
+      echo ""
+      echo "Reviewer: architecture-reviewer (Check 17 self-test fixture)."
+    } > "$1"
+  }
+
+  # (aa1) no keyword anywhere — PASS
+  write_check17_plan "$TMPDIR_SELFTEST/aa1.md" "ACTIVE" "" ""
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa1.md" > /dev/null 2>&1; then
+    echo "self-test (aa1) check17-no-keyword-silent: PASS (expected)" >&2
+  else
+    echo "self-test (aa1) check17-no-keyword-silent: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/aa1.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (aa2) keyword present, no review linked — FAIL
+  write_check17_plan "$TMPDIR_SELFTEST/aa2.md" "ACTIVE" \
+    "This design changes the staleness handling for the sync cache." ""
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa2.md" > /dev/null 2>&1; then
+    echo "self-test (aa2) check17-keyword-no-review-blocks: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (aa2) check17-keyword-no-review-blocks: FAIL (expected)" >&2
+  fi
+
+  # (aa3) keyword + linked review with verdict SOUND — PASS
+  write_check17_review "$TMPDIR_SELFTEST/docs/reviews/aa3-architecture-review.md" "SOUND"
+  write_check17_plan "$TMPDIR_SELFTEST/aa3.md" "ACTIVE" \
+    "This plan establishes a new source of truth for campaign state." \
+    "See docs/reviews/aa3-architecture-review.md for the architecture-reviewer verdict."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa3.md" > /dev/null 2>&1; then
+    echo "self-test (aa3) check17-sound-verdict-passes: PASS (expected)" >&2
+  else
+    echo "self-test (aa3) check17-sound-verdict-passes: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/aa3.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (aa4) keyword + linked review with verdict NEEDS-RESHAPING — FAIL
+  # (real-world golden case: cockpit-v2-push-materialized-store.md /
+  # 2026-07-14-cockpit-v2-architecture-review.md)
+  write_check17_review "$TMPDIR_SELFTEST/docs/reviews/aa4-architecture-review.md" "NEEDS-RESHAPING"
+  write_check17_plan "$TMPDIR_SELFTEST/aa4.md" "ACTIVE" \
+    "This plan adds a derived cache with a staleness contract." \
+    "The architecture-reviewer verdict lives at docs/reviews/aa4-architecture-review.md."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa4.md" > /dev/null 2>&1; then
+    echo "self-test (aa4) check17-needs-reshaping-blocks: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (aa4) check17-needs-reshaping-blocks: FAIL (expected)" >&2
+  fi
+
+  # (aa5) keyword + linked review file that does not exist on disk — FAIL
+  write_check17_plan "$TMPDIR_SELFTEST/aa5.md" "ACTIVE" \
+    "This plan changes the write path for the event log." \
+    "See docs/reviews/aa5-does-not-exist-architecture-review.md."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa5.md" > /dev/null 2>&1; then
+    echo "self-test (aa5) check17-missing-review-file-blocks: PASS (expected FAIL)" >&2
+    FAILED=1
+  else
+    echo "self-test (aa5) check17-missing-review-file-blocks: FAIL (expected)" >&2
+  fi
+
+  # (aa6) Status: DRAFT — keyword present, no review — PASS (pre-ACTIVE
+  # design-time iteration is never blocked; gate bites only at ACTIVE).
+  write_check17_plan "$TMPDIR_SELFTEST/aa6.md" "DRAFT" \
+    "This plan changes the write path and adds staleness handling." ""
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa6.md" > /dev/null 2>&1; then
+    echo "self-test (aa6) check17-draft-status-exempt: PASS (expected)" >&2
+  else
+    echo "self-test (aa6) check17-draft-status-exempt: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/aa6.md" >&2 || true
+    FAILED=1
+  fi
+
+  # (aa7) keyword + linked review with verdict SOUND-WITH-AMENDMENTS — PASS
+  write_check17_review "$TMPDIR_SELFTEST/docs/reviews/aa7-architecture-review.md" "SOUND-WITH-AMENDMENTS"
+  write_check17_plan "$TMPDIR_SELFTEST/aa7.md" "ACTIVE" \
+    "This plan introduces a new materialized view as a derived store." \
+    "Verdict captured in docs/reviews/aa7-architecture-review.md."
+  if bash "$SCRIPT" "$TMPDIR_SELFTEST/aa7.md" > /dev/null 2>&1; then
+    echo "self-test (aa7) check17-sound-with-amendments-passes: PASS (expected)" >&2
+  else
+    echo "self-test (aa7) check17-sound-with-amendments-passes: FAIL (expected PASS)" >&2
+    bash "$SCRIPT" "$TMPDIR_SELFTEST/aa7.md" >&2 || true
+    FAILED=1
+  fi
+
+  # ============================================================
+  # Check 18 scenarios (dd1..dd4) — LOE class+band annotation surfacing
+  # (accountable-estate-program-2026-07 T7). WARN only — never blocks,
+  # like Check 16.
+  # ============================================================
+  #
+  # write_loe_plan: minimal Mode: code plan satisfying Check 6b/10 with an
+  # optional `loe-class:` header line. Args: out, loe_class_line, status
+  # (default ACTIVE), schema_line (default "lifecycle-schema: v2" — the
+  # missing-field nudge is v2-vintage-gated per the fd48741 review, so the
+  # WARN fixtures must be v2; pass "" to model a grandfathered legacy plan).
+  write_loe_plan() {
+    local out="$1" loe_class_line="${2:-}" status="${3:-ACTIVE}"
+    # ${4-...} not ${4:-...}: dd6 passes an EXPLICIT empty 4th arg to model a
+    # legacy plan; colon-form substituted the v2 default on it, so the "legacy"
+    # fixture was v2 and dd6 could never pass anywhere (T7 verifier, 2026-07-30).
+    local schema_line="${4-lifecycle-schema: v2}"
+    {
+      echo "# Plan: Self-test Check 18 LOE fixture"
+      echo "Status: $status"
+      echo "Mode: code"
+      echo "Backlog items absorbed: none"
+      echo "tier: 1"
+      echo "rung: 0"
+      echo "architecture: coding-harness"
+      echo "frozen: false"
+      echo "prd-ref: n/a — harness-development"
+      # v2 plans must satisfy Checks 14/15 (owner + target + Closure
+      # Contract) so the ONLY variable across dd scenarios stays Check 18.
+      echo "owner: SelfTest"
+      echo "target-completion-date: 2026-12-31"
+      [[ -n "$schema_line" ]] && echo "$schema_line"
+      [[ -n "$loe_class_line" ]] && echo "$loe_class_line"
+      cat <<'LOE_BODY'
+
+## Goal
+Exercise Check 18 (LOE class+band surfacing) by varying the loe-class
+header field while keeping every other check satisfied.
+
+## Scope
+- IN: Check 18 loe-class surfacing
+- OUT: anything else; the fixture is single-purpose
+
+## Tasks
+- [ ] 1. Synthetic task placeholder; Verification: mechanical
+
+## Files to Modify/Create
+- `hooks/plan-reviewer.sh` — Check 18 under exercise
+
+## Assumptions
+- Assumes Check 6b/10 pass so the only variable across dd1..dd4 is
+  Check 18's own loe-class handling.
+
+## Edge Cases
+- The fixture must satisfy Check 6b's required sections so the only
+  failing path is Check 18 itself (which never fails — WARN only).
+
+## Testing Strategy
+- Run plan-reviewer.sh against this fixture in each variant; observe
+  stderr for the "Check 18" marker and confirm exit code stays 0.
+
+Walking Skeleton: n/a — self-test fixture, no runtime user-facing slice.
+
+## Closure Contract
+- **Commands that run:** bash hooks/plan-reviewer.sh --self-test
+- **Expected outputs:** exit 0 with all scenarios matched
+- **On-disk artifact location:** docs/plans/loe-fixture-evidence/1.evidence.json
+- **Done when:** the single task is task-verifier PASS and the evidence file exists with verdict PASS.
+
+## Definition of Done
+- [ ] Self-test reports the expected verdict per scenario.
+LOE_BODY
+    } > "$out"
+  }
+
+  # (dd1) No loe-class field at all → Check 18 WARNs (missing-field
+  # branch), exit code stays 0 (non-blocking).
+  write_loe_plan "$TMPDIR_SELFTEST/dd1.md" ""
+  DD1_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd1.md" 2>&1 >/dev/null)
+  DD1_RC=$?
+  if [[ $DD1_RC -eq 0 ]] && printf '%s' "$DD1_OUT" | grep -q "lacks a 'loe-class:' header"; then
+    echo "self-test (dd1) check18-missing-loe-class-warns-non-blocking: PASS (expected)" >&2
+  else
+    echo "self-test (dd1) check18-missing-loe-class-warns-non-blocking: FAIL (rc=$DD1_RC)" >&2
+    printf '%s\n' "$DD1_OUT" >&2
+    FAILED=1
+  fi
+
+  # (dd2) loe-class with an unrecognized value → Check 18 WARNs
+  # (invalid-value branch), exit code stays 0.
+  write_loe_plan "$TMPDIR_SELFTEST/dd2.md" "loe-class: bogus-value"
+  DD2_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd2.md" 2>&1 >/dev/null)
+  DD2_RC=$?
+  if [[ $DD2_RC -eq 0 ]] && printf '%s' "$DD2_OUT" | grep -q "is not one of the recognized classes"; then
+    echo "self-test (dd2) check18-invalid-loe-class-warns-non-blocking: PASS (expected)" >&2
+  else
+    echo "self-test (dd2) check18-invalid-loe-class-warns-non-blocking: FAIL (rc=$DD2_RC)" >&2
+    printf '%s\n' "$DD2_OUT" >&2
+    FAILED=1
+  fi
+
+  # (dd3) loe-class with a RECOGNIZED value, but no calibration table on
+  # disk (no docs/loe/loe-calibration.json resolvable from this fixture's
+  # location) → Check 18 WARNs (no-calibration-table branch), exit 0.
+  write_loe_plan "$TMPDIR_SELFTEST/dd3.md" "loe-class: harness-mechanism"
+  DD3_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd3.md" 2>&1 >/dev/null)
+  DD3_RC=$?
+  if [[ $DD3_RC -eq 0 ]] && printf '%s' "$DD3_OUT" | grep -q "no calibration table found"; then
+    echo "self-test (dd3) check18-valid-class-no-calibration-table-warns: PASS (expected)" >&2
+  else
+    echo "self-test (dd3) check18-valid-class-no-calibration-table-warns: FAIL (rc=$DD3_RC)" >&2
+    printf '%s\n' "$DD3_OUT" >&2
+    FAILED=1
+  fi
+
+  # (dd4) loe-class with a RECOGNIZED value AND a calibration table present
+  # at the fixture-directory-as-repo-root fallback (no .git anywhere above
+  # a mktemp dir, so REPO_ROOT_C18 falls back to the plan's own directory —
+  # place docs/loe/loe-calibration.json there; docs/loe/ per review fd48741
+  # Major F-A) → Check 18 prints the INFO band line for that class, exit 0.
+  mkdir -p "$TMPDIR_SELFTEST/docs/loe"
+  cat > "$TMPDIR_SELFTEST/docs/loe/loe-calibration.json" <<'CALIB_JSON'
+{
+  "generated_at": "2026-07-28T00:00:00Z",
+  "plans_total": 1,
+  "coverage": {"wall_clock_pct": 100, "builder_sessions_pct": 100, "tokens_pct": 0},
+  "classes": [
+    {
+      "class": "harness-mechanism",
+      "count": 1,
+      "task_count": {"p50": 3, "p90": 3, "n": 1},
+      "wall_clock_days": {"p50": 3, "p90": 3, "n": 1},
+      "builder_sessions": {"p50": 2, "p90": 2, "n": 1, "coverage_pct": 100},
+      "concentration_flag": false
+    }
+  ],
+  "per_plan": []
+}
+CALIB_JSON
+  write_loe_plan "$TMPDIR_SELFTEST/dd4.md" "loe-class: harness-mechanism"
+  DD4_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd4.md" 2>&1 >/dev/null)
+  DD4_RC=$?
+  if [[ $DD4_RC -eq 0 ]] && printf '%s' "$DD4_OUT" | grep -q "INFO Check 18" && printf '%s' "$DD4_OUT" | grep -q "P50/P90"; then
+    echo "self-test (dd4) check18-valid-class-with-calibration-prints-bands: PASS (expected)" >&2
+  else
+    echo "self-test (dd4) check18-valid-class-with-calibration-prints-bands: FAIL (rc=$DD4_RC)" >&2
+    printf '%s\n' "$DD4_OUT" >&2
+    FAILED=1
+  fi
+
+  # (dd5) SILENCE scenario (review fd48741 Minor: the Check 16 cc-triple
+  # house template) — a COMPLETED plan must produce ZERO Check 18 lines.
+  write_loe_plan "$TMPDIR_SELFTEST/dd5.md" "" "COMPLETED"
+  DD5_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd5.md" 2>&1 >/dev/null)
+  if ! printf '%s' "$DD5_OUT" | grep -q "Check 18"; then
+    echo "self-test (dd5) check18-completed-status-silent: PASS (expected)" >&2
+  else
+    echo "self-test (dd5) check18-completed-status-silent: FAIL (Check 18 fired on a COMPLETED plan)" >&2
+    printf '%s\n' "$DD5_OUT" >&2
+    FAILED=1
+  fi
+
+  # (dd6) VINTAGE GATE — a grandfathered plan (no lifecycle-schema: v2)
+  # missing loe-class gets NO nudge (review fd48741 Major: the field has no
+  # creation-time writer for legacy plans; only v2 plans are held to it).
+  write_loe_plan "$TMPDIR_SELFTEST/dd6.md" "" "ACTIVE" ""
+  DD6_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/dd6.md" 2>&1 >/dev/null)
+  if ! printf '%s' "$DD6_OUT" | grep -q "lacks a 'loe-class:' header"; then
+    echo "self-test (dd6) check18-legacy-schema-missing-field-silent: PASS (expected)" >&2
+  else
+    echo "self-test (dd6) check18-legacy-schema-missing-field-silent: FAIL (nudge fired on a pre-v2 plan)" >&2
+    printf '%s\n' "$DD6_OUT" >&2
+    FAILED=1
   fi
 
   if [[ $FAILED -eq 0 ]]; then
@@ -1743,7 +2147,7 @@ fi
 # ============================================================
 #
 # Every plan — regardless of size or mode — must include the seven
-# required sections listed in `~/.claude/rules/planning.md` → "Verbose
+# required sections listed in `~/.claude/doctrine/planning.md` → "Verbose
 # Plans Are Mandatory". A section fails the check if:
 #
 #   (1) its `## <Heading>` marker is missing from the file, OR
@@ -1796,7 +2200,7 @@ check_required_section() {
   ln=$(grep -nE "^${heading_pattern}\s*\$" "$PLAN_FILE" 2>/dev/null | head -1 | cut -d: -f1)
 
   if [[ -z "$ln" ]]; then
-    add_finding "Check 6b: required section '$heading' is missing. Every plan must include: ${REQUIRED_HEADINGS[*]}. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    add_finding "Check 6b: required section '$heading' is missing. Every plan must include: ${REQUIRED_HEADINGS[*]}. See ~/.claude/doctrine/planning.md, 'Verbose Plans Are Mandatory'."
     return
   fi
 
@@ -1826,7 +2230,7 @@ check_required_section() {
   non_ws_count=${non_ws_count:-0}
 
   if [[ $non_ws_count -lt 20 ]]; then
-    add_finding "Check 6b: required section '$heading' is empty or too short (only $non_ws_count non-whitespace chars; needs >= 20). Populate with substantive, plan-specific content. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    add_finding "Check 6b: required section '$heading' is empty or too short (only $non_ws_count non-whitespace chars; needs >= 20). Populate with substantive, plan-specific content. See ~/.claude/doctrine/planning.md, 'Verbose Plans Are Mandatory'."
     return
   fi
 
@@ -1842,7 +2246,7 @@ check_required_section() {
   stripped=$(printf '%s' "$stripped" | tr -d '[:space:]')
 
   if [[ -z "$stripped" ]]; then
-    add_finding "Check 6b: required section '$heading' contains only placeholder text (e.g., '[populate me]', 'TODO', or template prompt). Replace with plan-specific content. See ~/.claude/rules/planning.md, 'Verbose Plans Are Mandatory'."
+    add_finding "Check 6b: required section '$heading' contains only placeholder text (e.g., '[populate me]', 'TODO', or template prompt). Replace with plan-specific content. See ~/.claude/doctrine/planning.md, 'Verbose Plans Are Mandatory'."
     return
   fi
 }
@@ -1870,7 +2274,7 @@ done
 # non-placeholder content.
 #
 # Rationale: design-mode work fails catastrophically when any of these
-# 10 dimensions is unexamined. See ~/.claude/rules/design-mode-planning.md.
+# 10 dimensions is unexamined. See ~/.claude/doctrine/design-mode-planning.md.
 
 # Only apply to plans with Mode: design (not design-skip, not code)
 MODE_VALUE=$(awk '/^Mode:/ { print $2; exit }' "$PLAN_FILE" 2>/dev/null | tr -d '[:space:]')
@@ -1952,7 +2356,7 @@ fi
 # When a plan declares Mode: design, the planner must perform the
 # 5-sweep Pre-Submission Class-Sweep Audit (S1-S5) before invoking
 # systems-designer. The discipline is documented in
-# ~/.claude/rules/design-mode-planning.md "Pre-Submission Class-Sweep
+# ~/.claude/doctrine/design-mode-planning.md "Pre-Submission Class-Sweep
 # Audit (mandatory before invoking systems-designer)" — landed in
 # commit 9c4e4c8 as a Pattern; this check is the Mechanism layer.
 #
@@ -1988,7 +2392,7 @@ if [[ "$MODE_VALUE" == "design" ]]; then
   AUDIT_LN=$(grep -nE '^## Pre-Submission Audit\s*$' "$PLAN_FILE" 2>/dev/null | head -1 | cut -d: -f1)
 
   if [[ -z "$AUDIT_LN" ]]; then
-    add_finding "Check 8A (design-mode): plan declares Mode: design but lacks '## Pre-Submission Audit' section. The planner must perform the 5-sweep audit (S1 Entry-Point Surfacing, S2 Existing-Code-Claim Verification, S3 Cross-Section Consistency, S4 Numeric-Parameter Sweep, S5 Scope-vs-Analysis Check) before invoking the systems-designer agent. Add the section per the template at ~/.claude/templates/plan-template.md, OR if the plan is genuinely a single-task design-mode change with no analysis surface for sweeps to apply to, use the canonical carve-out: 'n/a — single-task plan, no class-sweep needed'. See ~/.claude/rules/design-mode-planning.md, 'Pre-Submission Class-Sweep Audit'."
+    add_finding "Check 8A (design-mode): plan declares Mode: design but lacks '## Pre-Submission Audit' section. The planner must perform the 5-sweep audit (S1 Entry-Point Surfacing, S2 Existing-Code-Claim Verification, S3 Cross-Section Consistency, S4 Numeric-Parameter Sweep, S5 Scope-vs-Analysis Check) before invoking the systems-designer agent. Add the section per the template at ~/.claude/templates/plan-template.md, OR if the plan is genuinely a single-task design-mode change with no analysis surface for sweeps to apply to, use the canonical carve-out: 'n/a — single-task plan, no class-sweep needed'. See ~/.claude/doctrine/design-mode-planning.md, 'Pre-Submission Class-Sweep Audit'."
   else
     # Extract the section body up to the next '## ' heading.
     # Strip HTML comments so prompts inside <!-- --> don't count
@@ -2024,7 +2428,7 @@ if [[ "$MODE_VALUE" == "design" ]]; then
     done
 
     if [[ $HAS_CARVEOUT -eq 0 ]] && [[ $SWEEP_TOKENS_FOUND -lt 5 ]]; then
-      add_finding "Check 8A (design-mode): plan's '## Pre-Submission Audit' section has neither (a) the canonical full-sentence carve-out 'n/a — single-task plan, no class-sweep needed', nor (b) at least one line each starting with S1/S2/S3/S4/S5 (found $SWEEP_TOKENS_FOUND of 5 distinct sweep tokens). The planner must document each of the 5 sweeps (or use the canonical carve-out) before invoking systems-designer. Format per sweep: 'S1 (Entry-Point Surfacing): swept, N matches, M cited correctly, K added to Tasks/Files'. See ~/.claude/rules/design-mode-planning.md, 'The \`## Pre-Submission Audit\` section'."
+      add_finding "Check 8A (design-mode): plan's '## Pre-Submission Audit' section has neither (a) the canonical full-sentence carve-out 'n/a — single-task plan, no class-sweep needed', nor (b) at least one line each starting with S1/S2/S3/S4/S5 (found $SWEEP_TOKENS_FOUND of 5 distinct sweep tokens). The planner must document each of the 5 sweeps (or use the canonical carve-out) before invoking systems-designer. Format per sweep: 'S1 (Entry-Point Surfacing): swept, N matches, M cited correctly, K added to Tasks/Files'. See ~/.claude/doctrine/design-mode-planning.md, 'The \`## Pre-Submission Audit\` section'."
     fi
   fi
 fi
@@ -2035,7 +2439,7 @@ fi
 # ============================================================
 #
 # The "Quantitative Claims Must Be Validated, Not Asserted" rule in
-# ~/.claude/rules/design-mode-planning.md requires that every comparative
+# ~/.claude/doctrine/design-mode-planning.md requires that every comparative
 # quantitative claim ("under 50 RPM", "fits within 30s timeout",
 # "30% margin") in a design-mode plan be accompanied by inline arithmetic
 # in the same paragraph that demonstrates the math has been checked.
@@ -2074,7 +2478,7 @@ if [[ "$MODE_VALUE" == "design" ]]; then
   # Comparative-phrase detection. We collect all match line numbers and
   # then validate each match's surrounding paragraph for arithmetic.
   # The pattern groups cover the canonical forms documented in
-  # ~/.claude/rules/design-mode-planning.md "Quantitative Claims Must Be
+  # ~/.claude/doctrine/design-mode-planning.md "Quantitative Claims Must Be
   # Validated, Not Asserted".
   COMPARATIVE_PATTERN='(\bunder [0-9]+\b|\bover [0-9]+\b|\bexceeds [0-9]+\b|\bfits within [0-9]+\b|\bbelow [0-9]+\b|\babove [0-9]+\b|\bat most [0-9]+\b|\bat least [0-9]+\b|\bwell (above|below) [0-9]+\b|\bcomfortably (under|within|below|above)\b|[0-9]+%[[:space:]]+(margin|headroom|over|under)\b|\b[0-9]+x\b[[:space:]]+(faster|slower|larger|smaller|more|less)\b)'
 
@@ -2131,7 +2535,7 @@ if [[ "$MODE_VALUE" == "design" ]]; then
       ARITH_PATTERN='[0-9]+[[:space:]]*[×*/÷][[:space:]]*[0-9]+|[0-9]+[[:space:]]*[<>][=]?[[:space:]]*[0-9]+|[0-9]+[[:space:]]*[≤≥][[:space:]]*[0-9]+|[=→][[:space:]]*[0-9]+|[0-9]+[[:space:]]*=[[:space:]]*[0-9]+'
 
       if ! echo "$paragraph" | grep -qE "$ARITH_PATTERN" 2>/dev/null; then
-        add_finding "Check 9 (design-mode comparative claim without inline arithmetic): line $ln has a comparative quantitative claim without arithmetic in the same paragraph — \"$phrase\". Required: show the math in the same paragraph (e.g., \"60 calls (15 threads × 2 calls × 2 batches × 1 sync) ÷ 60s = 60 calls/min < 50 RPM tier limit\"). Reason: FM-013 / FM-014 — capacity claims without arithmetic are unverified. See ~/.claude/rules/design-mode-planning.md, 'Quantitative Claims Must Be Validated, Not Asserted'."
+        add_finding "Check 9 (design-mode comparative claim without inline arithmetic): line $ln has a comparative quantitative claim without arithmetic in the same paragraph — \"$phrase\". Required: show the math in the same paragraph (e.g., \"60 calls (15 threads × 2 calls × 2 batches × 1 sync) ÷ 60s = 60 calls/min < 50 RPM tier limit\"). Reason: FM-013 / FM-014 — capacity claims without arithmetic are unverified. See ~/.claude/doctrine/design-mode-planning.md, 'Quantitative Claims Must Be Validated, Not Asserted'."
       fi
     done <<< "$COMPARATIVE_LINES"
   fi
@@ -2351,7 +2755,7 @@ fi
 # Mode-agnostic. Status-agnostic for new-plan creation: even DEFERRED
 # plans benefit from a quick syntax check on their task list.
 #
-# See ~/.claude/rules/risk-tiered-verification.md for level semantics.
+# See ~/.claude/doctrine/risk-tiered-verification.md for level semantics.
 
 # Scan task-checkbox lines under any heading whose title contains "Task"
 # (case-insensitive — matches "## Tasks", "## Implementation Tasks", etc.).
@@ -2394,11 +2798,11 @@ if [[ -n "$VERIFICATION_LINES" ]]; then
       echo "[plan-reviewer] note (non-blocking): line $vln contains $vocc 'Verification: <level>' occurrences; the LAST one ('$(echo "$vtext" | grep -oiE 'Verification:[[:space:]]*(mechanical|contract|full)' | tail -1)') is the declaration. Consider rewording the prose mention (e.g. 'full-tier') to avoid ambiguity." >&2
     fi
     if [[ -z "$vlevel" ]]; then
-      add_finding "Check 12 (risk-tiered verification): line $vln has 'Verification:' but no readable level token. Use one of: mechanical, full, contract. See ~/.claude/rules/risk-tiered-verification.md."
+      add_finding "Check 12 (risk-tiered verification): line $vln has 'Verification:' but no readable level token. Use one of: mechanical, full, contract. See ~/.claude/doctrine/risk-tiered-verification.md."
       continue
     fi
     if ! [[ "$vlevel" =~ ^(mechanical|full|contract)$ ]]; then
-      add_finding "Check 12 (risk-tiered verification): line $vln declares 'Verification: $vlevel' but the only legal levels are: mechanical, full, contract (case-sensitive, lowercase). See ~/.claude/rules/risk-tiered-verification.md."
+      add_finding "Check 12 (risk-tiered verification): line $vln declares 'Verification: $vlevel' but the only legal levels are: mechanical, full, contract (case-sensitive, lowercase). See ~/.claude/doctrine/risk-tiered-verification.md."
     fi
   done <<< "$VERIFICATION_LINES"
 fi
@@ -2536,7 +2940,7 @@ while IFS= read -r task_line; do
   # Prove it works
   prove_body=$(extract_subblock "Prove it works")
   if [[ -z "$(printf '%s' "$prove_body" | tr -d '[:space:]')" ]]; then
-    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Prove it works:**' sub-block (line $task_ln). Required for every Verification: full task. See ~/.claude/rules/planning.md 'Integration Verification'."$'\n'
+    CHECK13_FINDINGS+="    - Task $task_id_display: missing '**Prove it works:**' sub-block (line $task_ln). Required for every Verification: full task. See ~/.claude/doctrine/planning.md 'Integration Verification'."$'\n'
   elif ! is_substantive "$prove_body"; then
     CHECK13_FINDINGS+="    - Task $task_id_display: '**Prove it works:**' is empty / placeholder / too short (< 30 chars substantive content). Provide >= 2 numbered scenario steps a real user would take."$'\n'
   elif ! printf '%s' "$prove_body" | grep -qE '^[[:space:]]*[12]\.' ; then
@@ -2645,7 +3049,7 @@ if { [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; } && [[ "$LIFECY
 
   # owner: present + non-empty + not the template placeholder
   if [[ -z "$OWNER_VALUE" ]] || [[ "$OWNER_VALUE" == "<name>" ]]; then
-    add_finding "Check 14 (plan-lifecycle accountability): required field 'owner:' is missing or empty. Name the one human accountable for this plan reaching a terminal state. Add 'owner: <name>' to the plan header (start-plan.sh --owner <name>). See Decision 036-d and ~/.claude/rules/plan-lifecycle.md."
+    add_finding "Check 14 (plan-lifecycle accountability): required field 'owner:' is missing or empty. Name the one human accountable for this plan reaching a terminal state. Add 'owner: <name>' to the plan header (start-plan.sh --owner <name>). See Decision 036-d and ~/.claude/doctrine/planning-full.md (Plan File Lifecycle)."
   fi
 
   # target-completion-date: present + non-empty + well-formed YYYY-MM-DD + not placeholder
@@ -2717,6 +3121,204 @@ if { [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; } && [[ "$LIFECY
       fi
     fi
   fi
+
+  # ----- Check 16: ask<->plan linkage convention — WARN ONLY, NEVER BLOCKS -----
+  #
+  # ask-rooted-workstreams-p1 Task 10 (planning.md: "plan headers record
+  # ask-id:; plan creation back-links the registry"). Gated on the SAME
+  # lifecycle-schema: v2 grandfather signal as Checks 14/15 (this outer
+  # if-block) so pre-Task-10 plans never get flagged for a field that did
+  # not exist when they were created. Unlike Checks 14/15, a missing/
+  # unpopulated ask-id is advisory: not every plan originates from a
+  # captured ask (some are hand-authored, some predate ask-registry.sh
+  # entirely), so this is a stderr note that never calls add_finding and
+  # therefore never contributes to FINDING_COUNT / the blocking exit.
+  ASK_ID_VALUE=$(awk -F: '/^ask-id:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+  if ! grep -qE '^ask-id:' "$PLAN_FILE" 2>/dev/null; then
+    ASK_ID_MISSING=1
+  elif [[ -z "$ASK_ID_VALUE" ]] || [[ "$ASK_ID_VALUE" == "<id | none — no linked ask>" ]]; then
+    ASK_ID_MISSING=1
+  else
+    ASK_ID_MISSING=0
+  fi
+  if [[ "$ASK_ID_MISSING" == "1" ]]; then
+    echo "[plan-reviewer] WARN (non-blocking) Check 16 (ask-registry linkage, ask-rooted-workstreams-p1 Task 10): this ACTIVE lifecycle-schema: v2 plan lacks a populated 'ask-id:' header field. Plan headers should record the ask-registry entry this plan serves (adapters/claude-code/doctrine/planning.md); link one via 'start-plan.sh --ask-id <id>' at creation, or backfill via 'ask-registry.sh link-plan --ask-id <id> --plan-slug <slug>'. Advisory only — this never blocks the commit." >&2
+  fi
+fi
+
+# ============================================================
+# Check 17 (2026-07-14, GATE 1 of the artifact-evidence-bar):
+# architecture-review-before-build
+# ============================================================
+#
+# constitution §10 generalized (doctrine/artifact-evidence-bar.md): "design ->
+# plan -> REVIEW -> build." A plan that introduces or changes a data
+# architecture, a source-of-truth boundary, a read/write path, a
+# cache/derived store, a cross-component data flow, or a consistency/
+# staleness contract MUST carry an architecture-reviewer verdict of SOUND or
+# SOUND-WITH-AMENDMENTS (NOT NEEDS-RESHAPING) before builders can be
+# dispatched — i.e. before the plan is ACTIVE.
+#
+# Gated on STATUS_AWK == ACTIVE (or unset — a brand-new plan authored
+# straight to ACTIVE), same convention as Check 10/14/15. NOT gated on
+# lifecycle-schema: v2 — this is a fresh global requirement, not tied to
+# the v2 rollout, and unlike Checks 14-16 there is no pre-existing field
+# whose ABSENCE would falsely block legacy plans: the qualifying trigger
+# only fires on plans whose text contains the keyword set below, so a plan
+# authored before this check existed is only affected if it happens to be
+# newly edited AND genuinely architecture-shaped.
+#
+# Qualifying trigger (kept deliberately tight — see
+# doctrine/artifact-evidence-bar-full.md "Gate 1 false-positive measurement"
+# for the corpus study this was calibrated against: an early draft using
+# bare stems (cache/store/sync/project/derive/reconcile) fired on 120/237
+# = 50.6% of this repo's plan corpus; bare "reconcil*" alone was 94/237
+# because this harness uses "reconcile" generically for backlog/branch
+# bookkeeping unrelated to a data architecture. The phrase-anchored set
+# below fires on 64/237 = 27.0% of the full corpus (50/164 = 30.5% of
+# plan bodies excluding -evidence artifacts) and was spot-checked: every
+# sampled hit (source of truth / staleness / write path / reconcile loop)
+# was a genuine data-architecture claim, not an incidental word).
+ARCH_KEYWORDS='source of truth|read[- ]path|write[- ]path|staleness|materializ(e|ed|ation|ing)?|derived[- ](store|data|cache|state|view)|data[- ]store|cach(e|ing)[- ](layer|invalidation)|consistency contract|sync[- ](engine|job)|projection|reconcile loop|reconciliation loop|reconciler loop'
+
+if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
+  ARCH_MATCH=$(grep -oiE "$ARCH_KEYWORDS" "$PLAN_FILE" 2>/dev/null | head -1)
+  if [[ -n "$ARCH_MATCH" ]]; then
+    # Look for a referenced architecture-review artifact path anywhere in
+    # the plan text (backtick-quoted or bare).
+    REVIEW_REFS=$(grep -oE 'docs/reviews/[A-Za-z0-9_./-]*architecture-review[A-Za-z0-9_./-]*\.md' "$PLAN_FILE" 2>/dev/null | sort -u)
+
+    if [[ -z "$REVIEW_REFS" ]]; then
+      add_finding "Check 17 (architecture-review-before-build, GATE 1): plan text matches architecture-keyword \"$ARCH_MATCH\" (data architecture / source-of-truth / read-write-path / cache-derived-store / staleness signal) but links no architecture-review artifact. Dispatch the architecture-reviewer agent and link its verdict file (e.g. docs/reviews/<slug>-architecture-review.md) in this plan before marking it ACTIVE. See doctrine/artifact-evidence-bar.md."
+    else
+      # Resolve repo root the same way wire-check-gate.sh does: git
+      # rev-parse from the plan file's directory, falling back to a
+      # .git walk-up, falling back to the plan file's own directory.
+      PLAN_DIR_C17=$(dirname "$PLAN_FILE")
+      REPO_ROOT_C17=$(cd "$PLAN_DIR_C17" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || echo "")
+      if [[ -z "$REPO_ROOT_C17" ]] || [[ ! -d "$REPO_ROOT_C17" ]]; then
+        probe_c17="$PLAN_DIR_C17"
+        while [[ "$probe_c17" != "/" ]] && [[ "$probe_c17" != "." ]]; do
+          if [[ -d "$probe_c17/.git" ]] || [[ -f "$probe_c17/.git" ]]; then
+            REPO_ROOT_C17="$probe_c17"
+            break
+          fi
+          probe_c17=$(dirname "$probe_c17")
+        done
+      fi
+      [[ -z "$REPO_ROOT_C17" ]] && REPO_ROOT_C17="$PLAN_DIR_C17"
+
+      SATISFIED_C17=0
+      WORST_VERDICT_C17=""
+      MISSING_FILES_C17=""
+      while IFS= read -r ref_path; do
+        [[ -z "$ref_path" ]] && continue
+        if [[ ! -f "$REPO_ROOT_C17/$ref_path" ]]; then
+          MISSING_FILES_C17+="$ref_path "
+          continue
+        fi
+        verdict_line=$(grep -oiE 'verdict[^A-Za-z]{0,10}(SOUND-WITH-AMENDMENTS|SOUND|NEEDS-RESHAPING)' "$REPO_ROOT_C17/$ref_path" 2>/dev/null | head -1)
+        verdict_word=$(printf '%s' "$verdict_line" | grep -oiE '(SOUND-WITH-AMENDMENTS|SOUND|NEEDS-RESHAPING)$' | tr '[:lower:]' '[:upper:]')
+        if [[ "$verdict_word" == "SOUND" ]] || [[ "$verdict_word" == "SOUND-WITH-AMENDMENTS" ]]; then
+          SATISFIED_C17=1
+        else
+          WORST_VERDICT_C17="${verdict_word:-<unparseable>}"
+        fi
+      done <<< "$REVIEW_REFS"
+
+      if [[ "$SATISFIED_C17" -eq 0 ]]; then
+        if [[ -n "$MISSING_FILES_C17" ]]; then
+          add_finding "Check 17 (architecture-review-before-build, GATE 1): plan references architecture-review file(s) that do not exist on disk: ${MISSING_FILES_C17}-- and no OTHER linked review states SOUND / SOUND-WITH-AMENDMENTS. See doctrine/artifact-evidence-bar.md."
+        else
+          add_finding "Check 17 (architecture-review-before-build, GATE 1): plan matches architecture-keyword \"$ARCH_MATCH\" and links $(printf '%s' "$REVIEW_REFS" | wc -l | tr -d ' ') architecture-review artifact(s), but none state verdict SOUND or SOUND-WITH-AMENDMENTS (found: ${WORST_VERDICT_C17:-no parseable verdict}). A NEEDS-RESHAPING verdict does not satisfy this gate — re-run architecture-reviewer against the reshaped design and link its new verdict before marking this plan ACTIVE. See doctrine/artifact-evidence-bar.md."
+        fi
+      fi
+    fi
+  fi
+fi
+
+# ============================================================
+# Check 18 (2026-07-28, accountable-estate-program-2026-07 T7):
+# LOE class+band annotation surfacing — WARN ONLY, NEVER BLOCKS
+# ============================================================
+#
+# Architecture review F11 (docs/reviews/2026-07-27-accountable-estate-
+# architecture-review.md, binding): "v1 = per-PLAN classing (3-5 classes,
+# plan-level P50/P90 bands + the concentration flag) mined from plan
+# evidence + git history... Plan-time surfacing extends plan-reviewer,
+# already a hook." Companion miner: adapters/claude-code/scripts/
+# loe-backfill.sh (same commit) produces the calibration table this check
+# reads; this check ONLY surfaces, it never re-implements the mining.
+#
+# Advisory only, like Check 16: the LOE program is brand new (this is its
+# first slice), so a hard requirement would retroactively flag ~161
+# existing archived-plan-adjacent ACTIVE plans that predate this field.
+# A missing/unrecognized `loe-class:` header is a stderr note, never
+# add_finding, so it never contributes to FINDING_COUNT / the blocking
+# exit — matching the outcome metric's own framing ("every NEW plan
+# carries class+band annotations"), not a retroactive block.
+#
+# Valid class values MUST stay in sync with loe-backfill.sh's lb_classify
+# (adapters/claude-code/scripts/loe-backfill.sh): schema-migration,
+# ui-feature, harness-mechanism, design-only, general-multi-file.
+LOE_VALID_CLASSES="schema-migration|ui-feature|harness-mechanism|design-only|general-multi-file"
+
+if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
+  LOE_CLASS_VALUE=$(awk -F: '/^loe-class:/ { sub(/^[ \t]+/, "", $2); sub(/[ \t]+$/, "", $2); print $2; exit }' "$PLAN_FILE" 2>/dev/null)
+
+  if [[ -z "$LOE_CLASS_VALUE" ]]; then
+    # VINTAGE GATE (review fd48741 Major: unsatisfiable-noise fix): the
+    # missing-field nudge fires only on lifecycle-schema: v2 plans — the
+    # same grandfather boundary Checks 14/15 use — so the ~30 pre-T7
+    # ACTIVE plans are never flagged. New plans are silent by construction:
+    # plan-template.md now carries loe-class:.
+    if [[ "$LIFECYCLE_SCHEMA_VALUE" == "v2" ]]; then
+      echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): this plan lacks a 'loe-class:' header field. Run 'bash adapters/claude-code/scripts/loe-backfill.sh' to (re)generate docs/loe/loe-calibration.md, pick the closest of {${LOE_VALID_CLASSES//|/, }}, and add 'loe-class: <class>' to this plan's header so future calibration includes it. Advisory only — this never blocks the commit." >&2
+    fi
+  elif ! [[ "$LOE_CLASS_VALUE" =~ ^(${LOE_VALID_CLASSES})$ ]]; then
+    echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): 'loe-class: ${LOE_CLASS_VALUE}' is not one of the recognized classes {${LOE_VALID_CLASSES//|/, }} (must stay in sync with loe-backfill.sh's lb_classify). Advisory only — this never blocks the commit." >&2
+  else
+    # Resolve repo root the same way Check 17 does (git rev-parse from the
+    # plan file's directory, falling back to a .git walk-up, falling back
+    # to the plan file's own directory) so this check works from any CWD.
+    PLAN_DIR_C18=$(dirname "$PLAN_FILE")
+    REPO_ROOT_C18=$(cd "$PLAN_DIR_C18" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [[ -z "$REPO_ROOT_C18" ]] || [[ ! -d "$REPO_ROOT_C18" ]]; then
+      probe_c18="$PLAN_DIR_C18"
+      while [[ "$probe_c18" != "/" ]] && [[ "$probe_c18" != "." ]]; do
+        if [[ -d "$probe_c18/.git" ]] || [[ -f "$probe_c18/.git" ]]; then
+          REPO_ROOT_C18="$probe_c18"
+          break
+        fi
+        probe_c18=$(dirname "$probe_c18")
+      done
+    fi
+    [[ -z "$REPO_ROOT_C18" ]] && REPO_ROOT_C18="$PLAN_DIR_C18"
+
+    # docs/loe/ — moved out of docs/plans/ (review fd48741 Major F-A: the
+    # rendered table is not a plan and the plan gate rejected it there).
+    CALIBRATION_JSON_C18="$REPO_ROOT_C18/docs/loe/loe-calibration.json"
+    if [[ ! -f "$CALIBRATION_JSON_C18" ]]; then
+      echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): loe-class '${LOE_CLASS_VALUE}' recognized, but no calibration table found at docs/loe/loe-calibration.json yet — run 'bash adapters/claude-code/scripts/loe-backfill.sh' at least once to generate it. Advisory only — this never blocks the commit." >&2
+    elif ! jq -e . "$CALIBRATION_JSON_C18" >/dev/null 2>&1; then
+      # UNPARSEABLE != EMPTY (review fd48741 Major F-D): a corrupt table
+      # means REGENERATE, not "mine more plans" — conflating them hides a
+      # silently-failed mine indefinitely.
+      echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): the calibration table at docs/loe/loe-calibration.json is present but NOT valid JSON — regenerate it with 'bash adapters/claude-code/scripts/loe-backfill.sh' (a failed aggregation must never be mistaken for a coverage gap). Advisory only — this never blocks the commit." >&2
+    elif command -v jq >/dev/null 2>&1; then
+      LOE_BAND_LINE=$(jq -r --arg c "$LOE_CLASS_VALUE" '
+        (.classes[]? | select(.class == $c)) as $cls
+        | if $cls == null then "NO_CLASS_DATA"
+          else "class \($cls.class): n=\($cls.count) task_count P50/P90 \($cls.task_count.p50)/\($cls.task_count.p90) — wall_clock_days P50/P90 \($cls.wall_clock_days.p50)/\($cls.wall_clock_days.p90) — builder_sessions P50/P90 \($cls.builder_sessions.p50)/\($cls.builder_sessions.p90) (coverage \($cls.builder_sessions.coverage_pct)%) — concentration_flag \($cls.concentration_flag)"
+          end
+      ' "$CALIBRATION_JSON_C18" 2>/dev/null)
+      if [[ -z "$LOE_BAND_LINE" ]] || [[ "$LOE_BAND_LINE" == "NO_CLASS_DATA" ]]; then
+        echo "[plan-reviewer] WARN (non-blocking) Check 18 (LOE class+band, accountable-estate T7): loe-class '${LOE_CLASS_VALUE}' recognized, but the calibration table at docs/loe/loe-calibration.json has zero mined plans in that class yet. Advisory only — this never blocks the commit." >&2
+      else
+        echo "[plan-reviewer] INFO Check 18 (LOE class+band, accountable-estate T7): ${LOE_BAND_LINE}" >&2
+      fi
+    fi
+  fi
 fi
 
 # ============================================================
@@ -2736,6 +3338,7 @@ if [[ "$FINDING_COUNT" -gt 0 ]]; then
   echo "before a plan can be marked ACTIVE so that Gen 3 anti-patterns" >&2
   echo "don't survive into execution." >&2
   echo "" >&2
+  echo "This gate: ~/.claude/hooks/plan-reviewer.sh (source: adapters/claude-code/hooks/plan-reviewer.sh)" >&2
   exit 1
 fi
 

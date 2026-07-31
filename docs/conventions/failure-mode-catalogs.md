@@ -83,7 +83,7 @@ When a new failure surfaces during a session:
 - `docs/templates/project-failure-modes/` — the copy-able adoption skeleton.
 - `docs/proposals/fm-catalog-auto-search-harness-integration.md` — the proposed SessionStart auto-search hook (highest-leverage future execution; not yet shipped).
 - `~/.claude/rules/diagnosis.md` — the investigation-first reflex + the encode-the-fix loop.
-- `~/.claude/skills/harness-lesson.md`, `~/.claude/skills/why-slipped.md` — the "Step 0" consumers.
+- `~/.claude/skills/harness-lesson/SKILL.md`, `~/.claude/skills/why-slipped/SKILL.md` — the "Step 0" consumers.
 
 ## Scope
 

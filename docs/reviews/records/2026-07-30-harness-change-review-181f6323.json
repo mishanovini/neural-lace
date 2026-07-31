@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-181f6323",
+  "created_at": "2026-07-30T16:58:51Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "unknown",
+  "plan_ref": "docs/plans/accountable-estate-program-2026-07.md",
+  "change_ref": {
+    "commit_sha": "c21b22eddde0c37bbc241fd04f1a6b58b30195eb",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/close-plan.sh",
+      "blob_sha": "e38e358189a81b88089474a735f45549bd36b18e"
+    },
+    {
+      "path": "adapters/claude-code/scripts/plan-recheck-sweep.sh",
+      "blob_sha": "70d64d6810a6032d820f5c4a86989c6aba3d6e8d"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "C1 Critical fully closed and sandbox-proven terminated; M3 adversarial residual sentinel-proven closed (hostile-repo arm defeated, allowlist arm grants); cluster fully closed at PASS on all four files.",
+    "findings_summary": "Adversarial harness-reviewer (agent a2a535c44bfab2bd9, 2026-07-30, three-round T9-cluster review): close-plan.sh PASS — C1 write-side (default-marked re-check dates + re-close refresh, oscillation sandbox-proven terminated), M1 verdict anchor rejects the proven false-accept probe (one Minor residual persisted as CLOSE-PLAN-VERIFIER-LINE-FAIL-VETO-01), M2 manifest entry present with §10 credentials, minors closed. plan-recheck-sweep.sh PASS — C1 read-side (defaulted dates skipped, S9 mutation-proven), M3 innocent + adversarial halves closed (trust = physical-path identity or out-of-repo allowlist; in-repo markers grant nothing; reviewer re-ran the attack recipe non-vacuously: sentinel NOT written, allowlist arm executes — S11 pins both arms), needs-you reopen message names its exit. Reviewer-reproduced: close-plan 32/0 (29 scenarios), sweep 11/0, both interpreters sequential."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Mishas-Mac-mini",
+    "account": "unknown",
+    "session_id": "a2a535c44bfab2bd9"
+  },
+  "independence": "pathway",
+  "payload": {}
+}

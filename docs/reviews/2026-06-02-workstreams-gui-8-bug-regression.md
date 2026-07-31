@@ -22,7 +22,7 @@ stale-cached browser tab, but every item below is a real substance issue fixed h
 | 6 | Document folder structure gone | Old renderer had `📁 Docs` button → `#docsPanel` cross-project docs drawer reading `/api/docs`. Frontend dropped in rewrite; **`/api/docs` endpoint still exists** (server.js:174); orphan CSS (`.modal-scrim`, `#docsPanel`) survived. | CONFIRMED dropped (re-wire, not rebuild) |
 | 8 | Heartbeat stale | `/api/health` → `heartbeat_mtime_ms: null`, `heartbeat_stale: true`. Heartbeat writer not running this session. Operational. | CONFIRMED operational |
 
-Evidence artifacts: `C:/Users/misha/dev/pt-gui-verify/baseline-*.png|json`,
+Evidence artifacts: `<home>/dev/pt-gui-verify/baseline-*.png|json`,
 `interact-*.png|json`.
 
 ## Fix status — ALL 8 FIXED, browser-verified 9/9

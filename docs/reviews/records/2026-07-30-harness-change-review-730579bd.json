@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-730579bd",
+  "created_at": "2026-07-30T05:53:17Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 review sweep — operator authorization 2026-07-29 (adversarial reviewer agents as reviewing principal)",
+  "change_ref": {
+    "commit_sha": "a41b0e10b6737cad903e779ac6cc8eef108b1b76",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/supervisor-tick.sh",
+      "blob_sha": "c0cf4729414c1117d5051712abb2b9293291af61"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — unbounded-fork fallback and sed -i -E ledger pollution fixed; the 9 suite failures at HEAD are byte-identical on master and pre-date this change.",
+    "findings_summary": "Pre-existing macOS suite defect (orphan-liveness scenarios, master archive tree reproduces identical 9 FAILs) needs its own nl-issue; the diff strictly improves boundedness and removes the -E backup file the tick greps"
+  },
+  "written_by": "harness-reviewer subagent (group scripts-1)",
+  "payload": {}
+}

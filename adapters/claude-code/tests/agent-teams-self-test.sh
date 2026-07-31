@@ -161,7 +161,7 @@ run_hook_selftest() {
 
 run_hook_selftest "A1" "$HOOKS/teammate-spawn-validator.sh" \
   "teammate-spawn-validator --self-test" "passed: 6 / 6"
-run_hook_selftest "A2" "$HOOKS/tool-call-budget.sh" \
+run_hook_selftest "A2" "$HOOKS/../attic/tool-call-budget.sh" \
   "tool-call-budget --self-test" "self-test summary: [0-9]+ PASS, 0 FAIL"
 run_hook_selftest "A3" "$HOOKS/task-created-validator.sh" \
   "task-created-validator --self-test" "passed: 4 / 4"
@@ -169,7 +169,7 @@ run_hook_selftest "A4" "$HOOKS/task-completed-evidence-gate.sh" \
   "task-completed-evidence-gate --self-test" "passed: 6 / 6"
 run_hook_selftest "A5" "$HOOKS/plan-edit-validator.sh" \
   "plan-edit-validator --self-test" "self-test summary: 4 passed, 0 failed"
-run_hook_selftest "A6" "$HOOKS/product-acceptance-gate.sh" \
+run_hook_selftest "A6" "$HOOKS/../attic/product-acceptance-gate.sh" \
   "product-acceptance-gate --self-test" "self-test summary: 10 passed, 0 failed"
 
 # ============================================================
@@ -234,7 +234,7 @@ else
       TEAMS_DIR_OVERRIDE="$INT_TEAMS" \
       CLAUDE_SESSION_ID="$SENTINEL_LEADER" \
       CLAUDE_TASK_ID="task-i1-001" \
-    bash "$HOOKS/tool-call-budget.sh" </dev/null >/dev/null 2>"$SUITE_TMP/i1-budget-err.log"
+    bash "$HOOKS/../attic/tool-call-budget.sh" </dev/null >/dev/null 2>"$SUITE_TMP/i1-budget-err.log"
   BUDGET_RC=$?
   set -e
 
@@ -362,7 +362,7 @@ set +e
 I4_STDERR=$(env STATE_DIR_OVERRIDE="$INT_STATE" \
     TEAMS_DIR_OVERRIDE="$INT_TEAMS" \
     CLAUDE_SESSION_ID="$SENTINEL_LEADER" \
-  bash "$HOOKS/tool-call-budget.sh" </dev/null 2>&1 >/dev/null)
+  bash "$HOOKS/../attic/tool-call-budget.sh" </dev/null 2>&1 >/dev/null)
 I4_RC=$?
 set -e
 
@@ -587,7 +587,7 @@ EOF
       # Run the gate from the PRIMARY's cwd; it must discover the
       # SECONDARY's artifact via git-worktree-list aggregation.
       set +e
-      I6_OUT=$(cd "$I6_PRIMARY" && bash "$HOOKS/product-acceptance-gate.sh" </dev/null 2>&1)
+      I6_OUT=$(cd "$I6_PRIMARY" && bash "$HOOKS/../attic/product-acceptance-gate.sh" </dev/null 2>&1)
       I6_RC=$?
       set -e
 

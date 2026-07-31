@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-5bf85296",
+  "created_at": "2026-07-30T05:53:16Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 review sweep — operator authorization 2026-07-29 (adversarial reviewer agents as reviewing principal)",
+  "change_ref": {
+    "commit_sha": "a41b0e10b6737cad903e779ac6cc8eef108b1b76",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/needs-you.sh",
+      "blob_sha": "dd5697b8e16a42db10d99e7814c79919ad0079f2"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — the 2026-07-27 ledger-corruption incident is closed with three independent layers, a golden 1-byte fixture, a healthy-ledger negative control, and an explicit /bin/bash 3.2 regression; 54/54.",
+    "findings_summary": "links[] guarded with the arr[@]+ idiom; jq -e type write guard (not jq empty); state-json-init salvage-before-reset verified in lib; BSD sed 1{...;} fix with failure-checked strips"
+  },
+  "written_by": "harness-reviewer subagent (group scripts-1)",
+  "payload": {}
+}

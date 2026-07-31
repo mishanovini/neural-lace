@@ -1,0 +1,4 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"migrate the schema"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"TodoWrite","input":{"todos":[{"content":"write migration","status":"in_progress"},{"content":"run migration","status":"pending"}]}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"Todos updated"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"The staging database credentials are missing from the environment.\n\nBLOCKED: need STAGING_DB_URL set before the migration can run"}]}}

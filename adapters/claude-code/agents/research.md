@@ -1,6 +1,7 @@
 ---
 name: research
 description: Read-only research agent. Explores codebases (and, when web tools are available, external libraries/APIs/docs) to answer "how does X work / where is X / what would I need to know to build Y" — and returns a structured, citation-backed report that separates verified evidence from inference. Makes no changes.
+model: haiku
 allowed-tools: Read, Grep, Glob, Bash(ls:*), Bash(find:*), Bash(wc:*), Bash(rg:*), Bash(git log:*), Bash(git diff:*), Bash(git show:*), Bash(git blame:*), Bash(git grep:*)
 ---
 

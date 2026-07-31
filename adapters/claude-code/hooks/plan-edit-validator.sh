@@ -39,6 +39,28 @@
 
 set -e
 
+# ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
+# Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
+# O.3 (parallel; O.9 never creates/edits that file — §O.0.1 rule 2). Source it
+# if present; if it doesn't yet supply od_backlog_health (pre-merge, or the
+# file doesn't exist at all), fall back to the private test shim so this hook
+# still has a real oracle to call. Once O.3 merges the real lib, the guarded
+# source above wins the declare -F check and this fallback is never invoked.
+_PEV_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck disable=SC1091
+{ source "$_PEV_SELF_DIR/lib/observability-derive.sh" 2>/dev/null; } || true
+if ! declare -F od_backlog_health >/dev/null 2>&1; then
+  # shellcheck disable=SC1091
+  { source "$_PEV_SELF_DIR/../tests/fixtures/wave-o/O.9/od-backlog-shim.sh" 2>/dev/null; } || true
+fi
+
+# ---- SE4 (status-event-ledger plan): flip-time ledger emission ----
+# Guarded source, best-effort (see emit_flip_ledger_event below) -- a
+# missing/broken lib must never brick the checkbox-flip authorization path
+# this hook exists to gate.
+# shellcheck disable=SC1091
+{ source "$_PEV_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null; } || true
+
 # ============================================================
 # Lock helpers (plan-edit-validator concurrency protection)
 # ============================================================
@@ -177,6 +199,139 @@ release_plan_lock() {
 
 # Ensure lock release on any exit path (success, failure, signal)
 trap 'release_plan_lock' EXIT INT TERM
+
+# ============================================================
+# check_backlog_absorption_warn — BACKLOG-LOOP-01 part 2 (observability
+# O.9, operator directive 2026-07-06) — WARN-only, NEVER blocks
+# ============================================================
+#
+# Plan-time absorption matching: when a plan under docs/plans/ declares a
+# "## Files to Modify/Create" section, every OPEN docs/backlog.md row that
+# names one of the plan's declared surfaces (word-ish match on path
+# basenames / hook / script stems) must either be absorbed by the plan
+# (the existing "Backlog items absorbed:" header convention) or explicitly
+# deferred in the plan body. When matched rows are named NOWHERE in the
+# prospective plan content, this WARNS listing the matched IDs. Like
+# check_docs_impact_warn below, it never returns non-zero: authoring-time
+# nudge only — the session-start digest's backlog feed (part 1) is the
+# standing accountability backstop.
+#
+# Open-row parsing mirrors session-start-digest.sh's
+# feed_backlog_accountability exactly: structured rows ("- **<ID>")
+# minus terminal-marked ones (DISPOSITIONED/IMPLEMENTED/ABSORBED per the
+# directive + same-class CLOSED/SUPERSEDED/WONTFIX observed live).
+#
+# BACKLOG_MD_PATH overrides the backlog location (self-test fixtures —
+# the real docs/backlog.md is never read under --self-test); the default
+# derives <repo>/docs/backlog.md from the plan file's own path.
+#
+# NOTE: defined ABOVE the --self-test block (unlike check_docs_impact_warn,
+# which self-tests against an inline replica) so F13/F14 exercise THIS
+# function — no replica to drift.
+#
+# ORACLE (Wave O task O.9): row-parsing + position-anchored
+# terminal-marker detection is delegated to the od_backlog_health oracle
+# (contract C4; guarded source + feature-detect fallback near the top of
+# this file) rather than re-parsed here. This function now only does its
+# own presentation-layer job: token-match the oracle's OPEN rows against
+# the plan's declared surfaces.
+
+check_backlog_absorption_warn() {
+  local plan_path_norm="$1"
+  local prospective="$2"
+
+  local backlog="${BACKLOG_MD_PATH:-}"
+  if [[ -z "$backlog" ]]; then
+    local root="${plan_path_norm%docs/plans/*}"
+    backlog="${root}docs/backlog.md"
+  fi
+  [[ -f "$backlog" ]] || return 0
+  [[ -z "$prospective" ]] && return 0
+  declare -F od_backlog_health >/dev/null 2>&1 || return 0
+
+  # Declared surfaces: the "## Files to Modify/Create" section (tolerant
+  # header match: "Files to Modify", "Files to Create", "Files to
+  # Modify/Create"; section ends at the next "## " heading).
+  local section
+  section="$(printf '%s\n' "$prospective" | awk '
+    /^##+[[:space:]]*Files to (Modify|Create)/ { insec=1; next }
+    /^##[[:space:]]/ { insec=0 }
+    insec { print }
+  ')"
+  [[ -z "$section" ]] && return 0
+
+  # Path-ish tokens -> extensionless stems for word-ish matching against
+  # backlog row text. Generic stems (README/CLAUDE/index/...) and very
+  # short stems are excluded — they would match half the backlog.
+  local tokens
+  tokens="$(printf '%s\n' "$section" \
+    | grep -oE '[A-Za-z0-9_./-]+\.(sh|md|json|js|ts|tsx|py|ps1|yml|yaml)' \
+    | sort -u)"
+  [[ -z "$tokens" ]] && return 0
+
+  # Open rows (id + full line text) from the oracle — no local re-parse,
+  # no local terminal-marker logic (contract C4; the oracle's "terminal"
+  # field already applied the position-anchored R1-R4 rules).
+  local open_rows
+  open_rows="$(BACKLOG_MD_PATH="$backlog" od_backlog_health --json 2>/dev/null | node -e '
+    "use strict";
+    var doc = JSON.parse(require("fs").readFileSync(0, "utf8"));
+    (doc.rows || []).forEach(function (r) {
+      if (r.terminal) return;
+      process.stdout.write(r.id + "\t" + r.line + "\n");
+    });
+  ' 2>/dev/null)"
+  [[ -z "$open_rows" ]] && return 0
+
+  local match_ids="" line id token base stem
+  while IFS=$'\t' read -r id line; do
+    [[ -z "$id" ]] && continue
+    # Already named by the plan (absorbed header or explicit deferral
+    # note anywhere in the prospective content) -> handled, no warn.
+    if printf '%s' "$prospective" | grep -qF -- "$id"; then
+      continue
+    fi
+    while IFS= read -r token; do
+      [[ -z "$token" ]] && continue
+      base="${token##*/}"
+      stem="${base%.*}"
+      case "$stem" in
+        README*|readme*|CLAUDE*|claude|index|main|backlog|settings) continue ;;
+      esac
+      [[ "${#stem}" -lt 5 ]] && continue
+      if printf '%s' "$line" | grep -qF -- "$stem"; then
+        match_ids+="${id}"$'\n'
+        break
+      fi
+    done <<< "$tokens"
+  done <<< "$open_rows"
+
+  match_ids="$(printf '%s' "$match_ids" | grep -E . | sort -u || true)"
+  [[ -z "$match_ids" ]] && return 0
+
+  local id_list
+  id_list="$(printf '%s\n' "$match_ids" | tr '\n' ' ' | sed 's/ $//')"
+  cat >&2 <<WARNMSG
+
+----------------------------------------------------------------
+[plan-edit-validator] WARN — open backlog rows name this plan's
+surfaces (BACKLOG-LOOP-01 absorption matching)
+----------------------------------------------------------------
+Open docs/backlog.md rows match surfaces this plan declares under
+'## Files to Modify/Create', but the plan names none of them:
+
+  ${id_list}
+
+Absorb or explicitly defer each (add to the absorbed header or note
+deferral): name the ID in the plan's 'Backlog items absorbed:' header,
+or note its deferral with a reason in the plan body.
+
+This is a WARN, not a block — the edit is allowed. The session-start
+digest keeps proposing each overdue row until it reaches a terminal
+state (done / absorbed / wontfix-with-reason).
+WARNMSG
+  return 0
+}
 
 # ============================================================
 # --self-test: 4 scenarios for plan task 9 (lock concurrency)
@@ -757,8 +912,380 @@ JSON
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F11/F12 — §F.2b Docs-impact WARN (never blocks)
+  # ============================================================
+  # Inline replica of check_docs_impact_warn (defined later in this file,
+  # after the --self-test block's exit — mirrored here per the same
+  # convention as the F5-F10 replicas above).
+  selftest_check_docs_impact_warn() {
+    local old_content="$1" new_content="$2"
+    local new_task_lines
+    # `|| true` mirrors the fixed production check_docs_impact_warn (nl-issue
+    # [24]): unguarded grep-no-match here is only survivable via bash's
+    # no-inherit_errexit quirk in $() calls — keep the replica truly a replica.
+    new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null || true)"
+    [[ -z "$new_task_lines" ]] && { echo "NONE"; return 0; }
+    local any_warned=0
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      local tid
+      tid="$(echo "$line" | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)"
+      [[ -z "$tid" ]] && continue
+      if echo "$old_content" | grep -qF "$tid"; then continue; fi
+      if ! echo "$line" | grep -qiE 'Docs impact:'; then
+        any_warned=1
+      fi
+    done <<< "$new_task_lines"
+    [[ "$any_warned" -eq 1 ]] && echo "WARNED" || echo "CLEAN"
+  }
+
+  # ---- F11: new-task-missing-docs-impact-warns ----
+  OLD_F11=""
+  NEW_F11="- [ ] G.1. Add a new hook."
+  RESULT_F11=$(selftest_check_docs_impact_warn "$OLD_F11" "$NEW_F11")
+  if [[ "$RESULT_F11" == "WARNED" ]]; then
+    echo "self-test (F11) new-task-missing-docs-impact-warns: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F11) new-task-missing-docs-impact-warns: FAIL (result=$RESULT_F11)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F12: new-task-with-docs-impact-clean (and: editing an EXISTING
+  # task's wording, where the task ID already appears in old_content, never
+  # warns even without the field — F12b) ----
+  OLD_F12=""
+  NEW_F12="- [ ] G.2. Add a new hook. — Docs impact: none — internal refactor, no doc surface"
+  RESULT_F12=$(selftest_check_docs_impact_warn "$OLD_F12" "$NEW_F12")
+  OLD_F12B="- [ ] G.3. Original wording."
+  NEW_F12B="- [ ] G.3. Revised wording, no Docs impact field."
+  RESULT_F12B=$(selftest_check_docs_impact_warn "$OLD_F12B" "$NEW_F12B")
+  if [[ "$RESULT_F12" == "CLEAN" ]] && [[ "$RESULT_F12B" == "CLEAN" ]]; then
+    echo "self-test (F12) docs-impact-present-or-existing-task-edit-clean: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F12) docs-impact-present-or-existing-task-edit-clean: FAIL (new=$RESULT_F12 existing-edit=$RESULT_F12B)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ============================================================
+  # F13/F14 — BACKLOG-LOOP-01 absorption matching (WARN-only)
+  # ============================================================
+  #
+  # These exercise the REAL check_backlog_absorption_warn (defined above
+  # the self-test block — no inline replica) against a FIXTURE backlog
+  # via BACKLOG_MD_PATH; the real docs/backlog.md is never read here.
+  #   F13  plan declares a surface an open fixture row names, plan does
+  #        not name the row ID -> WARNED (matched ID listed), rc 0; the
+  #        unrelated-surface row and the terminal-marked row stay silent
+  #   F14  same plan WITH 'Backlog items absorbed: <ID>' header -> CLEAN
+  BL_FIXTURE="$TMPDIR_SELFTEST/fixture-backlog.md"
+  cat > "$BL_FIXTURE" <<'EOF'
+# Fixture Backlog
+
+- **FIXTURE-SURFACE-01 — session-start-digest.sh needs a fictional extension** (added 2026-01-01; `priority:high`). Prose body.
+- **FIXTURE-OTHER-01 — some-unrelated-hook.sh cleanup** (added 2026-01-01; `priority:low`). Prose body.
+- **FIXTURE-TERM-01 — [CLOSED 2026-01-02] session-start-digest.sh already handled** (added 2026-01-01; `priority:high`). Prose body.
+- **FIXTURE-REF-OPEN-01 — open session-start-digest.sh row whose prose references another row's terminal state** (added 2026-01-01; `priority:high`). **This is distinct from OTHER-GAP-99 (IMPLEMENTED 2026-01-01).** Still open.
+EOF
+
+  PLAN_F13=$'# Fixture Plan\n\nStatus: DRAFT\n\n## Goal\n\nFixture.\n\n## Files to Modify/Create\n\n`adapters/claude-code/hooks/session-start-digest.sh` (extend)\n\n## Testing Strategy\n\nn/a\n'
+  set +e
+  OUT_F13="$(BACKLOG_MD_PATH="$BL_FIXTURE" check_backlog_absorption_warn "docs/plans/fixture-f13.md" "$PLAN_F13" 2>&1)"
+  RC_F13=$?
+  set -e
+  if [[ "$RC_F13" -eq 0 ]] \
+     && printf '%s' "$OUT_F13" | grep -q "FIXTURE-SURFACE-01" \
+     && printf '%s' "$OUT_F13" | grep -q "FIXTURE-REF-OPEN-01" \
+     && printf '%s' "$OUT_F13" | grep -q "Absorb or explicitly defer each" \
+     && ! printf '%s' "$OUT_F13" | grep -q "FIXTURE-OTHER-01" \
+     && ! printf '%s' "$OUT_F13" | grep -q "FIXTURE-TERM-01"; then
+    echo "self-test (F13) backlog-surface-match-unabsorbed-warns: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F13) backlog-surface-match-unabsorbed-warns: FAIL (rc=$RC_F13 out=$OUT_F13)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  PLAN_F14="${PLAN_F13/Status: DRAFT/Status: DRAFT
+Backlog items absorbed: FIXTURE-SURFACE-01 (fixture absorption); FIXTURE-REF-OPEN-01 (deferred — fixture).}"
+  set +e
+  OUT_F14="$(BACKLOG_MD_PATH="$BL_FIXTURE" check_backlog_absorption_warn "docs/plans/fixture-f14.md" "$PLAN_F14" 2>&1)"
+  RC_F14=$?
+  set -e
+  if [[ "$RC_F14" -eq 0 ]] && [[ -z "$OUT_F14" ]]; then
+    echo "self-test (F14) absorbed-header-naming-the-id-silences: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F14) absorbed-header-naming-the-id-silences: FAIL (rc=$RC_F14 out=$OUT_F14)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ============================================================
+  # F15 — end-to-end: REAL flagless subprocess invocation (stdin JSON,
+  # Edit shape) on a prose-only plan edit (NO task lines in the fragment).
+  # Proves three things at once:
+  #   1. the §F.2b set-e regression is fixed (a no-task-line fragment
+  #      previously killed the hook with exit 1 before ANY later check ran)
+  #   2. the Edit-branch jq prospective-content path feeds
+  #      check_backlog_absorption_warn (WARN listing the matched ID)
+  #   3. the edit is ALLOWED (exit 0) — WARN never blocks
+  # ============================================================
+  F15_DIR="$TMPDIR_SELFTEST/f15/docs/plans"
+  mkdir -p "$F15_DIR"
+  printf '# F15 Plan\n\nStatus: DRAFT\n\n## Files to Modify/Create\n\n`adapters/claude-code/hooks/session-start-digest.sh` (extend)\n' > "$F15_DIR/f15-plan.md"
+  F15_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f15-plan.md","old_string":"Status: DRAFT","new_string":"Status: DRAFT (f15 edit)"}}' "$F15_DIR")"
+  set +e
+  F15_ERR="$(printf '%s' "$F15_JSON" | BACKLOG_MD_PATH="$BL_FIXTURE" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F15=$?
+  set -e
+  if [[ "$RC_F15" -eq 0 ]] \
+     && printf '%s' "$F15_ERR" | grep -q "FIXTURE-SURFACE-01" \
+     && printf '%s' "$F15_ERR" | grep -q "Absorb or explicitly defer each"; then
+    echo "self-test (F15) e2e-prose-edit-allowed-with-absorption-warn: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F15) e2e-prose-edit-allowed-with-absorption-warn: FAIL (rc=$RC_F15 stderr=$F15_ERR)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ============================================================
+  # F16/F17 (SE4, status-event-ledger plan) — end-to-end: REAL flagless
+  # subprocess invocation of an AUTHORIZED checkbox flip, proving the
+  # flip-time ledger emit fires with the real {verdict, confidence,
+  # verifier} extracted from the real evidence source.
+  #
+  # PATH SHIM NOTE (honest, not a workaround of MY code): this hook's
+  # PRE-EXISTING evidence-freshness check (`stat -c %Y`, several call
+  # sites) is a known GNU-only spelling with no BSD-stat fallback
+  # (docs/backlog.md PORTABILITY-STAT-SED-SWEEP-01/02 already tracks this
+  # class -- e.g. agent-heartbeat.sh's identical bug, fixed under M5; this
+  # file's own occurrences are NOT yet swept and are OUT OF SCOPE for this
+  # task). On stock-macOS `/usr/bin/stat` (no `-c` support) that GNU-only
+  # call always falls through to its `|| echo 0` sentinel, so `age` is
+  # always astronomically large and check_evidence_first/
+  # check_mechanical_or_contract_evidence NEVER authorize ANY flip on this
+  # exact class of machine -- confirmed directly: `stat -c %Y <file>`
+  # errors "illegal option -- c" here. Rather than silently working around
+  # this in production code (out of this task's scope) or leaving SE4
+  # entirely unproven end-to-end on this machine, this scenario prepends a
+  # tiny local `stat` shim (translating `-c %Y` to the real `stat -f %m`)
+  # onto ONLY this subprocess's PATH -- exercising the REAL, unmodified
+  # authorization + emit code exactly as it runs on a machine where GNU
+  # stat (or this shim) is available, without touching any committed file.
+  # ============================================================
+  F16_BINSHIM="$TMPDIR_SELFTEST/binshim"
+  mkdir -p "$F16_BINSHIM"
+  cat > "$F16_BINSHIM/stat" <<'SHIM'
+#!/bin/bash
+if [[ "$1" == "-c" && "$2" == "%Y" ]]; then
+  shift 2
+  /usr/bin/stat -f %m "$@"
+else
+  /usr/bin/stat "$@"
+fi
+SHIM
+  chmod +x "$F16_BINSHIM/stat"
+
+  # ---- F16: full-level (prose evidence) flip emits verdict+confidence+verifier ----
+  F16_DIR="$TMPDIR_SELFTEST/f16/docs/plans"
+  mkdir -p "$F16_DIR"
+  printf '# F16 Plan\n\n## Tasks\n\n- [ ] SE.4.1 Do the flip-emit thing\n' > "$F16_DIR/f16-plan.md"
+  cat > "$F16_DIR/f16-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.1
+Verified at: 2026-07-30T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 8
+EVID
+  F16_LEDGER="$TMPDIR_SELFTEST/f16-ledger.jsonl"
+  rm -f "$F16_LEDGER"
+  F16_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f16-plan.md","old_string":"- [ ] SE.4.1 Do the flip-emit thing","new_string":"- [x] SE.4.1 Do the flip-emit thing"}}' "$F16_DIR")"
+  set +e
+  F16_OUT="$(printf '%s' "$F16_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F16_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F16=$?
+  set -e
+  if [[ "$RC_F16" -eq 0 ]] \
+     && [[ -f "$F16_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=SE.4.1' "$F16_LEDGER" \
+     && grep -q 'verdict=PASS' "$F16_LEDGER" \
+     && grep -q 'confidence=8' "$F16_LEDGER" \
+     && grep -qi 'verifier=task-verifier' "$F16_LEDGER"; then
+    echo "self-test (F16) e2e-prose-flip-emits-verdict-confidence-verifier: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F16) e2e-prose-flip-emits-verdict-confidence-verifier: FAIL (rc=$RC_F16 out=$F16_OUT ledger=$(cat "$F16_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F17: structured (mechanical-level) evidence flip emits verdict +
+  # verifier, honestly "unknown" confidence (the schema has no such field) ----
+  F17_DIR="$TMPDIR_SELFTEST/f17/docs/plans"
+  mkdir -p "$F17_DIR/f17-plan-evidence"
+  printf '# F17 Plan\n\n## Tasks\n\n- [ ] SE.4.2 Do the mechanical flip-emit thing — Verification: mechanical\n' > "$F17_DIR/f17-plan.md"
+  cat > "$F17_DIR/f17-plan-evidence/SE.4.2.evidence.json" <<JSON
+{
+  "schema_version": 1,
+  "task_id": "SE.4.2",
+  "verdict": "PASS",
+  "commit_sha": "abc1234",
+  "files_modified": ["foo.md"],
+  "mechanical_checks": {"exists:foo.md": {"passed": true}},
+  "timestamp": "2026-07-30T00:00:00Z",
+  "verifier": "write-evidence.sh"
+}
+JSON
+  F17_LEDGER="$TMPDIR_SELFTEST/f17-ledger.jsonl"
+  rm -f "$F17_LEDGER"
+  F17_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f17-plan.md","old_string":"- [ ] SE.4.2 Do the mechanical flip-emit thing — Verification: mechanical","new_string":"- [x] SE.4.2 Do the mechanical flip-emit thing — Verification: mechanical"}}' "$F17_DIR")"
+  set +e
+  F17_OUT="$(printf '%s' "$F17_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F17_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F17=$?
+  set -e
+  if [[ "$RC_F17" -eq 0 ]] \
+     && [[ -f "$F17_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=SE.4.2' "$F17_LEDGER" \
+     && grep -q 'verdict=PASS' "$F17_LEDGER" \
+     && grep -q 'confidence=unknown' "$F17_LEDGER" \
+     && grep -q 'verifier=write-evidence.sh' "$F17_LEDGER"; then
+    echo "self-test (F17) e2e-structured-flip-emits-honest-unknown-confidence: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F17) e2e-structured-flip-emits-honest-unknown-confidence: FAIL (rc=$RC_F17 out=$F17_OUT ledger=$(cat "$F17_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F18 (harness-review REFORMULATE finding 1(a)) — a FAIL->fix->PASS
+  # re-verification: the SAME evidence.md accumulates TWO blocks for the
+  # SAME task_id (an earlier FAIL, then a later PASS conf 8 after the fix
+  # landed -- the real 3404bd1 T7 FLIP shape). The ledger must report the
+  # LAST block's fields (PASS/8), never the first (FAIL) -- proving the
+  # awk's early-exit-on-first-match bug is closed.
+  #
+  # NOTE on the first block's shape: it deliberately has NO "Runtime
+  # verification:" line (the first attempt's build failed before reaching
+  # a runtime check -- Verdict: FAIL/Confidence: 3 still stand alone as a
+  # real, if minimal, evidence entry). This is load-bearing for the
+  # fixture, not just flavor: check_evidence_first's OWN awk (the
+  # AUTHORIZER, unrelated to and out of scope for this finding -- filed
+  # separately, see docs/backlog.md) double-prints "MATCH" when a block
+  # satisfying its (task_id==wanted && has_runtime) condition is followed
+  # by ANOTHER "EVIDENCE BLOCK" header, because its bare `exit 0` inside
+  # the main body still runs the END rule against the pre-reset state --
+  # two "MATCH" lines fail the caller's exact `[[ "$result" == "MATCH" ]]`
+  # comparison and the flip never gets authorized at all. Keeping block 1's
+  # has_runtime false side-steps that SEPARATE pre-existing bug so this
+  # fixture can cleanly exercise the one this finding actually targets: the
+  # ledger EMIT path's own last-match-wins fix in `_pev_extract_prose_flip_
+  # fields`, which does not gate on has_runtime and reproduces the original
+  # bug (and its fix) regardless of block 1's shape. ----
+  F18_DIR="$TMPDIR_SELFTEST/f18/docs/plans"
+  mkdir -p "$F18_DIR"
+  printf '# F18 Plan\n\n## Tasks\n\n- [ ] SE.4.3 Do the reverify-flip thing\n' > "$F18_DIR/f18-plan.md"
+  cat > "$F18_DIR/f18-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.3
+Verified at: 2026-07-29T00:00:00Z
+Verifier: task-verifier agent (first attempt)
+
+Verdict: FAIL
+Confidence: 3
+
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.3
+Verified at: 2026-07-30T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check (re-verified after the fix landed)
+
+Verdict: PASS
+Confidence: 8
+EVID
+  F18_LEDGER="$TMPDIR_SELFTEST/f18-ledger.jsonl"
+  rm -f "$F18_LEDGER"
+  F18_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f18-plan.md","old_string":"- [ ] SE.4.3 Do the reverify-flip thing","new_string":"- [x] SE.4.3 Do the reverify-flip thing"}}' "$F18_DIR")"
+  set +e
+  F18_OUT="$(printf '%s' "$F18_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F18_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F18=$?
+  set -e
+  if [[ "$RC_F18" -eq 0 ]] \
+     && [[ -f "$F18_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=SE.4.3' "$F18_LEDGER" \
+     && grep -q 'verdict=PASS' "$F18_LEDGER" \
+     && grep -q 'confidence=8' "$F18_LEDGER" \
+     && ! grep -q 'verdict=FAIL' "$F18_LEDGER"; then
+    echo "self-test (F18) two-block-reverify-emits-LAST-verdict-not-first: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F18) two-block-reverify-emits-LAST-verdict-not-first: FAIL (rc=$RC_F18 out=$F18_OUT ledger=$(cat "$F18_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F19 (harness-review REFORMULATE finding 1(b)) — a mechanical-level
+  # task with BOTH a valid structured .evidence.json (verdict PASS, the
+  # artifact that actually authorized this flip via
+  # check_mechanical_or_contract_evidence's Path A) AND a STALE/wrong prose
+  # evidence.md sitting alongside it (a different verdict + verifier, as
+  # would happen if an earlier full-level attempt left a prose block
+  # behind). The ledger must read the structured file -- the source the
+  # authorizer actually used -- never the stale prose, proving
+  # flip_ledger_fields's level-aware ordering fix. ----
+  F19_DIR="$TMPDIR_SELFTEST/f19/docs/plans"
+  mkdir -p "$F19_DIR/f19-plan-evidence"
+  printf '# F19 Plan\n\n## Tasks\n\n- [ ] SE.4.4 Do the mechanical-prefers-structured thing — Verification: mechanical\n' > "$F19_DIR/f19-plan.md"
+  cat > "$F19_DIR/f19-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.4
+Verifier: stale-source-must-not-be-read
+Runtime verification: stale prose block that must NOT win over the structured file
+
+Verdict: FAIL
+Confidence: 2
+EVID
+  cat > "$F19_DIR/f19-plan-evidence/SE.4.4.evidence.json" <<'JSON'
+{
+  "schema_version": 1,
+  "task_id": "SE.4.4",
+  "verdict": "PASS",
+  "commit_sha": "def5678",
+  "files_modified": ["bar.md"],
+  "mechanical_checks": {"exists:bar.md": {"passed": true}},
+  "timestamp": "2026-07-30T00:00:00Z",
+  "verifier": "write-evidence.sh"
+}
+JSON
+  F19_LEDGER="$TMPDIR_SELFTEST/f19-ledger.jsonl"
+  rm -f "$F19_LEDGER"
+  F19_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f19-plan.md","old_string":"- [ ] SE.4.4 Do the mechanical-prefers-structured thing — Verification: mechanical","new_string":"- [x] SE.4.4 Do the mechanical-prefers-structured thing — Verification: mechanical"}}' "$F19_DIR")"
+  set +e
+  F19_OUT="$(printf '%s' "$F19_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F19_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F19=$?
+  set -e
+  if [[ "$RC_F19" -eq 0 ]] \
+     && [[ -f "$F19_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=SE.4.4' "$F19_LEDGER" \
+     && grep -q 'verdict=PASS' "$F19_LEDGER" \
+     && grep -q 'confidence=unknown' "$F19_LEDGER" \
+     && grep -q 'verifier=write-evidence.sh' "$F19_LEDGER" \
+     && ! grep -q 'stale-source-must-not-be-read' "$F19_LEDGER"; then
+    echo "self-test (F19) mechanical-level-ledger-reads-structured-not-stale-prose: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F19) mechanical-level-ledger-reads-structured-not-stale-prose: FAIL (rc=$RC_F19 out=$F19_OUT ledger=$(cat "$F19_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 10 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 19 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -878,7 +1405,7 @@ TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // ""' 2>/dev/null)
 # is present or the token is unrecognized (backward-compatible per
 # Decision queued-tranche-1.5.md D.2).
 #
-# See ~/.claude/rules/risk-tiered-verification.md for level semantics.
+# See ~/.claude/doctrine/risk-tiered-verification.md for level semantics.
 
 extract_verification_level() {
   local plan_file="$1"
@@ -1096,6 +1623,248 @@ check_evidence_first() {
   return 1
 }
 
+# ============================================================
+# check_docs_impact_warn — §F.2b (Wave F task F.2) — WARN-only, never blocks
+# ============================================================
+#
+# The plan template's per-task `Docs impact:` field (the doc/README/runbook
+# delta the task causes, or the literal word `none` with a reason) is meant
+# to be authored ALONGSIDE the task, not bolted on later. This check WARNS
+# (stderr message, exit code of the calling branch is untouched — this
+# function never returns non-zero) when a NEWLY-INTRODUCED task line (one
+# that appears in the new content but had no counterpart in the old content)
+# lacks a `Docs impact:` annotation. It is deliberately non-blocking: unlike
+# the checkbox-flip authorization above, an author drafting/iterating on task
+# text should never be gated on this field mid-edit — the WARN is a nudge at
+# authoring time, and `task-verifier` is where a non-none Docs-impact claim
+# with no accompanying doc delta is actually enforced (agents/task-verifier.md
+# Step 3 Documentation check).
+#
+# Detection is intentionally conservative (never false-blocks, may under-warn):
+# a "new" task line is one whose task-ID token does not appear ANYWHERE in
+# the old content at all — so editing an EXISTING task's wording never
+# spuriously warns, only genuinely new task lines do.
+check_docs_impact_warn() {
+  local old_content="$1"
+  local new_content="$2"
+
+  # Extract new task lines: "- [ ] <ID>. ..." present in new_content.
+  # "|| true" is load-bearing: this script runs under `set -e`, and a
+  # no-match grep exits 1, which (as the last command of an assignment
+  # substitution) killed the WHOLE hook with exit 1 on ANY plan edit
+  # whose new fragment contained no task line — the `[[ -z ]] && return`
+  # guard below never ran (latent since §F.2b; caught by BACKLOG-LOOP-01's
+  # F15 end-to-end scenario, 2026-07-06).
+  local new_task_lines
+  new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null || true)"
+  [[ -z "$new_task_lines" ]] && return 0
+
+  local warned=0
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    local tid
+    tid="$(echo "$line" | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)"
+    [[ -z "$tid" ]] && continue
+    # Skip if this task ID already existed anywhere in the old content
+    # (i.e., this is an edit to existing task text, not a brand-new task).
+    if echo "$old_content" | grep -qF "$tid"; then
+      continue
+    fi
+    # New task line. Does IT (or does the sub-bullet immediately following
+    # it in new_content) declare Docs impact? We only check the task line
+    # itself here — the sub-bullet form is a documented alternative the
+    # plan-reviewer's fuller check (a future Check N) may also recognize;
+    # this hook's job is the cheap same-line nudge.
+    if ! echo "$line" | grep -qiE 'Docs impact:'; then
+      if [[ "$warned" -eq 0 ]]; then
+        cat >&2 <<WARNMSG
+
+----------------------------------------------------------------
+[plan-edit-validator] WARN — new task missing 'Docs impact:' (§F.2b)
+----------------------------------------------------------------
+New task '${tid}' has no 'Docs impact:' annotation. Per the plan
+template, every task declares the doc/README/runbook delta it causes,
+or the literal word 'none' with a reason:
+
+  - [ ] ${tid}. <description> — Docs impact: <what doc changes> | none — <reason>
+
+This is a WARN, not a block — the edit is allowed. task-verifier
+treats a non-'none' Docs-impact claim with no accompanying doc delta
+as part of this task's Done-when (agents/task-verifier.md).
+WARNMSG
+        warned=1
+      fi
+    fi
+  done <<< "$new_task_lines"
+  return 0
+}
+
+# ============================================================
+# SE4 (status-event-ledger plan, taxonomy event #7 "verification verdict +
+# checkbox flip") — flip-time ledger emission.
+# ============================================================
+#
+# WHY HERE, NOT SOMEWHERE ELSE: this hook is ALREADY the deterministic
+# chokepoint every checkbox flip must pass through (that is its entire
+# reason for existing — "the only entity allowed to flip a checkbox is
+# task-verifier"). The authorization decision itself (mechanical/contract
+# via check_mechanical_or_contract_evidence, full via check_evidence_first)
+# already happened by the time we reach `exit 0`; this section only RE-READS
+# the same evidence source to extract {verdict, confidence, verifier} for
+# the emit — it never changes the authorization decision and never blocks.
+#
+# Emits unconditionally on every AUTHORIZED flip (never on a blocked one —
+# there is no verdict to report for a denied edit). Fail-open throughout:
+# any missing lib, missing field, or parse failure degrades to "unknown"
+# rather than aborting the (already-decided) exit 0.
+#
+# HARNESS-REVIEW FIX (2026-07-30, REFORMULATE finding 1): the awk below
+# used to `exit 0` the moment it hit the block matching wanted_id, emitting
+# THAT block's fields immediately. On a FAIL->fix->PASS re-verification (a
+# real, recurring pattern in this repo -- see 3404bd1's T7 FLIP history --
+# task-verifier appends a NEW evidence block for the SAME task_id after a
+# fix, rather than replacing the old one) the evidence file accumulates
+# multiple same-id blocks in file order, and the early exit reported the
+# FIRST (stale, often FAIL) block's verdict/confidence forever, even though
+# the flip being authorized right now is backed by the LAST (current, PASS)
+# block. Fixed by dropping the exit: every block's fields are provisionally
+# recorded when in_block && t == wanted_id, and each new match OVERWRITES
+# the previous one, so whichever block is LAST in file order wins -- emit
+# happens exactly once, at true END, from the final recorded state.
+
+# _pev_extract_prose_flip_fields <evidence_file> <task_id>
+#   Echoes "verdict|confidence|verifier" for the LAST block matching
+#   task_id (file order) -- see the HARNESS-REVIEW FIX note above for why
+#   "last", not "first". Missing fields render as "unknown", never empty
+#   (so the pipe-delimited triple always has exactly 3 components for the
+#   caller's `read`).
+_pev_extract_prose_flip_fields() {
+  local evidence_file="$1" wanted_id="$2"
+  awk -v wanted_id="$wanted_id" '
+    function emit(vv, cc, rr) {
+      if (vv == "") vv = "unknown"
+      if (cc == "") cc = "unknown"
+      if (rr == "") rr = "unknown"
+      gsub(/\|/, "/", vv); gsub(/\|/, "/", cc); gsub(/\|/, "/", rr)
+      print vv "|" cc "|" rr
+    }
+    function record_if_match() {
+      if (in_block && t == wanted_id) { found=1; lv=v; lc=c; lr=r }
+    }
+    BEGIN { in_block=0; t=""; v=""; c=""; r=""; found=0; lv=""; lc=""; lr="" }
+    /^EVIDENCE BLOCK/ {
+      record_if_match()
+      in_block=1; t=""; v=""; c=""; r=""; next
+    }
+    /^Task ID:/ {
+      if (in_block) { s=$0; sub(/^Task ID:[[:space:]]*/,"",s); sub(/[[:space:]].*$/,"",s); t=s }
+      next
+    }
+    /^Verdict:/ {
+      if (in_block) { s=$0; sub(/^Verdict:[[:space:]]*/,"",s); sub(/[[:space:]].*$/,"",s); v=s }
+      next
+    }
+    /^Confidence:/ {
+      if (in_block) { s=$0; sub(/^Confidence:[[:space:]]*/,"",s); sub(/[[:space:]].*$/,"",s); c=s }
+      next
+    }
+    /^Verifier:/ {
+      if (in_block) { s=$0; sub(/^Verifier:[[:space:]]*/,"",s); r=s }
+      next
+    }
+    END { record_if_match(); if (found) emit(lv, lc, lr) }
+  ' "$evidence_file" 2>/dev/null
+}
+
+# _pev_extract_json_flip_fields <structured_evidence_json>
+#   Structured evidence.schema.json has no `confidence` field (mechanical
+#   checks don't carry a calibrated confidence score) -- honestly "unknown",
+#   never fabricated.
+_pev_extract_json_flip_fields() {
+  local structured_file="$1"
+  local v r
+  v="$(jq -r '.verdict // "unknown"' "$structured_file" 2>/dev/null)" || v=""
+  r="$(jq -r '.verifier // "write-evidence.sh"' "$structured_file" 2>/dev/null)" || r=""
+  [[ -z "$v" ]] && v="unknown"
+  [[ -z "$r" ]] && r="unknown"
+  printf '%s|unknown|%s' "$v" "$r"
+}
+
+# flip_ledger_fields <plan_file> <task_id> [level]
+#   Echoes "verdict|confidence|verifier", reading whichever evidence source
+#   ACTUALLY AUTHORIZED this flip -- mirroring the real authorizer's own
+#   preference order for the given `level`, not a single fixed order for
+#   every task (HARNESS-REVIEW FIX, 2026-07-30, REFORMULATE finding 1(b)).
+#   `level` defaults to "full" when omitted/empty.
+#     - mechanical/contract: check_mechanical_or_contract_evidence tries
+#       structured `.evidence.json` FIRST (Path A) and only falls back to
+#       prose with a `Commit:` line (Path B) if the structured file is
+#       missing/stale/non-matching -- so the ledger must ALSO try
+#       structured first here, or it can report a stale/unrelated prose
+#       block that happens to sit in the SAME evidence.md (e.g. a leftover
+#       block from an earlier full-level attempt on the same task) even
+#       though the flip was actually authorized by the structured JSON.
+#     - full (default): check_evidence_first tries prose FIRST (Path A) and
+#       falls back to structured (Path B) -- unchanged from before this fix.
+flip_ledger_fields() {
+  local plan_file="$1" task_id="$2" level="${3:-full}"
+  local plan_dir plan_slug structured_file evidence_file
+  plan_dir=$(dirname "$plan_file")
+  plan_slug=$(basename "$plan_file" .md)
+  structured_file="$plan_dir/${plan_slug}-evidence/${task_id}.evidence.json"
+  evidence_file="${plan_file%.md}-evidence.md"
+
+  if [[ "$level" == "mechanical" ]] || [[ "$level" == "contract" ]]; then
+    if [[ -f "$structured_file" ]]; then
+      _pev_extract_json_flip_fields "$structured_file"
+      return 0
+    fi
+    if [[ -f "$evidence_file" ]]; then
+      local out_mc
+      out_mc="$(_pev_extract_prose_flip_fields "$evidence_file" "$task_id")" || out_mc=""
+      if [[ -n "$out_mc" ]]; then
+        printf '%s' "$out_mc"
+        return 0
+      fi
+    fi
+    printf 'unknown|unknown|unknown'
+    return 0
+  fi
+
+  if [[ -f "$evidence_file" ]]; then
+    local out
+    out="$(_pev_extract_prose_flip_fields "$evidence_file" "$task_id")" || out=""
+    if [[ -n "$out" ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+  fi
+  if [[ -f "$structured_file" ]]; then
+    _pev_extract_json_flip_fields "$structured_file"
+    return 0
+  fi
+  printf 'unknown|unknown|unknown'
+}
+
+# emit_flip_ledger_event <plan_file> <task_id> [level]
+#   Best-effort, never fails the caller (every internal step is guarded).
+#   `level` (VERIFICATION_LEVEL) is threaded through to flip_ledger_fields
+#   so the ledger reads the SAME evidence source the authorizer used.
+emit_flip_ledger_event() {
+  local plan_file="$1" task_id="$2" level="${3:-full}"
+  command -v ledger_emit_typed >/dev/null 2>&1 || return 0
+  local fields v c r
+  fields="$(flip_ledger_fields "$plan_file" "$task_id" "$level" 2>/dev/null)" || fields=""
+  [[ -z "$fields" ]] && fields="unknown|unknown|unknown"
+  IFS='|' read -r v c r <<< "$fields" || true
+  [[ -z "$v" ]] && v="unknown"
+  [[ -z "$c" ]] && c="unknown"
+  [[ -z "$r" ]] && r="unknown"
+  ledger_emit_typed "plan-edit-validator" "flip-verdict" \
+    "plan=$(basename "$plan_file") task=${task_id} verdict=${v} confidence=${c} verifier=${r}" 2>/dev/null || true
+  return 0
+}
+
 # For Edit calls: look at old_string vs new_string
 if [[ "$TOOL_NAME" == "Edit" ]]; then
   if [[ "$HAS_NESTED" == "true" ]]; then
@@ -1105,6 +1874,25 @@ if [[ "$TOOL_NAME" == "Edit" ]]; then
     OLD_STR=$(echo "$INPUT" | jq -r '.old_string // ""' 2>/dev/null)
     NEW_STR=$(echo "$INPUT" | jq -r '.new_string // ""' 2>/dev/null)
   fi
+
+  # §F.2b — WARN (never blocks) on a newly-introduced task line missing
+  # 'Docs impact:'.
+  check_docs_impact_warn "$OLD_STR" "$NEW_STR"
+
+  # BACKLOG-LOOP-01 — WARN (never blocks) when open backlog rows name
+  # surfaces this plan declares. Prospective content = on-disk content
+  # with the LITERAL old_string -> new_string replacement applied (jq
+  # split/join — literal, no regex), so section/header context outside
+  # the edited fragment still participates in the match. jq failure
+  # falls back to the on-disk content (conservative: pre-edit view).
+  if [[ -f "$FILE_PATH" ]]; then
+    PROSPECTIVE_CONTENT="$(jq -rn --rawfile c "$FILE_PATH" --arg old "$OLD_STR" --arg new "$NEW_STR" \
+      'if $old == "" then $c else ($c | split($old) | join($new)) end' 2>/dev/null \
+      || cat "$FILE_PATH" 2>/dev/null)"
+  else
+    PROSPECTIVE_CONTENT="$NEW_STR"
+  fi
+  check_backlog_absorption_warn "$FILE_PATH_NORM" "$PROSPECTIVE_CONTENT"
 
   # Does the old string contain an unchecked box AND the new string contain
   # a checked box? If yes, this is a checkbox flip.
@@ -1129,6 +1917,7 @@ file manually and retry:
 
   rm -f "${FILE_PATH}.lock"
 
+This gate: ~/.claude/hooks/plan-edit-validator.sh (source: adapters/claude-code/hooks/plan-edit-validator.sh)
 ERR
         exit 1
       fi
@@ -1150,12 +1939,19 @@ ERR
 
       if [[ "$VERIFICATION_LEVEL" == "mechanical" ]] || [[ "$VERIFICATION_LEVEL" == "contract" ]]; then
         if [[ -n "$TASK_ID" ]] && check_mechanical_or_contract_evidence "$FILE_PATH" "$TASK_ID" "$VERIFICATION_LEVEL"; then
+          # SE4: flip-time ledger emit (best-effort; never affects this exit).
+          # VERIFICATION_LEVEL is threaded through so the ledger reads the
+          # SAME evidence source (structured-first) that authorized THIS
+          # flip -- see flip_ledger_fields's header comment.
+          { emit_flip_ledger_event "$FILE_PATH" "$TASK_ID" "$VERIFICATION_LEVEL"; } 2>/dev/null || true
           # Lock auto-releases on exit via the EXIT trap.
           exit 0
         fi
       else
         # Default `full` behavior: existing evidence-first escape hatch
         if [[ -n "$TASK_ID" ]] && check_evidence_first "$FILE_PATH" "$TASK_ID"; then
+          # SE4: flip-time ledger emit (best-effort; never affects this exit).
+          { emit_flip_ledger_event "$FILE_PATH" "$TASK_ID" "$VERIFICATION_LEVEL"; } 2>/dev/null || true
           # Lock auto-releases on exit via the EXIT trap.
           exit 0
         fi
@@ -1190,6 +1986,7 @@ Why this works where a marker file didn't:
   executed requires doing the actual work. The adversarial review
   killed the marker-file escape hatch; this is the replacement.
 
+This gate: ~/.claude/hooks/plan-edit-validator.sh (source: adapters/claude-code/hooks/plan-edit-validator.sh)
 ERR
       exit 1
     fi
@@ -1223,6 +2020,7 @@ Once each task has an evidence block, COMPLETED is allowed.
 To defer the plan instead, set Status: DEFERRED with a reason.
 To abandon, set Status: ABANDONED with a reason.
 
+This gate: ~/.claude/hooks/plan-edit-validator.sh (source: adapters/claude-code/hooks/plan-edit-validator.sh)
 ERR
         exit 1
       fi
@@ -1234,10 +2032,22 @@ fi
 if [[ "$TOOL_NAME" == "Write" ]]; then
   NEW_CONTENT=$(echo "$INPUT" | jq -r '.tool_input.content // ""' 2>/dev/null)
 
-  # If the file doesn't exist yet, it's a new plan file — allow
+  # If the file doesn't exist yet, it's a new plan file — allow, but still
+  # WARN (§F.2b) on any task line missing 'Docs impact:' (old content is
+  # empty, so every task line in a fresh plan is "new").
   if [[ ! -f "$FILE_PATH" ]]; then
+    check_docs_impact_warn "" "$NEW_CONTENT"
+    # BACKLOG-LOOP-01 — a FRESH plan is the highest-value moment for
+    # absorption matching (WARN-only, never blocks).
+    check_backlog_absorption_warn "$FILE_PATH_NORM" "$NEW_CONTENT"
     exit 0
   fi
+
+  check_docs_impact_warn "$(cat "$FILE_PATH" 2>/dev/null)" "$NEW_CONTENT"
+
+  # BACKLOG-LOOP-01 — WARN (never blocks); full Write content IS the
+  # prospective plan content.
+  check_backlog_absorption_warn "$FILE_PATH_NORM" "$NEW_CONTENT"
 
   OLD_CHECKED=$(grep -cE '^\s*-\s*\[\s*[xX]\s*\]' "$FILE_PATH" 2>/dev/null || echo "0")
   OLD_CHECKED=$(echo "$OLD_CHECKED" | tr -d '[:space:]')

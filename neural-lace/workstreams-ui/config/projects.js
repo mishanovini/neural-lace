@@ -134,7 +134,16 @@ function loadProjects() {
       const raw = JSON.parse(fs.readFileSync(CFG, 'utf8'));
       Object.keys(raw).forEach(function (k) {
         if (k === '_comment') return;
-        if (typeof raw[k] === 'string' && raw[k]) map[k] = path.resolve(raw[k]);
+        const val = raw[k];
+        if (typeof val === 'string' && val) { map[k] = path.resolve(val); return; }
+        // R17 (roadmap multi-project grouping, 2026-07-30): the SAME file
+        // now also accepts an object form ({ root, group }) so the
+        // roadmap's per-repo display-group mapping can live alongside the
+        // root path — this reader only needs the root; `group` is
+        // consumed by server/roadmap-routes.js's own projectGroupFor.
+        if (val && typeof val === 'object' && typeof val.root === 'string' && val.root) {
+          map[k] = path.resolve(val.root);
+        }
       });
     }
   } catch (_) { /* malformed instance config → fall back to auto-detected self */ }

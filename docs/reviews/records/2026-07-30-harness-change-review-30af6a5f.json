@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-30af6a5f",
+  "created_at": "2026-07-30T07:05:19Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group delta-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "3404bd1e92a1c4836d32fe8cee6dbef2d1e88f98",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/dispatch-provenance.sh",
+      "blob_sha": "a9ac29a18fa43a51deafee9f5c0234b3d69aa929"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — additive role field on the provenance marker, backward compatible: an omitted flag yields an empty-string role, pre-existing markers simply lack the key, and the documented reader contract tolerates both. Self-test covers round-trip, omission validity, and field preservation; 17/0 verified first-hand under /bin/bash 3.2.57.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer via write-review-record.sh (delta-2 sweep)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

@@ -30,7 +30,7 @@ predicted_downstream:
 
 3. **Project→repo mapping must be derived, not guessed.** My hand-typed guess put
    cortex-one/foresight under Pocket Technician — WRONG. Ground truth (`gh repo list`
-   per account + local `C:\Users\misha\dev\<account>\` folders): cortex-one + foresight
+   per account + local `<home>\dev\<account>\` folders): cortex-one + foresight
    are mishanovini-only (Personal); Circuit is Pocket-Technician-only; neural-lace is
    in BOTH. The empty "Personal"/"Pocket Technician" 0-item nodes are account names,
    not projects.

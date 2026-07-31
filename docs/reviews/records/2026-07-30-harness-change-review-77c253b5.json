@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-77c253b5",
+  "created_at": "2026-07-30T00:30:18Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 operator-authorized adversarial review sweep (group hooks-2)",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/completion-criteria-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/cross-repo-drift-postpush-gate.sh",
+      "blob_sha": "629d7662047486e602f71af8f076442c0bb1730c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/dag-review-waiver-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decision-context-reply-emit.sh",
+      "blob_sha": "7cbec6155c6c7628b935e493846eed9a71443e43"
+    },
+    {
+      "path": "adapters/claude-code/hooks/external-monitor-alert-surfacer.sh",
+      "blob_sha": "991e5967e1bc35a77bec9338c480a5415d868447"
+    },
+    {
+      "path": "adapters/claude-code/hooks/gh-account-blindness-hint.sh",
+      "blob_sha": "f8175ddec6ec5661c681b0538ecde20923eba31b"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-auto-closure.sh",
+      "blob_sha": "2eb27f60656afee83e008ef924ffcd15c5e60037"
+    },
+    {
+      "path": "adapters/claude-code/hooks/post-tool-task-verifier-reminder.sh",
+      "blob_sha": "6f0eeaab2797b2b9a3a03af888b34a20037c4b71"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-compact-continuity.sh",
+      "blob_sha": "066c9f2878636e7727666cf547d5ae6b0b635252"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-discovery-cheatsheet.sh",
+      "blob_sha": "a529bc577227c72f612c906ff2ea84da68ec3105"
+    },
+    {
+      "path": "adapters/claude-code/hooks/settings-divergence-detector.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/transcript-lie-detector.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Mode-only change (100644 -> 100755) with blob content identical to master; the exec-bit fix is the anti-theatre remedy for hooks git ignored as non-executable — PASS.",
+    "findings_summary": "git diff master...HEAD shows mode change only, zero content lines; blob at HEAD identical to master for each file. Exec bit is required for git hooks and harmless for settings.json-invoked hooks. No enforcement semantics changed."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

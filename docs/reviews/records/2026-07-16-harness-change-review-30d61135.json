@@ -1,0 +1,59 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260716-30d61135",
+  "created_at": "2026-07-16T06:27:55Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-opus-4-8",
+  "plan_ref": "docs/plans/harness-governance-batch-2026-07-15.md",
+  "change_ref": {
+    "commit_sha": "59e338f",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "4b152d5c081523aba7f8809a21c0472c73eb3e1a"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "33341d94311a2296463e6eb7b5755a92e016cbb4"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-auto-install.sh",
+      "blob_sha": "80af5ecc365fa6c4e9c588c4c25ff5d929a4e726"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "6414125ed9031ce2f89467c8286a717241c8eaf1"
+    },
+    {
+      "path": "adapters/claude-code/scripts/write-review-record.sh",
+      "blob_sha": "59559fdd3804bdf62c5a7f11df69cf175c80d383"
+    },
+    {
+      "path": "adapters/claude-code/hooks/evidence-before-fix-gate.sh",
+      "blob_sha": "3b96ed5a506f5b33999a79bc5cb923f43778c0d1"
+    },
+    {
+      "path": "adapters/claude-code/hooks/gh-merge-canonical-gate.sh",
+      "blob_sha": "0ec32aa83b5e23773f34f17f1e48f9f921d3f5e1"
+    },
+    {
+      "path": "adapters/claude-code/scripts/manifest-check.sh",
+      "blob_sha": "368ea1155a938cd19640746b8747479598e24d49"
+    },
+    {
+      "path": "adapters/claude-code/settings.json.template",
+      "blob_sha": "de765570ae6d3082a5573b8199dc8205e391c938"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "harness-reviewer PASS at HEAD 59e338f: all findings from the three prior verdicts — Task-2 REFORMULATE (A1 surface parity, A2 index honesty, A3 grandfather trust anchor), closure-reviewer item-3, and the Task-3 evidence-before-fix REJECT — are CLOSED with PROVEN evidence; the harness-governance batch is authorized to push and deploy.",
+    "findings_summary": "Final consolidated re-review: zero open findings; all prior REFORMULATE/REJECT findings independently re-derived CLOSED; whole-stack sanity clean (22 batch-native commits)."
+  },
+  "written_by": "orchestrator (session 29f2930a) transcribing the final consolidated harness-reviewer verdict",
+  "payload": {}
+}

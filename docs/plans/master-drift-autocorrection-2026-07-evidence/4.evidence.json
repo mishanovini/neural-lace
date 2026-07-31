@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "task_id": "4",
+  "verdict": "PASS",
+  "commit_sha": "dc3d41bd93c9032644ee468aee6746ad050af716",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/hooks/harness-doctor.sh",
+    "adapters/claude-code/manifest.json",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "command:bash adapters/claude-code/scripts/manifest-check.sh check 2>&1 | tail -1 | grep -q GREEN": {
+      "passed": true,
+      "detail": "",
+      "command": "bash adapters/claude-code/scripts/manifest-check.sh check 2>&1 | tail -1 | grep -q GREEN",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/scripts/gen-architecture-doc.sh --check 2>&1 | tail -1 | grep -q GREEN": {
+      "passed": true,
+      "detail": "",
+      "command": "bash adapters/claude-code/scripts/gen-architecture-doc.sh --check 2>&1 | tail -1 | grep -q GREEN",
+      "exit_code": 0
+    },
+    "command:grep -q 'check_master_drift_autocorrect \"$live_home\" \"$repo_root\"' adapters/claude-code/hooks/harness-doctor.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'check_master_drift_autocorrect \"$live_home\" \"$repo_root\"' adapters/claude-code/hooks/harness-doctor.sh",
+      "exit_code": 0
+    },
+    "command:grep -q '\"id\": \"master-drift-autocorrect\"' adapters/claude-code/manifest.json": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q '\"id\": \"master-drift-autocorrect\"' adapters/claude-code/manifest.json",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:49:04Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/master-drift-autocorrection-2026-07.md"
+}

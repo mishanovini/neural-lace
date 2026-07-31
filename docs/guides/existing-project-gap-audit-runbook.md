@@ -40,7 +40,7 @@ cd <project-root>
 # Verify the harness is available:
 ls ~/.claude/scripts/analyze-propagation-audit-log.sh   # should exist
 ls ~/.claude/templates/pilot-friction.md                # should exist
-ls ~/.claude/skills/harness-review.md                   # should exist
+ls ~/.claude/skills/harness-review/SKILL.md                   # should exist
 
 # Verify the doctrine is reachable:
 ls ~/claude-projects/neural-lace/build-doctrine/        # should exist
@@ -418,7 +418,7 @@ After running this runbook to completion (likely 3-5 sessions, days to a week of
 - **Pilot-friction template**: `~/.claude/templates/pilot-friction.md`
 - **Audit-log analyzer**: `~/.claude/scripts/analyze-propagation-audit-log.sh`
 - **Findings ledger schema + rule**: `~/.claude/rules/findings-ledger.md`
-- **`/harness-review` Check 13** (KIT sweep): `~/.claude/skills/harness-review.md`
+- **`/harness-review` Check 13** (KIT sweep): `~/.claude/skills/harness-review/SKILL.md`
 - **Schemas for canon artifacts**: `build-doctrine/template-schemas/{prd,adr,spec,design-system,engineering-catalog,conventions,observability}.schema.yaml`
 - **Templates for canon-artifact content**: `build-doctrine-templates/conventions/`
 

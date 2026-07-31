@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260723-37623e59",
+  "created_at": "2026-07-23T09:49:40Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "fable",
+  "plan_ref": "docs/reviews/2026-07-22-auto-compact-at-85-design.md",
+  "change_ref": {
+    "commit_sha": "15dbf72",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/ask-registry.sh",
+      "blob_sha": "a35720f808eea685a10a10739ad63171b00e7310"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — adapters/claude-code/scripts/ask-registry.sh @ 15dbf72: the be037a7 Critical (dropped --model haiku -p) is fixed and PROVEN (flags baked into all helper branches; AR_DRYRUN_ARGV probe reproduced byte-exact; call sites at 487/572 pass prompt-only; suite flakes structurally unreachable from this diff); -p position correct; --kill-after absence noted Minor, non-blocking. Cleared for the three-file joint deploy.",
+    "findings_summary": "Two Minor advisories: %q argv serialization in the dry-run probe; --kill-after escalation (apply pattern-wide with _st_run if adopted)"
+  },
+  "written_by": "orchestrator session d3059d78 via write-review-record.sh",
+  "payload": {}
+}

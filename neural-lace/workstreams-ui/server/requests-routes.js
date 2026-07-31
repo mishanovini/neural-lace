@@ -1,0 +1,551 @@
+'use strict';
+// requests-routes.js — the Requests ledger view's server surface
+// (cockpit-roadmap-redesign Task 5: "Requests ledger view"). A NEW file by
+// design, mirroring task 3's roadmap-routes.js precedent: task 1 owns
+// server.js, task 2 (in flight) owns ask-registry.sh, so this task adds its
+// route handlers HERE and the ONE server.js mount line ships as a fragment
+// (docs/plans/fragments/roadmap-t5-server-fragment.md) for the orchestrator
+// to apply at merge — never a direct edit to a file another task owns.
+//
+// Routes (handle() returns true when it consumed the request):
+//   GET  /requests.js            — serves the client module (one mount line).
+//   GET  /api/requests           — the ledger payload (contract below).
+//   POST /api/requests/title     — title edit, DELEGATED to ask-registry.sh
+//                                  (A3 one-writer discipline; same set-title
+//                                  verb roadmap-routes.js already pins).
+//   POST /api/requests/amend/detach — amendment "detach" correction (I6),
+//                                  DELEGATED to a NEW ask-registry.sh verb
+//                                  this task pins (task 2 owns the file —
+//                                  see the fragment's §3).
+//
+// ============================================================
+// PAYLOAD CONTRACT (pinned for task-2 merge re-verification)
+// ============================================================
+// GET /api/requests -> { ok, generated_at, items: [RequestItem] }
+// RequestItem = {
+//   id,                              // == ask_id (== the Roadmap intent's own id — task 3 precedent)
+//   title, title_source: 'operator'|'auto',      // A3: always-editable, operator always outranks auto
+//   distilled_intent,                // the auto-derived summary text, KEPT for filtering even
+//                                     // after an operator rename (findability — C8)
+//   verbatim_ref,                    // '' if none captured — "one click away" (I6)
+//   project,
+//   created_ts,
+//   last_amended_ts,                 // latest NON-origin timeline event ts, '' if never amended (I1)
+//   state: 'open'|'closed',
+//   closed_reason: ''|'promoted'|'done'|'dismissed'|'merged',
+//   closed_at,                       // ISO ts | ''
+//   became: {plan_slug, roadmap_id} | null,   // roadmap_id addresses #roadmap/<id> (C6 reciprocal
+//                                             // law). Round 8 re-rooted the Roadmap on PLAN slugs
+//                                             // (roadmap-routes.js id: pf.slug), so roadmap_id IS
+//                                             // the plan slug — an ask id here false-misses.
+//   merged_into,                     // ask_id | ''
+//   timeline: [TimelineEvent],       // OLDEST-FIRST; origin always first (I6 timeline anatomy)
+// }
+// TimelineEvent = {
+//   type: 'origin'|'title_changed'|'amendment'|'decision'|'project_changed'|'promoted'|'candidate_promoted',
+//   ts, text,                        // text is a resolved-verbatim excerpt when available (2026-07-30
+//                                    // fix), else a hardcoded/reviewed literal + operator data
+//                                    // (asks.js's anti-noise law precedent) — never a gate/hook name
+//   detachable,                      // true only for an undetached, non-noise 'amendment' event
+//   event_key,                       // correlator for the detach call (see CONTRACT below)
+//   candidate_id,                    // 'amendment'/'candidate_promoted' events only (2026-07-30)
+//   became_request,                  // 'candidate_promoted' only: the ask_id it was spun off into
+//   plan_slug, verbatim_ref,         // present only on the event types that carry them
+// }
+//
+// ============================================================
+// EVOLUTION TIMELINE / CLOSE-ON-PROMOTE (this task's own derivation — no
+// task-1/2 seam here; unlike roadmap-routes.js this file owns its fold
+// end-to-end, since "the request's exit verb" is THIS view's own law, not
+// borrowed from derive-lib)
+// ============================================================
+// state/closed_reason precedence (documented assumption — the plan names
+// "close-on-promote" as the exit verb but doesn't order it against the
+// pre-existing done/dismissed/merged registry statuses): an EXPLICIT
+// terminal registry status always outranks the STRUCTURALLY-INFERRED
+// "promoted" state — merged > dismissed > done > promoted > open. A
+// promoted-then-separately-dismissed ask (rare) still reads "dismissed",
+// never a stale "became →" for something the operator explicitly closed
+// out; the common case (promoted, status still 'active') reads "promoted"
+// with the reciprocal #roadmap/<id> link (C6).
+//
+// ============================================================
+// AMENDMENTS (2026-07-30 fix — was a forward-compatible stub; task 2's
+// capture/classification lane HAS since landed in production, and two
+// separate bugs made its output invisible: (1) the async LLM classifier
+// hangs 100% of the time when invoked from a hook running inside an
+// already-live Claude Code session — proven: `env -u CLAUDECODE claude
+// --model haiku -p ...` never fails fast, it hangs until the 20s bound
+// kills it, so zero of 114 real amendment_candidate records captured
+// 2026-07-28..30 ever got a candidate_classified verdict; (2) THIS reader
+// never read candidate_classified records at all — it only ever consulted
+// the permanently-"pending" birth record's own `classification` field. Both
+// are fixed here: `verbatim-resolver.js`'s deterministic classifier now runs
+// synchronously-cheap (no model, no hang risk) from ask-registry.sh, and
+// this fold now overlays the LATEST candidate_classified verdict per
+// candidate_id (the documented fold contract — ask-registry.sh header,
+// AMENDMENT TIMELINE section), and resolves each candidate's REAL verbatim
+// text for display instead of the generic "possible amendment captured"
+// placeholder. Real shapes actually produced:
+//   {record_type:"amendment_candidate", ask_id, ts, verbatim_ref,
+//    candidate_id, classification:"pending"}
+//   {record_type:"candidate_classified", ask_id, candidate_id,
+//    classification:"amendment"|"noise"|"detached"|"promoted", summary}
+//   {record_type:"amendment_detached", ask_id, ts, detach_ref:<candidate ts>,
+//    emitter}  -- legacy correlator, superseded by candidate_id but still
+//    honored for any record that predates candidate_id.
+// A candidate classified "noise" or ever detached never renders (I6:
+// detach "marks not-an-amendment" — same effect as classifier noise). A
+// candidate classified "promoted" was spun off into its OWN top-level
+// request (record_type:"created") — its timeline entry links there rather
+// than rendering inline (HONEST LIMIT — A2: "amendment detection is
+// best-effort classification, not a guarantee").
+// event_key correlates a candidate to its detach call. Real records always
+// carry candidate_id, which is the primary key; a legacy/fixture record
+// missing candidate_id falls back to its ts (documented risk: two such
+// candidates sharing the same second-granularity ts for one ask would
+// collide — accepted at this granularity, same convention used elsewhere in
+// this codebase for ts-keyed correlation).
+
+const fs = require('fs');
+const path = require('path');
+const deriveLib = require('./derive-lib.js');
+const verbatimResolver = require('./verbatim-resolver.js');
+
+const WEB_DIR = path.join(__dirname, '..', 'web');
+
+function sendJson(res, code, obj) {
+  res.writeHead(code, { 'Content-Type': 'application/json' });
+  res.end(JSON.stringify(obj));
+}
+
+// ----------------------------------------------------------------------
+// decisionText(status, emitter) — a plain-English, hardcoded-literal label
+// for a status_change/merged event (asks.js's anti-noise law precedent:
+// never a gate/hook/oracle identifier in operator-visible text).
+// ----------------------------------------------------------------------
+function decisionText(status, emitter) {
+  const who = emitter === 'operator-ui' ? '(you)' : emitter === 'auditor' ? '(auto-detected)' : (emitter ? '(' + emitter + ')' : '');
+  let verb;
+  if (status === 'done') verb = 'marked done';
+  else if (status === 'dismissed') verb = 'dismissed';
+  else if (status === 'active') verb = 'reopened';
+  else verb = status || 'status changed';
+  return (verb + ' ' + who).trim();
+}
+
+// ----------------------------------------------------------------------
+// foldRegistryForRequests() — reads the raw registry once and folds per-ask,
+// building the OLDEST-FIRST timeline as it goes (evolution timeline: origin
+// pinned first via the 'created' record, every subsequent record type below
+// appending its own timeline entry).
+// ----------------------------------------------------------------------
+function foldRegistryForRequests() {
+  const lines = deriveLib.readAskRegistry().slice()
+    .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+  const byAsk = {};
+  function askOf(id) {
+    if (!byAsk[id]) {
+      byAsk[id] = {
+        ask_id: id, plan_slugs: [], status: 'active', status_ts: '', status_emitter: '',
+        created_ts: '', origin_session: '', repo: '', project: '',
+        summary: '', verbatim_ref: '', auto_title: '', operator_title: '',
+        merged_into: '', timeline: [], _amendments: {}, _detached: {}, _classifications: {},
+      };
+    }
+    return byAsk[id];
+  }
+
+  lines.forEach((rec) => {
+    if (!rec || !rec.ask_id) return;
+    const cur = askOf(rec.ask_id);
+    if (rec.project) cur.project = rec.project;
+    if (rec.repo) cur.repo = rec.repo;
+
+    if (rec.record_type === 'created') {
+      cur.created_ts = rec.ts || '';
+      cur.origin_session = rec.origin_session || rec.session_id || '';
+      if (rec.summary) { cur.summary = rec.summary; cur.auto_title = rec.summary; }
+      if (rec.verbatim_ref) cur.verbatim_ref = rec.verbatim_ref;
+      if (rec.status) { cur.status = rec.status; cur.status_ts = rec.ts || ''; }
+      cur.timeline.push({
+        type: 'origin', ts: cur.created_ts,
+        text: 'Registered' + (cur.summary ? ': "' + cur.summary + '"' : ''),
+        event_key: (cur.created_ts || '') + ':origin',
+      });
+      return;
+    }
+    if (rec.record_type === 'plan_linked' && rec.plan_slug) {
+      if (cur.plan_slugs.indexOf(rec.plan_slug) === -1) cur.plan_slugs.push(rec.plan_slug);
+      cur.timeline.push({
+        type: 'promoted', ts: rec.ts || '', plan_slug: rec.plan_slug,
+        text: 'became → ' + rec.plan_slug,
+        event_key: (rec.ts || '') + ':promoted:' + rec.plan_slug,
+      });
+      return;
+    }
+    if (rec.record_type === 'status_change' && rec.status) {
+      cur.status = rec.status; cur.status_ts = rec.ts || ''; cur.status_emitter = rec.emitter || '';
+      cur.timeline.push({
+        type: 'decision', ts: rec.ts || '', text: decisionText(rec.status, rec.emitter),
+        event_key: (rec.ts || '') + ':decision:' + rec.status,
+      });
+      return;
+    }
+    if (rec.record_type === 'merged' && rec.status) {
+      cur.status = rec.status; cur.status_ts = rec.ts || ''; cur.status_emitter = rec.emitter || '';
+      cur.merged_into = rec.merged_into || '';
+      cur.timeline.push({
+        type: 'decision', ts: rec.ts || '',
+        text: 'merged into ' + (rec.merged_into || 'another request'),
+        event_key: (rec.ts || '') + ':decision:merged',
+      });
+      return;
+    }
+    if (rec.record_type === 'summary_updated' && rec.summary) {
+      cur.auto_title = rec.summary;
+      cur.timeline.push({
+        type: 'title_changed', ts: rec.ts || '', text: 'title auto-updated: "' + rec.summary + '"',
+        event_key: (rec.ts || '') + ':title:auto',
+      });
+      return;
+    }
+    if (rec.record_type === 'title_set' && rec.title) {
+      if (rec.title_source === 'operator') cur.operator_title = rec.title; else cur.auto_title = rec.title;
+      cur.timeline.push({
+        type: 'title_changed', ts: rec.ts || '',
+        text: 'title ' + (rec.title_source === 'operator' ? 'edited' : 'auto-updated') + ': "' + rec.title + '"',
+        event_key: (rec.ts || '') + ':title:' + (rec.title_source || 'auto'),
+      });
+      return;
+    }
+    if (rec.record_type === 'project_override' && rec.project) {
+      cur.timeline.push({
+        type: 'project_changed', ts: rec.ts || '', text: 'moved to project "' + rec.project + '"',
+        event_key: (rec.ts || '') + ':project',
+      });
+      return;
+    }
+    // ---- amendment lane (2026-07-30 fix — see header note) ----
+    if (rec.record_type === 'amendment_candidate') {
+      // candidate_id is the real primary key (every production record has
+      // one); a legacy/fixture record lacking it falls back to its own ts so
+      // two such records never silently collide into one.
+      const key = rec.candidate_id || String(rec.ts || '');
+      cur._amendments[key] = {
+        ts: rec.ts || '', verbatim_ref: rec.verbatim_ref || '',
+        classification: rec.classification || '', candidate_id: rec.candidate_id || '',
+      };
+      return;
+    }
+    // candidate_classified OVERLAYS the birth record's classification — the
+    // documented fold contract (ask-registry.sh header, AMENDMENT TIMELINE):
+    // "a candidate's CURRENT classification is the LATEST candidate_classified
+    // record for its candidate_id, else its birth pending." Lines are already
+    // ts-sorted, so a later record here simply overwrites an earlier one
+    // (last-write-wins via forward iteration).
+    if (rec.record_type === 'candidate_classified' && rec.candidate_id) {
+      cur._classifications[rec.candidate_id] = {
+        classification: rec.classification || '', summary: rec.summary || '', ts: rec.ts || '',
+      };
+      return;
+    }
+    if (rec.record_type === 'amendment_detached' && rec.detach_ref) {
+      cur._detached[String(rec.detach_ref)] = true;
+      return;
+    }
+  });
+
+  Object.keys(byAsk).forEach((askId) => {
+    const cur = byAsk[askId];
+    Object.keys(cur._amendments).forEach((key) => {
+      const a = cur._amendments[key];
+      const override = a.candidate_id ? cur._classifications[a.candidate_id] : null;
+      // Legacy fixtures set classification directly on the birth record
+      // (no separate candidate_classified event) — honored only when no
+      // override exists, so real production data (which always classifies
+      // via a SEPARATE candidate_classified record) takes the override path.
+      const classification = (override && override.classification) || a.classification || '';
+      if (classification === 'noise') return; // classifier said not-an-amendment
+      if (classification === 'detached') return; // I6 correction: not-an-amendment
+      if (cur._detached[key]) return; // legacy ts-keyed detach correlator
+
+      const resolved = resolveCandidateText(a.verbatim_ref, a.ts);
+      const pending = !classification;
+
+      if (classification === 'promoted') {
+        const becameAskId = (override && override.summary) || '';
+        cur.timeline.push({
+          type: 'candidate_promoted', ts: a.ts, verbatim_ref: a.verbatim_ref,
+          text: resolved ? 'spun off as its own request: "' + truncateForDisplay(resolved.text) + '"' : 'spun off as its own request',
+          became_request: becameAskId, detachable: false, event_key: key,
+        });
+        return;
+      }
+
+      let text;
+      if (resolved) {
+        text = (pending ? '' : '') + truncateForDisplay(resolved.text);
+      } else if (classification === 'amendment' && override && override.summary) {
+        text = override.summary; // the classifier's own distilled label, when text isn't resolvable
+      } else {
+        text = pending ? 'possible amendment captured (not yet classified)' : 'amendment captured';
+      }
+      cur.timeline.push({
+        type: 'amendment', ts: a.ts, verbatim_ref: a.verbatim_ref,
+        text: text, detachable: true, event_key: key, candidate_id: a.candidate_id || '',
+        pending_classification: pending,
+      });
+    });
+    cur.timeline.sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
+    delete cur._amendments;
+    delete cur._detached;
+    delete cur._classifications;
+  });
+  return byAsk;
+}
+
+// ----------------------------------------------------------------------
+// resolveCandidateText(verbatimRef, ts) — best-effort read-time resolution
+// of an amendment candidate's REAL operator text from its own Claude Code
+// session transcript (see verbatim-resolver.js's header for the full
+// rationale + algorithm). NEVER throws — a resolution failure (missing
+// transcript, out-of-tolerance timestamp, corrupt JSON) degrades to null,
+// and callers fall back to the pre-existing generic placeholder text (S10:
+// this payload builder must never 500 on bad input).
+// ----------------------------------------------------------------------
+function resolveCandidateText(verbatimRef, ts) {
+  if (!verbatimRef) return null;
+  try {
+    const r = verbatimResolver.resolveVerbatimRef(verbatimRef, ts);
+    return r && r.ok ? r : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+const DISPLAY_TEXT_MAX = 280;
+function truncateForDisplay(text) {
+  const s = String(text || '');
+  if (s.length <= DISPLAY_TEXT_MAX) return s;
+  return s.slice(0, DISPLAY_TEXT_MAX - 1).trim() + '…';
+}
+
+// classifyRequestState(cur) — see header precedence note.
+function classifyRequestState(cur) {
+  if (cur.status === 'merged') {
+    return { state: 'closed', closed_reason: 'merged', closed_at: cur.status_ts || '', became: null };
+  }
+  if (cur.status === 'dismissed') {
+    return { state: 'closed', closed_reason: 'dismissed', closed_at: cur.status_ts || '', became: null };
+  }
+  if (cur.status === 'done') {
+    return { state: 'closed', closed_reason: 'done', closed_at: cur.status_ts || '', became: null };
+  }
+  if (cur.plan_slugs.length) {
+    const promotedEvents = cur.timeline.filter((e) => e.type === 'promoted');
+    const latest = promotedEvents.length ? promotedEvents[promotedEvents.length - 1] : null;
+    const slug = latest ? latest.plan_slug : cur.plan_slugs[cur.plan_slugs.length - 1];
+    const closedAt = latest ? latest.ts : '';
+    return { state: 'closed', closed_reason: 'promoted', closed_at: closedAt, became: { plan_slug: slug, roadmap_id: slug } };
+  }
+  return { state: 'open', closed_reason: '', closed_at: '', became: null };
+}
+
+// isErrorSignature(text) — R17 deliverable 2b (audit F4a, the live
+// defect: "origin event says the operator's actual request was 'Please
+// connect to gh and download the latest copy of Neural Lace.' — a
+// title_changed event then AUTO-RETITLED the request to the 401 error
+// string. Machine output displaced operator intent on the intent
+// ledger.") A conservative, two-signal check (an HTTP status-code-shaped
+// token AND a recognized error/auth keyword, co-occurring anywhere in the
+// text) — deliberately requires BOTH so an ordinary operator sentence
+// that happens to mention a number ("fix bug 404") or the word "error"
+// alone never false-positives; only genuine API-error-dump shapes trip it.
+const ERROR_STATUS_RE = /\b[45]\d{2}\b/;
+const ERROR_WORD_RE = /\b(unauthorized|forbidden|denied|not authenticated|auth failed|exception|traceback|internal server error)\b/i;
+function isErrorSignature(text) {
+  const s = String(text || '');
+  return ERROR_STATUS_RE.test(s) && ERROR_WORD_RE.test(s);
+}
+
+function buildRequestItem(cur) {
+  const cls = classifyRequestState(cur);
+  // R17 deliverable 2b (audit F4a): a LATER auto-retitle can overwrite
+  // auto_title with machine output that reads as a captured error — prefer
+  // the ORIGIN's own summary (cur.summary, set ONCE from the 'created'
+  // record and never touched by a later summary_updated) when that has
+  // happened. Never applies once the OPERATOR explicitly set the title —
+  // operator_title always wins regardless (A3's own precedent).
+  const rawAutoTitle = cur.auto_title || '';
+  const originSummary = cur.summary || '';
+  const safeAutoTitle = (isErrorSignature(rawAutoTitle) && originSummary && !isErrorSignature(originSummary))
+    ? originSummary
+    : rawAutoTitle;
+  let title = cur.operator_title || safeAutoTitle || cur.ask_id;
+  // R17 deliverable 2b (audit F4c): never render a bare 'none'/empty
+  // title (a fallback-string leak observed live on a closed request) —
+  // fall back to the distilled intent, then the became-slug, then the id.
+  if (!title || String(title).trim().toLowerCase() === 'none') {
+    title = originSummary || (cls.became && cls.became.plan_slug) || cur.ask_id;
+    if (!title || String(title).trim().toLowerCase() === 'none') title = cur.ask_id;
+  }
+  const titleSource = cur.operator_title ? 'operator' : 'auto';
+  const distilledIntent = safeAutoTitle || originSummary || '';
+  const nonOrigin = cur.timeline.filter((e) => e.type !== 'origin');
+  const lastAmendedTs = nonOrigin.length ? nonOrigin.map((e) => e.ts).sort().pop() : '';
+  return {
+    id: cur.ask_id,
+    title: title,
+    title_source: titleSource,
+    distilled_intent: distilledIntent,
+    verbatim_ref: cur.verbatim_ref || '',
+    project: cur.project || '',
+    created_ts: cur.created_ts || '',
+    last_amended_ts: lastAmendedTs || '',
+    state: cls.state,
+    closed_reason: cls.closed_reason,
+    closed_at: cls.closed_at || '',
+    became: cls.became,
+    merged_into: cur.merged_into || '',
+    timeline: cur.timeline.map((e) => ({
+      type: e.type, ts: e.ts || '', text: e.text || '',
+      detachable: !!e.detachable, event_key: e.event_key || '',
+      plan_slug: e.plan_slug || '', verbatim_ref: e.verbatim_ref || '',
+      candidate_id: e.candidate_id || '', became_request: e.became_request || '',
+    })),
+  };
+}
+
+function buildRequestsPayload() {
+  const byAsk = foldRegistryForRequests();
+  const items = Object.keys(byAsk).map((id) => buildRequestItem(byAsk[id]));
+  // Newest-registered first — open items needing triage surface earliest;
+  // closed items are re-grouped by age client-side regardless (C8).
+  items.sort((a, b) => String(b.created_ts).localeCompare(String(a.created_ts)));
+  return { ok: true, generated_at: new Date().toISOString(), items: items };
+}
+
+// ----------------------------------------------------------------------
+// ask-registry.sh delegation (one-writer discipline) — duplicated per this
+// codebase's small-helper convention (roadmap-routes.js's own header note:
+// "because server.js is task-1-owned right now"; here because
+// ask-registry.sh is task-2-owned and concurrently in flight).
+// ----------------------------------------------------------------------
+function askRegistryCliPath() {
+  return process.env.ASK_REGISTRY_CLI ||
+    path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code', 'scripts', 'ask-registry.sh');
+}
+
+function runAskRegistryCli(args) {
+  return new Promise((resolve) => {
+    const cli = askRegistryCliPath();
+    if (!fs.existsSync(cli)) return resolve({ ok: false, missing: true, error: 'registry CLI not found' });
+    let bashBin, spawnEnv;
+    try {
+      const dc = require('./derive-cache.js');
+      bashBin = dc.bashBin; spawnEnv = dc.spawnEnv;
+    } catch (e) { return resolve({ ok: false, error: 'shell environment unavailable' }); }
+    const { spawn } = require('child_process');
+    const cmd = 'bash ' + deriveLib.shQuote(cli) + ' ' + args.map(deriveLib.shQuote).join(' ');
+    let settled = false;
+    const done = (r) => { if (!settled) { settled = true; resolve(r); } };
+    let child;
+    try { child = spawn(bashBin(), ['-lc', cmd], { env: spawnEnv() }); }
+    catch (e) { return done({ ok: false, error: String(e && e.message || e) }); }
+    let out = '', err = '';
+    child.stdout.on('data', (d) => { out += d; });
+    child.stderr.on('data', (d) => { err += d; });
+    child.on('error', (e) => done({ ok: false, error: String(e && e.message || e) }));
+    child.on('close', (code) => done({ ok: code === 0, code: code, stdout: out, stderr: err }));
+    setTimeout(() => done({ ok: false, error: 'registry call timed out' }), 180000);
+  });
+}
+
+function readBody(req, cb) {
+  let buf = '';
+  req.on('data', (c) => { buf += c; if (buf.length > 1e5) req.destroy(); });
+  req.on('end', () => {
+    let input;
+    try { input = buf ? JSON.parse(buf) : {}; } catch (_) { input = null; }
+    cb(input);
+  });
+}
+
+// ----------------------------------------------------------------------
+// handle(req, res) -> true when consumed. The ONE server.js mount line (see
+// the fragment file): if (requestsRoutes.handle(req, res)) return;
+// ----------------------------------------------------------------------
+function handle(req, res) {
+  const urlPath = String(req.url || '').split('?')[0];
+
+  if (urlPath === '/requests.js' && req.method === 'GET') {
+    fs.readFile(path.join(WEB_DIR, 'requests.js'), (err, buf) => {
+      if (err) { res.writeHead(404); res.end('not found'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-cache, must-revalidate' });
+      res.end(buf);
+    });
+    return true;
+  }
+
+  if (urlPath === '/api/requests' && req.method === 'GET') {
+    try {
+      sendJson(res, 200, buildRequestsPayload());
+    } catch (e) {
+      // rc-style honesty: the client renders pane-error + Retry from
+      // ok:false — NEVER the empty state on failure (C4).
+      sendJson(res, 200, { ok: false, error: String(e && e.message || e), items: [] });
+    }
+    return true;
+  }
+
+  if (urlPath === '/api/requests/title' && req.method === 'POST') {
+    readBody(req, (input) => {
+      if (!input) return sendJson(res, 400, { ok: false, error: 'bad json' });
+      const askId = typeof input.ask_id === 'string' ? input.ask_id : '';
+      const title = typeof input.title === 'string' ? input.title.trim() : '';
+      if (!askId || !title) return sendJson(res, 400, { ok: false, error: 'ask_id and a non-empty title are required' });
+      // One-writer discipline (A3): the title lives in the registry, so this
+      // endpoint ONLY delegates — no second title store. Same pinned verb
+      // roadmap-routes.js's /api/roadmap/title already calls.
+      runAskRegistryCli(['set-title', '--ask-id', askId, '--title', title, '--title-source', 'operator', '--emitter', 'operator-ui'])
+        .then((r) => {
+          if (r.ok) return sendJson(res, 200, { ok: true, ask_id: askId, title: title, title_source: 'operator' });
+          const why = r.missing ? 'the title store is not available on this build yet'
+            : ('the title store rejected the change' + (r.stderr ? ': ' + String(r.stderr).trim().split('\n').pop() : ''));
+          sendJson(res, 200, { ok: false, error: 'could not save the title — ' + why });
+        });
+    });
+    return true;
+  }
+
+  if (urlPath === '/api/requests/amend/detach' && req.method === 'POST') {
+    readBody(req, (input) => {
+      if (!input) return sendJson(res, 400, { ok: false, error: 'bad json' });
+      const askId = typeof input.ask_id === 'string' ? input.ask_id : '';
+      const eventTs = typeof input.event_ts === 'string' ? input.event_ts : '';
+      if (!askId || !eventTs) return sendJson(res, 400, { ok: false, error: 'ask_id and event_ts are required' });
+      // Amendment correction (I6) — task 2 (in flight) owns ask-registry.sh
+      // and this exact verb; until it lands, the honest answer is a NAMED
+      // error, never a silent success (this task's dispatch mandate).
+      runAskRegistryCli(['detach-amendment', '--ask-id', askId, '--event-ts', eventTs, '--emitter', 'operator-ui'])
+        .then((r) => {
+          if (r.ok) return sendJson(res, 200, { ok: true, ask_id: askId, event_ts: eventTs });
+          const why = r.missing ? 'the amendment-correction verb is not available on this build yet'
+            : ('the registry rejected the correction' + (r.stderr ? ': ' + String(r.stderr).trim().split('\n').pop() : ''));
+          sendJson(res, 200, { ok: false, error: 'could not detach this amendment — ' + why });
+        });
+    });
+    return true;
+  }
+
+  return false;
+}
+
+module.exports = {
+  handle,
+  buildRequestsPayload,
+  foldRegistryForRequests,
+  classifyRequestState,
+  decisionText,
+};

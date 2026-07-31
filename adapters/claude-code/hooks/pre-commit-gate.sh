@@ -16,6 +16,21 @@
 
 set -eo pipefail
 
+# NL-FINDING-016 (compound-command gate trap): if this gate blocks (any
+# non-zero, non-self-test exit), print the banner explaining that the ENTIRE
+# Bash call — including any fix/edit/git-add prefix before the git commit —
+# never ran. A trap on EXIT covers every block path in this file uniformly.
+_pcg_finding016_trap() {
+  local rc=$?
+  if [[ "$rc" -ne 0 ]] && [[ "${1:-}" != "--self-test" ]]; then
+    echo "" >&2
+    echo "NOTE: this block prevented the ENTIRE command from running — including any" >&2
+    echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run" >&2
+    echo "the non-commit part as its own call first, then commit separately." >&2
+  fi
+}
+trap '_pcg_finding016_trap "$1"' EXIT
+
 # --- Build-script selection (DB-free gate validation) ----------------------
 # A project's pre-commit build can couple code-correctness validation with
 # DB-touching steps (e.g. `prisma migrate`, or build-time data fetching that
@@ -126,6 +141,7 @@ if [[ -x "$TDD_GATE" ]]; then
   if ! bash "$TDD_GATE" >&2; then
     echo "" >&2
     echo "✗ BLOCKED: TDD gate failed. See message above for missing tests." >&2
+    echo "This gate: ~/.claude/hooks/pre-commit-gate.sh (source: adapters/claude-code/hooks/pre-commit-gate.sh) invoked ~/.claude/hooks/pre-commit-tdd-gate.sh" >&2
     exit 1
   fi
   echo "✓ TDD gate passed" >&2
@@ -135,7 +151,11 @@ fi
 # 0b. Plan-reviewer — any staged docs/plans/*.md files must pass mechanical review
 PLAN_REVIEWER="$HOME/.claude/hooks/plan-reviewer.sh"
 if [[ -x "$PLAN_REVIEWER" ]]; then
-  STAGED_PLANS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^docs/plans/[^/]+\.md$' | grep -v -- '-evidence\.md$' || true)
+  # Exclusion covers the whole evidence-file class: -evidence.md AND the
+  # -evidence-t<N>.md / -evidence-<suffix>.md siblings (>=10 in-tree; the
+  # fd48741 review proved the single-suffix exclusion was already
+  # incomplete — plan-reviewer rejects these as malformed plans).
+  STAGED_PLANS=$(git diff --cached --name-only --diff-filter=ACMR 2>/dev/null | grep -E '^docs/plans/[^/]+\.md$' | grep -vE -- '-evidence(-[A-Za-z0-9_-]+)?\.md$' || true)
   if [[ -n "$STAGED_PLANS" ]]; then
     echo "[0b/5] Plan-reviewer adversarial check..." >&2
     while IFS= read -r plan; do
@@ -143,6 +163,7 @@ if [[ -x "$PLAN_REVIEWER" ]]; then
       if ! bash "$PLAN_REVIEWER" "$plan" >&2; then
         echo "" >&2
         echo "✗ BLOCKED: plan-reviewer rejected $plan" >&2
+        echo "This gate: ~/.claude/hooks/pre-commit-gate.sh (source: adapters/claude-code/hooks/pre-commit-gate.sh) invoked ~/.claude/hooks/plan-reviewer.sh" >&2
         exit 1
       fi
     done <<< "$STAGED_PLANS"
@@ -158,6 +179,7 @@ if _has_npm_script test; then
   if ! npm test 2>&1 | tail -3 >&2; then
     echo "" >&2
     echo "✗ BLOCKED: Unit tests failed. Fix tests before committing." >&2
+    echo "This gate: ~/.claude/hooks/pre-commit-gate.sh (source: adapters/claude-code/hooks/pre-commit-gate.sh)" >&2
     exit 1
   fi
   echo "✓ Tests passed" >&2
@@ -176,6 +198,7 @@ if [ -n "$BUILD_SCRIPT" ]; then
   if ! npm run "$BUILD_SCRIPT" 2>&1 | tail -5 >&2; then
     echo "" >&2
     echo "✗ BLOCKED: Build ($BUILD_SCRIPT) failed. Fix build errors before committing." >&2
+    echo "This gate: ~/.claude/hooks/pre-commit-gate.sh (source: adapters/claude-code/hooks/pre-commit-gate.sh)" >&2
     exit 1
   fi
   echo "✓ Build passed ($BUILD_SCRIPT)" >&2
@@ -191,6 +214,7 @@ if [ -f "scripts/audit-api-consumers.sh" ]; then
     echo "" >&2
     echo "✗ BLOCKED: API route changed with unstaged consumers." >&2
     echo "  Stage the consumer files or verify backward compatibility." >&2
+    echo "This gate: ~/.claude/hooks/pre-commit-gate.sh (source: adapters/claude-code/hooks/pre-commit-gate.sh)" >&2
     exit 1
   fi
   echo "✓ API audit passed" >&2
@@ -214,6 +238,7 @@ if grep -q '"audit:events"' package.json 2>/dev/null; then
     echo "  legacy / externally-fired, add to NON_EVENT_PREFIXES or" >&2
     echo "  knownExternal allowlist in scripts/audit-event-coupling.ts" >&2
     echo "  with a comment explaining why." >&2
+    echo "This gate: ~/.claude/hooks/pre-commit-gate.sh (source: adapters/claude-code/hooks/pre-commit-gate.sh)" >&2
     exit 1
   fi
   echo "✓ Event coupling passed" >&2
@@ -234,6 +259,7 @@ if grep -q '"audit:connectivity:files-only"' package.json 2>/dev/null; then
     echo "  add it to knip.config.ts 'ignore' list with a comment" >&2
     echo "  explaining why it's intentionally unreferenced (e.g., backlog" >&2
     echo "  partial-implementation flag, manual-run tool)." >&2
+    echo "This gate: ~/.claude/hooks/pre-commit-gate.sh (source: adapters/claude-code/hooks/pre-commit-gate.sh)" >&2
     exit 1
   fi
   echo "✓ Connectivity passed" >&2

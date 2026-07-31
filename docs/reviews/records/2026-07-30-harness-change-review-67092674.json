@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-67092674",
+  "created_at": "2026-07-30T16:41:58Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "unknown",
+  "plan_ref": "docs/plans/status-event-ledger.md",
+  "change_ref": {
+    "commit_sha": "6f97f702f06b12da2cc4cb2308b7ad58408bacd1",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/plan-edit-validator.sh",
+      "blob_sha": "98d668bf4006a9deb2307dc32f05858c0175fb81"
+    },
+    {
+      "path": "adapters/claude-code/hooks/stop-verdict-dispatcher.sh",
+      "blob_sha": "6c5f14735c4dc16af421329ad0683bc6bd2a826f"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Validator: PASS — the Major is closed with real teeth; F18 mutation cycle reproduced first-hand. Dispatcher: PASS at 8d8add2 — regex sweep clean, discriminator + sibling assertion proven, 95/0 reproduced.",
+    "findings_summary": "Adversarial harness-reviewer (agent abe0646f23a30fd13, 2026-07-30, two-round review): plan-edit-validator.sh PASS — SE4 flip-emit last-match + level-aware source selection verified (awk read + reviewer-run F18 mutation cycle: 13/6 red with the stale FAIL/3 row, green on restore); TASK_ID grammar byte-identical (HARNESS-GAP-62 untouched); HARNESS-GAP-63 filed not fixed; 1 advisory Minor (source-selection keyed on existence not the authorizer acceptance predicate — fold into next touch). stop-verdict-dispatcher.sh PASS after the class-sweep closure (8d8add2): missing-+ quantifier fixed on BOTH alternatives, zero bare-quantifier hits in the denylist sweep, S35 sibling assertion discriminating, comment claims match the artifact; 1 cosmetic dangling-fragment note. Reviewer-reproduced: validator 14/5-of-19 both interpreters (F5-F9 pre-existing GNU-stat), dispatcher 95/0."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Mishas-Mac-mini",
+    "account": "unknown",
+    "session_id": "abe0646f23a30fd13"
+  },
+  "independence": "pathway",
+  "payload": {}
+}

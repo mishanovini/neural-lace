@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260720-32c04a84",
+  "created_at": "2026-07-20T06:35:21Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/reviews/2026-07-20-f1-f3-rederived-harness-review.md",
+  "change_ref": {
+    "commit_sha": "e15a324973d785f4b32901934cb0ffe605e70d6c",
+    "branch": "build/cockpit-health-int"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "7a28c56767590247756707ba1d617a49a3d996ce"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "F2 harness-doctor.sh — PASS. WARN-only, format-correct, delegates to the deployed detector (blob-matched), 3 negative self-tests. The original REFORMULATE is best explained by the detector not being deployed at review time (now moot).",
+    "findings_summary": "PASS re-derived; 1 Minor advisory (timeout-wrap the sweep fork)"
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

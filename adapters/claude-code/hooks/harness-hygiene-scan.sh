@@ -38,6 +38,17 @@
 #   - docs/plans/ is NOT exempt — Neural Lace now commits its own
 #     development plans (subject to hygiene like any other committed file).
 #
+# WAIVER (F.5 waiver-parity audit row 12 / ADR 059 D4 fix): the exemption
+# list above is a PLAN-TIME allowlist (known-legitimate files/paths, edited
+# out-of-band). It does not help a session that hits a genuine NOVEL
+# false-positive at commit time (a denylisted string appearing legitimately
+# in, e.g., a test fixture never seen before). For that case, a fresh (<1h)
+# structured waiver at .claude/state/harness-hygiene-waiver-*.txt, naming
+# BOTH purpose clauses (lib/waiver-purpose-clause.sh) AND the specific
+# file(s) it covers, suppresses ONLY the matches on those named files for
+# this run (never a blanket suppression of the whole scan). See
+# `_hhs_waived_files` below.
+#
 # EXIT CODES
 #   0 — no matches (or denylist missing / not in a git repo — silent no-op)
 #   1 — one or more matches detected (denylist or heuristic)
@@ -59,11 +70,60 @@
 
 set -u
 
+# ---------- structured waiver (F.5 waiver-parity audit row 12 / ADR 059 D4)
+# ----------------------------------------------------------------------------
+# Fresh (<1h) .claude/state/harness-hygiene-waiver-*.txt files, each naming
+# BOTH purpose clauses (lib/waiver-purpose-clause.sh) AND a "Files:" line
+# listing the repo-relative path(s) the waiver covers (space or newline
+# separated). Matches on a listed file are suppressed for this run only —
+# this is per-file and per-run, distinct from the plan-time exempt-list
+# (is_exempt below), which is a durable, out-of-band, known-legitimate list.
+_HHS_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/waiver-purpose-clause.sh
+source "$_HHS_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
+# shellcheck source=lib/signal-ledger.sh
+source "$_HHS_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# _hhs_waived_files <state-dir>
+# Prints, one per line, every repo-relative file path named in a fresh
+# (<1h), purpose-clause-valid waiver's "Files:" line(s). Empty output if no
+# valid fresh waiver exists (fails closed — same posture as every other
+# structured waiver in the harness).
+_hhs_waived_files() {
+  local state_dir="$1"
+  [ -d "$state_dir" ] || return 0
+  local f
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      waiver_has_purpose_clauses "$f" || continue
+    fi
+    # "Files:" line(s), case-insensitive label, space/comma-separated paths.
+    grep -iE '^[[:space:]]*files[[:space:]]*:' "$f" 2>/dev/null \
+      | sed -E 's/^[[:space:]]*[Ff][Ii][Ll][Ee][Ss][[:space:]]*:[[:space:]]*//' \
+      | tr ', ' '\n\n'
+  done < <(find "$state_dir" -maxdepth 1 -type f -name 'harness-hygiene-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null)
+}
+
 # ---------- self-test ----------------------------------------------------
 
 if [ "${1:-}" = "--self-test" ]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (signal-ledger.sh) for this run and
+  # EXPORT it so re-invocations inherit it. Without it the lib resolves its
+  # PRODUCTION path and this self-test appends to the operator's real
+  # ~/.claude/state/signal-ledger.jsonl. PROVEN behaviorally: clean-HOME probe
+  # created .claude/state/signal-ledger.jsonl without it, nothing with it.
+  export HARNESS_SELFTEST=1
   TMPDIR_ST=$(mktemp -d)
   trap 'rm -rf "$TMPDIR_ST"' EXIT
+
+  # Portable fixture aging (macos-portability-2026-07 M4), sourced inside
+  # the self-test branch so the scan's normal path is untouched.
+  _HHS_PT="$(dirname "${BASH_SOURCE[0]}")/lib/portable-time.sh"
+  if ! . "$_HHS_PT" 2>/dev/null; then
+    echo "self-test: cannot source $_HHS_PT (needed to backdate fixtures portably)" >&2
+    exit 1
+  fi
 
   # Build a minimal denylist
   mkdir -p "$TMPDIR_ST/adapters/claude-code/patterns"
@@ -190,6 +250,134 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_HEUR_VOCAB_RC=$?
   ST_HEUR_CLEAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "clean-prose.md" 2>&1)
   ST_HEUR_CLEAN_RC=$?
+
+  # ---- Structured-waiver scenarios (F.5 audit row 12 / ADR 059 D4) ----
+  # Reuses dirty.txt (the FORBIDDEN_TOKEN fixture) as the "novel false
+  # positive" file the waiver covers.
+  ST_WAIVER_STATE="$TMPDIR_ST/.claude/state"
+  mkdir -p "$ST_WAIVER_STATE"
+
+  # W1 — waiver-absent-blocks: no waiver file → same as plain dirty (exit 1)
+  ST_W1_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W1_RC=$?
+
+  # W2 — waiver-honored: fresh waiver naming both clauses + Files: dirty.txt
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: dirty.txt is a self-test fixture, not a real leak"
+    echo "Files: dirty.txt"
+  } > "$ST_WAIVER_STATE/harness-hygiene-waiver-selftest.txt"
+  ST_W2_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W2_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-selftest.txt"
+
+  # W3 — waiver-stale-rejected: same valid waiver but backdated >1h → BLOCK
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: dirty.txt is a self-test fixture, not a real leak"
+    echo "Files: dirty.txt"
+  } > "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt"
+  # No `|| true`: an un-aged waiver inverts this scenario silently.
+  if ! nl_touch_age "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt" 7200; then
+    echo "self-test: could not backdate the stale-waiver fixture" >&2
+    exit 1
+  fi
+  ST_W3_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W3_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt"
+
+  # W4 — regression: waiver naming clauses but a DIFFERENT file → dirty.txt
+  # still BLOCKS (per-file scoping actually scopes, not a blanket valve)
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: some other file is a self-test fixture, not a real leak"
+    echo "Files: some-other-file.txt"
+  } > "$ST_WAIVER_STATE/harness-hygiene-waiver-otherfile.txt"
+  ST_W4_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W4_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-otherfile.txt"
+
+  # W5 — regression (pin f): non-empty waiver WITHOUT purpose-clause pair,
+  # even with a matching Files: line, does NOT open the valve → BLOCK
+  echo "Files: dirty.txt" > "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
+  ST_W5_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W5_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
+
+  # ---- Codename-pattern scenarios (nl-issue [47]) ----
+  # These run against the REAL shipped denylist (copied verbatim into a
+  # second temp repo) so they exercise the actual pattern that ships —
+  # including that the whole patterns file still compiles under
+  # `grep -iE -f` (one invalid ERE makes grep exit 2, which the scanner
+  # reads as "no match": ALL of Layer 1 would silently no-op).
+  # One product codename is also a generic electrical-engineering noun; the
+  # shipped pattern must catch it standalone (prose either case, file paths,
+  # identifiers, end-of-line) but must NOT catch the generic two-word idiom
+  # "<word> breaker" / "<word>-breaker", which false-blocked PR #91.
+  # Loud SKIP when the real denylist is not reachable (e.g. the script runs
+  # from a live ~/.claude copy outside the repo checkout).
+  ST_C_SKIP=1
+  REAL_ROOT=$(git -C "$(dirname "$SCRIPT_PATH")" rev-parse --show-toplevel 2>/dev/null || true)
+  REAL_DENYLIST="$REAL_ROOT/adapters/claude-code/patterns/harness-denylist.txt"
+  if [ -n "$REAL_ROOT" ] && [ -f "$REAL_DENYLIST" ]; then
+    ST_C_SKIP=0
+    TMPDIR_C="$TMPDIR_ST/codename-repo"
+    mkdir -p "$TMPDIR_C/adapters/claude-code/patterns"
+    cp "$REAL_DENYLIST" "$TMPDIR_C/adapters/claude-code/patterns/harness-denylist.txt"
+    (
+      cd "$TMPDIR_C" || exit 1
+      git init -q . >/dev/null 2>&1
+      git config user.email "selftest@example.com"
+      git config user.name "selftest"
+    )
+    # Positives — the codename must still trip in every real leak context:
+    printf '%s\n' 'the circuit rollout is delayed'                  > "$TMPDIR_C/c1-prose-lower.md"
+    printf '%s\n' 'The Circuit rollout starts tomorrow.'            > "$TMPDIR_C/c2-prose-upper.md"
+    printf '%s\n' 'stored under repos/circuit/config.yaml today'    > "$TMPDIR_C/c3-filepath.md"
+    printf '%s\n' 'export circuit_env=prod for the test run'        > "$TMPDIR_C/c4-identifier.md"
+    printf '%s\n' 'first enable circuit'                            > "$TMPDIR_C/c5-eol.md"
+    # Negatives — the generic idiom must NOT trip (nl-issue [47] / PR #91):
+    printf '%s\n' 'a circuit breaker guards the spawn path'         > "$TMPDIR_C/c6-idiom-space.md"
+    printf '%s\n' 'add a circuit-breaker to the retry loop'         > "$TMPDIR_C/c7-idiom-hyphen.md"
+    printf '%s\n' 'The Circuit Breaker pattern is well documented.' > "$TMPDIR_C/c8-idiom-caps.md"
+    printf '%s\n' 'plain control prose with nothing special'        > "$TMPDIR_C/c9-clean.md"
+
+    ST_C1_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c1-prose-lower.md" 2>&1); ST_C1_RC=$?
+    ST_C2_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c2-prose-upper.md" 2>&1); ST_C2_RC=$?
+    ST_C3_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c3-filepath.md" 2>&1); ST_C3_RC=$?
+    ST_C4_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c4-identifier.md" 2>&1); ST_C4_RC=$?
+    ST_C5_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c5-eol.md" 2>&1); ST_C5_RC=$?
+    ST_C6_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c6-idiom-space.md" 2>&1); ST_C6_RC=$?
+    ST_C7_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c7-idiom-hyphen.md" 2>&1); ST_C7_RC=$?
+    ST_C8_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c8-idiom-caps.md" 2>&1); ST_C8_RC=$?
+    ST_C9_OUT=$(cd "$TMPDIR_C" && bash "$SCRIPT_PATH" "c9-clean.md" 2>&1); ST_C9_RC=$?
+  fi
+
+  # ---- Machine-local secret-layer scenario (nl-issue [25] / GAP-56) ----
+  # The literal credential VALUE relocated out of the shipped denylist must
+  # never re-enter this repo's tracked tree. When the machine-local layer
+  # (~/.claude/business-patterns.d/*.txt) exists, grep every tracked file of
+  # the REAL repo for each of its patterns — zero matches required. Loud
+  # SKIP where the layer or the repo checkout is absent (e.g. CI runners).
+  ST_D_SKIP=1
+  ST_D_OUT=""
+  ST_D_RC=1
+  BPD_DIR="$HOME/.claude/business-patterns.d"
+  if [ -n "$REAL_ROOT" ] && [ -d "$BPD_DIR" ]; then
+    BPD_PATS="$TMPDIR_ST/bpd-patterns.txt"
+    cat "$BPD_DIR"/*.txt 2>/dev/null | awk '
+      { gsub(/\r$/, "") }
+      /^[[:space:]]*$/ { next }
+      /^[[:space:]]*#/ { next }
+      { print }
+    ' > "$BPD_PATS"
+    if [ -s "$BPD_PATS" ]; then
+      ST_D_SKIP=0
+      ST_D_OUT=$(git -C "$REAL_ROOT" grep -I -i -l -E -f "$BPD_PATS" 2>&1)
+      ST_D_RC=$?
+    fi
+  fi
+
   set -e
 
   FAIL=0
@@ -298,6 +486,107 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "(no project-internal shapes and no repeated non-allowlist clusters)" >&2
     echo "output was:" >&2
     echo "$ST_HEUR_CLEAN_OUT" >&2
+    FAIL=1
+  fi
+
+  # ---- Structured-waiver assertions (F.5 audit row 12 / ADR 059 D4) ----
+  # W1: waiver-absent-blocks
+  if [ "$ST_W1_RC" -ne 1 ]; then
+    echo "self-test: FAIL (w1) — waiver-absent expected exit 1, got $ST_W1_RC" >&2
+    echo "$ST_W1_OUT" >&2
+    FAIL=1
+  fi
+  # W2: waiver-honored (fresh, both clauses, Files: matches) → ALLOW
+  if [ "$ST_W2_RC" -ne 0 ]; then
+    echo "self-test: FAIL (w2) — waiver-honored expected exit 0, got $ST_W2_RC" >&2
+    echo "$ST_W2_OUT" >&2
+    FAIL=1
+  fi
+  # W3: waiver-stale-rejected (>1h old) → BLOCK
+  if [ "$ST_W3_RC" -ne 1 ]; then
+    echo "self-test: FAIL (w3) — waiver-stale expected exit 1, got $ST_W3_RC" >&2
+    echo "$ST_W3_OUT" >&2
+    FAIL=1
+  fi
+  # W4: waiver names a DIFFERENT file → dirty.txt still BLOCKS (scoping works)
+  if [ "$ST_W4_RC" -ne 1 ]; then
+    echo "self-test: FAIL (w4) — waiver for a different file must not cover dirty.txt, expected exit 1, got $ST_W4_RC" >&2
+    echo "$ST_W4_OUT" >&2
+    FAIL=1
+  fi
+  # W5: non-empty waiver without purpose-clause pair (pin f) → BLOCK
+  if [ "$ST_W5_RC" -ne 1 ]; then
+    echo "self-test: FAIL (w5) — weak waiver (no purpose-clauses) expected exit 1, got $ST_W5_RC" >&2
+    echo "$ST_W5_OUT" >&2
+    FAIL=1
+  fi
+
+  # ---- Codename-pattern assertions (nl-issue [47]) ----
+  if [ "$ST_C_SKIP" -eq 1 ]; then
+    echo "self-test: SKIP (c1-c9) — real shipped denylist not reachable from this script location; run from the repo checkout to exercise the codename-pattern scenarios" >&2
+  else
+    # c1-c5: the codename must trip, and via Layer 1 ([denylist] label) —
+    # a heuristic-caused block would be a false pass for the pattern.
+    if [ "$ST_C1_RC" -ne 1 ] || ! printf '%s' "$ST_C1_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c1) — lowercase codename in prose must trip the denylist (expected exit 1 + [denylist], got $ST_C1_RC)" >&2
+      echo "$ST_C1_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C2_RC" -ne 1 ] || ! printf '%s' "$ST_C2_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c2) — capitalized codename in prose must trip the denylist (expected exit 1 + [denylist], got $ST_C2_RC)" >&2
+      echo "$ST_C2_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C3_RC" -ne 1 ] || ! printf '%s' "$ST_C3_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c3) — codename inside a file path must trip the denylist (expected exit 1 + [denylist], got $ST_C3_RC)" >&2
+      echo "$ST_C3_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C4_RC" -ne 1 ] || ! printf '%s' "$ST_C4_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c4) — codename inside an identifier must trip the denylist (expected exit 1 + [denylist], got $ST_C4_RC)" >&2
+      echo "$ST_C4_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C5_RC" -ne 1 ] || ! printf '%s' "$ST_C5_OUT" | grep -q '\[denylist\]'; then
+      echo "self-test: FAIL (c5) — codename at end-of-line must trip the denylist (expected exit 1 + [denylist], got $ST_C5_RC)" >&2
+      echo "$ST_C5_OUT" >&2
+      FAIL=1
+    fi
+    # c6-c8: the generic "<word> breaker" idiom must NOT trip (PR #91 class)
+    if [ "$ST_C6_RC" -ne 0 ]; then
+      echo "self-test: FAIL (c6) — generic '<word> breaker' prose must NOT trip (nl-issue [47]), expected exit 0, got $ST_C6_RC" >&2
+      echo "$ST_C6_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C7_RC" -ne 0 ]; then
+      echo "self-test: FAIL (c7) — generic '<word>-breaker' prose must NOT trip (nl-issue [47]), expected exit 0, got $ST_C7_RC" >&2
+      echo "$ST_C7_OUT" >&2
+      FAIL=1
+    fi
+    if [ "$ST_C8_RC" -ne 0 ]; then
+      echo "self-test: FAIL (c8) — capitalized '<Word> Breaker' prose must NOT trip (scan is -i; nl-issue [47]), expected exit 0, got $ST_C8_RC" >&2
+      echo "$ST_C8_OUT" >&2
+      FAIL=1
+    fi
+    # c9: clean control — guards against an "everything matches" pathology
+    # (e.g. an invalid ERE degrading grep, or an over-broad new pattern).
+    if [ "$ST_C9_RC" -ne 0 ]; then
+      echo "self-test: FAIL (c9) — clean control file must pass with the full real denylist, expected exit 0, got $ST_C9_RC" >&2
+      echo "$ST_C9_OUT" >&2
+      FAIL=1
+    fi
+  fi
+
+  # ---- Machine-local secret-layer assertion (nl-issue [25] / GAP-56) ----
+  if [ "$ST_D_SKIP" -eq 1 ]; then
+    echo "self-test: SKIP (d) — machine-local ~/.claude/business-patterns.d layer absent or repo checkout not reachable (expected on CI runners)" >&2
+  elif [ "$ST_D_RC" -eq 0 ]; then
+    echo "self-test: FAIL (d) — a machine-local secret-layer pattern matches tracked file(s) in this repo; the relocated literal (or another local-layer secret) has re-entered the tree:" >&2
+    echo "$ST_D_OUT" >&2
+    FAIL=1
+  elif [ "$ST_D_RC" -ne 1 ]; then
+    echo "self-test: FAIL (d) — git grep errored (exit $ST_D_RC) while checking the machine-local secret layer against the tree:" >&2
+    echo "$ST_D_OUT" >&2
     FAIL=1
   fi
 
@@ -433,7 +722,10 @@ is_path_shape_exempt() {
     # NL-root prose files (README, CONTRIBUTING, LICENSE, SETUP,
     # CODE_OF_CONDUCT, CHANGELOG) — these are documentation, not
     # project-instance content.
-    README.md|README|CONTRIBUTING.md|LICENSE|LICENSE.md|SETUP.md|CODE_OF_CONDUCT.md|CHANGELOG.md|SECURITY.md) return 0 ;;
+    # .gitattributes added 2026-07-06 (GAP-55): its explanatory comments
+    # legitimately repeat platform terms (cluster-heuristic FP); the
+    # Layer-1 denylist still scans it.
+    README.md|README|CONTRIBUTING.md|LICENSE|LICENSE.md|SETUP.md|CODE_OF_CONDUCT.md|CHANGELOG.md|SECURITY.md|.gitattributes) return 0 ;;
     # `.pr-description.md` is a per-PR transient file consumed by
     # `gh pr create --body-file` (canonical convention per
     # `adapters/claude-code/git-hooks/pre-push-pr-template.sh`). It
@@ -531,10 +823,26 @@ is_exempt() {
   case "$path" in
     principles/harness-hygiene.md) return 0 ;;
     adapters/claude-code/rules/harness-hygiene.md) return 0 ;;
+    adapters/claude-code/doctrine/harness-hygiene-full.md) return 0 ;;
     principles/forward-compatibility.md) return 0 ;;
     adapters/claude-code/git-hooks/pre-commit) return 0 ;;
     adapters/claude-code/hooks/harness-hygiene-scan.sh) return 0 ;;
     adapters/claude-code/hooks/decisions-index-gate.sh) return 0 ;;
+  esac
+
+  # SECRET-SCAN-CI-BACKSTOP-01 fixture files. These deliberately contain
+  # AWS's own public documentation placeholder access-key ID
+  # (AKIAIOSFODNN7EXAMPLE — never a live credential) so the CI-backstop
+  # oracle can be proven locally against a real flagless-shape pattern
+  # match, matching pre-push-scan.sh's AKIA[0-9A-Z]{16} regex by design.
+  # Same class as sensitive-patterns.local.example (hooks/pre-push-scan.sh
+  # header) — a fixture that intentionally names the pattern it tests.
+  case "$path" in
+    adapters/claude-code/tests/secret-backstop-fixture-check.sh) return 0 ;;
+    # Plan archived on closure (2026-07-12) — exemption follows the file;
+    # pre-archive path kept for historical-blob rescans.
+    docs/plans/secret-scan-ci-backstop-skip.md) return 0 ;;
+    docs/plans/archive/secret-scan-ci-backstop-skip.md) return 0 ;;
   esac
 
   # Instance-specific operations tooling exemptions.
@@ -571,6 +879,43 @@ is_exempt() {
   case "$path" in
     neural-lace/workstreams-ui/web/*) return 0 ;;
     neural-lace/conversation-tree-ui/web/*) return 0 ;;
+    # scripts/ extension (2026-07-06, GAP-55 sweep, operator triage rubric):
+    # the seed/backfill scripts under scripts/ name the operator's projects
+    # for the same reason web/ does — the Repo -> Project mapping IS the
+    # feature. Same subtree, same class, same Layer-2-still-scans posture.
+    neural-lace/workstreams-ui/scripts/*) return 0 ;;
+    neural-lace/conversation-tree-ui/scripts/*) return 0 ;;
+  esac
+
+  # Public-by-design repo-architecture documentation (operator directive
+  # 2026-07-06, GAP-55 triage rubric: benign -> exempt with provenance note;
+  # genuinely-private -> redact, which was done separately in the same
+  # commit). These specific committed docs DOCUMENT this repo's own
+  # two-remote architecture, PR trail, and machine estate — the org/account
+  # names and downstream-product references ARE their subject matter, and
+  # the operator ruled the mirror public by design (docs/backlog.md
+  # HARNESS-GAP-55). File-by-file on purpose: NEW docs are NOT exempt and
+  # face the full denylist. The two synthetic-ci entries carry their
+  # archive/ twins so plan-lifecycle archiving does not un-exempt them.
+  case "$path" in
+    docs/discoveries/2026-05-27-neural-lace-fork-deep-dive-and-sync-strategy.md) return 0 ;;
+    docs/discoveries/2026-05-30-conv-tree-work-first-reframe-design.md) return 0 ;;
+    docs/discoveries/2026-06-02-pt-personal-fork-reconcile-and-adr-renumber.md) return 0 ;;
+    docs/discoveries/2026-06-03-workstreams-tree-design-misread-and-repo-tier.md) return 0 ;;
+    docs/decisions/039-conv-tree-reconciliation-over-interception.md) return 0 ;;
+    docs/plans/archive/ci-server-side-enforcement-2026-05-23.md) return 0 ;;
+    docs/plans/archive/git-bestpractices-9-item-initiative-2026-05-29.md) return 0 ;;
+    docs/plans/archive/neural-lace-mirror-automation-evidence.md) return 0 ;;
+    docs/plans/archive/scope-gate-rebase-exemption.md) return 0 ;;
+    docs/plans/archive/windows-scope-gate-drive-letter-fix.md) return 0 ;;
+    docs/plans/archive/workstreams-phase-1-2.md) return 0 ;;
+    docs/plans/archive/workstreams-phase-3.md) return 0 ;;
+    docs/plans/archive/worktree-spawn-primitive.md) return 0 ;;
+    docs/plans/archive/workstreams-ui-status-surface-redesign-2026-06-11-evidence/tasks-10-11.evidence.md) return 0 ;;
+    docs/plans/nl-overhaul-synthetic-ci-2026-07.md) return 0 ;;
+    docs/plans/nl-overhaul-synthetic-ci-2026-07-evidence.md) return 0 ;;
+    docs/plans/archive/nl-overhaul-synthetic-ci-2026-07.md) return 0 ;;
+    docs/plans/archive/nl-overhaul-synthetic-ci-2026-07-evidence.md) return 0 ;;
   esac
 
   # Directory-prefix exemptions
@@ -634,8 +979,23 @@ fi
 # ---------- scan each file -----------------------------------------------
 
 MATCH_COUNT=0
+WAIVED_COUNT=0
 MATCHES_TMP=$(mktemp)
 trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP"' EXIT
+
+# Structured-waiver files (F.5 audit row 12 / ADR 059 D4). Computed once per
+# run; state dir resolves relative to REPO_ROOT so pre-commit invocations
+# (which run with cwd=REPO_ROOT) and the self-test's own tmp repos agree.
+HHS_STATE_DIR="${CLAUDE_STATE_DIR:-$REPO_ROOT/.claude/state}"
+HHS_WAIVED_FILES_TMP=$(mktemp)
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP" "$HHS_WAIVED_FILES_TMP"' EXIT
+_hhs_waived_files "$HHS_STATE_DIR" > "$HHS_WAIVED_FILES_TMP" 2>/dev/null || true
+
+_hhs_is_waived() {
+  local path="$1"
+  [ -s "$HHS_WAIVED_FILES_TMP" ] || return 1
+  grep -qFx "$path" "$HHS_WAIVED_FILES_TMP" 2>/dev/null
+}
 
 # Read the null-delimited file list.
 while IFS= read -r -d '' rel_path; do
@@ -659,6 +1019,15 @@ while IFS= read -r -d '' rel_path; do
 
   # Skip exempt paths
   if is_exempt "$check_path"; then
+    continue
+  fi
+
+  # Skip files covered by a fresh, purpose-clause-valid structured waiver
+  # (F.5 audit row 12 / ADR 059 D4) — per-file, per-run, distinct from the
+  # durable exempt-list above.
+  if _hhs_is_waived "$check_path"; then
+    WAIVED_COUNT=$((WAIVED_COUNT + 1))
+    command -v ledger_emit >/dev/null 2>&1 && ledger_emit "harness-hygiene-scan" "waiver" "file=$check_path"
     continue
   fi
 
@@ -717,13 +1086,30 @@ fi
   echo "The following content matches patterns in the harness denylist."
   echo "Harness repos must not ship personal/business identifiers. Clean"
   echo "these up, or add the file to the scanner exemption list if the"
-  echo "match is legitimate."
+  echo "match is legitimate and durable."
   echo ""
   cat "$MATCHES_TMP"
   echo ""
-  echo "To bypass (not recommended): git commit --no-verify"
+  echo "Hatch (cost: suppresses matches on ONLY the named file(s), this run,"
+  echo "ledger-logged — never a blanket suppression of the whole scan):"
+  echo "  A genuine NOVEL false-positive (not a known-legitimate file worth"
+  echo "  a durable exemption) gets a fresh (<1h) structured waiver naming"
+  echo "  BOTH purpose clauses AND the file(s) it covers:"
+  echo "    mkdir -p $HHS_STATE_DIR && \\"
+  echo "    { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
+  echo "      printf 'Because: <Y>\\n'; \\"
+  echo "      printf 'Files: <repo-relative-path> [<repo-relative-path> ...]\\n'; \\"
+  echo "    } > $HHS_STATE_DIR/harness-hygiene-waiver-\$(date +%s).txt"
+  echo "  Re-run the commit after writing the waiver."
+  echo ""
+  echo "Durable remedy: fix the content, or add the file to is_exempt() in this"
+  echo "scanner (with a comment naming the exemption class) and stage both in the"
+  echo "same commit. (git commit --no-verify skips only the git-native hook layer,"
+  echo "cannot bypass this scan's PreToolUse wiring, and is prohibited without"
+  echo "operator say-so — constitution §7.)"
   echo "Denylist: adapters/claude-code/patterns/harness-denylist.txt"
   echo "Rule: principles/harness-hygiene.md"
+  echo "This gate: ~/.claude/hooks/harness-hygiene-scan.sh (source: adapters/claude-code/hooks/harness-hygiene-scan.sh)"
   echo "================================================================"
 } >&2
 

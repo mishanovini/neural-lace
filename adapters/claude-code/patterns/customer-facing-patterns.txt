@@ -1,0 +1,51 @@
+# customer-facing-patterns.txt — classifier pattern list for "is this
+# spawn/build-work customer-facing?"
+#
+# Extracted (NL Overhaul Wave D, task D.4) from customer-facing-review-gate.sh
+# (a retired Stop hook — see that file's header for the extraction note). The
+# gate's BLOCKING enforcement retires at D.5; the classifier patterns
+# themselves are relocated here so hooks/teammate-spawn-validator.sh can
+# source them for a NON-BLOCKING spawn-time warn without re-embedding the
+# regex logic inline.
+#
+# Format: one entry per line, "<CLASS>\t<ERE-fragment>". Blank lines and
+# lines starting with # are ignored. A consuming script joins all fragments
+# within a CLASS with "|" to build one ERE per class. Keep each fragment
+# ERE-safe (no unescaped tabs) — see customer-facing-review-gate.sh's
+# STRONG_RE / WEAK_RE / EXCLUSION_RE for the pre-extraction originals this
+# file reproduces verbatim (same match semantics, same three classes).
+#
+# Classifier semantics (unchanged from the original gate):
+#   A spawn is customer-facing iff: STRONG matches, OR (WEAK matches AND no
+#   EXCLUSION match). EXCLUSION suppresses WEAK only — it never overrides a
+#   STRONG match.
+
+# ---- STRONG signals (contractor-facing; override the platform/backend exclusion) ----
+STRONG	contractor
+STRONG	user-facing
+STRONG	user facing
+STRONG	support page
+STRONG	navigation
+STRONG	nav ia
+STRONG	src/app/\(dashboard\)
+STRONG	\(dashboard\)
+STRONG	/dashboard
+STRONG	src/components/
+STRONG	docs/support
+
+# ---- WEAK signals (customer-facing ONLY if no exclusion signal is also present) ----
+WEAK	\bpage\b
+WEAK	\bUI\b
+WEAK	/admin
+
+# ---- EXCLUSION signals (platform/backend; suppress WEAK, never STRONG) ----
+EXCLUSION	\(platform\)
+EXCLUSION	src/app/\(platform\)
+EXCLUSION	platform-admin
+EXCLUSION	platform admin
+EXCLUSION	\bsrc/lib/
+EXCLUSION	\bsrc/trigger/
+EXCLUSION	migrations/
+EXCLUSION	tests-only
+EXCLUSION	test-only
+EXCLUSION	tests only

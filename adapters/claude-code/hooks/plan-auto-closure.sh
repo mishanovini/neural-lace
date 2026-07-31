@@ -248,6 +248,7 @@ if [ "${1:-}" = "--self-test" ]; then
     (
       cd "$d" || exit 1
       git init -q
+      git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
       git config user.email "test@example.test"
       git config user.name "Test"
       git config commit.gpgsign false

@@ -46,7 +46,7 @@
 #   spawn-worktree.sh <slug> [options]        # decide + (dry-run) plan
 #   spawn-worktree.sh <slug> --apply          # decide + create if needed
 #   spawn-worktree.sh <slug> --apply --print-cd   # print ONLY the cwd on stdout
-#   spawn-worktree.sh --remove <slug> [--force]   # tear down one worktree
+#   spawn-worktree.sh --remove <slug> [--force] [--disposition <text>]  # tear down one worktree
 #   spawn-worktree.sh --self-test
 #
 # Options:
@@ -66,7 +66,14 @@
 #   --print-cd            print ONLY the absolute cwd to stdout (for `cd "$(...)"`)
 #   --remove <slug>       remove the worktree for <slug> (clean-only unless --force)
 #   --force               with --remove: remove even with uncommitted changes
+#   --disposition <text>  with --remove: label recorded on the closed registration
+#                         (e.g. "merged", "preserved-unmerged"); default "removed"
 #   --quiet               suppress the human-readable decision narration
+#   --plan <slug>         no-orphan attribution (T4): plan this create is for,
+#                         recorded on the registration at create time
+#   --task <id>           no-orphan attribution (T4): plan task id, ditto
+#   --who <label>         no-orphan attribution (T4): who/what is dispatching
+#                         this create (e.g. an agent name); ditto
 #
 # Exit codes:
 #   0  ran ok (decision emitted; dry-run or apply or remove)
@@ -78,6 +85,19 @@
 # empty leaf dir whose final rmdir fails with "Permission denied" because a
 # file handle is held transiently. De-registration is the success criterion;
 # the husk is harmless and best-effort rmdir'd.
+#
+# ── No-orphan registration (accountable-estate T4) ──────────────────────────
+# design docs/designs/accountable-estate-2026-07-27.md §6c: "branches/worktrees
+# are REGISTERED at creation ... and de-registered by the closer. Anything
+# existing without a ledger link is definitionally unattributable." A
+# successful --apply create registers who/what/plan/task via
+# hooks/lib/estate-registration-lib.sh (best-effort, fail-open — see the
+# REGISTRATION SPLICE below); a successful --remove (or the close-worktree.sh
+# closer, which calls --remove for its worktree-teardown step) closes that
+# same registration with a disposition. This is ADDITIVE to T3's admission
+# splice (which records dispatch-time PRESSURE observations, not attribution)
+# — the two splices answer different questions and neither depends on the
+# other; either can fail without affecting this script's own behavior.
 set -u
 
 # Absolute path to this script, captured BEFORE any cd (the self-test cds into
@@ -96,6 +116,10 @@ QUIET=0
 REMOVE_SLUG=""
 FORCE=0
 RUN_SELF_TEST=0
+REG_PLAN=""
+REG_TASK=""
+REG_WHO=""
+REMOVE_DISPOSITION=""
 
 die_usage() { echo "spawn-worktree.sh: $1" >&2; echo "see header for usage" >&2; exit 2; }
 log() { [ "$QUIET" = 1 ] || echo "$@" >&2; }
@@ -113,7 +137,20 @@ while [ $# -gt 0 ]; do
     --quiet) QUIET=1 ;;
     --remove) shift; [ $# -gt 0 ] || die_usage "--remove needs a slug"; REMOVE_SLUG="$1" ;;
     --force) FORCE=1 ;;
-    --self-test) RUN_SELF_TEST=1 ;;
+    --disposition) shift; [ $# -gt 0 ] || die_usage "--disposition needs a value"; REMOVE_DISPOSITION="$1" ;;
+    --plan) shift; [ $# -gt 0 ] || die_usage "--plan needs a value"; REG_PLAN="$1" ;;
+    --task) shift; [ $# -gt 0 ] || die_usage "--task needs a value"; REG_TASK="$1" ;;
+    --who) shift; [ $# -gt 0 ] || die_usage "--who needs a value"; REG_WHO="$1" ;;
+    # HARNESS_SELFTEST=1 is exported here because this script carries an
+    # adm_admit splice (see the ADMISSION OBSERVATION SPLICE below). Without it,
+    # admission-lib's sandbox guard is INERT for this host and every --self-test
+    # run appends fabricated `source=worktree` rows to the operator's REAL
+    # would-block ledger — the exact artifact T3's outcome metric is defined
+    # over, and indistinguishable from genuine builder load once written.
+    # PROVEN by task-verifier 2026-07-29: 32 -> 34 lines per run without this,
+    # 34 -> 34 with it. workstreams-emit.sh:120 and session-resumer.sh:385
+    # already do this; this host was the one that did not.
+    --self-test) RUN_SELF_TEST=1; export HARNESS_SELFTEST=1 ;;
     -h|--help) sed -n '2,75p' "$0"; exit 0 ;;
     -*) die_usage "unknown argument: $1" ;;
     *) [ -z "$SLUG" ] && SLUG="$1" || die_usage "unexpected argument: $1" ;;
@@ -211,6 +248,7 @@ remove_worktree() {
     log "spawn-worktree.sh: FAILED to de-register $wt"; return 1
   fi
   log "spawn-worktree.sh: removed worktree $wt"
+  local branch_disposition="removed"
   # Safe-delete the branch: `-d` (never `-D`) only succeeds if the branch is
   # merged, so unique unmerged work is never lost. A leftover unmerged branch
   # is left in place and reported.
@@ -219,8 +257,26 @@ remove_worktree() {
       log "spawn-worktree.sh: deleted merged branch $br"
     else
       log "spawn-worktree.sh: kept branch $br (has unmerged commits — delete manually with 'git branch -D $br' if intended)"
+      branch_disposition="branch-kept-unmerged"
     fi
   fi
+
+  # ---- NO-ORPHAN DE-REGISTRATION (accountable-estate T4) -------------------
+  # Closes the registration this same slug's create opened (see the
+  # REGISTRATION SPLICE below), whether that create went through THIS script
+  # or a caller registered it some other way. Best-effort, fail-open: this is
+  # the removal's own success path, already committed by the time we reach
+  # here, so a broken registration lib must never be reported as a removal
+  # failure. reg_close is itself a no-op (rc 0) for a slug that was never
+  # registered — the honest "pre-existing, unattributed worktree" case this
+  # slice's outcome metric names, not a bug.
+  {
+    local _sw_hooks_dir
+    _sw_hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks"
+    source "$_sw_hooks_dir/lib/estate-registration-lib.sh" 2>/dev/null \
+      && declare -F reg_close >/dev/null 2>&1 \
+      && reg_close "$slug" "${REMOVE_DISPOSITION:-$branch_disposition}" >/dev/null 2>&1
+  } || true
   return 0
 }
 
@@ -228,6 +284,14 @@ remove_worktree() {
 if [ "$RUN_SELF_TEST" = 1 ]; then
   set -e
   T=$(mktemp -d); trap 'rm -rf "$T" 2>/dev/null || true' EXIT
+  # Pin the registration sandbox to ONE fixed directory for the whole suite
+  # (an explicit REG_STATE_DIR always wins over estate-registration-lib.sh's
+  # own HARNESS_SELFTEST-keyed default, which is scoped per-PID and would
+  # otherwise put every one of this suite's `bash "$SCRIPT_ABS" ...`
+  # re-invocations — each its own process — in a DIFFERENT throwaway dir,
+  # making a create-then-remove registration check unobservable across two
+  # subprocess calls). Exported so every re-invocation below inherits it.
+  export REG_STATE_DIR="$T/estate"
   R="$T/repo"; git init -q -b master "$R"; cd "$R"
   R=$(git rev-parse --show-toplevel)   # canonical git form the script emits
   git config user.email t@example.com; git config user.name t
@@ -250,12 +314,21 @@ if [ "$RUN_SELF_TEST" = 1 ]; then
   echo "$OUT" | grep -q "DECISION: no-isolation" || fail "commits+alone should be no-isolation" "$OUT"
 
   # 4. branch-switch + --apply -> CREATES worktree on session/<slug> from base
-  OUT=$(bash "$SCRIPT_ABS" build-feature --type branch-switch --repo "$R" --apply --print-cd 2>/dev/null)
+  OUT=$(bash "$SCRIPT_ABS" build-feature --type branch-switch --repo "$R" --apply --print-cd --plan demo-plan --task T4-selftest --who demo-agent 2>/dev/null)
   [ -d "$R/.claude/worktrees/build-feature" ] || fail "apply should create the worktree dir" "$OUT"
   git -C "$R" worktree list --porcelain | grep -q "build-feature" || fail "apply should register the worktree" "$OUT"
   WB=$(git -C "$R/.claude/worktrees/build-feature" symbolic-ref --short HEAD)
   [ "$WB" = "session/build-feature" ] || fail "default branch should be session/<slug>, got $WB" "$WB"
   [ "$OUT" = "$R/.claude/worktrees/build-feature" ] || fail "--print-cd should print the worktree path" "$OUT"
+
+  # 4b. no-orphan registration (T4): create wrote an OPEN registration with
+  # the supplied plan/task/who attribution.
+  REGF="$REG_STATE_DIR/registrations/build-feature.json"
+  [ -f "$REGF" ] || fail "no-orphan registration: expected $REGF after create" "$(ls -la "$REG_STATE_DIR/registrations" 2>&1)"
+  grep -q '"plan":"demo-plan"' "$REGF" || fail "registration missing plan attribution" "$(cat "$REGF")"
+  grep -q '"task":"T4-selftest"' "$REGF" || fail "registration missing task attribution" "$(cat "$REGF")"
+  grep -q '"who":"demo-agent"' "$REGF" || fail "registration missing who attribution" "$(cat "$REGF")"
+  grep -q '"branch":"session/build-feature"' "$REGF" || fail "registration missing branch" "$(cat "$REGF")"
 
   # 5. idempotent: re-apply same slug reuses (no error), prints same cwd
   OUT=$(bash "$SCRIPT_ABS" build-feature --type branch-switch --repo "$R" --apply --print-cd 2>/dev/null)
@@ -265,19 +338,49 @@ if [ "$RUN_SELF_TEST" = 1 ]; then
   OUT=$(cd "$R/.claude/worktrees/build-feature" && bash "$SCRIPT_ABS" other --type commits --print-cd 2>/dev/null)
   [ "$OUT" = "$R/.claude/worktrees/build-feature" ] || fail "inside a worktree should short-circuit to cwd" "$OUT"
 
-  # 7. --branch override
+  # 7. --branch override (deliberately NO --plan/--task/--who: proves the
+  # no-orphan registration still writes a usable record — slug/path/branch —
+  # even when the caller supplies zero attribution)
   OUT=$(bash "$SCRIPT_ABS" custom --type commits --branch feat/my-custom --repo "$R" --apply --print-cd 2>/dev/null)
   CB=$(git -C "$R/.claude/worktrees/custom" symbolic-ref --short HEAD)
   [ "$CB" = "feat/my-custom" ] || fail "--branch override should set branch, got $CB" "$CB"
+  REGF="$REG_STATE_DIR/registrations/custom.json"
+  [ -f "$REGF" ] || fail "no-orphan registration: expected $REGF even with zero attribution flags" "$(ls -la "$REG_STATE_DIR/registrations" 2>&1)"
+  grep -q '"branch":"feat/my-custom"' "$REGF" || fail "registration missing branch for zero-attribution create" "$(cat "$REGF")"
+  grep -q '"plan"' "$REGF" && fail "registration should carry no plan label when none was given" "$(cat "$REGF")" || true
 
   # 8. --remove tears it down
   bash "$SCRIPT_ABS" --remove custom --repo "$R" --quiet 2>/dev/null
   git -C "$R" worktree list --porcelain | grep -q "worktrees/custom" && fail "--remove should de-register" "" || true
 
+  # 8b. no-orphan DE-registration (T4): --remove closed the registration
+  # this same slug's create opened — moved out of the open dir, disposition
+  # recorded (custom's branch has no unique commits beyond base, so `branch
+  # -d` succeeds -> disposition "removed").
+  [ -f "$REGF" ] && fail "registration still OPEN after --remove (orphan de-registration did not fire)" "$(cat "$REGF")"
+  CLOSEDF="$REG_STATE_DIR/registrations/closed/custom.json"
+  [ -f "$CLOSEDF" ] || fail "expected a CLOSED registration record at $CLOSEDF after --remove" "$(ls -la "$REG_STATE_DIR/registrations/closed" 2>&1)"
+  grep -q '"disposition":"removed"' "$CLOSEDF" || fail "closed registration missing disposition=removed (merged-branch remove default)" "$(cat "$CLOSEDF")"
+
+  # 8c. --remove --disposition <text> on an UNMERGED branch: the branch is
+  # kept (git branch -d refuses), and the explicit --disposition wins over
+  # the auto branch_disposition label.
+  bash "$SCRIPT_ABS" review-me --type commits --repo "$R" --apply --print-cd >/dev/null 2>&1
+  echo unmerged > "$R/.claude/worktrees/review-me/u.txt"
+  git -C "$R/.claude/worktrees/review-me" add u.txt
+  git -C "$R/.claude/worktrees/review-me" -c commit.gpgsign=false commit -qm "unmerged work"
+  bash "$SCRIPT_ABS" --remove review-me --repo "$R" --disposition "preserved-for-review" --quiet 2>/dev/null
+  git -C "$R" worktree list --porcelain | grep -q "worktrees/review-me" && fail "--remove of a clean-but-unmerged worktree should still de-register the WORKTREE" "" || true
+  git -C "$R" rev-parse --verify --quiet refs/heads/session/review-me >/dev/null 2>&1 \
+    || fail "unmerged branch should be KEPT (git branch -d refuses unmerged work)" ""
+  CLOSED2="$REG_STATE_DIR/registrations/closed/review-me.json"
+  [ -f "$CLOSED2" ] || fail "expected a closed registration for review-me" "$(ls -la "$REG_STATE_DIR/registrations/closed" 2>&1)"
+  grep -q '"disposition":"preserved-for-review"' "$CLOSED2" || fail "explicit --disposition should override the auto branch-kept label" "$(cat "$CLOSED2")"
+
   # 9. bad --type is a usage error (exit 2)
   if bash "$SCRIPT_ABS" x --type bogus --repo "$R" >/dev/null 2>&1; then fail "bad --type should exit non-zero" ""; fi
 
-  echo "SELFTEST PASS (read-only skips; commits+unknown isolate; commits+alone skip; apply creates session/<slug>; idempotent reuse; already-isolated short-circuit; --branch override; --remove; bad-type rejected)"
+  echo "SELFTEST PASS (read-only skips; commits+unknown isolate; commits+alone skip; apply creates session/<slug>; idempotent reuse; already-isolated short-circuit; --branch override; --remove; bad-type rejected; no-orphan registration on create incl. zero-attribution; no-orphan de-registration on remove incl. explicit --disposition override on a kept-unmerged branch)"
   exit 0
 fi
 
@@ -345,6 +448,39 @@ if ! git -C "$MAIN" worktree list --porcelain | grep -qxF "worktree $WT"; then
   echo "spawn-worktree.sh: failed to create worktree at $WT (base=$BASE_REF, branch=$BRANCH)" >&2
   exit 1
 fi
+
+# ---- ADMISSION OBSERVATION SPLICE (accountable-estate T3) -------------------
+# Third dispatch path: a worktree created here is a builder about to run, so it
+# is real estate load and belongs in the same would-block ledger as tool
+# dispatches and resumer spawns. Placed AFTER the create succeeds so the ledger
+# counts worktrees that actually exist, not attempts. OBSERVE MODE: never
+# blocks, never changes this script's exit code — a broken lib leaves
+# spawn-worktree byte-identical in behavior.
+{
+  _sw_hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks"
+  source "$_sw_hooks_dir/lib/admission-lib.sh" 2>/dev/null \
+    && declare -F adm_admit >/dev/null 2>&1 \
+    && adm_admit worktree kind=builder >/dev/null 2>&1
+} || true
+
+# ---- NO-ORPHAN REGISTRATION SPLICE (accountable-estate T4) -----------------
+# design §6c: "branches/worktrees are REGISTERED at creation ... Anything
+# existing without a ledger link is definitionally unattributable." Placed
+# AFTER the create succeeds (same reasoning as the admission splice above:
+# count what exists, not attempts) and is INDEPENDENT of it — either splice
+# can fail without affecting the other or this script's own exit code. A
+# missing --plan/--task/--who is not an error: the registration is still
+# written (slug/path/branch/created_at/host are always known), just with
+# fewer attribution labels — a caller that supplies none of them still gets
+# a strictly better answer than "no record at all" for "who created this."
+{
+  _sw_hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks"
+  source "$_sw_hooks_dir/lib/estate-registration-lib.sh" 2>/dev/null \
+    && declare -F reg_register >/dev/null 2>&1 \
+    && reg_register "$SLUG" "$WT" "$BRANCH" \
+         ${REG_PLAN:+plan="$REG_PLAN"} ${REG_TASK:+task="$REG_TASK"} ${REG_WHO:+who="$REG_WHO"} \
+         >/dev/null 2>&1
+} || true
 log "  CREATED: $WT  (branch $BRANCH from $BASE_REF)"
 log "  cd into it: cd \"$WT\""
 log "  at session end, tear down: spawn-worktree.sh --remove $SLUG   (or rely on worktree-prune.sh)"

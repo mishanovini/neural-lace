@@ -1,0 +1,6 @@
+{
+  "_comment": "Copy to people.json (gitignored, per-machine) and replace with your real machine hostnames. Keys = machine hostnames (matched case-insensitively against each peer export's <hostname>.json), values = the person's display name. The peer view groups machines by person ('Alice: desktop + laptop'); any hostname NOT listed here renders under the named 'unassigned' group — never a guessed person. Same two-layer config convention as projects.example.json/projects.json.",
+  "DESKTOP-EXAMPLE1": "Alice",
+  "laptop-example2": "Alice",
+  "workstation-example3": "Bob"
+}

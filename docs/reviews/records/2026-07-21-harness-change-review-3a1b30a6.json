@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260721-3a1b30a6",
+  "created_at": "2026-07-21T02:47:20Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/plans/cockpit-roadmap-redesign.md",
+  "change_ref": {
+    "commit_sha": "71c4736e7c513197c1a1f4a851eca6ec04fbb09e",
+    "branch": "build/cockpit-health-int"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/needs-you.sh",
+      "blob_sha": "7096d601869b5091b397f4ee9678ffd9c0892d84"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-digest.sh",
+      "blob_sha": "a984c4eaa26165cc2fd8b20816f4e849d7cb7194"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "The A1 contract is correctly implemented (the critical check passes: no mechanical caller can lose a waiting item). Bundle the two-line digest S9 --mechanical fix and the three doc updates into the same landing, then all seven can deploy and the plan can close.",
+    "findings_summary": "needs-you.sh A1 block-promotion (interactive BLOCKS, mechanical stores-and-quarantines, ledger-never-rejects VERIFIED); coupling REFORMULATE resolved: digest S9 fixture --mechanical (this commit) + 3 doc honesty updates. Full-suite re-run blocked by env process-load; reviewer's interactive-block probe PROVEN rc=1."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

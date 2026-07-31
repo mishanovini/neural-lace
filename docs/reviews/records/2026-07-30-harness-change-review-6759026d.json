@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-6759026d",
+  "created_at": "2026-07-30T00:28:14Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group hooks-1 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/evidence-before-fix-gate.sh",
+      "blob_sha": "b25a7b544b039d44371caeaba2d8da933bf34f46"
+    },
+    {
+      "path": "adapters/claude-code/hooks/prd-validity-gate.sh",
+      "blob_sha": "63c8e77f943e03bdc783f844036a6e2e88b31c35"
+    },
+    {
+      "path": "adapters/claude-code/hooks/spec-freeze-gate.sh",
+      "blob_sha": "6c5e55533f6e50a9fab5a66c2c75f3b777e5fa29"
+    },
+    {
+      "path": "adapters/claude-code/hooks/local-edit-gate.sh",
+      "blob_sha": "bfe85419bb544ae7d5295f7e1952b2a7d67d25c4"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS: self-test-branch-only changes — HARNESS_SELFTEST=1 sandbox arming (guard verified real in lib/signal-ledger.sh:116 and behaviorally via a clean-HOME probe that left $HOME/.claude empty) plus portable fixture aging via lib/portable-time.sh nl_touch_age (lib verified present, no GNU date -d or touch -d remains); self-tests re-run by the reviewer under /bin/bash 3.2.57: evidence-before-fix-gate 18/0, prd-validity-gate 6/0, spec-freeze-gate 11/0, local-edit-gate 9/0 including the new S5b 29-min inside-TTL negative control that pins the 30-min contract",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer agent (hooks-1 sweep)",
+  "payload": {}
+}

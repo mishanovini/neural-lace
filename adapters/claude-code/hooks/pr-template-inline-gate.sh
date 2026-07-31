@@ -1,6 +1,20 @@
 #!/usr/bin/env bash
 # pr-template-inline-gate.sh
 #
+# DEMOTED to non-blocking warn at NL Overhaul Wave D.6 (§D.0.4 / §D.6
+# item 8, 2026-07-02): every path that used to `exit 1` (block) now
+# exits 0 and instead emits a hookSpecificOutput.additionalContext warn
+# (the sanctioned channel that reaches model context) plus a
+# signal-ledger `warn` event. Detection/parsing logic (extract_body_
+# from_command, the validator invocation) is UNCHANGED — only the
+# verdict emission changed from block to warn. manifest.json's
+# `blocking` flag for this unit flips to false in the same wave (D.5
+# template/manifest cutover). Note: the SERVER-SIDE `PR Template Check`
+# CI workflow and `pre-push-pr-template.sh` (git pre-push hook, separate
+# mechanism) are UNAFFECTED by this demotion — they still enforce; this
+# hook's local PreToolUse early-warning just no longer blocks the tool
+# call itself.
+#
 # Closes HARNESS-GAP-40 — local-side validation of inline PR bodies passed
 # to `gh pr create` / `gh pr edit` via `--body`, `--body=`, or `--body-file`.
 #
@@ -30,6 +44,14 @@
 #   --body=<value>          (both quoted + bare-token shapes)
 #   --body "$(cat <<EOF ... EOF)" and <<'EOF' / <<"EOF" / arbitrary tag
 #   --body-file <path>      (relative path resolves vs repo root)
+#   --body-file "$VAR/path" (unexpanded shell construct — nl-issue 59:
+#                           conservative env-only expansion is attempted
+#                           ($VAR/${VAR}/leading ~, from the hook's own
+#                           environment; NEVER command substitution). If
+#                           expansion resolves to an existing file it is
+#                           validated normally; otherwise the existence
+#                           test is SKIPPED (the gate cannot statically
+#                           know the runtime path) — no false WARN.
 #   --body-file -           (stdin — not supported; BLOCKS with hint)
 #   --fill                  (gh derives body from commit messages) → PASS
 #                           through (the existing pre-push hook handles
@@ -65,6 +87,83 @@
 
 set -eo pipefail
 
+_PTIG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/signal-ledger.sh
+source "$_PTIG_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# ============================================================
+# _demote_warn <title> <body> — emit the demoted-to-warn verdict:
+# hookSpecificOutput.additionalContext JSON on stdout (reaches model
+# context) + a human-readable copy on stderr + a signal-ledger warn
+# event, then exit 0 (never blocks).
+# ============================================================
+_demote_warn() {
+  local title="$1"
+  local body="$2"
+  printf '%s\n' "$body" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg ctx "[pr-template-inline-gate] WARN (demoted from block, Wave D.6): ${title}
+${body}" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
+  fi
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "pr-template-inline-gate" "warn" "$title"
+  exit 0
+}
+
+# ============================================================
+# _ptig_expand_path <path> — conservative env-only expansion (nl-issue 59).
+#
+# Expands a leading `~` (to $HOME) and `$VAR` / `${VAR}` occurrences
+# where VAR is defined in the hook's own environment. NEVER performs
+# command substitution (`$(...)` or backticks → refuse immediately).
+# Echoes the expanded path and returns 0 only when NO unexpanded
+# construct remains; returns 1 when any construct is unresolvable
+# (undefined var, `~user` form, `${VAR:-...}` operators, `$(`, backtick).
+# ============================================================
+_ptig_expand_path() {
+  local p="$1"
+  # Command substitution: never attempt (could hide arbitrary commands).
+  if [[ "$p" == *'$('* ]] || [[ "$p" == *'`'* ]]; then
+    return 1
+  fi
+  # Leading tilde: bare `~` or `~/...` → $HOME; `~user` form → unresolvable.
+  if [[ "${p:0:1}" == "~" ]]; then
+    if [[ "$p" == "~" ]] || [[ "${p:1:1}" == "/" ]]; then
+      p="${HOME}${p:1}"
+    else
+      return 1
+    fi
+  fi
+  local guard=0 m var
+  while [[ "$p" == *'$'* ]]; do
+    guard=$((guard + 1))
+    if [[ $guard -gt 16 ]]; then
+      return 1
+    fi
+    if [[ "$p" =~ \$\{[A-Za-z_][A-Za-z0-9_]*\} ]]; then
+      m="${BASH_REMATCH[0]}"
+      var="${m:2:${#m}-3}"
+    elif [[ "$p" =~ \$[A-Za-z_][A-Za-z0-9_]* ]]; then
+      m="${BASH_REMATCH[0]}"
+      var="${m:1}"
+    else
+      # A `$` that is not a plain $VAR/${VAR} reference (e.g. ${VAR:-x},
+      # trailing `$`) — unresolvable conservatively.
+      return 1
+    fi
+    if [[ -z "${!var+x}" ]]; then
+      # Variable not defined in the hook's environment.
+      return 1
+    fi
+    # Replacement quoted: under bash>=5.2 patsub_replacement, an unquoted
+    # replacement re-expands `&` to the matched pattern (harness-reviewer
+    # finding, proven on this machine's bash 5.2.37).
+    p="${p/"$m"/"${!var}"}"
+  done
+  printf '%s\n' "$p"
+  return 0
+}
+
 # ============================================================
 # extract_body_from_command — parse the inline body from the
 # tokenized `gh pr create/edit` invocation.
@@ -72,6 +171,9 @@ set -eo pipefail
 # Echoes the body content to stdout. Returns 0 on successful
 # extraction OR 0 with empty stdout when no body source is present.
 # Returns 2 on a body-file path that does not exist or stdin (`-`).
+# Returns 3 (BODY_FILE_UNEXPANDABLE sentinel) on a body-file path
+# containing an unexpanded shell construct the hook cannot resolve
+# from its own environment — caller skips the existence test.
 #
 # Implementation note: uses bash parameter expansion (not sed) because
 # `sed` operates line-by-line and cannot capture multi-line `"..."`
@@ -120,6 +222,31 @@ extract_body_from_command() {
       # is the hook-input JSON, not the user's PR body. Block with hint.
       printf 'STDIN_NOT_SUPPORTED\n'
       return 2
+    fi
+    # nl-issue 59: the extracted path is the UNEXPANDED command string.
+    # A path containing a shell construct (`$`, backtick, leading `~`)
+    # cannot be `-f`-tested as-is — doing so false-WARNed "does not
+    # exist" while the actual gh call succeeded. Try conservative
+    # env-only expansion; validate normally if it resolves to an
+    # existing file, otherwise SKIP the existence test entirely.
+    if [[ "$body_file" == *'$'* ]] || [[ "$body_file" == *'`'* ]] || [[ "${body_file:0:1}" == "~" ]]; then
+      local expanded=""
+      if expanded=$(_ptig_expand_path "$body_file"); then
+        local eresolved="$expanded"
+        if [[ "${eresolved:0:1}" != "/" ]] && [[ ! "${eresolved:1:1}" == ":" ]]; then
+          eresolved="$repo_root/$eresolved"
+        fi
+        if [[ -f "$eresolved" ]]; then
+          printf '[pr-template-inline-gate] validated after env expansion: %s -> %s\n' "$body_file" "$eresolved" >&2
+          cat "$eresolved"
+          return 0
+        fi
+      fi
+      # Unresolvable (undefined var / $(...) / ~user) or the expanded
+      # path is absent from the HOOK's view — the runtime shell may
+      # expand differently. Never false-WARN; downstream gh + CI validate.
+      printf 'BODY_FILE_UNEXPANDABLE\t%s\n' "$body_file"
+      return 3
     fi
     # Resolve relative to repo root if not absolute (POSIX or Windows-style).
     local resolved="$body_file"
@@ -217,11 +344,32 @@ extract_body_from_command() {
 # ============================================================
 
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (perf-ledger, signal-ledger) for
+  # this whole run and EXPORT it so re-invocations of $SCRIPT inherit it.
+  # Without it those libs resolve their PRODUCTION paths and this self-test
+  # appends to the operator's real ~/.claude/state/signal-ledger.jsonl. PROVEN
+  # behaviorally: clean-HOME probe created .claude/state/signal-ledger.jsonl
+  # without it, nothing under .claude/ with it.
+  export HARNESS_SELFTEST=1
   SCRIPT="${BASH_SOURCE[0]}"
 
-  # Resolve validator library (used by all self-test cases).
-  # In the worktree where this script lives, .github/ is at the repo root.
-  REPO_ROOT="$(cd "$(dirname "$SCRIPT")/../../.." && pwd)"
+  # Resolve validator library (used by all self-test cases). Mirrors the
+  # runtime-path resolution below (git rev-parse --show-toplevel from cwd —
+  # same idiom sibling vaporware-volume-gate.sh uses) so this works from any
+  # cwd. A fixed-depth `dirname "$SCRIPT"/../../..` hop is NOT used here: it
+  # silently resolves to the wrong directory when invoked from the LIVE
+  # mirror (~/.claude/hooks — doctor --full does this), since the mirror has
+  # no repo three levels up (it walked to $HOME's parent, e.g.
+  # /c/Users/.github/... instead of the actual repo's .github/). Fall back to
+  # nl-paths' self-location-based resolver (which also tries git, from the
+  # SCRIPT's own directory rather than cwd, plus config-file/probe-list
+  # fallbacks) when cwd isn't inside a git repo at all.
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [[ ! -f "$REPO_ROOT/.github/scripts/validate-pr-template.sh" ]] && [[ -f "$_PTIG_SELF_DIR/lib/nl-paths.sh" ]]; then
+    # shellcheck disable=SC1091
+    source "$_PTIG_SELF_DIR/lib/nl-paths.sh"
+    REPO_ROOT="$(nl_repo_root)"
+  fi
   VALIDATOR_LIB="$REPO_ROOT/.github/scripts/validate-pr-template.sh"
   if [[ ! -f "$VALIDATOR_LIB" ]]; then
     echo "self-test: validator library missing at $VALIDATOR_LIB" >&2
@@ -230,6 +378,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
 
   TMPDIR_TEST=$(mktemp -d)
   trap 'rm -rf "$TMPDIR_TEST"' EXIT
+
+  # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): every scenario
+  # below re-invokes this script as a REAL child `bash "$SCRIPT"`
+  # subprocess. Without this export every self-test run would write
+  # dozens of real lines into the operator's actual ~/.claude/state/perf
+  # ledger.
+  export PERF_LEDGER_DIR="$TMPDIR_TEST/perf"
 
   VALID_BODY='## Summary
 
@@ -259,45 +414,71 @@ No template sections at all here.'
 
   FAILED=0
 
+  # Wave D.6 (§D.6 item 8): every path that used to BLOCK (exit 1) now
+  # exits 0 and instead emits a WARN. `expected_warn` below therefore
+  # means "1=detection should still fire (now as a WARN in stderr, exit
+  # STILL 0), 0=no detection, silent allow". Every scenario now expects
+  # exit_code==0 — the distinguishing signal is presence/absence of the
+  # WARN marker in stderr, which proves detection logic is unchanged.
   run_scenario() {
     local name="$1"
     local command_str="$2"
-    local expected_block="$3"   # 1=expect block, 0=expect allow
+    local expected_warn="$3"   # 1=expect WARN detected (stderr), 0=silent allow
     local label="$4"
+    local required_marker="${5:-}"  # optional: stderr must contain this string
 
     local input
     input=$(jq -nc --arg cmd "$command_str" '{tool_input: {command: $cmd}}')
 
     local exit_code=0
-    PR_TEMPLATE_INLINE_GATE_TEST_REPO_ROOT="$REPO_ROOT" \
-      bash "$SCRIPT" <<<"$input" >/dev/null 2>&1 || exit_code=$?
+    local stderr_out
+    stderr_out=$(PR_TEMPLATE_INLINE_GATE_TEST_REPO_ROOT="$REPO_ROOT" \
+      bash "$SCRIPT" <<<"$input" 2>&1 >/dev/null) || exit_code=$?
 
-    if [[ "$expected_block" == "1" ]]; then
-      if [[ $exit_code -ne 0 ]]; then
-        echo "self-test ($name) [$label]: BLOCK (expected, exit=$exit_code)" >&2
+    local warn_present=0
+    if printf '%s' "$stderr_out" | grep -q "WARN (demoted from block\|WARN, not a block\|not supported\|does not exist"; then
+      warn_present=1
+    fi
+
+    if [[ $exit_code -ne 0 ]]; then
+      echo "self-test ($name) [$label]: FAIL — expected exit=0 always post-demotion, got exit=$exit_code" >&2
+      FAILED=1
+      return
+    fi
+
+    if [[ -n "$required_marker" ]] && ! printf '%s' "$stderr_out" | grep -qF "$required_marker"; then
+      echo "self-test ($name) [$label]: FAIL — stderr missing required marker '$required_marker'" >&2
+      FAILED=1
+      return
+    fi
+
+    if [[ "$expected_warn" == "1" ]]; then
+      if [[ "$warn_present" == "1" ]]; then
+        echo "self-test ($name) [$label]: ALLOW + WARN detected (expected)" >&2
       else
-        echo "self-test ($name) [$label]: ALLOW (expected BLOCK)" >&2
+        echo "self-test ($name) [$label]: ALLOW but NO WARN detected (expected WARN)" >&2
         FAILED=1
       fi
     else
-      if [[ $exit_code -eq 0 ]]; then
-        echo "self-test ($name) [$label]: ALLOW (expected)" >&2
+      if [[ "$warn_present" == "0" ]]; then
+        echo "self-test ($name) [$label]: ALLOW, silent (expected)" >&2
       else
-        echo "self-test ($name) [$label]: BLOCK (expected ALLOW, exit=$exit_code)" >&2
+        echo "self-test ($name) [$label]: ALLOW but unexpected WARN detected" >&2
         FAILED=1
       fi
     fi
   }
 
-  # T1: Valid inline --body with all sections → PASS
+  # T1: Valid inline --body with all sections → PASS, silent
   run_scenario "T1-valid-inline-body" \
     "gh pr create --title \"test\" --body \"$VALID_BODY\"" \
-    0 "valid --body with all sections → ALLOW"
+    0 "valid --body with all sections → ALLOW, silent"
 
-  # T2: --body missing required sections → BLOCKS
+  # T2 (Wave D.6 demotion): --body missing required sections → ALLOW +
+  # WARN detected (was BLOCK exit 1 pre-demotion).
   run_scenario "T2-invalid-inline-body" \
     "gh pr create --title \"test\" --body \"$INVALID_BODY_NO_SUMMARY\"" \
-    1 "--body missing mechanism section → BLOCK"
+    1 "--body missing mechanism section → ALLOW + WARN (demoted)"
 
   # T3: --body via heredoc form → parses correctly, validates valid body
   # Note: command is delivered as the literal string the shell would receive
@@ -315,15 +496,17 @@ EOF
     "gh pr create --title test --body-file $TMPDIR_TEST/valid-body.md" \
     0 "--body-file <valid> → ALLOW"
 
-  # T5: --body-file with invalid content → BLOCKS
+  # T5 (Wave D.6 demotion): --body-file with invalid content → ALLOW +
+  # WARN detected (was BLOCK exit 1 pre-demotion).
   run_scenario "T5-body-file-invalid" \
     "gh pr create --title test --body-file $TMPDIR_TEST/invalid-body.md" \
-    1 "--body-file <invalid> → BLOCK"
+    1 "--body-file <invalid> → ALLOW + WARN (demoted)"
 
-  # T6: --body-file - (stdin) → BLOCKS with stdin-not-supported message
+  # T6 (Wave D.6 demotion): --body-file - (stdin) → ALLOW + WARN with
+  # stdin-not-supported message (was BLOCK exit 1 pre-demotion).
   run_scenario "T6-body-file-stdin" \
     "gh pr create --title test --body-file -" \
-    1 "--body-file - (stdin) → BLOCK with stdin-not-supported"
+    1 "--body-file - (stdin) → ALLOW + WARN stdin-not-supported (demoted)"
 
   # T7: gh pr create with NO --body/--body-file/--fill → PASS through
   run_scenario "T7-no-body-source" \
@@ -335,10 +518,11 @@ EOF
     "gh pr create --title test --fill" \
     0 "--fill flag → ALLOW (pass-through)"
 
-  # T9: gh pr edit <N> --body missing sections → BLOCKS
+  # T9 (Wave D.6 demotion): gh pr edit <N> --body missing sections →
+  # ALLOW + WARN detected (was BLOCK exit 1 pre-demotion).
   run_scenario "T9-edit-invalid" \
     "gh pr edit 42 --body \"$INVALID_BODY_NO_SUMMARY\"" \
-    1 "gh pr edit with invalid --body → BLOCK"
+    1 "gh pr edit with invalid --body → ALLOW + WARN (demoted)"
 
   # T10: --body='inline with equals' form → parses correctly (passes)
   # Build a body that uses the equals form; use single quotes to avoid
@@ -352,8 +536,56 @@ EOF
     "ls -la /tmp" \
     0 "non-gh Bash → ALLOW (pass-through silent)"
 
+  # --- nl-issue 59 scenarios: unexpanded shell constructs in --body-file ---
+
+  # T12: LITERAL nonexistent path → real "does not exist" WARN still fires
+  # (unchanged behavior — the skip applies only to unexpandable paths).
+  run_scenario "T12-body-file-literal-missing" \
+    "gh pr create --title test --body-file $TMPDIR_TEST/definitely-absent-body.md" \
+    1 "--body-file <literal nonexistent> → ALLOW + WARN does-not-exist (unchanged)"
+
+  # T13: $VAR path where VAR is UNDEFINED in the hook env → skipped as
+  # unexpandable; NO false "does not exist" WARN (RED on pre-fix code).
+  unset PTIG_TEST_UNDEFINED_VAR_XYZ
+  run_scenario "T13-body-file-undefined-var" \
+    'gh pr create --title test --body-file "$PTIG_TEST_UNDEFINED_VAR_XYZ/pr-body.md"' \
+    0 '--body-file "$UNDEFINED/..." → ALLOW, skipped-unexpandable, no false WARN' \
+    "skipped: unexpandable path"
+
+  # T14: $VAR path where VAR IS defined and file exists (valid body) →
+  # env-expanded and validated normally; silent allow + expansion log line.
+  export PTIG_TEST_BODY_DIR="$TMPDIR_TEST"
+  run_scenario "T14-body-file-defined-var-valid" \
+    'gh pr create --title test --body-file "$PTIG_TEST_BODY_DIR/valid-body.md"' \
+    0 '--body-file "$DEFINED/valid" → ALLOW after env expansion' \
+    "validated after env expansion"
+
+  # T15: $VAR path, VAR defined, file exists but content INVALID → content
+  # validation runs on the expanded file and the template WARN fires
+  # (proves expansion feeds the real validator, not a silent skip).
+  run_scenario "T15-body-file-defined-var-invalid" \
+    'gh pr create --title test --body-file "$PTIG_TEST_BODY_DIR/invalid-body.md"' \
+    1 '--body-file "$DEFINED/invalid" → ALLOW + template WARN after env expansion' \
+    "validated after env expansion"
+  unset PTIG_TEST_BODY_DIR
+
+  # T16 (harness-reviewer Major): command-substitution path → REFUSED
+  # (never executed, never expanded) → skipped-unexpandable. This is the
+  # safety-critical refusal property of _ptig_expand_path.
+  run_scenario "T16-body-file-command-substitution" \
+    'gh pr create --title test --body-file "$(mktemp)/pr-body.md"' \
+    0 '--body-file "$(cmd)/..." → ALLOW, refusal → skipped-unexpandable' \
+    "skipped: unexpandable path"
+
+  # T17 (harness-reviewer Major): ${VAR:-default} operator form → refused
+  # (only plain $VAR/${VAR} are expanded) → skipped-unexpandable.
+  run_scenario "T17-body-file-operator-form" \
+    'gh pr create --title test --body-file "${PTIG_UNDEF:-/tmp}/pr-body.md"' \
+    0 '--body-file "${VAR:-x}/..." → ALLOW, refusal → skipped-unexpandable' \
+    "skipped: unexpandable path"
+
   if [[ $FAILED -eq 0 ]]; then
-    echo "all 11 self-tests passed" >&2
+    echo "all 17 self-tests passed" >&2
     exit 0
   else
     echo "self-test failures detected" >&2
@@ -364,6 +596,22 @@ fi
 # ============================================================
 # Main hook entry
 # ============================================================
+
+# --- P1 perf metering (perf-telemetry-2026-07 plan) -------------------------
+# Self-metering: one of the 5 highest-cost per-Bash-call hooks (no single
+# PreToolUse chain wrapper exists — see hooks/lib/perf-ledger.sh's header
+# for the PROVEN instrumentation-point finding). This file already sets its
+# own `trap ... EXIT` further below (temp-file cleanup, line ~695ish) — that
+# assignment OVERWRITES a trap set here, so the meter call is CHAINED into
+# that existing trap's command string instead (search "pl_meter_end" below)
+# rather than set independently. This trap here covers every EARLIER exit
+# path (lines 594-686ish); `set -eo pipefail` is active, so pl_meter_end
+# must never itself fail (it doesn't — see its own contract).
+source "$_PTIG_SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
+if declare -F pl_meter_begin >/dev/null 2>&1; then
+  pl_meter_begin
+  trap 'pl_meter_end "pr-template-inline-gate"' EXIT
+fi
 
 INPUT="${CLAUDE_TOOL_INPUT:-}"
 if [[ -z "$INPUT" ]]; then
@@ -422,38 +670,40 @@ EXTRACT_RESULT=""
 EXTRACT_EXIT=0
 EXTRACT_RESULT=$(extract_body_from_command "$COMMAND" "$REPO_ROOT") || EXTRACT_EXIT=$?
 
+# nl-issue 59: unexpandable --body-file path — the gate cannot statically
+# know the runtime path. Skip the existence test with a one-line log
+# (NOT a WARN); gh itself and the server-side PR Template Check still
+# validate downstream.
+if [[ $EXTRACT_EXIT -eq 3 ]]; then
+  skipped_path="${EXTRACT_RESULT#BODY_FILE_UNEXPANDABLE$'\t'}"
+  echo "[pr-template-inline-gate] skipped: unexpandable path '$skipped_path' — cannot statically resolve shell constructs at hook time (or the resolved file is not visible to the hook); gh + server-side PR Template Check still validate" >&2
+  exit 0
+fi
+
 # Handle parser-recognized error sentinels.
 if [[ $EXTRACT_EXIT -eq 2 ]]; then
   case "$EXTRACT_RESULT" in
     STDIN_NOT_SUPPORTED*)
-      cat >&2 <<'ERR_MSG'
-[pr-template-inline-gate] BLOCKED
+      _demote_warn "--body-file - (stdin) not supported" "\
+[pr-template-inline-gate] The \`--body-file -\` (stdin) form is not supported by the local inline-body validator. The Bash tool's stdin is the hook-input JSON, not your PR body; the gate cannot read your intended PR body content.
 
-The `--body-file -` (stdin) form is not supported by the local inline-body validator. The Bash tool's stdin is the hook-input JSON, not your PR body; the gate cannot read your intended PR body content.
+Remediation: write your PR body to a file first, then use \`--body-file <path>\`:
 
-Remediation: write your PR body to a file first, then use `--body-file <path>`:
+  gh pr create --title \"...\" --body-file .pr-description.md
 
-  gh pr create --title "..." --body-file .pr-description.md
-
-Rule: rules/planning.md "Capture-codify at PR time"
-Related: HARNESS-GAP-40 (inline-body validation)
-ERR_MSG
-      exit 1
+Rule: rules/planning.md \"Capture-codify at PR time\"
+Related: HARNESS-GAP-40 (inline-body validation)"
       ;;
     BODY_FILE_MISSING*)
       missing_path="${EXTRACT_RESULT#BODY_FILE_MISSING	}"
-      cat >&2 <<ERR_MSG
-[pr-template-inline-gate] BLOCKED
-
-The --body-file path does not exist: $missing_path
+      _demote_warn "--body-file path does not exist: $missing_path" "\
+[pr-template-inline-gate] The --body-file path does not exist: $missing_path
 
 The gate cannot validate a non-existent body file. gh pr create would itself fail downstream, but we surface the failure locally so you don't waste a push.
 
 Remediation: confirm the path is correct (relative to the repo root or use an absolute path).
 
-Rule: rules/planning.md "Capture-codify at PR time"
-ERR_MSG
-      exit 1
+Rule: rules/planning.md \"Capture-codify at PR time\""
       ;;
   esac
 fi
@@ -472,7 +722,11 @@ source "$VALIDATOR_LIB"
 # Capture validator output (stdout + stderr) for surfacing.
 VALIDATOR_STDOUT_FILE=$(mktemp)
 VALIDATOR_STDERR_FILE=$(mktemp)
-trap 'rm -f "$VALIDATOR_STDOUT_FILE" "$VALIDATOR_STDERR_FILE"' EXIT
+# P1 perf metering: this trap assignment OVERWRITES the earlier
+# `trap 'pl_meter_end ...' EXIT` set at "Main hook entry" above (bash keeps
+# only one handler per signal) — so the meter call is CHAINED into this
+# replacement trap's command string to preserve both behaviors.
+trap '{ declare -F pl_meter_end >/dev/null 2>&1 && pl_meter_end "pr-template-inline-gate"; } || true; rm -f "$VALIDATOR_STDOUT_FILE" "$VALIDATOR_STDERR_FILE"' EXIT
 
 VALIDATOR_EXIT=0
 validate_pr_body "$EXTRACT_RESULT" >"$VALIDATOR_STDOUT_FILE" 2>"$VALIDATOR_STDERR_FILE" || VALIDATOR_EXIT=$?
@@ -483,36 +737,33 @@ if [[ $VALIDATOR_EXIT -eq 0 ]]; then
 fi
 
 # FAIL — surface the validator's own stderr verbatim, prepend a header
-# naming the gate + the failing command class, and exit 1 (BLOCK).
+# naming the gate + the failing command class. Wave D.6: WARN, not block
+# — the server-side `PR Template Check` CI workflow and
+# pre-push-pr-template.sh still enforce.
 ACTION_LABEL="gh pr create"
 if [[ $IS_PR_EDIT -eq 1 ]]; then
   ACTION_LABEL="gh pr edit"
 fi
 
-cat >&2 <<HEADER
-[pr-template-inline-gate] BLOCKED
+WARN_BODY="[pr-template-inline-gate] template validation failed (WARN, not a block)
 
-Inline PR body passed to \`$ACTION_LABEL\` failed the capture-codify template validator. The same validator runs server-side as \`PR Template Check\` — blocking here saves a push, an email, and the second-push amendment cycle.
+Inline PR body passed to \`$ACTION_LABEL\` failed the capture-codify template validator. The same validator runs server-side as \`PR Template Check\`, which still enforces — this local warning just gives you the chance to fix it before pushing.
 
 ----- validator output (stderr) -----
-HEADER
-cat "$VALIDATOR_STDERR_FILE" >&2
-cat >&2 <<'FOOTER'
+$(cat "$VALIDATOR_STDERR_FILE")
 ----- end validator output -----
 
 Remediation:
   - Fix the PR body to address the failure above (add the missing section,
     fill the placeholder, or extend the rationale to ≥40 chars for (c)).
-  - For complex bodies, author `.pr-description.md` locally and use
-    `gh pr create --body-file .pr-description.md` — the file can be
-    validated repeatedly via the validator-script CLI by invoking the
-    validator directly:
-      bash .github/scripts/validate-pr-template.sh --self-test
+  - For complex bodies, author \`.pr-description.md\` locally and use
+    \`gh pr create --body-file .pr-description.md\` — validate the file
+    itself repeatedly (the validator is a sourceable library, not a file CLI):
+      bash -c 'source .github/scripts/validate-pr-template.sh; validate_pr_body \"\$(cat .pr-description.md)\" && echo \"verdict: PASS\"'
 
-Rule:    rules/planning.md "Capture-codify at PR time"
+Rule:    rules/planning.md \"Capture-codify at PR time\"
 Sibling: vaporware-volume-gate.sh (PR volume-shape check on same matcher)
-Sibling: pre-push-pr-template.sh  (git pre-push side; validates .pr-description.md + commit msgs)
-Related: HARNESS-GAP-40 (inline-body validation; this gate closes it)
-FOOTER
+Sibling: pre-push-pr-template.sh  (git pre-push side; validates .pr-description.md + commit msgs; STILL ENFORCES)
+Related: HARNESS-GAP-40 (inline-body validation; this gate closes it)"
 
-exit 1
+_demote_warn "PR template validation failed for $ACTION_LABEL" "$WARN_BODY"

@@ -1,0 +1,46 @@
+{
+  "at": "2026-07-30T05:54:25.691Z",
+  "base": "http://127.0.0.1:7733",
+  "results": [
+    {
+      "id": "R2L-superseded-shipped-chip",
+      "verdict": "PASS",
+      "detail": "{\"payload\":{\"v\":\"complete\",\"terminal\":\"superseded\",\"label\":\"superseded\"},\"inShipped\":true,\"chipText\":\"superseded, 50h ago\",\"outsideShipped\":0,\"plainSiblingExists\":true}"
+    },
+    {
+      "id": "R2L-S1-alldone-never-active",
+      "verdict": "PASS",
+      "detail": "corrected oracle (archive fact lives in plan_path, not an archived flag): offenders=[]; archived complete plans=5"
+    },
+    {
+      "id": "R2L-S3-inbox-contract",
+      "verdict": "PASS",
+      "detail": "{\"status\":\"ok\",\"ok\":true,\"answerable\":0,\"quarantined\":0,\"tab\":\"(0)\",\"shape\":true}"
+    },
+    {
+      "id": "R2L-S5-machines-honest-empty",
+      "verdict": "PASS",
+      "detail": "payload has_data=false; section visible=true; names COORD-SYNC-NO-PEER-EXPORTS-YET-01=true; text=\"no peer exports received — the Windows cadence task is not registered; see COORD-SYNC-NO-PEER-EXPORTS-YET-01 (docs/backlog.md)\""
+    },
+    {
+      "id": "R2L-S4-health-diagnostics-intact",
+      "verdict": "PASS",
+      "detail": "diagnostics sample=\"cycle 162 · last run 44s ago · took 255ms · cadence 120s 2 healed backfill(s) recorded 0 backfill error(s) waiting-on-yo\""
+    },
+    {
+      "id": "R2L-S5-doubleclick-idempotent",
+      "verdict": "PASS",
+      "detail": "machinesBody empty-state nodes after double-click=1 (want exactly 1)"
+    },
+    {
+      "id": "R2L-console-clean",
+      "verdict": "PASS",
+      "detail": "0 errors []"
+    },
+    {
+      "id": "R2L-network-clean",
+      "verdict": "PASS",
+      "detail": "0 non-2xx []"
+    }
+  ]
+}

@@ -31,21 +31,62 @@
 #
 # Tunables (env, all optional):
 #   WS_TASK_MIN_TOOLCALLS   M1 threshold (default 5; block when toolCalls > N)
-#   WS_TASK_STOP_MODE       block | warn | off   (M1; default block)
+#   WS_TASK_STOP_MODE       block | warn | off   (M1; default WARN — see retirement note)
 #   WS_TASK_MESSAGE_MODE    warn  | block | off   (M3; default warn — calibration-first)
 #
-# Classification: M1 is a gate (can block, loop-safe). M2/M3/the bridge are
-# writer/advisory. Every runtime path is failure-isolated: a malfunction in the
-# binding must never wedge the session.
+# Classification: M1 is a gate (can block if WS_TASK_STOP_MODE=block is set
+# explicitly; loop-safe). M2/M3/the bridge are writer/advisory. Every runtime
+# path is failure-isolated: a malfunction in the binding must never wedge
+# the session.
+#
+# ============================================================
+# M1 Stop-block RETIREMENT (NL Overhaul Wave D, §D.0.5 / D.6, 2026-07-02)
+# ============================================================
+# The default for WS_TASK_STOP_MODE flipped block -> warn at Wave D.6. Root
+# cause (§D.0.5, PROVEN): M1's block demanded "call TaskCreate (and
+# TaskUpdate it to completed)" for any session with >5 tool calls and 0 task
+# mutations — but complying fired a TaskCompleted event that
+# task-completed-evidence-gate.sh then blocked (no plan claims an invented
+# compliance task). Mutually unsatisfiable for any session whose work sits
+# outside the current ACTIVE plans. Disposition: the Stop-BLOCK retires
+# (this default flip is that retirement — old deployments with an explicit
+# WS_TASK_STOP_MODE=block override in their environment keep blocking until
+# that override is removed; this file's own default no longer forces it).
+# The mutation-count SIGNAL survives as a non-blocking ledger warn (this
+# hook's normal warn path below, now the default outcome). The
+# SessionStart listing (M2, --on-session-start) is unaffected and keeps
+# surfacing active commitments. The template wiring removal (deleting the
+# Stop-hook registration entirely) lands at D.5 — this file must stay safe
+# under STALE LIVE WIRING in the meantime, i.e. even if some deployed
+# settings.json still invokes `--on-stop` directly, the new default no
+# longer blocks unless the operator opts back in explicitly.
 
 set -uo pipefail
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
+
 MODE="${1:-}"
 
-LOG_DIR="$HOME/.claude/logs"
+# Log destination: sandboxed when HARNESS_SELFTEST=1 or MODE is --self-test
+# itself (self-test isolation — E.2 remediation) so no self-test run appends
+# to the real machine's ~/.claude/logs/workstreams-task-binding.log
+# regardless of HOME. Prefers an explicit HARNESS_SELFTEST_DIR; falls back to
+# a PID-scoped tmp sandbox otherwise (signal-ledger.sh's convention).
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _WTB_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/workstreams-task-binding-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_WTB_SANDBOX"
+  LOG_DIR="$_WTB_SANDBOX/logs"
+else
+  LOG_DIR="$HOME/.claude/logs"
+fi
 LOG_FILE="$LOG_DIR/workstreams-task-binding.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BRIDGE_JS="$SELF_DIR/lib/workstreams-task-bridge.js"
+# shellcheck disable=SC1091
+{ source "$SELF_DIR/lib/nl-paths.sh" 2>/dev/null; } || true
 
 # ---- failure isolation -----------------------------------------------------
 _log() {
@@ -68,7 +109,11 @@ _read_stdin() {
 # ---- resolvers (mirror conversation-tree-emit.sh so writer + gate agree) ----
 _fallback_conv_tree_path() {
   local leaf="$1"
-  local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
+  local base="${CONV_TREE_MAIN_CHECKOUT:-}"
+  if [[ -z "$base" ]] && command -v nl_repo_root >/dev/null 2>&1; then
+    base="$(nl_repo_root 2>/dev/null)"
+  fi
+  [[ -z "$base" ]] && base="$HOME/.claude"
   local nested="$base/neural-lace/workstreams-ui/$leaf"
   local flat="$base/workstreams-ui/$leaf"
   if [[ -e "$nested" ]]; then printf '%s' "$nested"; return 0; fi
@@ -147,7 +192,10 @@ _run_on_stop() {
   [[ -z "$cwd" ]] && cwd="$(pwd 2>/dev/null || echo)"
   [[ -z "$tpath" ]] && { _log "on-stop: no transcript_path — no-op"; exit 0; }
 
-  local mode="${WS_TASK_STOP_MODE:-block}"
+  # Default flipped block -> warn at NL Overhaul Wave D.6 (§D.0.5 retirement
+  # note above). Set WS_TASK_STOP_MODE=block explicitly to restore the old
+  # blocking behavior (not recommended — see the collision this fixes).
+  local mode="${WS_TASK_STOP_MODE:-warn}"
   [[ "$mode" == "off" ]] && exit 0
 
   # Resolve sinks + project root, then run the bridge (writer: emit + count).
@@ -189,21 +237,28 @@ _run_on_stop() {
   fi
 
   # Waiver escape hatch (gate-respect.md): a fresh substantive waiver file.
+  # ADR 058 D5 pin f (specs-e §E.10 item 2): >=1 substantive line alone is
+  # no longer sufficient — the purpose-clause pair is required too.
   local state_dir=".claude/state"
   if compgen -G "$state_dir/workstreams-task-waiver-*.txt" >/dev/null 2>&1; then
     local w
     for w in "$state_dir"/workstreams-task-waiver-*.txt; do
       [[ -f "$w" ]] || continue
-      # younger than 1h AND >=1 substantive line
+      # younger than 1h AND >=1 substantive line AND (if the lib loaded)
+      # the purpose-clause pair.
       local age_min; age_min=$(( ( $(date +%s 2>/dev/null || echo 0) - $(date -r "$w" +%s 2>/dev/null || echo 0) ) / 60 ))
       if (( age_min < 60 )) && grep -qE '\S' "$w" 2>/dev/null; then
+        if declare -F waiver_has_purpose_clauses >/dev/null 2>&1 && ! waiver_has_purpose_clauses "$w"; then
+          _log "on-stop: waiver $w present but lacks the purpose-clause pair (pin f) — not honored"
+          continue
+        fi
         _log "on-stop: honoring waiver $w (age ${age_min}m)"; exit 0
       fi
     done
   fi
 
   # The injection text (shared by warn + block).
-  local nudge="[workstreams-task-binding] This session made $toolcalls tool calls but created/updated ZERO tasks. Record what you did in the task list so it survives to the next session: call TaskCreate (and TaskUpdate it to completed). The harness mirrors your tasks into the durable Workstreams tracker automatically. To intentionally skip (rare): write a one-line justification to $state_dir/workstreams-task-waiver-\$(date +%s).txt, or set WS_TASK_STOP_MODE=warn."
+  local nudge="[workstreams-task-binding] This session made $toolcalls tool calls but created/updated ZERO tasks. Record what you did in the task list so it survives to the next session: call TaskCreate (and TaskUpdate it to completed). The harness mirrors your tasks into the durable Workstreams tracker automatically. To intentionally skip (rare): write a waiver naming BOTH why this gate exists and why that does not apply here (ADR 058 D5 pin f) to $state_dir/workstreams-task-waiver-\$(date +%s).txt, e.g. printf 'Purpose: this gate exists to prevent unrecorded session work\\nBecause: <your reason>\\n' > $state_dir/workstreams-task-waiver-\$(date +%s).txt, or set WS_TASK_STOP_MODE=warn. This gate: ~/.claude/hooks/workstreams-task-binding.sh (source: adapters/claude-code/hooks/workstreams-task-binding.sh)"
 
   if [[ "$mode" == "warn" ]]; then
     printf '%s\n' "$nudge" >&2
@@ -326,7 +381,7 @@ _run_on_message() {
     fi
   fi
 
-  local nudge="[workstreams-task-binding] You're about to commit to something (\"I'll …\"/\"going to …\") but no TaskCreate appears in the recent transcript. Record the commitment first: TaskCreate it so it's tracked and survives the session. (Set WS_TASK_MESSAGE_MODE=off to silence.)"
+  local nudge="[workstreams-task-binding] You're about to commit to something (\"I'll …\"/\"going to …\") but no TaskCreate appears in the recent transcript. Record the commitment first: TaskCreate it so it's tracked and survives the session. (Set WS_TASK_MESSAGE_MODE=off to silence.) This gate: ~/.claude/hooks/workstreams-task-binding.sh (source: adapters/claude-code/hooks/workstreams-task-binding.sh)"
 
   if [[ "$mode" == "block" ]]; then
     printf '{"decision":"block","reason":%s}\n' "$(printf '%s' "$nudge" | (jq -Rs . 2>/dev/null || printf '"%s"' "$nudge"))"
@@ -346,6 +401,13 @@ _run_self_test() {
   local fails=0
   local tmp; tmp=$(mktemp -d 2>/dev/null || echo "/tmp/wstb-$$")
   mkdir -p "$tmp"
+  # Sandbox the shared retry-guard: scenarios reuse fixed synthetic session ids
+  # (ST-notask etc.), so counters written to the REAL cwd-relative state dir
+  # accumulate across suite runs until the guard silently DOWNGRADES the very
+  # blocks the scenarios assert (observed 2026-07-03: M1 green all morning,
+  # red after the day's repeated doctor sweeps crossed the threshold).
+  export RETRY_GUARD_STATE_DIR="$tmp/rg-state"
+  mkdir -p "$tmp/rg-state"
   local lib; lib=$(_resolve_state_lib)
   if [[ ! -f "$lib" ]]; then echo "self-test: FAIL (state lib not found at $lib)"; exit 1; fi
 
@@ -421,10 +483,40 @@ EOF
     | CONV_TREE_STATE_PATH="$tmp/m1c.json" WS_TASK_STOP_MODE=block bash "${BASH_SOURCE[0]}" --on-stop 2>/dev/null); rc=$?
   [[ $rc -eq 0 ]] ; _ck "M1 passes: trivial 1-tool session (rc=$rc)" $?
 
+  # --- M1 waiver escape hatch (ADR 058 D5 pin f, specs-e §E.10 item 2):
+  # a fresh waiver WITH the purpose-clause pair clears the block; a fresh
+  # waiver WITHOUT it does NOT (existence+freshness alone is not enough).
+  # Uses SELF_DIR (already-resolved absolute path) rather than the bare
+  # ${BASH_SOURCE[0]} since these scenarios `cd` into a fixture dir first.
+  local m1w_dir="$tmp/m1w"; mkdir -p "$m1w_dir/.claude/state"
+  {
+    printf 'Purpose: this gate exists to prevent unrecorded session work\n'
+    printf 'Because: this self-test scenario intentionally exercises the waiver valve\n'
+  } > "$m1w_dir/.claude/state/workstreams-task-waiver-1.txt"
+  rc=$(cd "$m1w_dir" && printf '{"transcript_path":"%s","session_id":"ST-waiver","cwd":"%s"}' "$t_notask" "$m1w_dir" \
+    | CONV_TREE_STATE_PATH="$tmp/m1w.json" WS_TASK_STOP_MODE=block RETRY_GUARD_STATE_DIR="$tmp/rg-state-m1w" \
+      bash "$SELF_DIR/$(basename "${BASH_SOURCE[0]}")" --on-stop >/dev/null 2>/dev/null; echo $?)
+  [[ "$rc" == "0" ]] ; _ck "M1 waiver with purpose clauses clears block (rc=$rc)" $?
+
+  local m1ww_dir="$tmp/m1ww"; mkdir -p "$m1ww_dir/.claude/state"
+  printf 'just skip this one\n' > "$m1ww_dir/.claude/state/workstreams-task-waiver-1.txt"
+  rc=$(cd "$m1ww_dir" && printf '{"transcript_path":"%s","session_id":"ST-waiver-weak","cwd":"%s"}' "$t_notask" "$m1ww_dir" \
+    | CONV_TREE_STATE_PATH="$tmp/m1ww.json" WS_TASK_STOP_MODE=block RETRY_GUARD_STATE_DIR="$tmp/rg-state-m1ww" \
+      bash "$SELF_DIR/$(basename "${BASH_SOURCE[0]}")" --on-stop >/dev/null 2>/dev/null; echo $?)
+  [[ "$rc" == "2" ]] ; _ck "M1 weak waiver (no purpose clauses) still blocks (rc=$rc)" $?
+
   # --- M1 warn mode never blocks ---
   out=$(printf '{"transcript_path":"%s","session_id":"ST-warn","cwd":"%s"}' "$t_notask" "$tmp" \
     | CONV_TREE_STATE_PATH="$tmp/m1d.json" WS_TASK_STOP_MODE=warn bash "${BASH_SOURCE[0]}" --on-stop 2>/dev/null); rc=$?
   [[ $rc -eq 0 ]] ; _ck "M1 warn-mode never blocks (rc=$rc)" $?
+
+  # --- M1 DEFAULT (§D.0.5/D.6 retirement): no WS_TASK_STOP_MODE set at all
+  # -> must NOT block (default flipped block -> warn at Wave D.6). This is
+  # the scenario that would have failed pre-fix: 6 tool calls + zero task
+  # mutations, no explicit mode override. ---
+  out=$(printf '{"transcript_path":"%s","session_id":"ST-default","cwd":"%s"}' "$t_notask" "$tmp" \
+    | CONV_TREE_STATE_PATH="$tmp/m1e.json" bash "${BASH_SOURCE[0]}" --on-stop 2>/dev/null); rc=$?
+  [[ $rc -eq 0 ]] ; _ck "M1 default (no env override) no longer blocks — warn is the new default (rc=$rc)" $?
 
   # --- M2 on-session-start surfaces active items ---
   # Reuse the state from the create scenario (has an unchecked... actually

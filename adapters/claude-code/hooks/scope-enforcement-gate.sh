@@ -109,17 +109,32 @@
 # Waivers:
 #   REMOVED 2026-05-04. The block-message no longer offers a waiver
 #   path. Three structural options (update plan / open new plan / defer)
-#   cover every legitimate case. Emergency override is `git commit
-#   --no-verify` per ~/.claude/rules/git.md.
+#   cover every legitimate case. There is no bypass flag: this hook is a
+#   PreToolUse gate that pattern-matches the `git commit` command string
+#   BEFORE git runs, so `--no-verify` (a git pre-commit-hook bypass) has
+#   no effect on it — the block message names the real remediations
+#   instead (NL-FINDING-032).
 #
 # Exit codes:
 #   0 — commit allowed (or non-applicable)
 #   2 — commit blocked (stderr explains why; JSON {decision: block} on stdout)
 
-# NOTE: `set -u` is intentionally NOT enabled. Bash associative arrays
-# under set -u throw "unbound variable" on `${#arr[@]}` and `${!arr[*]}`
-# even when declared (a known quirk). The hook handles its own undefined
-# states explicitly.
+# NOTE: `set -u` is intentionally NOT enabled. Bash 3.2 throws "unbound
+# variable" on `"${arr[@]}"` for an EMPTY indexed array even when it was
+# explicitly declared (a known 3.2 quirk, verified on 3.2.57 — bash 5.3
+# does not). The hook handles its own undefined states explicitly.
+#
+# PORTABILITY (bash 3.2 floor, 2026-07-29): this file MUST run correctly
+# under macOS's stock /bin/bash 3.2.57. It previously used `declare -A`
+# for FINAL_OOS; under 3.2 that is a hard parse-time error
+# ("declare: -A: invalid option"), after which `FINAL_OOS["$sf"]=...`
+# was interpreted as an ARITHMETIC subscript on a plain variable, so the
+# gate fell straight through to `exit 0` — i.e. it AUTHORIZED every
+# out-of-scope commit while appearing to run. There is no environmental
+# precondition here on purpose: a git hook, a scheduled task or a cloud
+# session may not inherit a PATH with Homebrew's bash 5.x first, and a
+# blocking gate must not depend on one. See docs/plans/
+# macos-portability-2026-07.md.
 
 # ============================================================
 # Helper: is this path system-managed (exempt from scope-check)?
@@ -138,11 +153,39 @@
 # scenario repo before invoking the hook; the spawned hook process
 # then detects merge-context from the filesystem.
 # ============================================================
+
+# ============================================================
+# Shared backtick-token extraction (§D.0.7 fix, NL Overhaul Wave D.6).
+# Loops ALL backtick pairs on a bullet line instead of only the first
+# (the pre-fix bug both this file and spec-freeze-gate.sh shared).
+# ============================================================
+_SEG_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/extract-backtick-paths.sh
+source "$_SEG_SELF_DIR/lib/extract-backtick-paths.sh" 2>/dev/null || true
+
 _is_system_managed_path() {
   local p="$1"
   case "$p" in
     docs/plans/archive/*) return 0 ;;
     docs/plans/deferred/*) return 0 ;;
+    # Discovery 2026-06-17 option E (dispositioned decided at E.0, specs-e
+    # §E.10 item 13): ad-hoc process capture (docs/discoveries/*) is
+    # off-plan by nature — a discovery filed mid-session about a foreign
+    # ACTIVE plan must not be blocked as scope-creep on that plan, and
+    # bug-persistence-gate.sh WANTS those commits to happen (it treats
+    # docs/discoveries/*.md as a valid persistence target). Same mechanism
+    # as the archive/deferred exemption above.
+    docs/discoveries/*) return 0 ;;
+    # Round-5 M4 (2026-07-29). review-record-commit-gate.sh's REMEDY-CHAIN
+    # header claims "the remedy this gate prescribes must not walk the operator
+    # into another gate". PROVEN false: its remedy is "write a review record,
+    # stage docs/reviews/records/, re-commit" — and THIS gate then blocked the
+    # re-commit, because a review record is never in a plan's Files to
+    # Modify/Create. The operator was handed a remedy that could not be
+    # completed. Review records are gate-managed artifacts produced BY the
+    # remedy, off-plan by nature — exactly the archive/deferred/discoveries
+    # case above, and the same mechanism fixes it.
+    docs/reviews/records/*) return 0 ;;
   esac
   if [[ "${IN_MERGE:-0}" == "1" ]]; then
     case "$p" in
@@ -191,153 +234,76 @@ _resolve_git_dir_abs() {
 # (`git -C <path> commit`). These helpers extract the effective
 # target directory so the gate evaluates THAT repo, not the hook
 # process's cwd. See the header "Target-repo resolution" section.
+#
+# EXTRACTED TO lib/git-command-parse.sh, 2026-07-29.
+#   _tokenize_segment / _analyze_git_segment / _parse_cd_target (and their
+#   helpers _expand_tilde / _is_abs_path_str / _compose_dir) used to be defined
+#   HERE. review-record-commit-gate.sh — which runs in the SAME PreToolUse Bash
+#   chain — hand-rolled its own second, quote-blind copy of the same logic, and
+#   the two disagreed: every quoted `-C` path was a fail-open in that gate while
+#   this one parsed it correctly. harness-reviewer rejected that gate three times
+#   for shipping the CLASS while fixing instances. The functions now live in
+#   lib/git-command-parse.sh as gcp_* and BOTH gates source them, so the harness
+#   has ONE commit-target resolver.
+#
+#   This gate's behavior is UNCHANGED by the move: the extracted bodies are
+#   verbatim, the added --work-tree/--git-dir capture writes only to NEW globals
+#   (GCP_SEG_WORK_TREE / GCP_SEG_GIT_DIR) that this gate never reads, and this
+#   gate keeps its own segment-splitting driver below. Proven by this file's own
+#   34-scenario self-test, which is the pre-existing oracle for the extraction.
 # ============================================================
-
-# Expand a leading ~ / ~/ to $HOME.
-_expand_tilde() {
-  local p="$1"
-  case "$p" in
-    "~") printf '%s' "$HOME" ;;
-    "~/"*) printf '%s/%s' "$HOME" "${p#\~/}" ;;
-    *) printf '%s' "$p" ;;
-  esac
-}
-
-# Is $1 an absolute path (POSIX or Windows drive-letter)?
-_is_abs_path_str() {
-  case "$1" in
-    /*) return 0 ;;
-    [A-Za-z]:/*|[A-Za-z]:\\*) return 0 ;;
-    *) return 1 ;;
-  esac
-}
-
-# Tokenize a command segment respecting single/double quotes.
-# Populates global array SEG_TOKENS.
-_tokenize_segment() {
-  local s="$1" i ch n cur="" in_dq=0 in_sq=0 have=0
-  SEG_TOKENS=()
-  n=${#s}
-  for ((i=0; i<n; i++)); do
-    ch="${s:i:1}"
-    if [[ $in_sq -eq 1 ]]; then
-      if [[ "$ch" == "'" ]]; then in_sq=0; else cur+="$ch"; fi
-      continue
-    fi
-    if [[ $in_dq -eq 1 ]]; then
-      if [[ "$ch" == '"' ]]; then in_dq=0; else cur+="$ch"; fi
-      continue
-    fi
-    case "$ch" in
-      "'") in_sq=1; have=1 ;;
-      '"') in_dq=1; have=1 ;;
-      ' '|$'\t')
-        if [[ -n "$cur" ]] || [[ $have -eq 1 ]]; then
-          SEG_TOKENS+=("$cur"); cur=""; have=0
-        fi
-        ;;
-      *) cur+="$ch"; have=1 ;;
-    esac
-  done
-  if [[ -n "$cur" ]] || [[ $have -eq 1 ]]; then
-    SEG_TOKENS+=("$cur")
-  fi
-}
-
-# Compose a directory path: absolute $3 wins; else resolve $3 against the
-# accumulated target $1; else against the base $2 (git's effective cwd).
-_compose_dir() {
-  local cur="$1" base="$2" p="$3"
-  p=$(_expand_tilde "$p")
-  if _is_abs_path_str "$p"; then
-    printf '%s' "$p"
-  elif [[ -n "$cur" ]]; then
-    printf '%s/%s' "$cur" "$p"
-  elif [[ -n "$base" ]]; then
-    printf '%s/%s' "$base" "$p"
-  else
-    printf '%s' "$p"
-  fi
-}
-
-# Analyze a `git …` segment. Sets globals:
-#   GIT_SEG_IS_COMMIT  — 1 iff the segment's subcommand is `commit`
-#                        (commit-tree / commit-graph excluded by token equality)
-#   GIT_SEG_C_TARGET   — composed `-C` target dir, or "" when no -C present.
-#                        Repeated -C composes per git semantics; relative
-#                        paths resolve against $2 (git's effective cwd base).
-_analyze_git_segment() {
-  local seg="$1" base="$2"
-  GIT_SEG_IS_COMMIT=0
-  GIT_SEG_C_TARGET=""
-  _tokenize_segment "$seg"
-  local n=${#SEG_TOKENS[@]} i tok
-  [[ $n -ge 2 ]] || return 0
-  [[ "${SEG_TOKENS[0]}" == "git" ]] || return 0
-  for ((i=1; i<n; i++)); do
-    tok="${SEG_TOKENS[$i]}"
-    case "$tok" in
-      -C)
-        i=$((i+1))
-        [[ $i -lt $n ]] || break
-        GIT_SEG_C_TARGET=$(_compose_dir "$GIT_SEG_C_TARGET" "$base" "${SEG_TOKENS[$i]}")
-        ;;
-      -C?*)
-        GIT_SEG_C_TARGET=$(_compose_dir "$GIT_SEG_C_TARGET" "$base" "${tok:2}")
-        ;;
-      --git-dir|--work-tree|--namespace|-c)
-        i=$((i+1))   # global flags whose value is a separate token
-        ;;
-      -*)
-        :            # other global flags (boolean, or value glued with =)
-        ;;
-      *)
-        if [[ "$tok" == "commit" ]]; then
-          GIT_SEG_IS_COMMIT=1
-        fi
-        return 0
-        ;;
-    esac
-  done
-  return 0
-}
-
-# Parse a `cd <path>` / `Set-Location <path>` segment; echo the resolved
-# target (relative paths resolve against $2, the accumulated cd target or
-# process cwd). Bare `cd` echoes $HOME.
-_parse_cd_target() {
-  local seg="$1" base="$2"
-  _tokenize_segment "$seg"
-  local n=${#SEG_TOKENS[@]}
-  if [[ $n -lt 2 ]]; then
-    printf '%s' "$HOME"
-    return
-  fi
-  local p="${SEG_TOKENS[1]}"
-  # Skip a leading flag (cd -P/-L, Set-Location -LiteralPath/-Path)
-  if [[ "$p" == -* ]] && [[ $n -ge 3 ]]; then
-    p="${SEG_TOKENS[2]}"
-  fi
-  p=$(_expand_tilde "$p")
-  if _is_abs_path_str "$p"; then
-    printf '%s' "$p"
-  elif [[ -n "$base" ]]; then
-    printf '%s/%s' "$base" "$p"
-  else
-    printf '%s' "$p"
-  fi
-}
+# shellcheck source=/dev/null
+source "$_SEG_SELF_DIR/lib/git-command-parse.sh" 2>/dev/null || true
+if ! command -v gcp_analyze_git_segment >/dev/null 2>&1; then
+  # The parser is load-bearing: without it this gate cannot tell which repo a
+  # commit targets and would scope-check the wrong index. Pass through loudly
+  # rather than silently mis-evaluating (the gate's documented fail-open posture
+  # for unusable inputs).
+  echo "[scope-enforcement-gate] lib/git-command-parse.sh unavailable — scope-check skipped." >&2
+  exit 0
+fi
 
 # ============================================================
-# --self-test handler (thirty-one scenarios)
+# --self-test handler (thirty-three scenarios)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm this file's OWN sandbox guard (the EXEMPT_LOG branch at ~line 1500) and
+  # perf-ledger.sh's, and EXPORT it so every re-invocation of $SELF_TEST_HOOK
+  # below inherits it. The guard already existed — it was simply never armed by
+  # this host, so it was INERT. PROVEN behaviorally: clean-HOME probe created
+  # .claude/state/scope-gate-exemptions.log without this line, nothing with it.
+  export HARNESS_SELFTEST=1
   # We need this script's path for re-invocation under different cwds
   SELF_TEST_HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
   if [[ ! -f "$SELF_TEST_HOOK" ]]; then
     echo "self-test: cannot resolve own path" >&2
     exit 2
   fi
+
+  # ----------------------------------------------------------------
+  # INTERPRETER FIDELITY (2026-07-29). Every scenario below re-invokes
+  # this script as a child process. That re-invocation used to be a bare
+  # `bash "$SELF_TEST_HOOK"`, which resolves through PATH — on a machine
+  # with Homebrew first that is bash 5.3, NO MATTER which interpreter is
+  # running the suite. The suite therefore reported 35/0 under
+  # /bin/bash 3.2.57 while never once executing the gate under 3.2, and
+  # hid a total gate failure there (`declare: -A: invalid option` ->
+  # fall-through -> exit 0 -> every out-of-scope commit authorized).
+  #
+  # $BASH is the absolute path of the interpreter executing THIS process,
+  # so the child is now guaranteed to be the same one the operator named
+  # on the command line. The banner prints it so a green run can never
+  # again be silently attributed to the wrong interpreter.
+  SELF_TEST_BASH="${BASH:-bash}"
+  if [[ ! -x "$SELF_TEST_BASH" ]]; then
+    SELF_TEST_BASH="$(command -v bash 2>/dev/null)"
+  fi
+  if [[ -z "$SELF_TEST_BASH" ]] || [[ ! -x "$SELF_TEST_BASH" ]]; then
+    echo "self-test: cannot resolve the running bash interpreter" >&2
+    exit 2
+  fi
+  echo "self-test interpreter: $SELF_TEST_BASH (${BASH_VERSION:-unknown})"
+  echo "  (child hook invocations use THIS interpreter, not PATH's \`bash\`)"
 
   PASSED=0
   FAILED=0
@@ -347,6 +313,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
     exit 2
   fi
   trap 'rm -rf "$TMPROOT"' EXIT
+
+  # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): every scenario
+  # below re-invokes this script as a REAL child `"$SELF_TEST_BASH" "$SELF_TEST_HOOK"`
+  # subprocess (not passed --self-test, so it runs the real production
+  # path, now metered — see the "Main hook logic" section's perf-metering
+  # block). Without this export every self-test run would write dozens of
+  # real lines into the operator's actual ~/.claude/state/perf ledger.
+  export PERF_LEDGER_DIR="$TMPROOT/perf"
 
   # Helper: build a fresh git repo with a plan + staged files, then
   # invoke the hook against synthesized stdin JSON. Returns hook's
@@ -358,12 +332,13 @@ if [[ "${1:-}" == "--self-test" ]]; then
   #            empty and `git add`-ed)
   #       $4 = optional secondary plan content (for new-plan-staged scenario)
   _run_scenario() {
-    local label="$1" plan_body="$2" staged_csv="$3" secondary_plan_body="${4:-}"
+    local label="$1" plan_body="$2" staged_csv="$3" secondary_plan_body="${4:-}" cmd_override="${5:-}"
     local repo="$TMPROOT/$label"
     mkdir -p "$repo"
     (
       cd "$repo" || exit 99
       git init -q 2>/dev/null || true
+      git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
       git config user.email "test@example.com" 2>/dev/null
       git config user.name "Test" 2>/dev/null
       git config commit.gpgsign false 2>/dev/null
@@ -393,8 +368,16 @@ if [[ "${1:-}" == "--self-test" ]]; then
         git add "docs/plans/hotfix-newplan.md" 2>/dev/null
       fi
 
-      local input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
-      printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+      local input
+      if [[ -n "$cmd_override" ]]; then
+        # Custom command (e.g. an obfuscation-boundary probe). JSON-escape it.
+        local _esc; _esc=$(printf '%s' "$cmd_override" | sed 's/\\/\\\\/g; s/"/\\"/g')
+        input="{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"$_esc\"}}"
+      else
+        # Default path — byte-identical to the original literal (no regression).
+        input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
+      fi
+      printf '%s' "$input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
       echo $? > rc.txt
     )
     cat "$repo/rc.txt" 2>/dev/null || echo 99
@@ -458,6 +441,20 @@ Test.
     PASSED=$((PASSED+1))
   else
     echo "self-test (2) system-managed-archive-exempt: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 2b (Discovery 2026-06-17 option E, specs-e §E.10 item 13):
+  # PASS — a staged docs/discoveries/*.md file passes under a FOREIGN
+  # ACTIVE plan (PLAN_NORMAL declares only src/foo.ts, src/bar.ts,
+  # src/lib/*.ts — a discovery file matches none of those globs) WITHOUT
+  # a waiver. Ad-hoc process capture is off-plan by nature. ----
+  RC=$(_run_scenario s2b "$PLAN_NORMAL" "docs/discoveries/2026-07-03-example-discovery.md")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (2b) system-managed-discovery-exempt-under-foreign-plan: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (2b) system-managed-discovery-exempt-under-foreign-plan: FAIL (rc=$RC, expected 0)" >&2
     FAILED=$((FAILED+1))
   fi
 
@@ -594,6 +591,7 @@ Test.
   (
     cd "$S11_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -604,7 +602,7 @@ Test.
     echo "stub" > "unrelated.md"
     git add "unrelated.md" 2>/dev/null
     s11_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
-    printf '%s' "$s11_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s11_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S11_RC=$(cat "$S11_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -679,6 +677,7 @@ Drive-by hotfix for unrelated.md.
   (
     cd "$S12_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -692,7 +691,7 @@ Drive-by hotfix for unrelated.md.
     echo "stub" > "unrelated.md"
     git add "unrelated.md" 2>/dev/null
     s12_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
-    printf '%s' "$s12_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$s12_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   S12_RC=$(cat "$S12_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -726,6 +725,7 @@ Test merge-context allowlist.
   (
     cd "$S13_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -740,7 +740,7 @@ Test merge-context allowlist.
     echo "-- migration" > "supabase/migrations/20260514120000_add_index.sql"
     git add "supabase/migrations/20260514120000_add_index.sql" 2>/dev/null
     s13_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
-    printf '%s' "$s13_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$s13_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   S13_RC=$(cat "$S13_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -761,6 +761,7 @@ Test merge-context allowlist.
   (
     cd "$S14_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -773,7 +774,7 @@ Test merge-context allowlist.
     echo "-- migration" > "supabase/migrations/20260514120000_add_index.sql"
     git add "supabase/migrations/20260514120000_add_index.sql" 2>/dev/null
     s14_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"normal\""}}'
-    printf '%s' "$s14_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$s14_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   S14_RC=$(cat "$S14_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -799,6 +800,7 @@ Test merge-context allowlist.
   (
     cd "$S15_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -813,7 +815,7 @@ Test merge-context allowlist.
     echo "stub" > "src/unrelated.ts"
     git add "supabase/migrations/20260514120000_add_index.sql" "src/unrelated.ts" 2>/dev/null
     s15_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
-    printf '%s' "$s15_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s15_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S15_RC=$(cat "$S15_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -841,6 +843,7 @@ Test merge-context allowlist.
   (
     cd "$S16_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -853,7 +856,7 @@ Test merge-context allowlist.
     echo "-- migration" > "prisma/migrations/20260514120000_add_index/migration.sql"
     git add "prisma/migrations/20260514120000_add_index/migration.sql" 2>/dev/null
     s16_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"merge\""}}'
-    printf '%s' "$s16_input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$s16_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   S16_RC=$(cat "$S16_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -875,6 +878,7 @@ Test merge-context allowlist.
   (
     cd "$S17_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -888,7 +892,7 @@ Test merge-context allowlist.
     echo "stub" > "src/way-out-of-scope.ts"
     git add "src/way-out-of-scope.ts" 2>/dev/null
     s17_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"replayed commit\""}}'
-    printf '%s' "$s17_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s17_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S17_RC=$(cat "$S17_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -909,6 +913,7 @@ Test merge-context allowlist.
   (
     cd "$S18_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -922,7 +927,7 @@ Test merge-context allowlist.
     echo "stub" > "src/another-out-of-scope.ts"
     git add "src/another-out-of-scope.ts" 2>/dev/null
     s18_input='{"tool_name":"Bash","tool_input":{"command":"git commit"}}'
-    printf '%s' "$s18_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s18_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S18_RC=$(cat "$S18_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -944,6 +949,7 @@ Test merge-context allowlist.
   (
     cd "$S19_REPO" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -956,7 +962,7 @@ Test merge-context allowlist.
     echo "stub" > "src/merged-in.ts"
     git add "src/merged-in.ts" 2>/dev/null
     s19_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"Merge branch '"'"'master'"'"' into feature\""}}'
-    printf '%s' "$s19_input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    printf '%s' "$s19_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
     echo $? > rc.txt
   )
   S19_RC=$(cat "$S19_REPO/rc.txt" 2>/dev/null || echo 99)
@@ -1066,6 +1072,7 @@ Test gitlink-shaped trailing-slash matching.
     mkdir -p "$repo"
     cd "$repo" || exit 99
     git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.com" 2>/dev/null
     git config user.name "Test" 2>/dev/null
     git config commit.gpgsign false 2>/dev/null
@@ -1077,7 +1084,7 @@ Test gitlink-shaped trailing-slash matching.
     echo '{"x":2}' > state/tree-state.json
     git add state/tree-state.json 2>/dev/null
     input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"state: update\""}}'
-    printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+    printf '%s' "$input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
     echo $? > rc.txt
   )
   RC=$(cat "$TMPROOT/s25/rc.txt" 2>/dev/null || echo 99)
@@ -1104,6 +1111,7 @@ Test gitlink-shaped trailing-slash matching.
     (
       cd "$dir" || exit 99
       git init -q 2>/dev/null || true
+      git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
       git config user.email "test@example.com" 2>/dev/null
       git config user.name "Test" 2>/dev/null
       git config commit.gpgsign false 2>/dev/null
@@ -1137,7 +1145,7 @@ Test gitlink-shaped trailing-slash matching.
       cd "$cwd" || exit 99
       local input
       input=$(jq -cn --arg t "$tool" --arg c "$cmd" '{tool_name:$t,tool_input:{command:$c}}')
-      printf '%s' "$input" | bash "$SELF_TEST_HOOK" >/dev/null 2>&1
+      printf '%s' "$input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>&1
       echo $?
     )
   }
@@ -1220,8 +1228,201 @@ Test gitlink-shaped trailing-slash matching.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 32 (§D.0.7): multi-path-per-line bullet — a single bullet
+  # naming TWO backticked paths ("- `a/multi1.ts` and `a/multi2.ts` — desc")
+  # must produce TWO scope entries. Stage both named paths only; ALLOW
+  # proves the second backtick pair was NOT silently dropped (pre-fix, only
+  # a/multi1.ts would have entered SECTION_ENTRIES and a/multi2.ts would
+  # have blocked as out-of-scope). ----
+  PLAN_MULTI_PATH='# Plan: test
+Status: ACTIVE
+
+## Goal
+Test goal.
+
+## Files to Modify/Create
+- `src/multi1.ts` and `src/multi2.ts` — two-file bullet (§D.0.7)
+
+## Tasks
+- [ ] 1. test
+'
+  RC=$(_run_scenario s32 "$PLAN_MULTI_PATH" "src/multi1.ts,src/multi2.ts")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (32) multi-path-per-line-bullet-both-tokens-in-scope: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (32) multi-path-per-line-bullet-both-tokens-in-scope: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 33 (NL-FINDING-032): block message names a REAL remediation.
+  # Prior defect: the block message claimed `git commit --no-verify` was an
+  # "emergency override" for this gate. False — this hook is a PreToolUse
+  # gate that pattern-matches the `git commit` string BEFORE git runs, so
+  # a git pre-commit-hook bypass flag has no effect on it. Verify (a) the
+  # string "no-verify" no longer appears anywhere in the emitted message,
+  # and (b) the message's actual named remediation — appending an
+  # `## In-flight scope updates` bullet for the blocked path — really
+  # clears the block on a same-shape re-commit. ----
+  PLAN_S33='# Plan: test
+Status: ACTIVE
+
+## Goal
+Test goal.
+
+## Files to Modify/Create
+- `src/foo.ts` — primary file
+
+## Tasks
+- [ ] 1. test
+'
+  S33_REPO="$TMPROOT/s33"
+  mkdir -p "$S33_REPO"
+  (
+    cd "$S33_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_S33" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    echo "stub" > "unrelated.md"
+    git add "unrelated.md" 2>/dev/null
+    s33_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}'
+    printf '%s' "$s33_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>blocked_stderr.txt
+    echo $? > blocked_rc.txt
+
+    # Apply the message's real named remediation: append an In-flight
+    # scope updates bullet for the blocked path, then re-stage (already
+    # staged; the plan edit is the new staged content) and re-commit.
+    printf '\n## In-flight scope updates\n- 2026-07-04: `unrelated.md` — self-test remediation-clears-block proof\n' >> "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    printf '%s' "$s33_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >/dev/null 2>after_stderr.txt
+    echo $? > after_rc.txt
+  )
+  S33_BLOCKED_RC=$(cat "$S33_REPO/blocked_rc.txt" 2>/dev/null || echo 99)
+  S33_AFTER_RC=$(cat "$S33_REPO/after_rc.txt" 2>/dev/null || echo 99)
+  S33_BLOCKED_STDERR=$(cat "$S33_REPO/blocked_stderr.txt" 2>/dev/null || echo "")
+  S33_OK=1
+  if [[ "$S33_BLOCKED_RC" != "2" ]]; then
+    S33_OK=0
+    echo "self-test (33) no-verify-message-fixed: FAIL (initial rc=$S33_BLOCKED_RC, expected 2)" >&2
+  fi
+  if [[ "$S33_BLOCKED_STDERR" == *"no-verify"* ]]; then
+    S33_OK=0
+    echo "self-test (33) no-verify-message-fixed: FAIL (stderr still contains 'no-verify')" >&2
+  fi
+  if [[ "$S33_AFTER_RC" != "0" ]]; then
+    S33_OK=0
+    echo "self-test (33) no-verify-message-fixed: FAIL (after-remediation rc=$S33_AFTER_RC, expected 0 — named remediation did not clear the block)" >&2
+  fi
+  if [[ "$S33_OK" -eq 1 ]]; then
+    echo "self-test (33) no-verify-message-fixed: PASS (no 'no-verify' string; named In-flight-scope-updates remediation actually clears the block)" >&2
+    PASSED=$((PASSED+1))
+  else
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 34: obfuscated-verb pre-filter gap (KNOWN, pinned per harness-review 2026-07-13) ----
+  # `git co""mmit` has no "commit" substring in the RAW payload, so the cheap
+  # pre-filter SKIPS it (rc 0) even though an out-of-scope staged file is present
+  # that the full tokenizer-based logic would BLOCK (rc 2). Accepted residual:
+  # the threat model is accidental scope violations, not adversarial obfuscation.
+  # This PINS the PASS so any future pre-filter that strips quotes flips it to 2
+  # and forces an explicit review here.
+  RC=$(_run_scenario s34 "$PLAN_NORMAL" "unrelated/file.ts" "" 'git co""mmit -m x')
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (34) obfuscated-verb-prefilter-gap: PASS (KNOWN pre-filter skip; full logic would block)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (34) obfuscated-verb-prefilter-gap: FAIL (rc=$RC, expected 0 — pre-filter should skip the obfuscated verb)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 35: review records are system-managed (round-5 M4) ----
+  # review-record-commit-gate.sh's remedy is "write a review record, stage
+  # docs/reviews/records/, re-commit". THIS gate blocked that re-commit, because
+  # a review record is never in a plan's Files to Modify/Create — so its own
+  # REMEDY-CHAIN header's claim that the remedy "must not walk the operator into
+  # another gate" was FALSE, and the operator was handed an uncompletable
+  # remedy. PROVEN rc=2 before the exemption, rc=0 after.
+  RC=$(_run_scenario s35 "$PLAN_NORMAL" "docs/reviews/records/index.json" "" 'git commit -m x')
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (35) review-record-remedy-not-blocked: PASS (docs/reviews/records/* is system-managed)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (35) review-record-remedy-not-blocked: FAIL (rc=$RC, expected 0 — the review-record gate's own remedy is blocked here)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 36: the two PROVEN cross-gate disagreements (round-5 Part 2) ----
+  # Round 3 claimed "ONE commit-target resolver". It shipped one TOKENIZER and
+  # two SPLITTERS. These are the two shapes where this gate disagreed with
+  # review-record-commit-gate, pinned here so a future splitter cannot creep back.
+  RC=$(_run_scenario s36a "$PLAN_NORMAL" "unrelated/file.ts" "" 'echo "stage; git commit -m msg" >> notes.md')
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (36a) quoted-separator-no-phantom-segment: PASS (over-fire closed)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (36a) quoted-separator-no-phantom-segment: FAIL (rc=$RC, expected 0 — a ';' inside a quoted string manufactured a commit)" >&2
+    FAILED=$((FAILED+1))
+  fi
+  # `pushd` must retarget the gate exactly as `cd` does. The discriminator has
+  # to be the TARGET, not merely "is it a commit": the old splitter still saw
+  # the `git commit` segment, it just evaluated it against the wrong repo. So
+  # this pushes to a repo with NO plans (full-skip, rc 0) from a session repo
+  # that HAS an active plan and an out-of-scope staged file (rc 2 if the pushd
+  # is ignored). A first version of this scenario used `pushd .` and passed
+  # under the old splitter too — it discriminated nothing.
+  _build_repo "$TMPROOT/s36b-session" "$PLAN_NORMAL" "unrelated.md"
+  _build_repo "$TMPROOT/s36b-target" "" "state/file.txt"
+  RC=$(_run_hook_cmd "$TMPROOT/s36b-session" "pushd $TMPROOT/s36b-target && git commit -m \"x\"")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (36b) pushd-retargets-like-cd: PASS (evaluated against the pushd TARGET, not session cwd)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (36b) pushd-retargets-like-cd: FAIL (rc=$RC, expected 0 — pushd was invisible to the old splitter)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 37 (was bf3aa15's 35): bash-3.2 floor — no bash-4-only construct in this file ----
+  # REGRESSION GUARD (2026-07-29). Scenario 3/4/8/11/14/27/29/31/33 already go
+  # RED under /bin/bash 3.2.57 if `declare -A` comes back (proven by mutation),
+  # but only when someone actually RUNS the suite under 3.2. This static check
+  # fires on EVERY interpreter, so a 5.3-only run still catches a reintroduction
+  # of the exact defect that made this blocking gate exit 0 on stock macOS.
+  # Scoped to the constructs that are hard errors or silent misbehavior on 3.2.
+  S35_HITS=$(grep -nE '(declare|local|typeset)[[:space:]]+-[A-Za-z]*A|^[[:space:]]*mapfile[[:space:]]|^[[:space:]]*readarray[[:space:]]|\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}' "$SELF_TEST_HOOK" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  if [[ -z "$S35_HITS" ]]; then
+    echo "self-test (37) bash32-floor-no-bash4-constructs: PASS (no associative-array declaration, mapfile/readarray, or case-conversion expansion outside comments)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (37) bash32-floor-no-bash4-constructs: FAIL — bash-4-only construct(s) present:" >&2
+    printf '%s\n' "$S35_HITS" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 38 (was bf3aa15's 36): the suite re-invokes the interpreter it CLAIMS to test ----
+  # REGRESSION GUARD (2026-07-29) for the defect that hid all of the above: a
+  # bare `bash "$SELF_TEST_HOOK"` resolves through PATH, so the suite reported
+  # 35/0 under 3.2 while every scenario actually ran under Homebrew's 5.3.
+  S36_BARE=$(grep -nE '\|[[:space:]]*bash[[:space:]]+"\$SELF_TEST_HOOK"' "$SELF_TEST_HOOK" || true)
+  if [[ -z "$S36_BARE" ]] && [[ "${SELF_TEST_BASH:-${BASH:-}}" == "${BASH:-}" ]]; then
+    echo "self-test (38) selftest-interpreter-fidelity: PASS (children run ${SELF_TEST_BASH:-$BASH}, no PATH-resolved \`bash\`)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (38) selftest-interpreter-fidelity: FAIL — suite would test an interpreter it was not run under:" >&2
+    [[ -n "$S36_BARE" ]] && printf '%s\n' "$S36_BARE" >&2
+    [[ "${SELF_TEST_BASH:-}" != "${BASH:-}" ]] && echo "  SELF_TEST_BASH=${SELF_TEST_BASH:-<unset>} but BASH=${BASH:-<unset>}" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 31 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 38 scenarios)" >&2
+  echo "  interpreter exercised: ${SELF_TEST_BASH:-${BASH:-unknown}} (${BASH_VERSION:-unknown})" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1232,6 +1433,47 @@ fi
 # ============================================================
 # Main hook logic
 # ============================================================
+
+# --- P1 perf metering (perf-telemetry-2026-07 plan) -------------------------
+# Self-metering: this is one of the 5 highest-cost per-Bash-call hooks (no
+# single PreToolUse chain wrapper exists to time the whole chain — see
+# hooks/lib/perf-ledger.sh's own header for the PROVEN instrumentation-point
+# finding). Builtin-only ($EPOCHREALTIME), zero forks; a trap on EXIT covers
+# every exit path in this file (all the `exit 0`/`exit 2` calls below) without
+# touching each one individually.
+source "$_SEG_SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
+if declare -F pl_meter_begin >/dev/null 2>&1; then
+  pl_meter_begin
+  trap 'pl_meter_end "scope-enforcement-gate"' EXIT
+fi
+
+# --- Cheap pre-filter (perf; behavior-preserving) ---------------------------
+# This gate only ever ACTS on a `git commit` command; every other command is a
+# guaranteed pass. On Windows Git Bash the dominant early-exit cost is the jq/sed
+# subprocess spawns below, NOT lexing the file (measured: ~612ms common path ->
+# ~182ms with this guard, whole file still parsed). A pure-bash substring guard
+# here exits the common non-commit path before any spawn. The guard covers every
+# UN-OBFUSCATED git-commit invocation: a real `git commit` segment contains the
+# literal substring "commit". ACCEPTED RESIDUAL: a quote/escape-obfuscated form
+# (e.g. `git co""mmit`) has no "commit" substring in the RAW payload, so it skips
+# this pre-filter — while the tokenizer below would reconstruct and act on it.
+# This is NOT a strict superset of the tokenizer; it is deliberately scoped to the
+# threat model (accidental scope violations, not adversarial obfuscation — no
+# human or LLM types `co""mmit` by accident). Pinned by the obfuscation-boundary
+# self-test scenario. Consume the input ONCE (env var else stdin) and re-export
+# it so the read below is unaffected.
+# Ref: docs/lessons/2026-07-13-agent-efficiency-bottlenecks-process-spawn-and-hook-latency.md rec 5.
+_SCOPE_PF="${CLAUDE_TOOL_INPUT:-}"
+if [[ -z "$_SCOPE_PF" ]] && [[ ! -t 0 ]]; then
+  _SCOPE_PF=$(cat 2>/dev/null || echo "")
+fi
+case "$_SCOPE_PF" in
+  *commit*) : ;;                 # possible git commit — fall through to full logic
+  *)                             # no "commit" substring — cannot be a git commit
+    [[ "${SCOPE_PRINT_TARGET:-0}" == "1" ]] && printf '0|\n'
+    exit 0 ;;
+esac
+export CLAUDE_TOOL_INPUT="$_SCOPE_PF"
 
 # --- Read tool input (env var OR stdin, supporting both Claude Code shapes) ---
 INPUT="${CLAUDE_TOOL_INPUT:-}"
@@ -1262,35 +1504,51 @@ if [[ -z "$CMD" ]]; then
 fi
 
 # --- Detect git commit + parse the effective commit-target (HARNESS-GAP-47) ---
-# Track `cd` / `Set-Location` segments as they accumulate, then when the
-# git-commit segment is found, extract its `-C` flags. Priority for the
-# effective target dir: -C composition > last cd target > process cwd ("").
-IS_GIT_COMMIT=0
-TARGET_DIR=""
-CD_TARGET=""
-TMP_CMD="$CMD"
-TMP_CMD=$(echo "$TMP_CMD" | sed -e 's/&&/\n/g' -e 's/;/\n/g')
-while IFS= read -r seg; do
-  seg="${seg#"${seg%%[![:space:]]*}"}"
-  seg="${seg%"${seg##*[![:space:]]}"}"
-  [[ -z "$seg" ]] && continue
-  if [[ "$seg" =~ ^cd($|[[:space:]]) ]] || [[ "$seg" =~ ^[Ss]et-[Ll]ocation($|[[:space:]]) ]]; then
-    CD_TARGET=$(_parse_cd_target "$seg" "${CD_TARGET:-$PWD}")
-    continue
+# ROUND 5, 2026-07-29 — ONE RESOLVER, FOR REAL THIS TIME.
+#
+# Round 3 was told to stop hand-rolling shell parsing so the harness would have
+# "ONE commit-target resolver instead of two that disagree". What round 3
+# actually shipped was one shared TOKENIZER and TWO different SPLITTERS: this
+# gate kept its own `sed -e 's/&&/\n/g' -e 's/;/\n/g'`, which is quote-BLIND.
+# The two gates therefore still disagreed. PROVEN pairs, before this change:
+#
+#   echo "stage; git commit -m msg" >> notes.md  -> review-record rc=0, scope rc=2
+#   pushd <plan-repo> && git commit -m x         -> review-record rc=2, scope rc=0
+#
+# The first is this gate OVER-FIRING on a phantom segment manufactured by a
+# semicolon inside a quoted string; the second is this gate FAILING OPEN because
+# its splitter never recognised `pushd`. Both are gone because the splitting,
+# the cd tracking, and the target resolution are now the SAME FUNCTION the other
+# gate calls — not a copy of it, not a shared helper wrapped in local logic.
+#
+# See lib/git-command-parse.sh Group 10 for the standing cross-gate agreement
+# test that keeps them from drifting apart again.
+_scope_resolve_commit() {
+  IS_GIT_COMMIT=0
+  TARGET_DIR=""
+  gcp_resolve_commit_target "$1" "$PWD"
+  IS_GIT_COMMIT="${GCP_IS_COMMIT:-0}"
+  TARGET_DIR="${GCP_TARGET_DIR:-}"
+  # BAILOUTS RESOLVE TOWARD DETECTION. A degraded parse means "I could not
+  # tell", not "it is not a commit" — scope-check it against the cwd rather than
+  # waving it through. Same posture review-record-commit-gate takes.
+  if [[ "$IS_GIT_COMMIT" -ne 1 ]] && [[ "${GCP_PARSE_DEGRADED:-0}" -eq 1 ]]; then
+    echo "[scope-enforcement-gate] command parse degraded — scope-checking anyway." >&2
+    IS_GIT_COMMIT=1
+    TARGET_DIR=""
   fi
-  if [[ "$seg" =~ ^git([[:space:]]|$) ]]; then
-    _analyze_git_segment "$seg" "${CD_TARGET:-$PWD}"
-    if [[ "$GIT_SEG_IS_COMMIT" -eq 1 ]]; then
-      IS_GIT_COMMIT=1
-      if [[ -n "$GIT_SEG_C_TARGET" ]]; then
-        TARGET_DIR="$GIT_SEG_C_TARGET"
-      elif [[ -n "$CD_TARGET" ]]; then
-        TARGET_DIR="$CD_TARGET"
-      fi
-      break
-    fi
-  fi
-done <<< "$TMP_CMD"
+}
+_scope_resolve_commit "$CMD"
+
+# Introspection for the standing CROSS-GATE AGREEMENT test (round 5). Prints
+# what THIS gate concluded, via the code path it really uses, and exits. It is
+# deliberately placed after _scope_resolve_commit rather than calling the lib
+# directly: a test that called the lib would pass even if this gate went back to
+# rolling its own splitter, which is precisely the round-4 failure.
+if [[ "${SCOPE_PRINT_TARGET:-0}" == "1" ]]; then
+  printf '%s|%s\n' "$IS_GIT_COMMIT" "$TARGET_DIR"
+  exit 0
+fi
 
 if [[ "$IS_GIT_COMMIT" -eq 0 ]]; then
   exit 0
@@ -1380,7 +1638,15 @@ if [[ -n "$SKIP_REASON" ]]; then
   # Audit log (best-effort; never fail the hook on a logging error). At
   # PreToolUse time the new commit's SHA does not exist yet, so we log the
   # current HEAD (the parent) for context.
-  EXEMPT_LOG="$HOME/.claude/state/scope-gate-exemptions.log"
+  # Sandbox the exemption-audit log under HARNESS_SELFTEST so a self-test
+  # scenario that trips an exemption (e.g. the discovery/replay exemption)
+  # never appends to the real ~/.claude/state/scope-gate-exemptions.log
+  # (HASH-DRIFT source found by the E.2 temp-HOME proof).
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    EXEMPT_LOG="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/scope-enforcement-gate-selftest/$$}/scope-gate-exemptions.log"
+  else
+    EXEMPT_LOG="$HOME/.claude/state/scope-gate-exemptions.log"
+  fi
   HEAD_SHA=$(git -C "$REPO_ROOT" rev-parse --short HEAD 2>/dev/null || echo "unknown")
   CUR_BRANCH=$(git -C "$REPO_ROOT" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
   TS=$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "unknown")
@@ -1534,8 +1800,18 @@ _parse_one_section() {
     fi
 
     if [[ "$line" == *'`'* ]]; then
-      local tmp="${line#*\`}"
-      extracted="${tmp%%\`*}"
+      # §D.0.7 fix: loop ALL backtick pairs on the line (a bullet can name
+      # multiple paths, e.g. "- `a/b.ts` and `c/d.ts` — desc"), not just
+      # the first. Each valid token is appended independently below.
+      local tok
+      while IFS= read -r tok; do
+        [[ -z "$tok" ]] && continue
+        if [[ "$tok" != */* ]] && [[ "$tok" != *.* ]]; then
+          continue
+        fi
+        SECTION_ENTRIES+=("$tok")
+      done < <(extract_backtick_paths "$line")
+      continue
     else
       extracted="$line"
       extracted="${extracted%% — *}"
@@ -1720,7 +1996,21 @@ for plan in "${ACTIVE_PLANS[@]}"; do
 done
 
 # --- Aggregate: a file is out of scope iff EVERY active plan rejects it ---
-declare -A FINAL_OOS
+#
+# STRUCTURE (bash 3.2 floor): two PARALLEL INDEXED ARRAYS, not `declare -A`.
+# Chosen for this site because (a) every consumer below walks the whole map
+# and needs the key AND its value together, so index-parallel iteration is
+# an O(1) value read — there is no lookup-by-key access pattern to make
+# linear at all; (b) keys are staged FILE PATHS, which may legally contain
+# `|`, `:` or any other separator, so the delimited-string form used for
+# `$oos_for_this_plan` above (whose members are compared, never split back
+# out) is not safe as the outer map; (c) insertion order is the staged-file
+# order, which makes the block message deterministic — `${!FINAL_OOS[@]}`
+# on bash 5.3 iterated in arbitrary hash order.
+# Invariant: FINAL_OOS_KEYS[i] pairs with FINAL_OOS_VALS[i]; keys are unique
+# because the enclosing loop visits each STAGED entry exactly once.
+FINAL_OOS_KEYS=()
+FINAL_OOS_VALS=()
 
 NUM_PLANS="${#ACTIVE_PLANS[@]}"
 for sf in "${STAGED[@]}"; do
@@ -1743,12 +2033,13 @@ for sf in "${STAGED[@]}"; do
     esac
   done
   if [[ "$reject_count" -eq "$NUM_PLANS" ]]; then
-    FINAL_OOS["$sf"]="$rejecting_plans"
+    FINAL_OOS_KEYS+=("$sf")
+    FINAL_OOS_VALS+=("$rejecting_plans")
   fi
 done
 
 # --- Decision ---
-if [[ "${#FINAL_OOS[@]}" -eq 0 ]] && [[ "${#PLAN_ERRORS[@]}" -eq 0 ]]; then
+if [[ "${#FINAL_OOS_KEYS[@]}" -eq 0 ]] && [[ "${#PLAN_ERRORS[@]}" -eq 0 ]]; then
   exit 0
 fi
 
@@ -1815,11 +2106,12 @@ fi
     done
     echo ""
   fi
-  if [[ "${#FINAL_OOS[@]}" -gt 0 ]]; then
+  if [[ "${#FINAL_OOS_KEYS[@]}" -gt 0 ]]; then
     echo "Out-of-scope staged files:"
-    for f in "${!FINAL_OOS[@]}"; do
+    for ((_oos_i=0; _oos_i<${#FINAL_OOS_KEYS[@]}; _oos_i++)); do
+      f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "  • $f"
-      rejected_by="${FINAL_OOS[$f]}"
+      rejected_by="${FINAL_OOS_VALS[$_oos_i]}"
       if [[ -n "$rejected_by" ]]; then
         echo "    Rejected by plan(s):${rejected_by}"
       fi
@@ -1836,7 +2128,8 @@ fi
     else
       echo "     Add to <active-plan-path>'s \`## In-flight scope updates\` section:"
     fi
-    for f in "${!FINAL_OOS[@]}"; do
+    for ((_oos_i=0; _oos_i<${#FINAL_OOS_KEYS[@]}; _oos_i++)); do
+      f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "       - ${TODAY}: ${f} — <one-line reason>"
     done
     echo "     Then re-stage and re-commit. The gate will read the updated section"
@@ -1854,7 +2147,8 @@ fi
     echo ""
     echo "  3. DEFER (when this work shouldn't ship at all right now)."
     echo "     Unstage:"
-    for f in "${!FINAL_OOS[@]}"; do
+    for ((_oos_i=0; _oos_i<${#FINAL_OOS_KEYS[@]}; _oos_i++)); do
+      f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "       git restore --staged \"$f\""
     done
     echo "     Add to docs/backlog.md if it should be picked up later, or skip"
@@ -1876,7 +2170,8 @@ fi
     echo ""
     echo "  3. DEFER (when this work shouldn't ship at all right now)."
     echo "     Unstage:"
-    for f in "${!FINAL_OOS[@]}"; do
+    for ((_oos_i=0; _oos_i<${#FINAL_OOS_KEYS[@]}; _oos_i++)); do
+      f="${FINAL_OOS_KEYS[$_oos_i]}"
       echo "       git restore --staged \"$f\""
     done
     echo "     Add to docs/backlog.md if it should be picked up later, or skip"
@@ -1889,10 +2184,20 @@ fi
   echo "genuinely-separate work gets its own plan, and work that shouldn't ship"
   echo "goes to backlog. Three options cover every legitimate case."
   echo ""
-  echo "Emergency override: \`git commit --no-verify\` bypasses ALL pre-commit hooks"
-  echo "including this one. Use only when explicitly authorized (per"
-  echo "~/.claude/rules/git.md). The bypass is auditable in git's output."
+  echo "There is no override flag: this gate is a PreToolUse hook that pattern-"
+  echo "matches the \`git commit\` command string BEFORE git runs, so any git"
+  echo "commit-hook bypass flag has no effect on it — the block already happened"
+  echo "before git was ever invoked. The only real remediations are the three"
+  echo "options above — fastest is usually option 1: append one backtick-quoted-"
+  echo "path bullet (- <YYYY-MM-DD>: <path> — <reason>) per staged file to the"
+  echo "active plan's \`## In-flight scope updates\` section (or list the path"
+  echo "directly under \`## Files to Modify/Create\`), then re-stage and re-commit."
   echo ""
+  echo "NOTE: this block prevented the ENTIRE command from running — including any"
+  echo "fix/edit/\`git add\` prefix before the \`git commit\`. Nothing was executed."
+  echo "Re-run the non-commit part as its own call first, then commit separately."
+  echo ""
+  echo "This gate: ~/.claude/hooks/scope-enforcement-gate.sh (source: adapters/claude-code/hooks/scope-enforcement-gate.sh)"
   echo "================================================================"
 } >&2
 

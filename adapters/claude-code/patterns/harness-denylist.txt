@@ -20,7 +20,21 @@ Pocket-Technician
 pocket-technician
 pt-leads
 Pocket\sTechnician
-(^|[^-A-Za-z0-9])Circuit(?:\s|$|[^A-Za-z])
+# The codename below is also a generic electrical-engineering noun. Its
+# pattern must catch the codename standalone (prose either case, file paths,
+# identifiers, end-of-line) but must NOT catch the generic two-word idiom
+# "<word> breaker" / "<word>-breaker" (nl-issue [47]: the old right boundary
+# `(?:\s|$|[^A-Za-z])` false-blocked PR #91's spawn-cascade prose until the
+# guards were renamed). POSIX ERE has no lookahead, so "not followed by
+# 'breaker'" is spelled as the prefix-complement alternation below: after the
+# word, allow (spaces/hyphens then EOL) | (any non-letter that is not a
+# space/hyphen) | (spaces/hyphens then a word that is NOT 'breaker'-prefixed).
+# The scanner greps -iE, and GNU grep folds bracket expressions under -i, so
+# [^b] etc. also exclude 'B'. Accepted narrowings (proven in the scanner's
+# --self-test, scenarios c1-c9): "<word>[ -]breaker..." never trips; the
+# truncated forms "<word> b" / "<word> br" / ... / "<word> breake" at
+# end-of-line never trip (six near-impossible strings, accepted).
+(^|[^-A-Za-z0-9])Circuit([[:space:]-]*$|[^-A-Za-z[:space:]]|[[:space:]-]+([^b[:space:]-]|b[^r]|br[^e]|bre[^a]|brea[^k]|break[^e]|breake[^r]))
 (^|[^-A-Za-z0-9])Foresight(?:\s|$|[^A-Za-z])
 
 # === Filesystem markers revealing personal setup ===
@@ -29,18 +43,37 @@ OneDrive
 c:\\Users\\misha\\
 /Users/misha/
 
-# === Known test credentials that must never resurface ===
-PipelineTest2026
-pipeline-test@pocket-technician\.com
+# === Known test credentials — RELOCATED (GAP-56, 2026-07-07) ===
+# The literal pipeline test-user credential (a password VALUE + its account
+# email) used to live here. A shipped public denylist that stores a literal
+# secret value re-publishes the very thing it guards (this file is mirrored
+# public). Those two literals now live ONLY in the machine-local, gitignored
+# layer at ~/.claude/business-patterns.d/pt-test-credentials.txt, which the
+# git-native pre-commit loads and enforces on EVERY repo on this machine
+# (including the product repo where the credential originated) — zero public
+# disclosure. RULE: literal secret VALUES go in the local layer; this shipped
+# file holds only generic shapes + non-secret identifiers (usernames/org/
+# product names, which are inherently public).
+#
+# COVERAGE CAVEAT (honest scope delta): harness-hygiene-scan.sh AND both CI
+# jobs (server-side-enforcement.yml, secret-backstop.yml) read ONLY this repo
+# denylist — never the machine-local layer (the GitHub runner has no
+# ~/.claude/business-patterns.d). So this relocation trades a broader LOCAL
+# block (all repos, this machine) for the loss of the SERVER-SIDE/CI block on
+# the password VALUE: a `--no-verify` commit of the raw value to neural-lace
+# would no longer be caught in CI. Accepted because the credential is being
+# rotated dead (NEEDS-YOU.md; GAP-56). If the pending liveness check comes
+# back LIVE, add a CI-side backstop for the value rather than leaving this gap.
 
 # === Generic credential/PII shapes (catch future additions) ===
 # NOTE: generic email matching was removed 2026-04-18. POSIX ERE does not
 # support negative lookahead, so an `@(?!example\.com)` pattern silently
 # failed to compile and either no-op'd or produced false positives. The
-# targeted entries above (jagguar7, pipeline-test@pocket-technician) catch
-# the known leaks; broader email matching risks more false positives than
-# prevented leaks. Reintroduce with per-file exemptions if a real leak
-# surfaces.
+# targeted identifier entry above (jagguar7) catches the known leak; the
+# test-credential pair that used to sit here is no longer in this file (it was
+# relocated to the machine-local layer — see the RELOCATED note above).
+# Broader email matching risks more false positives than prevented leaks.
+# Reintroduce with per-file exemptions if a real leak surfaces.
 # Absolute POSIX home paths containing a username segment
 /(?:home|Users)/[a-z][a-z0-9_-]+/
 # GitHub fine-grained PAT + classic PAT

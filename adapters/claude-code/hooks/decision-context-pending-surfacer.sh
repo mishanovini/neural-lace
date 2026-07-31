@@ -37,10 +37,27 @@
 
 set -uo pipefail
 
+# ----- shared neural-lace repo-root resolver (B.2 legacy-path fix) ----------
+# shellcheck disable=SC1091
+{ source "${BASH_SOURCE[0]%/*}/lib/nl-paths.sh" 2>/dev/null; } || true
+
 MODE="${1:-}"
 
-LOG_DIR="$HOME/.claude/logs"
+# Log destination: sandboxed when HARNESS_SELFTEST=1 or MODE is --self-test
+# itself (self-test isolation — E.2 remediation) so no self-test run appends
+# to the real machine's ~/.claude/logs/decision-context-pending-surfacer.log
+# regardless of HOME. Prefers an explicit HARNESS_SELFTEST_DIR; falls back to
+# a PID-scoped tmp sandbox otherwise (signal-ledger.sh's convention).
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _DCPS_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/decision-context-pending-surfacer-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_DCPS_SANDBOX"
+  LOG_DIR="$_DCPS_SANDBOX/logs"
+else
+  LOG_DIR="$HOME/.claude/logs"
+fi
 LOG_FILE="$LOG_DIR/decision-context-pending-surfacer.log"
+mkdir -p "$LOG_DIR" 2>/dev/null || true
 SEEN_DIR="${DCPS_SEEN_DIR:-$HOME/.claude/state/decision-context}"
 # Glob is overridable via DCPS_FOLLOWUP_GLOB (test scaffolding); production
 # default points at the canonical ~/.claude/state location.
@@ -63,7 +80,11 @@ _have() { command -v "$1" >/dev/null 2>&1; }
 # ---- conv-tree path resolvers (copied from conversation-tree-emit.sh) ------
 _fallback_conv_tree_path() {
   local leaf="$1"
-  local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
+  local base="${CONV_TREE_MAIN_CHECKOUT:-}"
+  if [[ -z "$base" ]] && command -v nl_repo_root >/dev/null 2>&1; then
+    base="$(nl_repo_root 2>/dev/null)"
+  fi
+  [[ -z "$base" ]] && base="$HOME/.claude"
   # UI module lives at neural-lace/workstreams-ui/ (renamed 2026-06).
   local d cand
   for d in workstreams-ui; do

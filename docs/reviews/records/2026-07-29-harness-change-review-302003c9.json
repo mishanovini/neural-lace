@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260729-302003c9",
+  "created_at": "2026-07-29T22:36:51Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/plans/accountable-estate-program-2026-07.md (T7)",
+  "change_ref": {
+    "commit_sha": "b5dfaf1",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/loe-backfill.sh",
+      "blob_sha": "3c46197099e3601a73b524978ae33d3ae1fe19ff"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-reviewer.sh",
+      "blob_sha": "117c1a7dcc1f8c6f2f07a25266cb1572dd5d9009"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-commit-gate.sh",
+      "blob_sha": "d22a497b59559f37f6f314d04cb9648ef3c66a3f"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "80bd7c72d71e25f6dea1af552eb796b4f2e39686"
+    },
+    {
+      "path": "adapters/claude-code/scripts/manifest-check.sh",
+      "blob_sha": "72feeff98501bf9fdaf0528c810b58ae21639789"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "CONDITIONAL-PASS on fd48741 (0 Critical, 6 Major, 4 Minor — all probes PROVEN) remediated in full by b5dfaf1 same session: artifact moved to docs/loe/ out of the plan gate's selector; atomic validated mine write; tokens mined only from structured anchors (honest-data law restored); corrupt-vs-empty table messages split; missing-field nudge v2-vintage-gated with template creation-time writer; manifest schema extended for ../scripts/ refs — manifest-check GREEN 0-red first time. Orchestrator verification: loe-backfill self-test 12/12, manifest-check self-test 18/18, direct Check 18 branch harness 7/7 (incl. both silence paths + corrupt table), tokens anchor positive+negative proof, bash -n x5. Full plan-reviewer suite impractical on this machine (characterized fork-tax class) — direct branch evidence per the reviewer's own method.",
+    "findings_summary": "6 Major (artifact-path-in-gate-selector; unchecked-pipeline-write; prose-promoted-to-actual; unparseable-vs-empty conflation; unsatisfiable-nudge; manifest-schema-rejection) + 4 Minor — ALL landed in b5dfaf1; residual: full ~100-scenario plan-reviewer suite unexercised end-to-end on this machine (unrefuted, not proven)"
+  },
+  "written_by": "orchestrator session d3059d78 via write-review-record.sh",
+  "payload": {}
+}

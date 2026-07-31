@@ -1,0 +1,11 @@
+# Design-Mode Planning — compact
+> Enforcement: systems-design-gate.sh, plan-reviewer.sh; systems-designer agent review. Full: doctrine/design-mode-planning-full.md
+> Applies: system-design work where iteration is expensive and failures compound.
+
+- Declare `Mode: design` when ANY of: editing `.github/workflows/*.yml`, database migrations, `vercel.json` / `Dockerfile` / infra config, deploy or migration scripts; integrating an unfamiliar third-party tool; more than 3 state transitions in the flow; iteration costs >5 minutes or real money; other systems/teams depend on the output. When in doubt, use design.
+- A design-mode plan MUST include the Systems Engineering Analysis with all 10 sections, each substantive and task-specific: Outcome (measurable, user-perspective), End-to-end trace (walk ONE concrete example with real values through every boundary), Interface contracts, Environment & execution context, Authentication & authorization map, Observability plan, Failure-mode analysis per step, Idempotency & restart semantics, Load/capacity model, Decision records & runbook.
+- systems-designer MUST return PASS before implementation begins. systems-design-gate.sh blocks edits to design-mode files without a passing ACTIVE `Mode: design` plan.
+- Before invoking systems-designer, run the five pre-submission class-sweeps and record them in `## Pre-Submission Audit`: S1 entry-point surfacing, S2 existing-code-claim verification (re-verify every cited line against the file — no claims from memory), S3 cross-section consistency, S4 numeric-parameter sweep (one value per parameter everywhere), S5 scope-vs-analysis check.
+- Quantitative claims show inline arithmetic in the same paragraph — never "comfortably under X" without the multiplication. Cold-start / reset / fallback paths inherit steady-state caps unless the capacity model explicitly budgets them separately.
+- "Stays identical / unchanged / preserved" claims must enumerate BOTH what's preserved and what changes — blanket claims forbidden.
+- Escape hatch for trivial edits (version bump, typo fix): a `Mode: design-skip` plan with a 1–2 sentence `## Why design-skip` justification — an auditable pause, not the full 10-section treatment.

@@ -1,0 +1,25 @@
+{
+  "id": "stop-verdict-dispatcher",
+  "kind": "gate",
+  "doctrine_file": "doctrine/session-end-protocol.md",
+  "hooks": [
+    "stop-verdict-dispatcher.sh"
+  ],
+  "events": [
+    "Stop"
+  ],
+  "wired_template": false,
+  "selftest": true,
+  "jit_triggers": {
+    "paths": [],
+    "keywords": [
+      "stop-verdict",
+      "batched Stop verdict",
+      "block-once-then-ledger",
+      "ADR 059"
+    ]
+  },
+  "blocking": true,
+  "budget_class": "stop",
+  "honest_status": "Built this wave (task E.11) but NOT YET wired into settings.json.template's Stop chain -- adapters/claude-code/settings.json.template is an ORCHESTRATOR-ONLY surface this wave (specs-e sec E.0.1 rule 1). The orchestrator's sec E.W integration step rewires the Stop chain from 6 entries to 4 (this dispatcher replacing the three standalone work-integrity-gate.sh / session-honesty-gate.sh / bug-persistence-gate.sh entries) and should update wired_template to true + retire or repoint those three gates' own existing manifest entries at that same commit (their entries are UNCHANGED by this task -- they still each independently claim wired_template: true, which stays honest until the sec E.W rewire actually happens)."
+}

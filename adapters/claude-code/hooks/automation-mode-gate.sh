@@ -196,6 +196,8 @@ a human-in-the-loop for deploy-class operations.
 To approve: ask the user to approve the specific action.
 To switch mode: /automation-mode full-auto  (or edit ~/.claude/local/automation-mode.config.json)
 To override per-project: create <project>/.claude/automation-mode.json
+
+This gate: ~/.claude/hooks/automation-mode-gate.sh (source: adapters/claude-code/hooks/automation-mode-gate.sh)
 ================================================================
 EOF
   return 1
@@ -404,6 +406,7 @@ JSON
     (
       cd "$wt_parent" || exit 0
       git init -q .
+      git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
       git config user.email "test@example.test"
       git config user.name "Test"
       echo "seed" > seed.txt

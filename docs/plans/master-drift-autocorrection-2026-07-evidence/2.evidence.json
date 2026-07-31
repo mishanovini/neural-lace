@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task_id": "2",
+  "verdict": "PASS",
+  "commit_sha": "dc3d41bd93c9032644ee468aee6746ad050af716",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/hooks/harness-doctor.sh",
+    "adapters/claude-code/manifest.json",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "command:bash adapters/claude-code/scripts/master-drift-autocorrect.sh --self-test 2>&1 | tail -1 | grep -qx '\\[self-test\\] 11 passed, 0 failed'": {
+      "passed": true,
+      "detail": "",
+      "command": "bash adapters/claude-code/scripts/master-drift-autocorrect.sh --self-test 2>&1 | tail -1 | grep -qx '\\[self-test\\] 11 passed, 0 failed'",
+      "exit_code": 0
+    },
+    "exists:adapters/claude-code/scripts/master-drift-autocorrect.sh": {
+      "passed": true,
+      "detail": "adapters/claude-code/scripts/master-drift-autocorrect.sh exists",
+      "command": "test -e adapters/claude-code/scripts/master-drift-autocorrect.sh",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:46:34Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/master-drift-autocorrection-2026-07.md"
+}

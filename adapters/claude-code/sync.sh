@@ -64,14 +64,18 @@ _sync_owner_name_from_url() {
 # — `|| true` suppresses the exit code, so we must validate the shape
 # explicitly (40-char hex) to distinguish a real tree hash from an error body.
 #
-# WHY TREE HASH AND NOT COMMIT SHA: per the 2026-05-29 divergent-history-identical-
-# content posture (PT canonical; personal receives the same content via
-# cherry-pick + non-force direct push), the two repos intentionally have
-# different commit SHAs forever — each cherry-pick produces a distinct commit
-# object on the receiving side. What must stay identical is the CONTENT
-# (the tree hash). Comparing `.commit.sha` here would false-positive on every
-# push under this posture; comparing `.commit.commit.tree.sha` (the tree the
-# master tip points at) is the correct content-equivalence check.
+# WHY TREE HASH AND NOT COMMIT SHA: per decision 064 (2026-07-16, superseding the
+# 2026-05-29 "PT is canonical" posture — personal `origin` is now canonical;
+# `pt` is the mirror, see docs/decisions/064-never-diverge-single-canonical-
+# master.md), a manual reconcile (docs/runbooks/master-reconcile-and-estate-
+# cleanup.md) can still produce a divergent-history-identical-content state —
+# e.g. a cherry-pick-based reconcile after true divergence gives the two repos
+# different commit SHAs on the affected commits (each cherry-pick produces a
+# distinct commit object on the receiving side) while the CONTENT stays
+# identical. What must stay identical is the CONTENT (the tree hash), not the
+# commit SHA. Comparing `.commit.sha` here would false-positive after any such
+# reconcile; comparing `.commit.commit.tree.sha` (the tree the master tip
+# points at) is the correct content-equivalence check.
 # Function name is preserved for callsite stability; the value it returns is
 # now a tree hash, not a commit SHA.
 _sync_remote_master_sha() {

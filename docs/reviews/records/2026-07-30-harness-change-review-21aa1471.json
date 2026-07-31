@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-21aa1471",
+  "created_at": "2026-07-30T00:30:07Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/plans/macos-portability-2026-07.md",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/cross-repo-drift-warn.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decision-context-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/deferral-counter.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/doctrine-jit.sh",
+      "blob_sha": "3f49813ec96f4c92185adab2831b126ad4c2da91"
+    },
+    {
+      "path": "adapters/claude-code/hooks/goal-coverage-on-stop.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/narrate-and-wait-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pr-health-snapshot-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-stop-verifier.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/register-progress-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/signal-ledger-flush.sh",
+      "blob_sha": "2e82fe84336cd9e868bfe7b4235cb1f391eb76aa"
+    },
+    {
+      "path": "adapters/claude-code/hooks/vaporware-volume-gate.sh",
+      "blob_sha": "1514ebab4e9989d96eb5e937dad6de6a671ff31c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-extract-pending.sh",
+      "blob_sha": "b8016157bd647e3c23499a6d3d6903062e556950"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-stop-writer.sh",
+      "blob_sha": "7c49603a73678f00418d85af00d0cf089819d2ca"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "mode-only change (644 to 755): content identical to master; makes the hook executable, the fix for the silently-inert git-ignored-hook class",
+    "findings_summary": "13 files, each a pure mode change 100644->100755 with zero content delta vs master (git diff --shortstat: 0 insertions, 0 deletions). No new behavior to model; executability is the corrective for the mode-644 inert-hook theatre class."
+  },
+  "written_by": "orchestrated adversarial review sweep (operator-authorized 2026-07-29), hooks-3 group",
+  "payload": {}
+}

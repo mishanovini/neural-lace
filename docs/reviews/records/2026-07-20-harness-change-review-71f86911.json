@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260720-71f86911",
+  "created_at": "2026-07-20T06:35:35Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/reviews/2026-07-20-f1-f3-rederived-harness-review.md",
+  "change_ref": {
+    "commit_sha": "e15a324973d785f4b32901934cb0ffe605e70d6c",
+    "branch": "build/cockpit-health-int"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/session-start-digest.sh",
+      "blob_sha": "62ae96ac7bb340ccd77e77726a4235b393147fb8"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "F3 session-start-digest.sh — PASS. Advisory, format-correct, layer-correct, negative-tested; the double-sweep concern is refuted (doctor feed is cached).",
+    "findings_summary": "PASS re-derived; 1 Minor advisory (timeout + cache-parity with feed_doctor)"
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

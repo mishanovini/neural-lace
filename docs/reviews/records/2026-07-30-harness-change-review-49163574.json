@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-49163574",
+  "created_at": "2026-07-30T00:30:47Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/plans/macos-portability-2026-07.md",
+  "change_ref": {
+    "commit_sha": "7886762216a669bfd9f68f92e936278878a32423",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/concurrent-ownership-gate.sh",
+      "blob_sha": "6a27dc279ce5ea58ddb49b95c164d1259e43b7e1"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "find -mmin freshness window replaces GNU date -d cutoff, rounds up fail-safe; 19/19 self-test under /bin/bash 3.2.57 including with children forced to 3.2 via PATH shim",
+    "findings_summary": "Mechanism change verified: the fail-OPEN cutoff bug (empty date -d output -> zero claims loaded) is gone; find -mmin widens the window by <60s (more blocking, fail-safe direction). nl_touch_age fixture aging hard-fails instead of || true. Suite green under both interpreters; children independently forced to 3.2 via shim. Residual (pre-existing, ledgered): child re-invocations use PATH-resolved bare bash."
+  },
+  "written_by": "orchestrated adversarial review sweep (operator-authorized 2026-07-29), hooks-3 group",
+  "payload": {}
+}

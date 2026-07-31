@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "task_id": "7",
+  "verdict": "PASS",
+  "commit_sha": "dc3d41bd93c9032644ee468aee6746ad050af716",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/hooks/harness-doctor.sh",
+    "adapters/claude-code/manifest.json",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q '^CONVERGED ' \"$HOME/.claude/state/master-drift/neural-lace.status\"": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q '^CONVERGED ' \"$HOME/.claude/state/master-drift/neural-lace.status\"",
+      "exit_code": 0
+    },
+    "command:git -C \"$HOME/.claude/sync-clone/neural-lace\" rev-parse origin/master pt/master | uniq -u | wc -l | grep -qx 0": {
+      "passed": true,
+      "detail": "",
+      "command": "git -C \"$HOME/.claude/sync-clone/neural-lace\" rev-parse origin/master pt/master | uniq -u | wc -l | grep -qx 0",
+      "exit_code": 0
+    },
+    "command:grep -q 'master-drift-autocorrect.sh' adapters/claude-code/hooks/session-start-git-freshness.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'master-drift-autocorrect.sh' adapters/claude-code/hooks/session-start-git-freshness.sh",
+      "exit_code": 0
+    },
+    "command:grep -q 'isl_live_session' adapters/claude-code/scripts/master-drift-autocorrect.sh && grep -q 'isl_refuse_log' adapters/claude-code/scripts/master-drift-autocorrect.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'isl_live_session' adapters/claude-code/scripts/master-drift-autocorrect.sh && grep -q 'isl_refuse_log' adapters/claude-code/scripts/master-drift-autocorrect.sh",
+      "exit_code": 0
+    },
+    "command:grep -q -- '--is-ancestor' adapters/claude-code/scripts/master-drift-autocorrect.sh": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q -- '--is-ancestor' adapters/claude-code/scripts/master-drift-autocorrect.sh",
+      "exit_code": 0
+    },
+    "command:grep -q 'phase=state wrote: CONVERGED 23143e1' \"$HOME/.claude/logs/master-drift-autocorrect.log\"": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'phase=state wrote: CONVERGED 23143e1' \"$HOME/.claude/logs/master-drift-autocorrect.log\"",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:49:09Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/master-drift-autocorrection-2026-07.md"
+}

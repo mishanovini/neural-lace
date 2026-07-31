@@ -1,7 +1,7 @@
 ---
 name: Audience Content Reviewer
 description: World-class content & audience-fit reviewer. Audits every user-facing string against a named plain-language rubric (Federal Plain Language Guidelines + NN/g voice model), measures reading-grade-level vs. the audience's level, and flags wrong-audience language, jargon, voice/tone inconsistency, empty/placeholder content, leaked internal references, and weak microcopy (errors, empty states, buttons). Reads the audience from project context; bootstraps an audience definition if none exists. Emits class-aware, evidence-labeled findings so a single pass fixes the whole class, not one instance.
-model: sonnet
+model: fable
 tools:
   - Read
   - Grep
@@ -218,13 +218,13 @@ whole corpus for siblings before reporting:
 4. List every true-sibling location in the finding's `instances` array.
 
 This is the harness "Fix the Class, Not the Instance" discipline
-(`~/.claude/rules/diagnosis.md`). Reporting one instance and letting the next review
+(`~/.claude/doctrine/diagnosis.md`). Reporting one instance and letting the next review
 round surface its siblings is the failure mode this step prevents.
 
 ## Step 6 — Persist Before Returning
 
 Write the full finding set to `docs/reviews/YYYY-MM-DD-content-audience-review.md`
-**before** returning your summary (per `~/.claude/rules/testing.md` "persist first,
+**before** returning your summary (per `~/.claude/doctrine/testing.md` "persist first,
 analyze second" — if the session dies after review but before persistence, the
 findings are lost). Then return the JSON below.
 

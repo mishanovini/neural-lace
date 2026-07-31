@@ -1,0 +1,31 @@
+{
+  "_fragment_note": "Wave F task F.5 (gate-governance hardening) — TWO manifest-relevant deliverables per §F.0.1 (builder ships fragment, F.1 orchestrator merges into adapters/claude-code/manifest.json .entries at integration). Entry #1 (cross-repo-nl-touch) is a NEW hook this task adds. gate-demotion.sh (scripts/, not hooks/) is a manually-invoked script in the same family as waiver-density.sh and is NOT independently manifest-entried per that existing convention (scripts/ tools invoked by the E.5 KPI pass rather than event-wired are catalogued via their own honest_status text, matching waiver-density's 'pattern' kind entry) — entry #2 below adds it as a 'pattern' kind entry mirroring waiver-density's shape, for discoverability, though F.1 may fold it as a sub-bullet of waiver-density's own entry instead if that reads better at merge time; either is acceptable, the content is what matters.",
+  "entries": [
+    {
+      "id": "cross-repo-nl-touch-warn",
+      "kind": "surfacer",
+      "doctrine_file": null,
+      "hooks": ["cross-repo-nl-touch-warn.sh"],
+      "events": ["PreToolUse"],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": false,
+      "honesty_rationale": "WARN-only by design (specs-f §F.5 item 4, the cross-repo-incident candidate gate) — never blocks; a legitimate cross-repo/orchestrator touch is common and blocking it would be strictly worse than the risk it flags. Not yet wired into settings.json.template (orchestrator-only this wave, §F.0.1) — recommend PreToolUse matcher \"Edit|Write|MultiEdit\". FP fixtures (a)/(b) in the hook's own --self-test are the REQUIRED evidence per the §10 bar: legitimate NL main-checkout AND linked-worktree sessions editing NL-repo files both produce zero output. 11/11 self-test scenarios pass on this branch.",
+      "budget_class": "pretool"
+    },
+    {
+      "id": "gate-demotion",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": { "paths": [], "keywords": [] },
+      "blocking": false,
+      "budget_class": "none",
+      "honesty_rationale": "scripts/gate-demotion.sh (ADR 059 D7 metric-driven auto-demotion) — invoked from the E.5 weekly KPI pass's --dry-run mode (zero new settings.json chain entries, per specs-f §F.5); --apply is the orchestrator-applied real-manifest-edit step, never auto-scheduled (D7 demotes pending harness-reviewer re-review, a reviewed action by design). 16/16 self-test scenarios pass on this branch, entirely against a manifest COPY — never the real manifest.json."
+    }
+  ]
+}

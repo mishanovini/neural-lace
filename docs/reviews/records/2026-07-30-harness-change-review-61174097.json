@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-61174097",
+  "created_at": "2026-07-30T21:02:29Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "haiku",
+  "plan_ref": "docs/plans/requests-tab-visibility-fix-2026-07-30.md",
+  "change_ref": {
+    "commit_sha": "PENDING",
+    "branch": "worktree-agent-a465831e5b8168bdc"
+  },
+  "covered_files": [
+    {
+      "path": "neural-lace/workstreams-ui/server/verbatim-resolver.js",
+      "blob_sha": "a35f62010d7c69832d2456bf9c9e842e4584490d"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/verbatim-resolver.selftest.js",
+      "blob_sha": "9c39e0cf77d2fbe356e50a79647318f6d34df3c6"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Major 2 (promotion over-fires): FIXED. verbatim-resolver.js classifyCandidate now has SHORT_QUESTION_MAX_WORDS=8 + question-mark guard forcing short interrogatives to amendment regardless of overlap, plus a MIN_SUBSTANTIVE_TOKENS_FOR_PROMOTION=4 floor -- spot-checked against live registry, correctly excludes context-dependent Q&As from promotion.",
+    "findings_summary": "verbatim-resolver.js (resolveVerbatimRef timestamp-nearest matching + ordinal tiebreak, deterministic classifyCandidate with synthetic-content noise guard, short-question promotion guard, substantive-token floor) reviewed in detail as part of the ask-registry.sh/backfill review (record 05284b04, Major 2) and again as part of the requests-routes.js review (record 28112fca, resolveCandidateText's consumption of this module). This record exists to give the module its own explicit file-level coverage entry. 29/29 self-test."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

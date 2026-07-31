@@ -181,8 +181,8 @@ assert_contains_all "stage-3-advocate-runtime" \
   'artifact' \
   'plan_commit_sha'
 
-if [[ -x "$ADAPTER/hooks/product-acceptance-gate.sh" ]] || [[ -f "$ADAPTER/hooks/product-acceptance-gate.sh" ]]; then
-  gate_out=$(bash "$ADAPTER/hooks/product-acceptance-gate.sh" --self-test 2>&1)
+if [[ -x "$ADAPTER/attic/product-acceptance-gate.sh" ]] || [[ -f "$ADAPTER/attic/product-acceptance-gate.sh" ]]; then
+  gate_out=$(bash "$ADAPTER/attic/product-acceptance-gate.sh" --self-test 2>&1)
   gate_rc=$?
   if [[ $gate_rc -eq 0 ]] && grep -q '8 passed, 0 failed' <<<"$gate_out"; then
     stage_ok "stage-3-gate-self-test" "product-acceptance-gate.sh --self-test: 8/8 passed"
@@ -192,7 +192,7 @@ if [[ -x "$ADAPTER/hooks/product-acceptance-gate.sh" ]] || [[ -f "$ADAPTER/hooks
     stage_fail "stage-3-gate-self-test" "product-acceptance-gate.sh --self-test failed: $summary_line"
   fi
 else
-  stage_fail "stage-3-gate-self-test" "missing hook: adapters/claude-code/hooks/product-acceptance-gate.sh"
+  stage_fail "stage-3-gate-self-test" "missing hook: adapters/claude-code/attic/product-acceptance-gate.sh"
 fi
 
 # ============================================================
@@ -244,7 +244,7 @@ if [[ -d "$INSTALLED" ]]; then
     "agents/plan-phase-builder.md"
     "rules/orchestrator-pattern.md"
     "rules/acceptance-scenarios.md"
-    "hooks/product-acceptance-gate.sh"
+    "attic/product-acceptance-gate.sh"
     "templates/plan-template.md"
   )
   mirror_drift=()

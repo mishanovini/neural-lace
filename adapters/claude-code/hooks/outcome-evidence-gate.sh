@@ -1,7 +1,17 @@
 #!/bin/bash
 # outcome-evidence-gate.sh — Generation 5
 #
-# PreToolUse hook that enforces the reproduction discipline for fix tasks.
+# DEMOTED to non-blocking warn at NL Overhaul Wave D.6 (§D.0.4 / §D.6
+# item 8, 2026-07-02): every path that used to `exit 1` (block) now
+# exits 0 and instead emits a hookSpecificOutput.additionalContext warn
+# (the sanctioned channel that reaches model context) plus a
+# signal-ledger `warn` event. Detection logic is UNCHANGED — only the
+# verdict emission changed from block to warn. manifest.json's
+# `blocking` flag for this unit flips to false in the same wave (D.5
+# template/manifest cutover).
+#
+# PreToolUse hook that used to enforce the reproduction discipline for
+# fix tasks; now warns instead of blocking.
 #
 # Rule: when a plan-file checkbox is flipped for a task whose description
 # describes fixing a bug (match keywords: fix, bug, broken, doesn't work,
@@ -31,11 +41,33 @@
 #      wasn't possible, and gave a manual recipe instead).
 #
 # Exit codes:
-#   0 — edit is allowed (either not a fix task, or fix task with proper
-#       before/after evidence)
-#   1 — edit is blocked (fix task missing before/after reproduction)
+#   0 — edit is allowed (always, post-demotion; a WARN may be emitted via
+#       hookSpecificOutput.additionalContext + a signal-ledger entry)
 
 set -e
+
+SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/signal-ledger.sh
+source "$SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+
+# ============================================================
+# _demote_warn <title> <body> — emit the demoted-to-warn verdict:
+# hookSpecificOutput.additionalContext JSON on stdout (reaches model
+# context) + a human-readable copy on stderr + a signal-ledger warn
+# event, then exit 0 (never blocks).
+# ============================================================
+_demote_warn() {
+  local title="$1"
+  local body="$2"
+  printf '%s\n' "$body" >&2
+  if command -v jq >/dev/null 2>&1; then
+    jq -n --arg ctx "[outcome-evidence-gate] WARN (demoted from block, Wave D.6): ${title}
+${body}" \
+      '{hookSpecificOutput:{hookEventName:"PreToolUse", additionalContext:$ctx}}'
+  fi
+  command -v ledger_emit >/dev/null 2>&1 && ledger_emit "outcome-evidence-gate" "warn" "$title"
+  exit 0
+}
 
 # ============================================================
 # Input loading — support both CLAUDE_TOOL_INPUT and stdin
@@ -137,21 +169,17 @@ fi
 EVIDENCE_FILE="${FILE_PATH%.md}-evidence.md"
 
 if [[ ! -f "$EVIDENCE_FILE" ]]; then
-  cat >&2 <<MSG
-BLOCKED: outcome-evidence-gate
-
-Task $TASK_ID is a fix task (matches pattern: fix/bug/broken/etc.)
+  _demote_warn "no evidence file for fix task $TASK_ID" "\
+outcome-evidence-gate: Task $TASK_ID is a fix task (matches pattern: fix/bug/broken/etc.)
 but no companion evidence file exists at:
   $EVIDENCE_FILE
 
-Fix tasks require before/after reproduction evidence. See
-~/.claude/agents/task-verifier.md → "Reproduction-based
-verification for FIX tasks" for the required format.
+Fix tasks should ideally have before/after reproduction evidence. See
+~/.claude/agents/task-verifier.md → \"Reproduction-based
+verification for FIX tasks\" for the required format.
 
-The task-verifier agent must produce this evidence before the
-checkbox can be flipped.
-MSG
-  exit 1
+The task-verifier agent should produce this evidence before the
+checkbox is relied upon."
 fi
 
 # ============================================================
@@ -176,20 +204,16 @@ TASK_SECTION=$(awk -v id="$TASK_ID" '
 ' "$EVIDENCE_FILE")
 
 if [[ -z "$TASK_SECTION" ]]; then
-  cat >&2 <<MSG
-BLOCKED: outcome-evidence-gate
-
-Task $TASK_ID is a fix task but its evidence block was not found
+  _demote_warn "evidence block not found for fix task $TASK_ID" "\
+outcome-evidence-gate: Task $TASK_ID is a fix task but its evidence block was not found
 in the evidence file:
   $EVIDENCE_FILE
 
 Expected a section starting with:
   Task ID: $TASK_ID
 
-The task-verifier agent must add this evidence block before the
-checkbox can be flipped.
-MSG
-  exit 1
+The task-verifier agent should add this evidence block before the
+checkbox is relied upon."
 fi
 
 # Check for before/after OR the manual reproduction recipe escape hatch.
@@ -211,17 +235,15 @@ if [[ $HAS_RECIPE -ge 1 ]]; then
 fi
 
 if [[ $HAS_BEFORE -lt 1 ]] || [[ $HAS_AFTER -lt 1 ]]; then
-  cat >&2 <<MSG
-BLOCKED: outcome-evidence-gate
-
-Task $TASK_ID is a fix task:
-  "$TASK_DESC"
+  _demote_warn "before/after reproduction structure missing for fix task $TASK_ID" "\
+outcome-evidence-gate: Task $TASK_ID is a fix task:
+  \"$TASK_DESC\"
 
 The evidence block at $EVIDENCE_FILE is missing the required
 before/after reproduction structure.
 
-Found: "Runtime verification (before)" lines: $HAS_BEFORE
-       "Runtime verification (after)" lines: $HAS_AFTER
+Found: \"Runtime verification (before)\" lines: $HAS_BEFORE
+       \"Runtime verification (after)\" lines: $HAS_AFTER
 
 Required for fix tasks:
 
@@ -247,10 +269,8 @@ was overwritten, or bug requires production data), add a section:
 (Use this only when automated reproduction is genuinely impossible —
 a test that CAN be written should be.)
 
-See ~/.claude/agents/task-verifier.md → "Reproduction-based
-verification for FIX tasks" for full format.
-MSG
-  exit 1
+See ~/.claude/agents/task-verifier.md → \"Reproduction-based
+verification for FIX tasks\" for full format."
 fi
 
 # All checks passed

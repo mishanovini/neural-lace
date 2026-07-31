@@ -58,6 +58,7 @@ if [ "${1:-}" = "--self-test" ]; then
   (
     cd "$TMPDIR_ST" || exit 1
     git init -q . >/dev/null 2>&1
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "selftest@example.test"
     git config user.name "selftest"
     mkdir -p docs/reviews
@@ -272,6 +273,8 @@ fi
   echo "or stage the review file with an updated status note."
   echo ""
   echo "To bypass (not recommended): git commit --no-verify"
+  echo ""
+  echo "This gate: ~/.claude/hooks/review-finding-fix-gate.sh (source: adapters/claude-code/hooks/review-finding-fix-gate.sh)"
   echo "================================================================"
 } >&2
 exit 1

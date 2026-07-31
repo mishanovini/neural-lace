@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"ship the fix"}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Fixed the bug and verified the tests pass.\n\nDONE: shipped the fix, merged abc1234"}]}}

@@ -1,0 +1,7 @@
+{
+  "name": "harness-kpis.sh",
+  "type": "script",
+  "path": "scripts/harness-kpis.sh",
+  "description": "Weekly KPI report from signal ledger (Wave E task E.5)",
+  "selftest": false
+}

@@ -7,14 +7,21 @@
     Opens the Conversation Tree GUI in the default browser, starting the local
     Node server (server/server.js) first if it is not already up.
 
-    Order of operations (port-check FIRST, deliberately):
-      1. Probe the server. If it is already up on the port, the launcher
+    Order of operations (health-check FIRST, deliberately):
+      1. Probe the server's own /api/health endpoint. If it answers HTTP
+         200 with JSON and does NOT self-report lobotomized, the launcher
          NEVER touches Node at all - it just opens the browser. This is the
          common case (the autostart task already started it at logon).
-      2. Only if the server is NOT up does the launcher resolve Node and
-         start it. Node is resolved robustly (PATH, then a list of common
-         install locations incl. nvm/Volta/fnm/asdf) so a missing or
-         not-yet-populated PATH does not break the launch.
+      1b. If /api/health reports lobotomized=true (every pane failing and
+         uptime > 2 minutes - the 2026-07-09 minimal-logon-env incident),
+         the launcher kills the port-owning process and starts a fresh
+         server with its own healthy environment. Bounded: a fresh instance
+         reports lobotomized=false (uptime < 2m), so at most ONE restart per
+         launcher invocation.
+      2. Only if the server is NOT up (or was just killed) does the launcher
+         resolve Node and start it. Node is resolved robustly (PATH, then a
+         list of common install locations incl. nvm/Volta/fnm/asdf) so a
+         missing or not-yet-populated PATH does not break the launch.
 
     Error policy: everything is logged to
     ~/.claude/logs/conv-tree-launcher.log. A Windows dialog is shown ONLY
@@ -148,39 +155,74 @@ function Resolve-NodeExe {
 }
 
 # --- Authoritative "is OUR server up" probe ---------------------------------
-# Strongest signal: an HTTP 200 from the server's own /api/state endpoint.
-# Falls back to a TCP listen check. One short retry absorbs a transient miss
-# so the launcher does not falsely decide "not up" and needlessly touch Node.
+# GET /api/health (the O.4 cockpit's real health endpoint) with a short
+# timeout; "up" = HTTP 200 + parseable JSON. REWRITTEN 2026-07-09: the old
+# probe hit /api/state — an endpoint RETIRED by the O.4 rebuild (404 on the
+# live server) — then fell back to a bare TCP listen check, so ANY process
+# listening on the port passed as "our server" (the old "confirms it is the
+# conv-tree server" claim was false). No TCP fallback anymore: a listener
+# that cannot answer /api/health with JSON is not a working cockpit server
+# and must be treated as down.
+#
+# Returns @{ Up = <bool>; Lobotomized = <bool> }. Lobotomized is the
+# server's own /api/health `lobotomized` flag (every pane's last refresh
+# failed AND uptime > 2 minutes — the 2026-07-09 incident shape, where a
+# logon-task-spawned server with a minimal registry env held the port all
+# day while every pane showed rc=127/rc=1).
+function Get-ServerHealth {
+    try {
+        $resp = Invoke-WebRequest -Uri "$Url/api/health" -UseBasicParsing `
+                    -TimeoutSec 3 -ErrorAction Stop
+        if ($resp.StatusCode -ne 200) { return @{ Up = $false; Lobotomized = $false } }
+        $json = $null
+        try { $json = $resp.Content | ConvertFrom-Json } catch { $json = $null }
+        if ($null -eq $json) { return @{ Up = $false; Lobotomized = $false } }
+        $lob = $false
+        try { if ($json.lobotomized) { $lob = $true } } catch { }
+        return @{ Up = $true; Lobotomized = $lob }
+    } catch {
+        return @{ Up = $false; Lobotomized = $false }
+    }
+}
+
+# One short retry absorbs a transient miss so the launcher does not falsely
+# decide "not up" and needlessly touch Node.
 function Test-ServerUp {
     for ($attempt = 0; $attempt -lt 2; $attempt++) {
         if ($attempt -gt 0) { Start-Sleep -Milliseconds 300 }
-
-        # 1. HTTP probe (definitive: confirms it is the conv-tree server)
-        try {
-            $resp = Invoke-WebRequest -Uri "$Url/api/state" -UseBasicParsing `
-                        -TimeoutSec 2 -ErrorAction Stop
-            if ($resp.StatusCode -eq 200) { return $true }
-        } catch {
-            # fall through to the TCP check
-        }
-
-        # 2. TCP listen check via cmdlet
-        try {
-            $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop
-            if ($conn) { return $true }
-        } catch {
-            # 3. Raw TCP connect fallback (cmdlet absent / no match)
-            try {
-                $client = New-Object System.Net.Sockets.TcpClient
-                $iar = $client.BeginConnect('127.0.0.1', $Port, $null, $null)
-                $ok = $iar.AsyncWaitHandle.WaitOne(700)
-                $connected = ($ok -and $client.Connected)
-                $client.Close()
-                if ($connected) { return $true }
-            } catch { }
-        }
+        $h = Get-ServerHealth
+        if ($h.Up) { return $true }
     }
     return $false
+}
+
+# --- Restart-on-lobotomy -----------------------------------------------------
+# Kill the port-owning process so the main flow can start a fresh node with
+# THIS launcher's (healthy, user-session) environment. Bounded by design: a
+# fresh instance has uptime < 120s, so its /api/health reports
+# lobotomized=false and no second kill can trigger — worst case ONE restart
+# per launcher invocation, each logged.
+function Stop-ServerOnPort {
+    $stopped = $false
+    try {
+        $conns = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction Stop
+        $owners = $conns | Select-Object -ExpandProperty OwningProcess -Unique
+        foreach ($ownerPid in $owners) {
+            if ($ownerPid -and $ownerPid -gt 0) {
+                Write-Log "Stopping lobotomized server (PID=$ownerPid owns port $Port)." 'WARN'
+                try {
+                    Stop-Process -Id $ownerPid -Force -Confirm:$false -ErrorAction Stop
+                    $stopped = $true
+                } catch {
+                    Write-Log ("Failed to stop PID=" + $ownerPid + ": " + $_.Exception.Message) 'WARN'
+                }
+            }
+        }
+    } catch {
+        Write-Log ("Could not resolve the port-owning PID for port " + $Port + ": " + $_.Exception.Message) 'WARN'
+    }
+    if ($stopped) { Start-Sleep -Milliseconds 500 }   # let the OS release the port before rebind
+    return $stopped
 }
 
 # --- Main -------------------------------------------------------------------
@@ -188,12 +230,22 @@ try {
     $mode = if ($NoBrowser) { 'background' } else { 'interactive' }
     Write-Log "Launcher invoked ($mode). ProjectDir=$ProjectDir Port=$Port"
 
-    # STEP 1 - port-check FIRST. If the server is up, never touch Node.
-    if (Test-ServerUp) {
-        Write-Log "Server already up on port $Port - skipping start (Node not needed)."
+    # STEP 1 - health-check FIRST. If the server is up AND healthy, never
+    # touch Node. If it is up but LOBOTOMIZED (every pane failing for > 2m —
+    # the 2026-07-09 logon-env incident), kill it and start a fresh one with
+    # this launcher's healthy environment (bounded: see Stop-ServerOnPort).
+    $initialHealth = Get-ServerHealth
+    if ($initialHealth.Up -and -not $initialHealth.Lobotomized) {
+        Write-Log "Server already up and healthy on port $Port - skipping start (Node not needed)."
     }
     else {
-        # Server is down: we must start it. Validate layout, resolve Node.
+        if ($initialHealth.Up -and $initialHealth.Lobotomized) {
+            Write-Log ("Server on port $Port reports lobotomized=true (every pane failing, " +
+                "uptime > 2m). Killing it and starting a fresh instance.") 'WARN'
+            Stop-ServerOnPort | Out-Null
+        }
+        # Server is down (or was just killed): we must start it. Validate
+        # layout, resolve Node.
         if (-not (Test-Path -LiteralPath $ServerPath)) {
             Show-ActionableError ("Conversation Tree server file is missing at: $ServerPath. " +
                 "The project layout may have changed - reinstall or re-pull the repo.")

@@ -80,11 +80,57 @@
 
 set -uo pipefail
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+# NL Observability Program Wave O, task O.1 (specs-o §O.1 deliverable 3):
+# spawn-dispatched/spawn-concluded ledger events, sourced best-effort so a
+# tree missing this lib (should not happen — same repo) never breaks a
+# tool call (writer hooks never block, per this file's own header).
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/signal-ledger.sh" 2>/dev/null; } || true
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
+
 MODE="${1:-}"
 
-LOG_DIR="$HOME/.claude/logs"
+# NL-FINDING-040 keystone guard: several MODE branches below spawn further
+# subprocesses (bash "$SELF" --on-stop from within builder-dispatch flows,
+# workstreams-task-bridge.js, etc.). Under NL_HOOK_REENTRY=1 (automation-
+# spawned/re-entrant child), no-op for every LIVE mode. --self-test is
+# deliberately EXEMPT (it internally re-invokes this
+# same script with HARNESS_SELFTEST=1 to exercise --on-stop etc. as a
+# controlled, bounded, sandboxed fixture — that is not the reentrancy
+# scenario this guard targets, and suppressing it would break the self-test
+# suite itself rather than protect anything).
+if [[ "$MODE" != "--self-test" ]] && command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+  hook_reentry_note "workstreams-emit" 2>/dev/null || true
+  exit 0
+fi
+
+# Log + ledger destinations: sandboxed when HARNESS_SELFTEST=1 OR the
+# invocation is --self-test itself (self-test isolation — E.2 remediation;
+# --self-test always self-sandboxes even if a caller forgot to export
+# HARNESS_SELFTEST=1 first) so no self-test run appends to the real
+# machine's ~/.claude/logs/conversation-tree-emit.log or writes correlation-
+# ledger fixtures into ~/.claude/state/conversation-tree-emit/ regardless of
+# HOME. Prefers an explicit HARNESS_SELFTEST_DIR; falls back to a PID-scoped
+# tmp sandbox otherwise (signal-ledger.sh's convention) so exporting
+# HARNESS_SELFTEST=1 alone (e.g. a bare sweep loop) is enough.
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _WSE_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/workstreams-emit-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_WSE_SANDBOX"
+  LOG_DIR="$_WSE_SANDBOX/logs"
+  LEDGER_DIR="$_WSE_SANDBOX/state/conversation-tree-emit"
+else
+  LOG_DIR="$HOME/.claude/logs"
+  LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+fi
 LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
-LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+# Ensure both dirs exist up front: several call sites redirect directly to
+# $LOG_FILE via `2>>` rather than through _log()'s own mkdir -p, so a
+# freshly-resolved sandbox dir (self-test) must exist before first use.
+mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
 
 # Workstreams consolidation (Phase A, 2026-06-08): the canonical state file
 # lives at one operator-configured location (~/.claude/workstreams-state-path.txt),
@@ -129,7 +175,11 @@ _sha1() {
 # git-based resolvers, before defaulting to the nested form.
 _fallback_conv_tree_path() {
   local leaf="$1"
-  local base="${CONV_TREE_MAIN_CHECKOUT:-$HOME/claude-projects/neural-lace}"
+  local base="${CONV_TREE_MAIN_CHECKOUT:-}"
+  if [[ -z "$base" ]] && command -v nl_repo_root >/dev/null 2>&1; then
+    base="$(nl_repo_root 2>/dev/null)"
+  fi
+  [[ -z "$base" ]] && base="$HOME/.claude"
   local nested="$base/neural-lace/workstreams-ui/$leaf"
   local flat="$base/workstreams-ui/$leaf"
   if [[ -e "$nested" ]]; then printf '%s' "$nested"; return 0; fi
@@ -607,6 +657,23 @@ _run_on_spawn() {
   # observability floor for spawns that carry no sentinels at all.
   _warn_no_rich_details "$input" "$title"
 
+  # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
+  # emission + dispatch-provenance marker (see the section above
+  # _run_on_builder_dispatch for the full contract; silent no-op when the
+  # dispatch names no plan). sid/child_id here are the SAME values just used
+  # for the branch-opened/session-bound events above -- "the same provenance
+  # the SESSIONS lineage rendering consumes" per the plan's Task 3 spec.
+  _emit_dispatch_provenance "$input" "$sid" "$child_id" || true
+
+  # ---- WAVE-O O.1 EMIT: spawn-dispatched (contract C2) --------------------
+  # ONE marked emit line, per specs-o §O.1 deliverable 3. Never blocks
+  # (ledger_emit's own contract); guarded by command -v for a tree missing
+  # the lib. child_id/title/serves_item_id are already resolved above.
+  if command -v ledger_emit >/dev/null 2>&1; then
+    ledger_emit "workstreams-emit" "spawn-dispatched" "child=${child_id} title=\"${title}\" tool=${tool} serves=${serves_item_id:-none}"
+  fi
+  # ---- END WAVE-O O.1 EMIT --------------------------------------------------
+
   exit 0
 }
 
@@ -810,6 +877,10 @@ _kind_of_item() {
 _run_on_stop() {
   local input; input=$(_read_stdin)
   local sid; sid=$(_session_id "$input")
+  # Stop hooks receive transcript_path on stdin alongside session_id (same
+  # field bug-persistence-gate.sh / work-integrity-gate.sh / the reconciler
+  # already read) — used below by the NL-ATTRIBUTION END trigger.
+  local transcript_path; transcript_path=$(printf '%s' "$input" | jq -r '.transcript_path // empty' 2>/dev/null)
   local ledger="$LEDGER_DIR/opened-${sid}.jsonl"
   [[ -f "$ledger" ]] || exit 0   # session opened no branches -> silent no-op
 
@@ -848,6 +919,32 @@ _run_on_stop() {
     _emit_dual "$lib" "$ef"
     rm -f "$ef" 2>/dev/null || true
     _log "stop session=$sid concluded=$n_cc shipped=$n_ship"
+
+    # ---- WAVE-O O.1 EMIT: spawn-concluded (contract C2) -------------------
+    # ONE marked emit line, per specs-o §O.1 deliverable 3. Only fires when
+    # this Stop actually concluded >=1 branch ($first==0, same guard as the
+    # _emit_dual call above) — a session that opened nothing has nothing to
+    # conclude (mirrors the pre-existing silent-no-op-at-top guard).
+    #
+    # NL-ATTRIBUTION END trigger (attribution-pipeline task, 2026-07-29): a
+    # dispatched CHILD session's PreToolUse dispatch text was never visible
+    # to IT (that lived in the PARENT's hook invocation) but its OWN
+    # transcript's first user turn IS the prompt it was launched with -- the
+    # same text the header convention asks orchestrators to put the
+    # NL-ATTRIBUTION line into. _stop_extract_nl_attribution reads it here,
+    # at the guaranteed-complete end of the session, so start (governor
+    # ledger, parent-side) and end (this signal-ledger row, child-side)
+    # carry the SAME plan/task/role vocabulary even though they are
+    # necessarily two different session_ids (HONEST GAP, not silently
+    # papered over: see docs/plans/fragments/attribution-server-fragment.md
+    # for how a consumer should treat "concluded with no matching start" as
+    # its own class rather than a join failure).
+    if command -v ledger_emit >/dev/null 2>&1; then
+      local a_plan a_task a_role a_attributed
+      IFS='|' read -r a_plan a_task a_role a_attributed <<<"$(_stop_extract_nl_attribution "$transcript_path")"
+      ledger_emit "workstreams-emit" "spawn-concluded" "session=${sid} concluded=${n_cc} shipped=${n_ship} plan=${a_plan} task=${a_task} role=${a_role} attributed=${a_attributed}"
+    fi
+    # ---- END WAVE-O O.1 EMIT ------------------------------------------------
   fi
   rm -f "$ledger" 2>/dev/null || true   # idempotent: a re-fired Stop is a no-op
   exit 0
@@ -1060,6 +1157,21 @@ _self_test() {
   trap - ERR
   local pass=0 fail=0 tmp
   tmp=$(mktemp -d 2>/dev/null || echo "/tmp/cte-st-$$"); mkdir -p "$tmp"
+  # Self-contained sandboxing regardless of caller env (E.2 remediation): every
+  # child `bash "$SELF"` this self-test spawns below inherits
+  # HARNESS_SELFTEST_DIR="$tmp" and therefore logs/ledgers to $tmp, never the
+  # real ~/.claude/logs or ~/.claude/state/conversation-tree-emit/, even if
+  # the caller invoked --self-test without first setting HARNESS_SELFTEST=1.
+  # Re-point THIS process's own LOG_FILE/LEDGER_DIR (resolved once at
+  # top-of-script, before --self-test dispatch reached here) at the SAME
+  # "$tmp" so the parent's own log-content assertions (ST38/ST39 etc.) read
+  # from the identical file the child subprocesses just wrote to.
+  export HARNESS_SELFTEST=1
+  export HARNESS_SELFTEST_DIR="$tmp"
+  LOG_DIR="$tmp/logs"
+  LEDGER_DIR="$tmp/state/conversation-tree-emit"
+  LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
+  mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
   local LIB; LIB=$(CONV_TREE_STATE_LIB="${CONV_TREE_STATE_LIB:-}" _resolve_state_lib)
   if [[ ! -f "$LIB" ]]; then echo "self-test: cannot locate state library ($LIB)"; echo "self-test: FAIL"; exit 1; fi
   export CONV_TREE_STATE_LIB="$LIB"
@@ -1182,7 +1294,7 @@ _self_test() {
     local R="$tmp/mainrepo" WT="$tmp/wt"
     mkdir -p "$R/neural-lace/workstreams-ui/state"
     : >"$R/neural-lace/workstreams-ui/state/state.js"
-    ( cd "$R" && git init -q . && git config user.email t@e.test && git config user.name t \
+    ( cd "$R" && git init -q . && git config core.hooksPath "" && git config user.email t@e.test && git config user.name t \
         && git add -A && git commit -qm init && git worktree add -q "$WT" -b st13wt ) >/dev/null 2>&1
     local Rabs gui_from_wt gate_from_wt want_gui NOCFG="$tmp/no-such-config.txt"
     Rabs=$(cd "$R" && pwd)
@@ -1430,7 +1542,7 @@ _self_test() {
   # item-shipped precedes concluded in the batch, FR-7 lets the node conclude.
   if command -v git >/dev/null 2>&1; then
     local G="$tmp/shiprepo"; mkdir -p "$G"
-    ( cd "$G" && git init -q . && git config user.email t@e.test && git config user.name t \
+    ( cd "$G" && git init -q . && git config core.hooksPath "" && git config user.email t@e.test && git config user.name t \
         && echo a > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
     local sp35="$tmp/st-35.json"
     ( cd "$G" && CONV_TREE_STATE_PATH="$sp35" CLAUDE_SESSION_ID="sess-st-35" \
@@ -1452,7 +1564,7 @@ _self_test() {
   # candidate) — exactly the Phase-4 surface.
   if command -v git >/dev/null 2>&1; then
     local G2="$tmp/noshiprepo"; mkdir -p "$G2"
-    ( cd "$G2" && git init -q . && git config user.email t@e.test && git config user.name t \
+    ( cd "$G2" && git init -q . && git config core.hooksPath "" && git config user.email t@e.test && git config user.name t \
         && echo a > a.txt && git add -A && git commit -qm base ) >/dev/null 2>&1
     local sp36="$tmp/st-36.json"
     ( cd "$G2" && CONV_TREE_STATE_PATH="$sp36" CLAUDE_SESSION_ID="sess-st-36" \
@@ -1605,7 +1717,8 @@ _self_test() {
 
   # BD5: Workflow launch — PostToolUse is launch-ack, NOT completion -> stays open.
   local spB5="$tmp/bd-5.json"
-  CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
+  local obs_bg_ledger="$tmp/obs-bg-ledger.jsonl"
+  SIGNAL_LEDGER_PATH="$obs_bg_ledger" CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
     bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Workflow","tool_input":{"meta":{"name":"Nightly sweep"},"prompt":"body"},"session_id":"sess-bd-5"}' >/dev/null 2>&1
   CONV_TREE_STATE_PATH="$spB5" CLAUDE_SESSION_ID="sess-bd-5" \
     bash "$SELF" --on-builder-complete <<<'{"tool_name":"Workflow","tool_input":{"meta":{"name":"Nightly sweep"},"prompt":"body"},"tool_response":"launched id=wf-1","session_id":"sess-bd-5"}' >/dev/null 2>&1
@@ -1616,6 +1729,27 @@ _self_test() {
     echo "FAIL: BD5 (item='$idB5' checked='$(_bd_item "$spB5" "$idB5" 'checked')')"; fail=$((fail+1))
   fi
   _ck "BD5b Workflow title from meta.name" "$(_bd_item "$spB5" "$idB5" 'text')" "Nightly sweep"
+
+  # OBS4 (Wave O task O.1, contract C2): --on-builder-dispatch for a
+  # genuinely-background dispatch (Workflow, bg==1 per _builder_is_background)
+  # emits bg-task-started. Reuses the SIGNAL_LEDGER_PATH set alongside BD5's
+  # own --on-builder-dispatch call immediately above.
+  if [[ -f "$obs_bg_ledger" ]] && grep -q '"gate":"workstreams-emit".*"event":"bg-task-started"' "$obs_bg_ledger" 2>/dev/null && grep -q 'Nightly sweep' "$obs_bg_ledger" 2>/dev/null; then
+    echo "PASS: OBS4 --on-builder-dispatch (background Workflow) emits bg-task-started"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS4 --on-builder-dispatch (background Workflow) emits bg-task-started (expected a workstreams-emit/bg-task-started line naming 'Nightly sweep' in $obs_bg_ledger)"; fail=$((fail+1))
+  fi
+
+  # OBS5: a FOREGROUND dispatch (bg==0, e.g. BD1's plain Task) must NOT emit
+  # bg-task-started (the emit is scoped strictly to bg=="1").
+  local obs_fg_ledger="$tmp/obs-fg-ledger.jsonl"
+  SIGNAL_LEDGER_PATH="$obs_fg_ledger" CONV_TREE_STATE_PATH="$tmp/obs-fg.json" CLAUDE_SESSION_ID="sess-obs-fg" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Foreground only"},"session_id":"sess-obs-fg"}' >/dev/null 2>&1
+  if [[ ! -f "$obs_fg_ledger" ]] || ! grep -q '"event":"bg-task-started"' "$obs_fg_ledger" 2>/dev/null; then
+    echo "PASS: OBS5 foreground dispatch (bg==0) emits NO bg-task-started"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS5 foreground dispatch (bg==0) emits NO bg-task-started"; fail=$((fail+1))
+  fi
 
   # BD6: Agent run_in_background:true -> completion NOT emitted at PostToolUse.
   local spB6="$tmp/bd-6.json"
@@ -1654,6 +1788,378 @@ _self_test() {
     bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"description":"Pre was missed"},"tool_response":"ok","session_id":"sess-bd-10"}' >/dev/null 2>&1
   local idB10; idB10=$(_bd_itemid_of "$spB10")
   _ck "BD10 complete-without-pre -> item created + checked" "$(_bd_item "$spB10" "$idB10" 'checked')" "true"
+
+  # ================================================================
+  # PL1-PL6 (ask-rooted-workstreams-p1 Task 3 -- dispatch emission splice):
+  # task_started progress-log emission + dispatch-provenance marker, spliced
+  # into --on-builder-dispatch / --on-spawn alongside the conv-tree emission
+  # above. A fixture plan file with an `ask-id:` header proves the SAME
+  # ask-id resolution Task 1's plan-lifecycle.sh splice established.
+  # ================================================================
+  local plfix="$tmp/planfix"
+  mkdir -p "$plfix/docs/plans"
+  cat >"$plfix/docs/plans/pl-fixture-plan.md" <<'PLANEOF'
+# Plan: PL fixture
+Status: ACTIVE
+ask-id: ask-pl-fixture-1
+PLANEOF
+  if command -v git >/dev/null 2>&1; then
+    ( cd "$plfix" && git init -q . && git config core.hooksPath "" \
+        && git config user.email t@e.test && git config user.name t \
+        && git add -A && git commit -qm init ) >/dev/null 2>&1
+  fi
+
+  # PL1: --on-builder-dispatch with a "Task N of ... docs/plans/<slug>.md"
+  # prompt emits ONE task_started event with the right plan_slug/task_id,
+  # resolved to the fixture plan's ask-id, via the UNCHANGED progress-log.sh
+  # emit CLI (Task 2).
+  local plog1="$tmp/pl-progresslog-1" dpdir1="$tmp/dispatch-provenance-1"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
+  local plfile1="$plog1/ask-pl-fixture-1.jsonl"
+  if [[ -f "$plfile1" ]] && grep -q '"type":"task_started"' "$plfile1" && grep -q '"plan_slug":"pl-fixture-plan"' "$plfile1" && grep -q '"task_id":"3"' "$plfile1" && grep -q '"emitter":"workstreams-emit"' "$plfile1"; then
+    echo "PASS: PL1 --on-builder-dispatch emits task_started (plan_slug/task_id/ask_id resolved, emitter=workstreams-emit) via the unchanged progress-log.sh CLI"; pass=$((pass+1))
+  else
+    echo "FAIL: PL1 expected a task_started event with plan_slug=pl-fixture-plan task_id=3 in $plfile1"; fail=$((fail+1))
+    [[ -f "$plfile1" ]] && cat "$plfile1"
+  fi
+
+  # PL1b (FINDING 2 REGRESSION, half 1 -- REPLAY MUST STILL DEDUP): re-fire
+  # the SAME dispatch IMMEDIATELY (a true hook double-fire: same
+  # session_id, same prompt, back-to-back) -> still exactly ONE
+  # task_started. This runs at PRODUCTION DEFAULTS (no debounce override):
+  # both fires land inside _dispatch_replay_token's default 5s window, so
+  # the second one reuses the first's token and pl_emit's natural key
+  # (plan_slug+task_id+session_id+dedup_extra) collapses it.
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
+  local ts_count_pl1; ts_count_pl1=$(grep -c '"type":"task_started"' "$plfile1" 2>/dev/null || echo 0)
+  _ck "PL1b true double-fire (same session_id, back-to-back, within the replay-debounce window) dedups (still exactly 1 task_started)" "$ts_count_pl1" "1"
+
+  # PL1c (FINDING 2 REGRESSION, half 2 -- THE LOAD-BEARING TEST): drive the
+  # REAL caller path a THIRD time with the IDENTICAL plan-rooted prompt and
+  # the SAME CLAUDE_SESSION_ID -- exactly the real-world shape, since an
+  # orchestrator's CLAUDE_SESSION_ID is INVARIANT across its own
+  # re-dispatches. That invariance is precisely what the OLD key got wrong:
+  # it keyed on that sid and silently DROPPED the re-dispatch. Nothing is
+  # hand-fed here -- same sid, same prompt, same plan, same task; the ONLY
+  # difference is WALL-CLOCK TIME, which is the only thing that genuinely
+  # distinguishes a re-dispatch from a replay.
+  #
+  # DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 compresses the clock rather than
+  # sleeping past the real 30s production window (a 31s sleep in a self-test
+  # is not worth it). This is the SAME mechanism and the SAME boundary the
+  # shipped default crosses -- only the window's width is parameterized, via
+  # the documented knob. The COMPLEMENTARY assertion (PL1b, immediately
+  # above) runs at the PRODUCTION DEFAULT, so between them both sides of the
+  # window are covered: replay-inside dedups, re-dispatch-outside does not.
+  sleep 3
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir1" \
+      CONV_TREE_STATE_PATH="$tmp/pl-1.json" CLAUDE_SESSION_ID="sess-pl-1" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md","prompt":"Build Task 3 of the FROZEN plan docs/plans/pl-fixture-plan.md in your worktree."},"session_id":"sess-pl-1"}' >/dev/null 2>&1 )
+  local ts_count_pl1c; ts_count_pl1c=$(grep -c '"type":"task_started"' "$plfile1" 2>/dev/null || echo 0)
+  _ck "PL1c re-dispatch of the SAME task from the SAME dispatching session_id, past the debounce window, is NOT dropped (2 task_started events total, not still 1)" "$ts_count_pl1c" "2"
+
+  # PL2: the SAME dispatch also writes a dispatch-provenance marker file
+  # (Task 9's future guard input) with the resolved fields.
+  local dpfile1; dpfile1=$(ls "$dpdir1"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile1" && -f "$dpfile1" ]] && grep -q '"ask_id":"ask-pl-fixture-1"' "$dpfile1" && grep -q '"plan_slug":"pl-fixture-plan"' "$dpfile1" && grep -q '"task_id":"3"' "$dpfile1" && grep -q '"session_id":"sess-pl-1"' "$dpfile1"; then
+    echo "PASS: PL2 dispatch-provenance marker written with resolved ask_id/plan_slug/task_id/session_id"; pass=$((pass+1))
+  else
+    echo "FAIL: PL2 expected a populated dispatch-provenance marker under $dpdir1 (got '$dpfile1')"; fail=$((fail+1))
+    [[ -n "$dpfile1" ]] && cat "$dpfile1"
+  fi
+  case "$(basename "${dpfile1:-}" 2>/dev/null || echo)" in
+    UNRESOLVED__*) echo "PASS: PL2b marker filename honestly says UNRESOLVED (no worktree hint on the Task/Agent surface)"; pass=$((pass+1)) ;;
+    *) echo "FAIL: PL2b expected an UNRESOLVED-prefixed marker filename (Task/Agent carries no cwd), got '$(basename "${dpfile1:-}" 2>/dev/null)'"; fail=$((fail+1)) ;;
+  esac
+
+  # PL3: anti-noise guard — a dispatch with NO plan reference emits nothing
+  # (no task_started event, no marker file): not every builder dispatch
+  # serves a plan task.
+  local plog3="$tmp/pl-progresslog-3" dpdir3="$tmp/dispatch-provenance-3"
+  CONV_TREE_STATE_PATH="$tmp/pl-3.json" PROGRESS_LOG_STATE_DIR="$plog3" DISPATCH_PROVENANCE_STATE_DIR="$dpdir3" CLAUDE_SESSION_ID="sess-pl-3" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Investigate a flaky test","prompt":"look into why the CI job is flaky"},"session_id":"sess-pl-3"}' >/dev/null 2>&1
+  if [[ ! -d "$plog3" || -z "$(ls -A "$plog3" 2>/dev/null)" ]] && [[ ! -d "$dpdir3" || -z "$(ls -A "$dpdir3" 2>/dev/null)" ]]; then
+    echo "PASS: PL3 anti-noise: a plan-less dispatch emits NO task_started event and writes NO marker"; pass=$((pass+1))
+  else
+    echo "FAIL: PL3 expected no progress-log/marker output for a plan-less dispatch (plog3=$(ls -A "$plog3" 2>/dev/null) dpdir3=$(ls -A "$dpdir3" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # PL4: --on-spawn (mcp__ccd_session__spawn_task) with an explicit
+  # tool_input.cwd hint that IS a real worktrees-pool path -> the marker's
+  # worktree_path is populated (the one surface that CAN carry a
+  # pre-dispatch location hint; see this splice's header comment on the
+  # Task/Agent surface's honest gap).
+  local plog4="$tmp/pl-progresslog-4" dpdir4="$tmp/dispatch-provenance-4"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog4" DISPATCH_PROVENANCE_STATE_DIR="$dpdir4" \
+      CONV_TREE_STATE_PATH="$tmp/pl-4.json" CLAUDE_SESSION_ID="sess-pl-4" \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn PL","prompt":"Build Task 5 of the FROZEN plan docs/plans/pl-fixture-plan.md","cwd":"/tmp/some/project/root/.claude/worktrees/agent-pl4"},"session_id":"sess-pl-4"}' >/dev/null 2>&1 )
+  local dpfile4; dpfile4=$(ls "$dpdir4"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile4" ]] && grep -q '"worktree_path":"/tmp/some/project/root/.claude/worktrees/agent-pl4"' "$dpfile4" && grep -q '"task_id":"5"' "$dpfile4"; then
+    echo "PASS: PL4 --on-spawn with a pool-shaped tool_input.cwd hint populates the marker's worktree_path"; pass=$((pass+1))
+  else
+    echo "FAIL: PL4 expected worktree_path=/tmp/some/project/root/.claude/worktrees/agent-pl4 task_id=5 in $dpfile4"; fail=$((fail+1))
+    [[ -n "$dpfile4" ]] && cat "$dpfile4"
+  fi
+
+  # PL4b (FINDING 3 REGRESSION, 2026-07-14 review panel): --on-spawn with a
+  # tool_input.cwd hint that is a BARE PROJECT ROOT (the documented
+  # cross-repo spawn_task workflow's actual shape, NOT a
+  # `.claude/worktrees/` child) must NOT be recorded as the marker's
+  # worktree_path -- recording it verbatim previously let a later,
+  # unrelated operator session at that same root get misclassified
+  # spawned by pl_classify_session. The marker must land honestly
+  # UNRESOLVED, exactly like the generic Task/Agent surface's gap.
+  local plog4b="$tmp/pl-progresslog-4b" dpdir4b="$tmp/dispatch-provenance-4b"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog4b" DISPATCH_PROVENANCE_STATE_DIR="$dpdir4b" \
+      CONV_TREE_STATE_PATH="$tmp/pl-4b.json" CLAUDE_SESSION_ID="sess-pl-4b" \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Cross-repo Spawn","prompt":"Build Task 6 of the FROZEN plan docs/plans/pl-fixture-plan.md","cwd":"/tmp/some/other-project-root"},"session_id":"sess-pl-4b"}' >/dev/null 2>&1 )
+  local dpfile4b; dpfile4b=$(ls "$dpdir4b"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile4b" ]] && grep -q '"worktree_path":""' "$dpfile4b" && grep -q '"task_id":"6"' "$dpfile4b"; then
+    echo "PASS: PL4b a bare-project-root tool_input.cwd is NOT recorded as worktree_path (honest UNRESOLVED, not a misleading non-pool value)"; pass=$((pass+1))
+  else
+    echo "FAIL: PL4b expected worktree_path=\"\" task_id=6 (bare project root must never populate worktree_path) in $dpfile4b"; fail=$((fail+1))
+    [[ -n "$dpfile4b" ]] && cat "$dpfile4b"
+  fi
+  case "$(basename "${dpfile4b:-}" 2>/dev/null || echo)" in
+    UNRESOLVED__*) echo "PASS: PL4c marker filename honestly says UNRESOLVED for a bare-project-root cwd hint"; pass=$((pass+1)) ;;
+    *) echo "FAIL: PL4c expected an UNRESOLVED-prefixed marker filename for a bare-project-root cwd hint, got '$(basename "${dpfile4b:-}" 2>/dev/null)'"; fail=$((fail+1)) ;;
+  esac
+
+  # PL4d (REGRESSION, proven 2026-07-27 bug): a fixture plan whose header
+  # still carries the LITERAL un-substituted template placeholder
+  # (`ask-id: <id | none — no linked ask>` — real example still on disk:
+  # docs/plans/cockpit-roadmap-redesign.md:7) must resolve the dispatch's
+  # task_started event into the SAME "unlinked" per-ask log a plan with NO
+  # ask-id header at all would use — NEVER a separate `_id.jsonl` (the
+  # plausible-but-wrong file _resolve_ask_id_for_plan_slug produced
+  # pre-fix; 1090 real events found filed there on this machine).
+  local plfixph="$tmp/planfix-placeholder"
+  mkdir -p "$plfixph/docs/plans"
+  cat >"$plfixph/docs/plans/pl-fixture-placeholder.md" <<'PLANEOF'
+# Plan: PL fixture (unsubstituted placeholder)
+Status: ACTIVE
+ask-id: <id | none — no linked ask>
+PLANEOF
+  if command -v git >/dev/null 2>&1; then
+    ( cd "$plfixph" && git init -q . && git config core.hooksPath "" \
+        && git config user.email t@e.test && git config user.name t \
+        && git add -A && git commit -qm init ) >/dev/null 2>&1
+  fi
+  local plog4d="$tmp/pl-progresslog-4d"
+  ( cd "$plfixph" && PROGRESS_LOG_STATE_DIR="$plog4d" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dispatch-provenance-4d" \
+      CONV_TREE_STATE_PATH="$tmp/pl-4d.json" CLAUDE_SESSION_ID="sess-pl-4d" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-placeholder.md","prompt":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-placeholder.md in your worktree."},"session_id":"sess-pl-4d"}' >/dev/null 2>&1 )
+  if [[ -f "$plog4d/unlinked.jsonl" ]] && grep -q '"plan_slug":"pl-fixture-placeholder"' "$plog4d/unlinked.jsonl"; then
+    echo "PASS: PL4d a plan header carrying the literal un-substituted placeholder resolves to the unlinked log, same as no ask-id header at all"; pass=$((pass+1))
+  else
+    echo "FAIL: PL4d expected the placeholder-plan's task_started event in $plog4d/unlinked.jsonl"; fail=$((fail+1))
+    ls -la "$plog4d" 2>/dev/null
+  fi
+  if [[ -f "$plog4d/_id.jsonl" ]]; then
+    echo "FAIL: PL4d _id.jsonl was created — _resolve_ask_id_for_plan_slug is still handing the literal placeholder token to pl_emit"; fail=$((fail+1))
+  else
+    echo "PASS: PL4d no _id.jsonl (the historical garbage filename) was created"; pass=$((pass+1))
+  fi
+
+  # PL5: failure isolation — missing progress-log.sh/dispatch-provenance.sh
+  # CLIs (simulated via the override env vars) never blocks the caller.
+  local rcPL5
+  PL_PROGRESS_LOG_CLI_OVERRIDE="$tmp/does-not-exist-pl.sh" DISPATCH_PROVENANCE_CLI_OVERRIDE="$tmp/does-not-exist-dp.sh" \
+    CONV_TREE_STATE_PATH="$tmp/pl-5.json" CLAUDE_SESSION_ID="sess-pl-5" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Task 1 of the FROZEN plan docs/plans/pl-fixture-plan.md"},"session_id":"sess-pl-5"}' >/dev/null 2>&1
+  rcPL5=$?
+  _ck "PL5 missing progress-log.sh/dispatch-provenance.sh CLIs -> exit 0 (never blocks)" "$rcPL5" "0"
+
+  # ================================================================
+  # NLA1-NLA4, NLA-STOP1/2 (attribution-pipeline task, 2026-07-29): the
+  # NL-ATTRIBUTION header convention (doctrine/orchestrator-pattern.md) — a
+  # machine-readable `plan=<slug> task=<id> role=<...>` line any dispatch
+  # prompt may carry, parsed once by _extract_nl_attribution and threaded
+  # into every sink --on-builder-dispatch already writes (governor ledger
+  # via adm_admit, task_started progress-log, dispatch-provenance marker)
+  # PLUS the --on-stop END trigger (spawn-concluded), so a future consumer
+  # can join "started, not concluded" dispatches to a <plan>/<task> id --
+  # see docs/plans/fragments/attribution-server-fragment.md.
+  # ================================================================
+
+  # NLA1: a dispatch prompt with ONLY the header — NO "docs/plans/X.md"
+  # text, NO "Task N of" phrasing (the exact shape the pre-existing
+  # free-text heuristic silently no-ops on, PL3-style, and the exact shape
+  # THIS task's own dispatch prompt had) — still gets a task_started event
+  # resolved against the REAL fixture plan's ask-id, via the header alone.
+  local plog_nla1="$tmp/pl-nla1" dpdir_nla1="$tmp/dp-nla1" adm_nla1="$tmp/adm-nla1"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_nla1" DISPATCH_PROVENANCE_STATE_DIR="$dpdir_nla1" \
+      ADM_STATE_DIR="$adm_nla1" CONV_TREE_STATE_PATH="$tmp/nla-1.json" CLAUDE_SESSION_ID="sess-nla-1" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build the thing","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=7 role=builder\nGo build the thing -- no plan-file phrasing anywhere in this prompt at all."},"session_id":"sess-nla-1"}' >/dev/null 2>&1 )
+  local plfile_nla1="$plog_nla1/ask-pl-fixture-1.jsonl"
+  if [[ -f "$plfile_nla1" ]] && grep -q '"plan_slug":"pl-fixture-plan"' "$plfile_nla1" && grep -q '"task_id":"7"' "$plfile_nla1"; then
+    echo "PASS: NLA1 header-only prompt (no free-text plan/task phrasing) still emits task_started via the NL-ATTRIBUTION header alone -- fixes the exact silent-no-op class PL3 documents for prose-less dispatches"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA1 expected task_started plan_slug=pl-fixture-plan task_id=7 in $plfile_nla1 (header-only dispatch)"; fail=$((fail+1))
+    [[ -f "$plfile_nla1" ]] && cat "$plfile_nla1"
+  fi
+  local dpfile_nla1; dpfile_nla1=$(ls "$dpdir_nla1"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile_nla1" ]] && grep -q '"role":"builder"' "$dpfile_nla1" 2>/dev/null; then
+    echo "PASS: NLA1b dispatch-provenance marker carries role=builder from the header"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA1b expected role=builder in dispatch-provenance marker ($dpfile_nla1)"; fail=$((fail+1))
+  fi
+  local ledger_nla1; ledger_nla1=$(ls "$adm_nla1"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_nla1" ]] && grep -q '"plan":"pl-fixture-plan"' "$ledger_nla1" 2>/dev/null \
+      && grep -q '"task":"7"' "$ledger_nla1" 2>/dev/null && grep -q '"role":"builder"' "$ledger_nla1" 2>/dev/null \
+      && grep -q '"attributed":"1"' "$ledger_nla1" 2>/dev/null; then
+    echo "PASS: NLA1c governor ledger row (adm_admit, the same 1000+/day emit-feed row) carries plan/task/role/attributed=1 -- the START trigger's consumer-ready row"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA1c expected plan/task/role/attributed=1 in governor ledger $ledger_nla1"; fail=$((fail+1))
+    [[ -n "$ledger_nla1" ]] && cat "$ledger_nla1"
+  fi
+
+  # NLA2: NO header (an ORDINARY pre-existing dispatch, e.g. BD1's own
+  # prompt shape) -> attributed=0 in the governor ledger row, a WARN line
+  # logged, and the pre-existing free-text-heuristic behavior is completely
+  # unaffected (no plan/task label written at all -- honest absence, never
+  # a guess).
+  local adm_nla2="$tmp/adm-nla2"
+  ADM_STATE_DIR="$adm_nla2" CONV_TREE_STATE_PATH="$tmp/nla-2.json" CLAUDE_SESSION_ID="sess-nla-2" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build the widget","prompt":"long body, no header, no plan reference"},"session_id":"sess-nla-2"}' >/dev/null 2>&1
+  local ledger_nla2; ledger_nla2=$(ls "$adm_nla2"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_nla2" ]] && grep -q '"attributed":"0"' "$ledger_nla2" 2>/dev/null && ! grep -q '"plan":"' "$ledger_nla2" 2>/dev/null; then
+    echo "PASS: NLA2 no header -> attributed=0, and plan/task/role labels are absent (empty values dropped by adm_admit itself, never a guessed value)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA2 expected attributed=0 with no plan/task/role labels in $ledger_nla2"; fail=$((fail+1))
+    [[ -n "$ledger_nla2" ]] && cat "$ledger_nla2"
+  fi
+  if grep -qE 'WARN unattributed builder dispatch.*session=sess-nla-2' "$LOG_FILE" 2>/dev/null; then
+    echo "PASS: NLA2b unattributed dispatch logs a WARN line naming this session (constitution §10 adoption-lag signal, never a block)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA2b expected a WARN line naming session=sess-nla-2 in $LOG_FILE"; fail=$((fail+1))
+  fi
+
+  # NLA3: PARTIAL header (plan= present, task= missing) -> attributed=0
+  # (both fields are required to name a real <slug>/<task_id> node) even
+  # though plan WAS parsed and is still recorded (diagnostic visibility,
+  # never silently dropped) -- and _emit_dispatch_provenance falls all the
+  # way back to the free-text heuristic rather than trusting a
+  # half-populated header (this prompt's free text also names no plan, so
+  # the net effect mirrors PL3: no task_started emitted).
+  local plog_nla3="$tmp/pl-nla3" adm_nla3="$tmp/adm-nla3"
+  PROGRESS_LOG_STATE_DIR="$plog_nla3" ADM_STATE_DIR="$adm_nla3" \
+    CONV_TREE_STATE_PATH="$tmp/nla-3.json" CLAUDE_SESSION_ID="sess-nla-3" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"prompt":"NL-ATTRIBUTION: plan=orphan-plan role=builder\nno task= token in this header"},"session_id":"sess-nla-3"}' >/dev/null 2>&1
+  local ledger_nla3; ledger_nla3=$(ls "$adm_nla3"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_nla3" ]] && grep -q '"attributed":"0"' "$ledger_nla3" 2>/dev/null && grep -q '"plan":"orphan-plan"' "$ledger_nla3" 2>/dev/null; then
+    echo "PASS: NLA3 partial header (plan without task) -> attributed=0 but the parsed plan value is still recorded"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA3 expected attributed=0 with plan=orphan-plan in $ledger_nla3"; fail=$((fail+1))
+    [[ -n "$ledger_nla3" ]] && cat "$ledger_nla3"
+  fi
+  if [[ ! -d "$plog_nla3" || -z "$(ls -A "$plog_nla3" 2>/dev/null)" ]]; then
+    echo "PASS: NLA3b a partial header falls back to the free-text heuristic in full (no task_started emitted, matching PL3's plan-less anti-noise since the free text also names no plan)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA3b expected no task_started output for a partial-header, plan-less-by-heuristic dispatch (plog3=$(ls -A "$plog_nla3" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # NLA4: role=hacker (out-of-enum) -> role dropped (empty), plan/task
+  # still honored, attributed still 1 (role never gates attribution).
+  local adm_nla4="$tmp/adm-nla4"
+  ADM_STATE_DIR="$adm_nla4" CONV_TREE_STATE_PATH="$tmp/nla-4.json" CLAUDE_SESSION_ID="sess-nla-4" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"prompt":"NL-ATTRIBUTION: plan=some-plan task=2 role=hacker\nbody"},"session_id":"sess-nla-4"}' >/dev/null 2>&1
+  local ledger_nla4; ledger_nla4=$(ls "$adm_nla4"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_nla4" ]] && grep -q '"attributed":"1"' "$ledger_nla4" 2>/dev/null && ! grep -q '"role":"' "$ledger_nla4" 2>/dev/null; then
+    echo "PASS: NLA4 an out-of-enum role= value is dropped (never guessed/passed-through) while plan/task attribution still succeeds"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA4 expected attributed=1 with NO role label for role=hacker in $ledger_nla4"; fail=$((fail+1))
+    [[ -n "$ledger_nla4" ]] && cat "$ledger_nla4"
+  fi
+
+  # NLA-STOP1: the END trigger. --on-stop reads the STOPPING session's OWN
+  # transcript (not tool_input -- that lived in the DISPATCHING parent's
+  # hook) for the SAME NL-ATTRIBUTION line, since the transcript's first
+  # user turn IS the prompt the session was launched with. --on-spawn opens
+  # the branch first (OBS1/OBS2's own precedent) so --on-stop's early
+  # "nothing opened" guard does not short-circuit.
+  local tp_nla1="$tmp/transcript-nla1.jsonl"
+  cat >"$tp_nla1" <<'TRJSON'
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"NL-ATTRIBUTION: plan=attribution-pipeline task=2 role=builder\nBuild the thing."}]}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}
+TRJSON
+  local obs_ledger_nla1="$tmp/obs-ledger-nla1.jsonl"
+  CONV_TREE_STATE_PATH="$tmp/nla-stop-1.json" SIGNAL_LEDGER_PATH="$obs_ledger_nla1" CLAUDE_SESSION_ID="sess-nla-stop-1" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"NLA Stop Branch"},"session_id":"sess-nla-stop-1"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$tmp/nla-stop-1.json" SIGNAL_LEDGER_PATH="$obs_ledger_nla1" CLAUDE_SESSION_ID="sess-nla-stop-1" \
+    bash "$SELF" --on-stop <<<"$(printf '{"session_id":"sess-nla-stop-1","transcript_path":"%s"}' "$tp_nla1")" >/dev/null 2>&1
+  if grep -q '"event":"spawn-concluded"' "$obs_ledger_nla1" 2>/dev/null && grep -q 'plan=attribution-pipeline task=2 role=builder attributed=1' "$obs_ledger_nla1" 2>/dev/null; then
+    echo "PASS: NLA-STOP1 --on-stop's spawn-concluded carries the SAME plan/task/role parsed from the stopping session's own transcript (END trigger, same ids as START)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA-STOP1 expected spawn-concluded detail with plan=attribution-pipeline task=2 role=builder attributed=1 in $obs_ledger_nla1"; fail=$((fail+1))
+    [[ -f "$obs_ledger_nla1" ]] && cat "$obs_ledger_nla1"
+  fi
+
+  # NLA-STOP2: a transcript with NO NL-ATTRIBUTION line -> spawn-concluded
+  # still carries attributed=0 explicitly (never omits the field, never
+  # crashes on a header-less transcript) -- "a concluded event without a
+  # matching start is its own honest class" starts here: a consumer sees
+  # attributed=0 rather than a guessed or silently-missing field.
+  local tp_nla2="$tmp/transcript-nla2.jsonl"
+  cat >"$tp_nla2" <<'TRJSON2'
+{"type":"user","message":{"role":"user","content":[{"type":"text","text":"just build the thing, no header here"}]}}
+TRJSON2
+  local obs_ledger_nla2="$tmp/obs-ledger-nla2.jsonl"
+  CONV_TREE_STATE_PATH="$tmp/nla-stop-2.json" SIGNAL_LEDGER_PATH="$obs_ledger_nla2" CLAUDE_SESSION_ID="sess-nla-stop-2" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"NLA Stop Branch 2"},"session_id":"sess-nla-stop-2"}' >/dev/null 2>&1
+  CONV_TREE_STATE_PATH="$tmp/nla-stop-2.json" SIGNAL_LEDGER_PATH="$obs_ledger_nla2" CLAUDE_SESSION_ID="sess-nla-stop-2" \
+    bash "$SELF" --on-stop <<<"$(printf '{"session_id":"sess-nla-stop-2","transcript_path":"%s"}' "$tp_nla2")" >/dev/null 2>&1
+  if grep -q 'plan= task= role= attributed=0' "$obs_ledger_nla2" 2>/dev/null; then
+    echo "PASS: NLA-STOP2 a header-less transcript still emits attributed=0 explicitly (honest absence, never omitted or guessed)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA-STOP2 expected 'plan= task= role= attributed=0' in $obs_ledger_nla2"; fail=$((fail+1))
+    [[ -f "$obs_ledger_nla2" ]] && cat "$obs_ledger_nla2"
+  fi
+
+  # ================================================================
+  # OBS1/OBS2 (Wave O task O.1, specs-o §O.1 deliverable 3, contract C2):
+  # --on-spawn emits spawn-dispatched; --on-stop emits spawn-concluded.
+  # SIGNAL_LEDGER_PATH is set explicitly (rather than relying on the
+  # HARNESS_SELFTEST=1 PID-scoped default) so both the spawn and the stop
+  # calls below — two separate `bash "$SELF"` child processes with two
+  # different PIDs — write to the SAME fixture ledger file this scenario
+  # asserts against.
+  # ================================================================
+  local spOBS="$tmp/obs-1.json"
+  local obs_ledger="$tmp/obs-ledger.jsonl"
+  CONV_TREE_STATE_PATH="$spOBS" SIGNAL_LEDGER_PATH="$obs_ledger" CLAUDE_SESSION_ID="sess-obs-1" \
+    bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Obs Spawn"},"session_id":"sess-obs-1"}' >/dev/null 2>&1
+  if [[ -f "$obs_ledger" ]] && grep -q '"gate":"workstreams-emit".*"event":"spawn-dispatched"' "$obs_ledger" 2>/dev/null && grep -q 'title=\\"Obs Spawn\\"' "$obs_ledger" 2>/dev/null; then
+    echo "PASS: OBS1 --on-spawn emits spawn-dispatched (contract C2, title carried in detail)"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS1 --on-spawn emits spawn-dispatched (expected a workstreams-emit/spawn-dispatched line naming 'Obs Spawn' in $obs_ledger)"; fail=$((fail+1))
+    [[ -f "$obs_ledger" ]] && cat "$obs_ledger"
+  fi
+  CONV_TREE_STATE_PATH="$spOBS" SIGNAL_LEDGER_PATH="$obs_ledger" CLAUDE_SESSION_ID="sess-obs-1" \
+    bash "$SELF" --on-stop <<<'{"session_id":"sess-obs-1"}' >/dev/null 2>&1
+  if grep -q '"gate":"workstreams-emit".*"event":"spawn-concluded"' "$obs_ledger" 2>/dev/null && grep -q 'session=sess-obs-1 concluded=' "$obs_ledger" 2>/dev/null; then
+    echo "PASS: OBS2 --on-stop emits spawn-concluded (contract C2)"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS2 --on-stop emits spawn-concluded (expected a workstreams-emit/spawn-concluded line in $obs_ledger)"; fail=$((fail+1))
+    [[ -f "$obs_ledger" ]] && cat "$obs_ledger"
+  fi
+
+  # OBS3: a Stop with NOTHING to conclude (no prior spawn — mirrors ST12's
+  # silent-no-op fixture) emits NO spawn-concluded event (the guard only
+  # fires when $first==0, i.e. >=1 branch was actually concluded).
+  local obs_ledger3="$tmp/obs-ledger-3.json"
+  SIGNAL_LEDGER_PATH="$obs_ledger3" CLAUDE_SESSION_ID="sess-obs-3-never-spawned" \
+    bash "$SELF" --on-stop <<<'{"session_id":"sess-obs-3-never-spawned"}' >/dev/null 2>&1
+  if [[ ! -f "$obs_ledger3" ]] || ! grep -q '"event":"spawn-concluded"' "$obs_ledger3" 2>/dev/null; then
+    echo "PASS: OBS3 --on-stop with nothing to conclude emits no spawn-concluded event"; pass=$((pass+1))
+  else
+    echo "FAIL: OBS3 --on-stop with nothing to conclude emits no spawn-concluded event"; fail=$((fail+1))
+  fi
 
   rm -rf "$tmp" 2>/dev/null || true
   echo "self-test: $pass passed, $fail failed"
@@ -2073,6 +2579,438 @@ _builder_classify() {
   printf '%s\t%s\t%s\t%s\t%s\t%s' "$tool" "$sid" "$child_id" "$item_id" "$title" "$bg"
 }
 
+# ============================================================================
+# Progress-log `task_started` emission + DISPATCH-PROVENANCE MARKER
+# (ask-rooted-workstreams-p1, Task 3 — "Dispatch emission splice").
+#
+# WHY: the plan's log-first law (constraint 6, verifier monopoly preserved —
+# this NEVER flips a checkbox, only OBSERVES a dispatch) requires every
+# dispatch to be recorded by a MECHANISM. This best-effort addition runs
+# inside the ALREADY-WIRED --on-builder-dispatch (PreToolUse Task|Agent|
+# Workflow) and --on-spawn (PreToolUse mcp__ccd_session__spawn_task |
+# mcp__ccd_session_mgmt__start_code_task) hooks, alongside their existing
+# conv-tree emission (untouched). It:
+#   (a) emits ONE `task_started` progress-log event via the STABLE, UNCHANGED
+#       scripts/progress-log.sh `emit` CLI (Task 2) when the dispatch text
+#       names a plan (`docs/plans/<slug>.md`) + a task number — the same
+#       shape Task 1's plan-lifecycle.sh splice already established;
+#   (b) writes the DISPATCH-PROVENANCE MARKER Task 9's spawned-session
+#       classification guard consumes, via scripts/dispatch-provenance.sh.
+#
+# ANTI-NOISE GUARD: a dispatch whose text names no plan is a SILENT no-op —
+# not every builder/spawn dispatch serves a plan task (Explore, ad-hoc
+# research, etc.), and emitting an empty-plan_slug event for every one of
+# them would violate the anti-noise law and flood the orphan lane.
+#
+# HONEST LIMITATION (documented, not papered over — mirrors this file's own
+# ADR-054 background-completion-ceiling discipline above): the true CHILD
+# worktree path is not visible to a PreToolUse hook on the generic
+# Task/Agent/Workflow dispatch surface. Harness/SDK `isolation: worktree`
+# creates the worktree as part of EXECUTING the tool call and returns the
+# path only in the PostToolUse result (this hook's --on-builder-complete
+# mode) — not before. This splice therefore records `--worktree` best-effort:
+# populated only from `.tool_input.cwd` when the dispatching tool_input
+# happens to carry one (the mcp__ccd_session__spawn_task surface accepts an
+# optional `cwd` project-root override) AND that hint itself already looks
+# like a real `.claude/worktrees/` pool path (`_looks_like_worktree_pool`,
+# FINDING 3 fix, 2026-07-14 review panel); left UNRESOLVED otherwise — a
+# cross-repo spawn's `cwd` override is frequently a bare PROJECT ROOT, and
+# recording that verbatim previously let a later, unrelated operator
+# session at the same root get misclassified spawned by
+# pl_classify_session's ancestor predicate. Task 9 (out of this task's
+# scope) is expected to correlate primarily via its own
+# cwd-under-`.claude/worktrees/` predicate and treat this marker as an
+# ADDITIONAL, not sole, signal — see dispatch-provenance.sh's own header for
+# the full marker schema.
+#
+# Never blocks: every external call is best-effort (`|| true`); missing CLIs
+# are silently skipped via `[[ -f ]]` guards.
+# ============================================================================
+
+# Resolve scripts/progress-log.sh next to this hook's own hooks/ dir. Override
+# for tests (mirrors CONV_TREE_STATE_LIB's env-override convention).
+_pl_progress_log_cli() {
+  if [[ -n "${PL_PROGRESS_LOG_CLI_OVERRIDE:-}" ]]; then
+    printf '%s' "$PL_PROGRESS_LOG_CLI_OVERRIDE"; return 0
+  fi
+  printf '%s/../scripts/progress-log.sh' "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+}
+
+# Resolve scripts/dispatch-provenance.sh. Override for tests.
+_dispatch_provenance_cli() {
+  if [[ -n "${DISPATCH_PROVENANCE_CLI_OVERRIDE:-}" ]]; then
+    printf '%s' "$DISPATCH_PROVENANCE_CLI_OVERRIDE"; return 0
+  fi
+  printf '%s/../scripts/dispatch-provenance.sh' "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+}
+
+# The combined prompt/description/content text a dispatch tool_input may
+# carry, in ONE string (the same field set _builder_title / _spawn_title /
+# _extract_rich_details already read from tool_input).
+_dispatch_text() {
+  local input="$1"
+  _have jq || { printf ''; return 0; }
+  printf '%s' "$input" | jq -r '
+    [(.tool_input.prompt // ""),(.tool_input.description // ""),(.tool_input.content // "")] | join("\n")' 2>/dev/null || echo ""
+}
+
+# First `docs/plans/<slug>.md` reference in the dispatch text, or empty.
+_extract_plan_slug() {
+  local text="$1" ref
+  ref=$(printf '%s' "$text" | grep -oE 'docs/plans/[A-Za-z0-9_.-]+\.md' | head -n1)
+  [[ -z "$ref" ]] && { printf ''; return 0; }
+  local slug="${ref#docs/plans/}"
+  slug="${slug%.md}"
+  printf '%s' "$slug"
+}
+
+# Best-effort task number: prefers the "Task N of" convention this harness's
+# orchestrator dispatch prompts use (matches this exact plan's own dispatch
+# prompt shape); falls back to the first bare "Task N" mention. N may be
+# dotted (e.g. 3.2). Empty when no task number is found.
+_extract_task_id() {
+  local text="$1" m
+  m=$(printf '%s' "$text" | grep -oE '[Tt]ask[[:space:]]+[0-9]+(\.[0-9]+)?[[:space:]]+of\b' | head -n1)
+  if [[ -z "$m" ]]; then
+    m=$(printf '%s' "$text" | grep -oE '[Tt]ask[[:space:]]+[0-9]+(\.[0-9]+)?' | head -n1)
+  fi
+  [[ -z "$m" ]] && { printf ''; return 0; }
+  printf '%s' "$m" | grep -oE '[0-9]+(\.[0-9]+)?' | head -n1
+}
+
+# ============================================================================
+# NL-ATTRIBUTION header (attribution-pipeline task, 2026-07-29 — operator
+# directive: "how do we ensure we don't keep running into this same damn
+# issue of you reporting something that's complete false" -- the START
+# trigger (this hook's --on-builder-dispatch) already fires reliably, but
+# nothing a dispatch carries is MACHINE-READABLE, so deriveLiveAgentLeaves
+# (workstreams-ui/server/roadmap-routes.js) can bind nothing and the cockpit
+# reads "N running, unattributed to a task" all day. This is the convention
+# (doctrine: doctrine/orchestrator-pattern.md) + parser closing that gap.
+#
+# CONVENTION: a dispatch prompt MAY include a line anywhere in its text:
+#   NL-ATTRIBUTION: plan=<slug> task=<id> role=<builder|verifier|reviewer|advocate>
+# Same key=value vocabulary as admission-lib.sh's adm_admit labels and
+# estate-registration-lib.sh's reg_register labels (plan=/task= already
+# closed-enum keys in both) -- one vocabulary across all three attribution
+# surfaces, not a fourth invented shape.
+#
+# _extract_nl_attribution <text> -> plan|task|role|attributed ('|'-joined —
+#   see the printf at the end of this function for why NOT tab-joined)
+#   attributed=1 iff BOTH plan AND task are present -- the id scheme
+#   (roadmap-routes.js: `<slug>/<task_id>`) needs both to name a real node;
+#   role is supplementary metadata and never gates attribution. role is a
+#   CLOSED enum (builder|verifier|reviewer|advocate) -- an unrecognized
+#   value is dropped, not guessed, mirroring _adm_key_allowed's closed-enum
+#   discipline. Tolerant of a missing/malformed header: never guesses,
+#   always returns the 4-field row (empty fields, attributed=0) so a caller
+#   can unconditionally destructure it.
+# ============================================================================
+_extract_nl_attribution() {
+  local text="$1"
+  local line
+  line=$(printf '%s' "$text" | grep -oE 'NL-ATTRIBUTION:.*' | head -n1)
+  local plan="" task="" role=""
+  if [[ -n "$line" ]]; then
+    plan=$(printf '%s' "$line" | grep -oE 'plan=[A-Za-z0-9_.-]+' | head -n1)
+    plan="${plan#plan=}"
+    task=$(printf '%s' "$line" | grep -oE 'task=[A-Za-z0-9_.-]+' | head -n1)
+    task="${task#task=}"
+    role=$(printf '%s' "$line" | grep -oE 'role=(builder|verifier|reviewer|advocate)' | head -n1)
+    role="${role#role=}"
+  fi
+  local attributed="0"
+  [[ -n "$plan" && -n "$task" ]] && attributed="1"
+  # Field separator is '|', NOT a tab: bash treats tab as "IFS whitespace"
+  # (like space/newline) regardless of being the SOLE IFS character, so
+  # `IFS=$'\t' read -r a b c d` silently COLLAPSES leading empty fields —
+  # proven live: `printf '\t\t\t0'` read back with IFS=$'\t' assigns "0" to
+  # the FIRST variable, not the fourth (every caller destructures via `read`
+  # and must see a true absent-plan/absent-task row correctly, so this bug
+  # would have silently mis-attributed the common no-header case). '|' is
+  # not IFS whitespace, so leading/embedded empty fields round-trip exactly
+  # — and '|' can never appear in plan/task (charset [A-Za-z0-9_.-]) or role
+  # (closed enum), so no value collision is possible.
+  printf '%s|%s|%s|%s' "$plan" "$task" "$role" "$attributed"
+}
+
+# _stop_extract_nl_attribution <transcript_path>
+#   END-side counterpart: a dispatched CHILD session cannot see its own
+#   dispatch tool_input (that lived in the PARENT's PreToolUse hook) but its
+#   OWN transcript's first user-role turn IS the prompt it was launched
+#   with -- the same text the header convention asks orchestrators to put
+#   the NL-ATTRIBUTION line into. Reading it at --on-stop (not
+#   --on-session-start) is deliberate: the transcript is GUARANTEED
+#   complete by the time a session stops, whereas SessionStart timing
+#   relative to first-turn ingestion is not something this hook can safely
+#   assume. jq idiom mirrors work-integrity-gate.sh's _wig_touched_plan_paths
+#   and workstreams-emit-reconciler.sh's user/tool_result extraction (both
+#   already read this same transcript JSONL shape) -- not a new technique.
+#   Only the FIRST matching user-role turn is read (head -n1): later turns
+#   are ordinary conversation, not the dispatch prompt.
+_stop_extract_nl_attribution() {
+  local tp="$1"
+  [[ -n "$tp" && -f "$tp" ]] || { _extract_nl_attribution ""; return 0; }
+  _have jq || { _extract_nl_attribution ""; return 0; }
+  local text
+  text=$(jq -r '
+    select(.type == "user" or .role == "user" or .message.role == "user")
+    | (.message.content // .content // empty)
+    | if type == "array" then
+        ([ .[] | select(type=="object" and .type=="text") | .text ] | join(" "))
+      elif type == "string" then .
+      else empty end
+    | gsub("\n"; " ")
+  ' "$tp" 2>/dev/null | head -n1)
+  _extract_nl_attribution "$text"
+}
+
+# Read the plan header's `ask-id:` value from docs/plans/<slug>.md, resolved
+# against the CURRENT repo's toplevel (ephemeral-ok READ, constraint 11 --
+# this is not a durable in-repo WRITE). Deliberately duplicates
+# plan-lifecycle.sh's extract_ask_id awk pattern rather than sourcing that
+# hook: this hook does not depend on plan-lifecycle.sh, keeping the two
+# splices independently best-effort per this file's own failure-isolation
+# contract. Empty when the plan/header/repo is unresolvable -- pl_emit's own
+# orphan lane (pl_path_for("") -> unlinked.jsonl) absorbs it, same as Task 1.
+#
+# PLACEHOLDER GUARD (fix, 2026-07-27 -- SAME proven bug and SAME fix as
+# plan-lifecycle.sh's extract_ask_id; kept in sync deliberately since this
+# is a KNOWN duplication, not a shared function): a plan header still
+# carrying the LITERAL un-substituted template default (`ask-id: <id | none
+# — no linked ask>`, adapters/claude-code/templates/plan-template.md's own
+# text; real example still on disk: docs/plans/cockpit-roadmap-redesign.md:7)
+# matches the awk pattern below and used to hand back the truncated literal
+# token `<id` as if it were a real ask-id -- pl_emit then filed the event
+# under the plausible-but-wrong `_id.jsonl` (1090 real events proven on this
+# machine, most from THIS splice's own --on-builder-dispatch task_started
+# emission). A token starting with `<` is never a legitimate ask-id, so it
+# means the same thing an absent header means and now resolves to the same
+# empty/"unlinked" case. (progress-log-lib.sh's pl_path_for independently
+# quarantines any placeholder-shaped ask_id reaching it by any other path --
+# a writer-side backstop, not relied on here.)
+_resolve_ask_id_for_plan_slug() {
+  local slug="$1"
+  [[ -z "$slug" ]] && { printf ''; return 0; }
+  local root
+  root=$(git rev-parse --show-toplevel 2>/dev/null) || { printf ''; return 0; }
+  local planfile="$root/docs/plans/$slug.md"
+  [[ -f "$planfile" ]] || { printf ''; return 0; }
+  local raw
+  raw="$(awk '
+    /^ask-id:[[:space:]]*[^[:space:]]+/ {
+      sub(/^ask-id:[[:space:]]*/, "", $0)
+      sub(/[[:space:]].*$/, "", $0)
+      print $0
+      exit
+    }
+  ' "$planfile" 2>/dev/null)"
+  case "$raw" in
+    # '<'* = template placeholder; none = the documented no-ask spelling —
+    # both sentinels resolve to empty (re-review Critical, 2026-07-28).
+    '<'* | none) printf ''; return 0 ;;
+  esac
+  printf '%s' "$raw"
+}
+
+# _dispatch_state_dir -- resolve the dispatch-provenance state dir with the
+# SAME order scripts/dispatch-provenance.sh's `_dp_state_dir` and
+# progress-log-lib.sh's `_pl_dispatch_provenance_dir` use, so a caller that
+# sandboxes one sandboxes all three. Used only to park the replay-debounce
+# files below (named WITHOUT a .json suffix so they never collide with the
+# `*.json` marker glob that pl_classify_session / _dp_prune walk).
+_dispatch_state_dir() {
+  if [[ -n "${DISPATCH_PROVENANCE_STATE_DIR:-}" ]]; then
+    printf '%s' "$DISPATCH_PROVENANCE_STATE_DIR"; return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/state/dispatch-provenance' "${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/dispatch-provenance-selftest/$$}"
+    return 0
+  fi
+  printf '%s/.claude/state/dispatch-provenance' "${HOME:-$PWD}"
+}
+
+# _dispatch_replay_token <sid> <slug> <task_id>
+#   The per-dispatch DISCRIMINATOR for the task_started dedup key (FINDING 2,
+#   2026-07-14 ask-splice review panel).
+#
+# THE PROBLEM. The natural key's session_id is the DISPATCHING orchestrator's
+# CLAUDE_SESSION_ID -- INVARIANT across every dispatch it makes (and child_id
+# is a pure function of that same sid, so it is no help either). A
+# within-session RE-DISPATCH of a failed task therefore produced an identical
+# plan_slug+task_id+session_id key and was silently DROPPED. But the key must
+# STILL absorb a genuine hook double-fire (the same PreToolUse firing twice
+# for ONE tool call) -- so the discriminator has to tell "the same dispatch,
+# fired twice" apart from "the same task, dispatched twice", and the ONLY
+# thing that distinguishes those two is WHEN they happened.
+#
+# WHY NOT A WALL-CLOCK TIME BUCKET (floor(now/N), the obvious first answer --
+# and the one this function replaces): a bucket has BOUNDARIES, and two fires
+# milliseconds apart can straddle one. That makes a double-fire produce a
+# DUPLICATE event whenever it happens to land on a boundary -- a real,
+# silently-wrong outcome, not just a flaky test. (It is what made this file's
+# own PL1b regression scenario fail.)
+#
+# WHAT THIS DOES INSTEAD -- a debounce anchored at the FIRST fire, so there is
+# no boundary to straddle: the first fire of a given (sid, slug, task_id)
+# records `<epoch> <token>` in a small state file and returns that token. Any
+# re-fire within DISPATCH_REPLAY_DEBOUNCE_SECONDS (default 30) reads the file
+# and returns the SAME token -> identical natural key -> deduped (a replay).
+# A fire after the window mints a NEW token -> new key -> a distinct event (a
+# genuine re-dispatch).
+#
+# SIZING THE WINDOW (30s). It must exceed the wall-clock gap between two fires
+# of ONE dispatch, and stay well under the gap between two GENUINE dispatches
+# of the same task. The lower bound is NOT "sub-second": this hook forks a
+# whole bash process (plus git + sha1sum) per fire, which on the Windows/Git-
+# Bash target costs SECONDS -- a 5s window was measurably too tight and let a
+# replay mint a fresh token (caught by this file's own PL1b scenario). The
+# upper bound is generous: an orchestrator must dispatch, let the builder run,
+# and verify before it can re-dispatch -- minutes, not seconds. 30s sits with
+# large margin on both sides. Override via the env var for tests that need to
+# compress the clock rather than sleep past a real window.
+#
+# Best-effort and NEVER BLOCKS: if the state dir is unwritable or `date` is
+# missing, it falls back to a value that is merely conservative (never a
+# crash). Two truly-concurrent first-fires could both mint a token and produce
+# one duplicate line -- exactly the pre-existing worst case, never a lost or
+# blocked write.
+_dispatch_replay_token() {
+  local sid="${1:-}" slug="${2:-}" task_id="${3:-}"
+  local now; now=$(date -u +%s 2>/dev/null)
+  # No usable clock -> return a constant so a replay still dedups (the
+  # conservative direction: never manufacture a spurious second event).
+  [[ -n "$now" ]] || { printf 'noclock'; return 0; }
+
+  local debounce="${DISPATCH_REPLAY_DEBOUNCE_SECONDS:-30}"
+  local dir; dir="$(_dispatch_state_dir)"
+  mkdir -p "$dir" 2>/dev/null || { printf '%s' "$now"; return 0; }
+
+  local key; key=$(printf '%s|%s|%s' "$sid" "$slug" "$task_id" | _sha1 | cut -c1-16)
+  local f="$dir/.replay-$key"
+
+  local prev_ts="" prev_token=""
+  if [[ -f "$f" ]]; then
+    read -r prev_ts prev_token <"$f" 2>/dev/null || true
+    if [[ "$prev_ts" =~ ^[0-9]+$ ]] && [[ -n "$prev_token" ]] \
+       && [[ $(( now - prev_ts )) -le "$debounce" ]] && [[ $(( now - prev_ts )) -ge 0 ]]; then
+      # Within the debounce window -> this is a REPLAY of the dispatch the
+      # stored token already represents. Deliberately do NOT refresh the
+      # stored ts: the window stays anchored at the FIRST fire, so a long
+      # chain of replays can never keep extending it.
+      printf '%s' "$prev_token"
+      return 0
+    fi
+  fi
+
+  # First fire (or past the window) -> mint a new token and anchor the window.
+  printf '%s %s\n' "$now" "$now" >"$f" 2>/dev/null || true
+  printf '%s' "$now"
+  return 0
+}
+
+# _looks_like_worktree_pool <path> -- true iff <path> (after normalizing
+# backslashes) sits inside a `.claude/worktrees/` pool. Mirrors
+# progress-log-lib.sh's pl_classify_session pool predicate exactly (same
+# case pattern) so the writer side and the reader side agree on what
+# "looks like a real child worktree" means (FINDING 3, 2026-07-14 review
+# panel -- see below).
+_looks_like_worktree_pool() {
+  local p="${1:-}"
+  [[ -z "$p" ]] && return 1
+  local norm="${p//\\//}"
+  case "$norm" in
+    */.claude/worktrees/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# _emit_dispatch_provenance <input> <sid> <child_id> [h_plan h_task h_role h_attributed]
+#   Best-effort task_started progress-log emission + dispatch-provenance
+#   marker write. Silent no-op when NEITHER the NL-ATTRIBUTION header NOR
+#   the free-text heuristic names a plan (anti-noise: not every
+#   builder/spawn dispatch is plan-rooted). sid/child_id are the SAME
+#   dispatching-session-derived values the caller already computed for the
+#   conv-tree SESSIONS lineage rendering -- this is "the same provenance the
+#   SESSIONS lineage rendering consumes" per the plan's Task 3 spec, not a
+#   newly-invented session concept.
+#
+#   ATTRIBUTION PRECEDENCE (attribution-pipeline task, 2026-07-29): the
+#   caller (_run_on_builder_dispatch) already parsed the dispatch text once
+#   via _extract_nl_attribution and passes the 4 fields through as
+#   h_plan/h_task/h_role/h_attributed. When h_attributed=="1" (BOTH header
+#   plan AND task present) the header is AUTHORITATIVE and the free-text
+#   heuristic (_extract_plan_slug/_extract_task_id) is skipped entirely --
+#   deterministic beats prose-scanning. Otherwise (header absent OR only
+#   partially present) this falls back to the pre-existing heuristic
+#   UNCHANGED, so every dispatch prompt written before this convention
+#   existed keeps working exactly as it did (PL1-PL5 regressions below stay
+#   green with zero header text).
+_emit_dispatch_provenance() {
+  local input="$1" sid="$2" child_id="$3"
+  local h_plan="${4:-}" h_task="${5:-}" h_role="${6:-}" h_attributed="${7:-0}"
+  local text; text=$(_dispatch_text "$input")
+  local slug task_id
+  if [[ "$h_attributed" == "1" ]]; then
+    slug="$h_plan"
+    task_id="$h_task"
+  else
+    slug=$(_extract_plan_slug "$text")
+    [[ -z "$slug" ]] && return 0
+    task_id=$(_extract_task_id "$text")
+  fi
+  local ask_id; ask_id=$(_resolve_ask_id_for_plan_slug "$slug")
+
+  local pl_cli; pl_cli=$(_pl_progress_log_cli)
+  if [[ -f "$pl_cli" ]]; then
+    # FINDING 2 fix: --dedup-extra carries a per-dispatch replay-debounce
+    # token (see _dispatch_replay_token above) so this dispatch's
+    # task_started event is NOT collapsed with a LATER re-dispatch of the
+    # same task from the same (invariant) dispatching session_id, while a
+    # hook double-fire of THIS dispatch still dedups to one event.
+    local dispatch_token; dispatch_token=$(_dispatch_replay_token "$sid" "$slug" "$task_id")
+    bash "$pl_cli" emit --type task_started --ask "$ask_id" --plan-slug "$slug" \
+      --task-id "$task_id" --session-id "$sid" --dedup-extra "$dispatch_token" \
+      --summary "task ${task_id:-?} dispatched" --emitter workstreams-emit \
+      >/dev/null 2>&1 || true
+  fi
+
+  # Best-effort worktree hint: only the spawn_task surface's optional `cwd`
+  # override is ever visible pre-dispatch (see the section header above) --
+  # empty on the generic Task|Agent|Workflow surface, which is an honest
+  # gap, not a guessed value (dispatch-provenance.sh records it as such).
+  #
+  # FINDING 3 fix (2026-07-14 review panel): a cross-repo spawn_task's cwd
+  # override is frequently a PROJECT ROOT (the documented estate workflow
+  # for spawning into a different project entirely), not the
+  # `.claude/worktrees/<slug>` child the harness's own per-task isolation
+  # actually creates. Recording that bare project-root as worktree_path
+  # made a LATER, wholly unrelated operator session at that same root (or a
+  # subdirectory of it) match pl_classify_session's ancestor predicate and
+  # get misclassified spawned -- silently dropping its opening ask. Only
+  # ever record --worktree when the hint itself already looks like a real
+  # worktrees-pool path; otherwise this is the SAME honest UNRESOLVED gap
+  # the generic Task/Agent/Workflow surface already produces (never a
+  # guess) -- predicate (a) in pl_classify_session catches the real child
+  # unconditionally when the harness's own isolation actually creates one.
+  local wt_hint
+  wt_hint=$(printf '%s' "$input" | jq -r '.tool_input.cwd // empty' 2>/dev/null || echo "")
+
+  local dp_cli; dp_cli=$(_dispatch_provenance_cli)
+  if [[ -f "$dp_cli" ]]; then
+    if [[ -n "$wt_hint" ]] && _looks_like_worktree_pool "$wt_hint"; then
+      bash "$dp_cli" write --ask "$ask_id" --plan-slug "$slug" --task-id "$task_id" \
+        --session-id "$sid" --child-id "$child_id" --worktree "$wt_hint" --role "$h_role" \
+        >/dev/null 2>&1 || true
+    else
+      bash "$dp_cli" write --ask "$ask_id" --plan-slug "$slug" --task-id "$task_id" \
+        --session-id "$sid" --child-id "$child_id" --role "$h_role" \
+        >/dev/null 2>&1 || true
+    fi
+  fi
+  return 0
+}
+
 # ----------------------------------------------------------------------------
 # --on-builder-dispatch  (PreToolUse on Task|Agent|Workflow)
 # ----------------------------------------------------------------------------
@@ -2084,6 +3022,13 @@ _run_on_builder_dispatch() {
   local tool sid child_id item_id title bg
   IFS=$'\t' read -r tool sid child_id item_id title bg <<<"$line"
 
+  # NL-ATTRIBUTION header parse (attribution-pipeline task, 2026-07-29) —
+  # ONE parse of the dispatch text, reused by every downstream sink below
+  # (governor ledger, dispatch-provenance marker, WARN counter) so they can
+  # never disagree with each other about what this dispatch claims.
+  local h_plan h_task h_role h_attributed
+  IFS='|' read -r h_plan h_task h_role h_attributed <<<"$(_extract_nl_attribution "$(_dispatch_text "$input")")"
+
   local lib; lib=$(_resolve_state_lib)
   local events
   events="$(BUILDER_INPUT_JSON="$input" _builder_creation_events "$sid" "$tool" "$title" "$child_id" "$item_id" "$bg")]"
@@ -2091,6 +3036,31 @@ _run_on_builder_dispatch() {
   printf '%s' "$events" >"$ef"
   _emit_dual "$lib" "$ef"
   rm -f "$ef" 2>/dev/null || true
+
+  # ---- ADMISSION OBSERVATION SPLICE (accountable-estate T3) -----------------
+  # OBSERVE MODE ONLY: records what estate admission WOULD have decided for this
+  # dispatch; never blocks, never changes this hook's exit code. This is the
+  # emit-feed registration callsite named by the T3 task text — it sits on the
+  # PreToolUse Task|Agent|Workflow matcher, so it is also the "dispatch gate"
+  # surface. Per review F2 the lib, not this gate, is the guarantee: the same
+  # lib is called by session-resumer.sh (hookless scheduled dispatcher) and
+  # spawn-worktree.sh. Best-effort by construction — a missing or broken lib
+  # leaves this hook's behavior byte-identical. See hooks/lib/admission-lib.sh.
+  #
+  # plan=/task=/role=/attributed= (attribution-pipeline task, 2026-07-29):
+  # the SAME NL-ATTRIBUTION parse above, carried into the governor ledger row
+  # this splice already writes 1000+ times/day — the START trigger the
+  # cockpit's future consumer joins against (see
+  # docs/plans/fragments/attribution-server-fragment.md). adm_admit's own
+  # _adm_key_allowed enum gates role/attributed same as plan/task; empty
+  # values are dropped by adm_admit itself, so an absent header contributes
+  # only attributed=0 (honest, never guessed).
+  {
+    source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/admission-lib.sh" 2>/dev/null \
+      && declare -F adm_admit >/dev/null 2>&1 \
+      && adm_admit emit-feed kind="$([[ "${bg:-0}" == "1" ]] && printf bg || printf fg)" \
+           plan="$h_plan" task="$h_task" role="$h_role" attributed="$h_attributed" >/dev/null 2>&1
+  } || true
 
   # Builder correlation ledger (observability + reconciler hint):
   # item_id \t child_id \t tool \t bg \t title \t ts — append once per item.
@@ -2100,7 +3070,47 @@ _run_on_builder_dispatch() {
     printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$item_id" "$child_id" "$tool" "$bg" "$title" \
       "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
   fi
-  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid"
+
+  # WARN counter (constitution §10 requires the golden scenario/FP-rate/
+  # retirement condition named at the callsite, not just here — see
+  # doctrine/orchestrator-pattern-full.md's NL-ATTRIBUTION section). NEVER
+  # blocks: this is the adoption-lag signal, not a gate. Counts prior
+  # attributed=0 lines already appended to the append-only LOG_FILE (no
+  # separate racy read-modify-write counter file needed) so the value is
+  # exact under sequential dispatches and merely best-effort (never wrong in
+  # a blocking sense) under true concurrency.
+  local warn_count=""
+  if [[ "$h_attributed" == "0" ]]; then
+    local prior_warns; prior_warns=$(grep -c 'WARN unattributed builder dispatch' "$LOG_FILE" 2>/dev/null | tr -d ' \n')
+    [[ -n "$prior_warns" ]] || prior_warns=0
+    warn_count=$((prior_warns + 1))
+    _log "WARN unattributed builder dispatch (no NL-ATTRIBUTION header) item=$item_id title=\"$title\" session=$sid — unattributed dispatch #$warn_count logged this session (doctrine/orchestrator-pattern.md names the header MANDATORY; this WARN never blocks the dispatch)"
+  fi
+  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid plan=$h_plan task=$h_task role=$h_role attributed=$h_attributed${warn_count:+ warn_count=$warn_count}"
+
+  # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
+  # emission + dispatch-provenance marker (see the section above this
+  # function for the full contract; silent no-op when the dispatch names no
+  # plan). Header fields passed through so the header takes precedence over
+  # the free-text heuristic when present (see _emit_dispatch_provenance's
+  # own ATTRIBUTION PRECEDENCE note).
+  _emit_dispatch_provenance "$input" "$sid" "$child_id" "$h_plan" "$h_task" "$h_role" "$h_attributed" || true
+
+  # ---- WAVE-O O.1 EMIT: bg-task-started (contract C2) --------------------
+  # ONE marked emit line, per specs-o §O.1 deliverable 3. Scoped HONESTLY:
+  # this is the closest existing mechanical tap for "a background task
+  # started" (PreToolUse on Task|Agent|Workflow, bg=="1" derived from
+  # _builder_is_background — run_in_background:true or a Workflow launch)
+  # but it does NOT cover EVERY background-task shape in this harness — a
+  # `Bash` tool call with run_in_background:true (or the `Monitor` tool)
+  # has no PreToolUse/PostToolUse hook wired anywhere that would fire this
+  # event. See this task's report-back for the documented gap; no
+  # cooperative-discipline convention was invented to paper over it.
+  if [[ "$bg" == "1" ]] && command -v ledger_emit >/dev/null 2>&1; then
+    ledger_emit "workstreams-emit" "bg-task-started" "item=${item_id} node=${child_id} tool=${tool} title=\"${title}\" session=${sid}"
+  fi
+  # ---- END WAVE-O O.1 EMIT --------------------------------------------------
+
   exit 0
 }
 
@@ -2124,6 +3134,17 @@ _run_on_builder_complete() {
   if [[ "$bg" == "1" ]]; then
     events="$events]"
     _log "builder-complete DEFERRED (background $tool) item=$item_id — launch-ack is not completion (ADR-054 ceiling)"
+    # NL Observability Program Wave O, task O.1 (specs-o §O.1 deliverable 3):
+    # deliberately NO bg-task-finished emit here. This branch fires at
+    # LAUNCH-RETURN for a background dispatch, not at its actual
+    # completion (the COMPLETION-SIGNAL CEILING documented above this
+    # function: "NO stable local hook event ... for background-dispatch
+    # completion"). Emitting bg-task-finished here would be a false
+    # completion claim, exactly the failure mode this file's own ADR-054
+    # ceiling was written to avoid. Per specs-o §O.1 deliverable 3's own
+    # instruction ("if none exists, document the gap ... do NOT invent a
+    # cooperative-discipline convention"), this gap is left unfilled and
+    # named in this task's report-back rather than papered over.
   else
     # SAME derivation as _run_resolve_item resolution=done, so a manual
     # resolve and this automatic one dedupe to one event.

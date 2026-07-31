@@ -3,7 +3,7 @@
 # install.sh — Deploy Neural Lace's Claude Code adapter to ~/.claude/
 #
 # What it does:
-#   1. Syncs rules/agents/templates/hooks/docs/scripts into ~/.claude/
+#   1. Syncs rules/agents/templates/skills/hooks/docs/scripts into ~/.claude/
 #   2. Copies settings.json.template to ~/.claude/settings.json (if missing)
 #   3. Makes all hook scripts executable
 #   4. Sets `git config --global core.hooksPath` for the pre-push scanner
@@ -17,6 +17,7 @@
 #   ./install.sh --dry-run         # print what would change, don't execute
 #   ./install.sh --replace-settings  # install settings.json, back up existing
 #   ./install.sh --uninstall       # best-effort uninstall (see --help)
+#   ./install.sh --verify          # after installing, run harness-doctor.sh --quick
 #   ./install.sh --help            # full usage reference
 #
 # Re-run anytime to refresh (safe — existing symlinks are replaced).
@@ -28,6 +29,7 @@ set -e
 # ============================================================
 
 MODE="install"
+VERIFY_AFTER_INSTALL=0
 for arg in "$@"; do
   case "$arg" in
     --help|-h)
@@ -41,6 +43,13 @@ for arg in "$@"; do
       ;;
     --uninstall)
       MODE="uninstall"
+      ;;
+    --verify)
+      # Additive flag (not a MODE): after the normal copy phase, run
+      # harness-doctor.sh --quick and propagate its exit code. Only takes
+      # effect in the normal install flow (MODE=install); harmless no-op
+      # combined with --help/--dry-run/--replace-settings/--uninstall.
+      VERIFY_AFTER_INSTALL=1
       ;;
     *)
       echo "install.sh: unknown argument: $arg" >&2
@@ -79,6 +88,329 @@ if [ -n "$_git_common_dir" ] && [ "$_git_common_dir" != "$_git_dir" ]; then
 fi
 
 # ============================================================
+# Review-before-deploy gate infra (harness-governance-batch-2026-07-15,
+# task 2; design: docs/design-notes/review-record-primitive.md, Amendment F;
+# harness-review REFORMULATE fixup, finding 1). install.sh is the LOUD
+# HARD-BLOCK path (operator present): if a changed in-surface file lacks a
+# PASS harness-change-review record covering its EXACT content (or a
+# cutover grandfather entry -- Amendment E), the ENTIRE install aborts
+# BEFORE any file is touched. Contrast with session-start-auto-install.sh,
+# which is fail-open by platform contract and instead skips + loudly warns
+# on just the uncovered file.
+#
+# Sourced/defined EARLY (before the MODE dispatch below), because
+# settings.json.template is copied/applied from TWO call sites --
+# --replace-settings mode (unconditional) and the normal flow (only when
+# live settings.json is missing) -- and both must be gated, not just
+# whichever one a narrower fix happened to touch first.
+#
+# Fails OPEN only on genuine infra unavailability (the shared lib missing,
+# or git/jq unavailable) -- never on a resolvable "not covered" verdict,
+# which is exactly what this gate exists to catch.
+# ============================================================
+REVIEW_GATE_LIB="$ADAPTER_DIR/hooks/lib/review-record-gate-lib.sh"
+if [ -f "$REVIEW_GATE_LIB" ]; then
+  # shellcheck source=hooks/lib/review-record-gate-lib.sh
+  . "$REVIEW_GATE_LIB" 2>/dev/null || true
+fi
+
+REVIEW_GATE_UNCOVERED=()
+
+# $1 = path relative to $ADAPTER_DIR (e.g. hooks/foo.sh, hooks/lib/bar.sh,
+# scripts/lib/baz.sh, agents/qux.md, settings.json.template). Appends to
+# REVIEW_GATE_UNCOVERED when the file is in-surface, CHANGED vs the live
+# copy (or has no live copy at all -- its first deploy), and not covered by
+# a grandfather/PASS record. A no-op (returns 0) whenever rrg_in_surface is
+# unavailable (lib missing/failed to source) -- callers gate on that
+# separately so a missing lib fails OPEN, never silently blocks nothing.
+_review_gate_check_file() {
+  local rel="$1"
+  command -v rrg_in_surface >/dev/null 2>&1 || return 0
+  rrg_in_surface "$rel" || return 0
+  local repo_file="$ADAPTER_DIR/$rel"
+  local live_file="$CLAUDE_DIR/$rel"
+  [ -f "$repo_file" ] || return 0
+  # A live copy byte-identical to the repo copy is not a CHANGE -- nothing
+  # new is being deployed for this file, so it needs no fresh review.
+  if [ -f "$live_file" ] && cmp -s "$repo_file" "$live_file" 2>/dev/null; then
+    return 0
+  fi
+  local sha
+  sha=$(rrg_blob_sha_of_file "$repo_file")
+  if rrg_is_covered "$NEURAL_LACE_ROOT" "" "adapters/claude-code/$rel" "$sha"; then
+    return 0
+  fi
+  REVIEW_GATE_UNCOVERED+=("$rel (blob_sha ${sha:-<unresolved>})")
+}
+
+# Prints the teaching message and exits 1 iff REVIEW_GATE_UNCOVERED is
+# non-empty. Call once every relevant check for the current mode has run.
+_review_gate_abort_if_uncovered() {
+  [ "${#REVIEW_GATE_UNCOVERED[@]}" -eq 0 ] && return 0
+  echo "" >&2
+  echo "================================================================" >&2
+  echo "  REVIEW-BEFORE-DEPLOY GATE — INSTALL BLOCKED" >&2
+  echo "================================================================" >&2
+  echo "" >&2
+  echo "  The following changed harness file(s) are in the review-before-" >&2
+  echo "  deploy trigger surface but carry NO PASS harness-change-review" >&2
+  echo "  record covering their exact content. NOTHING was installed." >&2
+  echo "" >&2
+  local u
+  for u in "${REVIEW_GATE_UNCOVERED[@]}"; do
+    echo "    - $u" >&2
+  done
+  echo "" >&2
+  echo "  Remedy: get a harness-reviewer PASS on this change, then run:" >&2
+  echo "    bash adapters/claude-code/scripts/write-review-record.sh capture \\" >&2
+  echo "      --kind harness-change-review --reviewer harness-reviewer \\" >&2
+  echo "      --verdict PASS --plan-ref <plan.md#task> \\" >&2
+  echo "      --quote \"<verbatim substring of the reviewer's returned message>\" \\" >&2
+  echo "      --file <path> [--file <path> ...]" >&2
+  echo "  then re-run ./install.sh." >&2
+  echo "" >&2
+  echo "  If this seems wrong, your docs/reviews/records/index.json may be" >&2
+  echo "  stale or corrupt -- run:" >&2
+  echo "    bash adapters/claude-code/scripts/write-review-record.sh rebuild-index" >&2
+  echo "  and retry." >&2
+  echo "" >&2
+  echo "  Design: docs/design-notes/review-record-primitive.md" >&2
+  echo "  Doctrine: adapters/claude-code/doctrine/review-before-deploy.md" >&2
+  echo "================================================================" >&2
+  exit 1
+}
+
+# ============================================================
+# CRLF normalization on copy (LIVE-MIRROR-CRLF-01)
+# ============================================================
+# The repo is LF-only by .gitattributes pin (*.sh/*.md/*.json/... eol=lf,
+# NL-FINDING-038), but on Windows the symlink path below often fails
+# (requires elevated privilege / Developer Mode) and install.sh falls back
+# to `cp`, copying whatever bytes the repo's working tree holds. A mirror
+# built BEFORE the .gitattributes pin landed — or checked out with a stale
+# core.autocrlf=true — carries CRLF forward into ~/.claude on every such
+# copy, and nothing downstream ever re-normalizes it: the live mirror drifts
+# CRLF while a fresh clone is LF-clean (the exact drift the Closure Contract
+# exists to catch; harness-doctor.sh's check_line_endings only scans the
+# REPO tree, so it is blind to this).
+#
+# Fix: strip \r from genuinely-text surfaces as part of the copy, so every
+# install run converges the live mirror to LF regardless of the repo
+# working tree's byte state or prior mirror history. Scoped to hooks/
+# scripts/ lib/ and other *.sh-bearing dirs (never binary/data assets —
+# see is_text_sync_target below) so no non-text file is ever touched.
+# Defined early (before any MODE branch) so --replace-settings and the
+# examples-seed step can use it too, not just the normal sync_file/
+# sync_directory path.
+
+# Returns 0 (true) if $1 is a target this installer should CRLF-normalize
+# on copy: shell scripts and the other plain-text harness surfaces that
+# ship as *.sh/*.md/*.json/*.txt under the synced dirs. Binary/data assets
+# (schemas' occasional non-text fixtures, anything under data/ that isn't
+# one of these extensions, images, etc.) are left byte-for-byte untouched.
+is_text_sync_target() {
+  case "$1" in
+    *.sh|*.md|*.json|*.jsonl|*.yaml|*.yml|*.js|*.mjs|*.ts|*.py|*.toml|*.txt)
+      return 0 ;;
+    */git-hooks/pre-commit|*/git-hooks/pre-push|*/git-hooks/post-commit)
+      # Extensionless git-hooks entrypoints are shell scripts too.
+      return 0 ;;
+    *)
+      return 1 ;;
+  esac
+}
+
+# Copies $1 -> $2, stripping CR bytes if $1 qualifies as a text sync target
+# (see is_text_sync_target) and leaving every other file a plain byte-for-
+# byte `cp` (binaries, or text files git normalizes without a CRLF concern
+# on this platform get the fast path unchanged).
+cp_normalized() {
+  local src="$1" dst="$2"
+  if is_text_sync_target "$src" && [ -f "$src" ]; then
+    tr -d '\r' < "$src" > "$dst" 2>/dev/null && return 0
+    # tr failed (e.g. permissions) -- fall back to a plain copy rather than
+    # leaving $dst missing.
+    cp "$src" "$dst"
+    return $?
+  fi
+  cp "$src" "$dst"
+}
+
+# Verifies that $2's on-disk content matches $1's content MODULO CRLF
+# (NL-FINDING-017 discipline: comparing raw bytes here would false-mismatch
+# on every CRLF-normalizing copy, since dst is EXPECTED to differ from a
+# CRLF-carrying src by exactly its \r bytes). Returns 0 on match.
+_verify_normalized_copy() {
+  local src="$1" dst="$2"
+  [ -f "$src" ] && [ -f "$dst" ] || return 1
+  local src_norm dst_norm
+  src_norm="$(tr -d '\r' < "$src" 2>/dev/null)"
+  dst_norm="$(tr -d '\r' < "$dst" 2>/dev/null)"
+  [ "$src_norm" = "$dst_norm" ]
+}
+
+# ============================================================
+# Self-sync guard (SELF-SYNC-01, 2026-07-29)
+# ============================================================
+# PROVEN data loss, twice in ten minutes on 2026-07-29 once the post-commit
+# auto-deploy hook was armed: on a SYMLINK-based install, ~/.claude/hooks is
+# a symlink back into adapters/claude-code/hooks. install.sh then runs
+#   sync_directory "$ADAPTER_DIR/hooks/lib" "$CLAUDE_DIR/hooks/lib"
+# whose TARGET resolves, THROUGH that symlink, onto the SOURCE ITSELF:
+#   source: /Users/.../adapters/claude-code/hooks/lib
+#   target: /Users/.../adapters/claude-code/hooks/lib   <- SAME DIRECTORY
+# sync_directory's existing `[ -L "$dst" ]` fast path never sees this — the
+# PARENT is the symlink, the leaf (lib) is a real directory — so control
+# reaches `rm -rf "$dst"`, which deletes the source tree, and the copy loop
+# then finds an empty source: "synced hooks/lib/ (0 files)". 19 files and
+# ~12,400 lines (admission-lib.sh among them) were destroyed that way.
+#
+# The fix is DETECTION, not redesign: resolve both sides to a physical path
+# and SKIP the sync when they name the same object, loudly and with the
+# reason. On a copy-based install (the Windows machines) source and target
+# are genuinely different paths, so the guard never fires and behaviour there
+# is byte-identical to before — that is the acceptance bar, pinned by
+# tests/install-self-sync-guard-test.sh scenarios S5/S6/S7/S9.
+#
+# Defined here, BEFORE any MODE branch, so --dry-run's preview can use it too
+# (a dry run that promises a sync the real run will skip is a lie).
+
+# Print the PHYSICAL (fully symlink-resolved) absolute path of $1 on stdout.
+#
+# Handles, per the four topologies this guard must cover: symlinks anywhere
+# in the path (including a symlinked PARENT with a real leaf — the topology
+# that caused the loss), `..` components, trailing slashes, relative input,
+# and a path that DOES NOT EXIST YET (resolve the deepest existing ancestor,
+# re-append the missing tail).
+#
+# Portability: stock macOS has no `realpath` and its `readlink` has no -f, so
+# `cd ... && pwd -P` is the only universally available idiom. Works on bash
+# 3.2.57 (macOS system bash) and 5.x alike — no arrays, no `local -n`, no
+# process substitution, no GNU-only flags.
+resolve_real_path() {
+  local p="$1"
+  local tail="" dir base rdir link
+  local depth=0
+
+  [ -n "$p" ] || return 1
+  # Make relative input absolute before any resolution.
+  case "$p" in
+    /*) : ;;
+    *)  p="$PWD/$p" ;;
+  esac
+  # Strip trailing slashes ("/foo/" and "/foo///" == "/foo"; bare "/" stays).
+  while [ "$p" != "/" ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+
+  # Anything that exists as a directory: `cd` follows every symlink in the
+  # chain (leaf AND ancestors) and `pwd -P` prints the physical answer, which
+  # also collapses any `..` components. This is the case that matters for
+  # every sync_directory call.
+  if [ -d "$p" ]; then
+    (cd "$p" 2>/dev/null && pwd -P) || return 1
+    return 0
+  fi
+
+  # A symlink to a FILE (or a dangling symlink): `cd` cannot help, so follow
+  # the link chain by hand. Bounded at 40 hops so a symlink cycle terminates
+  # instead of hanging the installer.
+  while [ -L "$p" ] && [ "$depth" -lt 40 ]; do
+    link="$(readlink "$p" 2>/dev/null)" || break
+    [ -n "$link" ] || break
+    case "$link" in
+      /*) p="$link" ;;
+      *)  dir="${p%/*}"
+          if [ -z "$dir" ] || [ "$dir" = "$p" ]; then dir="/"; fi
+          p="$dir/$link" ;;
+    esac
+    while [ "$p" != "/" ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+    depth=$((depth + 1))
+    if [ -d "$p" ]; then
+      (cd "$p" 2>/dev/null && pwd -P) || return 1
+      return 0
+    fi
+  done
+
+  # A plain file, or a path that does not exist yet: peel leaf components
+  # until an existing directory is found, resolve THAT physically, and
+  # re-append what was peeled. This is what makes a not-yet-created target
+  # comparable at all (without it the guard could not run before first
+  # install).
+  while :; do
+    base="${p##*/}"
+    dir="${p%/*}"
+    if [ -z "$dir" ]; then dir="/"; fi
+    if [ -n "$tail" ]; then tail="$base/$tail"; else tail="$base"; fi
+    if [ -d "$dir" ]; then
+      rdir="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+      if [ "$rdir" = "/" ]; then
+        printf '/%s\n' "$tail"
+      else
+        printf '%s/%s\n' "$rdir" "$tail"
+      fi
+      return 0
+    fi
+    if [ "$dir" = "/" ]; then
+      printf '/%s\n' "$tail"
+      return 0
+    fi
+    p="$dir"
+  done
+}
+
+# Returns 0 (and prints the shared physical path) when sync source $1 and
+# sync target $2 are the SAME object on disk; returns 1 — the normal,
+# copy-based-install case — otherwise. Deliberately fails CLOSED as "not the
+# same" if either side cannot be resolved, so an unresolvable path can never
+# silently suppress a legitimate sync.
+_sync_self_check() {
+  local src_real dst_real
+  src_real="$(resolve_real_path "$1" 2>/dev/null)" || return 1
+  dst_real="$(resolve_real_path "$2" 2>/dev/null)" || return 1
+  [ -n "$src_real" ] || return 1
+  [ -n "$dst_real" ] || return 1
+  [ "$src_real" = "$dst_real" ] || return 1
+  printf '%s\n' "$src_real"
+  return 0
+}
+
+# The single skip announcement used by every sync path. Returns 0 when the
+# sync WAS a self-sync (caller must return without touching the filesystem),
+# 1 when the caller should proceed exactly as before.
+#   $1 src   $2 dst   $3 label   $4 "file" | "directory"
+sync_is_self_sync() {
+  local shared
+  shared="$(_sync_self_check "$1" "$2")" || return 1
+  echo "  SKIPPED $3 -- source and target are the SAME $4 on disk:"
+  echo "      $shared"
+  echo "    WHY: this machine has a SYMLINK-based install (a ~/.claude/ entry"
+  echo "    links back into the repo), so this sync's target resolves onto its"
+  echo "    own source. Syncing it would delete the source first and then find"
+  echo "    nothing left to copy back -- that is exactly how"
+  echo "    adapters/claude-code/hooks/lib was destroyed on 2026-07-29."
+  echo "    This is EXPECTED on a symlink-based machine and is NOT an error:"
+  echo "    the live path already serves the repo's files directly, so there"
+  echo "    is nothing to deploy. Copy-based installs are unaffected."
+  return 0
+}
+
+# Returns 0 when $1 resolves to a path INSIDE the repo's adapter dir — i.e. a
+# "live ~/.claude/" path that is really a REPO file reached through a
+# symlink. Used to stop the prune steps (which delete live-side files whose
+# repo twin is gone) from deleting repo files on a symlinked install: same
+# root cause as the sync bug above, different code path.
+_resolves_into_adapter_dir() {
+  local p_real adapter_real
+  p_real="$(resolve_real_path "$1" 2>/dev/null)" || return 1
+  adapter_real="$(resolve_real_path "$ADAPTER_DIR" 2>/dev/null)" || return 1
+  [ -n "$p_real" ] || return 1
+  [ -n "$adapter_real" ] || return 1
+  case "$p_real" in
+    "$adapter_real"|"$adapter_real"/*) return 0 ;;
+  esac
+  return 1
+}
+
+# ============================================================
 # --help
 # ============================================================
 
@@ -91,12 +423,17 @@ USAGE
   ./install.sh --dry-run           Print what would change; don't execute
   ./install.sh --replace-settings  Install settings.json from template, backing up existing
   ./install.sh --uninstall         Best-effort uninstall (restores most recent backup)
+  ./install.sh --verify            After installing, run harness-doctor.sh --quick and
+                                    propagate its exit code (skips gracefully with a
+                                    warning if harness-doctor.sh isn't installed yet)
   ./install.sh --help, -h          This message
 
 NOTES
   - Re-running without flags is safe; existing files are backed up before overwrite.
   - settings.json is NOT overwritten by default; use --replace-settings to override.
-  - ~/.claude/local/ is NEVER touched by the installer (personal config layer).
+  - ~/.claude/local/ is NEVER touched by the installer (personal config layer), except
+    for ~/.claude/local/nl-repo-path, which the installer writes/refreshes every run
+    (the resolved repo root, consumed by hooks/lib/nl-paths.sh's nl_repo_root()).
   - For a true revert to a pre-Neural-Lace state, take a whole-directory snapshot
     of ~/.claude/ BEFORE first install and restore it if needed. See SETUP.md.
 HELP
@@ -267,6 +604,17 @@ if [ "$MODE" = "replace-settings" ]; then
     exit 1
   fi
 
+  # Review-before-deploy gate: --replace-settings ALWAYS applies the
+  # template (unconditionally, unlike the normal flow's missing-settings.json
+  # guard), so it must be checked here too -- harness-review REFORMULATE
+  # fixup finding 1 named this exact call site as previously ungated.
+  if [ -f "$REVIEW_GATE_LIB" ] && command -v rrg_in_surface >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+    _review_gate_check_file "settings.json.template"
+    _review_gate_abort_if_uncovered
+  elif [ ! -f "$REVIEW_GATE_LIB" ]; then
+    echo "  [review-before-deploy] shared lib not present at $REVIEW_GATE_LIB -- skipping the gate (pre-cutover checkout)" >&2
+  fi
+
   BACKUP_DIR_RS="$CLAUDE_DIR/.backup-$(date +%Y%m%d-%H%M%S)"
   mkdir -p "$CLAUDE_DIR"
 
@@ -278,7 +626,7 @@ if [ "$MODE" = "replace-settings" ]; then
     echo "  (No existing settings.json to back up)"
   fi
 
-  cp "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
+  cp_normalized "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
   echo "  Installed: $CLAUDE_DIR/settings.json from template"
   echo ""
   echo "  ACTION REQUIRED: Edit $CLAUDE_DIR/settings.json and replace placeholders"
@@ -350,6 +698,16 @@ if [ "$MODE" = "dry-run" ]; then
     local src="$1"
     local dst="$2"
     local label="$3"
+    # SELF-SYNC-01: the real flow will SKIP this sync (source and target are
+    # the same path on disk), so the preview must say so rather than promise
+    # a replace/relink that never happens. Not counted as a change.
+    local shared
+    if shared="$(_sync_self_check "$src" "$dst")"; then
+      echo "  [WOULD SKIP -- self-sync guard]     $dst ($label)"
+      echo "      source and target are the same path on disk: $shared"
+      echo "      symlink-based install; nothing to deploy -- this is NOT an error."
+      return
+    fi
     if [ -e "$dst" ] && [ ! -L "$dst" ]; then
       echo "  [WOULD REPLACE -- backup existing] $dst ($label)"
       backups=$((backups + 1))
@@ -364,14 +722,55 @@ if [ "$MODE" = "dry-run" ]; then
   }
 
   check_sync_target "$ADAPTER_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
-  for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands; do
+  # skills + templates included here to mirror the real sync loop below
+  # (parity with session-start-auto-install.sh's SYNC_SUBDIRS — nl-issue [31]).
+  for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands doctrine skills templates; do
     if [ -d "$ADAPTER_DIR/$dir" ]; then
       check_sync_target "$ADAPTER_DIR/$dir" "$CLAUDE_DIR/$dir" "$dir/"
     fi
   done
-  if [ -d "$NEURAL_LACE_ROOT/patterns/templates" ]; then
-    check_sync_target "$NEURAL_LACE_ROOT/patterns/templates" "$CLAUDE_DIR/templates" "templates/"
+  # Install-completeness additions (B.3): these previously were NOT synced at
+  # all (tests/, patterns/, examples/) or were only partially covered as a
+  # side effect of the hooks/ sync (hooks/lib/ -- explicit here for clarity
+  # and to guarantee completeness independent of the hooks/ sweep).
+  if [ -d "$ADAPTER_DIR/hooks/lib" ]; then
+    check_sync_target "$ADAPTER_DIR/hooks/lib" "$CLAUDE_DIR/hooks/lib" "hooks/lib/"
   fi
+  if [ -d "$ADAPTER_DIR/tests" ]; then
+    check_sync_target "$ADAPTER_DIR/tests" "$CLAUDE_DIR/tests" "tests/"
+  fi
+  if [ -d "$ADAPTER_DIR/patterns" ]; then
+    check_sync_target "$ADAPTER_DIR/patterns" "$CLAUDE_DIR/patterns" "patterns/"
+  fi
+  if [ -d "$ADAPTER_DIR/examples" ]; then
+    check_sync_target "$ADAPTER_DIR/examples" "$CLAUDE_DIR/examples" "examples/"
+  fi
+  if [ -d "$ADAPTER_DIR/data" ]; then
+    check_sync_target "$ADAPTER_DIR/data" "$CLAUDE_DIR/data" "data/"
+  fi
+  # manifest.json + schemas/ (NL-FINDING-017: previously NOT synced, so the
+  # live manifest the doctor's claim-honesty + manifest-freshness checks read
+  # drifted stale across every cutover — the exact class that produced the
+  # §E.W MANIFEST-DRIFT. The manifest is the enforcement source of truth; it
+  # MUST be deployed with the hooks it describes).
+  if [ -f "$ADAPTER_DIR/manifest.json" ]; then
+    check_sync_target "$ADAPTER_DIR/manifest.json" "$CLAUDE_DIR/manifest.json" "manifest.json"
+  fi
+  # observability-consumer-map.json (NL Observability Program Wave O, task
+  # O.1, specs-o §O.0.3 contract C3): the doctor's check_obs_consumer_map
+  # predicate (O.6) reads this from the LIVE ~/.claude/ mirror, so it needs
+  # the same single-file sync treatment as manifest.json above — a fresh
+  # event type added to the repo copy must reach the live copy the doctor
+  # actually checks, or the doctor is validating a stale artifact.
+  if [ -f "$ADAPTER_DIR/observability-consumer-map.json" ]; then
+    check_sync_target "$ADAPTER_DIR/observability-consumer-map.json" "$CLAUDE_DIR/observability-consumer-map.json" "observability-consumer-map.json"
+  fi
+  if [ -d "$ADAPTER_DIR/schemas" ]; then
+    check_sync_target "$ADAPTER_DIR/schemas" "$CLAUDE_DIR/schemas" "schemas/"
+  fi
+  # templates/ previewed via the main loop above (sourced from the adapter dir);
+  # the former repo-root patterns/templates preview was removed with its real-flow
+  # counterpart — nl-issue [31].
   if [ -d "$NEURAL_LACE_ROOT/docs" ]; then
     check_sync_target "$NEURAL_LACE_ROOT/docs" "$CLAUDE_DIR/docs" "docs/"
   fi
@@ -426,6 +825,20 @@ if [ "$MODE" = "dry-run" ]; then
     else
       echo "  [WOULD SKIP -- file populated]     $cred_target"
     fi
+  fi
+  echo ""
+
+  # Workstreams heartbeat scheduled task (NL-FINDING-022, item 6)
+  echo "[Phase 4d: Workstreams heartbeat scheduled-task registration]"
+  if command -v schtasks >/dev/null 2>&1; then
+    if MSYS_NO_PATHCONV=1 schtasks /Query /TN "NL-workstreams-heartbeat" >/dev/null 2>&1; then
+      echo "  [WOULD SKIP -- already registered]  NL-workstreams-heartbeat"
+    else
+      echo "  [WOULD REGISTER]                   NL-workstreams-heartbeat (workstreams-emit.sh --heartbeat, every 5 min)"
+      changes=$((changes + 1))
+    fi
+  else
+    echo "  [WOULD SKIP -- schtasks unavailable] non-Windows platform"
   fi
   echo ""
 
@@ -515,6 +928,25 @@ if [ "$MODE" = "dry-run" ]; then
     echo "  (no examples/ directory in adapter)"
   fi
   echo ""
+
+  # nl-repo-path (B.3): written/refreshed on every run, unlike the seed-once
+  # local/ examples above -- this is a resolved value (the repo root), not a
+  # user-editable config file, so it is safe (and necessary) to overwrite.
+  echo "[Phase 7b: Write \$CLAUDE_DIR/local/nl-repo-path]"
+  echo "  [WOULD WRITE]                      $CLAUDE_DIR/local/nl-repo-path = $NEURAL_LACE_ROOT"
+  changes=$((changes + 1))
+  echo ""
+
+  # --verify preview
+  if [ "$VERIFY_AFTER_INSTALL" -eq 1 ]; then
+    echo "[Phase 7c: --verify]"
+    if [ -f "$CLAUDE_DIR/hooks/harness-doctor.sh" ]; then
+      echo "  [WOULD RUN]                        $CLAUDE_DIR/hooks/harness-doctor.sh --quick"
+    else
+      echo "  [WOULD SKIP -- not installed yet]  harness-doctor.sh not present at $CLAUDE_DIR/hooks/harness-doctor.sh"
+    fi
+    echo ""
+  fi
 
   # Summary
   echo "[Summary]"
@@ -608,13 +1040,80 @@ prune_stale_backups
 BACKUP_DIR="$CLAUDE_DIR/.backup-$(date +%Y%m%d-%H%M%S)"
 BACKED_UP=0
 
+# NL-FINDING-017 fix (specs-e §E.10 item 4): backup becomes copy-then-
+# verify, never mv-the-live-tree. The prior mv-based backup aborted
+# mid-run on a locked file (Windows: "Permission denied — file held
+# open"), leaving the live tree in a half-moved state and the manifest
+# silently stale across the cutover. Copy-then-verify is lock-tolerant:
+# the live file is left in place (readable by whatever holds it open)
+# until its backup copy is hash-verified byte-identical, and ONLY the
+# copy is ever touched by a failure — the live tree is never partially
+# removed. Best-effort hashing (sha1sum -> shasum -> openssl -> byte-
+# count fallback) mirrors the pattern already used by hooks/lib/
+# stop-hook-retry-guard.sh's _retry_guard_hash.
+_hash_path() {
+  local p="$1"
+  if [ -d "$p" ]; then
+    # Directory: hash the sorted relative-path + content-hash listing so
+    # the comparison is order-independent and catches any file diff.
+    (
+      cd "$p" 2>/dev/null || exit 1
+      # -L: hash LOGICAL content (follow symlinks). The backup copy is
+      # `cp -R`, which dereferences symlinks — without -L a symlinked
+      # entry (e.g. a skills/<name> link) enumerates differently on the
+      # two sides and verification can never match (nl-issue [27]).
+      find -L . -type f -print0 | sort -z | while IFS= read -r -d '' f; do
+        if command -v sha1sum >/dev/null 2>&1; then
+          sha1sum "$f" 2>/dev/null
+        elif command -v shasum >/dev/null 2>&1; then
+          shasum "$f" 2>/dev/null
+        else
+          wc -c < "$f" 2>/dev/null
+          printf ' %s\n' "$f"
+        fi
+      done
+    ) | { command -v sha1sum >/dev/null 2>&1 && sha1sum || { command -v shasum >/dev/null 2>&1 && shasum || cat; }; } | awk '{print $1}'
+  else
+    if command -v sha1sum >/dev/null 2>&1; then
+      sha1sum "$p" 2>/dev/null | awk '{print $1}'
+    elif command -v shasum >/dev/null 2>&1; then
+      shasum "$p" 2>/dev/null | awk '{print $1}'
+    elif command -v openssl >/dev/null 2>&1; then
+      openssl sha1 "$p" 2>/dev/null | awk '{print $NF}'
+    else
+      wc -c < "$p" 2>/dev/null | tr -d '[:space:]'
+    fi
+  fi
+}
+
 backup_if_real_file() {
   local target="$1"
   if [ -e "$target" ] && [ ! -L "$target" ]; then
     mkdir -p "$BACKUP_DIR"
-    mv "$target" "$BACKUP_DIR/"
+    local dst="$BACKUP_DIR/$(basename "$target")"
+    # Copy (never mv) -- the live tree is untouched by this step. -R/-r for
+    # dirs, plain cp for files; either way the ORIGINAL stays in place.
+    if [ -d "$target" ]; then
+      cp -R "$target" "$dst" 2>/dev/null
+    else
+      cp "$target" "$dst" 2>/dev/null
+    fi
+    if [ ! -e "$dst" ]; then
+      echo "  ERROR: backup copy of $target to $dst FAILED -- leaving live tree untouched, aborting this sync" >&2
+      return 1
+    fi
+    # Hash-verify the copy before ANY removal of the live tree is allowed.
+    local src_hash dst_hash
+    src_hash="$(_hash_path "$target")"
+    dst_hash="$(_hash_path "$dst")"
+    if [ -n "$src_hash" ] && [ "$src_hash" != "$dst_hash" ]; then
+      echo "  ERROR: backup copy of $target does not hash-match the original ($src_hash != $dst_hash) -- leaving live tree untouched, aborting this sync" >&2
+      rm -rf "$dst" 2>/dev/null
+      return 1
+    fi
     BACKED_UP=1
   fi
+  return 0
 }
 
 # Sync a file: prefer symlink, fall back to copy (Windows Git Bash)
@@ -623,7 +1122,17 @@ sync_file() {
   local dst="$2"
   local label="$3"
 
-  backup_if_real_file "$dst"
+  # SELF-SYNC-01: bail BEFORE the `rm -f "$dst"` below. When $dst resolves
+  # onto $src (symlinked parent), that rm deletes the source file and the
+  # following `ln -s` leaves a dangling link pointing at what it just erased.
+  if sync_is_self_sync "$src" "$dst" "$label" "file"; then
+    return 0
+  fi
+
+  if ! backup_if_real_file "$dst"; then
+    echo "  SKIPPED sync of $label -- backup verification failed (see error above); live file left untouched" >&2
+    return 1
+  fi
   rm -f "$dst"
   ln -s "$src" "$dst" 2>/dev/null || true
 
@@ -631,7 +1140,10 @@ sync_file() {
     echo "  linked $label"
   else
     rm -f "$dst"
-    cp "$src" "$dst"
+    cp_normalized "$src" "$dst"
+    if is_text_sync_target "$src" && ! _verify_normalized_copy "$src" "$dst"; then
+      echo "  WARNING: copy of $label does not content-match source modulo CRLF -- live file may be stale/corrupt; re-run install.sh" >&2
+    fi
     echo "  copied $label (symlinks unavailable)"
   fi
 }
@@ -642,7 +1154,16 @@ sync_directory() {
   local dst="$2"
   local label="$3"
 
-  backup_if_real_file "$dst"
+  # SELF-SYNC-01: bail BEFORE the `rm -rf "$dst"` below. This is the guard
+  # that would have saved hooks/lib on 2026-07-29.
+  if sync_is_self_sync "$src" "$dst" "$label/" "directory"; then
+    return 0
+  fi
+
+  if ! backup_if_real_file "$dst"; then
+    echo "  SKIPPED sync of $label/ -- backup verification failed (see error above); live directory left untouched" >&2
+    return 1
+  fi
   [ -L "$dst" ] && rm -f "$dst"
 
   ln -s "$src" "$dst" 2>/dev/null || true
@@ -654,6 +1175,7 @@ sync_directory() {
   rm -rf "$dst"
   mkdir -p "$dst"
   local count=0
+  local mismatches=0
   while IFS= read -r -d '' rel; do
     local rel_path="${rel#./}"
     [ "$rel_path" = "." ] && continue
@@ -663,12 +1185,79 @@ sync_directory() {
       mkdir -p "$dst_file"
     else
       mkdir -p "$(dirname "$dst_file")"
-      cp "$src_file" "$dst_file"
+      cp_normalized "$src_file" "$dst_file"
+      if is_text_sync_target "$src_file" && ! _verify_normalized_copy "$src_file" "$dst_file"; then
+        mismatches=$((mismatches + 1))
+        echo "  WARNING: copy of $label/$rel_path does not content-match source modulo CRLF -- live file may be stale/corrupt; re-run install.sh" >&2
+      fi
       count=$((count + 1))
     fi
   done < <(cd "$src" && find . -print0)
-  echo "  synced $label/ ($count files)"
+  if [ "$mismatches" -gt 0 ]; then
+    echo "  synced $label/ ($count files, $mismatches content-verify mismatch(es) -- see WARNINGs above)"
+  else
+    echo "  synced $label/ ($count files)"
+  fi
 }
+
+# ============================================================
+# Review-before-deploy gate: normal-flow checks (harness-review REFORMULATE
+# fixup, finding 1). Infra (lib sourcing + _review_gate_check_file +
+# _review_gate_abort_if_uncovered) is defined near the TOP of this script so
+# --replace-settings mode (above, already returned if that was the mode) can
+# use it too. hooks/ and scripts/ are walked RECURSIVELY (find, not a flat
+# glob) so the enforced set matches what sync_directory actually deploys --
+# a flat `scripts/*.sh` glob previously missed scripts/lib/*.sh entirely
+# (and any future scripts/host-setup/*.sh), while auto-install's `git
+# ls-tree -r` was already recursive -- the hard-block path must never be
+# WEAKER than the fail-open path.
+# ============================================================
+if [ -f "$REVIEW_GATE_LIB" ] && command -v rrg_in_surface >/dev/null 2>&1 && command -v git >/dev/null 2>&1 && command -v jq >/dev/null 2>&1; then
+  if [ -d "$ADAPTER_DIR/hooks" ]; then
+    while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "hooks/${f#"$ADAPTER_DIR"/hooks/}"
+    done < <(find "$ADAPTER_DIR/hooks" -type f -name '*.sh')
+  fi
+  if [ -d "$ADAPTER_DIR/scripts" ]; then
+    while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "scripts/${f#"$ADAPTER_DIR"/scripts/}"
+    done < <(find "$ADAPTER_DIR/scripts" -type f -name '*.sh')
+  fi
+  if [ -d "$ADAPTER_DIR/agents" ]; then
+    # agents/*.md is single-level by surface definition (Amendment A) -- a
+    # flat glob is correct here, not a residual (contrast rules/** below).
+    for f in "$ADAPTER_DIR"/agents/*.md; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "agents/$(basename "$f")"
+    done
+  fi
+  if [ -d "$ADAPTER_DIR/rules" ]; then
+    # rules/** IS recursive by surface definition and sync_directory deploys
+    # it recursively -- walk it the same way hooks/scripts are walked above
+    # (no nested rules/*.md exists today, but a flat glob would silently
+    # miss one added later, same class of gap as the scripts/lib/ miss).
+    while IFS= read -r f; do
+      [ -f "$f" ] || continue
+      _review_gate_check_file "rules/${f#"$ADAPTER_DIR"/rules/}"
+    done < <(find "$ADAPTER_DIR/rules" -type f -name '*.md')
+  fi
+  if [ -f "$ADAPTER_DIR/manifest.json" ]; then
+    _review_gate_check_file "manifest.json"
+  fi
+  # settings.json.template: in the NORMAL flow it is only actually applied
+  # when live settings.json is missing (see the copy site further below) --
+  # --replace-settings mode (which ALWAYS applies it) already checked it,
+  # above, before this point in the script was ever reached for that mode.
+  if [ ! -f "$CLAUDE_DIR/settings.json" ] && [ -f "$ADAPTER_DIR/settings.json.template" ]; then
+    _review_gate_check_file "settings.json.template"
+  fi
+
+  _review_gate_abort_if_uncovered
+elif [ ! -f "$REVIEW_GATE_LIB" ]; then
+  echo "  [review-before-deploy] shared lib not present at $REVIEW_GATE_LIB -- skipping the gate (pre-cutover checkout; run install.sh again after this lib lands to enable it)" >&2
+fi
 
 echo "Deploying Claude Code adapter..."
 echo ""
@@ -677,16 +1266,198 @@ echo ""
 sync_file "$ADAPTER_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
 
 # Sync adapter directories to ~/.claude/
-for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands; do
+# skills + templates MUST be in this loop so install.sh delivers the SAME
+# canonical set as session-start-auto-install.sh's SYNC_SUBDIRS
+# ("hooks scripts agents rules templates skills doctrine"). They were absent
+# before: skills/ was never synced by install.sh at all, and templates/ was
+# synced further down from the repo-root patterns/templates/ (a STALE 3-file
+# subset, incl. an out-of-date plan-template.md). A Wave-O merge that added
+# skills/coordinate-estate/SKILL.md was therefore missing from live ~/.claude until
+# the next SessionStart tick ran auto-install. Sourcing both from the adapter
+# dir here (same source AND target auto-install reads) closes that drift —
+# nl-issue [31].
+for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands doctrine skills templates; do
   if [ -d "$ADAPTER_DIR/$dir" ]; then
     sync_directory "$ADAPTER_DIR/$dir" "$CLAUDE_DIR/$dir" "$dir"
   fi
 done
 
-# Sync shared templates from patterns/ (tool-agnostic)
-if [ -d "$NEURAL_LACE_ROOT/patterns/templates" ]; then
-  sync_directory "$NEURAL_LACE_ROOT/patterns/templates" "$CLAUDE_DIR/templates" "templates (from patterns/)"
+# ============================================================
+# Prune stale ~/.claude/rules/*.md (Wave C, C.5): the harness moved almost
+# all rule content to ~/.claude/doctrine/ and shrank rules/ down to the
+# constitution set. sync_directory() above only ADDS/UPDATES files — it
+# never deletes a live-side file whose repo-side twin was removed. Without
+# an explicit prune step, every rule this move deleted from the repo would
+# persist forever in ~/.claude/rules/ on any machine that installed before
+# this cutover. This step ONLY touches ~/.claude/rules/*.md and ONLY
+# deletes files whose basename is absent from the repo's
+# adapters/claude-code/rules/ directory — it never touches any other dir.
+# ============================================================
+
+prune_stale_rules() {
+  local repo_rules="$ADAPTER_DIR/rules"
+  local live_rules="$CLAUDE_DIR/rules"
+  [ -d "$repo_rules" ] || return 0
+  [ -d "$live_rules" ] || return 0
+  # If ~/.claude/rules is a symlink to the repo dir, there is nothing to
+  # prune independently -- it always mirrors the repo exactly.
+  [ -L "$live_rules" ] && return 0
+  # SELF-SYNC-01, same root cause one level up: ~/.claude itself (or any
+  # ancestor) may be the symlink, leaving `rules` a REAL directory that is
+  # nonetheless the repo's own rules/. `rm -f` here would then delete repo
+  # files. Nothing to prune in that case by definition -- live IS repo.
+  if _sync_self_check "$repo_rules" "$live_rules" >/dev/null 2>&1; then
+    echo "  (skipping rules/ prune -- live rules/ IS the repo's rules/ on this symlinked install)"
+    return 0
+  fi
+
+  local pruned=0
+  shopt -s nullglob 2>/dev/null || true
+  for f in "$live_rules"/*.md; do
+    [ -f "$f" ] || continue
+    local base
+    base=$(basename "$f")
+    if [ ! -f "$repo_rules/$base" ]; then
+      rm -f "$f"
+      echo "  pruned stale rules/$base (no longer in repo)"
+      pruned=$((pruned + 1))
+    fi
+  done
+  shopt -u nullglob 2>/dev/null || true
+
+  if [ "$pruned" -gt 0 ]; then
+    echo "  pruned $pruned stale rules/*.md file(s)"
+  fi
+}
+
+prune_stale_rules
+
+# ============================================================
+# Prune individually-retired files (decision 064 A6): a whole-directory diff
+# (prune_stale_rules above) is overkill when a SINGLE file moves out of an
+# otherwise-still-live directory (e.g. one scripts/*.sh retired to attic/,
+# which is NOT in the sync_directory loop above and therefore never
+# overwrites/removes its old live twin). This is a minimal named-list
+# mechanism: add the live-side relative path here whenever a file is
+# deliberately retired (git mv'd to attic/ or deleted outright) so it stops
+# lingering on already-installed machines forever (sync_directory only
+# ADDS/UPDATES, never deletes — same class of gap prune_stale_rules fixed
+# for rules/*.md, generalized here to any single retired path).
+# ============================================================
+
+PRUNED_FILES=(
+  # retired 2026-07-16, decision 064 element 4/A6: unwired (no hook, no
+  # schedule, no manifest entry), bug-carrying, superseded by
+  # docs/runbooks/master-reconcile-and-estate-cleanup.md; moved to
+  # adapters/claude-code/attic/. Its ISL guard + dedicated-clone + FF-only
+  # push make a stray live copy near-harmless even if this list is ever
+  # forgotten (accept-as-dead-drift is the A6 fallback if this list rots).
+  "scripts/sync-pt-to-personal.sh"
+  # retired 2026-07-23, agent-efficiency-fixes-2026-07 plan T5: the O.4
+  # (2026-07-07, commit 568daa0) attic move + exit-0 shim was correct, but a
+  # 2026-07-12 template-live-drift "fix" (b71456d) re-added the two
+  # workstreams-state-gate.sh PreToolUse wirings to settings.json.template by
+  # copying FROM an already-drifted live settings.json instead of reconciling
+  # live TO the retirement -- re-wiring a dead exit-0 shim into every
+  # Task|Agent|Workflow dispatch and every spawn_task/start_code_task call
+  # (docs/backlog.md HOOK-SHIM-RETIRE-01, live-confirmed still wired 2x in
+  # this machine's ~/.claude/settings.json as of 2026-07-23). The template
+  # wiring is removed (this commit) and the hooks/ shim hard-deleted outright
+  # -- the full original already lives at adapters/claude-code/attic/
+  # workstreams-state-gate.sh (untouched, from the 568daa0 move), so no
+  # further attic move is needed, only pruning the stray live shim copy.
+  # merge_settings() (session-start-auto-install.sh) is additive-only and has
+  # no removal path for the two already-merged live settings.json entries;
+  # this PRUNED_FILES entry only removes the stray hooks/ FILE, not the two
+  # live settings.json hook wirings -- see docs/backlog.md HOOK-SHIM-RETIRE-01
+  # for the still-open settings-entry-removal gap (no reconcile mechanism
+  # exists for settings.json hook entries as of this commit).
+  "hooks/workstreams-state-gate.sh"
+)
+
+prune_retired_files() {
+  local rel f
+  for rel in "${PRUNED_FILES[@]}"; do
+    f="$CLAUDE_DIR/$rel"
+    if [ -f "$f" ]; then
+      # SELF-SYNC-01: on a symlinked install this "live" path resolves INTO
+      # the repo, so the rm below would delete a REPO file rather than a
+      # stale live copy. If the repo still carries the file it is not
+      # retired-but-lingering, it is the source of truth -- leave it alone.
+      if _resolves_into_adapter_dir "$f"; then
+        echo "  (skipping prune of retired $rel -- it resolves into the repo on this symlinked install, not a stale live copy)"
+        continue
+      fi
+      rm -f "$f"
+      echo "  pruned retired $rel (superseded — see install.sh PRUNED_FILES)"
+    fi
+  done
+}
+
+prune_retired_files
+
+# ============================================================
+# Install completeness (B.3): sync directories self-tests and doctor
+# checks need but which weren't previously deployed at all, or were only
+# deployed as a side effect of the hooks/ sweep above (hooks/lib/ -- kept
+# here explicitly, both for clarity and so it stays deployed even if the
+# hooks/ sync logic ever changes independently of this one). data/ was
+# discovered missing while running B.3's own Done-when assertion
+# (imperative-evidence-linker.sh --self-test silently no-ops without its
+# pattern-library JSON present at ~/.claude/data/) -- same completeness
+# class as the other four, added here rather than narrowing the assertion.
+# ============================================================
+
+if [ -d "$ADAPTER_DIR/hooks/lib" ]; then
+  sync_directory "$ADAPTER_DIR/hooks/lib" "$CLAUDE_DIR/hooks/lib" "hooks/lib"
 fi
+
+if [ -d "$ADAPTER_DIR/tests" ]; then
+  sync_directory "$ADAPTER_DIR/tests" "$CLAUDE_DIR/tests" "tests"
+fi
+
+if [ -d "$ADAPTER_DIR/patterns" ]; then
+  sync_directory "$ADAPTER_DIR/patterns" "$CLAUDE_DIR/patterns" "patterns"
+fi
+
+if [ -d "$ADAPTER_DIR/examples" ]; then
+  sync_directory "$ADAPTER_DIR/examples" "$CLAUDE_DIR/examples" "examples"
+fi
+
+if [ -d "$ADAPTER_DIR/data" ]; then
+  sync_directory "$ADAPTER_DIR/data" "$CLAUDE_DIR/data" "data"
+fi
+
+# manifest.json + schemas/ (NL-FINDING-017): the enforcement source of truth
+# was NEVER deployed to ~/.claude — install synced hooks/rules/doctrine but not
+# the manifest the doctor's claim-honesty + manifest-freshness checks READ, so
+# the live manifest drifted stale across every cutover (the §E.W MANIFEST-DRIFT
+# that surfaced this gap). The manifest MUST ship with the hooks it describes.
+if [ -f "$ADAPTER_DIR/manifest.json" ]; then
+  sync_file "$ADAPTER_DIR/manifest.json" "$CLAUDE_DIR/manifest.json" "manifest.json"
+fi
+
+# observability-consumer-map.json (NL Observability Program Wave O, task
+# O.1, specs-o §O.0.3 contract C3): the doctor's check_obs_consumer_map
+# predicate (O.6) reads this from the LIVE ~/.claude/ mirror, so it needs
+# the same single-file sync treatment as manifest.json above — a fresh
+# event type added to the repo copy must reach the live copy the doctor
+# actually checks, or the doctor is validating a stale artifact.
+if [ -f "$ADAPTER_DIR/observability-consumer-map.json" ]; then
+  sync_file "$ADAPTER_DIR/observability-consumer-map.json" "$CLAUDE_DIR/observability-consumer-map.json" "observability-consumer-map.json"
+fi
+
+if [ -d "$ADAPTER_DIR/schemas" ]; then
+  sync_directory "$ADAPTER_DIR/schemas" "$CLAUDE_DIR/schemas" "schemas"
+fi
+
+# templates/ now syncs from $ADAPTER_DIR/templates via the main directory loop
+# above (alongside skills/), NOT from the repo-root patterns/templates/. The old
+# patterns/ source shipped a STALE 3-file subset (an out-of-date plan-template.md
+# among them) and, running AFTER the main loop, would rm -rf and clobber the
+# canonical 8-file adapter set. Removing it makes install.sh converge on exactly
+# what session-start-auto-install.sh delivers (same adapter source + target), so
+# the two installers no longer drift — nl-issue [31].
 
 # Sync docs from neural-lace root
 if [ -d "$NEURAL_LACE_ROOT/docs" ]; then
@@ -696,6 +1467,21 @@ fi
 # Make scripts executable
 chmod +x "$ADAPTER_DIR/hooks/"*.sh 2>/dev/null || true
 chmod +x "$ADAPTER_DIR/git-hooks/"* 2>/dev/null || true
+
+# ============================================================
+# Write resolved repo root (B.3)
+# ============================================================
+# hooks/lib/nl-paths.sh's nl_repo_root() resolution order is:
+#   (1) $NL_REPO_ROOT env, (2) content of this file, (3) git-derived from the
+#   hook's own location, (4) a fixed probe list. Writing it here means every
+#   hook gets a fast, correct answer without needing $NL_REPO_ROOT set or a
+#   git-derived lookup to succeed. Unlike the local/ example-seeded files
+#   above, this is a RESOLVED VALUE (not user-editable config), so it is
+#   safe -- and necessary -- to overwrite on every install run. This never
+#   touches any OTHER file under local/.
+mkdir -p "$CLAUDE_DIR/local"
+printf '%s\n' "$NEURAL_LACE_ROOT" > "$CLAUDE_DIR/local/nl-repo-path"
+echo "  wrote $CLAUDE_DIR/local/nl-repo-path = $NEURAL_LACE_ROOT"
 
 # ============================================================
 # Global git hooks
@@ -823,6 +1609,140 @@ check_credentials_reference() {
 check_credentials_reference
 
 # ============================================================
+# Workstreams heartbeat scheduled-task registration (NL-FINDING-022,
+# specs-e §E.10 item 6 — DECISION: WIRE)
+# ============================================================
+#
+# workstreams-emit.sh --heartbeat is the Layer-C backstop that concludes
+# crashed-orchestrator branches (marks stale spawned branches as
+# concluded so the Workstreams GUI stops showing phantom in-flight work).
+# It has existed since ADR-031/032 but had NO runtime trigger under any
+# name — doctrine claimed a 5-minute Windows scheduled task that was
+# never actually registered (constitution §10 theater class). This
+# section makes the claim true: idempotent registration via schtasks,
+# tolerating schtasks absence on non-Windows with a logged skip (never
+# fails the install). Reversible: one `schtasks /Delete` unregisters it.
+#
+# Idempotent: schtasks /Create without /F fails if the task already
+# exists with the same name; we probe first via /Query and only /Create
+# when absent, so re-running install.sh never errors or double-registers.
+
+register_workstreams_heartbeat_task() {
+  local task_name="NL-workstreams-heartbeat"
+  local heartbeat_script="$CLAUDE_DIR/hooks/workstreams-emit.sh"
+
+  if ! command -v schtasks >/dev/null 2>&1; then
+    echo "  (schtasks not available on this platform — skipping ${task_name} scheduled-task registration; non-Windows machines get no runtime heartbeat trigger, tracked via the doctor's honest WARN)"
+    return 0
+  fi
+
+  if [ ! -f "$heartbeat_script" ]; then
+    echo "  WARNING: ${heartbeat_script} not found — skipping ${task_name} registration (run install.sh again after hooks/ sync completes)"
+    return 0
+  fi
+
+  if MSYS_NO_PATHCONV=1 schtasks /Query /TN "$task_name" >/dev/null 2>&1; then
+    echo "  scheduled task '${task_name}' already registered — skipping (idempotent)"
+    return 0
+  fi
+
+  # Resolve a bash executable schtasks can invoke directly (Windows Task
+  # Scheduler does not inherit the interactive Git Bash PATH, so a bare
+  # "bash" TR would fail at trigger time — the same class of gotcha the
+  # E.7 session-resumer builder documented for its own scheduled task).
+  local bash_bin
+  bash_bin="$(command -v bash 2>/dev/null || echo "bash")"
+
+  local tr_cmd
+  tr_cmd="\"${bash_bin}\" \"${heartbeat_script}\" --heartbeat"
+
+  if MSYS_NO_PATHCONV=1 schtasks /Create /TN "$task_name" /TR "$tr_cmd" /SC MINUTE /MO 5 /F >/dev/null 2>&1; then
+    echo "  registered scheduled task '${task_name}' (workstreams-emit.sh --heartbeat, every 5 min)"
+  else
+    echo "  WARNING: schtasks /Create failed for '${task_name}' — heartbeat will not run on a schedule until this is fixed (see: bash adapters/claude-code/hooks/harness-doctor.sh --quick for the honest status)"
+  fi
+}
+
+register_workstreams_heartbeat_task
+
+# ============================================================
+# NL-health-tick scheduled-task registration (ADR-061 D6)
+# ============================================================
+#
+# health-tick.sh is the session-independent, PASSIVE hourly watchdog that
+# closes the "who notices a RED while no session is open" gap: it runs
+# the doctor --quick cache refresh, scheduled-task-health capture, and
+# heartbeat reap, and writes an alert file the existing SessionStart
+# surfacer picks up. It spawns NO `claude` ever and does NOT set
+# NL_HOOK_REENTRY (the doctor would self-suppress — ADR-061 D6).
+#
+# Registration follows register_workstreams_heartbeat_task's exact
+# probe-before-create idempotent pattern, but uses the TWO-FILE WRAPPER
+# /TR pattern (docs/runbooks/session-resumer.md "Registration pattern"):
+# never inline `bash -c` in /TR (schtasks collapses nested quotes — every
+# tick exit 1, silently), and wrappers live under
+# %USERPROFILE%\.claude\state\task-wrappers\ — NEVER ~/.claude/scripts,
+# which install re-sync wipes (the 2026-07-07 dead-/TR lesson). state/ is
+# machine state and never purged. Wrapper files are (re)generated at
+# install time so the .cmd always points at the LIVE mirror path.
+
+register_health_tick_task() {
+  local task_name="NL-health-tick"
+  local tick_script="$CLAUDE_DIR/scripts/health-tick.sh"
+
+  if ! command -v schtasks >/dev/null 2>&1; then
+    echo "  (schtasks not available on this platform — skipping ${task_name} scheduled-task registration; non-Windows machines get no session-independent health tick, tracked via the doctor's honest WARN)"
+    return 0
+  fi
+
+  if [ ! -f "$tick_script" ]; then
+    echo "  WARNING: ${tick_script} not found — skipping ${task_name} registration (run install.sh again after scripts/ sync completes)"
+    return 0
+  fi
+
+  local wrapper_dir="$CLAUDE_DIR/state/task-wrappers"
+  mkdir -p "$wrapper_dir"
+
+  # Shared hidden-window launcher (runbook-verbatim). Only written when
+  # absent — other tasks (session-resumer) share this exact file.
+  local vbs="$wrapper_dir/run-hidden.vbs"
+  if [ ! -f "$vbs" ]; then
+    printf 'Set sh = CreateObject("WScript.Shell")\r\ncmd = ""\r\nFor i = 0 To WScript.Arguments.Count - 1\r\n  cmd = cmd & """" & WScript.Arguments(i) & """" & " "\r\nNext\r\nsh.Run Trim(cmd), 0, False\r\n' > "$vbs"
+    echo "  wrote shared hidden-window launcher: $vbs"
+  fi
+
+  # health-tick.cmd — paths baked literally at install time (runbook
+  # precedent), pointing at the LIVE mirror ~/.claude/scripts path, never
+  # a repo worktree or tempdir (the 0x80070002-every-tick lesson).
+  local bash_win home_msys
+  bash_win="$(cygpath -w "$(command -v bash)" 2>/dev/null || echo 'C:\Program Files\Git\bin\bash.exe')"
+  home_msys="${HOME:-/c/Users/${USER:-unknown}}"
+  local cmdfile="$wrapper_dir/health-tick.cmd"
+  {
+    printf '@echo off\r\n'
+    printf '"%s" -c "export PATH=/usr/bin:/mingw64/bin:$PATH; mkdir -p '\''%s/.claude/state/health-tick'\''; bash '\''%s/.claude/scripts/health-tick.sh'\'' >> '\''%s/.claude/state/health-tick/tick.log'\'' 2>&1"\r\n' \
+      "$bash_win" "$home_msys" "$home_msys" "$home_msys"
+  } > "$cmdfile"
+
+  if MSYS_NO_PATHCONV=1 schtasks /Query /TN "$task_name" >/dev/null 2>&1; then
+    echo "  scheduled task '${task_name}' already registered — skipping (idempotent; wrapper files refreshed above)"
+    return 0
+  fi
+
+  local wrapper_dir_win
+  wrapper_dir_win="$(cygpath -w "$wrapper_dir" 2>/dev/null || echo "$wrapper_dir")"
+  local tr_cmd="C:\\Windows\\System32\\wscript.exe ${wrapper_dir_win}\\run-hidden.vbs ${wrapper_dir_win}\\health-tick.cmd"
+
+  if MSYS_NO_PATHCONV=1 schtasks /Create /TN "$task_name" /TR "$tr_cmd" /SC HOURLY /F >/dev/null 2>&1; then
+    echo "  registered scheduled task '${task_name}' (health-tick.sh, hourly, hidden window; log: ~/.claude/state/health-tick/tick.log)"
+  else
+    echo "  WARNING: schtasks /Create failed for '${task_name}' — the session-independent health tick will not run on a schedule until this is fixed (verify: schtasks /Query /TN ${task_name})"
+  fi
+}
+
+register_health_tick_task  # ADR-061 D6 — enabled 2026-07-09 (Phase-1 ops, orchestrator; passive task, no claude spawn; probe-before-create idempotent)
+
+# ============================================================
 # Clean up legacy per-repo hooks
 # ============================================================
 
@@ -871,7 +1791,7 @@ fi
 echo ""
 if [ ! -f "$CLAUDE_DIR/settings.json" ]; then
   if [ -f "$ADAPTER_DIR/settings.json.template" ]; then
-    cp "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
+    cp_normalized "$ADAPTER_DIR/settings.json.template" "$CLAUDE_DIR/settings.json"
     echo "  created settings.json from template"
     echo ""
     echo "  ACTION REQUIRED: Edit $CLAUDE_DIR/settings.json and replace placeholders"
@@ -931,7 +1851,7 @@ if [ -d "$ADAPTER_DIR/examples" ]; then
     if [ -e "$target" ]; then
       echo "  $CLAUDE_DIR/local/$target_name exists (not overwritten)"
     else
-      cp "$example" "$target"
+      cp_normalized "$example" "$target"
       echo "  created $CLAUDE_DIR/local/$target_name from example"
       seeded_any=1
     fi
@@ -946,7 +1866,7 @@ if [ -d "$ADAPTER_DIR/examples" ]; then
     if [ -e "$target" ]; then
       echo "  $CLAUDE_DIR/local/$target_name exists (not overwritten)"
     else
-      cp "$example" "$target"
+      cp_normalized "$example" "$target"
       echo "  created $CLAUDE_DIR/local/$target_name from example"
       seeded_any=1
     fi
@@ -970,13 +1890,13 @@ fi
 # installer copies principles.md content into principles_canonical.md at
 # each listed path, with a header marker noting it is auto-generated.
 
-PRINCIPLES_SRC="$ADAPTER_DIR/rules/principles.md"
+PRINCIPLES_SRC="$ADAPTER_DIR/doctrine/principles-full.md"
 PATHS_CONFIG="$CLAUDE_DIR/local/personal-memory-paths.txt"
 PATHS_EXAMPLE="$ADAPTER_DIR/examples/personal-memory-paths.example.txt"
 
 # Seed the config from the example on first install (if neither exists)
 if [ ! -e "$PATHS_CONFIG" ] && [ -f "$PATHS_EXAMPLE" ]; then
-  cp "$PATHS_EXAMPLE" "$PATHS_CONFIG"
+  cp_normalized "$PATHS_EXAMPLE" "$PATHS_CONFIG"
   echo ""
   echo "  seeded $PATHS_CONFIG from example"
   echo "    edit it to list per-machine personal-memory dirs you want synced;"
@@ -1014,15 +1934,15 @@ if [ -f "$PRINCIPLES_SRC" ] && [ -f "$PATHS_CONFIG" ]; then
     {
       printf -- '---\n'
       printf 'name: principles-canonical\n'
-      printf 'description: "Auto-generated mirror of ~/.claude/rules/principles.md (the canonical Operating Rules 0-7 + Decision Principles + Design Philosophy). Refreshed on each install.sh run. DO NOT edit this file — edit the canonical at adapters/claude-code/rules/principles.md and re-run install.sh."\n'
+      printf 'description: "Auto-generated mirror of ~/.claude/doctrine/principles-full.md (the canonical Operating Rules 0-7 + Decision Principles + Design Philosophy). Refreshed on each install.sh run. DO NOT edit this file — edit the canonical at adapters/claude-code/doctrine/principles-full.md and re-run install.sh."\n'
       printf 'metadata:\n'
       printf '  node_type: memory\n'
       printf '  type: auto-generated-from-principles\n'
-      printf '  source: adapters/claude-code/rules/principles.md\n'
+      printf '  source: adapters/claude-code/doctrine/principles-full.md\n'
       printf '  generated_by: install.sh\n'
       printf '  generated_at: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
       printf -- '---\n\n'
-      printf '<!-- AUTO-GENERATED FROM ~/.claude/rules/principles.md — DO NOT EDIT -->\n\n'
+      printf '<!-- AUTO-GENERATED FROM ~/.claude/doctrine/principles-full.md — DO NOT EDIT -->\n\n'
       cat "$PRINCIPLES_SRC"
     } > "$target_file"
     echo "  personal-memory sync: wrote principles_canonical.md to $target_dir"
@@ -1073,3 +1993,38 @@ esac
 
 echo "Update: cd $NEURAL_LACE_ROOT && git pull && $0"
 echo ""
+
+# ============================================================
+# --verify: run harness-doctor.sh --quick and propagate its exit code
+# ============================================================
+# Runs LAST (after every sync + write above has completed and printed its
+# own output) so a non-zero doctor exit doesn't short-circuit, under `set
+# -e`, any of the normal install reporting. Degrades gracefully with a
+# warning (does not fail the install) when harness-doctor.sh isn't deployed
+# yet -- e.g. on a repo checkout from before Wave B.1 landed, or mid-Wave-B
+# before B.1's worker branch has been cherry-picked in.
+
+if [ "$VERIFY_AFTER_INSTALL" -eq 1 ]; then
+  echo "========================================================"
+  echo "  --verify: running harness-doctor.sh --quick"
+  echo "========================================================"
+  DOCTOR_BIN="$CLAUDE_DIR/hooks/harness-doctor.sh"
+  if [ -f "$DOCTOR_BIN" ]; then
+    set +e
+    bash "$DOCTOR_BIN" --quick
+    DOCTOR_EXIT=$?
+    set -e
+    echo ""
+    if [ "$DOCTOR_EXIT" -eq 0 ]; then
+      echo "  --verify: harness-doctor.sh --quick passed."
+    else
+      echo "  --verify: harness-doctor.sh --quick FAILED (exit $DOCTOR_EXIT). See RED lines above." >&2
+    fi
+    echo ""
+    exit "$DOCTOR_EXIT"
+  else
+    echo "  WARNING: --verify requested but $DOCTOR_BIN not found -- skipping doctor check." >&2
+    echo "    (harness-doctor.sh ships from Wave B.1; re-run --verify after it's installed.)" >&2
+    echo ""
+  fi
+fi

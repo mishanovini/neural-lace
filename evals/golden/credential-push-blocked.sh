@@ -21,6 +21,8 @@ cd "$TEMP_DIR"
 git init -q
 git config user.email "test@test.com"
 git config user.name "Test"
+mkdir -p "$TEMP_DIR/no-hooks"
+git config core.hooksPath "$TEMP_DIR/no-hooks"
 
 # Create a file with a fake AWS credential
 # Note: credential is constructed at runtime to avoid triggering the pre-push

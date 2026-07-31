@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-589620d6",
+  "created_at": "2026-07-30T00:29:54Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29#hooks-4 operator-authorized adversarial review sweep 2026-07-29",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/cross-repo-nl-touch-warn.sh",
+      "blob_sha": "789d90f6d5a2047f1120e748d39fea2490913763"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — self-test-only portability fixes (portable-time fixture aging replaces GNU touch -d whose BSD fallback aged the marker 7h into the FUTURE, explicit-interpreter re-invocation); 11/11 green under /bin/bash 3.2.57.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

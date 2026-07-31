@@ -1,29 +1,14 @@
-/* Conversation Tree UI — v3 accordion redesign (2026-05-27) styles.
-   Vanilla CSS, no framework, no build step. Dark-mode-first.
+/* Workstreams cockpit — NL Observability Program Wave O, task O.4
+   (specs-o §O.4). Six-question layout: a thin view over the derivation
+   lib. Dark-mode-first, vanilla CSS, no framework, no build step. Reuses
+   the palette variables from the prior tree UI for visual continuity on
+   this machine.
 
-   V3 ACCORDION REWRITE (per Misha 2026-05-27 feedback):
-     * Two PERSISTENT surfaces only: Tree (fixed narrow column) and Side
-       Panel (vertically-stacked accordion of Waiting / Backlog /
-       Decisions / Questions). Tree always claims the full vertical real
-       estate; nothing ever stacks BELOW it.
-     * The right column's panels are STACKED ACCORDION, not tabs. Each
-       panel has a clickable header with a chevron; click to collapse to
-       header-only. All panels start expanded. Per-panel collapse state
-       persists across reload via localStorage.
-     * Detail / doc / dispatch composer are CENTERED MODALS — they do not
-       shift the persistent layout.
-     * At < 1024px wide, the side panel collapses to a slide-in drawer
-       (overlay + scrim) with a peek pill so the operator still sees that
-       items are waiting.
-     * The old Layout A/B/C system is retired; there's ONE responsive
-       template that scales smoothly from 1920 down to ~480 px.
-
-   STATE MODEL — class-based on <body> for drawer state; per-panel state
-   lives on the <section.apanel> via the .collapsed class:
-     `.side-open`                                : drawer open (only meaningful at < 1024px)
-     `.side-hidden`                              : explicitly hidden at wide widths (peek pill returns it)
-     `.apanel.collapsed`                         : panel collapsed (header only, body hidden)
-   Per-panel collapse keys: ctree-panel-<name>-collapsed in localStorage. */
+   ONE ACCENT COLOR RULE (ux-review amendment 9 / shell C6 rule, carried
+   forward): --interrupt is spent ONLY on interrupt-worthy classes —
+   needs-me>0, stalled/crashed chips, doctor RED/drift-firing. Everything
+   else stays neutral. Chips are ALWAYS text+color (never color-only —
+   WCAG 2.2 AA baseline, ux-review amendment 12). */
 :root {
   --bg: #111827;
   --panel: #1f2937;
@@ -37,1164 +22,1926 @@
   --warn: #fbbf24;
   --err: #f87171;
   --info: #60a5fa;
-  --type-action: #ef4444;
-  --type-decision: #f59e0b;
-  --type-question: #3b82f6;
-  --type-on: #0b0b0f;
-  --type-neutral: #22d3ee;
-  --btn-go: #22c55e;
-  --btn-wait: #f59e0b;
-  --btn-info: #3b82f6;
-  --btn-up: #a855f7;
-  --btn-del: #b91c1c;
-  --btn-neutral: #475569;
-  /* v2 layout tokens */
-  --tree-col: clamp(260px, 22vw, 340px);
-  --side-panel-w: clamp(380px, 32vw, 520px);
+  --interrupt: #fb7185; /* the ONE accent for interrupt-worthy classes */
+  /* Round 12 (ux-ia-auditor live audit, item 5): --done is the roadmap's
+     "complete" neutral — deliberately the DARKEST gray that still clears
+     WCAG AA 4.5:1 against --panel (#1f2937): measured #87909e = 4.55:1;
+     #6b7280 measures 3.04:1 and #7a8494 measures 3.88:1, both FAIL. Do not
+     round this to a "nicer" gray without re-measuring. --ok (green) is
+     retired from the roadmap entirely (see the .rm-* rules below) — a
+     single static green fill made a 2/14 plan and a 6/6 plan look
+     identical (measured: 100% of fill pixels on the live page were that
+     one green, 0 non-green). */
+  --done: #87909e;
+  /* Round 16 (operator: "let's use green instead of blue for the running
+     items because blue looks like links"): --info (blue) is retired from
+     every NON-LINK signal in the roadmap — it is now spent EXCLUSIVELY on
+     real interactive links/anchors. "Running" (a real live_sessions entry,
+     never merely in-progress-with-nobody-attending — same distinction
+     Round 15's roll-up fix drew) gets its own green, deliberately a
+     brighter/more saturated shade than the roadmap's OWN retired --ok
+     (#34d399, see --done's note above: that green used to mean "complete"
+     and was retired for making every fill look identical) — a different
+     green reads as a genuinely NEW signal, not a reversion to the
+     old complete-fill meaning. #4ade80 measured 8.42:1 against --panel
+     (#1f2937) — comfortably above the 4.5:1 body-text floor. Word/weight
+     carriers are unchanged (WCAG 1.4.1: colour is reinforcement only). */
+  --running: #4ade80;
 }
+
 * { box-sizing: border-box; }
-/* Global hidden-attribute defense. Without this, author display rules
-   (e.g. `.list-body { display: flex }`) override the UA `[hidden]{display:none}`
-   at equal specificity, so `el.hidden = true` silently fails to hide the
-   element. That footgun squeezed the detail card into a 67px bottom strip when
-   #filterBody (.list-body) stayed visible despite `.hidden`. (bug #2, 2026-06-02) */
-[hidden] { display: none !important; }
-html, body { height: 100%; }
+html, body { margin: 0; padding: 0; }
 body {
-  margin: 0;
-  font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
-  background: var(--bg); color: var(--text);
-  display: flex; flex-direction: column;
-  overflow: hidden;
-  min-width: 320px;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
 }
 
+/* ---- header ---- */
 header {
-  display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.5rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
   background: var(--panel);
-  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 20;
 }
-h1 { font-size: 1rem; margin: 0; font-weight: 700; }
+header h1 { font-size: 16px; margin: 0; font-weight: 600; }
 header .spacer { flex: 1; }
-.proj-wrap, .archtoggle, .sortlbl { font-size: 0.78rem; color: var(--muted); display: flex; align-items: center; gap: 0.3rem; }
-select, input[type=text] {
-  background: var(--panel2); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 5px;
-  padding: 0.22rem 0.4rem; font: inherit; font-size: 0.82rem;
-}
-input[type=text] { min-width: 12rem; }
-button {
-  font: inherit; font-size: 0.8rem; cursor: pointer;
-  border-radius: 5px; padding: 0.25rem 0.6rem; border: 1px solid var(--border2);
-}
-button.primary { background: var(--info); color: #06121f; border-color: var(--info); font-weight: 600; }
-button.ghost { background: var(--panel2); color: var(--text); }
-button.danger { background: #7f1d1d; color: #fee2e2; border-color: #b91c1c; }
-button:active { transform: scale(0.98); }
-.lastread { font-size: 0.72rem; color: var(--muted); }
-.freshness {
-  font-size: 0.72rem; color: var(--muted);
-  border: 1px solid var(--border); padding: 0.1rem 0.5rem; border-radius: 999px;
-  cursor: help;
-}
-.freshness.stale {
-  color: #fecaca; background: #7f1d1d; border-color: #b91c1c;
-}
-.status {
-  font-size: 0.75rem; color: var(--muted);
-  border: 1px solid var(--border); padding: 0.1rem 0.5rem; border-radius: 999px;
-}
-.status.live { color: var(--ok); border-color: #065f46; }
 
-.banner {
-  padding: 0.5rem 1rem; font-size: 0.82rem; flex: 0 0 auto;
+/* ---- tab shell (ask-rooted-workstreams-p1 Task 16 "Layout integration +
+   Harness Health demotion"). Two tabs: Asks (default landing) and Harness
+   Health (the six wave-O panes, demoted here per the anti-noise law — the
+   markup lives verbatim inside <template id="harnessHealthTemplate"> in
+   index.html, inert until app.js's initHarnessHealthTab() first clones it
+   in). No Team tab in P1 (review round 1 — no empty shell surfaces): there
+   is no third button here. The active-tab signal is never color-only
+   (WCAG 1.4.1): the selected button keeps its full-strength text color +
+   an underline, on top of the programmatic `aria-selected` state app.js
+   sets — a screen reader announces the state even with CSS off. ---- */
+.tab-nav { display: flex; gap: 4px; }
+.tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--muted);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  min-height: 24px;
+}
+.tab-btn:hover { color: var(--text); }
+.tab-btn[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+/* Round 12 item 9 (inbox count honesty): a derived count badge needs THREE
+   visually distinct states — a real number, unknown/loading ("(—)"), and a
+   CONFIRMED error ("(!)"). Pre-fix, a broken /api/inbox left the tab
+   showing the hardcoded loading "(—)" forever, which read as "probably
+   fine" rather than "this is broken". */
+.ib-tabcount-error { color: var(--interrupt); font-weight: 700; }
+.tab-panel[hidden] { display: none; } /* same [hidden]-override footgun this file already documents below */
+
+/* ---- Harness Health tab's own toolbar (refresh + reconciler badge —
+   moved verbatim out of the global header, since both are wave-O-specific
+   actions, not landing chrome). ---- */
+.hh-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--border);
-}
-.banner.corrupt { background: #422006; color: #fde68a; border-color: #92400e; }
-.note-stack {
-  position: fixed; right: 1rem; top: 3.1rem; z-index: 40;
-  display: flex; flex-direction: column; gap: 0.4rem; max-width: 22rem;
-}
-.note {
-  background: var(--panel); border: 1px solid var(--accent);
-  border-left: 4px solid var(--accent); border-radius: 6px;
-  padding: 0.5rem 0.6rem; font-size: 0.8rem;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
-}
-.note .dismiss { float: right; margin-left: 0.5rem; }
-.note.hot { border-color: var(--warn); border-left-color: var(--warn); }
-.toast {
-  position: fixed; right: 1.2rem; bottom: 1.2rem;
-  background: var(--panel); border: 1px solid var(--border2);
-  border-radius: 6px; padding: 0.4rem 0.6rem 0.4rem 0.9rem; font-size: 0.8rem; z-index: 50;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.45);
-  display: flex; align-items: center; gap: 0.6rem;
-}
-.toast.ok { border-color: #065f46; color: var(--ok); }
-.toast.err { border-color: #b91c1c; color: var(--err); }
-.toast .sb-msg { white-space: nowrap; }
-.toast .sb-undo {
-  background: var(--accent); color: #1a1030; border-color: var(--accent);
-  font-weight: 700; padding: 0.18rem 0.6rem;
-}
-.toast .sb-x {
-  background: transparent; border: none; color: var(--muted);
-  font-size: 0.95rem; line-height: 1; padding: 0.1rem 0.25rem; cursor: pointer;
-}
-.toast .sb-x:hover { color: var(--text); }
-
-/* ================= v2 LAYOUT (2026-05-23 redesign) ===================== */
-#layout {
-  flex: 1 1 auto; min-height: 0; min-width: 0;
-  display: grid; gap: 1px; background: var(--border);
-  grid-template-columns: var(--tree-col) 1fr;
-  grid-template-rows: 1fr;
-  grid-template-areas: "tree side";
-}
-.tree-pane    { grid-area: tree; }
-#layout .side-panel { grid-area: side; }
-
-/* Side panel — base look (always-on declarations live here; positioning
-   for drawer mode is in a more-specific .side-open / max-width selector). */
-#layout .side-panel {
   background: var(--panel);
-  display: flex; flex-direction: column;
-  min-height: 0; min-width: 0; overflow: hidden;
 }
 
-/* DRAWER MODE: <1024px wide. Side panel becomes off-canvas; tree gets the
-   full column. Slide via `right` (single-value property, no specificity
-   puzzles vs base layout declarations). */
-@media (max-width: 1023.98px) {
-  #layout {
-    grid-template-columns: 1fr;
-    grid-template-areas: "tree";
-  }
-  #layout .side-panel {
-    position: fixed; top: 2.6rem; bottom: 0;
-    width: min(var(--side-panel-w), 92vw);
-    z-index: 32;
-    right: calc(-1 * min(var(--side-panel-w), 92vw));
-    transition: right 160ms ease;
-    box-shadow: -8px 0 24px rgba(0,0,0,0.45);
-    border-left: 1px solid var(--border2);
-  }
-  body.side-open #layout .side-panel { right: 0; }
-  body.side-open::before {
-    content: ""; position: fixed; inset: 0; background: rgba(0,0,0,0.45);
-    z-index: 31; -webkit-backdrop-filter: blur(1px); backdrop-filter: blur(1px);
-  }
-}
+/* ---- Diagnostics section (Task 16 — auditor + reconciler internals,
+   "Diagnostics ... live here too"). Reuses .pane/.pane-head/.pane-body for
+   visual continuity; healed/error counts are ALWAYS text (never a bare
+   color dot — WCAG 1.4.1), color is an additive cue only. ---- */
+.diagnostics-section { max-width: 1400px; margin: 0 auto 24px; }
+.diag-row { font-size: 13px; margin-bottom: 4px; }
+.diag-row:last-child { margin-bottom: 0; }
+.diag-healed { color: var(--ok); }
+.diag-errors { color: var(--err); font-weight: 600; }
 
-/* EXPLICIT-HIDE MODE: user clicked #paneToggle / #rightClose at wide widths. */
-@media (min-width: 1024px) {
-  body.side-hidden #layout {
-    grid-template-columns: 1fr;
-    grid-template-areas: "tree";
-  }
-  body.side-hidden #layout .side-panel { display: none; }
-}
+/* Machines section (PEERS-SURFACE-RETIRED-01) — minimal person -> host chip
+   row, reusing .diag-row's own spacing rhythm + asks.js's .peer-state-*
+   chip colors (no new color rules). */
+.machines-section { max-width: 1400px; margin: 0 auto 24px; }
+.machines-person-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.machines-person-label { font-weight: 600; }
 
-/* PEEK PILL — visible only when side panel is hidden or drawer-closed. */
-.pane-peek {
-  position: fixed; top: 3.1rem; right: 0.8rem; z-index: 30;
-  background: var(--accent); color: #1a1030; border-color: var(--accent);
-  font-weight: 700; padding: 0.3rem 0.8rem; border-radius: 999px;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
-}
-.pane-peek:hover { filter: brightness(1.05); }
-.pane-peek[hidden] { display: none; }
-
-/* Panes (tree + side-panel internals) */
-.pane {
-  background: var(--bg); display: flex; flex-direction: column;
-  min-height: 0; min-width: 0; overflow: hidden;
-}
-.pane-head {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.45rem 0.7rem; background: var(--panel);
-  border-bottom: 1px solid var(--border); position: sticky; top: 0;
-}
-.pane-title { font-weight: 700; font-size: 0.85rem; }
-.pane-tools { margin-left: auto; display: flex; gap: 0.3rem; }
-.crumb { font-size: 0.74rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 18rem; }
-.pane-body { flex: 1 1 auto; overflow: auto; padding: 0.6rem; }
-.list-body { display: flex; flex-direction: column; gap: 0.4rem; }
-.pane-state { padding: 1.2rem; color: var(--muted); font-size: 0.85rem; }
-.pane-state.skel .bar { height: 0.7rem; background: var(--panel2); border-radius: 4px; margin: 0.4rem 0; animation: pulse 1.2s ease-in-out infinite; }
-.pane-state.skel .bar:nth-child(2){ width: 80%; } .pane-state.skel .bar:nth-child(3){ width: 60%; }
-@keyframes pulse { 0%,100%{opacity:.4} 50%{opacity:.9} }
-.pane-state .hint { color: var(--accent); }
-
-/* v3 accordion 2026-05-27 — stacked panel layout for the right column.
-   Replaces the prior #paneTabs nav. Each .apanel has a clickable header
-   (.apanel-head) with a chevron + title + per-panel controls. Body
-   (.apanel-body) flex-grows to fill remaining space when expanded; hidden
-   when the panel is collapsed (.apanel.collapsed). The accordion stack
-   itself scrolls vertically when total content exceeds the column. */
-
-#rightPanel .rp-head {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.4rem 0.7rem; background: var(--panel2);
-  border-bottom: 1px solid var(--border);
-}
-#rightPanel .rp-title {
-  font-size: 0.78rem; font-weight: 700; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.05em;
-}
-#rightPanel .rp-close {
-  margin-left: auto; background: transparent; border: 1px solid transparent;
-  color: var(--muted); padding: 0.2rem 0.45rem; font-size: 0.95rem; line-height: 1;
-}
-#rightPanel .rp-close:hover { color: var(--err); border-color: var(--err); }
-
-#paneStack {
-  flex: 1 1 auto; min-height: 0; overflow-y: auto;
-  display: flex; flex-direction: column; gap: 0;
-  background: var(--border);
-}
-
-.apanel {
-  display: flex; flex-direction: column;
-  background: var(--bg); min-height: 0;
-  border-bottom: 1px solid var(--border);
-}
-.apanel:last-child { border-bottom: none; }
-.apanel.collapsed { flex: 0 0 auto; }
-.apanel:not(.collapsed) { flex: 1 1 auto; min-height: 8rem; }
-
-.apanel-head {
-  flex: 0 0 auto; display: flex; align-items: center; gap: 0.5rem;
-  padding: 0.55rem 0.7rem; background: var(--panel);
-  border: none; border-bottom: 1px solid var(--border);
-  color: var(--text); cursor: pointer;
-  font: inherit; font-size: 0.85rem; font-weight: 700;
-  text-align: left; width: 100%; border-radius: 0;
-  position: sticky; top: 0; z-index: 5;
-}
-.apanel-head:hover { background: var(--panel2); }
-.apanel-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-
-.apanel-chevron {
-  flex: 0 0 auto; display: inline-block; width: 0.9rem; text-align: center;
-  color: var(--muted); font-size: 0.8rem; transition: transform 150ms ease;
-}
-.apanel.collapsed .apanel-chevron { transform: rotate(-90deg); }
-
-.apanel-title { font-weight: 700; }
-.apanel-spacer { flex: 1 1 auto; }
-.apanel-sort { font-size: 0.74rem; color: var(--muted); margin-left: auto; cursor: default; }
-.apanel-sort select { font-size: 0.76rem; padding: 0.12rem 0.3rem; }
-.apanel-action {
-  padding: 0.15rem 0.5rem; font-size: 0.8rem; line-height: 1; cursor: pointer;
-}
-
-.apanel-body {
-  flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column;
-  overflow: hidden;
-}
-.apanel.collapsed .apanel-body { display: none; }
-
-/* Count badge for filtered panels (Decisions / Questions). */
-.count-badge {
-  font-size: 0.66rem; font-weight: 700;
-  color: var(--text); background: var(--panel2);
-  border: 1px solid var(--border2); border-radius: 999px;
-  padding: 0.05rem 0.45rem; margin-left: 0.4rem;
-}
-.count-badge[hidden] { display: none; }
-
-/* Tree pane */
-.tree-scroll { position: relative; }
-.tree-canvas { transform-origin: top left; transition: transform 80ms ease; width: 100%; }
-.tnode { margin: 0.25rem 0; }
-.tnode-row {
-  display: flex; align-items: center; gap: 0.4rem;
-  background: var(--panel); border: 1px solid var(--border);
-  border-left: 3px solid var(--accent); border-radius: 6px;
-  padding: 0.4rem 0.55rem; cursor: pointer;
-}
-.tnode-row:hover { border-color: var(--border2); }
-.tnode-row.sel { outline: 2px solid var(--accent); }
-.tnode-row.concluded { border-left-color: var(--ok); opacity: 0.85; }
-.tnode-row.archived { border-left-color: var(--muted); opacity: 0.6; }
-.tnode-row.dragover { outline: 2px dashed var(--info); }
-.twist { width: 1rem; text-align: center; color: var(--muted); user-select: none; }
-.tnode-title { font-weight: 600; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tnode-title.concluded::before { content: "✓ "; color: var(--ok); }
-.tnode-row.tnode-root {
-  background-color: var(--panel2);
-  background-image: linear-gradient(rgba(167,139,250,0.10), rgba(167,139,250,0.10));
-  margin-top: 0.45rem;
-  border-top: 1px solid var(--border2);
-  border-bottom: 1px solid var(--border);
-  border-left: 3px solid var(--accent);
-  padding-left: 0.3rem;
-}
-.tnode-row.tnode-root .tnode-title { font-weight: 700; color: var(--text); }
-.tree-canvas > .tnode:first-child > .tnode-row.tnode-root { margin-top: 0.1rem; border-top: none; }
-.tkids { margin-left: 1.1rem; border-left: 1px dashed var(--border); padding-left: 0.5rem; }
-.collapsed > .tkids { display: none; }
-.badge {
-  font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 999px;
-  border: 1px solid var(--border2); color: var(--muted); white-space: nowrap;
-}
-.badge.draft { color: var(--warn); border-color: var(--warn); }
-.badge.contested { color: var(--err); border-color: var(--err); }
-.badge.deferred { color: var(--info); border-color: var(--info); }
-.badge.handoff { color: var(--accent); border-color: var(--accent); }
-.badge.sess { color: var(--muted); }
-.badge.count { color: var(--muted); }
-.stub { font-style: italic; color: var(--muted); }
-
-/* List items (Waiting + Backlog) */
-.li {
-  background: var(--panel); border: 1px solid var(--border);
-  border-radius: 6px; padding: 0.45rem 0.55rem;
-  display: flex; flex-direction: column; gap: 0.3rem;
-}
-.li.hot { border-color: var(--warn); }
-.li-top { display: flex; align-items: center; gap: 0.45rem; }
-.wou-group-header {
-  margin: 0.6rem 0 0.2rem; padding: 0.3rem 0.5rem;
-  font-size: 0.85rem; font-weight: 600; color: var(--text);
-  background-image: linear-gradient(rgba(255,255,255,0.06), rgba(255,255,255,0.06));
-  border-top: 1px solid var(--border); border-radius: 4px;
-}
-.wou-group-header:first-child { margin-top: 0.1rem; border-top: none; }
-.wou-group-header .wgh-sep { color: var(--muted); font-weight: 400; padding: 0 0.2rem; }
-
-/* C6 color migration (2026-06-11): color encodes STATUS, icon encodes KIND.
-   The per-kind color variants (.li-kind.action/.decision/.question and the
-   .li.kind-* borders/tints) are RETIRED — kind is expressed by glyph only. */
-.li-kind { font-size: 0.62rem; font-weight: 600; padding: 0.02rem 0.4rem; border-radius: 999px; border: 1px solid var(--border2); color: var(--muted); background: var(--panel2); text-transform: uppercase; letter-spacing: 0.04em; cursor: default; user-select: none; }
-.li-text { flex: 1; }
-.li-jump {
-  flex: 0 0 24px; width: 24px; height: 24px; padding: 0; line-height: 1;
-  display: flex; align-items: center; justify-content: center;
-  background: var(--panel2); color: var(--info); border: 1px solid var(--border2);
-  border-radius: 5px; cursor: pointer; font-size: 0.85rem;
-}
-.li-jump:hover { color: var(--type-question); border-color: var(--type-question); }
-.li.hl, .tnode-row.hl { background-image: linear-gradient(rgba(34,211,238,0.18), rgba(34,211,238,0.18)); border-left: 4px solid var(--type-neutral); }
-.li-actions { display: flex; gap: 0.3rem; flex-wrap: wrap; }
-.li-actions button { padding: 0.15rem 0.45rem; font-size: 0.72rem; }
-
-.defer-pop {
-  margin-top: 0.4rem; background: var(--panel2);
-  border: 1px solid var(--border2); border-radius: 6px;
-  padding: 0.5rem; display: flex; flex-direction: column; gap: 0.3rem;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.4);
-}
-.defer-pop .dp-title { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.defer-pop button { text-align: left; }
-.defer-pop .dp-when { display: flex; gap: 0.3rem; align-items: center; flex-wrap: wrap; }
-.defer-pop input[type=datetime-local] {
-  background: var(--bg); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 5px;
-  padding: 0.22rem 0.4rem; font: inherit; font-size: 0.8rem;
-}
-.li.contested { border-color: var(--err); }
-.contest-note { font-size: 0.76rem; color: var(--warn); background: var(--panel2); border-radius: 4px; padding: 0.3rem 0.4rem; }
-.prio { font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 999px; border: 1px solid var(--border2); }
-.prio.high { color: var(--err); border-color: var(--err); }
-.prio.medium { color: var(--warn); border-color: var(--warn); }
-.prio.low { color: var(--muted); }
-.p-badge { font-size: 0.62rem; font-weight: 700; padding: 0.02rem 0.45rem; border-radius: 999px; border: 1px solid currentColor; }
-.p-badge.p1 { color: #ef4444; background: rgba(239,68,68,0.15); }
-.p-badge.p2 { color: #f59e0b; background: rgba(245,158,11,0.15); }
-.p-badge.p3 { color: #60a5fa; background: rgba(96,165,250,0.15); }
-.p-badge.p4 { color: #94a3b8; background: rgba(148,163,184,0.12); }
-.prio-pop {
-  position: relative; display: inline-flex; flex-direction: column; gap: 0.25rem;
-  margin-top: 0.3rem; background: var(--panel2); border: 1px solid var(--border2);
-  border-radius: 6px; padding: 0.4rem; box-shadow: 0 6px 18px rgba(0,0,0,0.4);
-}
-.prio-pop .pp-row { display: flex; gap: 0.25rem; flex-wrap: wrap; }
-.prio-pop button { font-size: 0.7rem; padding: 0.1rem 0.5rem; }
-.prio-assign { font-size: 0.66rem; padding: 0.05rem 0.4rem; border-radius: 4px; }
-.li[draggable=true] { cursor: grab; }
-.li.dragover { outline: 2px dashed var(--info); }
-
-/* ======== UX-VR-13 v2: Context-as-textarea pattern (2026-05-23) =========
-   Backlog capture form switches from single-line input → autoresize textarea.
-   Each backlog item exposes a context disclosure: read render OR edit mode
-   with a textarea. Empty items show "Add context →" as a clear affordance. */
-.context-area {
-  width: 100%; min-height: 4rem; background: var(--panel2); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 5px;
-  padding: 0.45rem 0.55rem; font: inherit; font-size: 0.82rem;
-  line-height: 1.45; resize: vertical; box-sizing: border-box;
-}
-.context-area:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
-.li-context-toggle {
-  align-self: flex-start; font-size: 0.72rem;
-  padding: 0.1rem 0.45rem; background: var(--panel2);
-  color: var(--info); border: 1px solid var(--border2);
-  border-radius: 4px; cursor: pointer;
-}
-.li-context-toggle.empty { color: var(--accent); border-color: var(--accent); font-weight: 600; }
-.li-context-toggle:hover { color: var(--text); border-color: var(--info); }
-.li-context-render {
-  margin-top: 0.35rem; background: var(--panel2); border: 1px solid var(--border);
-  border-radius: 5px; padding: 0.45rem 0.55rem; font-size: 0.82rem;
-  line-height: 1.5; white-space: pre-wrap; word-break: break-word;
-  color: var(--text); border-left: 3px solid var(--info);
-}
-.li-context-edit {
-  margin-top: 0.35rem; display: flex; flex-direction: column; gap: 0.35rem;
-}
-.li-context-edit .row { display: flex; gap: 0.4rem; align-items: center; }
-.li-context-empty {
-  font-size: 0.76rem; color: var(--muted); font-style: italic;
-  padding: 0.25rem 0;
-}
-/* The capture form needs to allow its #blContext textarea to grow vertically.
-   We give it block layout when a textarea is present. */
-.capture textarea#blContext {
-  width: 100%; min-height: 3.6rem; background: var(--panel2); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 5px;
-  padding: 0.4rem 0.55rem; font: inherit; font-size: 0.82rem;
-  resize: vertical; box-sizing: border-box;
-}
-.capture { display: flex; flex-direction: column; gap: 0.4rem; padding: 0.4rem 0.55rem; background: var(--panel2); border-bottom: 1px solid var(--border); }
-.capture-row { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
-
-/* ======================= MODAL OVERLAYS (v2) ============================ */
-.modal-scrim {
-  position: fixed; inset: 0; z-index: 59; background: rgba(0,0,0,0.55);
-  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
-}
-.modal-scrim[hidden] { display: none !important; }
-.modal-card {
-  position: fixed; z-index: 60;
-  top: 50%; left: 50%; transform: translate(-50%, -50%);
-  background: var(--panel); border: 1px solid var(--border2);
-  border-radius: 10px; box-shadow: 0 24px 64px rgba(0,0,0,0.7);
-  display: flex; flex-direction: column; overflow: hidden;
-  max-width: 92vw; max-height: 88vh;
-}
-.modal-card[hidden] { display: none !important; }
-.ctx-modal { width: min(640px, 92vw); height: min(82vh, 880px); }
-.doc-modal { width: min(820px, 92vw); height: min(86vh, 1000px); }
-/* Doc-viewer LAYERS ABOVE the item-detail modal (2026-06-11): doc links inside
-   the detail modal open the viewer on top; its scrim dims + click-shields the
-   detail modal underneath (Esc/scrim closes the viewer first). */
-#docScrim { z-index: 61; }
-#docsPanel { z-index: 62; }
-#docModal { z-index: 62; }
-.dispatch-modal { width: min(520px, 92vw); height: auto; max-height: 80vh; }
-
-/* Item DETAIL MODAL (Phase D, 2026-06-09) — the dismissible overlay that
-   replaced the list-filling detailCard. Sized comfortably for full context. */
-.detail-modal { width: min(680px, 94vw); height: min(86vh, 980px); }
-.dm-head { padding: 0.7rem 0.9rem; border-bottom: 1px solid var(--border);
-  display: flex; align-items: flex-start; gap: 0.5rem; flex: 0 0 auto; }
-.dm-title { font-size: 0.98rem; font-weight: 700; flex: 1; line-height: 1.3; }
-.dm-close { flex: 0 0 auto; }
-.dm-body { flex: 1 1 auto; overflow: auto; padding: 0.8rem 0.9rem; }
-.dm-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 0.4rem;
-  padding: 0.7rem 0.9rem; border-top: 1px solid var(--border); background: var(--panel2); }
-.dm-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
-.dm-act-sep { color: var(--border2); align-self: center; padding: 0 0.1rem; }
-
-.ctx-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 0.5rem; flex: 0 0 auto; }
-.ctx-head .x { margin-left: auto; }
-.ctx-body { flex: 1 1 auto; overflow: auto; padding: 0.8rem; display: flex; flex-direction: column; gap: 0.7rem; }
-.ctx-sec h4 { margin: 0 0 0.3rem; font-size: 0.78rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
-.ctx-chain { font-size: 0.82rem; }
-.ctx-chain .seg { color: var(--accent); cursor: pointer; }
-.ctx-chain .seg:hover { text-decoration: underline; }
-.ctx-item { font-size: 0.82rem; padding: 0.25rem 0; border-bottom: 1px solid var(--border); }
-.ctx-sel-hdr { display: flex; gap: 0.4rem; align-items: baseline; margin-bottom: 0.4rem; }
-.ctx-sel-text { font-size: 0.86rem; font-weight: 600; }
-.ctx-more { color: var(--accent); cursor: pointer; font-size: 0.78rem; }
-.handoff-box {
-  background: var(--panel2); border: 1px dashed var(--accent);
-  border-radius: 6px; padding: 0.6rem; font-size: 0.8rem;
-}
-.handoff-box pre { white-space: pre-wrap; word-break: break-word; margin: 0.4rem 0; font: 12px/1.4 ui-monospace, monospace; color: var(--text); }
-.handoff-explain { color: var(--muted); font-size: 0.76rem; margin-top: 0.4rem; }
-.draft-area { width: 100%; min-height: 5rem; background: var(--panel2); color: var(--text); border: 1px solid var(--border2); border-radius: 5px; padding: 0.4rem; font: inherit; resize: vertical; box-sizing: border-box; }
-.row { display: flex; gap: 0.4rem; align-items: center; flex-wrap: wrap; }
-.muted { color: var(--muted); font-size: 0.78rem; }
-.xlink-chip { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 999px; padding: 0.05rem 0.45rem; cursor: pointer; }
-.sr { position: absolute; left: -9999px; }
-
-@keyframes li-enter { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-@keyframes li-leave { to { opacity: 0; transform: translateX(14px); height: 0; margin: 0; padding-top: 0; padding-bottom: 0; } }
-@keyframes li-flash { 0% { box-shadow: 0 0 0 0 var(--accent); } 35% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 0 transparent; } }
-.list-body .li { animation: li-enter 0.2s ease both; }
-.list-body .li.flash { animation: li-enter 0.2s ease both, li-flash 1.1s ease 0.2s 1; }
-.list-body .li.leaving { animation: li-leave 0.2s ease both; pointer-events: none; overflow: hidden; }
-
-.new-badge {
-  font-size: 0.68rem; font-weight: 700; color: #1a1030; background: var(--accent);
-  border-radius: 999px; padding: 0.05rem 0.45rem; margin-left: 0.4rem;
-}
-.new-badge[hidden] { display: none; }
-
-.det-toggle { align-self: flex-start; font-size: 0.72rem; padding: 0.1rem 0.4rem; margin-top: 0.1rem; }
-.li-details {
-  background: var(--panel2); border: 1px solid var(--border);
-  border-radius: 5px; padding: 0.5rem 0.6rem; margin-top: 0.35rem;
-  display: flex; flex-direction: column; gap: 0.4rem; font-size: 0.8rem;
-}
-.det-row { display: flex; gap: 0.5rem; align-items: flex-start; }
-.det-k { flex: 0 0 8.5rem; color: var(--muted); text-transform: uppercase; font-size: 0.66rem; letter-spacing: 0.04em; padding-top: 0.1rem; }
-.det-v { flex: 1; white-space: pre-wrap; word-break: break-word; }
-.det-opt { border-left: 2px solid var(--border2); padding-left: 0.5rem; margin: 0.2rem 0; }
-.det-opt-l { font-weight: 600; }
-/* Task 9-full (OQ-2 / decision-context fence-grammar fields). Minimal chips
-   + reply-with code block + recommendation block so the fence-payload reads
-   as more than flat key/value rows. */
-.det-opt-field { font-size: 0.78rem; color: var(--muted); margin-left: 0.2rem; }
-.det-chip {
-  display: inline-block; font-size: 0.7rem; padding: 0.05rem 0.4rem;
-  border-radius: 4px; border: 1px solid var(--border2); margin-right: 0.2rem;
-}
-.det-chip-cat { background: rgba(99,102,241,0.10); border-color: rgba(99,102,241,0.4); }
-.det-chip-urgency-low      { background: rgba(34,197,94,0.10); }
-.det-chip-urgency-medium   { background: rgba(234,179,8,0.10); }
-.det-chip-urgency-high     { background: rgba(249,115,22,0.15); border-color: rgba(249,115,22,0.4); }
-.det-chip-urgency-critical { background: rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.5); font-weight: 600; }
-.det-chip-revcost-free        { background: rgba(34,197,94,0.10); }
-.det-chip-revcost-cheap       { background: rgba(132,204,22,0.10); }
-.det-chip-revcost-expensive   { background: rgba(249,115,22,0.12); }
-.det-chip-revcost-irreversible{ background: rgba(239,68,68,0.18); border-color: rgba(239,68,68,0.5); font-weight: 600; }
-.det-chip-state-open    { background: rgba(59,130,246,0.10); }
-.det-chip-state-done    { background: rgba(34,197,94,0.10); }
-.det-chip-state-declined{ background: rgba(156,163,175,0.15); }
-.det-chip-state-stale   { background: rgba(234,179,8,0.15); }
-.det-rec-key { font-weight: 600; font-size: 0.78rem; }
-.det-rec-reasoning { font-size: 0.82rem; margin-top: 0.15rem; }
-.det-reply-with-box {
-  display: inline-block; padding: 0.1rem 0.4rem;
-  background: var(--bg2, rgba(0,0,0,0.04)); border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem;
-}
-.det-link { font-size: 0.72rem; color: var(--info); border: 1px solid var(--info); border-radius: 4px; padding: 0.03rem 0.35rem; }
-/* Clickable doc-reference chips (2026-06-11) — open the doc IN-APP via the
-   docs viewer. Button form so they are keyboard-activatable. */
-button.det-link-doc {
-  background: rgba(59,130,246,0.10); cursor: pointer; font-family: inherit;
-}
-button.det-link-doc:hover { background: rgba(59,130,246,0.22); text-decoration: underline; }
-.det-link-branch {
-  font-size: 0.72rem; color: var(--info); background: rgba(59,130,246,0.10);
-  border: 1px solid var(--info); border-radius: 4px;
-  padding: 0.05rem 0.45rem; cursor: pointer; font-family: inherit;
-}
-.det-link-branch:hover { background: rgba(59,130,246,0.22); }
-.det-fallback {
-  display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap;
-  padding: 0.25rem 0; border-bottom: 1px dashed var(--border);
-  margin-bottom: 0.2rem;
-}
-.det-incomplete-badge {
-  font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.04em;
-  background: rgba(245,158,11,0.18); color: var(--type-decision);
-  border: 1px solid rgba(245,158,11,0.40); border-radius: 999px;
-  padding: 0.02rem 0.4rem; font-weight: 600;
-}
-
-.respond-box { margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.35rem; }
-.li.responded { opacity: 0.78; border-left: 3px solid var(--info); }
-.responded-note {
-  margin-top: 0.35rem; background: var(--panel2); border: 1px dashed var(--info);
-  border-radius: 5px; padding: 0.45rem 0.55rem; font-size: 0.78rem;
-  display: flex; flex-direction: column; gap: 0.3rem;
-}
-
-@media (max-width: 699.98px) {
-  .toast { right: 50%; transform: translateX(50%); }
-}
-@keyframes arrive {
-  0%   { background-color: rgba(34,211,238,0.34); }
-  100% { background-color: transparent; }
-}
-.list-body .li.arrive, .tnode-row.arrive { animation: arrive 0.6s ease-out 1; }
-.arrive-static { background-image: linear-gradient(rgba(34,211,238,0.30), rgba(34,211,238,0.30)) !important; }
-
-.btn-go      { background: var(--btn-go);      color: #052e13; border-color: var(--btn-go);      font-weight: 600; }
-.btn-wait    { background: var(--btn-wait);    color: #3a2a05; border-color: var(--btn-wait);    font-weight: 600; }
-.btn-info    { background: var(--btn-info);    color: #07182f; border-color: var(--btn-info);    font-weight: 600; }
-.btn-up      { background: var(--btn-up);      color: #2a0a3f; border-color: var(--btn-up);      font-weight: 600; }
-.btn-del     { background: var(--btn-del);     color: #fee2e2; border-color: var(--btn-del);     font-weight: 600; }
-.btn-neutral { background: var(--btn-neutral); color: #e2e8f0; border-color: var(--btn-neutral); font-weight: 600; }
-.btn-go.outline,.btn-wait.outline,.btn-info.outline,.btn-up.outline,.btn-del.outline,.btn-neutral.outline { background: var(--panel2); }
-.btn-go.outline      { color: var(--ok);    border-color: var(--btn-go); }
-.btn-wait.outline    { color: var(--warn);  border-color: var(--btn-wait); }
-.btn-info.outline    { color: var(--info);  border-color: var(--btn-info); }
-.btn-up.outline      { color: var(--accent);border-color: var(--btn-up); }
-.btn-del.outline     { color: var(--err);   border-color: var(--btn-del); }
-.btn-neutral.outline { color: var(--muted); border-color: var(--btn-neutral); }
-
-.btn-go      { background: rgba(34,197,94,0.50);   color: #86efac; border-color: rgba(34,197,94,0.55); }
-.btn-wait    { background: rgba(245,158,11,0.50);  color: #fde68a; border-color: rgba(245,158,11,0.55); }
-.btn-info    { background: rgba(59,130,246,0.50);  color: #bfdbfe; border-color: rgba(59,130,246,0.55); }
-.btn-up      { background: rgba(168,85,247,0.50);  color: #e9d5ff; border-color: rgba(168,85,247,0.55); }
-.btn-del     { background: rgba(185,28,28,0.50);   color: #fecaca; border-color: rgba(185,28,28,0.55); }
-.btn-neutral { background: rgba(71,85,105,0.50);   color: #e2e8f0; border-color: rgba(71,85,105,0.55); }
-.btn-go:hover, .btn-wait:hover, .btn-info:hover,
-.btn-up:hover, .btn-del:hover, .btn-neutral:hover { filter: brightness(1.15); }
-
-.viewtoggle {
-  display: flex; align-items: center; gap: 0.35rem; font-size: 0.78rem;
-  color: var(--text); cursor: pointer; user-select: none;
-  background: var(--panel2); border: 1px solid var(--border2);
-  border-radius: 5px; padding: 0.18rem 0.5rem;
-}
-.viewtoggle input { accent-color: var(--accent); }
-.viewtoggle .eye { font-size: 0.95rem; }
-
-.doc-link { color: var(--type-question); border: 1px solid var(--type-question);
-  background: var(--panel2); border-radius: 4px; padding: 0.02rem 0.4rem;
-  font-size: 0.72rem; cursor: pointer; }
-.doc-link:hover { background: var(--type-question); color: var(--type-on); }
-
-.doc-head { display: flex; align-items: center; gap: 0.6rem; padding: 0.6rem 0.9rem;
-  border-bottom: 1px solid var(--border); flex: 0 0 auto; }
-.doc-head .doc-title { font-weight: 700; flex: 1; font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.doc-body { overflow: auto; padding: 1rem 1.2rem; font-size: 0.86rem; line-height: 1.6; flex: 1 1 auto; min-height: 0; }
-.doc-body h1 { font-size: 1.25rem; } .doc-body h2 { font-size: 1.08rem; border-bottom: 1px solid var(--border); padding-bottom: 0.2rem; }
-.doc-body h3 { font-size: 0.96rem; color: var(--accent); }
-.doc-body code { background: var(--panel2); padding: 0.05rem 0.3rem; border-radius: 3px; font: 12px/1.4 ui-monospace, monospace; }
-.doc-body pre { background: var(--panel2); padding: 0.6rem; border-radius: 5px; overflow: auto; }
-.doc-body pre code { background: none; padding: 0; }
-.doc-body a { color: var(--info); }
-.doc-body hr { border: none; border-top: 1px solid var(--border); margin: 0.8rem 0; }
-.doc-body ul, .doc-body ol { padding-left: 1.4rem; }
-
-#docsPanel {
-  position: fixed; z-index: 60; top: 0; right: 0; bottom: 0; width: min(26rem, 90vw);
-  background: var(--panel); border-left: 1px solid var(--border2);
-  box-shadow: -8px 0 24px rgba(0,0,0,0.5); display: flex; flex-direction: column;
-}
-#docsPanel[hidden] { display: none !important; }
-#docsPanel .dp-head { padding: 0.6rem 0.8rem; border-bottom: 1px solid var(--border); display: flex; gap: 0.5rem; align-items: center; }
-#docsPanel .dp-head input { flex: 1; }
-#docsPanel .dp-body { flex: 1 1 auto; overflow: auto; padding: 0.5rem 0.7rem; }
-.dp-proj { font-weight: 700; font-size: 0.8rem; color: var(--accent);
-  margin: 0.55rem 0 0.1rem; cursor: pointer; display: flex; align-items: center;
-  gap: 0.35rem; padding: 0.2rem 0.3rem; border-radius: 4px; }
-.dp-proj:hover { background: var(--panel2); }
-.dp-dir { font-size: 0.78rem; color: var(--text); cursor: pointer;
-  display: flex; align-items: center; gap: 0.35rem; padding: 0.14rem 0.3rem;
-  border-radius: 4px; }
-.dp-dir:hover { background: var(--panel2); }
-.dp-dir .dp-name { font-weight: 600; }
-.dp-file { font-size: 0.78rem; cursor: pointer; color: var(--text);
-  display: flex; align-items: center; gap: 0.35rem; padding: 0.14rem 0.3rem;
-  border-radius: 4px; }
-.dp-file:hover { background: var(--panel2); color: var(--type-question); }
-.dp-proj .twist, .dp-dir .twist { display: inline-block; width: 0.9rem;
-  text-align: center; flex: 0 0 auto; color: var(--muted); }
-.dp-name { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
-.dp-count { flex: 0 0 auto; font-size: 0.68rem; color: var(--muted);
-  font-weight: 400; padding: 0 0.3rem; }
-.dp-fileicon { flex: 0 0 auto; font-size: 0.7rem; opacity: 0.7; }
-.dp-missing { font-size: 0.74rem; color: var(--muted); padding-left: 1.4rem;
-  font-style: italic; }
-
-@media (prefers-reduced-motion: reduce) {
-  .list-body .li, .list-body .li.flash, .list-body .li.leaving,
-  .list-body .li.arrive, .tnode-row.arrive,
-  .tree-canvas, .side-panel
-  { animation: none !important; transition: none !important; }
-}
-
-/* ====================================================================
-   WORKSTREAMS v2 WORK-FIRST REFRAME (2026-05-30) — appended overrides.
-   Replaces the v3-accordion 3-pane layout with: Tree pane | adjustable
-   divider | filter-driven side panel (filtered list OR detail card).
-   These rules are appended last so they win the cascade over the
-   v3-accordion rules above without editing them.
-   ==================================================================== */
-
-/* Adjustable two-pane layout. --tree-w (set + persisted by the divider drag)
-   drives the tree column width; the divider is a 6px draggable gutter. */
-#layout {
-  display: grid;
-  grid-template-columns: var(--tree-w, 42%) 6px 1fr;
-  grid-template-rows: 1fr;
-  grid-template-areas: "tree divider side";
-  gap: 0;
-}
-#layout .tree-pane { grid-area: tree; border-right: none; min-width: 0; }
-#layout .side-panel {
-  grid-area: side; position: static; transform: none;
-  width: auto; min-width: 0; box-shadow: none;
-  display: flex; flex-direction: column; background: var(--bg);
-  border-left: none;
-}
-#layout #divider {
-  grid-area: divider; cursor: col-resize; background: var(--border);
-  transition: background 0.12s ease;
-}
-#layout #divider:hover, #layout #divider:focus { background: var(--accent); outline: none; }
-
-/* Tree pane */
-.tree-pane .pane-head { display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.45rem 0.7rem; border-bottom: 1px solid var(--border); }
-.tree-scroll { position: relative; }
-
-/* ---- TIER HIERARCHY: Repo → Project → Workstream → WorkItem → Sub-task ----
-   (design-v2 §1, + Misha's Repo top-tier 2026-06-03). Nesting is rendered with
-   guide-rail CONTAINERS (.tree-kids), one per level. Each adds an indent step +
-   a vertical rail connecting its children to the parent row above; nesting
-   compounds so every tier sits at a distinct, clearly-indented x. Decision /
-   Question / Action is a per-item BADGE, never a nesting axis. */
-
-/* Top tier — GitHub repo group header (a real <button>: focusable,
-   aria-expanded). C6: neutral gray structure; the only accent is the amber
-   waiting chip. */
-.repo-group { margin-bottom: 0.5rem; }
-.repo-head {
-  display: flex; align-items: center; gap: 0.5rem; width: 100%;
-  padding: 0.5rem 0.6rem; border-radius: 7px; cursor: pointer;
-  background: var(--panel2); color: var(--text);
+button.ghost {
+  background: transparent;
   border: 1px solid var(--border2);
-  font: inherit; text-align: left;
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 24px;
+  cursor: pointer;
 }
-.repo-head:hover { background: var(--panel); }
-.repo-head:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.repo-title { font-weight: 800; font-size: 0.92rem; letter-spacing: 0.01em; }
-.rg-wait {
-  margin-left: auto; font-size: 0.68rem; font-weight: 700;
-  padding: 0.05rem 0.45rem; border-radius: 999px;
-  background: rgba(251,191,36,0.16); color: var(--warn);
+button.ghost:hover { border-color: var(--accent); }
+button.ghost.small { padding: 3px 8px; font-size: 12px; min-height: 24px; }
+button.btn-go {
+  background: var(--info);
+  color: #0b1220;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-height: 24px;
+  cursor: pointer;
+  font-weight: 600;
 }
-
-/* The guide-rail nesting container — the load-bearing hierarchy cue. */
-.tree-kids { margin-left: 0.8rem; border-left: 2px solid var(--border2);
-  padding-left: 0.85rem; display: flex; flex-direction: column; gap: 0.12rem; }
-.repo-kids { margin-top: 0.2rem; }
-
-/* Project tier. */
-.proj { margin: 0.2rem 0; }
-.proj-head {
-  display: flex; align-items: center; gap: 0.45rem;
-  padding: 0.38rem 0.5rem; border-radius: 6px; cursor: pointer;
-  background: var(--panel); border: 1px solid var(--border);
-}
-.proj-head:hover { background: var(--panel2); }
-.proj.exp > .proj-head { border-color: var(--border2); }
-.twisty { color: var(--muted); font-size: 0.7rem; width: 0.8rem; flex: 0 0 auto; }
-.proj-title { font-weight: 700; font-size: 0.86rem; }
-.proj-badge { margin-left: auto; display: flex; gap: 0.35rem; font-size: 0.68rem; }
-.proj-badge span { padding: 0.05rem 0.4rem; border-radius: 999px; font-weight: 600; }
-.proj-kids { margin-top: 0.15rem; }
-.proj-empty { color: var(--muted); font-size: 0.76rem; font-style: italic; padding: 0.25rem 0.4rem; }
-
-/* Workstream / branch tier (Task 5). Branch rows: focusable twisty button +
-   neutral title + amber needs-you dot + open-count badge. C6: the old blue
-   .ws-state.st-active chip is retired — gray structure, amber pop only. */
-.ws { margin: 0.15rem 0; }
-.ws-head { display: flex; align-items: center; gap: 0.4rem; padding: 0.3rem 0.45rem;
-  font-size: 0.82rem; font-weight: 700; color: var(--muted); cursor: pointer;
-  border-radius: 5px; }
-.ws-head:hover { background: var(--panel2); }
-.ws-title { color: var(--text); }
-.ws-subhead { padding: 0.25rem 0.45rem; font-size: 0.78rem; font-weight: 600; color: var(--text); }
-.ws-open-badge { margin-left: auto; font-size: 0.64rem; font-weight: 600; color: var(--muted);
-  background: var(--panel2); border: 1px solid var(--border2); border-radius: 999px;
-  padding: 0.02rem 0.42rem; white-space: nowrap; }
-.ws-open-badge.all-done { color: var(--ok); opacity: 0.7; border-color: transparent; }
-.ws-done .ws-title { color: var(--muted); }
-/* the disclosure twisty is a real <button> (keyboard-focusable, aria-expanded) */
-.ws-head .twisty, .repo-head .twisty {
-  background: none; border: none; padding: 0 0.1rem; margin: 0;
-  color: var(--muted); font-size: 0.7rem; width: 1.1rem; flex: 0 0 auto;
-  cursor: pointer; line-height: 1.2;
-}
-.ws-head .twisty:focus-visible, .repo-head .twisty:focus-visible {
-  outline: 2px solid var(--accent); outline-offset: 1px; border-radius: 3px;
+button.btn-go.small { padding: 4px 8px; font-size: 12px; }
+button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
 }
 
-/* WorkItem / Sub-task rows. Indent comes from the enclosing .tree-kids. */
-.tree-item { display: flex; align-items: center; gap: 0.4rem; padding: 0.22rem 0.45rem;
-  border-radius: 5px; cursor: pointer; font-size: 0.8rem; }
-.tree-item:hover { background: var(--panel2); }
-.tree-item.sel { background: rgba(167,139,250,0.18); outline: 1px solid var(--accent); }
-.ti-ic { width: 1rem; text-align: center; }
-/* C6: ICON = KIND (neutral gray glyph — ◆ decision / ? question / ! action);
-   COLOR = STATUS. The colored .ti-badge.k-* kind badges are RETIRED. */
-.ti-kind-ic { flex: 0 0 auto; width: 1rem; text-align: center; color: var(--muted);
-  font-size: 0.74rem; cursor: default; }
-.ti-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tree-item.state-shipped .ti-text { color: var(--muted); text-decoration: line-through; }
-.ti-done-ic { flex: 0 0 auto; color: var(--ok); opacity: 0.75; font-size: 0.78rem; }
-/* AMBER = needs-you / blocked ONLY — the one thing that pops. */
-.needs-dot { flex: 0 0 auto; width: 8px; height: 8px; border-radius: 50%;
-  background: var(--warn); display: inline-block; }
-.tree-item.needs-you { border-left: 2px solid var(--warn); border-radius: 0 5px 5px 0; }
-.tree-item.state-blocked .ti-text { color: var(--warn); }
+.refresh-feedback { color: var(--muted); font-size: 12px; min-width: 8ch; }
 
-/* Orphans section */
-.orphan-section { margin-top: 0.8rem; border-top: 1px dashed var(--border2); padding: 0.5rem 0.3rem 0; }
-.orphan-head { font-size: 0.76rem; font-weight: 700; color: var(--warn); margin-bottom: 0.3rem; }
-.orphan-body { display: flex; flex-direction: column; gap: 0.15rem; }
-.orphan-row { display: flex; align-items: center; gap: 0.4rem; padding: 0.2rem 0.4rem;
-  font-size: 0.76rem; cursor: pointer; border-radius: 5px; }
-.orphan-row:hover { background: var(--panel2); }
-.orphan-text { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-
-/* Filter chip bar */
-.filter-bar { display: flex; flex-wrap: wrap; gap: 0.3rem; padding: 0.5rem 0.6rem;
-  border-bottom: 1px solid var(--border); background: var(--panel); flex: 0 0 auto; }
-.chip { background: var(--panel2); color: var(--muted); border: 1px solid var(--border2);
-  border-radius: 999px; padding: 0.22rem 0.6rem; font-size: 0.76rem; display: inline-flex;
-  align-items: center; gap: 0.35rem; }
-.chip:hover { color: var(--text); border-color: var(--accent); }
-.chip.active { background: var(--accent); color: #1a1530; border-color: var(--accent); font-weight: 700; }
-.chip-count { background: rgba(0,0,0,0.25); border-radius: 999px; padding: 0 0.32rem;
-  font-size: 0.66rem; min-width: 1.1rem; text-align: center; }
-.chip.active .chip-count { background: rgba(255,255,255,0.35); color: #1a1530; }
-.chip-warn { color: var(--warn); }
-.chip.active .chip-warn { color: #1a1530; }
-
-/* Filtered item list */
-#filterBody { padding: 0.5rem 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; }
-.list-group-head { font-size: 0.72rem; font-weight: 700; color: var(--muted);
-  text-transform: uppercase; letter-spacing: 0.04em; margin: 0.5rem 0 0.15rem; }
-.item-row { display: flex; gap: 0.5rem; padding: 0.4rem 0.5rem; border-radius: 6px;
-  background: var(--panel); border: 1px solid var(--border); cursor: pointer; }
-.item-row:hover { border-color: var(--border2); background: var(--panel2); }
-.item-ic { width: 1.1rem; text-align: center; font-size: 0.95rem; flex: 0 0 auto; }
-.item-main { flex: 1; min-width: 0; }
-.item-text { font-size: 0.84rem; }
-.item-ctx { font-size: 0.74rem; color: var(--muted); margin-top: 0.15rem;
-  white-space: pre-wrap; max-height: 3.6em; overflow: hidden; }
-.item-meta { display: flex; gap: 0.35rem; margin-top: 0.25rem; flex-wrap: wrap; }
-.item-meta span { font-size: 0.66rem; padding: 0.03rem 0.36rem; border-radius: 4px; }
-/* C6: kind chips are NEUTRAL (glyph + word) — kind never carries color. */
-.kind-chip { background: var(--panel2); color: var(--muted); border: 1px solid var(--border2); }
-/* C6: status badges use TWO ramps (gray + amber) + the muted-green done
-   semantic. committed / in-flight are neutral grays — only needs-you/blocked
-   pops (amber); shipped is the muted green check tier. */
-.st-badge { font-weight: 600; }
-.st-muted     { background: var(--panel2); color: var(--muted); }
-.st-committed { background: var(--panel2); color: var(--muted); }
-.st-in-flight { background: rgba(156,163,175,0.16); color: var(--text); }
-.st-blocked   { background: rgba(251,191,36,0.16); color: var(--warn); }
-.st-shipped   { background: rgba(52,211,153,0.12); color: var(--ok); opacity: 0.85; }
-
-/* Detail card */
-.detail-card { padding: 0.7rem 0.8rem; overflow: auto; flex: 1 1 auto; }
-.dc-head { display: flex; align-items: flex-start; gap: 0.5rem; margin-bottom: 0.6rem; }
-.dc-title { font-size: 0.95rem; font-weight: 700; flex: 1; }
-.dc-close { flex: 0 0 auto; }
-.dc-meta { display: grid; grid-template-columns: auto 1fr; gap: 0.2rem 0.7rem; margin-bottom: 0.7rem; }
-.dc-row { display: contents; }
-.dc-l { color: var(--muted); font-size: 0.74rem; }
-.dc-v { font-size: 0.8rem; }
-.dc-sec-h { font-size: 0.72rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--muted); margin: 0.6rem 0 0.25rem; border-top: 1px solid var(--border); padding-top: 0.5rem; }
-.dc-prov-row, .dc-sub-row { display: flex; gap: 0.5rem; font-size: 0.78rem; padding: 0.12rem 0; }
-.dc-prov-l { color: var(--muted); min-width: 8rem; }
-.dc-sub-ck { width: 1rem; }
-.dc-acts { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-top: 0.9rem;
-  border-top: 1px solid var(--border); padding-top: 0.7rem; }
-.dc-acts button:disabled { opacity: 0.45; cursor: not-allowed; }
-
-/* Capture form (reused in side panel) */
-#backlogCapture.capture { padding: 0.6rem; border-bottom: 1px solid var(--border);
-  display: flex; flex-direction: column; gap: 0.4rem; background: var(--panel2); }
-#backlogCapture textarea { background: var(--bg); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 5px; padding: 0.35rem; font: inherit;
-  font-size: 0.8rem; min-height: 4rem; resize: vertical; }
-#backlogCapture .capture-row { display: flex; gap: 0.4rem; align-items: center; }
-
-/* btn-warn (Block) — not present in the v3 palette; add filled-amber. */
-.btn-warn { background: var(--btn-wait); color: #0b0b0f; border-color: var(--btn-wait); font-weight: 600; }
-.btn-warn.outline { background: transparent; color: var(--btn-wait); }
-
-/* The reframe is single-column-friendly at narrow widths: stack the panes. */
-@media (max-width: 860px) {
-  #layout { grid-template-columns: 1fr; grid-template-areas: "tree" "side"; grid-template-rows: 1fr 1fr; }
-  #layout #divider { display: none; }
+/* Reconciler badge — quiet state is neutral (never alarms without
+   diagnosis, ux-review amendment 10); firing state uses --interrupt. */
+.reconciler-badge {
+  font-size: 12px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border2);
+  cursor: default;
+  min-height: 24px;
+  display: inline-flex;
+  align-items: center;
 }
+.reconciler-badge.reconciler-quiet { color: var(--muted); border-color: var(--border2); }
+.reconciler-badge.reconciler-firing { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; }
+.reconciler-badge.reconciler-unknown { color: var(--muted); font-style: italic; }
 
-/* ====================================================================
-   My tasks surface (Task 6, 2026-06-11). Operator-owned, editable.
-   Color discipline (C6): controls are NEUTRAL; amber is reserved for
-   needs-you/blocked elsewhere, so nothing here uses --warn. The only
-   accent is --err for the inline "not saved — retry" affordance (I3).
-   ==================================================================== */
-.mytasks-add {
-  display: flex; gap: 0.4rem; align-items: center;
-  padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border);
+/* Reconciler badge is now a <summary> inside <details id="reconcilerDetails">
+   (O.4-fix1 item 4 — keyboard-only FAIL: the mismatch detail previously
+   lived ONLY in a hover title= tooltip, unreachable by keyboard/AT users;
+   <details>/<summary> is natively focusable + Enter/Space-activatable). */
+#reconcilerDetails { position: relative; }
+#reconcilerDetails summary { list-style: none; }
+#reconcilerDetails summary::-webkit-details-marker { display: none; }
+.reconciler-disclosure-body {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 260px;
+  max-width: 420px;
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+.reconciler-mismatch-list { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.reconciler-mismatch-list li { padding: 4px 0; border-bottom: 1px solid var(--border); }
+.reconciler-mismatch-list li:last-child { border-bottom: none; }
+
+/* ---- interrupt-priority strip (specs-o §O.4.3b — BINDING) ---- */
+.interrupt-strip {
+  padding: 8px 16px;
+  background: color-mix(in srgb, var(--interrupt) 12%, var(--panel));
+  border-bottom: 2px solid var(--interrupt);
+  display: flex;
   flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
 }
-.mytasks-add-input {
-  flex: 1 1 12rem; min-width: 8rem;
-  background: var(--bg); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 5px;
-  padding: 0.35rem 0.55rem; font: inherit;
+.interrupt-strip.quiet { display: none; }
+.interrupt-label { font-weight: 700; color: var(--interrupt); margin-right: 4px; }
+.chip.interrupt-chip {
+  background: color-mix(in srgb, var(--interrupt) 20%, var(--panel2));
+  border: 1px solid var(--interrupt);
+  color: var(--text);
 }
-.mytasks-add-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-.mytasks-add.save-failed .mytasks-add-input { border-color: var(--err); }
-.mytasks-list { display: flex; flex-direction: column; }
-.mytask-row { display: flex; align-items: center; gap: 0.5rem; }
-.mytask-row .item-main { flex: 1 1 auto; min-width: 0; }
-.mytask-text {
-  cursor: text; border-radius: 4px; padding: 0.1rem 0.25rem;
-  word-break: break-word;
-}
-.mytask-text:hover { background: var(--panel2); }
-.mytask-text:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-.mytask-edit {
-  width: 100%;
-  background: var(--bg); color: var(--text);
-  border: 1px solid var(--accent); border-radius: 4px;
-  padding: 0.2rem 0.35rem; font: inherit;
-}
-.origin-badge {
-  font-size: 0.66rem; color: var(--accent);
-  border: 1px solid var(--border2); border-radius: 999px;
-  padding: 0.02rem 0.4rem;
-}
-.mytask-ctrls { display: flex; gap: 0.2rem; align-items: center; flex: 0 0 auto; }
-.mytask-ctrl {
-  background: var(--panel); color: var(--muted);
-  border: 1px solid var(--border2); border-radius: 5px;
-  width: 1.7rem; height: 1.7rem; line-height: 1;
-  cursor: pointer; font-size: 0.85rem;
-  display: inline-flex; align-items: center; justify-content: center;
-}
-.mytask-ctrl:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
-.mytask-ctrl:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.mytask-ctrl:disabled { opacity: 0.35; cursor: default; }
-.mytask-ctrl.ctrl-done:hover:not(:disabled) { color: var(--ok); border-color: var(--ok); }
-.mytask-ctrl.ctrl-remove:hover:not(:disabled) { color: var(--err); border-color: var(--err); }
-/* I3 inline "not saved — retry" affordance — the ONLY red on this surface. */
-.mytask-row.save-failed { border-color: var(--err); }
-.retry-note {
-  display: inline-block; font-size: 0.72rem; color: var(--err);
-  margin-left: 0.5rem;
-}
-.retry-btn {
-  background: transparent; border: 1px solid var(--err); color: var(--err);
-  border-radius: 5px; padding: 0.05rem 0.45rem; cursor: pointer; font: inherit;
-}
-.retry-btn:hover { background: rgba(248, 113, 113, 0.12); }
+/* R17 deliverable 7 (audit F9): the needs-me interrupt chip is now a real
+   <button> navigating to #inbox/<id> (session-waiting chips stay plain
+   text — out of scope this round, no roadmap-task binding is exposed to
+   this pane yet). Cursor + a visibly inert disabled state for the honest
+   no-id fallback. */
+.chip.interrupt-chip:not([disabled]) { cursor: pointer; }
+.chip.interrupt-chip[disabled] { opacity: 0.6; cursor: default; }
 
-/* ====================================================================
-   STATUS SURFACE (Tasks 3/4/5, 2026-06-11) — cockpit + drill + waiting.
-   Color discipline (C6): neutral gray structure; AMBER = needs-you/blocked
-   ONLY; muted green check = done. Two ramps + the done semantic, no rainbow.
-   Density principle: the cockpit renders COUNTS (fixed-size number pills,
-   O(projects)); items render only in the drilled tree / waiting list.
-   ==================================================================== */
-
-/* ---- cockpit (Task 3) ---- */
-/* shared fixed grid: project name + four number columns. The pills are
-   fixed-width so the four columns read as a scannable matrix; a project with
-   dozens of items still occupies exactly one row of constant height. */
-.ck-cols, .ck-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) repeat(4, minmax(2.4rem, 3rem));
-  gap: 0.3rem; align-items: center;
+/* ---- ask-tree landing — ask-rooted-workstreams-p1 Task 13 (REPLACES the
+   Task 1 walking-skeleton block wholesale). Project sections (collapsible,
+   native <details>/<summary> — same keyboard-accessible convention this
+   file already uses for the reconciler badge / per-gate health rows) ->
+   ask cards -> a collapsed "completed" group. One accent (--interrupt) is
+   NOT spent here; drift badges and waiting counts use --warn/--info
+   (text+color, never color-only, per the a11y baseline this file already
+   states at the top). */
+/* ---- ws-layout: ask tree (main column) + sidebar (My To-Do / Backlog).
+   Placeholder assembly for Task 14 — Task 16 "Layout integration" owns the
+   FINAL responsive grid + Harness Health tab per the binding ux-designer
+   round-1 ruling (independent-scroll sidebar, header count, stacks under
+   the tree below ~1200px — the breakpoint below matches that ruling
+   verbatim). */
+.ws-layout {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  max-width: 1600px;
+  margin: 12px auto 0;
+  padding: 0 16px;
 }
-.ck-cols {
-  padding: 0.15rem 0.5rem 0.25rem;
-  font-size: 0.62rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.05em; color: var(--muted);
-  position: sticky; top: 0; background: var(--bg); z-index: 4;
+.ws-layout .ask-tree-section {
+  flex: 1 1 0;
+  min-width: 0; /* allow the flex child to shrink below its content's natural width */
+  max-width: none;
+  margin: 0;
+  padding: 0;
 }
-.ck-col { text-align: center; }
-.ck-rows { display: flex; flex-direction: column; gap: 0.25rem; margin: 0.25rem 0 0.1rem; }
-.ck-row {
-  width: 100%; padding: 0.36rem 0.5rem; border-radius: 6px; cursor: pointer;
-  background: var(--panel); color: var(--text); border: 1px solid var(--border);
-  font: inherit; text-align: left;
+.sidebar {
+  flex: 0 0 320px;
+  width: 320px;
+  position: sticky;
+  top: 68px; /* clears the sticky header */
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
-.ck-row:hover { background: var(--panel2); border-color: var(--border2); }
-.ck-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ck-name { font-weight: 700; font-size: 0.84rem; min-width: 0;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ck-arch { font-weight: 400; font-size: 0.7rem; color: var(--muted); }
-.ck-pill {
-  display: inline-block; text-align: center; font-size: 0.74rem; font-weight: 700;
-  padding: 0.08rem 0.2rem; border-radius: 999px;
-  background: var(--panel2); color: var(--text); border: 1px solid var(--border2);
-  font-variant-numeric: tabular-nums; white-space: nowrap;
-}
-.ck-pill.zero { color: var(--muted); font-weight: 400; opacity: 0.55; }
-.ck-pill.ck-done { color: var(--muted); font-weight: 500; }
-/* the bottleneck signal — the ONLY accent on the cockpit */
-.ck-pill.accent { background: rgba(251,191,36,0.18); color: var(--warn);
-  border-color: rgba(251,191,36,0.45); }
-
-/* ---- drill (Task 5) — master-detail (C4) ---- */
-.drill-wrap { display: grid; grid-template-columns: minmax(140px, 180px) 1fr;
-  gap: 0.6rem; min-width: 0; }
-.ck-rail { display: flex; flex-direction: column; gap: 0.15rem; min-width: 0;
-  border-right: 1px solid var(--border); padding-right: 0.45rem; }
-.ck-rail-row {
-  display: flex; align-items: center; gap: 0.3rem; width: 100%;
-  padding: 0.26rem 0.4rem; border-radius: 5px; cursor: pointer;
-  background: none; color: var(--muted); border: 1px solid transparent;
-  font: inherit; font-size: 0.78rem; text-align: left;
-}
-.ck-rail-row:hover { background: var(--panel2); color: var(--text); }
-.ck-rail-row.sel { background: var(--panel); color: var(--text);
-  border-color: var(--border2); font-weight: 700; }
-.ck-rail-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.ck-rail-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
-  white-space: nowrap; }
-.ck-rail-wait { flex: 0 0 auto; font-size: 0.64rem; font-weight: 700;
-  padding: 0 0.34rem; border-radius: 999px; min-width: 1rem; text-align: center;
-  background: rgba(251,191,36,0.18); color: var(--warn); }
-.drill-main { min-width: 0; display: flex; flex-direction: column; gap: 0.35rem; }
-/* C4 — persistent breadcrumb + current-project header (no dead-end drill) */
-.drill-head { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;
-  padding: 0.2rem 0.1rem 0.35rem; border-bottom: 1px solid var(--border);
-  position: sticky; top: 0; background: var(--bg); z-index: 4; }
-.drill-back {
-  background: var(--panel2); color: var(--text); border: 1px solid var(--border2);
-  border-radius: 5px; padding: 0.18rem 0.5rem; cursor: pointer; font: inherit;
-  font-size: 0.76rem; white-space: nowrap;
-}
-.drill-back:hover { border-color: var(--accent); }
-.drill-back:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.drill-title { font-weight: 800; font-size: 0.92rem; }
-.drill-counts { display: inline-flex; gap: 0.25rem; flex-wrap: wrap; }
-.drill-counts .ck-pill { font-size: 0.66rem; font-weight: 600; padding: 0.05rem 0.4rem; }
-.drill-showdone {
-  margin-left: auto; background: none; color: var(--muted);
-  border: 1px solid var(--border2); border-radius: 999px;
-  padding: 0.12rem 0.55rem; cursor: pointer; font: inherit; font-size: 0.72rem;
-}
-.drill-showdone:hover { color: var(--text); border-color: var(--accent); }
-.drill-showdone[aria-pressed="true"] { background: var(--panel2); color: var(--text); }
-.drill-tree { min-width: 0; }
-
-/* C4 — full swap at narrow widths: the rail hides; the breadcrumb is the way
-   back. (≤390px is the design target; 560px keeps the rail from cramping.) */
-@media (max-width: 560px) {
-  .drill-wrap { grid-template-columns: 1fr; }
-  .ck-rail { display: none; }
+/* BUGFIX (Task 18 runtime-acceptance fix-forward, 2026-07-13): .pane has
+   `overflow: hidden` (below, ~L577+) for its border-radius clipping, which
+   per the flexbox spec makes a flex item's AUTOMATIC MINIMUM SIZE resolve
+   to 0 (the auto-min-size content-based floor only applies when overflow
+   is `visible`). Combined with the default `flex-shrink: 1`, the real
+   Backlog pane's content (dozens of open rows, easily 1000s of px tall)
+   was enough to shrink #todoSection down to its ~49px header-only height
+   whenever the sidebar's own max-height was exceeded — .todo-list and the
+   add-to-do form then rendered BELOW that shrunk box's clipped bottom,
+   invisible and unreachable by any scroll (the sidebar's own overflow-y:
+   auto never engaged, because flexbox had already made everything "fit"
+   by shrinking the pane instead of overflowing it). `flex-shrink: 0` on
+   both direct pane children removes the shrink pressure entirely: each
+   pane always renders at its own natural (unclipped) content height, and
+   if the two together exceed the sidebar's max-height, THIS container's
+   existing overflow-y: auto is what scrolls to reach the rest — never a
+   pane's own `overflow: hidden` silently eating content. My To-Do is
+   first in source/flex order, so it renders fully visible from the top
+   of the sidebar with zero scrolling; Backlog (collapsed below it, per
+   the binding ux-designer round-1 ruling) is reached via that same
+   sidebar scroll when its real volume runs long. */
+.sidebar > .pane { flex-shrink: 0; }
+@media (max-width: 1200px) {
+  .ws-layout { flex-direction: column; }
+  .sidebar { position: static; max-height: none; width: 100%; flex: none; }
+  /* the column split (requests vs sidebar) stops meaning anything once the
+     layout stacks — hide it; the row handle (My To-Do vs Backlog) still
+     applies stacked, so it stays. */
+  .resize-handle-col { display: none; }
 }
 
-/* ---- waiting on you (Task 4) ---- */
-/* These rows ARE the needs-you set — the amber edge is within discipline. */
-.wait-row { border-left: 3px solid var(--warn); }
-.wi-kind-ic { font-size: 0.85rem; padding-top: 0.05rem; }
-.wait-ctx { margin-top: 0.2rem; display: flex; flex-direction: column; gap: 0.1rem; }
-.wait-bg {
-  font-size: 0.76rem; color: var(--muted); line-height: 1.45;
-  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden;
+/* ============================================================
+   Resizable + independently scrollable panes (cockpit-roadmap-redesign
+   Task 8, absorbed UI-polish operator item 1). Wired by app.js's own
+   separate, additive IIFE at the bottom of that file — does not touch the
+   flex-shrink:0 BUGFIX above (that guard stays scoped to `.pane`; these
+   handles are plain siblings, not `.pane` elements) and defaults to a
+   no-op (no inline style) until the operator actually resizes something,
+   so the pre-Task-8 layout is bit-for-bit unchanged on first load. Once
+   dragged, the affected pane BODY gets its own `overflow-y: auto` +
+   min-height floor so it scrolls independently of its sibling pane,
+   instead of only the whole sidebar scrolling as one unit. Text handles
+   are ARIA "window splitter" separators (role=separator + tabindex + arrow
+   keys) — a keyboard alternative to the pointer drag, same WCAG 2.2
+   SC 2.5.7 law task 3 already applies to roadmap_rank reorder. ---- */
+.resize-handle {
+  background: transparent;
+  flex: 0 0 auto;
+  border-radius: 3px;
 }
-.wait-rec { font-size: 0.76rem; color: var(--text); }
-/* context-incomplete marker — deliberately NEUTRAL (gray, dashed): this is
-   "needs enrichment by the AI", not an operator-ask; amber stays exclusive
-   to needs-you. */
-.ctx-incomplete-badge {
-  display: inline-block; margin-top: 0.2rem;
-  font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--muted); background: var(--panel2);
-  border: 1px dashed var(--border2); border-radius: 999px;
-  padding: 0.04rem 0.45rem; font-weight: 600;
+.resize-handle:hover, .resize-handle:focus-visible { background: var(--accent); }
+.resize-handle-col {
+  width: 6px;
+  min-height: 40px;
+  align-self: stretch;
+  cursor: col-resize;
+  touch-action: none;
 }
-
-
-/* ====================================================================
-   BACKLOG surface (Task 7, 2026-06-11) — operator-owned "someday" bucket.
-   Reuses the My-tasks editing chrome (mytasks-add / mytask-row / mytask-ctrl /
-   retry-note). Color discipline unchanged: neutral gray; the only red is the
-   I3 retry affordance; promote uses the neutral ctrl chrome with the shared
-   accent hover (no new color ramp).
-   ==================================================================== */
-.bl-row .item-ic { color: var(--muted); }
-/* legacy snap.backlog captures (promote-only) read slightly muted so the
-   editable parked rows stay the primary surface */
-.bl-legacy { opacity: 0.8; }
-.bl-legacy .item-text { color: var(--muted); }
-.mytask-ctrl.ctrl-promote {
-  width: auto; padding: 0 0.5rem; font-weight: 700;
+.resize-handle-row {
+  height: 6px;
+  cursor: row-resize;
+  touch-action: none;
 }
-.mytask-ctrl.ctrl-promote:hover:not(:disabled) {
-  color: var(--text); border-color: var(--accent); background: var(--panel2);
+.todo-section .pane-body, .backlog-section .pane-body {
+  overflow-y: auto;
+  min-height: 48px;
 }
 
-/* ====================================================================
-   CONTEXT CARD + GATE (Task 8, 2026-06-11) — progressive-disclosure
-   essentials card for context-COMPLETE operator-asks + the neutral
-   "context incomplete — needs enrichment" gated panel (I2). Discipline:
-   the card is structure (gray); the gate state matches the list's
-   ctx-incomplete-badge (neutral, dashed) — enrichment is the AI's job,
-   not a needs-you signal, so NO amber here.
-   ==================================================================== */
-.dc-essentials {
-  display: flex; flex-direction: column; gap: 0.45rem;
-  padding: 0.55rem 0.6rem; margin-bottom: 0.6rem;
-  background: var(--panel); border: 1px solid var(--border); border-radius: 6px;
+.ask-tree-section {
+  max-width: 1400px;
+  margin: 12px auto 0;
+  padding: 0 16px;
 }
-.dc-bg { font-size: 0.8rem; color: var(--muted); line-height: 1.5; }
-.dc-ask { font-size: 0.86rem; font-weight: 700; line-height: 1.45; }
-.dc-opts { display: flex; flex-direction: column; gap: 0.3rem; }
-.dc-opt-line {
-  display: flex; align-items: baseline; gap: 0.5rem;
-  padding: 0.25rem 0.4rem; border: 1px solid var(--border); border-radius: 5px;
+.ask-tree-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.ask-tree-title { font-size: 15px; margin: 0; font-weight: 600; }
+.ask-tree-status { padding: 8px 0; }
+
+.ask-project-group { margin-bottom: 14px; }
+.ask-project-summary {
+  font-weight: 600;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 4px 0;
+  list-style: revert;
+}
+.ask-project-body { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
+
+.ask-completed-group { margin: 16px 0 24px; border-top: 1px solid var(--border); padding-top: 10px; }
+.ask-completed-summary { color: var(--muted); font-size: 13px; cursor: pointer; list-style: revert; }
+.ask-completed-body { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+
+.ask-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
   background: var(--panel2);
 }
-.dc-opt-main { flex: 1 1 auto; min-width: 0; font-size: 0.78rem; line-height: 1.45; }
-.dc-opt-name { font-weight: 700; }
-.dc-opt-meta { color: var(--muted); }
-.dc-opt-choose {
-  flex: 0 0 auto; align-self: center;
-  background: var(--panel); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 5px;
-  padding: 0.12rem 0.55rem; cursor: pointer; font: inherit; font-size: 0.72rem;
+.ask-card-completed { opacity: 0.85; }
+.ask-card-head { margin-bottom: 4px; }
+.ask-card-title { margin: 0 0 2px; font-size: 14px; }
+.ask-card-meta { font-size: 11px; color: var(--muted); }
+
+.ask-verbatim-details { margin: 4px 0; }
+.ask-verbatim-summary { font-size: 11px; color: var(--accent); cursor: pointer; list-style: revert; } /* R16 row 79: blue = links only */
+.ask-verbatim-body { font-size: 12px; margin-top: 4px; padding: 6px 8px; background: var(--bg); border-radius: 6px; }
+.ask-verbatim-label { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
+
+.ask-narrative-excerpt { font-size: 13px; margin: 6px 0; }
+
+.ask-noplan-note { font-size: 12px; color: var(--muted); font-style: italic; margin: 6px 0; }
+
+/* ---- aggregate plan progress bar + explicit drill-down control (review
+   round 1: the bar is NEVER the sole click target — the chevron+"N tasks"
+   <summary> beside it is the mandatory control; native <details> gives a
+   real chevron + keyboard/AT operability for free). ---- */
+.ask-progress-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.ask-progress-bar {
+  display: flex;
+  width: 160px;
+  height: 10px;
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--bg);
+  border: 1px solid var(--border2);
 }
-.dc-opt-choose:hover { border-color: var(--accent); background: var(--bg); }
-.dc-opt-choose:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dc-rec-line { font-size: 0.8rem; font-weight: 600; line-height: 1.45; }
-.dc-reply-line { font-size: 0.78rem; display: flex; align-items: baseline; gap: 0.35rem; flex-wrap: wrap; }
-.dc-reply-k { color: var(--muted); }
-/* "More context" native disclosure — keyboard-focusable summary, no overlay */
-.dc-more { margin-top: 0.15rem; }
-.dc-more > summary {
-  cursor: pointer; font-size: 0.74rem; color: var(--muted);
-  padding: 0.15rem 0.1rem; border-radius: 4px; width: fit-content;
+.ask-progress-seg.seg-done { background: var(--ok); }
+.ask-progress-seg.seg-inflight { background: var(--running); } /* R16 row 79: running = green */
+.ask-progress-seg.seg-notstarted { background: transparent; }
+.ask-progress-text { font-size: 11px; color: var(--muted); }
+.ask-drilldown-details { font-size: 12px; }
+.ask-drilldown-summary { cursor: pointer; color: var(--accent); } /* R16 row 79: blue = links only */
+.ask-drilldown-body { margin-top: 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; display: flex; flex-direction: column; gap: 12px; }
+
+.ask-status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
+.chip.ask-waiting-btn { color: var(--warn); border-color: var(--warn); cursor: pointer; }
+.ask-badges-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.ask-badge-details { display: inline-block; }
+.chip.ask-badge { color: var(--interrupt); border-color: var(--interrupt); cursor: pointer; list-style: revert; }
+.ask-badge-detail-body { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+.ask-subhead { font-weight: 600; font-size: 12px; margin-bottom: 4px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.02em; }
+.ask-plans-section, .ask-waiting-section, .ask-sessions-section, .ask-artifacts-section { }
+.ask-plan-block { margin-bottom: 10px; }
+.ask-plan-block:last-child { margin-bottom: 0; }
+.ask-plan-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.ask-plan-slug { font-family: monospace; font-size: 12px; }
+.ask-plan-nodoc { font-size: 11px; color: var(--muted); font-style: italic; }
+.ask-task-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+/* flex-wrap (cockpit-roadmap-redesign Task 8, absorbed item 3): the
+   description block below wants its own line — .ask-task-desc gets
+   flex-basis:100% so it always wraps onto a new row under the
+   chip/id/evidence line, without changing that line's own layout. */
+.ask-task-row { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
+.chip.ask-task-status.task-status-done { color: var(--ok); border-color: var(--ok); }
+.chip.ask-task-status.task-status-in_flight { color: var(--running); border-color: var(--running); } /* R16 row 79 */
+.chip.ask-task-status.task-status-not_started { color: var(--muted); border-color: var(--border2); }
+.ask-task-id { font-family: monospace; }
+.ask-task-evidence { font-size: 11px; color: var(--muted); }
+.ask-task-desc { flex: 1 0 100%; font-size: 12px; color: var(--muted); margin-top: 1px; }
+.ask-task-desc-details { font-size: 12px; }
+.ask-task-desc-summary { cursor: pointer; color: var(--muted); list-style: revert; }
+.ask-task-desc-full { margin-top: 3px; white-space: pre-wrap; }
+.ask-plan-empty { margin-top: 4px; }
+
+.ask-waiting-item { border: 1px solid var(--border2); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; background: var(--panel); }
+.ask-waiting-item:last-child { margin-bottom: 0; }
+.ask-waiting-title { font-weight: 600; font-size: 12px; margin-bottom: 2px; }
+.ask-waiting-body { font-size: 12px; white-space: pre-wrap; margin-bottom: 4px; }
+.ask-waiting-links { display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-defect-form { border-color: var(--warn); }
+.ask-defect-message { font-size: 12px; color: var(--warn); font-weight: 600; margin-bottom: 4px; }
+.ask-defect-recovery { font-size: 11px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.ask-defect-session { margin-top: 4px; }
+
+.ask-session-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.ask-session-row { display: flex; align-items: center; gap: 6px; font-size: 12px; flex-wrap: wrap; }
+.chip.ask-session-chip.hb-live { color: var(--ok); border-color: var(--ok); }
+.chip.ask-session-chip.hb-stale { color: var(--warn); border-color: var(--warn); }
+.chip.ask-session-chip.hb-throttled { color: var(--warn); border-color: var(--warn); }
+.chip.ask-session-chip.hb-crashed { color: var(--interrupt); border-color: var(--interrupt); }
+.chip.ask-session-chip.hb-missing { color: var(--muted); border-color: var(--border2); font-style: italic; }
+.ask-session-role { font-size: 11px; color: var(--muted); }
+.ask-session-id { font-family: monospace; font-size: 11px; }
+.ask-session-copy-caption { font-size: 10px; color: var(--muted); font-style: italic; }
+
+.ask-artifact-row { display: flex; align-items: center; gap: 6px; font-size: 12px; margin-bottom: 4px; }
+.ask-artifact-sha { font-family: monospace; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+.ask-artifact-ts { color: var(--muted); font-size: 11px; }
+
+.ask-link-resolved a { color: var(--info); }
+.ask-copy-btn { margin-left: 2px; }
+
+.ask-lifecycle-row { margin-top: 8px; }
+.ask-lifecycle-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.ask-merge-chooser { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; padding: 6px; background: var(--bg); border-radius: 6px; }
+.ask-merge-none { font-size: 11px; color: var(--muted); font-style: italic; }
+.ask-feedback-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.ask-feedback-text { color: var(--ok); }
+.ask-undo-btn {}
+/* [hidden]-override footgun (same regression class this file already
+   documents for .modal-card/.modal-scrim/#docsPanel, live-browser-verified
+   here too during Task 13 build: the merge chooser and feedback row were
+   both rendering VISIBLE despite `.hidden = true` in asks.js, because
+   `display: flex` on the class beat the UA [hidden] default at equal
+   specificity). Every flex-styled element asks.js ever toggles via
+   `.hidden` needs this explicit override. */
+.ask-lifecycle-actions[hidden], .ask-merge-chooser[hidden], .ask-feedback-row[hidden] { display: none; }
+
+/* ============================================================
+   Peers section (cockpit-v2-push-materialized-store Task 4) — cross-
+   machine state. Reuses --ok/--warn/--interrupt/--muted exactly as the
+   local session/task chips above do (no new accent introduced); peer rows
+   are visually distinguished from local ask cards by the always-present
+   .peer-provenance-label line, never by color alone (F4: an unmerged peer
+   row is never mistakable for local "done").
+   ============================================================ */
+.peer-section { margin: 16px 0 24px; border-top: 1px solid var(--border); padding-top: 10px; }
+.peer-summary { color: var(--muted); font-size: 13px; cursor: pointer; list-style: revert; }
+.peer-body { display: flex; flex-direction: column; gap: 12px; margin-top: 10px; }
+.peer-coord-health { font-size: 11px; color: var(--muted); }
+
+.peer-entry { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--panel2); }
+.peer-entry-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.peer-entry-host { font-weight: 600; font-size: 13px; }
+
+/* Person-grouped peers (cockpit-roadmap-redesign Task 7, round 5:
+   "Misha: desktop + laptop"). Group = <details> per person; entries nest
+   inside. The map-error line is the labeled system-failure surface. */
+.peer-person-group { margin: 4px 0 8px; }
+.peer-person-summary { cursor: pointer; font-weight: 600; font-size: 13px; padding: 2px 0; }
+.peer-person-group > .peer-entry { margin: 4px 0 0 12px; }
+.peer-people-map-error { font-size: 11px; color: var(--warn); margin: 2px 0 6px; }
+
+.chip.peer-state.peer-state-fresh-ish { color: var(--ok); border-color: var(--ok); }
+.chip.peer-state.peer-state-estate-unchanged { color: var(--warn); border-color: var(--warn); }
+.chip.peer-state.peer-state-peer-unreachable { color: var(--interrupt); border-color: var(--interrupt); }
+
+.peer-plan-row { margin: 6px 0; padding-top: 6px; border-top: 1px dashed var(--border2); }
+.peer-plan-row:first-of-type { border-top: none; padding-top: 0; }
+.peer-plan-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.peer-plan-slug { font-size: 13px; font-weight: 600; }
+.peer-plan-progress { font-size: 11px; color: var(--muted); }
+.peer-provenance-label { font-size: 11px; color: var(--muted); margin: 2px 0 4px; }
+.peer-provenance-label.peer-unmerged { color: var(--warn); font-weight: 600; }
+
+.peer-task-list { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.peer-task-row { display: flex; align-items: center; gap: 6px; }
+.peer-task-id { font-size: 11px; color: var(--muted); }
+.chip.peer-task-status.task-status-done { color: var(--ok); border-color: var(--ok); }
+.chip.peer-task-status.task-status-in_flight { color: var(--running); border-color: var(--running); } /* R16 row 79 */
+.chip.peer-task-status.task-status-not_started { color: var(--muted); border-color: var(--border2); }
+
+.peer-sessions { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
+.peer-session-row { display: flex; align-items: center; gap: 6px; }
+.peer-session-id { font-family: monospace; font-size: 11px; }
+.peer-session-meta { font-size: 11px; color: var(--muted); }
+.chip.peer-session-chip.peer-session-fresh { color: var(--ok); border-color: var(--ok); }
+.chip.peer-session-chip.peer-session-stale { color: var(--warn); border-color: var(--warn); }
+.chip.peer-session-chip.peer-session-unknown { color: var(--muted); border-color: var(--border2); font-style: italic; }
+
+/* ============================================================
+   My To-Do pane (ask-rooted-workstreams-p1, Task 14). Reuses the shared
+   .pane/.pane-head/.pane-title/.pane-body classes above for visual
+   continuity with the six-question cockpit; .todo-section only adds the
+   sidebar-specific bits (independent scroll body).
+   ============================================================ */
+.todo-count { font-size: 11px; color: var(--muted); }
+.todo-section .pane-body { display: flex; flex-direction: column; gap: 8px; }
+
+.todo-status { padding: 4px 0; }
+
+.todo-global-feedback {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg);
 }
-.dc-more > summary:hover { color: var(--text); }
-.dc-more > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dc-more[open] > summary { margin-bottom: 0.35rem; }
-/* the gated state (I2) — neutral + dashed, mirrors .ctx-incomplete-badge */
-.dc-incomplete-panel {
-  display: flex; flex-direction: column; gap: 0.4rem;
-  padding: 0.55rem 0.6rem; margin-bottom: 0.6rem;
-  background: var(--panel2); border: 1px dashed var(--border2); border-radius: 6px;
+.todo-global-feedback.todo-feedback-ok { color: var(--ok); }
+.todo-global-feedback.todo-feedback-error { color: var(--err); background: color-mix(in srgb, var(--err) 10%, var(--bg)); }
+/* [hidden]-override footgun (see the ask-lifecycle note above — this file's
+   own established regression: `display` on a class beats the UA [hidden]
+   default at equal specificity). */
+.todo-global-feedback[hidden] { display: none; }
+
+.todo-add-form { display: flex; gap: 6px; }
+.todo-add-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  min-height: 24px;
 }
-.dc-incomplete-h {
-  font-size: 0.7rem; font-weight: 700; text-transform: uppercase;
-  letter-spacing: 0.04em; color: var(--muted);
+.todo-edit-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 13px;
 }
-.dc-incomplete-b { font-size: 0.78rem; color: var(--muted); line-height: 1.5; }
-.dm-gate-note {
-  align-self: center; font-size: 0.72rem; color: var(--muted);
-  border: 1px dashed var(--border2); border-radius: 999px;
-  padding: 0.08rem 0.5rem;
+
+.todo-list { display: flex; flex-direction: column; gap: 6px; }
+.todo-empty { padding: 6px 0; }
+
+.todo-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel2);
 }
-/* in-surface reply forms (C5) — replace every native prompt() dialog */
-.dm-form {
-  flex-basis: 100%; display: flex; flex-direction: column; gap: 0.35rem;
-  padding: 0.5rem 0.55rem; margin-top: 0.3rem;
-  background: var(--panel2); border: 1px solid var(--border2); border-radius: 6px;
+
+/* ---- operator items: freely editable ---- */
+.todo-checkbox {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  cursor: pointer;
+  accent-color: var(--accent);
+  margin-top: 1px;
 }
-.dm-form-label { font-size: 0.74rem; font-weight: 600; color: var(--muted); }
-.dm-form-input {
-  width: 100%; background: var(--bg); color: var(--text);
-  border: 1px solid var(--border2); border-radius: 5px;
-  padding: 0.35rem 0.5rem; font: inherit; font-size: 0.8rem;
+.todo-item-text { flex: 1; font-size: 13px; align-self: center; word-break: break-word; }
+.todo-item-text.todo-item-checked { color: var(--muted); text-decoration: line-through; }
+.todo-item-text[hidden], .todo-edit-btn[hidden] { display: none; }
+
+/* ---- pointer items: DERIVED, never a checkbox lookalike (review round 1:
+   lock/auto glyph, aria-disabled, tooltip; navigation is the PRIMARY
+   affordance, distinct visual treatment from operator rows). ---- */
+.todo-item-pointer { background: var(--panel); border-style: dashed; }
+.todo-item-pointer.todo-item-resolved { opacity: 0.7; }
+.todo-pointer-glyph { font-size: 15px; line-height: 1; margin-top: 2px; cursor: default; }
+.todo-pointer-body { flex: 1; min-width: 0; }
+.todo-pointer-title { font-size: 13px; }
+.todo-pointer-link { color: var(--info); text-decoration: underline; }
+/* R17 deliverable 2a (operator, live: "the links on the Inbox tab don't
+   work") — the pointer row's title is now sometimes a <button> opening
+   the in-page doc modal (the old `file://` href was dead — a browser
+   loading this page over http silently blocks it, same class as the
+   Round 15 roadmap plan-link fix above); reset UA button chrome so it
+   still READS as the same underlined link, not a boxed button. */
+.todo-pointer-link-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer;
 }
-textarea.dm-form-input { min-height: 4.2rem; resize: vertical; }
-.dm-form-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dm-form-row { display: flex; gap: 0.4rem; }
+.todo-pointer-link-btn:hover { text-decoration: underline; }
+.todo-pointer-preview {
+  font-size: 12px;
+  color: var(--muted);
+  white-space: pre-wrap;
+  margin-top: 2px;
+}
+.todo-pointer-meta { font-size: 11px; color: var(--muted); margin-top: 2px; text-transform: uppercase; letter-spacing: 0.02em; }
+.todo-override-btn { align-self: center; }
+
+/* ============================================================
+   Backlog pane (ask-rooted-workstreams-p1, Task 15). Reuses the shared
+   .pane/.pane-head/.pane-title/.pane-body classes for visual continuity
+   with My To-Do above it; .backlog-section only adds the sidebar-specific
+   bits (independent scroll body, same as .todo-section).
+   ============================================================ */
+.backlog-count { font-size: 11px; color: var(--muted); }
+.backlog-section .pane-body { display: flex; flex-direction: column; gap: 8px; }
+
+.backlog-status { padding: 4px 0; }
+.backlog-empty { padding: 6px 0; }
+
+.backlog-global-feedback {
+  font-size: 12px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+}
+.backlog-global-feedback.backlog-feedback-ok { color: var(--ok); }
+.backlog-global-feedback.backlog-feedback-error { color: var(--err); background: color-mix(in srgb, var(--err) 10%, var(--bg)); }
+/* [hidden]-override footgun (this file's own established regression — see
+   the ask-lifecycle/todo-global-feedback notes above: `display` on a class
+   beats the UA [hidden] default at equal specificity). */
+.backlog-global-feedback[hidden] { display: none; }
+
+.backlog-add-form { display: flex; gap: 6px; flex-wrap: wrap; }
+.backlog-add-title, .backlog-add-desc {
+  flex: 1;
+  min-width: 90px;
+  background: var(--bg);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font-size: 13px;
+  min-height: 24px;
+}
+.backlog-add-priority {
+  background: var(--bg);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 5px 6px;
+  font-size: 13px;
+  min-height: 24px;
+}
+
+.backlog-header-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.backlog-counts-summary { color: var(--muted); }
+.backlog-open-file-link { color: var(--info); }
+.backlog-toggle-btn { margin-left: auto; }
+
+.backlog-tier-group { margin-bottom: 8px; }
+.backlog-tier-group:last-child { margin-bottom: 0; }
+.backlog-tier-title { font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.02em; color: var(--muted); margin-bottom: 4px; }
+.backlog-tier-empty { font-size: 12px; color: var(--muted); font-style: italic; padding: 2px 0; }
+.backlog-tier-more { font-size: 11px; color: var(--muted); font-style: italic; margin-top: 2px; }
+
+.backlog-full-list { display: flex; flex-direction: column; gap: 12px; }
+
+/* cockpit-roadmap-redesign Task 8 (absorbed UI-polish item 2): open rows
+   are now a native <details class="backlog-row"> — collapsed by default,
+   one-line summary (id + title + tier + age), click/keyboard-expandable
+   (native disclosure, same a11y precedent as the roadmap tree's
+   <details>/<summary> nodes — no custom aria-expanded bookkeeping needed).
+   Disposition action buttons live INSIDE the expanded body only. Dispositioned
+   (already-scheduled/demoted/etc.) rows stay a plain non-expandable <div> —
+   nothing further to disclose once a row has left the open state. */
+.backlog-row {
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel2);
+  margin-bottom: 6px;
+}
+.backlog-row:last-child { margin-bottom: 0; }
+.backlog-row-done { opacity: 0.75; }
+.backlog-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  list-style: none;
+  min-height: 24px;
+}
+.backlog-row-summary::-webkit-details-marker { display: none; }
+/* single-line truncation, not word-wrap (LIVE-BROWSER-CAUGHT: a long title
+   + `flex:1;min-width:0` + `word-break:break-word` shrinks the title to a
+   sliver in the ~260px sidebar and wraps it across dozens of lines —
+   860px+ tall observed — which defeats "one-line collapsed" entirely.
+   text-overflow:ellipsis + white-space:nowrap keeps the row genuinely one
+   line regardless of title length; the full title is in the `title=`
+   tooltip AND repeated untruncated in the expanded body, below). */
+.backlog-row-summary-title {
+  font-size: 13px;
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.backlog-row-summary-meta { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.backlog-row-detail { margin-top: 6px; display: flex; flex-direction: column; gap: 6px; }
+/* THE SAME [hidden]-override footgun this file already documents in three
+   other places (modal-card/scrim, docsPanel, todo/backlog global-feedback)
+   — LIVE-BROWSER-CAUGHT here too during Task 8's build: `display: flex`
+   above beats the UA stylesheet's own `details:not([open]) > *:not(summary)
+   { display: none }` rule at higher specificity, so the detail body (and
+   its disposition buttons) rendered VISIBLE even while the row's <details>
+   was closed — collapsed-by-default silently wasn't. This selector's
+   specificity (.backlog-row + :not([open]) + .backlog-row-detail) beats
+   the bare `.backlog-row-detail` rule above regardless of source order. */
+.backlog-row:not([open]) > .backlog-row-detail { display: none; }
+.backlog-row-head { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; }
+.backlog-row-title { font-size: 13px; font-weight: 600; flex: 1; min-width: 0; word-break: break-word; }
+.backlog-row-meta { font-size: 11px; color: var(--muted); }
+.backlog-row-preview { font-size: 12px; color: var(--muted); }
+.chip.backlog-overdue { color: var(--warn); border-color: var(--warn); }
+.chip.backlog-badge { color: var(--muted); border-color: var(--border2); }
+.chip.backlog-badge-inflight { color: var(--running); border-color: var(--running); } /* R16 row 79 */
+.chip.backlog-badge-terminal { color: var(--ok); border-color: var(--ok); }
+
+.backlog-row-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.backlog-row-confirm { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
+.backlog-confirm-text { font-size: 12px; color: var(--warn); }
+.backlog-fold-input {
+  flex: 1;
+  min-width: 90px;
+  background: var(--bg);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 4px 6px;
+  font-size: 12px;
+}
+.backlog-row-feedback { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.backlog-row-feedback-text { color: var(--ok); }
+/* [hidden]-override footgun (same class as above — flex beats [hidden]). */
+.backlog-row-actions[hidden], .backlog-row-confirm[hidden], .backlog-row-feedback[hidden] { display: none; }
+
+/* ---- cockpit grid: six panes, Q2 first (attention semantics) ---- */
+#cockpit {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(320px, 1fr));
+  grid-template-areas:
+    "needsme needsme"
+    "status  status"
+    "health  costs"
+    "shipped backlog";
+  gap: 12px;
+  padding: 12px 16px 32px;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+#paneNeedsMe { grid-area: needsme; }
+#paneStatus  { grid-area: status; }
+#paneHealth  { grid-area: health; }
+#paneCosts   { grid-area: costs; }
+#paneShipped { grid-area: shipped; }
+#paneBacklog { grid-area: backlog; }
+
+.pane {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.pane-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel2);
+}
+.pane-title { font-weight: 600; font-size: 13px; }
+.pane-age { font-size: 11px; color: var(--muted); }
+.pane-age.stale { color: var(--warn); font-weight: 600; }
+.pane-body { padding: 10px 12px; min-height: 40px; }
+.pane-empty { color: var(--muted); font-size: 13px; }
+.pane-loading { color: var(--muted); font-size: 13px; font-style: italic; }
+
+/* ---- error state (ux-review amendment 1 — never renders as empty) ---- */
+.pane-error {
+  border: 1px solid var(--err);
+  border-radius: 6px;
+  padding: 10px;
+  background: color-mix(in srgb, var(--err) 10%, var(--panel2));
+}
+.pane-error-title { color: var(--err); font-weight: 700; margin-bottom: 4px; }
+/* R17 deliverable 3 (audit F2): plain-language headline leads (above);
+   scope honesty names which panel is affected; actions (Retry/Copy
+   details) come next; the command + stderr fold into <details> below —
+   never the primary content a non-developer reader sees first. */
+.pane-error-scope { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.pane-error-actions { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.pane-error-details { margin-top: 4px; }
+.pane-error-details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.pane-error-cmd { font-family: monospace; font-size: 12px; color: var(--muted); margin: 6px 0; }
+.pane-error-stderr {
+  font-family: monospace;
+  font-size: 11px;
+  white-space: pre-wrap;
+  background: var(--bg);
+  padding: 6px;
+  border-radius: 4px;
+  max-height: 120px;
+  overflow: auto;
+  margin: 0 0 8px;
+}
+
+/* ---- Q1 session board ---- */
+.session-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.session-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--panel2);
+  flex-wrap: wrap;
+}
+.session-meta { font-size: 12px; color: var(--muted); flex: 1; word-break: break-all; }
+.why-btn { margin-left: auto; }
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid var(--border2);
+  min-height: 20px;
+  /* Round 12 contrast fix (item 7, live-measured): a chip rendered as a
+     real <button> (rm-project-chip, rm-status-stalled/unknown,
+     rm-rollup-badge, ...) has no explicit background here, so it fell
+     back to the UA default button face — measured live as rgb(239,239,239)
+     ("#efefef"), a light gray box in a dark theme (1.56:1-class failure).
+     A <span>-based chip already looked fine (UA spans have no background) —
+     only the interactive ones needed this. */
+  background: transparent;
+}
+.state-chip.state-working { color: var(--ok); border-color: var(--ok); }
+.state-chip.state-waiting-on-me { color: var(--interrupt); border-color: var(--interrupt); background: color-mix(in srgb, var(--interrupt) 15%, transparent); }
+.state-chip.state-crashed { color: var(--interrupt); border-color: var(--interrupt); }
+.state-chip.state-stalled { color: var(--warn); border-color: var(--warn); }
+.state-chip.state-throttled { color: var(--warn); border-color: var(--warn); }
+.state-chip.state-blocked { color: var(--err); border-color: var(--err); }
+.state-chip.state-unobserved-cloud { color: var(--muted); border-color: var(--border2); font-style: italic; }
+.state-chip.state-unknown { color: var(--muted); border-color: var(--border2); font-style: italic; }
+
+/* ---- Q2 needs-me cards ---- */
+.needs-me-card {
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 8px;
+  background: var(--panel2);
+}
+.needs-me-card:last-child { margin-bottom: 0; }
+.nm-head { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
+/* R17 deliverable 7 (audit F9): trailing action, right-aligned in the row
+   (same pattern as .why-btn's own margin-left: auto). */
+.nm-open-inbox-btn { margin-left: auto; }
+.chip.section-chip { color: var(--accent); border-color: var(--accent); } /* R16 row 79: blue = links only */
+.nm-session { font-size: 11px; color: var(--muted); }
+.nm-session.session-gone { color: var(--warn); font-style: italic; }
+.nm-text { font-size: 13px; white-space: pre-wrap; margin-bottom: 6px; }
+.nm-links { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Cold-reader lint (constitution §3 amendment 53d3bee): a degraded-card
+   notice, never a rejection — text+color per the a11y baseline above, same
+   pattern as .health-gate-flag's waiver-dominant chip. */
+.nm-lint-warning { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+.nm-lint-chip { color: var(--warn); border-color: var(--warn); font-size: 11px; }
+.nm-lint-detail { font-size: 11px; color: var(--muted); font-style: italic; }
+
+/* ---- Q3 shipped ---- */
+.last-look-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--muted);
+}
+.shipped-list { list-style: none; margin: 0; padding: 0; }
+.shipped-list li { padding: 3px 0; font-size: 13px; }
+.shipped-subject { color: var(--muted); }
+.shipped-decision { color: var(--accent); } /* R16 row 79: blue = links only */
+.shipped-failures { margin-top: 6px; color: var(--err); font-size: 12px; }
+
+/* ---- Q4 health ---- */
+.health-verdict { display: flex; align-items: center; gap: 8px; }
+.doctor-chip.doctor-green { color: var(--ok); border-color: var(--ok); }
+.doctor-chip.doctor-red { color: var(--interrupt); border-color: var(--interrupt); font-weight: 700; }
+.doctor-chip.doctor-unknown { color: var(--muted); border-color: var(--border2); }
+.health-cache-age { font-size: 12px; color: var(--muted); }
+
+/* Per-gate expandable table (O.4-fix1 item 1). One <details> per gate —
+   natively keyboard-operable, matches the interaction-table amendment 8
+   "gate name click -> its 7d numbers" rule without any custom JS focus
+   handling. Waiver-dominant gates get the ONE --interrupt accent + a
+   text label (never color-only). */
+.health-gate-count { font-size: 11px; color: var(--muted); margin: 8px 0 4px; }
+.health-gate-list { display: flex; flex-direction: column; gap: 4px; }
+.health-gate-row {
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 4px 8px;
+  background: var(--panel2);
+}
+.health-gate-row.waiver-dominant { border-color: var(--interrupt); }
+.health-gate-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  list-style: none;
+}
+.health-gate-summary::-webkit-details-marker { display: none; }
+.health-gate-name { font-family: monospace; }
+.health-gate-flag {
+  color: var(--interrupt);
+  border-color: var(--interrupt);
+  font-size: 10px;
+}
+.health-gate-numbers { font-size: 11px; color: var(--muted); margin-top: 4px; font-family: monospace; }
+
+/* ---- Q5 costs / backlog strips ---- */
+.costs-row, .backlog-row { font-size: 13px; margin-bottom: 4px; }
+.costs-note { font-size: 11px; color: var(--muted); font-style: italic; }
+
+/* Per-session rows (O.4-fix1 item 2 — the oracle's 10-session set was
+   rendered as 0 rows). Compact table: session id + totals + an honest
+   transcript_status chip (text + color). */
+.costs-session-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.costs-session-row td { padding: 3px 4px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+.costs-session-id { font-family: monospace; word-break: break-all; }
+.costs-session-totals { color: var(--muted); white-space: nowrap; }
+.costs-session-status { font-size: 10px; }
+.costs-status-fresh { color: var(--ok); border-color: var(--ok); }
+.costs-status-stale { color: var(--warn); border-color: var(--warn); }
+.costs-status-partial { color: var(--warn); border-color: var(--warn); }
+.costs-status-unknown { color: var(--muted); border-color: var(--border2); font-style: italic; }
+
+/* ---- link resolver (ux-review amendment 6) ---- */
+.link-resolved a { color: var(--info); }
+.sha { font-family: monospace; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+.copy-btn { margin-left: 4px; }
+.link-path-btn { text-align: left; }
+
+/* ---- modal scaffolding (why-drawer, docs) ----
+   [hidden] MUST win over .modal-card's own `display: flex` — otherwise the
+   element stays visually flex-rendered despite the `hidden` DOM attribute
+   (this is the exact "[hidden] override" CSS footgun class the pre-O.4 GUI
+   had already been bitten by once; verified live during O.4 browser
+   livesmoke: docModal/whyDrawer both computed display:flex while
+   hidden===true in the DOM before this rule was added). Put the [hidden]
+   selector AFTER .modal-card in source order with matching specificity
+   (attribute selector on the same class) so the cascade favors it whenever
+   both apply. */
+.modal-scrim {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 40;
+}
+.modal-scrim[hidden] { display: none; }
+.modal-card {
+  position: fixed;
+  top: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(720px, 92vw);
+  max-height: 84vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 10px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+}
+.modal-card[hidden] { display: none; }
+.dm-head {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel2);
+}
+.dm-title { font-weight: 600; }
+.dm-close { min-width: 28px; min-height: 28px; }
+.dm-body { padding: 12px 14px; overflow: auto; }
+
+.why-chain { width: 100%; border-collapse: collapse; font-size: 12px; font-family: monospace; }
+.why-chain td { border-bottom: 1px solid var(--border); padding: 4px 6px; vertical-align: top; }
+.why-transcript-note { margin-top: 8px; color: var(--muted); font-size: 12px; font-style: italic; }
+/* O.4-fix1 item 3: the mandated one-line verdict (what blocked, which
+   state it read, what happened next). */
+.why-verdict {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  background: var(--panel2);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* ---- docs browser (kept) ---- */
+#docsPanel {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(360px, 90vw);
+  background: var(--panel); border-left: 1px solid var(--border2); z-index: 45;
+  display: flex; flex-direction: column;
+}
+#docsPanel[hidden] { display: none; } /* same [hidden]-override footgun as .modal-card, above */
+.dp-head { display: flex; gap: 8px; padding: 10px; border-bottom: 1px solid var(--border); }
+.dp-head input { flex: 1; background: var(--bg); border: 1px solid var(--border2); color: var(--text); border-radius: 6px; padding: 6px 8px; }
+.dp-body { overflow: auto; padding: 6px; }
+.doc-row { display: block; width: 100%; text-align: left; margin-bottom: 4px; font-size: 12px; }
+.doc-row-empty { color: var(--muted); font-size: 12px; padding: 6px 2px; }
+.doc-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel2); }
+.doc-title { flex: 1; font-weight: 600; font-size: 13px; }
+/* Round 16 deliverable 2 (operator: "the plans are now displaying in a
+   popup but it's still not rendering the formatting"): #docBody is the
+   ONE shared viewer both the plan-doc modal (roadmap.js#openPlanDocModal)
+   and this Docs panel (app.js#openDoc) render into — a real markdown->HTML
+   render (web/md-render.js#renderMarkdown) replaces the raw
+   white-space:pre-wrap/monospace text dump. Monospace now scopes to code
+   only (.md-code / inline <code>), not the whole document. */
+.doc-body { padding: 12px 14px; font-size: 13px; line-height: 1.6; overflow: auto; }
+.doc-body h1, .doc-body h2, .doc-body h3, .doc-body h4, .doc-body h5, .doc-body h6 {
+  margin: 0.6em 0 0.3em; line-height: 1.3;
+}
+.doc-body h1 { font-size: 20px; }
+.doc-body h2 { font-size: 17px; }
+.doc-body h3 { font-size: 15px; }
+.doc-body h4, .doc-body h5, .doc-body h6 { font-size: 13px; }
+.doc-body p { margin: 0.5em 0; }
+.doc-body strong { font-weight: 700; }
+.doc-body em { font-style: italic; }
+.doc-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em; background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 3px; padding: 0 4px;
+}
+.doc-body pre.md-code {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px; overflow: auto; margin: 0.5em 0;
+}
+.doc-body pre.md-code code { background: none; border: none; padding: 0; }
+.doc-body ul, .doc-body ol { margin: 0.4em 0; padding-left: 22px; }
+.doc-body li { margin: 2px 0; }
+.doc-body li.md-task { list-style: none; margin-left: -18px; }
+.doc-body .md-cb { display: inline-block; width: 1.1em; }
+.doc-body li.md-task-done { color: var(--muted); }
+.doc-body blockquote {
+  margin: 0.5em 0; padding: 2px 10px; border-left: 3px solid var(--border2); color: var(--muted);
+}
+.doc-body table.md-table { border-collapse: collapse; margin: 0.6em 0; font-size: 12px; }
+.doc-body table.md-table th, .doc-body table.md-table td {
+  border: 1px solid var(--border); padding: 3px 8px; text-align: left;
+}
+.doc-body table.md-table th { background: var(--panel2); }
+/* the ONE real link colour in this surface; a repo-relative reference that
+   isn't a live href renders as inert, muted text — never blue (Round 16's
+   own "blue = link only" rule, applied here too). */
+.doc-body a { color: var(--info); }
+.doc-body .md-doc-link { color: var(--muted); border-bottom: 1px dotted var(--border2); }
+
+/* ---- responsive: single column below ~800px, Q2 first (already is via
+   grid-template-areas source order) — ux-review amendment 13 (polish) ---- */
+@media (max-width: 800px) {
+  #cockpit {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "needsme"
+      "status"
+      "health"
+      "costs"
+      "shipped"
+      "backlog";
+  }
+  header { flex-wrap: wrap; }
+}
+
+/* ---- text contrast / target size baseline (WCAG 2.2 AA, amendment 12) ---- */
+button, a, [role="button"] { min-height: 24px; }
+
+/* ============================================================
+   cockpit-roadmap-redesign Task 3 — Roadmap tree view + navigation shell.
+   Palette discipline unchanged: --interrupt is spent ONLY on
+   interrupt-worthy classes (stalled/crashed roll-ups + the stalled kanban
+   column); every chip is text + color, never color-only (C9 / WCAG 1.4.1).
+   ============================================================ */
+
+/* ---- roadmap toolbar (static DOM — filter text + toggles survive the
+   view's state-preserving re-renders trivially, C7) ---- */
+.roadmap-section { max-width: 1400px; margin: 12px auto 24px; }
+.roadmap-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+#roadmapFilter {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 24px;
+  min-width: 220px;
+}
+.rm-project-chips { display: flex; gap: 4px; flex-wrap: wrap; }
+.chip.rm-project-chip { cursor: pointer; color: var(--muted); border-color: var(--border2); }
+.chip.rm-project-chip[aria-pressed="true"] { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+
+/* ---- tree nodes ---- */
+.rm-tree { padding: 4px 0; }
+/* ROUND 13 fix 5 (operator: "child items are not visibly obvious
+   children... more space between child tasks and their own parent than
+   between them and the next plan"): the connecting rail now READS as
+   hanging off the parent — a touch darker/thicker for a TASK node than a
+   PLAN node, so the eye can tell "this line belongs to what's above it"
+   at a glance, not just "every node has an identical rail". */
+.rm-node { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+.rm-kind-task.rm-node { border-left-color: var(--border2); }
+/* ---- Round 12 (ux-ia-auditor live audit, item 1/sev 3): the row was
+   `display:flex; flex-wrap:wrap`, so optional content (a project chip here,
+   a marker there) shifted every LATER element — measured live across 16
+   real rows: the status chip started anywhere in x∈[465,757] (292px
+   swing), the fraction in x∈[628,974] (346px swing). A CSS grid with a
+   FIXED column per role fixes this by construction, PROVIDED every row
+   appends exactly one (possibly-empty) cell per column — see roadmap.js's
+   titleCell/taskSpanCell/fractionCellForRow/exceptionGlyphCell/
+   exceptionLabelCell, which do exactly that.
+   ROUND 13 fix 1 (operator walkthrough, live-measured): the dedicated
+   marker column (56px + its own 10px gap either side) was EMPTY on
+   105/112 real rows (93.75%) — a pure dead zone between the chevron and
+   the title on nearly every row. RETIRED; markerChips(item) now renders
+   inside the title cell (roadmap.js). Columns, left to right:
+     1. 16px  — disclosure chevron
+     2. 1fr   — title (state-colored, item 5) + transient marker chips
+                (new / added-mid-build) + rare reference-lifecycle badges
+                (dangling-parent/cycle)
+     3. 190px — the task-span text (item 2 + Round 13 fix 6: "T3 next" /
+                "all done", the done-half retired — the bar already says
+                how much) OR a master's two labeled fractions (spans into
+                column 4) OR, for a TASK row, "next"/"running" (fix 4)
+     4. 76px  — the progress bar + "n/m" fraction text (tabular-nums)
+     5. 46px  — the EXCEPTION glyph (item 4) — empty for the three
+                DERIVABLE states, a small icon for the three the fraction
+                cannot derive (stalled/merged-unverified/unknown)
+     6. 132px — the EXCEPTION label chip (loud, full text) + any collapsed-
+                descendant roll-up badges (C1) ---- */
+.rm-node > summary.rm-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0,1fr) 190px 76px 46px 132px;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 3px 4px;
+  min-height: 24px;
+}
+.rm-node > summary.rm-row:hover { background: var(--panel2); }
+.rm-cell { min-width: 0; }
+.rm-cell-exglyph { overflow: hidden; }
+.rm-cell-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rm-title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* Round 13 fix 5: tasks read visibly SMALLER than the plan that owns them
+   (12px vs the plan's 14px) — a size ladder on top of the existing
+   indentation + rail, so "this is a child" is legible even before reading
+   a single word of the title. */
+.rm-kind-task .rm-title { font-weight: 400; font-size: 12px; }
+/* Round 13 fix 4: the leading done-glyph on a completed TASK row — text
+   (not color-only, WCAG 1.4.1), inherits the row's rm-title-complete dim
+   colour so it reads as PART of the dimmed line, not a loud accent. */
+.rm-task-check { color: var(--done); }
+.rm-cell-taskspan {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Round 13 fix 4: the per-task "next"/"running" affordance — text +
+   weight/colour, never colour-only. "next" is a POSITIONAL claim (weight
+   only, same neutral the column already uses); "running" is a claim
+   backed by a REAL live_sessions entry on this exact task, so it earns the
+   one loud colour. Round 15 (operator, twice: "the running indicator is
+   small and not obvious"): promoted to a real `chip` (bordered pill,
+   background tint — the SAME loud treatment every other status signal in
+   this view uses) instead of plain inline text, and bumped a notch above
+   the base chip's 11px. ROUND 16 (operator: "let's use green instead of
+   blue for the running items because blue looks like links"): --info ->
+   --running (#4ade80, 8.42:1 on --panel — see the variable's own note). */
+.rm-task-next { font-weight: 600; color: var(--text); }
+.chip.rm-task-running {
+  font-weight: 700; font-size: 12px; color: var(--running); border-color: var(--running);
+  background: color-mix(in srgb, var(--running) 18%, transparent);
+}
+/* the plan-row "<id> running" token (deriveTaskSpanLabel) — same colour as
+   the leaf chip above and the running-green title, text-based (the word
+   "running" is the non-colour carrier, WCAG 1.4.1). */
+.rm-taskspan-running { color: var(--running); font-weight: 600; }
+.rm-cell-exglyph { font-size: 13px; text-align: center; }
+.rm-cell-exception { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.rm-cell-mastersummary { grid-column: 3 / 5; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* ---- six states, TITLE-carried (item 5 — recession not emphasis: the
+   eye lands on the title, leftmost + largest, not on an 11px chip at the
+   far right). LUMINANCE for the two common/normal-traffic states + a
+   neutral for complete; HUE reserved for the three exceptions — with 4
+   in-progress / 10 not-started measured live, hue-coding the common case
+   would spend the scarce colour budget on the unremarkable (app.css:7-9's
+   own discipline). Every ratio measured against the REAL row background,
+   --panel #1f2937 (rows are transparent over the pane).
+   ROUND 13 fix 2 (operator, Round 12 walkthrough — INVERTED from Round 12:
+   "It's the completed items that should be dimmed gray, not the unstarted
+   items"): not-started is now NORMAL weight/colour (var(--text), the
+   body's own default reading colour, 11.86:1 on --panel) — it is complete
+   that stays the ONE dim state (var(--done), unchanged from Round 12,
+   4.55:1). in-progress/stalled/merged-unverified/unknown are the loud
+   exceptions and are UNCHANGED by this fix. ---- */
+/* Round 15 (operator, TWICE now — Round 12 asked for this exact thing and
+   it did not land): in-progress titles get one loud colour, not merely
+   brighter white — the same hue every other "active right now" signal in
+   this view uses (leaf running chip, taskspan token, roll-up badge), so a
+   bright title reads as PART OF ONE running-state language instead of a
+   shade of the neutral ladder.
+   ROUND 16 (operator, live walkthrough: "let's use green instead of blue
+   for the running items because blue looks like links"): --info (#60a5fa,
+   5.9:1) -> --running (#4ade80, 8.42:1 on --panel #1f2937) — comfortably
+   above the 4.5:1 body-text floor, let alone the 3:1 large/bold-text floor
+   this is set at (600 weight). --info is now reserved EXCLUSIVELY for real
+   interactive links across this view (the operator's own stated reason). */
+.rm-title.rm-title-not-started { color: var(--text); font-weight: 400; }                /* 11.86:1 */
+/* Operator 2026-07-30: GREEN means ACTIVELY RUNNING, nothing else — an
+   in-progress-but-idle plan title must not read as live. Accent (violet)
+   keeps row 69's "distinct from white" requirement without lying green. */
+.rm-title.rm-title-in-progress { color: var(--accent); font-weight: 600; }
+.rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note; the ONLY dim state now */
+.rm-title.rm-title-stalled { color: var(--interrupt); font-weight: 600; }               /* 5.45:1 */
+.rm-title.rm-title-merged-unverified { color: var(--warn); font-weight: 600; }          /* 8.79:1 */
+.rm-title.rm-title-unknown { color: var(--warn); font-weight: 400; border-bottom: 1px dashed var(--warn); } /* 8.79:1 + dashed, never color-only */
+/* Round 13 fix 5: .rm-children carries BOTH the indentation AND the
+   spacing ladder — a small top margin (tight parent->first-child) and a
+   LARGER bottom margin (breathing room before the NEXT sibling row
+   starts). An OPEN node's own immediate children also get a faint tint
+   distinct from the project-group tint (fix 3) — a visually nested "card
+   within a card" so an expanded subtree reads as one contained region. */
+.rm-children { margin: 2px 0 12px 14px; }
+.rm-node[open] > .rm-children {
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 4px;
+  padding: 0 4px 4px 2px; /* top trimmed to 0 — the wrapper's own 2px margin already supplies it */
+}
+/* Round 13 fix 5: padding trimmed 4/6px -> 2/2px (top/bottom) — one more
+   cut at the live-measured parent->first-child gap's actual source,
+   alongside .rm-plan-link-row's own trimmed margin below. ROUND 16: the
+   title-edit/rank-button chrome that used to sit here (a hidden-until-
+   hover row reserving 24px of block-height even while invisible — see the
+   retired comment this replaced) is GONE entirely (deliverables 3/4: the
+   buttons caused the exact "GUI jumps around" the operator complained
+   about, and plan-title editing is removed outright) — the parent->child
+   gap is now governed by this padding + .rm-children's own 2px top margin
+   alone, no reclaim hack needed. */
+.rm-drill { display: none; padding: 2px 8px 2px 20px; font-size: 12px; color: var(--muted); }
+.rm-node[open] > .rm-drill { display: block; }
+.rm-drill-label { font-weight: 600; }
+.rm-from-requests, .rm-status-reason, .rm-rank-row { margin: 3px 0; }
+
+/* ---- round-6 gap 1/7A/7B/7B-i: task-leaf structure as LISTS, never a
+   paragraph wall — lead sentences, sub-bullet subtasks, live agent leaves.
+   All compact, scannable, indented one level under the drill-down. ---- */
+.rm-lead-points, .rm-subtasks, .rm-subtask-body, .rm-agents {
+  margin: 2px 0 4px 0;
+  padding-left: 18px;
+}
+.rm-lead-points > li, .rm-subtasks > li, .rm-agents > li { margin: 1px 0; }
+.rm-subtask-title { font-weight: 600; }
+.rm-subtask-body { font-size: 11px; color: var(--muted); }
+.rm-agent { display: flex; align-items: baseline; gap: 6px; list-style: none; margin-left: -18px; }
+.rm-agent-glyph { font-size: 10px; }
+.rm-agent-running .rm-agent-glyph { color: var(--ok); }
+.rm-agent-stalled .rm-agent-glyph { color: var(--interrupt); }
+.rm-agent-unknown .rm-agent-glyph { color: var(--warn); }
+.rm-agent-text { font-size: 12px; }
+
+/* ---- ROUND 16 deliverables 3/4/5 — the hover-reveal edit/rank-button
+   chrome that used to live here (round-6 gap 4) is RETIRED outright: the
+   operator's own words, "I don't like the buttons appearing below the
+   plan doc links; they force the GUI underneath to jump around
+   awkwardly, and they're also unnecessary... I don't see any need to
+   edit the name of the plan titles." Plan titles come from the H1, full
+   stop — no edit affordance anywhere in this view. Build-order reordering
+   is now DRAG-AND-DROP on the row's own grip handle (below), backed by
+   the SAME /api/roadmap/rank endpoint the retired buttons called.
+   WCAG 2.2 2.5.7 (drag must not be the ONLY operable path) is held by a
+   NON-VISUAL keyboard path: Cmd/Ctrl+ArrowUp/Down on a focused plan row
+   fires the identical move — no second, dedicated visible control, so
+   there is no chrome row left to jump the layout around. ---- */
+.rm-drag-handle {
+  display: inline-block;
+  width: 14px;
+  flex: 0 0 auto;
+  cursor: grab;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+  opacity: 0.55;
+}
+.rm-drag-handle:hover, .rm-node.rm-dragging .rm-drag-handle { opacity: 1; }
+.rm-node.rm-dragging { opacity: 0.5; }
+/* drop indicator: a bright line on the edge the dragged row would land
+   against — never colour-only (the cursor position + browser's own drag
+   affordance carry the same information; this is reinforcement). */
+.rm-row.rm-drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.rm-row.rm-drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
+
+/* ---- round-6 gap 6: sibling PLAN nodes under an intent render as a
+   connected series of numbered "phases" (the operator's own mental model —
+   "phase one through four"). The connector line is ADDITIVE to the "Phase
+   N of M" TEXT label, never color/line-only.
+   ROUND 13 fix 5 gave this a 30px bottom margin + a DELIBERATE break in
+   the connector (the rationale: "these are separate plans"). ROUND 16
+   REVERSES that call (operator, live walkthrough, verbatim): "I don't
+   like the spaces between the plans. It looks awkward with the spacing
+   between the nesting lines" — the Round 13 break is exactly what reads
+   as awkward once seen live: a 24px stretch of pure blank space with NO
+   rail, between two rails that each stop short of reaching it. Fix:
+   the margin shrinks to a single-digit gap BEYOND the row's own 3px
+   padding (.rm-row's `padding: 3px 4px` — see below), and the connector's
+   `bottom` offset is widened so the SAME rail now reaches all the way to
+   the next step's own line start — one continuous filament down the
+   whole group, never a visible break. The parent->child proximity law
+   (child gap < inter-plan gap) still holds: removing the title-edit/
+   rank-button chrome entirely (Round 16 deliverables 3/4 — see the
+   .rm-drag-handle/.rm-drop-before/.rm-drop-after rules above, which
+   replace it) trims the parent->first-child gap even further than
+   Round 13's own fix did, so the ladder (child gap ~4-6px < inter-plan
+   gap 8px) is wider than before, not narrower, despite the inter-plan gap
+   itself shrinking. Live-measured before/after via getBoundingClientRect
+   at 1400px: see the Round 16 evidence entry in the plan's Decisions Log. */
+.rm-phase-step { position: relative; padding-left: 16px; margin: 2px 0 8px; }
+.rm-phase-step::before {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 18px;
+  bottom: -26px; /* reaches the next step's own connector start (8px gap + its 18px top offset) — continuous, not broken */
+  width: 2px;
+  background: var(--border2);
+}
+.rm-phase-step:last-child::before { display: none; }
+.rm-phase-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-bottom: 1px;
+}
+
+/* ---- six-value status chips (C5): text + color, never color-only.
+   Round 12 item 4 (operator: "showing the 'in progress'/'complete' status
+   next to the progress bar is also redundant"): the chip is now the
+   EXCEPTION column ONLY — roadmap.js's statusChip() returns null for the
+   three DERIVABLE states (not-started/complete/in-progress, which the
+   fraction + task-span text already say), so only stalled/merged-
+   unverified/unknown ever reach these rules. .rm-status-not-started/
+   -in-progress/-complete are dead CSS today (kept, harmless, in case a
+   future caller — e.g. a non-grid surface — reuses the chip builder
+   without the exception gate) but never render inside the tree row.
+   Round 16: swept off --info along with every other non-link roadmap
+   signal (see --running's variable note) for the same consistency even
+   though this rule never renders live today. ---- */
+.chip.rm-status { white-space: nowrap; }
+.chip.rm-status-not-started { color: var(--muted); border-color: var(--border2); }
+/* Operator 2026-07-30: green = ACTIVELY RUNNING only — an idle in-progress
+   plan's status chip must not read live. Accent, matching the title ladder. */
+.chip.rm-status-in-progress { color: var(--accent); border-color: var(--accent); }
+.chip.rm-status-merged-unverified { color: var(--warn); border-color: var(--warn); }
+.chip.rm-status-complete { color: var(--done); border-color: var(--done); } /* retired --ok (green) — see --done's note */
+.chip.rm-status-stalled { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; cursor: pointer; }
+.chip.rm-status-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; cursor: pointer; }
+
+/* ---- progress: the bar NEVER travels without its "n/m" text. Round 12
+   item 1: tabular-nums so "5/6" and "12/14" align digit-for-digit down a
+   column of rows. Round 12 item 5: the track was --panel2 (#182230),
+   measured 1.09:1 against the real --panel background — effectively
+   invisible, so an EMPTY bar read as "no bar at all"; --border (#374151)
+   is the live-legible track. The fill is now STATUS-COLORED via the
+   rm-fill-<value> modifier (roadmap.js's progressNode) instead of one
+   static green for every state — see --done's note for why green is
+   retired from the roadmap entirely; this bar feeds BOTH the tree row
+   (column 5) and the kanban card, so the fix lands in both places at
+   once. ---- */
+.rm-progress { display: inline-flex; align-items: center; gap: 4px; width: 100%; overflow: hidden; }
+.rm-progress-bar {
+  display: inline-block;
+  flex: 0 0 28px;
+  width: 28px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  border: 1px solid var(--border2);
+  overflow: hidden;
+}
+.rm-progress-fill { display: block; height: 100%; background: var(--muted); }
+.rm-fill-not-started { background: var(--border2); }
+.rm-fill-in-progress { background: #38bdf8; } /* sky — 6.85:1, distinct from the retired --ok green */
+.rm-fill-complete { background: var(--done); }
+.rm-fill-stalled { background: var(--interrupt); }
+.rm-fill-merged-unverified { background: var(--warn); }
+.rm-fill-unknown { background: var(--warn); }
+.rm-progress-text { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* ---- roll-up badges (C1/R4): visible on COLLAPSED ancestors; when a
+   branch is open its children's own chips carry the signal, so the
+   parent's badges hide — an attention state is NEVER masked while
+   collapsed. ---- */
+.rm-rollups { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+details[open] > summary .rm-rollups { display: none; }
+.chip.rm-rollup-badge { cursor: pointer; }
+/* Round 15: "running" joins the roll-up badge machinery. ROUND 16
+   (operator: green not blue for running — see --running's variable
+   note): --info -> --running. */
+.chip.rm-rollup-running { color: var(--running); border-color: var(--running); font-weight: 600; }
+.chip.rm-rollup-waiting-on-you, .chip.rm-rollup-crashed { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; }
+.chip.rm-rollup-blocked-on, .chip.rm-rollup-limit-parked { color: var(--warn); border-color: var(--warn); }
+.chip.rm-rollup-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; }
+
+/* ---- markers (I1/I2): text markers, never color-only ---- */
+.rm-new-marker { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 3px; }
+/* Round 16 sweep: "added mid-build" is a novelty marker, not a running/
+   in-progress signal and not a link — --info -> --accent (the SAME hue
+   the sibling "new" marker just above already uses for "recently
+   changed," a more honest pairing than the retired blue). Blue (--info)
+   is now spent EXCLUSIVELY on real interactive links in this view. */
+.chip.rm-marker-midbuild { color: var(--accent); border-color: var(--accent); font-style: italic; }
+/* rm-completed-when RETIRED (Round 12 item 3): duplicated the status
+   chip's own "complete, 37h ago" text verbatim; the chip is gone for the
+   complete state too now (item 4), so there is nothing left to duplicate
+   and nothing to replace it with — the task-span text + fraction already
+   carry "how far through" without an age string. */
+/* ---- filter-match note (Round 12 item 8): surfaces WHICH descendant
+   task/plan matched a filter query, directly under the row that matched —
+   ALWAYS visible (not gated by [open], unlike .rm-drill) since the row
+   itself may still be collapsed. Round 16 sweep: non-interactive text, not
+   a link — --info -> --accent (same "worth noticing" hue as the markers
+   above; blue is reserved for real links now). ---- */
+.rm-filter-match-note { font-size: 11px; color: var(--accent); padding: 0 4px 4px 26px; }
+
+/* ---- completed aging roll-up rows ---- */
+.rm-completed-rollup { margin: 4px 0 4px 4px; border-left: 2px dotted var(--border); padding-left: 6px; }
+.rm-completed-rollup-summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 3px 4px; min-height: 24px; }
+
+/* ---- rank-move + override feedback (Round 16: the title-input styling
+   that used to live here is retired along with the edit affordance
+   itself — this element/CSS is gone, not merely unused, per deliverable
+   4). The feedback line is still shared by the merged-unverified override
+   button and the keyboard/drag reorder path below. ---- */
+.rm-edit-feedback { font-size: 12px; margin-top: 3px; }
+.rm-edit-feedback.rm-feedback-ok { color: var(--ok); }
+.rm-edit-feedback.rm-feedback-err { color: var(--err); }
+.rm-chore-note { font-size: 12px; color: var(--muted); padding: 6px 8px; }
+
+/* ---- kanban (I3): stalled column visually distinct (text label already
+   carries the state — the accent is additive, never the only cue) ---- */
+.rm-kanban { display: flex; gap: 10px; align-items: flex-start; overflow-x: auto; padding: 8px 4px; }
+.rm-kanban-col {
+  flex: 1 1 200px;
+  min-width: 190px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px;
+}
+.rm-kanban-col-head { font-size: 12px; font-weight: 700; color: var(--muted); padding: 2px 4px 6px; }
+.rm-kanban-col-stalled { border-color: var(--interrupt); }
+.rm-kanban-col-stalled .rm-kanban-col-head { color: var(--interrupt); }
+.rm-kanban-col-unknown, .rm-kanban-col-merged-unverified { border-style: dashed; }
+.rm-card {
+  background: var(--panel);
+  border: 1px solid var(--border2);
+  border-radius: 6px;
+  padding: 6px 8px;
+  margin-bottom: 6px;
+}
+.rm-card-title { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+.rm-card-chips { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+.rm-kanban-empty { font-size: 11px; }
+
+/* ---- landing state (C2): the visible highlight + return affordance ---- */
+.landing-highlight {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+.landing-return { margin-left: 8px; }
+.miss-banner {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--warn);
+  border-radius: 6px;
+  margin: 8px 12px;
+  font-size: 13px;
+}
+.miss-banner[hidden] { display: none; } /* the R21 [hidden]-override class lock */
+
+/* ---- inbox (interim, task 3) ---- */
+.inbox-section { max-width: 1000px; margin: 12px auto 24px; }
+.inbox-item { border-bottom: 1px solid var(--border); padding: 8px 4px; }
+.inbox-item-head { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); }
+.chip.inbox-type-chip { color: var(--warn); border-color: var(--warn); }
+.inbox-item-text { margin: 4px 0; }
+.inbox-win { color: var(--ok); }
+
+/* ============================================================
+   cockpit-roadmap-redesign Task 5 — Requests ledger view. Same palette
+   discipline as the Roadmap tree (Task 3): every chip is text + color,
+   never color-only (C9 / WCAG 1.4.1); no new accent introduced.
+   ============================================================ */
+.requests-ledger-section { max-width: 1200px; margin: 12px auto 16px; }
+.requests-ledger-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+#requestsFilter {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 4px 8px;
+  min-height: 24px;
+  min-width: 280px;
+}
+.rl-section-head { font-size: 12px; font-weight: 700; color: var(--muted); padding: 8px 4px 4px; }
+
+/* ---- rows (I6 timeline anatomy): nested <details>/<summary> (C9) ---- */
+.rl-row { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+.rl-row > summary.rl-row-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  cursor: pointer;
+  padding: 3px 4px;
+  min-height: 24px;
+}
+.rl-row > summary.rl-row-summary:hover { background: var(--panel2); }
+.rl-title { font-weight: 600; }
+.rl-recency-inline { font-size: 11px; color: var(--muted); }
+.rl-drill { display: none; padding: 4px 8px 6px 20px; font-size: 12px; color: var(--muted); }
+.rl-row[open] > .rl-drill { display: block; }
+.rl-title-edit, .rl-recency, .rl-subhead { margin: 4px 0; }
+.rl-subhead { font-weight: 600; color: var(--text); }
+/* R17 deliverable 6 (audit F3): the ledger's missing exit verb. */
+.rl-actions { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+/* R17 deliverable 2b (audit F4b): a collapsed run of identical timeline
+   events — same <details> disclosure convention as the app's other
+   roll-ups (rm-completed-rollup etc.), dimmer text (it's noise, not
+   content) until expanded. */
+.rl-collapsed-run { margin: 2px 0; }
+.rl-collapsed-run-summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.rl-collapsed-run-list { list-style: none; margin: 2px 0 2px 14px; padding: 0; border-left: 1px dotted var(--border2); }
+
+/* ---- current-state chip (collapsed anatomy): text + color, never color-only ---- */
+.chip.rl-state-chip { white-space: nowrap; }
+/* R16 row 79: blue is reserved exclusively for links — open-state uses accent */
+.chip.rl-state-chip-open { color: var(--accent); border-color: var(--accent); }
+.chip.rl-state-chip-promoted { color: var(--ok); border-color: var(--ok); }
+.chip.rl-state-chip-done { color: var(--ok); border-color: var(--ok); }
+.chip.rl-state-chip-dismissed { color: var(--muted); border-color: var(--border2); }
+.chip.rl-state-chip-merged { color: var(--muted); border-color: var(--border2); font-style: italic; }
+
+/* ---- closed requests: age-grouped, default-collapsed (C8 findability) ---- */
+.rl-age-group { margin: 4px 0 4px 4px; border-left: 2px dotted var(--border); padding-left: 6px; }
+.rl-age-group-summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 3px 4px; min-height: 24px; }
+
+/* ---- title edit ---- */
+.rl-title-input {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 240px;
+}
+.rl-edit-feedback { font-size: 12px; margin-top: 3px; }
+.rl-edit-feedback.rl-feedback-ok { color: var(--ok); }
+.rl-edit-feedback.rl-feedback-err { color: var(--err); }
+
+/* ---- verbatim reveal ---- */
+.rl-verbatim-body { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.rl-verbatim-ref { font-family: monospace; font-size: 11px; }
+
+/* ---- evolution timeline (oldest-first; origin pinned first) ---- */
+.rl-timeline-list { list-style: none; margin: 4px 0; padding: 0; }
+.rl-timeline-event {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 3px 0;
+  border-bottom: 1px dotted var(--border2);
+}
+.rl-event-text { flex: 1 1 auto; }
+.rl-event-age { font-size: 11px; color: var(--muted); }
+.rl-event-origin .rl-event-text { font-weight: 600; }
+.rl-event-promoted .rl-event-text { color: var(--ok); font-weight: 600; }
+/* R16 row 79: blue is reserved exclusively for links — amendments use accent */
+.rl-event-amendment .rl-event-text { color: var(--accent); font-style: italic; }
+.rl-event-feedback { font-size: 11px; }
+.rl-event-feedback.rl-feedback-ok { color: var(--ok); }
+.rl-event-feedback.rl-feedback-err { color: var(--err); }
+
+/* ============================================================
+   INBOX (cockpit-roadmap-redesign Task 4). Reuses .inbox-section/
+   .inbox-win from task 3's interim shell markup (index.html keeps that
+   markup; only the JS behind it changed — see web/inbox.js); everything
+   below is NEW, prefixed .ib-* (mirrors the .rl-*/.rm-* per-task section
+   convention already established for the Requests/Roadmap views).
+   ============================================================ */
+.ib-section-head { font-size: 12px; font-weight: 700; color: var(--muted); padding: 8px 4px 4px; }
+.ib-quarantine-head { color: var(--interrupt); } /* the ONE interrupt-worthy accent (system-failure framing, I4) */
+
+/* ---- collapsed row anatomy (I5) ---- */
+.ib-row { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+.ib-row-quarantined { border-left-color: var(--interrupt); }
+.ib-row > summary.ib-row-summary {
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 5px 4px;
+  min-height: 24px;
+  list-style: none;
+}
+.ib-row > summary.ib-row-summary::-webkit-details-marker { display: none; }
+.ib-row > summary.ib-row-summary:hover { background: var(--panel2); }
+.ib-type-glyph { font-size: 14px; }
+.ib-ask-text { flex: 1 1 auto; font-weight: 600; }
+.ib-source-chip { font-size: 11px; color: var(--muted); background: var(--panel2); border-radius: 3px; padding: 1px 6px; }
+.ib-age { font-size: 11px; color: var(--muted); }
+.ib-blocks-chip { color: var(--interrupt); border-color: var(--interrupt); }
+
+/* ---- expanded anatomy (constitution §3 compact format) ---- */
+.ib-drill { display: none; padding: 4px 8px 8px 20px; font-size: 12px; color: var(--muted); }
+.ib-row[open] > .ib-drill { display: block; }
+.ib-anatomy-head { font-weight: 700; color: var(--text); font-size: 13px; margin-bottom: 4px; }
+.ib-context { margin: 4px 0; }
+.ib-context-line { margin: 2px 0; }
+.ib-options-table { border-collapse: collapse; margin: 6px 0; font-size: 12px; }
+.ib-options-table th, .ib-options-table td { border: 1px solid var(--border2); padding: 3px 8px; text-align: left; }
+.ib-options-table th { color: var(--muted); font-weight: 600; }
+.ib-my-pick { margin: 4px 0; font-weight: 600; color: var(--text); }
+.ib-context-more { margin: 2px 0; color: var(--muted); font-style: italic; }
+
+/* ---- links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01) ---- */
+.ib-links { margin: 6px 0; }
+.ib-drill-label { font-weight: 600; }
+.ib-link-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0; word-break: break-all; }
+.ib-link-row a { color: var(--info); }
+
+/* ---- reply (the ANSWER lifecycle verb, C3a — pointer + copyable stub) ---- */
+.ib-reply { margin: 6px 0; }
+.ib-reply-channel { font-weight: 600; color: var(--text); margin-bottom: 3px; }
+.ib-reply-with { color: var(--muted); margin-bottom: 3px; }
+.ib-reply-stub-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.ib-reply-stub-input {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 280px;
+  flex: 1 1 auto;
+}
+
+/* ---- quarantine-only anatomy (I4/A8 — system-failure framing) ---- */
+.ib-quarantine-extra { margin: 6px 0; border-left: 2px dotted var(--interrupt); padding-left: 8px; }
+.ib-quarantine-framing { color: var(--interrupt); font-weight: 600; margin-bottom: 4px; }
+.ib-lint-reasons { margin: 4px 0; padding-left: 18px; }
+.ib-lint-reasons li { margin: 2px 0; }
+.ib-defect-line { color: var(--muted); margin: 4px 0; }
+.ib-open-session-row { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin: 4px 0; }
+.ib-resume-cmd-input {
+  background: var(--panel2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  font-family: monospace;
+  border-radius: 4px;
+  padding: 3px 6px;
+  min-width: 240px;
+}
+
+/* ---- actions + feedback ---- */
+.ib-actions { margin: 6px 0; }
+.ib-edit-feedback { font-size: 12px; margin-top: 3px; }
+.ib-edit-feedback.ib-feedback-ok { color: var(--ok); }
+.ib-edit-feedback.ib-feedback-err { color: var(--err); }
+
+/* ---- R17 deliverable 2 (audit F1 — the operator's own top complaint:
+   "it's not clear where the command begins and ends") — shared fenced-
+   command chip (web/command-render.js). Generalizes the ONE surface that
+   already got this right (.ib-resume-cmd-input above: readonly monospace
+   input + Copy button) into a single reusable pattern: a monospace <code>
+   + an inline Copy button, visually distinct from surrounding prose so a
+   command's start/end is never ambiguous. .cat-line is the per-line
+   wrapper renderCommandAwareText() emits (one per input line — narrative
+   prose lines have no chip at all, only a genuinely-detected command). ---- */
+.cat-line { margin: 1px 0; }
+.cmd-fence {
+  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 4px; padding: 2px 4px; margin: 1px 0;
+}
+.cmd-fence-code { font-family: monospace; font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-all; }
+.cmd-copy-btn {
+  font-size: 11px; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid var(--border2); background: var(--panel); color: var(--text); cursor: pointer;
+}
+.cmd-copy-btn:hover { background: var(--panel2); }
+
+/* ---- below-the-fold raw verbatim + session lineage ---- */
+.ib-raw-details { margin-top: 6px; }
+.ib-raw-body { padding: 4px 0 0 4px; }
+.ib-raw-text { white-space: pre-wrap; font-family: monospace; font-size: 11px; background: var(--panel2); padding: 6px; border-radius: 4px; margin: 4px 0; }
+.ib-raw-meta { font-size: 11px; color: var(--muted); }
+
+/* ---- "My items" (cockpit-roadmap-redesign Task 8 item 5 / A10) — the
+   retired standalone My-To-Do pane's replacement, as a third section below
+   the two above. Reuses the EXISTING generic .todo-* classes (todo-item,
+   todo-checkbox, todo-add-form, etc. — defined earlier in this file, never
+   scoped to the now-removed #todoSection) so no new item-row styling is
+   needed; only the section wrapper itself is new, visually separated the
+   same way .ask-completed-group already separates its own trailing group. */
+.ib-my-items-wrap { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--border); }
+
+/* ---- Round 9 (operator audit 2026-07-23) ---- */
+/* R9-2: project group — a visible header naming what the phases belong to.
+   ROUND 13 fix 3 (operator: "I still don't see how all these plans are
+   grouped together" — the header floated above an unbounded list): a
+   visible CONTAINER — left rail + a faint background tint — now spans
+   every plan row in the group. Survives filtering for free: renderTree
+   re-groups the already-FILTERED set on every render (applyFilters runs
+   first), so this wrapper just as reliably encloses whatever's left, even
+   down to a single row; nothing here is gated on filter state. The
+   Shipped group gets the SAME treatment, dimmer — see .rm-shipped-group
+   below. */
+.rm-project-group {
+  margin: 10px 0 14px;
+  border-left: 2px solid var(--border2);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  padding: 6px 10px 10px;
+}
+.rm-project-group-head {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  padding: 0 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+}
+/* R9-3: per-item project tag (text chip, never color-only). */
+.rm-project-tag { font-size: 10px; opacity: 0.75; }
+/* R17 Round 17 deliverable 4 (operator 2026-07-30, decision A): top-level
+   display groups (Neural Lace / Pocket Technician / Personal / any
+   '(ungrouped)' catch-all) sit ABOVE the existing per-project group. A
+   plain <details> so a group with zero in-progress plans collapses by
+   default (renderTopGroup in roadmap.js sets .open) while the group NAME
+   (and an honest empty-state line) always stays visible via <summary>. */
+.rm-top-group { margin: 4px 0 20px; }
+.rm-top-group-head {
+  cursor: pointer; font-size: 15px; font-weight: 700; color: var(--text);
+  padding: 4px 0 8px; border-bottom: 1px solid var(--border2); margin-bottom: 8px;
+}
+.rm-top-group-body { padding-left: 2px; }
+.rm-top-group .rm-empty-note { font-size: 12px; color: var(--muted); padding: 4px 0 4px 2px; }
+/* R9-7: unattributed live sessions — one top-of-tree collapsible node. */
+.rm-unbound-sessions {
+  margin: 0 0 10px; padding: 4px 8px;
+  border: 1px dashed var(--border); border-radius: 6px;
+}
+.rm-unbound-summary { cursor: pointer; display: flex; gap: 8px; align-items: center; }
+.rm-unbound-summary .rm-title { font-size: 12px; }
+/* R9-6: landing sidebar (My items + Backlog compact mirrors). */
+.rm-layout { display: flex; align-items: flex-start; gap: 16px; }
+.rm-layout > .roadmap-section { flex: 1 1 0; min-width: 0; }
+.rm-sidebar { flex: 0 0 300px; max-width: 300px; display: flex; flex-direction: column; gap: 10px; }
+.rm-side-pane { padding: 6px 10px; }
+.rm-side-summary { cursor: pointer; font-weight: 600; font-size: 12px; }
+.rm-side-body { max-height: 40vh; overflow-y: auto; }
+.rm-side-list { list-style: none; margin: 6px 0 0; padding: 0; }
+.rm-side-item { display: flex; gap: 6px; align-items: baseline; margin: 3px 0; font-size: 12px; }
+.rm-side-text { min-width: 0; overflow-wrap: anywhere; }
+.rm-side-done { text-decoration: line-through; opacity: 0.6; }
+.rm-side-pointer .rm-side-glyph { opacity: 0.7; }
+.rm-side-more, .rm-side-empty, .rm-side-error, .rm-side-tiers { font-size: 11px; opacity: 0.75; margin-top: 4px; }
+.rm-side-error { color: var(--warn, #c96); }
+.rm-side-tier { font-size: 10px; }
+.rm-side-foot { margin-top: 6px; }
+@media (max-width: 1100px) {
+  .rm-layout { flex-direction: column; }
+  .rm-sidebar { flex: none; max-width: none; width: 100%; }
+  /* ROADMAP-NARROW-VIEWPORT-COLLAPSE-01 (P1, live-verified 2026-07-29):
+     `.roadmap-section { flex: 1 1 0 }` is written for the DESKTOP row layout,
+     where the flex main axis is WIDTH. The moment this query flips .rm-layout
+     to column, that same rule governs HEIGHT — and because .pane sets
+     `overflow: hidden`, the flex spec gives the item an automatic minimum
+     main-size of 0. With no ancestor supplying spare height for flex-grow to
+     distribute, the section collapses to its flex-basis (0) instead of its
+     content height: measured `#roadmapSection` height = 2px while its own
+     `#roadmapBody` child reported 563px. Every row stayed in the DOM and the
+     entire tree was invisible. `flex-basis: auto` makes the column case size
+     to content, which is what the row case never needed to say out loud. */
+  .rm-layout > .roadmap-section { flex: 1 1 auto; min-height: 0; }
+}
+/* R9 follow-up 2026-07-24: the ledger takes the hidden interim tree's flex
+   slot so the column handle splits a real pair again. */
+.ws-layout .requests-ledger-in-layout { flex: 1 1 0; min-width: 0; margin: 0; }
+/* Round 13 fix 5: bottom margin trimmed 6px -> 2px — same parent->child
+   gap cut as .rm-drill's padding above; the link stays fully visible,
+   just no longer padded out with extra dead space beneath it. */
+.rm-plan-link-row { margin: 2px 0 2px; font-size: 12px; }
+/* Round 12 item 7 (pre-existing contrast bug, live-measured): rm-plan-link
+   had NO color rule at all, so every one of the 16 plan links rendered at
+   the browser default visited/unvisited blue (#0000EE), 1.56:1 on the
+   dark panel — a hard WCAG 1.4.3 failure.
+   ROUND 16 sweep (operator: "blue looks like links" — so reserve it for
+   ONLY real links): the base rule is now a NEUTRAL colour — it also
+   covers the rare plain-text fallback span (plan_doc: null, no working
+   link at all), which rendering blue would be the exact "looks like a
+   link but isn't" defect this whole round is about. The compound
+   `.rm-plan-link-btn` rule below (present only on the real clickable
+   button) re-adds blue at higher specificity, so the genuine link still
+   reads as one. */
+.rm-plan-link { overflow-wrap: anywhere; color: var(--muted); }
+/* Round 15 (operator, verified live): the plan link is now a <button>
+   opening the in-page docs viewer (the old `file:///` href was dead —
+   confirmed live, no navigation/network on click) — reset UA button chrome
+   so it still READS as the same underlined-on-hover link, not a boxed
+   button; button.ghost's own `color: var(--text)` rule would otherwise
+   outrank the plain `.rm-plan-link` selector above on specificity
+   (type+class beats class-only), so this reset avoids `.ghost` entirely
+   rather than fighting the cascade. */
+.rm-plan-link-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.rm-plan-link.rm-plan-link-btn { color: var(--info); } /* the ONE real link — blue stays here */
+.rm-plan-link-btn:hover { text-decoration: underline; }
+/* R10 (operator round 10, 2026-07-27) */
+.rm-chevron { display: inline-block; width: 12px; font-size: 10px; opacity: 0.6; transition: transform 0.12s; }
+details[open] > .rm-row > .rm-chevron { transform: rotate(90deg); }
+/* rm-phase-inline RETIRED (Round 12 item 3): rendered the "#N OF 16"
+   ordinal, PROVEN unstable — filtering to "T3" renumbered Accountable
+   Estate from "#12 OF 16" to "#2 OF 3" live. A render-position count is
+   not an identity; roadmap.js no longer computes or appends it. The
+   connected phase-series CONNECTOR LINE (rm-phase-step/rm-phase-series
+   below) is unaffected — the operator's complaint was the unstable
+   NUMBER, not the sibling-sequence visual. */
+.rm-project-group-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+/* rm-group-progress(-bar/-fill/-text) RETIRED (Round 12 item 3, R10-3's
+   aggregate bar): live-verified THIRD restatement of the header's own
+   "... complete" bucket count — "neural-lace — 16 plans... (2 complete)"
+   was immediately followed by a separate "2/16 complete" bar+line saying
+   the identical fact again. */
+/* Round 12 item 6: the top-level "Shipped" group (a fully-complete PLAN
+   leaving the main list) reuses rm-completed-rollup's box styling but
+   gets its own class so it's distinguishable from a nested per-parent
+   "N completed" roll-up (task 3's existing 7-day-window mechanism, which
+   this item does NOT change). */
+.rm-shipped-group > summary { font-weight: 600; }
+/* Round 13 fix 3: the SAME containment treatment as .rm-project-group,
+   dimmer — .rm-completed-rollup already gives every roll-up (this one
+   included) a dotted rail + padding spanning its own body; this adds the
+   faint background tint at HALF the live group's opacity (0.01 vs 0.02),
+   so Shipped reads as one contained, quieter region instead of floating
+   loose the way an unbounded list did before fix 3. */
+.rm-shipped-group { background: rgba(255, 255, 255, 0.01); border-radius: 4px; }
+
+/* R11 (round 11, 2026-07-28) — master-plan hierarchy: docs/reviews/
+   2026-07-28-roadmap-hierarchy-ux-review.md */
+.rm-master-tag { font-weight: 600; }
+.rm-master-fraction { opacity: 0.85; }
+.rm-dangling-badge, .rm-cycle-badge {
+  color: var(--warn, #c96); border-color: var(--warn, #c96);
+}
+.rm-subsection { margin: 4px 0 8px 4px; }
+.rm-subsection-label {
+  font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+  opacity: 0.65; margin: 6px 0 4px;
+}
+.rm-batch { margin: 2px 0; border-left: 2px solid var(--border); padding-left: 6px; }
+.rm-batch-summary { cursor: pointer; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+details[open] > .rm-batch-summary > .rm-chevron { transform: rotate(90deg); }
+.rm-batch-label { font-weight: 600; }
+.rm-batch-fraction { opacity: 0.8; }
+.rm-master-tag { font-size: 10px; opacity: 0.8; border-style: dashed; }

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-1caf28a4",
+  "created_at": "2026-07-30T07:06:05Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "operator-authorized adversarial review sweep 2026-07-29, group delta-1 (review-before-deploy backlog)",
+  "change_ref": {
+    "commit_sha": "3404bd1e92a1c4836d32fe8cee6dbef2d1e88f98",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/loe-backfill.sh",
+      "blob_sha": "583d919c3b5103477d2e57112f26cb28bdedb6d0"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — GNU 'date -d' replaced with a dual-branch that falls back to BSD 'date -j -f'; verified on this Mac for both Z-suffixed and +offset ISO timestamps (epoch 1785344400, rc=0 both).",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

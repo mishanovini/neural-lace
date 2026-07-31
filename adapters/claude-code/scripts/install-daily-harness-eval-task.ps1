@@ -38,7 +38,7 @@ if ($Uninstall) {
         Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
         Write-Host "Uninstalled scheduled task: $TaskName"
     } else {
-        Write-Host "No scheduled task '$TaskName' found — nothing to uninstall."
+        Write-Host "No scheduled task '$TaskName' found -- nothing to uninstall."
     }
     exit 0
 }

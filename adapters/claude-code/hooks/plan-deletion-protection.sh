@@ -24,21 +24,121 @@
 # Bias: false-positive blocks are acceptable friction; false-negative
 # passes are not. Detection biases toward blocking on uncertainty.
 #
+# WAIVER (F.5 waiver-parity audit row 17 / ADR 059 D4 fix): the previous
+# only remedy for a genuine deliberate non-archive removal/move was "commit
+# it, then bypass this hook by editing the source out manually" — vague,
+# no file, no freshness, no ledger. Fixed: a fresh (<1h) structured waiver
+# at .claude/state/plan-deletion-waiver-<slug>-*.txt, naming BOTH purpose
+# clauses (lib/waiver-purpose-clause.sh), ALLOWS the specific blocked
+# command to proceed and is ledger-logged as a "waiver" event.
+#
 # Self-test:
 #   bash plan-deletion-protection.sh --self-test
 #
 # Exit codes:
-#   0 — command is allowed (silent) or non-blocking warning emitted
-#   1 — command is blocked (stderr explains why)
+#   0 — command is allowed (silent), non-blocking warning emitted, or a
+#       fresh substantive waiver was honored (release valve)
+#   1 — command is blocked (stderr explains why + the waiver hatch)
 
 set -e
+
+# ============================================================
+# Shared libs (best-effort; hook degrades gracefully if absent)
+# ============================================================
+_PDP_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+# shellcheck source=lib/waiver-purpose-clause.sh
+source "$_PDP_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
+# shellcheck source=lib/signal-ledger.sh
+source "$_PDP_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+# shellcheck source=lib/perf-ledger.sh
+source "$_PDP_SELF_DIR/lib/perf-ledger.sh" 2>/dev/null || true
+
+# --- P1 perf metering (perf-telemetry-2026-07 plan) -------------------------
+# Self-metering: one of the 5 highest-cost per-Bash-call hooks (no single
+# PreToolUse chain wrapper exists — see hooks/lib/perf-ledger.sh's header for
+# the PROVEN instrumentation-point finding). Placed BEFORE the cheap
+# pre-filter below (line ~84) so its `exit 0` — the dominant exit path for
+# non-destructive commands — is metered too; a trap on EXIT covers every
+# exit path in this file without touching each one. Builtin-only, zero
+# forks. Skipped for the `--self-test` parent process itself (checked via
+# $1 directly — SELF_TEST isn't assigned until further below — the
+# self-test harness sandboxes PERF_LEDGER_DIR before spawning its child
+# scenarios, see run_self_test, so metering still fires correctly there).
+if [[ "${1:-}" != "--self-test" ]] && declare -F pl_meter_begin >/dev/null 2>&1; then
+  pl_meter_begin
+  trap 'pl_meter_end "plan-deletion-protection"' EXIT
+fi
+
+PDP_STATE_DIR="${CLAUDE_STATE_DIR:-.claude/state}"
+PDP_WAIVER_GLOB='plan-deletion-waiver-*.txt'
+
+# _pdp_has_fresh_waiver — fresh (<1h) .claude/state/plan-deletion-waiver-*.txt
+# naming BOTH purpose clauses (lib/waiver-purpose-clause.sh). Mirrors
+# bug-persistence-gate.sh / workstreams-state-gate.sh waiver semantics.
+# Prints the matched waiver file path and returns 0 on success.
+_pdp_has_fresh_waiver() {
+  [[ -d "$PDP_STATE_DIR" ]] || return 1
+  local f
+  while IFS= read -r f; do
+    [[ -f "$f" ]] || continue
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      if waiver_has_purpose_clauses "$f"; then
+        printf '%s' "$f"
+        return 0
+      fi
+    fi
+  done < <(find "$PDP_STATE_DIR" -maxdepth 1 -type f -name "$PDP_WAIVER_GLOB" -newermt '1 hour ago' 2>/dev/null)
+  return 1
+}
 
 # ============================================================
 # Self-test entry point (handled BEFORE input parsing)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (perf-ledger, signal-ledger) for
+  # this whole run and EXPORT it so the child scenarios spawned below inherit
+  # it. Without it those libs resolve their PRODUCTION paths and this self-test
+  # appends to the operator's real ~/.claude/state/signal-ledger.jsonl. PROVEN
+  # behaviorally: clean-HOME probe created .claude/state/signal-ledger.jsonl
+  # without it, nothing under .claude/ with it.
+  export HARNESS_SELFTEST=1
   # Defined further down; jump to it
   SELF_TEST=1
+fi
+
+# --- Cheap pre-filter (perf; behavior-preserving) ---------------------------
+# This gate only ACTS on a destructive command shape (rm / git clean /
+# git stash -u / git checkout|restore / git reset / mv). Every other command is
+# a guaranteed pass. On Windows Git Bash the common-path early-exit cost is
+# dominated by the jq/sed subprocess spawns below (measured ~1194ms -> ~125ms
+# with this guard). The trigger set covers every UN-OBFUSCATED destructive verb
+# the five detectors act on (detect_rm / detect_git_clean / detect_git_stash /
+# detect_git_checkout_restore_reset / detect_mv — verbs rm|clean|stash|checkout|
+# restore|reset|mv). ACCEPTED RESIDUAL: this matches the RAW payload substring,
+# but the full logic below tokenizes (strips quotes/backslashes) first, so a
+# quote/escape-obfuscated verb (`r""m`, `r''m`, `r\m`) skips this pre-filter while
+# the tokenizer reconstructs and BLOCKS it. It is therefore NOT a strict superset
+# of the tokenizer — the gap is scoped to the threat model (accidental deletion,
+# not adversarial obfuscation; nobody types `r""m` to delete a plan by accident)
+# and is pinned by the obfuscation-boundary self-test scenario below. Pre-existing
+# full-logic gaps (Remove-Item / truncate / `>` redirect / `/usr/bin/rm`) are
+# unchanged by this pre-filter — anything containing a trigger substring still
+# falls through to the identical full logic. Skipped in the PARENT self-test
+# process (SELF_TEST=1, direct function calls); child subprocess scenarios do
+# traverse it (SELF_TEST is not exported), so the harness exercises it on natural
+# verbs. Consume the input ONCE (env var else stdin) and re-export so load_input
+# below is unaffected.
+# Ref: docs/lessons/2026-07-13-agent-efficiency-bottlenecks-process-spawn-and-hook-latency.md rec 5.
+if [[ "${SELF_TEST:-0}" != "1" ]]; then
+  _PDP_PF="${CLAUDE_TOOL_INPUT:-}"
+  if [[ -z "$_PDP_PF" ]] && [[ ! -t 0 ]]; then
+    _PDP_PF=$(cat 2>/dev/null || echo "")
+  fi
+  case "$_PDP_PF" in
+    *rm*|*mv*|*clean*|*stash*|*checkout*|*restore*|*reset*) : ;;  # possible plan deletion — run full logic
+    *) exit 0 ;;                                                   # no destructive verb — cannot delete a plan
+  esac
+  export CLAUDE_TOOL_INPUT="$_PDP_PF"
 fi
 
 # ============================================================
@@ -59,10 +159,22 @@ load_input() {
 # ============================================================
 
 # emit_block <title> <body>
-# Prints structured BLOCKED message to stderr and exits 1.
+# Checks the structured-waiver release valve FIRST (ADR 059 D4; F.5 audit
+# row 17); if a fresh, purpose-clause-valid plan-deletion-waiver-*.txt
+# exists, the command is ALLOWED (ledger-logged, exit 0) instead of
+# blocked. Otherwise prints structured BLOCKED message to stderr and
+# exits 1, naming the waiver hatch + its cost.
 emit_block() {
   local title="$1"
   local body="$2"
+
+  local pdp_waiver_file
+  if pdp_waiver_file=$(_pdp_has_fresh_waiver); then
+    command -v ledger_emit >/dev/null 2>&1 && ledger_emit "plan-deletion-protection" "waiver" "title=$title file=$pdp_waiver_file"
+    echo "[plan-deletion-protection] ALLOW: fresh substantive plan-deletion-waiver present (release valve) — $title" >&2
+    return 0
+  fi
+
   cat >&2 <<MSG
 
 ================================================================
@@ -74,11 +186,27 @@ Plan files are protected from accidental destruction. The only
 legitimate move from docs/plans/<file>.md is:
   git mv docs/plans/<file>.md docs/plans/archive/<file>.md
 
-Escape hatches if you genuinely need this command:
+Hatch (cost: allows THIS specific command to run, once, ledger-logged —
+never a blanket disable of this hook):
+  A genuine, substantive, deliberate non-archive removal/move gets a
+  fresh (<1h) structured waiver naming BOTH purpose clauses:
+    mkdir -p .claude/state && \\
+    { printf 'Purpose: this gate exists to prevent <X>\\n'; \\
+      printf 'Because: <Y>\\n'; \\
+    } > .claude/state/plan-deletion-waiver-<slug>-\$(date +%s).txt
+  Re-run the exact same command after writing the waiver.
+
+Other options:
   - Commit the plan first (git history then preserves it)
   - Use git mv to archive/ instead of deletion
   - For genuine cleanup of archive files: target the archive path
     explicitly (rm docs/plans/archive/<file>.md is allowed)
+
+NOTE: this block prevented the ENTIRE command from running — including any
+fix/edit/git add prefix before the git commit. Nothing was executed. Re-run
+the non-commit part as its own call first, then commit separately.
+
+This gate: ~/.claude/hooks/plan-deletion-protection.sh (source: adapters/claude-code/hooks/plan-deletion-protection.sh)
 MSG
   exit 1
 }
@@ -712,6 +840,25 @@ inspect_command() {
 run_self_test() {
   local total=0 passed=0 failed_names=""
 
+  # Portable fixture aging (macos-portability-2026-07 M4) — sourced here,
+  # not at file scope, so the gate's PreToolUse path pays nothing for a
+  # helper only the fixtures use.
+  local _pdp_pt="$_PDP_SELF_DIR/lib/portable-time.sh"
+  if ! . "$_pdp_pt" 2>/dev/null; then
+    echo "self-test: cannot source $_pdp_pt (needed to backdate fixtures portably)" >&2
+    return 2
+  fi
+
+  # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): scenarios below
+  # spawn REAL child `bash "$SELF_PATH"` subprocesses (by design — see the
+  # cheap pre-filter's comment: they are NOT marked SELF_TEST so the harness
+  # exercises the pre-filter on natural verbs). Those children now source
+  # perf-ledger.sh too. Without this override every self-test run would
+  # write ~19 real lines into the operator's actual ~/.claude/state/perf
+  # ledger. Exported so every child subprocess inherits it.
+  export PERF_LEDGER_DIR
+  PERF_LEDGER_DIR="$(mktemp -d -t pdpst-perf-XXXXXX 2>/dev/null || printf '%s/pdpst-perf-selftest' "${TMPDIR:-/tmp}")"
+
   # run_scenario <name> <expect: BLOCK|PASS|WARN> <pre-setup-fn> <command>
   run_scenario() {
     local name="$1"
@@ -728,6 +875,7 @@ run_self_test() {
 
     # Initialize git fixture
     git init -q
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "test@example.test"
     git config user.name "Test"
     mkdir -p docs/plans/archive
@@ -807,6 +955,34 @@ run_self_test() {
   setup_no_plan() {
     :
   }
+  # ---- Waiver setup helpers (F.5 audit row 17 / ADR 059 D4) ----
+  setup_uncommitted_plan_with_fresh_waiver() {
+    setup_uncommitted_plan
+    mkdir -p .claude/state
+    {
+      echo "Purpose: this gate exists to prevent accidental plan-file loss"
+      echo "Because: this is a self-test scenario exercising the waiver valve"
+    } > .claude/state/plan-deletion-waiver-selftest.txt
+  }
+  setup_uncommitted_plan_with_stale_waiver() {
+    setup_uncommitted_plan
+    mkdir -p .claude/state
+    {
+      echo "Purpose: this gate exists to prevent accidental plan-file loss"
+      echo "Because: this is a self-test scenario exercising the waiver valve"
+    } > .claude/state/plan-deletion-waiver-selftest.txt
+    # No `|| true`: leaving the waiver fresh would silently invert this
+    # scenario ("stale waiver must be rejected") into its opposite.
+    if ! nl_touch_age .claude/state/plan-deletion-waiver-selftest.txt 7200; then
+      echo "self-test: could not backdate the stale-waiver fixture" >&2
+      exit 2
+    fi
+  }
+  setup_uncommitted_plan_with_weak_waiver() {
+    setup_uncommitted_plan
+    mkdir -p .claude/state
+    printf 'just trust me on this one\n' > .claude/state/plan-deletion-waiver-selftest.txt
+  }
 
   echo "plan-deletion-protection self-test"
   echo "==================================="
@@ -866,6 +1042,34 @@ run_self_test() {
   run_scenario "14. git mv docs/plans/foo.md docs/plans/archive/foo.md → PASS" \
     PASS setup_committed_clean_plan \
     "git mv docs/plans/foo.md docs/plans/archive/foo.md"
+
+  # ---- Structured-waiver scenarios (F.5 audit row 17 / ADR 059 D4) ----
+  run_scenario "15. waiver-absent-blocks: rm docs/plans/foo.md, no waiver → BLOCK" \
+    BLOCK setup_uncommitted_plan \
+    "rm docs/plans/foo.md"
+
+  run_scenario "16. waiver-honored: rm docs/plans/foo.md, fresh purpose-clause waiver → PASS" \
+    PASS setup_uncommitted_plan_with_fresh_waiver \
+    "rm docs/plans/foo.md"
+
+  run_scenario "17. waiver-stale-rejected: rm docs/plans/foo.md, waiver >1h old → BLOCK" \
+    BLOCK setup_uncommitted_plan_with_stale_waiver \
+    "rm docs/plans/foo.md"
+
+  run_scenario "18. weak-waiver-no-purpose-clauses: rm docs/plans/foo.md → BLOCK" \
+    BLOCK setup_uncommitted_plan_with_weak_waiver \
+    "rm docs/plans/foo.md"
+
+  # KNOWN, INTENTIONAL pre-filter gap (pinned per harness-review 2026-07-13):
+  # the cheap substring pre-filter matches the RAW payload, so a quote-obfuscated
+  # verb has no "rm" substring and SKIPS the gate (PASS) even though the full
+  # tokenizer would reconstruct `r""m`->`rm` and BLOCK it. Accepted under the
+  # accidental-deletion threat model (nobody types `r""m` to delete a plan by
+  # accident). This scenario PINS that PASS so any future pre-filter change that
+  # closes the gap will flip this to BLOCK and force an explicit review here.
+  run_scenario "19. obfuscated-verb pre-filter gap: r\"\"m docs/plans/foo.md → PASS (KNOWN)" \
+    PASS setup_uncommitted_plan \
+    'r""m docs/plans/foo.md'
 
   echo "==================================="
   echo "passed: $passed / $total"

@@ -2,7 +2,7 @@
 title: product-acceptance-gate waiver path unreachable for exempt+UI plans
 date: 2026-06-10
 type: process
-status: pending
+status: superseded
 auto_applied: false
 originating_context: "Operational session (launch Workstreams UI server + desktop shortcut). product-acceptance-gate.sh blocked session end on 4 orthogonal prior-session ACTIVE plans; a per-session waiver could not clear them."
 decision_needed: "Fix product-acceptance-gate.sh so an exempt-but-UI-refused plan can still be cleared by a fresh per-session waiver (re-order the checks), OR triage the 4 stale ACTIVE plans (close/defer/de-exempt), OR accept the recurring retry-guard downgrade as the de-facto escape?"
@@ -104,6 +104,8 @@ Surfaced here for a dedicated session.
 ## Decision
 
 (pending — awaiting operator direction)
+
+2026-07-02: superseded by ADR 058 D5 — the session-scoped work-integrity-gate (task D.2) removes the orthogonal-plan class entirely.
 
 ## Implementation log
 

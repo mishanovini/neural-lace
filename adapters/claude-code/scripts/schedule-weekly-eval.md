@@ -1,5 +1,10 @@
 # Harness-evaluator scheduling — wiring placeholders
 
+**`<nl-repo-root>` below is your local neural-lace checkout path** (not a
+literal string to paste). Resolve it once for your shell with, e.g.,
+`bash adapters/claude-code/hooks/lib/nl-paths.sh` sourced, or substitute
+your machine's actual checkout path when copying a command.
+
 **Cadence: daily, not weekly** (per Misha 2026-05-25). The plan
 originally called for weekly; daily gives more current signal +
 faster feedback when a rule's bypass rate spikes. Daily reports are
@@ -41,7 +46,7 @@ Daily scan + packet:
 Routine body:
 
 ```bash
-cd ~/claude-projects/neural-lace
+cd <nl-repo-root>
 bash adapters/claude-code/scripts/dispatch-ci-watcher.sh
 bash adapters/claude-code/scripts/mine-misha-asked.sh --recent-days 30 --project-filter neural-lace
 bash adapters/claude-code/scripts/harness-evaluator.sh --mode daily
@@ -60,7 +65,7 @@ Weekly rollup (one extra cron):
 Routine body:
 
 ```bash
-cd ~/claude-projects/neural-lace
+cd <nl-repo-root>
 bash adapters/claude-code/scripts/harness-evaluator.sh --mode weekly-rollup
 git add docs/reviews/$(date -u +%Y-W%V)-harness-weekly-rollup.md
 git commit -m "weekly: harness rollup $(date -u +%Y-W%V)"
@@ -77,7 +82,7 @@ Counts against weekly cloud quota: 7 daily + 1 weekly = 8 / week
 ```
 schtasks /Create /SC DAILY /ST 08:00 \
   /TN "harness-self-eval-daily" \
-  /TR "C:\Program Files\Git\bin\bash.exe -c 'cd ~/claude-projects/neural-lace && bash adapters/claude-code/scripts/dispatch-ci-watcher.sh && bash adapters/claude-code/scripts/mine-misha-asked.sh --recent-days 30 --project-filter neural-lace && bash adapters/claude-code/scripts/harness-evaluator.sh --mode daily'"
+  /TR "C:\Program Files\Git\bin\bash.exe -c 'cd <nl-repo-root> && bash adapters/claude-code/scripts/dispatch-ci-watcher.sh && bash adapters/claude-code/scripts/mine-misha-asked.sh --recent-days 30 --project-filter neural-lace && bash adapters/claude-code/scripts/harness-evaluator.sh --mode daily'"
 ```
 
 **Windows Task Scheduler (weekly rollup, Monday):**
@@ -85,17 +90,17 @@ schtasks /Create /SC DAILY /ST 08:00 \
 ```
 schtasks /Create /SC WEEKLY /D MON /ST 09:00 \
   /TN "harness-weekly-rollup" \
-  /TR "C:\Program Files\Git\bin\bash.exe -c 'cd ~/claude-projects/neural-lace && bash adapters/claude-code/scripts/harness-evaluator.sh --mode weekly-rollup'"
+  /TR "C:\Program Files\Git\bin\bash.exe -c 'cd <nl-repo-root> && bash adapters/claude-code/scripts/harness-evaluator.sh --mode weekly-rollup'"
 ```
 
 **Cron (Linux / macOS):**
 
 ```cron
 # Daily 08:00 — CI watcher + drift refresh + daily packet
-0 8 * * * cd ~/claude-projects/neural-lace && bash adapters/claude-code/scripts/dispatch-ci-watcher.sh && bash adapters/claude-code/scripts/mine-misha-asked.sh --recent-days 30 --project-filter neural-lace && bash adapters/claude-code/scripts/harness-evaluator.sh --mode daily >> ~/.claude/logs/harness-eval.log 2>&1
+0 8 * * * cd <nl-repo-root> && bash adapters/claude-code/scripts/dispatch-ci-watcher.sh && bash adapters/claude-code/scripts/mine-misha-asked.sh --recent-days 30 --project-filter neural-lace && bash adapters/claude-code/scripts/harness-evaluator.sh --mode daily >> ~/.claude/logs/harness-eval.log 2>&1
 
 # Weekly Monday 09:00 — rollup
-0 9 * * MON cd ~/claude-projects/neural-lace && bash adapters/claude-code/scripts/harness-evaluator.sh --mode weekly-rollup >> ~/.claude/logs/harness-eval.log 2>&1
+0 9 * * MON cd <nl-repo-root> && bash adapters/claude-code/scripts/harness-evaluator.sh --mode weekly-rollup >> ~/.claude/logs/harness-eval.log 2>&1
 ```
 
 ## Option C — Manual + reminder
@@ -103,7 +108,7 @@ schtasks /Create /SC WEEKLY /D MON /ST 09:00 \
 If automation feels premature, just run when Misha sits down:
 
 ```bash
-cd ~/claude-projects/neural-lace
+cd <nl-repo-root>
 bash adapters/claude-code/scripts/dispatch-ci-watcher.sh
 bash adapters/claude-code/scripts/mine-misha-asked.sh --recent-days 30 --project-filter neural-lace
 bash adapters/claude-code/scripts/harness-evaluator.sh --mode daily

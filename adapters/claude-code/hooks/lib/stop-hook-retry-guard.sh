@@ -112,6 +112,25 @@ fi
 _STOP_HOOK_RETRY_GUARD_SOURCED=1
 
 # ----------------------------------------------------------------------
+# Signal ledger (ADR 058 D6 / NL Overhaul task D.1) — sourced BEST-EFFORT.
+# When present, every downgrade this library performs also appends one
+# "downgrade" event to the shared JSONL ledger so Wave-E consumers (the
+# digest, the waiver-density alarm, the KPI script) can see it. When the
+# ledger lib is absent (older harness install, or a caller running this
+# file in isolation), `ledger_emit` is simply undefined and every call
+# site below guards with `command -v ledger_emit` — a missing ledger lib
+# NEVER changes this file's blocking/downgrade behavior.
+# ----------------------------------------------------------------------
+if [[ -z "${_SIGNAL_LEDGER_SOURCED:-}" ]]; then
+  _rg_ledger_lib="${BASH_SOURCE%/*}/signal-ledger.sh"
+  if [[ -f "$_rg_ledger_lib" ]]; then
+    # shellcheck source=/dev/null
+    source "$_rg_ledger_lib" 2>/dev/null || true
+  fi
+  unset _rg_ledger_lib
+fi
+
+# ----------------------------------------------------------------------
 # Configuration
 # ----------------------------------------------------------------------
 : "${RETRY_GUARD_THRESHOLD:=3}"
@@ -126,7 +145,15 @@ _STOP_HOOK_RETRY_GUARD_SOURCED=1
 # the infinite-loop DoS the downgrade exists to prevent. Originating
 # incident: an autonomous loop rode the downgrade past 38 consecutive
 # pre-stop-verifier blocks while reporting DONE on incomplete work.
-: "${RETRY_GUARD_VERIFICATION_HOOKS:=pre-stop-verifier product-acceptance-gate}"
+#
+# session-honesty-gate ADDED here (NL-FINDING-027, specs-e §E.10 item 10):
+# once its done_contradicted_by_block() became resolution-aware (a LATER
+# work-integrity PASS or a valid purpose-clause waiver clears a historical
+# block), its blocks are no longer a pure message-form check — a session
+# that keeps re-claiming DONE past an ACTUAL unresolved contradiction must
+# not be allowed to ride the downgrade out. Honest PAUSING:/BLOCKED: still
+# downgrades normally; only DONE-riding is refused.
+: "${RETRY_GUARD_VERIFICATION_HOOKS:=pre-stop-verifier product-acceptance-gate work-integrity-gate session-honesty-gate}"
 
 # ----------------------------------------------------------------------
 # retry_guard_session_id [ <input-json> ]
@@ -450,6 +477,9 @@ EOF
       exit "$block_exit"
     fi
     retry_guard_log_unresolved "$hook_name" "$sid" "$count" "$failure_sig" "$error_msg"
+    if command -v ledger_emit >/dev/null 2>&1; then
+      ledger_emit "$hook_name" "downgrade" "$error_msg"
+    fi
     local short
     short=$(_retry_guard_session_short "$sid")
     cat >&2 <<EOF
@@ -513,6 +543,7 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
 
   cd "$TMP" || { echo "could not cd to TMP" >&2; exit 1; }
   git init -q 2>/dev/null
+  git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
   git config user.email "selftest@example.test" 2>/dev/null
   git config user.name  "Self Test"            2>/dev/null
   : > seed.txt

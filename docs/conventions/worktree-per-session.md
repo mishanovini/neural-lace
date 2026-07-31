@@ -15,7 +15,7 @@
 
 On 2026-05-25 four design sessions (Patterns 1/3/4/5 of the plan-lifecycle
 redesign arc) ran **in parallel in the single main checkout**
-(`C:/Users/misha/dev/Pocket Technician/neural-lace`). Because they shared one
+(`<abs-path-to-main-checkout>`). Because they shared one
 working tree they collided on two shared resources:
 
 1. **`SCRATCHPAD.md` write race** — each session rewrote the shared SCRATCHPAD, clobbering the others' state.
@@ -232,12 +232,36 @@ depends on worktree state:
 
 So the accumulation this repo saw (~50 in one repo) comes from the worktrees that
 **made commits** (the common case for a real task) plus non-interactive runs —
-exactly the ones the native cleanup leaves behind. Two complementary cleanup
+exactly the ones the native cleanup leaves behind. Three complementary cleanup
 paths in this harness:
 
-- **Per-session, explicit:** `spawn-worktree.sh --remove <slug>` tears down one
-  worktree (clean-only unless `--force`) and safe-deletes its branch
-  (`git branch -d` — merged-only, never loses work). Run it at session end.
+- **RETIRED (2026-07-29, accountable-estate T4): "run `spawn-worktree.sh --remove
+  <slug>` at session end" as a bare, memory-reliant instruction.** That phrasing —
+  a session must remember, unprompted, to run one more command after its real
+  work is done — is exactly the "spanning-time obligation nobody durable owns"
+  failure class docs/designs/accountable-estate-2026-07-27.md names (`§1`). It is
+  superseded by:
+  - **Per-session, the canonical closer:** `close-worktree.sh close <slug>
+    --plan <plan-slug> --task <id>` (or `--verified` to explicitly vouch)
+    performs the FULL deterministic sequence in one call — verify (a
+    task-verifier PASS evidence block, or an explicit vouch) → integration
+    check (refuses an unmerged branch unless `--keep-branch --reason '<why>'`
+    — design §6c's "branch delete or explicit preserve+reason") → worktree
+    remove → branch delete/preserve → no-orphan DE-REGISTRATION. A work item
+    without this closer's receipt cannot reach done. `spawn-worktree.sh
+    --remove <slug>` remains available as the lower-level primitive
+    close-worktree.sh itself calls for the mechanical teardown step — still
+    correct to invoke directly for a quick manual cleanup, just no longer the
+    *recommended* top-level closer.
+  - **No-orphan REGISTRATION at creation:** every `spawn-worktree.sh --apply`
+    create now writes an open registration (slug/path/branch/host, plus
+    `--plan`/`--task`/`--who` attribution when supplied) via
+    `hooks/lib/estate-registration-lib.sh`, closed by `--remove` (or
+    `close-worktree.sh`, which calls it) with a disposition. "Anything
+    existing without a ledger link is definitionally unattributable" (design
+    §6c) is now a checkable fact, not a manual audit — see
+    `scripts/estate-attribution-check.sh` (T4's outcome-metric tool: "zero
+    unattributable worktrees/branches older than 48h").
 - **Periodic, repo-wide:** `~/.claude/scripts/worktree-prune.sh` conservatively
   removes only worktrees whose branch tip is already an ancestor of master (or
   introduces no net diff vs its fork point — covers squash merges), that are
@@ -268,7 +292,10 @@ paths in this harness:
 ## Cross-references
 
 - `code.claude.com/docs/en/worktrees` — the official Claude Code worktree reference (`--worktree` flag, `worktree.baseRef`, `.worktreeinclude`, subagent isolation, cleanup semantics) that the 2026-05-26 corrections were reconciled against.
-- `adapters/claude-code/scripts/spawn-worktree.sh` — the spawn half: decision matrix + create + cd + `--remove` (this doc's primitive).
+- `adapters/claude-code/scripts/spawn-worktree.sh` — the spawn half: decision matrix + create + cd + `--remove` (this doc's primitive); T4 added `--plan`/`--task`/`--who` attribution + no-orphan registration on create, and `--disposition` on remove.
+- `adapters/claude-code/scripts/close-worktree.sh` — the deterministic closer (accountable-estate T4): verify → integration-check → remove → de-registration in one call. The RECOMMENDED per-session teardown as of 2026-07-29 (see Cleanup above).
+- `adapters/claude-code/hooks/lib/estate-registration-lib.sh` — the no-orphan registration store (T4) spawn-worktree.sh/close-worktree.sh read and write.
+- `adapters/claude-code/scripts/estate-attribution-check.sh` — T4's outcome-metric tool: derives "unattributable worktrees/branches older than 48h" from the registration store + `git worktree list`.
 - `~/.claude/scripts/worktree-prune.sh` — the cleanup half (periodic, conservative).
 - `~/.claude/rules/automation-modes.md` — Mode 2 (Parallel local worktrees) and its tradeoffs; the five-mode decision tree.
 - `~/.claude/rules/orchestrator-pattern.md` — `isolation: "worktree"` sub-agent dispatch + cherry-pick protocol. **[corrected 2026-05-26: that rule's "worktree base is master HEAD" note should read `origin/HEAD` per the official docs; the practical effect is the same when `origin/master` == `origin/HEAD`.]**

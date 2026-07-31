@@ -9,7 +9,7 @@
 # AND no persistence happened, blocks session end with a detailed message.
 #
 # This is the mechanical enforcement of the bug-persistence rule in
-# ~/.claude/rules/testing.md. Rules that depend on the agent remembering
+# ~/.claude/doctrine/testing.md. Rules that depend on the agent remembering
 # to follow them are theater; this hook closes the loop.
 #
 # Escape hatch: the agent can write
@@ -72,6 +72,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
     (
       cd "$repo" || exit 99
       git init -q 2>/dev/null || true
+      git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
       git config user.email "test@example.com" 2>/dev/null
       git config user.name "Test" 2>/dev/null
       git config commit.gpgsign false 2>/dev/null
@@ -121,6 +122,21 @@ NL
         prd)
           printf '# PRD\n\n## Open questions\n\n- OQ-1: surfaced during intake; awaiting the user'"'"'s relayed answer.\n' > docs/prd.md
           ;;
+        attested)
+          # ADR 058 D5 pin f (specs-e §E.10 item 2): the attestation must
+          # name BOTH the gate's purpose and why it does not apply here.
+          mkdir -p .claude/state
+          {
+            echo "Purpose: this gate exists to prevent bugs surfaced in conversation from being lost"
+            echo "Because: the flagged phrase is a rhetorical example in this self-test fixture, not a real bug"
+          } > ".claude/state/bugs-attested-$(date +%Y%m%d-%H%M).txt"
+          ;;
+        attested-weak)
+          # Existence + non-empty content, but NO purpose-clause pair —
+          # must NOT clear the block under pin f.
+          mkdir -p .claude/state
+          echo "not a real bug, false positive" > ".claude/state/bugs-attested-$(date +%Y%m%d-%H%M).txt"
+          ;;
         none)
           : # no-op
           ;;
@@ -134,6 +150,84 @@ JSONL
       local input
       input=$(printf '{"transcript_path":"%s"}' "$repo/transcript.jsonl")
       printf '%s' "$input" | bash "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+      echo $? > rc.txt
+    )
+    cat "$repo/rc.txt" 2>/dev/null || echo 99
+  }
+
+  # Same as _run_scenario but invokes --report mode. Report JSON lines
+  # land in <repo>/stdout.txt for the caller to inspect (mirrors
+  # _run_scenario's own stdout.txt/stderr.txt/rc.txt capture). Duplicates
+  # _run_scenario's persistence-target setup (backlog/review/discovery/
+  # findings/prd/attested/attested-weak/none) rather than parameterizing
+  # that function, to avoid touching the existing (already self-tested)
+  # helper's call signature.
+  _run_scenario_report() {
+    local label="$1" persistence="$2"
+    local repo="$TMPROOT/$label"
+    mkdir -p "$repo"
+    (
+      cd "$repo" || exit 99
+      git init -q 2>/dev/null || true
+      git config core.hooksPath "" 2>/dev/null
+      git config user.email "test@example.com" 2>/dev/null
+      git config user.name "Test" 2>/dev/null
+      git config commit.gpgsign false 2>/dev/null
+      mkdir -p docs/reviews docs/discoveries
+      echo "init" > .marker
+      git add .marker 2>/dev/null
+      git commit -q -m "init" 2>/dev/null
+
+      case "$persistence" in
+        backlog)
+          echo "- new bug observed" > docs/backlog.md
+          ;;
+        review)
+          echo "# Review" > docs/reviews/2026-05-04-test.md
+          ;;
+        discovery)
+          echo "# Discovery" > docs/discoveries/2026-05-04-test.md
+          ;;
+        findings)
+          cat > docs/findings.md <<'NL'
+# Findings
+
+### NL-FINDING-002 — fresh entry
+
+- **Severity:** info
+- **Scope:** unit
+- **Source:** orchestrator
+- **Location:** somewhere:1
+- **Status:** open
+- **Description:** Synthetic finding entry written this session.
+NL
+          ;;
+        prd)
+          printf '# PRD\n\n## Open questions\n\n- OQ-1: surfaced during intake; awaiting the user'"'"'s relayed answer.\n' > docs/prd.md
+          ;;
+        attested)
+          mkdir -p .claude/state
+          {
+            echo "Purpose: this gate exists to prevent bugs surfaced in conversation from being lost"
+            echo "Because: the flagged phrase is a rhetorical example in this self-test fixture, not a real bug"
+          } > ".claude/state/bugs-attested-$(date +%Y%m%d-%H%M).txt"
+          ;;
+        attested-weak)
+          mkdir -p .claude/state
+          echo "not a real bug, false positive" > ".claude/state/bugs-attested-$(date +%Y%m%d-%H%M).txt"
+          ;;
+        none)
+          : # no-op
+          ;;
+      esac
+
+      cat > transcript.jsonl <<'JSONL'
+{"role": "assistant", "content": "We should also handle the X case. Let me flag this for follow-up."}
+JSONL
+
+      local input
+      input=$(printf '{"transcript_path":"%s"}' "$repo/transcript.jsonl")
+      printf '%s' "$input" | bash "$SELF_TEST_HOOK" --report >stdout.txt 2>stderr.txt
       echo $? > rc.txt
     )
     cat "$repo/rc.txt" 2>/dev/null || echo 99
@@ -205,8 +299,74 @@ JSONL
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 7 (ADR 058 D5 pin f, specs-e §E.10 item 2): a fresh
+  # attestation WITH the purpose-clause pair clears the block ----
+  RC=$(_run_scenario s7 "attested")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (7) PASS-with-attestation-purpose-clauses: PASS (rc=$RC, expected 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (7) PASS-with-attestation-purpose-clauses: FAIL (rc=$RC, expected 0)" >&2
+    cat "$TMPROOT/s7/stderr.txt" >&2 2>/dev/null || true
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 8 (ADR 058 D5 pin f regression): a fresh, non-empty
+  # attestation LACKING the purpose-clause pair does NOT clear the block ----
+  RC=$(_run_scenario s8 "attested-weak")
+  if [[ "$RC" == "2" ]]; then
+    echo "self-test (8) BLOCK-attestation-missing-purpose-clauses: PASS (rc=$RC, expected 2; weak attestation correctly rejected)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (8) BLOCK-attestation-missing-purpose-clauses: FAIL (rc=$RC, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 9 (specs-e §E.11, --report mode): trigger phrases + no
+  # persistence, invoked with --report, must exit 0 (never block) and emit
+  # ONE JSON gap line on stdout. ----
+  RC=$(_run_scenario_report s9 "none")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (9) REPORT-mode-never-blocks: PASS (rc=$RC, expected 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (9) REPORT-mode-never-blocks: FAIL (rc=$RC, expected 0)" >&2
+    cat "$TMPROOT/s9/stderr.txt" >&2 2>/dev/null || true
+    FAILED=$((FAILED+1))
+  fi
+  if grep -q '"gate":"bug-persistence-gate"' "$TMPROOT/s9/stdout.txt" 2>/dev/null && \
+     grep -q '"check":"trigger-phrases-not-persisted"' "$TMPROOT/s9/stdout.txt" 2>/dev/null; then
+    echo "self-test (9b) REPORT-mode-emits-json-gap-line: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (9b) REPORT-mode-emits-json-gap-line: FAIL (expected a bug-persistence-gate/trigger-phrases-not-persisted JSON line)" >&2
+    cat "$TMPROOT/s9/stdout.txt" >&2 2>/dev/null || true
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Scenario 10 (specs-e §E.11, --report mode): persisted (clean)
+  # session invoked with --report emits NO gap lines and exits 0. ----
+  RC=$(_run_scenario_report s10 "backlog")
+  if [[ "$RC" == "0" ]]; then
+    echo "self-test (10) REPORT-mode-clean-session-exit-0: PASS (rc=$RC, expected 0)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (10) REPORT-mode-clean-session-exit-0: FAIL (rc=$RC, expected 0)" >&2
+    FAILED=$((FAILED+1))
+  fi
+  CLEAN_LINES=$(grep -c '^{' "$TMPROOT/s10/stdout.txt" 2>/dev/null)
+  CLEAN_LINES=$(printf '%s' "$CLEAN_LINES" | tr -d '[:space:]')
+  [[ -z "$CLEAN_LINES" ]] && CLEAN_LINES=0
+  if [[ "$CLEAN_LINES" -eq 0 ]]; then
+    echo "self-test (10b) REPORT-mode-clean-session-emits-no-gaps: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (10b) REPORT-mode-clean-session-emits-no-gaps: FAIL (expected 0 JSON lines, got $CLEAN_LINES)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 6 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 10 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -217,6 +377,32 @@ fi
 # Shared retry-guard library — see lib/stop-hook-retry-guard.sh.
 # shellcheck disable=SC1091
 source "${BASH_SOURCE[0]%/*}/lib/stop-hook-retry-guard.sh"
+# shellcheck disable=SC1091
+{ source "${BASH_SOURCE[0]%/*}/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
+# shellcheck disable=SC1091
+{ source "${BASH_SOURCE[0]%/*}/lib/signal-ledger.sh" 2>/dev/null; } || true
+
+# --report mode (ADR 059 D1, specs-e §E.11): run every check, emit gaps as
+# JSON lines on stdout, ALWAYS exit 0 — never blocks, never touches the
+# ledger or retry-guard. Consumed by stop-verdict-dispatcher.sh.
+BPG_REPORT_MODE=0
+[[ "${1:-}" == "--report" ]] && BPG_REPORT_MODE=1
+
+# _bpg_report_gap <check> <message> — emits one JSON line on stdout, schema
+# {"gate","check","message"}. Used only when BPG_REPORT_MODE=1.
+_bpg_report_gap() {
+  local check="$1" message="$2" gate_esc check_esc msg_esc
+  if command -v _signal_ledger_json_escape >/dev/null 2>&1; then
+    gate_esc=$(_signal_ledger_json_escape "bug-persistence-gate")
+    check_esc=$(_signal_ledger_json_escape "$check")
+    msg_esc=$(_signal_ledger_json_escape "$message")
+  else
+    gate_esc="bug-persistence-gate"
+    check_esc=$(printf '%s' "$check" | sed 's/\\/\\\\/g; s/"/\\"/g')
+    msg_esc=$(printf '%s' "$message" | sed 's/\\/\\\\/g; s/"/\\"/g; :a;N;$!ba; s/\n/\\n/g')
+  fi
+  printf '{"gate":"%s","check":"%s","message":"%s"}\n' "$gate_esc" "$check_esc" "$msg_esc"
+}
 
 # Read stdin JSON (Claude Code provides it)
 INPUT=""
@@ -231,7 +417,7 @@ if [[ -n "$INPUT" ]]; then
 fi
 
 # If we can't find a transcript, no-op — better to let session end than
-# to block falsely.
+# to block falsely. (--report mode: nothing to report either way.)
 if [[ -z "$TRANSCRIPT_PATH" ]] || [[ ! -f "$TRANSCRIPT_PATH" ]]; then
   exit 0
 fi
@@ -335,7 +521,7 @@ check_persisted_for() {
     return
   fi
   # Unstaged or staged change to findings.md (Phase 1d-C-3, 2026-05-04;
-  # see ~/.claude/rules/findings-ledger.md and Decision 019).
+  # see ~/.claude/doctrine/findings-ledger.md and Decision 019).
   if git -C "$root" status --porcelain docs/findings.md 2>/dev/null | grep -q .; then
     PERSISTED=1
     return
@@ -360,7 +546,7 @@ check_persisted_for() {
     PERSISTED=1
     return
   fi
-  # New discovery file (untracked) — see ~/.claude/rules/discovery-protocol.md
+  # New discovery file (untracked) — see ~/.claude/doctrine/discovery-protocol.md
   if git -C "$root" ls-files --others --exclude-standard docs/discoveries/ 2>/dev/null | grep -qE '^docs/discoveries/[0-9]{4}-[0-9]{2}-[0-9]{2}-'; then
     PERSISTED=1
     return
@@ -412,16 +598,32 @@ if [[ "$PERSISTED" -eq 0 ]]; then
 fi
 
 # Attestation escape hatch — agent has explicitly declared these matches
-# are not real bugs (quoted examples, hypothetical, etc.).
+# are not real bugs (quoted examples, hypothetical, etc.). ADR 058 D5 pin f
+# (specs-e §E.10 item 2): existence+freshness alone is no longer
+# sufficient — the purpose-clause pair (lib/waiver-purpose-clause.sh) is
+# required too, same as every other waiver reader this wave.
 ATTEST_DIR=".claude/state"
 if [[ -d "$ATTEST_DIR" ]]; then
   # Most recent attestation file (if any) within the last 1 hour
-  if find "$ATTEST_DIR" -type f -name 'bugs-attested-*.txt' -newermt '1 hour ago' 2>/dev/null | grep -q .; then
-    PERSISTED=1
+  ATTEST_FILE=$(find "$ATTEST_DIR" -maxdepth 1 -type f -name 'bugs-attested-*.txt' -newermt '1 hour ago' 2>/dev/null | head -1)
+  if [[ -n "$ATTEST_FILE" ]]; then
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      waiver_has_purpose_clauses "$ATTEST_FILE" && PERSISTED=1
+    else
+      PERSISTED=1
+    fi
   fi
 fi
 
 if [[ "$PERSISTED" -eq 1 ]]; then
+  exit 0
+fi
+
+# --report mode (ADR 059 D1, specs-e §E.11): report the gap as a JSON line
+# and exit 0 instead of blocking — never touches the ledger or retry-guard.
+if [[ "$BPG_REPORT_MODE" == "1" ]]; then
+  _bpg_report_gap "trigger-phrases-not-persisted" \
+    "Bug-persistence gate: trigger phrases detected with no corresponding edit to docs/backlog.md, docs/reviews/, docs/discoveries/, or docs/findings.md."
   exit 0
 fi
 
@@ -434,7 +636,7 @@ BUG-PERSISTENCE GATE — BLOCKED
 This session mentioned bugs / gaps / deficiencies using trigger
 phrases, but did NOT persist any of them to docs/backlog.md,
 docs/reviews/YYYY-MM-DD-<slug>.md, docs/discoveries/YYYY-MM-DD-<slug>.md,
-or docs/findings.md. See rule in ~/.claude/rules/testing.md (Bug
+or docs/findings.md. See rule in ~/.claude/doctrine/testing.md (Bug
 Persistence section).
 
 Trigger phrases detected (up to 10):
@@ -452,7 +654,7 @@ Before the session can end, do ONE of:
      testing / audit pass.
 
   3. Create docs/discoveries/YYYY-MM-DD-<slug>.md with the discovery
-     protocol format (see ~/.claude/rules/discovery-protocol.md). Use
+     protocol format (see ~/.claude/doctrine/discovery-protocol.md). Use
      this for mid-process realizations that aren't bug-shaped:
      architectural learnings, scope expansions, dependency surprises,
      performance/failure-mode/process/user-experience discoveries.
@@ -460,7 +662,7 @@ Before the session can end, do ONE of:
      etc.) is documented in the rule.
 
   4. Add a structured entry to docs/findings.md per the locked six-field
-     schema (Decision 019; see ~/.claude/rules/findings-ledger.md and the
+     schema (Decision 019; see ~/.claude/doctrine/findings-ledger.md and the
      template at ~/.claude/templates/findings-template.md). Use this for
      class-aware observations from gates / adversarial-review agents /
      builder mid-session discoveries that warrant a tracked disposition
@@ -469,13 +671,19 @@ Before the session can end, do ONE of:
 
   5. If the matches are false positives (quoted examples, rhetorical,
      etc.), create .claude/state/bugs-attested-YYYY-MM-DD-HHMM.txt
-     with one line per false-positive justifying why. Create the
-     state directory if it doesn't exist; it's gitignored.
+     naming BOTH why this gate exists and why that does not apply here
+     (ADR 058 D5 pin f), e.g.:
+       Purpose: this gate exists to prevent bugs surfaced in conversation
+                from being lost without a durable record
+       Because: <one line per false-positive justifying why it is not
+                a real bug>
+     Create the state directory if it doesn't exist; it's gitignored.
 
-See also: ~/.claude/rules/planning.md "Identifying a gap = writing a
+See also: ~/.claude/doctrine/planning.md "Identifying a gap = writing a
 backlog entry, in the same response" — the same principle applies to
 bugs surfaced during execution.
 
+This gate: ~/.claude/hooks/bug-persistence-gate.sh (source: adapters/claude-code/hooks/bug-persistence-gate.sh)
 ================================================================
 MSG
 

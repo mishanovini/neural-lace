@@ -43,10 +43,12 @@
 #            branch-protection is configured.
 #
 # INSTALL
-#   Source this file from your `~/.bashrc` or `~/.zshrc`:
-#       . ~/claude-projects/neural-lace/adapters/claude-code/scripts/git-no-verify-friction.sh
+#   Source this file from your `~/.bashrc` or `~/.zshrc` (path is your local
+#   neural-lace checkout — resolvable at runtime via
+#   adapters/claude-code/hooks/lib/nl-paths.sh's nl_repo_root()):
+#       . <nl-repo-root>/adapters/claude-code/scripts/git-no-verify-friction.sh
 #   Or use the installer:
-#       bash ~/claude-projects/neural-lace/adapters/claude-code/scripts/install-git-friction.sh
+#       bash <nl-repo-root>/adapters/claude-code/scripts/install-git-friction.sh
 #
 # UNINSTALL
 #   Remove the source line from your rc file, then `unset -f git`

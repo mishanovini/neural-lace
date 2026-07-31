@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-560a3bf9",
+  "created_at": "2026-07-30T06:01:39Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group scripts-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "e1fc56050726987bb140a77018750f04ee0182ad",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/worktree-hygiene-sweep.sh",
+      "blob_sha": "38956d03b964882d26585e99c40d7aa9cc363326"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — find -mmin claim scan, interpreter-pinned re-invocations, nl_touch_age fixtures; strict improvement proven (master 10 failures with exec bit restored, HEAD 6, fixes 4, regresses 0); residual liveness failures pre-exist and are baseline-sanctioned.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer agent (scripts-2 sweep) via write-review-record.sh",
+  "payload": {}
+}

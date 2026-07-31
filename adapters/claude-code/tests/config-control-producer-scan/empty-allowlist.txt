@@ -1,0 +1,2 @@
+# Empty fixture allowlist — self-test scenarios that must NOT be rescued
+# by an allowlist entry point here.

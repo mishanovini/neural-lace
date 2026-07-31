@@ -65,6 +65,11 @@
 
 set -u
 
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/waiver-purpose-clause.sh" 2>/dev/null; } || true
+
 # ============================================================
 # State-file + state-library path resolution — kept byte-consistent with
 # conversation-tree-state-gate.sh (B1) per ADR-032 §5. Same trust primitive;
@@ -108,7 +113,11 @@ _resolve_state_lib() {
     cand="$root/workstreams-ui/state/state.js"
     if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   fi
-  printf '%s' "$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
+  if command -v nl_workstreams_ui >/dev/null 2>&1; then
+    local _ui; _ui="$(nl_workstreams_ui 2>/dev/null)"
+    [[ -n "$_ui" ]] && { printf '%s' "$_ui/state/state.js"; return 0; }
+  fi
+  printf '%s' "$HOME/.claude/state/state.js"
 }
 
 WAIVER_GLOB='conv-tree-stop-waiver-*.txt'
@@ -128,15 +137,25 @@ if [[ "${1:-}" == "--self-test" ]]; then
   SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
   if [[ ! -f "$SELF" ]]; then echo "self-test: cannot resolve own path" >&2; exit 2; fi
 
-  ST_ROOT=""
-  if ST_ROOT=$(git rev-parse --show-toplevel 2>/dev/null) && [[ -n "$ST_ROOT" ]]; then :; fi
-  ST_LIB=""
-  for c in \
-    "$ST_ROOT/neural-lace/workstreams-ui/state/state.js" \
-    "$ST_ROOT/workstreams-ui/state/state.js"; do
-    [[ -f "$c" ]] && { ST_LIB="$c"; break; }
-  done
-  if [[ -z "$ST_LIB" ]]; then
+  # Portable fixture aging (macos-portability-2026-07 M4), self-test only.
+  _WSG_PT="$(dirname "$SELF")/lib/portable-time.sh"
+  if ! . "$_WSG_PT" 2>/dev/null; then
+    echo "self-test: cannot source $_WSG_PT (needed to backdate fixtures portably)" >&2
+    exit 2
+  fi
+
+  # Locate the real state library for fixture generation. Delegates to the
+  # SAME _resolve_state_lib() the production runtime path uses (pin repo
+  # root via nl-paths.sh's nl_repo_root/nl_workstreams_ui, not an ambient
+  # `git rev-parse --show-toplevel` re-derivation) so the self-test resolves
+  # identically to production regardless of the invoking cwd. Fixed: the
+  # self-test's OWN prior ad-hoc re-derivation relied solely on ambient-cwd
+  # git discovery, which returns empty (and this self-test then exit-2s) when
+  # invoked from a cwd outside any git repo — e.g. a fresh-HOME sandbox whose
+  # cwd is $HOME/.claude, exactly the condition the harness's fresh-install
+  # self-test sweep runs under.
+  ST_LIB="$(_resolve_state_lib)"
+  if [[ -z "$ST_LIB" ]] || [[ ! -f "$ST_LIB" ]]; then
     echo "self-test: cannot locate state library (state.js) for fixture generation" >&2
     exit 2
   fi
@@ -208,7 +227,14 @@ JSONL
       local wf="$work/.claude/state/conv-tree-stop-waiver-test.txt"
       printf '%s\n' "$wv" > "$wf"
       if [[ "$wage" == "stale" ]]; then
-        touch -d '2 hours ago' "$wf" 2>/dev/null || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M 2>/dev/null || echo 197001010000)" "$wf" 2>/dev/null || true
+        # Previously fell back to a hardcoded `197001010000`, which made
+        # this scenario pass on macOS for the WRONG reason (1970, not the
+        # 2-hours-ago the label claims) whenever both GNU spellings
+        # failed. Age it truthfully or fail loudly.
+        if ! nl_touch_age "$wf" 7200; then
+          echo "self-test: could not backdate the stale-waiver fixture" >&2
+          exit 2
+        fi
       fi
     fi
     local input
@@ -252,12 +278,18 @@ JSONL
   _run "s3-spawn-torn-state-BLOCK"      2 "$TORN"     "$TR_SPAWN"   ""  ""      "NOT integrity-verified"
   # 4. NO spawn this session -> ALLOW (silent)
   _run "s4-no-spawn-ALLOW-silent"       0 "$MISSING"  "$TR_NOSPAWN" ""  ""      ""
-  # 5. spawn + no state BUT fresh substantive waiver -> ALLOW
-  _run "s5-fresh-waiver-ALLOW"          0 "$MISSING"  "$TR_SPAWN"   "legitimate edge: spawn dispatched a read-only research agent that touches no tree" fresh ""
+  # 5. spawn + no state BUT fresh substantive waiver WITH the required
+  # purpose-clause pair (ADR 058 D5 pin f) -> ALLOW
+  S5_WAIVER=$'Purpose: this gate exists to prevent ending a session with an unrecorded spawn\nBecause: this legitimate edge dispatched a read-only research agent that touches no tree'
+  _run "s5-fresh-waiver-ALLOW"          0 "$MISSING"  "$TR_SPAWN"   "$S5_WAIVER" fresh ""
   # 6. spawn + no state + whitespace-only waiver -> still BLOCK
   _run "s6-whitespace-waiver-BLOCK"     2 "$MISSING"  "$TR_SPAWN"   "    " fresh "conversation-tree state"
   # 7. spawn + no state + stale(>1h) waiver -> still BLOCK
   _run "s7-stale-waiver-BLOCK"          2 "$MISSING"  "$TR_SPAWN"   "this justification is substantive but stale" stale "conversation-tree state"
+  # 7b (ADR 058 D5 pin f regression): non-empty, FRESH waiver LACKING the
+  # purpose-clause pair -> still BLOCK (existence+freshness alone is not
+  # enough — the pre-pin-f behavior this fixes).
+  _run "s7b-weak-waiver-no-purpose-clauses-BLOCK" 2 "$MISSING" "$TR_SPAWN" "just trust me, this spawn is fine" fresh "conversation-tree state"
   # 8. transcript missing (gate-internal limitation) -> fail-open ALLOW
   _run "s8-transcript-missing-failopen" 0 "$GOOD"     "$TR_MISSING" ""  ""      ""
   # 9. REGRESSION (ADR-034): a session whose ONLY spawns were sub-agent
@@ -384,13 +416,17 @@ done <<< "$TI_TITLES"
 # --- Fresh substantive waiver release-valve (mirrors bug-persistence-gate.sh
 # waiver semantics EXACTLY: >=1 substantive non-whitespace line, mtime < 1h).
 # Checked BEFORE the state checks so a hook bug or a legitimate edge never
-# bricks all work. ---
+# bricks all work. ADR 058 D5 pin f (specs-e §E.10 item 2): non-empty
+# content alone is no longer sufficient — the purpose-clause pair
+# (lib/waiver-purpose-clause.sh) is required too. ---
 _has_fresh_waiver() {
   [[ -d "$STATE_DIR" ]] || return 1
   local f
   while IFS= read -r f; do
     [[ -f "$f" ]] || continue
-    if grep -q '[^[:space:]]' "$f" 2>/dev/null; then
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      waiver_has_purpose_clauses "$f" && return 0
+    elif grep -q '[^[:space:]]' "$f" 2>/dev/null; then
       return 0
     fi
   done < <(find "$STATE_DIR" -maxdepth 1 -type f -name "$WAIVER_GLOB" -newermt '1 hour ago' 2>/dev/null)
@@ -525,7 +561,9 @@ Before the session can end, do ONE of:
          > $STATE_DIR/conv-tree-stop-waiver-\$(date +%s).txt
      (>=1 non-whitespace line, mtime < 1h). NEVER --no-verify.
 
-See ~/.claude/rules/gate-respect.md — diagnose before bypass.
+See ~/.claude/doctrine/gate-respect.md — diagnose before bypass.
+
+This gate: ~/.claude/hooks/workstreams-stop-gate.sh (source: adapters/claude-code/hooks/workstreams-stop-gate.sh)
 ================================================================
 MSG
 

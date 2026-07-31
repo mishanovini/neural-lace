@@ -61,6 +61,7 @@ if [ "${1:-}" = "--self-test" ]; then
   (
     cd "$TMPDIR_ST" || exit 1
     git init -q . >/dev/null 2>&1
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "selftest@example.test"
     git config user.name "selftest"
     mkdir -p adapters/claude-code/hooks
@@ -286,6 +287,8 @@ if [ "${#STRUCTURAL_CHANGES[@]}" -gt 0 ] && [ "$HAS_DOC_STAGED" -eq 0 ]; then
     echo "this gate — only structural changes (A/D/R) do."
     echo ""
     echo "To bypass (not recommended): git commit --no-verify"
+    echo ""
+    echo "This gate: ~/.claude/hooks/docs-freshness-gate.sh (source: adapters/claude-code/hooks/docs-freshness-gate.sh)"
     echo "================================================================"
   } >&2
   exit 1

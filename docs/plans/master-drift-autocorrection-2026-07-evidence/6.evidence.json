@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "task_id": "6",
+  "verdict": "PASS",
+  "commit_sha": "dc3d41bd93c9032644ee468aee6746ad050af716",
+  "files_modified": [
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/hooks/harness-doctor.sh",
+    "adapters/claude-code/manifest.json",
+    "docs/harness-architecture.md"
+  ],
+  "mechanical_checks": {
+    "command:grep -q 'MOOT' docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'MOOT' docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md",
+      "exit_code": 0
+    },
+    "command:grep -q 'master-drift-autocorrect.sh' docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q 'master-drift-autocorrect.sh' docs/discoveries/2026-06-02-component-c-sync-daemon-thrashes-live-checkout.md",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:49:07Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/master-drift-autocorrection-2026-07.md"
+}

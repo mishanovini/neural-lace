@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-214761da",
+  "created_at": "2026-07-30T00:28:29Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group hooks-1 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/session-start-digest.sh",
+      "blob_sha": "ff72fc499780dcd77ad9d014d8832d64a3c1c156"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS: two best-effort never-blocking SessionStart splices (model-availability.sh reconcile — script and cmd_reconcile verified present; ensure-coord-sync.sh — verified present) plus portable self-test fixture aging; both splices are subshelled with || true and cannot block a session start; self-test 86/3 under /bin/bash 3.2 with the identical 3 failures (S1 monitor-alerts, S4 auto-ack x2) reproduced on master's blob in the same environment — pre-existing, not introduced by this diff",
+    "findings_summary": "Pre-existing (not this change): S1 monitor-alerts-feed and S4 auto-ack scenarios fail 3/89 on this machine on both master and branch blobs; file separately against the digest self-test."
+  },
+  "written_by": "harness-reviewer agent (hooks-1 sweep)",
+  "payload": {}
+}

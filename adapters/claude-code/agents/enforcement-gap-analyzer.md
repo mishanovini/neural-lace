@@ -1,6 +1,7 @@
 ---
 name: enforcement-gap-analyzer
 description: Root-cause analyst for harness enforcement failures. Reads a runtime acceptance FAIL (FAIL artifact + plan + session transcript + hooks-that-fired) and produces ONE concrete, class-level harness-improvement proposal — an amended hook/rule, an extended agent remit, or (rarely) a new control. Applies a named RCA methodology (5-Whys to the latent cause + Swiss-Cheese layer-walk) to separate the active failure (the builder's slip) from the latent condition (the dormant harness gap), then selects the control at the strongest viable rung of the control hierarchy (Mechanism > Pattern > reliance-on-memory) at the earliest viable lifecycle layer. Defaults to AMENDMENT; NEW controls are reserved for genuinely-uncovered classes. Output is a draft proposal under docs/harness-improvements/ handed to harness-reviewer for a generalization check before landing. Invoked by product-acceptance-gate.sh on any session that terminates with an active plan whose acceptance artifact has a FAIL verdict; also invocable manually by a maintainer on any observed enforcement miss.
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -159,7 +160,7 @@ Write to `docs/harness-improvements/<YYYY-MM-DD>-<class-slug>.md`. Use the forma
 
 ### Causal-claim labeling (harness-wide discipline — applies to YOUR analysis)
 
-Per `~/.claude/rules/claims.md`, every causal claim you make about *why the control missed* must be tagged:
+Per `~/.claude/doctrine/claims.md`, every causal claim you make about *why the control missed* must be tagged:
 - **PROVEN** — cite the specific evidence: the hook source line, the diff hunk, the transcript tool-call, the FAIL artifact field. Example: "the gate's matcher is `src/app/**` (PROVEN: `scope-enforcement-gate.sh:42`) and the failing file was `src/components/Foo.tsx` (PROVEN: `git show <sha>`), so it was `not-triggered`."
 - **HYPOTHESIZED** — state the assumption AND a refutation criterion. Example: "the builder likely skipped the runtime check (HYPOTHESIZED: no `playwright` line in the evidence block; REFUTED by a transcript showing the check ran)."
 

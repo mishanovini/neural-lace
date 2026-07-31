@@ -2,7 +2,7 @@
 
 Branch: `worker-ws-mytasks`
 Commit: `536e813d69d037d9c7d6e7f7e0b6be18b5d10ce0`
-Worktree: `C:/Users/misha/dev/Pocket Technician/neural-lace/.claude/worktrees/agent-a3bf47087ec4c946f`
+Worktree: `<repo-root>/.claude/worktrees/agent-a3bf47087ec4c946f`
 Verification level: Task 1 = contract; Tasks 2, 6 = full.
 
 ## Task 1 — data substrate (REUSE existing events; ONE new event)

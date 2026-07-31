@@ -158,7 +158,7 @@ sweep_plans() {
   done
 
   if [ "$archived_count" -gt 0 ]; then
-    echo "[plan-archival-sweep] swept $archived_count terminal-status plan(s) into docs/plans/{archive,deferred}/ (DEFERRED → deferred/; COMPLETED/ABANDONED/SUPERSEDED → archive/). See ~/.claude/rules/planning.md 'Plan File Lifecycle' for the convention."
+    echo "[plan-archival-sweep] swept $archived_count terminal-status plan(s) into docs/plans/{archive,deferred}/ (DEFERRED → deferred/; COMPLETED/ABANDONED/SUPERSEDED → archive/). See ~/.claude/doctrine/planning.md 'Plan File Lifecycle' for the convention."
   fi
 }
 

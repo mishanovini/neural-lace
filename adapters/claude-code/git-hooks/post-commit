@@ -38,4 +38,25 @@ if [ -f "$SYNCER" ]; then
   bash "$SYNCER" 2>&1 | grep -E "(✓|✗|synced|failed)"
 fi
 
+# 3. ask-rooted-workstreams-p1 Task 5a: best-effort `merged` progress-log
+# emission for a LOCAL commit that just landed on master. ADDITIVE, not the
+# guaranteed lane -- a remote squash-merge via `gh pr merge` never fires
+# this hook at all; the auditor's git-scan (Task 5b/12, merge-scan-lib.sh's
+# ms_scan_repo_for_merges) is the lane that actually guarantees coverage.
+# Writer semantics (constraint 5): best-effort, never blocks this commit,
+# every failure path silently swallowed (`|| true`, `>/dev/null 2>&1`).
+(
+  MS_LIB="$REPO_DIR/adapters/claude-code/hooks/lib/merge-scan-lib.sh"
+  if [ -f "$MS_LIB" ]; then
+    # shellcheck disable=SC1090
+    . "$MS_LIB"
+    if _ms_is_master_branch "$REPO_DIR" >/dev/null 2>&1; then
+      _HEAD_SHA="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null)"
+      if [ -n "$_HEAD_SHA" ]; then
+        ms_emit_merged_for_commit "$REPO_DIR" "$_HEAD_SHA" --emitter post-commit >/dev/null 2>&1
+      fi
+    fi
+  fi
+) >/dev/null 2>&1 || true
+
 echo ""

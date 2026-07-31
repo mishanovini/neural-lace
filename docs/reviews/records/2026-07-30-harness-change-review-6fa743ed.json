@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-6fa743ed",
+  "created_at": "2026-07-30T00:28:34Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group hooks-1 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/workstreams-read.sh",
+      "blob_sha": "d1164056090db0a299f3d1a62e7ed0b08b1eee44"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS: problem-capture splice is never-blocking (subshelled, || true), its claimed nl-issue.sh operator-verbatim no-dedup contract is real (verified at scripts/nl-issue.sh:281,290,327 plus its Scenario 12), the trigger regex works under BSD grep (verified directly), and the new PC1-PC4 scenarios including the PC2 negative control pass under /bin/bash 3.2; suite 62/1 vs master's 44/14 in the same environment — the single failure (R20 cursor-not-advanced) is pre-existing on master and untouched by this diff",
+    "findings_summary": "Pre-existing (not this change): R20 cursor-not-advanced fails on both master and branch blobs; also note the trigger vocabulary (why is/are, broken, failing) is recall-leaning and will produce benign extra ledger rows — acceptable for a non-blocking capture with a wontfix triage path, but watch the ledger noise rate."
+  },
+  "written_by": "harness-reviewer agent (hooks-1 sweep)",
+  "payload": {}
+}

@@ -1,0 +1,4 @@
+{"ts":"2026-08-01T10:00:00Z","session_id":"fixture-024-sid","gate":"workstreams-emit","event":"spawn-dispatched","detail":"branch=build/wave-o-o3"}
+{"ts":"2026-08-01T10:00:01Z","session_id":"fixture-024-sid","gate":"workstreams-state-gate","event":"block","detail":"verified snapshot has no live node naming this spawn's branch"}
+{"ts":"2026-08-01T10:00:02Z","session_id":"fixture-024-sid","gate":"workstreams-emit","event":"spawn-dispatched","detail":"retry after disk-sync window"}
+{"ts":"2026-08-01T10:00:03Z","session_id":"fixture-024-sid","gate":"workstreams-state-gate","event":"warn","detail":"allow - snapshot now shows the branch"}

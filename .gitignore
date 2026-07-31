@@ -71,6 +71,10 @@ id_ed25519.pub
 # produced while USING neural-lace to build something else — those belong
 # in the downstream project's own repo, not here.
 SCRATCHPAD.md
+# NEEDS-YOU.md — the per-machine awaiting-operator ledger (E.6), same
+# local-only class as SCRATCHPAD: session/operator working state, not a
+# committed artifact.
+NEEDS-YOU.md
 
 # docs/{decisions,reviews,sessions}: ignore content that doesn't follow the
 # established NL-self conventions. Decision records are NNN-*.md; reviews
@@ -86,6 +90,24 @@ docs/decisions/*
 !docs/decisions/queued-*.md
 docs/reviews/*
 !docs/reviews/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
+# docs/reviews/records/ (harness-governance-batch-2026-07-15, task 2): the
+# review-record primitive's records + content-keyed index. MUST be
+# committed (never gitignored) -- session-start-auto-install.sh reads
+# canonical content via `git show origin/master:<path>` on every machine,
+# so anything not committed+merged to master is invisible to the deploy
+# gate everywhere but the one machine that wrote it. Directory itself must
+# be un-ignored too (a bare `docs/reviews/*` match blocks git from ever
+# descending into it to apply a per-file re-include).
+!docs/reviews/records/
+!docs/reviews/records/*.json
+# cockpit-roadmap-redesign Round 15: a LIVING canonical requirements ledger
+# (one row per operator-verbatim UI requirement, re-verified and updated
+# every build round — see the plan's task 9), deliberately NOT dated like a
+# one-time review snapshot; a stable name is the point (future rounds edit
+# this file in place rather than deciding whether to mint a new dated one).
+# Legitimate NL-self artifact, not downstream-project content — explicit
+# single-file re-include, same convention as docs/reviews/records/ above.
+!docs/reviews/cockpit-ui-requirements-ledger.md
 docs/sessions/*
 !docs/sessions/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
 
@@ -142,3 +164,22 @@ build-doctrine/telemetry/propagation.jsonl
 # docs/plans/archive/repo-cleanup-dispatch-worktree-gitlinks-2026-05-22.md.
 # The glob below prevents recurrence. HARNESS-GAP-41 (2026-05-24).
 /[a-z]*-[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]/
+
+# conversation-tree-ui runtime state (ephemeral; was swept into the index by check-harness-sync git add -A — RWR-27)
+neural-lace/conversation-tree-ui/state/.versions/
+neural-lace/conversation-tree-ui/state/*.tmp.*
+neural-lace/conversation-tree-ui/state/*.audit.log
+neural-lace/conversation-tree-ui/state/tree-state.before-ws.json
+neural-lace/conversation-tree-ui/state/tree-state.json.20*
+# live operational tree state + walking-skeleton fixtures (per-machine accumulated session
+# state with real ULIDs/timestamps; not a versioned fixture — RWR-27 follow-up 2026-06-19)
+neural-lace/conversation-tree-ui/state/tree-state.json
+neural-lace/conversation-tree-ui/state/walking-skeleton-*.json
+
+# machine-local workstreams state-path pointer: holds an ABSOLUTE per-machine path.
+# Belongs in the local layer, never the committed harness kit (harness-hygiene:
+# no absolute paths with usernames). RWR-27 follow-up.
+adapters/claude-code/config/workstreams-state-path
+
+# per-machine scheduler runtime lock (untracked 2026-07-12; was committed in v1.0 by accident)
+.claude/scheduled_tasks.lock

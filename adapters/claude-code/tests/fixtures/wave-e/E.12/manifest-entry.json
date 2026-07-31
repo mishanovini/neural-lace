@@ -1,0 +1,22 @@
+{
+  "id": "end-manifest",
+  "kind": "writer",
+  "doctrine_file": null,
+  "hooks": [
+    "scripts/end-manifest.sh"
+  ],
+  "events": [],
+  "wired_template": false,
+  "selftest": true,
+  "jit_triggers": {
+    "paths": [],
+    "keywords": [
+      "end-manifest",
+      "session end-manifest",
+      "ADR 059 D6"
+    ]
+  },
+  "blocking": false,
+  "budget_class": "none",
+  "_fragment_note": "kind 'writer' (not 'gate') because end-manifest.sh itself never blocks -- it only writes/validates a structured artifact. The validator's PASS/FAIL verdict becomes gate-relevant only once stop-verdict-dispatcher.sh (task E.11, its own manifest entry in ../E.11/manifest-entry.json) actually calls 'end-manifest.sh validate' at sec E.W integration -- that call site does not exist yet on this branch (documented, not wired, per sec E.0.1 rule 1 -- settings.json.template/wiring decisions are orchestrator-only)."
+}

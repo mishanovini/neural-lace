@@ -132,6 +132,8 @@ _main_check() {
     echo "Bypass (only if you understand the consequence):" >&2
     echo "  git push --no-verify" >&2
     echo "" >&2
+    echo "This gate: ~/.claude/hooks/pre-push-divergence-check.sh (source: adapters/claude-code/hooks/pre-push-divergence-check.sh)" >&2
+    echo "" >&2
   done
 
   [ "$saw_block" = "1" ] && return 1
@@ -155,6 +157,7 @@ _self_test() {
   (
     cd "$tmp" && mkdir work && cd work
     git init --quiet
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "t@example.com" && git config user.name "T"
     git remote add origin "$tmp/bare-canonical"
     echo a > a && git add a && git commit --quiet -m init
@@ -188,6 +191,7 @@ _self_test() {
     cd "$tmp"
     mkdir advancer && cd advancer
     git init --quiet
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "t@example.com" && git config user.name "T"
     git remote add origin "$tmp/bare-canonical"
     git fetch --quiet origin

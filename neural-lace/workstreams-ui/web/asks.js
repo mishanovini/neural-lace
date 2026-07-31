@@ -1,0 +1,1298 @@
+'use strict';
+/* asks.js — ask-rooted-workstreams-p1, Task 13 "UI landing — ask tree".
+ *
+ * REPLACES the Task 1 walking-skeleton stub wholesale with the full
+ * ask-tree landing: project sections (collapsible) -> ask cards (summary +
+ * one-click verbatim reference, progress narrative excerpt, aggregate plan
+ * progress bar + an explicit drill-down control, waiting count, drift
+ * badges), a collapsed "completed" group (review round 1/2 exit-mechanism
+ * law), and lifecycle affordances (done/dismiss/merge) with success
+ * feedback + undo (constraint 9). Drill-down is lazy: `/api/asks` (this
+ * file's ONLY eager fetch) carries just enough to render the shallow card;
+ * `/api/ask/<id>` (Task 11) is fetched on first expand of either the
+ * verbatim reveal or the plan drill-down, and memoized per ask so both
+ * reveals share one request.
+ *
+ * Anti-noise law (hard constraint 1): every string this module ever assigns
+ * to a DOM text node is either (a) a hardcoded, reviewed, plain-English
+ * literal below, or (b) server-prepared operator prose (`summary`,
+ * `narrative_excerpt`, a §3 waiting-item `title`/`body`) that the payload
+ * schema (Task 11) already scans for gate/hook identifiers before it ever
+ * reaches the wire. This module never fabricates copy that mentions a
+ * script, hook, or oracle name.
+ *
+ * Absolute-links law (hard constraint 2): the ONE place this module ever
+ * sets a real `<a href>` is `absoluteLinkNode()`, which only accepts
+ * http(s)/file:// /drive-letter/UNC/POSIX-absolute strings (mirrors
+ * `server/payload-schema.js`'s `isAbsoluteHref`) — anything else renders as
+ * plain text + a copy button, never a relative href. Plan-doc links are the
+ * ONE documented exception (ux-review amendment 6): they resolve through
+ * the EXISTING `/api/doc` + `/api/doc/open` handlers via the shared
+ * `docModal` DOM (app.js already wires its close affordances — Esc,
+ * docClose, docScrim — this module reuses those elements/handlers rather
+ * than growing its own modal).
+ */
+(function () {
+  var root = document.getElementById('askTreeBody');
+  if (!root) return; // section not present on this page — no-op
+
+  // ============================================================
+  // small utilities
+  // ============================================================
+  function $(id) { return document.getElementById(id); }
+
+  function formatAge(iso) {
+    if (!iso) return 'unknown';
+    var ms = Date.now() - Date.parse(iso);
+    if (isNaN(ms)) return 'unknown';
+    if (ms < 0) ms = 0;
+    var s = Math.round(ms / 1000);
+    if (s < 60) return s + 's ago';
+    var m = Math.round(s / 60);
+    if (m < 60) return m + 'm ago';
+    var h = Math.round(m / 60);
+    if (h < 24) return h + 'h ago';
+    var d = Math.round(h / 24);
+    return d + 'd ago';
+  }
+
+  function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(function () {});
+    }
+  }
+
+  function makeCopyBtn(text, label) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost small ask-copy-btn';
+    b.textContent = label || 'copy';
+    b.title = 'copy "' + text + '" to clipboard';
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      copyToClipboard(text);
+      var orig = b.textContent;
+      b.textContent = 'copied';
+      setTimeout(function () { b.textContent = orig; }, 1200);
+    });
+    return b;
+  }
+
+  // isAbsoluteHref — mirrors server/payload-schema.js's isAbsoluteHref
+  // exactly (same five accepted shapes) so this module never sets a
+  // relative `<a href>` regardless of what a future field carries.
+  function isAbsoluteHref(v) {
+    if (typeof v !== 'string' || v === '') return false;
+    if (/^https?:\/\//i.test(v)) return true;
+    if (/^file:\/\//i.test(v)) return true;
+    if (/^[A-Za-z]:[\\/]/.test(v)) return true;
+    if (/^\\\\/.test(v)) return true;
+    if (/^\//.test(v)) return true;
+    return false;
+  }
+
+  function toFileUrl(p) {
+    var norm = String(p).replace(/\\/g, '/');
+    if (/^[A-Za-z]:\//.test(norm)) return 'file:///' + norm;
+    if (/^\/\//.test(norm)) return null; // UNC — not worth the encoding risk; copy-only is the honest fallback
+    if (/^\//.test(norm)) return 'file://' + norm;
+    return null;
+  }
+
+  // absoluteLinkNode(value) — the ONE function in this module that ever
+  // assigns a real `<a href>`. Any non-empty string reaches here (evidence
+  // links, raw NEEDS-YOU.md links, needs-you.sh §3 `links[]` entries); only
+  // an absolute shape becomes a clickable anchor (http(s) as-is, a local
+  // absolute path best-effort converted to `file://`) — everything else is
+  // plain text + a copy affordance, never a relative href (constraint 2).
+  function absoluteLinkNode(value) {
+    var wrap = document.createElement('span');
+    wrap.className = 'ask-link-resolved';
+    if (typeof value !== 'string' || value === '') {
+      wrap.textContent = '(none)';
+      return wrap;
+    }
+    if (/^https?:\/\//i.test(value)) {
+      var a = document.createElement('a');
+      a.href = value; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.textContent = value;
+      wrap.appendChild(a);
+      return wrap;
+    }
+    if (isAbsoluteHref(value)) {
+      var fileUrl = toFileUrl(value);
+      if (fileUrl) {
+        var fa = document.createElement('a');
+        fa.href = fileUrl; fa.target = '_blank'; fa.rel = 'noopener noreferrer';
+        fa.textContent = value;
+        wrap.appendChild(fa);
+      } else {
+        wrap.appendChild(document.createTextNode(value));
+      }
+      wrap.appendChild(makeCopyBtn(value, 'copy path'));
+      return wrap;
+    }
+    // Not absolute — never rendered as a clickable href (constraint 2).
+    // Plain text + copy so the reference is never silently dropped.
+    wrap.appendChild(document.createTextNode(value));
+    wrap.appendChild(makeCopyBtn(value));
+    return wrap;
+  }
+
+  // openPlanDocModal(project, path) — reuses the EXISTING docModal DOM
+  // app.js already renders/wires (docClose click, docScrim click, Escape
+  // key all already close it regardless of who opened it) rather than
+  // growing a second link-handling surface (ux-review amendment 6: "no
+  // pane grows its own link handling"). Best-effort no-op if the shared
+  // modal elements are absent from this page for any reason.
+  function openPlanDocModal(project, docPath) {
+    var docModal = $('docModal'), docTitle = $('docTitle'), docBody = $('docBody'), docOpenEditor = $('docOpenEditor');
+    if (!docModal || !docTitle || !docBody) return;
+    docTitle.textContent = project + ' / ' + docPath;
+    docBody.textContent = 'loading…';
+    docModal.hidden = false;
+    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
+      .then(function (r) { return r.json(); })
+      .then(function (j) { docBody.textContent = j && j.ok ? j.content : ('error: ' + (j && j.error)); })
+      .catch(function (err) { docBody.textContent = 'error: ' + err; });
+    if (docOpenEditor) {
+      docOpenEditor.onclick = function () {
+        fetch('/api/doc/open', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: project, path: docPath }),
+        }).catch(function () {});
+      };
+    }
+  }
+
+  // ============================================================
+  // top-level render states (loading / error / empty / ideal —
+  // constraint 8)
+  // ============================================================
+  function renderLoading() {
+    root.innerHTML = '';
+    var box = document.createElement('div');
+    box.className = 'ask-tree-status';
+    box.innerHTML = '<div class="pane-loading" aria-busy="true">loading asks…</div>';
+    root.appendChild(box);
+  }
+
+  function renderError(message) {
+    root.innerHTML = '';
+    var box = document.createElement('div');
+    box.className = 'ask-tree-status pane-error';
+    box.setAttribute('role', 'alert');
+    var h = document.createElement('div');
+    h.className = 'pane-error-title';
+    h.textContent = 'Could not load asks';
+    box.appendChild(h);
+    var msg = document.createElement('div');
+    msg.className = 'pane-error-cmd';
+    msg.textContent = String(message || 'unknown error — the server may be restarting');
+    box.appendChild(msg);
+    var retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'btn-go small';
+    retry.textContent = 'Retry';
+    retry.addEventListener('click', load);
+    box.appendChild(retry);
+    root.appendChild(box);
+  }
+
+  function renderFullyEmpty() {
+    var box = document.createElement('div');
+    box.className = 'ask-tree-status';
+    box.innerHTML = '<div class="pane-empty">No asks registered yet. New sessions register their opening ask automatically — nothing to set up.</div>';
+    return box;
+  }
+
+  // ============================================================
+  // drift badges (Task 12 populates the array; cockpit-roadmap-redesign
+  // Task 6 is the BADGE LAW at this renderer — defense in depth alongside
+  // the auditor's own age-bound fix, commit 0cb4f9b).
+  //
+  // PROVEN production defect (badge-storm nl-issue, docs/reviews/
+  // 2026-07-17-cockpit-ux-redesign-proposal.md D4/§5): the auditor emitted
+  // 718 `unmatched_dispatch` badges for one ask, and this function rendered
+  // 718 unlabeled "drift" chips (one <details> PER BADGE, falling through to
+  // a hardcoded literal because badges carry `divergence_class`, not
+  // label/type/note). The auditor-side over-emission is fixed upstream
+  // (commit 0cb4f9b ages out unmatched_dispatch past the marker-retention
+  // horizon) — this half is the renderer's OWN invariant.
+  //
+  // FIX ROUND (2026-07-19, task-verifier conf 7 + comprehension-reviewer
+  // conf 5 on the FIRST pass, both addressed here):
+  //
+  // (1) SUPPRESSION, not just a cap. §5 is explicit: "only divergence
+  // classes that change what the operator should believe about the card's
+  // own claim qualify at all... bookkeeping classes (unmatched_dispatch and
+  // kin) render NOWHERE on the board — they live in Harness Health's
+  // diagnostics pane, counted." The first pass capped bookkeeping classes to
+  // one on-card chip instead of suppressing them (Acceptance Scenario 4:
+  // 700 bookkeeping badges -> 0 board chips). BOOKKEEPING_DIVERGENCE_CLASSES
+  // below is read off the divergence-class table (server/auditor.js:27-36):
+  // `log_ahead_task_not_flipped` is the ONE class that directly contradicts
+  // a card's own claim ("shown done, but the plan file disagrees" — §5's
+  // literal "shown done, not merged" example) and is BELIEF-CHANGING, kept
+  // on the board; `unmatched_dispatch` (§5 names it explicitly),
+  // `orphaned_waiting_item`, and `unknown_provenance` are mechanism/ledger
+  // bookkeeping gaps ("kin") -- SUPPRESSED here, their counted summary
+  // rendered instead in Harness Health (web/app.js's renderDiagnostics /
+  // bookkeepingDivergenceSummary — reads the SAME per-ask badge data via
+  // the existing `/api/diagnostics/drift` -> `badges_by_ask` aggregate, no
+  // new endpoint or cross-module global needed). An unranked/future class
+  // (not in either list) defaults to BELIEF-CHANGING (visible on the
+  // board) — the safe default, since silently hiding an unclassified
+  // signal would repeat the "confident wrong bucket" failure this whole
+  // plan exists to kill (C5's generalization applied to badge
+  // classification).
+  //
+  // (2) DRILL-DOWN CAP (comprehension gate conf 5): the detail body used to
+  // materialize one hidden <div> PER badge instance -- unsurfaced reliance
+  // on the auditor's own age-bound fix staying in place forever to keep
+  // that count small. Capped to DRILL_DOWN_LINE_CAP (50) + one "+K more"
+  // line (the proposal's list-cap idiom, §5/D4: "274 artifact rows ->
+  // newest 5 + 'all 274 ->'"). SCOPED CLAIM (the gate's correction): the
+  // drill-down body's own DOM footprint is invulnerable to upstream
+  // over-emission by construction -- capped at 51 elements regardless of
+  // upstream badge count. That is the ONLY "invulnerable by construction"
+  // claim made here; it does not extend to the rest of this function or to
+  // any other surface.
+  //
+  // THE LAW (revised): belief-changing classes get at most ONE counted,
+  // labeled chip PER class, ever — never one chip per badge instance.
+  // Bookkeeping classes get ZERO chips here (Harness Health only).
+  // Precedence orders DISPLAY ONLY among the classes that DO render (a
+  // higher-precedence class never masks a lower one — every belief-
+  // changing class present gets its own chip; same "precedence orders,
+  // never selects" law as the roadmap roll-up badges, task 1/3's separate
+  // mechanism for a different surface). Zero renderable badges (whether
+  // truly zero, or every badge present was bookkeeping-suppressed) renders
+  // NO chip and no wrapping container (never an empty <span> — the call
+  // site below only appends when this returns non-null).
+  // ============================================================
+  // BADGE-LAW-RENDER-BEGIN (selftest extraction anchor — cockpit.selftest.js
+  // sandboxes exactly this block, verbatim, against fixture badge arrays to
+  // prove the RENDERED OUTPUT of the real function, not a reimplementation.
+  // Keep this block self-contained between the BEGIN/END anchors: no
+  // reference to anything outside it except the global `document`. Mirrors
+  // web/app.js's BOOKKEEPING-DIAG-BEGIN/END block's own
+  // BOOKKEEPING_DIVERGENCE_CLASSES literal — cockpit.selftest.js T6H-4
+  // cross-checks the two stay identical, since there's no shared module
+  // system between these two plain-script files.)
+  var BOOKKEEPING_DIVERGENCE_CLASSES = {
+    unmatched_dispatch: true,
+    orphaned_waiting_item: true,
+    unknown_provenance: true,
+  };
+  var DIVERGENCE_CLASS_PRECEDENCE = [
+    'log_ahead_task_not_flipped',
+    'unmatched_dispatch',
+    'orphaned_waiting_item',
+    'unknown_provenance',
+  ];
+  function divergenceClassRank(cls) {
+    var i = DIVERGENCE_CLASS_PRECEDENCE.indexOf(cls);
+    return i === -1 ? DIVERGENCE_CLASS_PRECEDENCE.length : i; // unknown/future classes sort last, never crash
+  }
+  var DRILL_DOWN_LINE_CAP = 50;
+  function renderDriftBadges(badges) {
+    // bookkeeping classes render NOWHERE on the card (suppressed here, not
+    // capped) -- only belief-changing classes (or an unranked/future class,
+    // defaulting to belief-changing) ever reach the board.
+    var list = (badges || []).filter(function (b) {
+      var cls = (b && b.divergence_class) || 'drift';
+      return !BOOKKEEPING_DIVERGENCE_CLASSES[cls];
+    });
+    if (!list.length) return null; // zero belief-changing badges -> no chip, never an empty container
+
+    // group by divergence_class (a badge with no class at all — legacy/
+    // malformed — groups under the literal 'drift' fallback rather than
+    // being dropped silently).
+    var groups = {};
+    var order = [];
+    list.forEach(function (b) {
+      var cls = (b && b.divergence_class) || 'drift';
+      if (!groups[cls]) { groups[cls] = []; order.push(cls); }
+      groups[cls].push(b);
+    });
+    order.sort(function (a, c) {
+      var ra = divergenceClassRank(a), rc = divergenceClassRank(c);
+      if (ra !== rc) return ra - rc;
+      return a < c ? -1 : (a > c ? 1 : 0); // stable, deterministic tiebreak for unranked classes
+    });
+
+    var wrap = document.createElement('span');
+    wrap.className = 'ask-badges-row';
+    order.forEach(function (cls) {
+      var members = groups[cls];
+      var det = document.createElement('details');
+      det.className = 'ask-badge-details';
+      var sum = document.createElement('summary');
+      sum.className = 'chip ask-badge';
+      sum.textContent = cls + ' ×' + members.length; // ONE counted, labeled chip per class (text + color, never color-only)
+      det.appendChild(sum);
+      var body = document.createElement('div');
+      body.className = 'ask-badge-detail-body';
+      // drill-down list on demand: one line per underlying badge instance in
+      // this class, on expand — capped at DRILL_DOWN_LINE_CAP + one "+K
+      // more" line so the detail body's own DOM footprint stays bounded
+      // regardless of upstream count. Task 12 hasn't defined the
+      // divergence-detail shape beyond divergence_class, so each line
+      // renders whatever fields the badge object carries rather than
+      // guessing a schema.
+      members.slice(0, DRILL_DOWN_LINE_CAP).forEach(function (b) {
+        var line = document.createElement('div');
+        line.className = 'ask-badge-detail-line';
+        var lines = [];
+        Object.keys(b || {}).forEach(function (k) {
+          if (k === 'divergence_class') return;
+          lines.push(k + ': ' + String(b[k]));
+        });
+        line.textContent = lines.length ? lines.join(' · ') : 'divergence detail not yet available';
+        body.appendChild(line);
+      });
+      if (members.length > DRILL_DOWN_LINE_CAP) {
+        var more = document.createElement('div');
+        more.className = 'ask-badge-detail-line ask-badge-detail-more';
+        more.textContent = '+' + (members.length - DRILL_DOWN_LINE_CAP) + ' more';
+        body.appendChild(more);
+      }
+      det.appendChild(body);
+      wrap.appendChild(det);
+    });
+    return wrap;
+  }
+  // BADGE-LAW-RENDER-END
+
+  // ============================================================
+  // detail fetch — memoized per ask id so the verbatim reveal and the
+  // plan drill-down share one request (Behavioral Contracts: no oracle
+  // shelling on the landing path; this is off that path entirely, fired
+  // only on explicit operator expand).
+  // ============================================================
+  var detailCache = {}; // ask_id -> Promise<detailPayload|{__error:msg}>
+  function getAskDetail(askId, forceReload) {
+    if (!forceReload && detailCache[askId]) return detailCache[askId];
+    var p = fetch('/api/ask/' + encodeURIComponent(askId))
+      .then(function (r) { return r.json().then(function (j) { return { status: r.status, json: j }; }); })
+      .then(function (r) {
+        if (!r.json || r.json.ok === false) {
+          return { __error: (r.json && r.json.error) || ('request failed (HTTP ' + r.status + ')') };
+        }
+        return r.json;
+      })
+      .catch(function (err) { return { __error: String(err) }; });
+    detailCache[askId] = p;
+    return p;
+  }
+
+  // ============================================================
+  // sessions + spawn lineage (constraint: never a lost session — flat
+  // grouping where no provenance edge exists).
+  // ============================================================
+  var HB_STATE_LABEL = { live: 'live', stale: 'stale', throttled: 'throttled', crashed: 'crashed', missing: 'no heartbeat' };
+  function renderSessionRow(s, depth) {
+    var li = document.createElement('li');
+    li.className = 'ask-session-row';
+    li.style.marginLeft = (depth * 16) + 'px';
+    var chip = document.createElement('span');
+    var st = s.state || 'missing';
+    chip.className = 'chip ask-session-chip hb-' + st;
+    chip.textContent = HB_STATE_LABEL[st] || st; // text + color, never color-only
+    li.appendChild(chip);
+    if (s.role) {
+      var roleSpan = document.createElement('span');
+      roleSpan.className = 'ask-session-role';
+      roleSpan.textContent = s.role;
+      li.appendChild(roleSpan);
+    }
+    var idSpan = document.createElement('span');
+    idSpan.className = 'ask-session-id';
+    idSpan.textContent = s.session_id;
+    li.appendChild(idSpan);
+    var copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'ghost small ask-copy-btn';
+    copyBtn.textContent = 'Copy session id';
+    copyBtn.addEventListener('click', function () { copyToClipboard(s.session_id); var o = copyBtn.textContent; copyBtn.textContent = 'copied'; setTimeout(function () { copyBtn.textContent = o; }, 1200); });
+    li.appendChild(copyBtn);
+    var caption = document.createElement('span');
+    caption.className = 'ask-session-copy-caption';
+    caption.textContent = 'copy session id — resume with `claude --resume ' + s.session_id + '`';
+    li.appendChild(caption);
+    return li;
+  }
+  function renderSessionsList(sessions) {
+    var list = document.createElement('ul');
+    list.className = 'ask-session-list';
+    if (!sessions || sessions.length === 0) {
+      var none = document.createElement('div');
+      none.className = 'pane-empty';
+      none.textContent = 'no sessions recorded for this ask yet';
+      return none;
+    }
+    // Lineage: a session with resumed_from pointing at another session in
+    // this SAME set renders indented beneath its parent (spawn-lineage
+    // edge); everything else — including a resumed_from that points
+    // nowhere resolvable — renders flat, so no session is ever silently
+    // dropped for lacking provenance.
+    var byId = {};
+    sessions.forEach(function (s) { byId[s.session_id] = s; });
+    var childrenOf = {};
+    var isChild = {};
+    sessions.forEach(function (s) {
+      if (s.resumed_from && byId[s.resumed_from] && s.resumed_from !== s.session_id) {
+        childrenOf[s.resumed_from] = childrenOf[s.resumed_from] || [];
+        childrenOf[s.resumed_from].push(s);
+        isChild[s.session_id] = true;
+      }
+    });
+    function appendWithChildren(s, depth, seen) {
+      if (seen[s.session_id]) return; // cycle guard — never infinite-loop on bad data
+      seen[s.session_id] = true;
+      list.appendChild(renderSessionRow(s, depth));
+      (childrenOf[s.session_id] || []).forEach(function (c) { appendWithChildren(c, depth + 1, seen); });
+    }
+    var seen = {};
+    sessions.forEach(function (s) { if (!isChild[s.session_id]) appendWithChildren(s, 0, seen); });
+    // Any session caught in a cycle/orphan gap never reached above still
+    // renders flat rather than vanishing.
+    sessions.forEach(function (s) { if (!seen[s.session_id]) list.appendChild(renderSessionRow(s, 0)); });
+    return list;
+  }
+
+  // ============================================================
+  // waiting items — real §3 block, or the NEVER-TERMINAL defect form
+  // (constraint 9: always carries the violation notice + an absolute link
+  // to the raw NEEDS-YOU.md entry + the source session id).
+  // ============================================================
+  function renderWaitingItem(item) {
+    var box = document.createElement('div');
+    if (item.defect) {
+      box.className = 'ask-waiting-item ask-defect-form';
+      box.setAttribute('role', 'note');
+      var msg = document.createElement('div');
+      msg.className = 'ask-defect-message';
+      msg.textContent = item.message || 'context missing — session violated §3';
+      box.appendChild(msg);
+      var recovery = document.createElement('div');
+      recovery.className = 'ask-defect-recovery';
+      var label = document.createElement('span');
+      label.textContent = 'Raw ledger entry: ';
+      recovery.appendChild(label);
+      recovery.appendChild(absoluteLinkNode(item.raw_link));
+      box.appendChild(recovery);
+      if (item.session_id) {
+        var sessRow = document.createElement('div');
+        sessRow.className = 'ask-defect-session';
+        sessRow.appendChild(renderSessionRow({ session_id: item.session_id, role: 'source', state: 'missing' }, 0));
+        box.appendChild(sessRow);
+      }
+      return box;
+    }
+    box.className = 'ask-waiting-item';
+    var title = document.createElement('div');
+    title.className = 'ask-waiting-title';
+    title.textContent = item.title || '(untitled decision)';
+    box.appendChild(title);
+    var body = document.createElement('div');
+    body.className = 'ask-waiting-body';
+    body.textContent = item.body || '';
+    box.appendChild(body);
+    if (item.links && item.links.length) {
+      var linksRow = document.createElement('div');
+      linksRow.className = 'ask-waiting-links';
+      item.links.forEach(function (l) { linksRow.appendChild(absoluteLinkNode(l)); });
+      box.appendChild(linksRow);
+    }
+    if (item.session_id) {
+      var sr = document.createElement('div');
+      sr.className = 'ask-waiting-session';
+      sr.appendChild(renderSessionRow({ session_id: item.session_id, role: 'source', state: 'missing' }, 0));
+      box.appendChild(sr);
+    }
+    return box;
+  }
+
+  // ============================================================
+  // per-plan drill-down block (MULTI-PLAN CARDS, review round 2: one
+  // live-doc link per plan; per-task rows grouped by plan).
+  // ============================================================
+  var TASK_STATUS_LABEL = { done: 'done', in_flight: 'in flight', not_started: 'not started' };
+  function taskStatusOf(t) { return t.done ? 'done' : (t.in_flight ? 'in_flight' : 'not_started'); }
+  function renderPlanBlock(row) {
+    var block = document.createElement('div');
+    block.className = 'ask-plan-block';
+    var head = document.createElement('div');
+    head.className = 'ask-plan-head';
+    var name = document.createElement('span');
+    name.className = 'ask-plan-slug';
+    name.textContent = row.plan_slug;
+    head.appendChild(name);
+    if (row.plan_doc && row.plan_doc.project && row.plan_doc.path) {
+      var linkBtn = document.createElement('button');
+      linkBtn.type = 'button';
+      linkBtn.className = 'ghost small ask-plan-doc-link';
+      linkBtn.textContent = 'View live plan doc';
+      linkBtn.title = 'open ' + row.plan_doc.project + '/' + row.plan_doc.path + ' in the docs viewer';
+      linkBtn.addEventListener('click', function () { openPlanDocModal(row.plan_doc.project, row.plan_doc.path); });
+      head.appendChild(linkBtn);
+    } else {
+      var noDoc = document.createElement('span');
+      noDoc.className = 'ask-plan-nodoc';
+      noDoc.textContent = '(plan file not found)';
+      head.appendChild(noDoc);
+    }
+    block.appendChild(head);
+    if (!row.tasks || row.tasks.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'pane-empty ask-plan-empty';
+      empty.textContent = 'no tasks found for this plan';
+      block.appendChild(empty);
+      return block;
+    }
+    var list = document.createElement('ul');
+    list.className = 'ask-task-list';
+    row.tasks.forEach(function (t) {
+      var li = document.createElement('li');
+      li.className = 'ask-task-row';
+      var status = taskStatusOf(t);
+      var chip = document.createElement('span');
+      chip.className = 'chip ask-task-status task-status-' + status;
+      chip.textContent = TASK_STATUS_LABEL[status]; // text + color, never color-only
+      li.appendChild(chip);
+      var idSpan = document.createElement('span');
+      idSpan.className = 'ask-task-id';
+      idSpan.textContent = 'task ' + t.id;
+      li.appendChild(idSpan);
+      if (t.done && t.evidence_link) {
+        var ev = document.createElement('span');
+        ev.className = 'ask-task-evidence';
+        ev.appendChild(document.createTextNode('evidence: '));
+        ev.appendChild(absoluteLinkNode(t.evidence_link));
+        li.appendChild(ev);
+      }
+      // cockpit-roadmap-redesign Task 8 (absorbed UI-polish item 3, render
+      // half): each task's own DESCRIPTION text (derive-lib.js's
+      // computePlanRows now sources it from plan-parse.js's per-task
+      // `description`, clamped server-side well under payload-schema's
+      // DENYLIST_EXEMPT_MAX_LEN — see that file's comment for why the raw
+      // plan text can't ride through unclamped). Long descriptions get a
+      // native <details> clamp+expand (this codebase's established
+      // keyboard-a11y disclosure pattern), short ones render plain. NOTE:
+      // the archived plan's "de-duplicate links" half of this item is
+      // already satisfied by THIS function's own single "View live plan
+      // doc" button above (one per plan block) — there has never been a
+      // second, per-task plan-path link anywhere in this render path to
+      // remove.
+      if (t.description) {
+        var desc = document.createElement('div');
+        desc.className = 'ask-task-desc';
+        if (t.description.length > 160) {
+          var descDetails = document.createElement('details');
+          descDetails.className = 'ask-task-desc-details';
+          var descSummary = document.createElement('summary');
+          descSummary.className = 'ask-task-desc-summary';
+          descSummary.textContent = t.description.slice(0, 160) + '…';
+          descDetails.appendChild(descSummary);
+          var descFull = document.createElement('div');
+          descFull.className = 'ask-task-desc-full';
+          descFull.textContent = t.description;
+          descDetails.appendChild(descFull);
+          desc.appendChild(descDetails);
+        } else {
+          desc.textContent = t.description;
+        }
+        li.appendChild(desc);
+      }
+      list.appendChild(li);
+    });
+    block.appendChild(list);
+    return block;
+  }
+
+  // renderArtifact() / the "Artifacts" drill-down section it backed were
+  // REMOVED here (cockpit-roadmap-redesign Task 8, absorbed UI-polish
+  // operator item 4 — "never see the Artifacts wall again"). The server's
+  // `detail.artifacts` field is UNCHANGED (buildArtifacts() in server.js):
+  // no other consumer was found (grep across web/ + server/), but the field
+  // stays for API compat per the archived plan's own instruction — this is
+  // a UI-only removal, not a payload/schema change.
+
+  // ============================================================
+  // drill-down body — populated on first expand from the memoized detail
+  // fetch. Renders: per-plan blocks grouped by plan_slug (MULTI-PLAN
+  // CARDS), waiting items (§3 block or defect form), sessions + lineage,
+  // artifacts.
+  // ============================================================
+  function renderDrilldownBody(container, askId) {
+    container.innerHTML = '<div class="pane-loading" aria-busy="true">loading plan detail…</div>';
+    getAskDetail(askId).then(function (detail) {
+      container.innerHTML = '';
+      if (detail.__error) {
+        var errBox = document.createElement('div');
+        errBox.className = 'pane-error';
+        errBox.setAttribute('role', 'alert');
+        var t = document.createElement('div');
+        t.className = 'pane-error-title';
+        t.textContent = 'Could not load this ask’s detail';
+        errBox.appendChild(t);
+        var m = document.createElement('div');
+        m.className = 'pane-error-cmd';
+        m.textContent = detail.__error;
+        errBox.appendChild(m);
+        var retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn-go small';
+        retry.textContent = 'Retry';
+        retry.addEventListener('click', function () { getAskDetail(askId, true); renderDrilldownBody(container, askId); });
+        errBox.appendChild(retry);
+        container.appendChild(errBox);
+        return;
+      }
+      var planRows = detail.plan_rows || [];
+      var plansSection = document.createElement('div');
+      plansSection.className = 'ask-plans-section';
+      if (planRows.length === 0) {
+        var noPlan = document.createElement('div');
+        noPlan.className = 'pane-empty';
+        noPlan.textContent = 'no plan linked yet';
+        plansSection.appendChild(noPlan);
+      } else {
+        planRows.forEach(function (row) { plansSection.appendChild(renderPlanBlock(row)); });
+      }
+      container.appendChild(plansSection);
+
+      var waitingSection = document.createElement('div');
+      waitingSection.className = 'ask-waiting-section';
+      waitingSection.id = 'ask-waiting-' + askId;
+      waitingSection.tabIndex = -1;
+      var waitingHead = document.createElement('div');
+      waitingHead.className = 'ask-subhead';
+      waitingHead.textContent = 'Waiting on you';
+      waitingSection.appendChild(waitingHead);
+      var waitingItems = detail.waiting_items || [];
+      if (waitingItems.length === 0) {
+        var noWaiting = document.createElement('div');
+        noWaiting.className = 'pane-empty';
+        noWaiting.textContent = 'nothing waiting on you for this ask';
+        waitingSection.appendChild(noWaiting);
+      } else {
+        waitingItems.forEach(function (item) { waitingSection.appendChild(renderWaitingItem(item)); });
+      }
+      container.appendChild(waitingSection);
+
+      var sessionsSection = document.createElement('div');
+      sessionsSection.className = 'ask-sessions-section';
+      var sessionsHead = document.createElement('div');
+      sessionsHead.className = 'ask-subhead';
+      sessionsHead.textContent = 'Sessions';
+      sessionsSection.appendChild(sessionsHead);
+      sessionsSection.appendChild(renderSessionsList(detail.sessions || []));
+      container.appendChild(sessionsSection);
+      // Artifacts section REMOVED (Task 8, absorbed UI-polish item 4) —
+      // see the renderArtifact() removal comment above.
+    });
+  }
+
+  function renderVerbatimBody(container, askId) {
+    container.innerHTML = '<div class="pane-loading" aria-busy="true">loading…</div>';
+    getAskDetail(askId).then(function (detail) {
+      container.innerHTML = '';
+      if (detail.__error) {
+        var errBox = document.createElement('div');
+        errBox.className = 'pane-error';
+        errBox.setAttribute('role', 'alert');
+        errBox.textContent = 'Could not load the verbatim reference: ' + detail.__error;
+        container.appendChild(errBox);
+        return;
+      }
+      if (!detail.verbatim_ref) {
+        var none = document.createElement('div');
+        none.className = 'pane-empty';
+        none.textContent = 'no verbatim reference captured for this ask';
+        container.appendChild(none);
+        return;
+      }
+      var row = document.createElement('div');
+      row.className = 'ask-verbatim-ref';
+      var label = document.createElement('div');
+      label.className = 'ask-verbatim-label';
+      // Honest limitation (follow-up filed, not routed around): the
+      // registry currently captures a REFERENCE (transcript path + prompt
+      // offset), not the resolved prompt text itself — no read surface
+      // exists yet to turn that pointer into displayed text, and building
+      // one is server-side work outside this task's file ownership (Tasks
+      // 11/12 own server/). This renders the real reference, absolute and
+      // copyable, rather than a fabricated "original text" the current
+      // architecture cannot actually produce.
+      label.textContent = 'Capture reference (transcript path + prompt offset):';
+      row.appendChild(label);
+      row.appendChild(absoluteLinkNode(detail.verbatim_ref));
+      container.appendChild(row);
+    });
+  }
+
+  // ============================================================
+  // lifecycle actions — done/dismiss/merge (operator-override exit path,
+  // constraint 7) with success feedback + brief undo (constraint 9).
+  // ============================================================
+  function postLifecycle(askId, action, into) {
+    var body = { action: action };
+    if (into) body.into = into;
+    return fetch('/api/ask/' + encodeURIComponent(askId) + '/lifecycle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    }).then(function (r) { return r.json(); }).catch(function (err) { return { ok: false, error: String(err) }; });
+  }
+
+  var UNDO_WINDOW_MS = 8000;
+
+  // renderLifecycleRow(ask, isCompleted, onMoved) — onMoved() is called
+  // once the undo window has elapsed without an undo click, signalling the
+  // caller to reload the whole landing (the card has now truly left the
+  // active list / re-entered it — Task 12's auditor derivation may also
+  // race this, so the next full load() is the source of truth either way).
+  function renderLifecycleRow(ask, isCompleted, onMoved) {
+    var row = document.createElement('div');
+    row.className = 'ask-lifecycle-row';
+    var feedback = document.createElement('div');
+    feedback.className = 'ask-feedback-row';
+    feedback.setAttribute('aria-live', 'polite');
+    feedback.hidden = true;
+
+    var actionsWrap = document.createElement('div');
+    actionsWrap.className = 'ask-lifecycle-actions';
+
+    function showFeedback(text, undoAction) {
+      actionsWrap.hidden = true;
+      feedback.hidden = false;
+      feedback.innerHTML = '';
+      var t = document.createElement('span');
+      t.className = 'ask-feedback-text';
+      t.textContent = text;
+      feedback.appendChild(t);
+      var timer = null;
+      if (undoAction) {
+        var undoBtn = document.createElement('button');
+        undoBtn.type = 'button';
+        undoBtn.className = 'ghost small ask-undo-btn';
+        undoBtn.textContent = 'Undo';
+        undoBtn.addEventListener('click', function () {
+          if (timer) clearTimeout(timer);
+          postLifecycle(ask.ask_id, 'reopen').then(function (r) {
+            if (r && r.ok) {
+              feedback.hidden = true;
+              actionsWrap.hidden = false;
+            } else {
+              t.textContent = 'Undo failed: ' + ((r && r.error) || 'unknown error') + '. Reload to check status.';
+            }
+          });
+        });
+        feedback.appendChild(undoBtn);
+      }
+      timer = setTimeout(function () { if (onMoved) onMoved(); }, UNDO_WINDOW_MS);
+    }
+
+    function makeActionBtn(label, cls, handler) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = cls || 'ghost small';
+      b.textContent = label;
+      b.addEventListener('click', handler);
+      return b;
+    }
+
+    if (isCompleted) {
+      actionsWrap.appendChild(makeActionBtn('Reopen', 'ghost small', function () {
+        postLifecycle(ask.ask_id, 'reopen').then(function (r) {
+          if (r && r.ok) { showFeedback('Reopened.', null); if (onMoved) setTimeout(onMoved, 1200); }
+          else showFeedback('Reopen failed: ' + ((r && r.error) || 'unknown error'), null);
+        });
+      }));
+    } else {
+      actionsWrap.appendChild(makeActionBtn('Done', 'btn-go small', function () {
+        postLifecycle(ask.ask_id, 'done').then(function (r) {
+          if (r && r.ok) showFeedback('Marked done.', true);
+          else showFeedback('Could not mark done: ' + ((r && r.error) || 'unknown error'), null);
+        });
+      }));
+      actionsWrap.appendChild(makeActionBtn('Dismiss', 'ghost small', function () {
+        postLifecycle(ask.ask_id, 'dismiss').then(function (r) {
+          if (r && r.ok) showFeedback('Dismissed.', true);
+          else showFeedback('Could not dismiss: ' + ((r && r.error) || 'unknown error'), null);
+        });
+      }));
+      var mergeBtn = makeActionBtn('Merge into…', 'ghost small', function () {
+        mergeBtn.hidden = true;
+        chooser.hidden = false;
+      });
+      actionsWrap.appendChild(mergeBtn);
+
+      var chooser = document.createElement('div');
+      chooser.className = 'ask-merge-chooser';
+      chooser.hidden = true;
+      var candidates = (getAllActiveAsks() || []).filter(function (a) { return a.ask_id !== ask.ask_id; });
+      if (candidates.length === 0) {
+        var noneMsg = document.createElement('span');
+        noneMsg.className = 'ask-merge-none';
+        noneMsg.textContent = 'no other active asks to merge into';
+        chooser.appendChild(noneMsg);
+      } else {
+        candidates.forEach(function (c) {
+          var opt = document.createElement('button');
+          opt.type = 'button';
+          opt.className = 'ghost small ask-merge-option';
+          opt.textContent = c.summary || c.ask_id;
+          opt.addEventListener('click', function () {
+            postLifecycle(ask.ask_id, 'merge', c.ask_id).then(function (r) {
+              if (r && r.ok) showFeedback('Merged into "' + (c.summary || c.ask_id) + '".', true);
+              else showFeedback('Merge failed: ' + ((r && r.error) || 'unknown error'), null);
+            });
+          });
+          chooser.appendChild(opt);
+        });
+      }
+      var cancelChoose = document.createElement('button');
+      cancelChoose.type = 'button';
+      cancelChoose.className = 'ghost small';
+      cancelChoose.textContent = 'Cancel';
+      cancelChoose.addEventListener('click', function () { chooser.hidden = true; mergeBtn.hidden = false; });
+      chooser.appendChild(cancelChoose);
+      actionsWrap.appendChild(chooser);
+    }
+
+    row.appendChild(actionsWrap);
+    row.appendChild(feedback);
+    return row;
+  }
+
+  // ============================================================
+  // ask card (shallow-first with lazy drill-down)
+  // ============================================================
+  function renderProgressArea(ask) {
+    var wrap = document.createElement('div');
+    var pp = ask.plan_progress || { done: 0, in_flight: 0, not_started: 0, total: 0 };
+    if (!pp.total) {
+      wrap.className = 'ask-noplan-note';
+      wrap.textContent = 'no plan linked yet';
+      return wrap;
+    }
+    wrap.className = 'ask-progress-row';
+    var bar = document.createElement('div');
+    bar.className = 'ask-progress-bar';
+    bar.setAttribute('role', 'img');
+    bar.setAttribute('aria-label', pp.done + ' of ' + pp.total + ' tasks done, ' + pp.in_flight + ' in flight');
+    var segDone = document.createElement('div');
+    segDone.className = 'ask-progress-seg seg-done';
+    segDone.style.width = (100 * pp.done / pp.total) + '%';
+    var segFlight = document.createElement('div');
+    segFlight.className = 'ask-progress-seg seg-inflight';
+    segFlight.style.width = (100 * pp.in_flight / pp.total) + '%';
+    var segNot = document.createElement('div');
+    segNot.className = 'ask-progress-seg seg-notstarted';
+    segNot.style.width = (100 * pp.not_started / pp.total) + '%';
+    bar.appendChild(segDone); bar.appendChild(segFlight); bar.appendChild(segNot);
+    wrap.appendChild(bar);
+    var text = document.createElement('span');
+    text.className = 'ask-progress-text';
+    text.textContent = pp.done + ' done · ' + pp.in_flight + ' in flight · ' + pp.not_started + ' not started';
+    wrap.appendChild(text);
+
+    // DRILL-DOWN SIGNIFIER (review round 1): an explicit control beside
+    // the bar — the bar itself is never the sole click target. Native
+    // <details>/<summary> gives a real chevron + keyboard/AT support for
+    // free (same convention this app already uses for the reconciler
+    // badge and per-gate health rows).
+    var details = document.createElement('details');
+    details.className = 'ask-drilldown-details';
+    var summary = document.createElement('summary');
+    summary.className = 'ask-drilldown-summary';
+    summary.textContent = pp.total + (pp.total === 1 ? ' task' : ' tasks');
+    details.appendChild(summary);
+    var body = document.createElement('div');
+    body.className = 'ask-drilldown-body';
+    details.appendChild(body);
+    var fetched = false;
+    details.addEventListener('toggle', function () {
+      if (details.open && !fetched) { fetched = true; renderDrilldownBody(body, ask.ask_id); }
+    });
+    wrap.appendChild(details);
+    wrap._drilldownDetails = details; // exposed so the waiting-count button can open + scroll to it
+    return wrap;
+  }
+
+  function renderAskCard(ask, isCompleted, onMoved) {
+    var card = document.createElement('div');
+    card.className = 'ask-card' + (isCompleted ? ' ask-card-completed' : '');
+    // cockpit-roadmap-redesign Task 3: the shell's #request/<id> addressing
+    // lands on this card (app.js's interim 'requests' adapter looks it up
+    // by this data attribute; task 5's full ledger view keeps the same id).
+    card.dataset.askId = ask.ask_id;
+
+    var head = document.createElement('div');
+    head.className = 'ask-card-head';
+    var h3 = document.createElement('h3');
+    h3.className = 'ask-card-title';
+    h3.textContent = ask.summary || ask.ask_id;
+    head.appendChild(h3);
+
+    var meta = document.createElement('div');
+    meta.className = 'ask-card-meta';
+    meta.textContent = (ask.project ? ask.project + ' · ' : '') + 'last activity ' + formatAge(ask.activity_ts);
+    head.appendChild(meta);
+    card.appendChild(head);
+
+    // verbatim — one click away (compact reveal, separate from the
+    // heavier plan drill-down below).
+    var verbatimDetails = document.createElement('details');
+    verbatimDetails.className = 'ask-verbatim-details';
+    var vSummary = document.createElement('summary');
+    vSummary.className = 'ask-verbatim-summary';
+    vSummary.textContent = 'Verbatim';
+    verbatimDetails.appendChild(vSummary);
+    var vBody = document.createElement('div');
+    vBody.className = 'ask-verbatim-body';
+    verbatimDetails.appendChild(vBody);
+    var vFetched = false;
+    verbatimDetails.addEventListener('toggle', function () {
+      if (verbatimDetails.open && !vFetched) { vFetched = true; renderVerbatimBody(vBody, ask.ask_id); }
+    });
+    card.appendChild(verbatimDetails);
+
+    var narrative = document.createElement('div');
+    narrative.className = 'ask-narrative-excerpt';
+    narrative.textContent = ask.narrative_excerpt || 'no progress events yet';
+    card.appendChild(narrative);
+
+    var progressArea = renderProgressArea(ask);
+    card.appendChild(progressArea);
+
+    var statusRow = document.createElement('div');
+    statusRow.className = 'ask-status-row';
+    if (ask.waiting_count > 0) {
+      var waitBtn = document.createElement('button');
+      waitBtn.type = 'button';
+      waitBtn.className = 'chip ask-waiting-btn';
+      waitBtn.textContent = ask.waiting_count + (ask.waiting_count === 1 ? ' item waiting on you' : ' items waiting on you');
+      waitBtn.title = 'view in this ask’s plan detail below';
+      waitBtn.addEventListener('click', function () {
+        var det = progressArea._drilldownDetails;
+        if (!det) return;
+        det.open = true;
+        setTimeout(function () {
+          var target = document.getElementById('ask-waiting-' + ask.ask_id);
+          if (target) { target.scrollIntoView({ block: 'nearest' }); target.focus(); }
+        }, 60);
+      });
+      statusRow.appendChild(waitBtn);
+    }
+    var driftBadgesNode = renderDriftBadges(ask.drift_badges);
+    if (driftBadgesNode) statusRow.appendChild(driftBadgesNode); // null when zero badges -> never an empty container
+    card.appendChild(statusRow);
+
+    card.appendChild(renderLifecycleRow(ask, isCompleted, onMoved));
+
+    return card;
+  }
+
+  // ============================================================
+  // Peers section (cockpit-v2-push-materialized-store Task 4) — reads
+  // payload.peers (server.js's buildPeersBlock -> peer-view.js). Every
+  // string rendered below is either a hardcoded literal or a server-
+  // prepared label (state_label/provenance_label/my_coord_refresh.label)
+  // that already passed payload-schema.js's anti-noise scan before it
+  // reached the wire — same convention as narrative_excerpt elsewhere in
+  // this module. Local ask cards above (renderAskCard etc.) are entirely
+  // untouched by this section — peer rows are ALWAYS additional, labeled
+  // provenance, never substituted into a local card (requirement 8).
+  // ============================================================
+  var PEER_SESSION_STATE_LABEL = { fresh: 'fresh', stale: 'stale', unknown: 'unknown' };
+
+  function renderPeerSessionRow(s) {
+    var row = document.createElement('div');
+    row.className = 'peer-session-row';
+    var chip = document.createElement('span');
+    var st = s.state || 'unknown';
+    chip.className = 'chip peer-session-chip peer-session-' + st;
+    chip.textContent = PEER_SESSION_STATE_LABEL[st] || st; // text + color, never color-only
+    row.appendChild(chip);
+    var idSpan = document.createElement('span');
+    idSpan.className = 'peer-session-id';
+    idSpan.textContent = s.session_id;
+    row.appendChild(idSpan);
+    if (s.role || s.plan_slug) {
+      var meta = document.createElement('span');
+      meta.className = 'peer-session-meta';
+      meta.textContent = [s.role, s.plan_slug, s.task_id ? ('task ' + s.task_id) : ''].filter(Boolean).join(' · ');
+      row.appendChild(meta);
+    }
+    return row;
+  }
+
+  function renderPeerPlanRow(p) {
+    var wrap = document.createElement('div');
+    wrap.className = 'peer-plan-row';
+    var head = document.createElement('div');
+    head.className = 'peer-plan-head';
+    var slug = document.createElement('span');
+    slug.className = 'peer-plan-slug';
+    slug.textContent = p.plan_slug || '(unnamed plan)';
+    head.appendChild(slug);
+    var pct = p.plan_progress || { done: 0, in_flight: 0, not_started: 0, total: 0 };
+    var bar = document.createElement('span');
+    bar.className = 'peer-plan-progress';
+    bar.textContent = pct.done + '/' + pct.total + ' done' + (pct.in_flight ? (', ' + pct.in_flight + ' in-flight') : '');
+    head.appendChild(bar);
+    if (p.plan_doc && p.plan_doc.project && p.plan_doc.path) {
+      var linkBtn = document.createElement('button');
+      linkBtn.type = 'button';
+      linkBtn.className = 'ghost small peer-plan-doc-link';
+      linkBtn.textContent = 'View live plan doc';
+      linkBtn.title = 'open ' + p.plan_doc.project + '/' + p.plan_doc.path + ' in the docs viewer';
+      linkBtn.addEventListener('click', function () { openPlanDocModal(p.plan_doc.project, p.plan_doc.path); });
+      head.appendChild(linkBtn);
+    }
+    wrap.appendChild(head);
+    // F4/requirement 8: the provenance label is ALWAYS shown — a peer row
+    // never renders as a plain checkbox indistinguishable from local truth,
+    // even when every task on it is done.
+    var prov = document.createElement('div');
+    prov.className = 'peer-provenance-label' + (/unmerged/.test(p.provenance_label || '') ? ' peer-unmerged' : '');
+    prov.textContent = p.provenance_label || '';
+    wrap.appendChild(prov);
+    if (p.tasks && p.tasks.length) {
+      var list = document.createElement('ul');
+      list.className = 'peer-task-list';
+      p.tasks.forEach(function (t) {
+        var li = document.createElement('li');
+        li.className = 'peer-task-row';
+        var status = t.done ? 'done' : (t.in_flight ? 'in_flight' : 'not_started');
+        var chip = document.createElement('span');
+        chip.className = 'chip peer-task-status task-status-' + status;
+        chip.textContent = TASK_STATUS_LABEL[status];
+        li.appendChild(chip);
+        var idSpan = document.createElement('span');
+        idSpan.className = 'peer-task-id';
+        idSpan.textContent = 'task ' + t.id;
+        li.appendChild(idSpan);
+        list.appendChild(li);
+      });
+      wrap.appendChild(list);
+    }
+    return wrap;
+  }
+
+  function renderPeerEntry(e) {
+    var box = document.createElement('div');
+    box.className = 'peer-entry';
+    var head = document.createElement('div');
+    head.className = 'peer-entry-head';
+    var hostSpan = document.createElement('span');
+    hostSpan.className = 'peer-entry-host';
+    hostSpan.textContent = e.host;
+    head.appendChild(hostSpan);
+    var chip = document.createElement('span');
+    chip.className = 'chip peer-state peer-state-' + e.state;
+    chip.textContent = e.state_label; // text + color, never color-only
+    head.appendChild(chip);
+    box.appendChild(head);
+    (e.plans || []).forEach(function (p) { box.appendChild(renderPeerPlanRow(p)); });
+    if (e.sessions && e.sessions.length) {
+      var sessWrap = document.createElement('div');
+      sessWrap.className = 'peer-sessions';
+      e.sessions.forEach(function (s) { sessWrap.appendChild(renderPeerSessionRow(s)); });
+      box.appendChild(sessWrap);
+    }
+    return box;
+  }
+
+  // renderPeerPersonGroups(body, peers) — cockpit-roadmap-redesign Task 7
+  // (round 5 verbatim: peers group by PERSON — "Misha: desktop + laptop").
+  //
+  // I3 ALTERNATE-VIEW LAW (unit-of-card + state persistence, both named):
+  //   unit-of-card    = the PERSON group (each machine renders as a row
+  //                     inside its person's group, via the UNCHANGED
+  //                     renderPeerEntry);
+  //   state persistence = each group's <details> open state persists per
+  //                     person in localStorage ('cockpit.peers.person.
+  //                     <person>'), defaulting OPEN; storage failures
+  //                     (privacy modes) degrade to default-open, silently.
+  //
+  // NAMED STATES (task-1 named-absence generalization):
+  //   - an unmapped hostname lands in the literal 'unassigned' group —
+  //     never a guessed person;
+  //   - peers.people_map_error non-empty (the map file exists but is
+  //     unreadable/malformed — server/config/people.js named the failure)
+  //     renders a visible system-failure line naming the component and the
+  //     remediation, with every machine under 'unassigned' meanwhile
+  //     (framing law: the SYSTEM failed, labeled, remediation shown);
+  //   - an older server payload with NO persons array degrades to one
+  //     'unassigned' group holding every entry — never a blank pane.
+  function renderPeerPersonGroups(body, peers) {
+    if (peers.people_map_error) {
+      var mapErr = document.createElement('div');
+      mapErr.className = 'peer-people-map-error';
+      mapErr.textContent = 'Person grouping unavailable — ' + peers.people_map_error +
+        ' (fix config/people.json to restore grouping; machines shown under "unassigned" meanwhile)';
+      body.appendChild(mapErr);
+    }
+    var byHost = {};
+    (peers.entries || []).forEach(function (e) { byHost[e.host] = e; });
+    var groups = (peers.persons && peers.persons.length)
+      ? peers.persons
+      : [{ person: 'unassigned', hosts: (peers.entries || []).map(function (e) { return e.host; }) }];
+    groups.forEach(function (g) {
+      var det = document.createElement('details');
+      det.className = 'peer-person-group';
+      var storeKey = 'cockpit.peers.person.' + g.person;
+      var stored = null;
+      // storage unavailable (privacy modes) -> stored stays null -> default open
+      try { stored = window.localStorage.getItem(storeKey); } catch (_) { stored = null; }
+      det.open = stored === null ? true : stored === '1';
+      det.addEventListener('toggle', function () {
+        // best-effort persistence; a write failure silently keeps default-open behavior
+        try { window.localStorage.setItem(storeKey, det.open ? '1' : '0'); } catch (_) { void 0; }
+      });
+      var sum = document.createElement('summary');
+      sum.className = 'peer-person-summary';
+      sum.textContent = g.person + ': ' + (g.hosts || []).join(' + ');
+      det.appendChild(sum);
+      (g.hosts || []).forEach(function (h) {
+        if (byHost[h]) det.appendChild(renderPeerEntry(byHost[h]));
+      });
+      body.appendChild(det);
+    });
+  }
+
+  // renderPeersSection(peers) — ALWAYS renders a <details> (never returns
+  // null, unlike renderCompletedGroup): a "Peers" section always exists on
+  // the landing so the operator can see cross-machine state is a real
+  // capability, but it starts COLLAPSED when there is nothing to show
+  // (peers.has_data === false — "no data yet"), and OPEN when there is.
+  function renderPeersSection(peers) {
+    peers = peers || { has_data: false, entries: [], my_coord_refresh: null };
+    var details = document.createElement('details');
+    details.className = 'peer-section';
+    details.open = !!peers.has_data;
+    var summary = document.createElement('summary');
+    summary.className = 'peer-summary';
+    summary.textContent = peers.has_data
+      ? ('Peers (' + peers.entries.length + ')')
+      : 'Peers (no data yet)';
+    details.appendChild(summary);
+
+    var body = document.createElement('div');
+    body.className = 'peer-body';
+
+    var coordHealth = document.createElement('div');
+    coordHealth.className = 'peer-coord-health';
+    coordHealth.textContent = (peers.my_coord_refresh && peers.my_coord_refresh.label) || 'my coord view has never refreshed';
+    body.appendChild(coordHealth);
+
+    if (!peers.has_data) {
+      var empty = document.createElement('div');
+      empty.className = 'pane-empty';
+      empty.textContent = 'No peer machine state received yet.';
+      body.appendChild(empty);
+    } else {
+      // Task 7: entries render grouped by PERSON (see renderPeerPersonGroups
+      // header for the I3 unit-of-card + persistence declaration and the
+      // named unassigned/map-error states).
+      renderPeerPersonGroups(body, peers);
+    }
+    details.appendChild(body);
+    return details;
+  }
+
+  // ============================================================
+  // project groups + completed group
+  // ============================================================
+  var allActiveAsksFlat = [];
+  function getAllActiveAsks() { return allActiveAsksFlat; }
+
+  function renderProjectGroup(group) {
+    var details = document.createElement('details');
+    details.className = 'ask-project-group';
+    details.open = true; // expanded by default — cold-start scanning is the primary flow
+    var summary = document.createElement('summary');
+    summary.className = 'ask-project-summary';
+    summary.textContent = group.project + ' (' + group.asks.length + ')';
+    details.appendChild(summary);
+    var body = document.createElement('div');
+    body.className = 'ask-project-body';
+    group.asks.forEach(function (ask) {
+      body.appendChild(renderAskCard(ask, false, load));
+    });
+    details.appendChild(body);
+    return details;
+  }
+
+  function renderCompletedGroup(completed) {
+    if (!completed || completed.count === 0) return null; // hidden entirely — never an expanded empty shell (review round 2)
+    var details = document.createElement('details');
+    details.className = 'ask-completed-group';
+    // collapsed by default (review round 1 exit-mechanism law)
+    var summary = document.createElement('summary');
+    summary.className = 'ask-completed-summary';
+    summary.textContent = 'Completed (' + completed.count + ' · newest ' + formatAge(completed.newest_completed_ts) + ')';
+    details.appendChild(summary);
+    var body = document.createElement('div');
+    body.className = 'ask-completed-body';
+    (completed.asks || []).forEach(function (ask) {
+      body.appendChild(renderAskCard(ask, true, load));
+    });
+    details.appendChild(body);
+    return details;
+  }
+
+  // ============================================================
+  // top-level render
+  // ============================================================
+  function renderLanding(payload) {
+    root.innerHTML = '';
+    var groups = payload.groups || [];
+    var completed = payload.completed || { count: 0, asks: [] };
+    allActiveAsksFlat = groups.reduce(function (acc, g) { return acc.concat(g.asks); }, []);
+
+    var totalActive = allActiveAsksFlat.length;
+    if (totalActive === 0 && completed.count === 0) {
+      root.appendChild(renderFullyEmpty());
+      // Peers is an independent capability from ask-tracking — a fresh
+      // install with zero asks yet can still have real cross-machine peer
+      // state to show, so it renders even on this early-empty path.
+      root.appendChild(renderPeersSection(payload.peers));
+      return;
+    }
+    if (totalActive === 0) {
+      var note = document.createElement('div');
+      note.className = 'pane-empty';
+      note.textContent = 'No active asks — see Completed below.';
+      root.appendChild(note);
+    } else {
+      groups.forEach(function (g) { root.appendChild(renderProjectGroup(g)); });
+    }
+    var completedNode = renderCompletedGroup(completed);
+    if (completedNode) root.appendChild(completedNode);
+
+    // cockpit-v2-push-materialized-store Task 4 — always rendered (unlike
+    // the completed group above), collapsed when there's nothing to show.
+    root.appendChild(renderPeersSection(payload.peers));
+  }
+
+  function load() {
+    renderLoading();
+    fetch('/api/asks')
+      .then(function (r) { return r.json(); })
+      .then(function (resp) {
+        if (!resp || resp.ok === false) {
+          renderError(resp && resp.error ? resp.error : 'server returned ok:false');
+          return;
+        }
+        renderLanding(resp);
+      })
+      .catch(function (err) { renderError(String(err)); });
+  }
+
+  load();
+})();

@@ -1,0 +1,308 @@
+# Continuous-operation (24/7 factory) design sit-down — round 1, 2026-07-19
+
+Operator-initiated design conversation, mid-build of cockpit-roadmap-redesign. This doc is
+the durable record (cockpit-ux-design-input.md precedent): operator words verbatim, then the
+orchestrator's response + open questions. Outcome seeds a follow-on program plan
+(working name: continuous-operation; NOT yet created).
+
+## Operator round 1 (verbatim, 2026-07-19)
+
+> I want to have a system that is always working, building, and making progress 24/7 without
+> stopping. It allows me to come in several times a day and provide more guidance, answer
+> questions, provide more steering, and keep things continuing to move forward. But what's
+> important is that the system never stops making progress. I would like to do some
+> collaborative thinking together with you to think about how we modify our current Neural
+> Lace system in order to accomplish that. What do we need to improve? What questions do you
+> have for me? What challenges do we have that are keeping us from getting there? What
+> nuances do we need to consider? I also need to understand what is the best way to manage
+> the orchestration of all of that. Is it better to work with one single session that
+> orchestrates all the work and all the plans? To what extent can we have multiple plans
+> running in parallel? And how do we manage running a whole bunch of things in parallel or
+> to maximize the throughput of everything we're building? Could we orchestrate and automate
+> the process so that when completing a plan and running into having additional bandwidth
+> available, the system could automatically pull new plans from the backlog and start
+> working on those? And I also want to make sure we have good observability into everything
+> that's happening at the same time. I want to have a good, easy way to see what's currently
+> being built, any issues that are coming up, what progress is being made, what's next on
+> the list, what all the items are on the road map within the backlog, any questions that
+> are waiting on me, what work streams are slowing down or needing anything from me, all
+> that fun stuff.
+>
+> We've had problems many times with build work not getting deployed and getting forgotten
+> about and turning into orphaned branches or worktrees. There's been tons of clutter on my
+> system because a lot of this stuff is not well tracked. I want to streamline the process
+> so that we can build as much as possible in parallel and maximize the progress we're
+> making, while also still keeping things cleanly orchestrated and always moving forward and
+> never allowing workstreams to fall by the wayside.
+
+Same message, tiering clarification: Fable where actually valuable (design/review/hard
+verification), not as a default builder. Recorded in memory
+feedback_fable_only_when_real_value (2026-07-19 refinement).
+
+## Orchestrator response — round 1
+
+### The design thesis: the orchestrator is a FILE, not a session
+
+Sessions are mortal — proven three times in the last 48h on this exact program: the NL
+Observability session died of context exhaustion mid-integration (work stranded in
+worktrees, found only because the operator asked); a reboot killed four builders and a
+review batch mid-flight; the "dead" session later REVIVED and raced the replacement
+orchestrator (duplicate delta reviews, preserve-commit collisions). Every recovery worked
+only because state was on disk (plan files, worktrees, ledger, SCRATCHPAD) — and every
+recovery cost 15-30 min of forensic archaeology.
+
+Therefore: continuous operation ≠ a session that never dies. It is (1) durable orchestration
+state any fresh session can animate in under a minute, plus (2) a supervisor that guarantees
+some session is always animating it, plus (3) work units that survive their owner's death.
+
+### The six components (gap analysis vs what exists)
+
+1. **Orchestrator state manifest** (NEW). One machine-readable file: active plans + wave
+   state, in-flight dispatches (agent/branch/worktree/task/TTL), master-integration queue,
+   next-up queue, standing directives (tiering, caps). Any fresh session resumes the ROLE
+   from it cold. Today this knowledge lives across SCRATCHPAD prose + dispatch markers +
+   session memory — this weekend's pickups each took ~20+ min of git forensics.
+2. **Supervisor / wake layer** (REDESIGN of session-resumer, disabled by ADR 061 after the
+   2026-07-08 spawn cascade). OS scheduled task (reboot-proof) checks every N min: is an
+   orchestrator alive AND progressing (state-file mtime, not session existence — a wedged
+   context-full session must count as dead)? If not: launch fresh with the standing resume
+   prompt. MUST have: single-flight lock (this weekend's two-orchestrator race is the
+   golden scenario), spawn-rate limiter + cascade breaker (ADR 061's lesson), and
+   context-lifecycle awareness (planned handoff BEFORE exhaustion: rewrite state manifest,
+   end session, let supervisor respawn — death on schedule instead of death by surprise).
+3. **Mortality-aware work units + the REAPER** (half exists). Every dispatch already gets
+   worktree + branch + provenance marker. Missing: the lifecycle end — marker TTL expiry
+   triggers auto-triage: unintegrated commits → Inbox item ("orphan work: rehome or
+   discard?") or auto-cherry-pick when patch-clean; clean/integrated → purge worktree +
+   branch. This deletes the 83-worktree/90-branch pile CLASS (today: 127 of 164 doctor
+   reds, plus doctor-runtime blowout that blinded health-tick for 2.5 days). Sweep exists
+   (worktree-hygiene-sweep.sh) but is report-only and — irony — is one of the 9 files stuck
+   undeployed behind the review-record gate.
+4. **Single-writer master integration** (practiced, not enforced). Only the orchestrator
+   role merges/pushes master; builders never do. Needs to become a gate, not a habit.
+   Deploy-verify belongs to the same leg: "merged" ≠ done until auto-install/install has
+   actually shipped it and doctor confirms (today's deploy-theater: 9 merged files silently
+   stale-live for 3 days). The redesign's completion oracle (task 1, built today) is the
+   render-side of this; the integration leg must consume it.
+5. **Backlog auto-pull** (half exists). Backlog digest already tiers rows and escalates
+   build-ready ones (7 currently). Missing: the promotion mechanism — when active-plan
+   slots < cap and the orchestrator has bandwidth: top build-ready row → plan template →
+   autonomous gates (arch/UX review, already autonomous) → build; the promotion lands in
+   the Inbox as a VETO-window notification, not a pre-approval (for whichever work classes
+   the operator authorizes — Q1 below).
+6. **Observability** (IS the active build). The cockpit-roadmap-redesign's three views are
+   precisely the asked-for surface: Roadmap (what's being built / progress / what's next /
+   backlog), Inbox (questions waiting on operator, context contract), Requests (steering
+   ledger), statuses incl. STALLED(why + what-unblocks). One addition to fold in: a
+   "factory strip" — orchestrator liveness, active builder count, throughput (tasks landed
+   24h), next-up, and the supervisor's last-check stamp — the is-the-factory-running glance.
+
+### Honest challenges (the things that will actually hurt)
+
+- **Verification is the throughput ceiling.** Two-gate rung-3 verify cost ≈ 2-3× build cost
+  (correct for foundations — today comprehension-FAIL caught a real spec divergence the
+  verifier PASSed). Sustainable 24/7 = risk-tiered verification (rung system exists) +
+  pipelined gates (verify N while building N+1 — already practiced today).
+- **Windows machine limits.** Process-explosion history (3 reboots); realistic cap ~4-6
+  heavy concurrent builders per machine. Throughput scaling beyond that = second machine /
+  cloud sessions (coord-sync exists; cloud has restricted .claude per Decision 011).
+- **Platform limits.** Usage throttles (429s), Fable quotas, context windows. Pacing policy
+  needed: park+scheduled-resume vs model-downgrade-and-continue (Q2).
+- **The app itself is a single point of failure.** CCD crashed 2026-07-14; a scheduled-task
+  supervisor can relaunch, but this must be designed, not assumed.
+- **Operator-attention economy.** Decisions pile up between check-ins; every default must be
+  safe-to-proceed + cheap-to-reverse, with the Inbox as the review surface (decide-and-go
+  is already constitutional; the Inbox makes the review loop real).
+- **Gate ergonomics under autonomy.** Gates that swallow stderr or block whole compound
+  commands cost the autonomous loop real time (two examples today); gate UX for
+  machine-operators is its own small workstream.
+
+### Orchestration model recommendation (Q4 confirms)
+
+ONE orchestrator role per machine, animated by disposable sessions (supervisor-respawned),
+managing MULTIPLE plans: parallelism WITHIN a plan via file-disjoint waves + fragments
+(proven today), ACROSS plans when surfaces/repos are disjoint (NL redesign + Circuit P1 can
+run concurrently). One master-integration queue per repo. Multiple peer orchestrators only
+when a second machine joins (coord-sync makes them visible to each other).
+
+## Open questions for the operator (round 2)
+
+Q1 AUTONOMY ENVELOPE: which work classes may auto-promote from backlog with only a
+veto-window Inbox notice, vs requiring your pre-approval? (e.g. harness hygiene/mechanical =
+auto; NL features = auto with veto; Circuit/product-facing = pre-approve?)
+Q2 THROTTLE POLICY: when limits hit mid-build — park and self-resume later (slower, full
+quality) or downgrade model and keep moving (faster, weaker)? Default proposal: park for
+builders, downgrade only for mechanical sweeps.
+Q3 CHECK-IN CONTRACT: should anything HOLD for your daily windows (e.g. product-visible
+deploys), or truly never wait? Default proposal: never wait; everything reversible ships,
+the Inbox carries the review trail.
+Q4 SCOPE: one machine first (this one), or design the supervisor for desktop+laptop+cloud
+from day one? Default proposal: single-machine skeleton first, coord-sync peers next.
+Q5 SUPERVISOR REVIVAL: ADR 061 disabled session-resumer after the spawn cascade. OK to
+supersede 061 with the redesigned supervisor (single-flight + rate-limited + progress-based
+liveness), or does 061 stand as a harder constraint? 
+
+## Disposition
+
+Next: operator answers fold here as round 2 → program plan drafted (Fable) → arch review →
+build. The redesign build continues in parallel throughout; nothing here blocks it.
+
+---
+
+# Round 2 — operator answers + worktree-discipline directive (2026-07-19 late)
+
+## Operator (condensed; verbatim in session transcript)
+
+Worktree critique: why so many worktrees; want a deterministic process that doesn't allow
+disparate worktrees/incomplete work; strong bias toward each session cleaning up when done
+instead of a garbage collector after the fact; "doing it right by default instead of fixing
+problems afterward."
+
+Q1 AUTONOMY: harness/mechanical = fully auto PROVIDED the operator can drag-drop backlog
+ordering + modify items. Philosophy: Claude pushes forward with full autonomy + full
+disclosure; operator injects modifications whenever they have time; Claude never waits.
+Q2 THROTTLES: park for builders, downgrade only mechanical sweeps; PROGRESSIVE BACKOFF on
+resume to discover supported throughput; limits vary over time — handling must be dynamic.
+Q3 CHECK-INS: never wait — everything reversible ships, Inbox carries the review trail.
+Q4 MULTI-MACHINE: operator's model — supervisor works per-machine, doesn't coordinate
+across machines; only STATUS coordinates. "Am I thinking of this right?"
+Q5 ADR 061: was a temporary fix; DO want a session resumer restored, but cleanly — past
+resumers/cron jobs created "a whole bunch of extra junk on the machine."
+Q6 COORDSYNC: operator opinion — the installer should be unnecessary if coordination is
+deterministic in-process instead of frequency-based check-ins. Designable, or still cron?
+
+## Orchestrator answers (round 2)
+
+WORKTREES — why 79 accumulated: every builder/reviewer spawn under the mandatory-isolation
+gate creates one; auto-clean removes only UNCHANGED trees; any agent that committed keeps
+its tree as salvage; INTEGRATION NEVER REAPED THEM — the lifecycle had no closing step.
+Deterministic fix (ADOPTED THIS SESSION + binding for the continuous-operation plan):
+the orchestrator's landing step ends with REAP — verify integrated → remove worktree +
+delete branch in the same motion as the cherry-pick+gates. Demonstrated live: 5 worktrees
++ 3 branches reaped at landing this session; 5 conflict-resolved stragglers reap at plan
+close with tree-diff proof (git-cherry can't prove patch-equivalence across union-resolved
+conflicts — a reap-check must use tree-diff, not patch-id, for conflicted landings).
+The hygiene sweep demotes to BACKSTOP (catches crashes), never the mechanism. Doctor
+trend-check: worktree count ≤ live-agent count + small constant.
+
+Q4 — YES, exactly right. The supervisor is strictly per-machine (watch progress mtimes,
+respawn dead orchestrators, enforce single-flight). Cross-machine, only STATUS flows
+(coord-repo publish, already built in task 7); no cross-machine control plane. The one
+nuance: cross-machine WORK-CLAIMING (two machines pulling the same backlog row) needs no
+new mechanism — git serializes it (first push of the claiming commit wins; loser rebases,
+sees the claim, picks the next row). Status-only coordination + git-as-arbiter is the
+whole multi-machine design.
+
+Q5 — resumer redesign constraints (the anti-junk contract): (1) SINGLE-FLIGHT — one
+orchestrator per repo per machine, lock-file with pid+ttl; (2) SPAWN BUDGET — max N
+respawns per hour, breaker trips to an Inbox item instead of a cascade; (3) ONE namespaced
+state dir (~/.claude/state/supervisor/) with TTL'd files, nothing scattered; (4) the
+resumer NEVER creates worktrees/branches — it only launches the orchestrator session,
+which owns its own dispatch hygiene incl. reap-at-landing; (5) liveness = state-file
+mtime progress, not process existence (context-wedged = dead). ADR 061 superseded by
+this design once it ships (operator confirmed 061 was temporary).
+
+Q6 — mostly yes, one heartbeat remains. Task 7 already made the FRESHNESS path
+deterministic: every status-changing write marks dirty at the writer-lib seam → debounced
+publish ~1min. What events CANNOT cover: (a) git-blind changes (cherry-pick/merge fire no
+hook — a floor sweep catches them); (b) LIVENESS — an idle machine that publishes nothing
+is indistinguishable from a dead one; the periodic keepalive is what lets peers render
+"idle alive" vs "unreachable since <t>". So SOME periodic task survives — but it should be
+ONE task: the per-machine SUPERVISOR tick, which absorbs the coord floor (and the health
+tick). DISPOSITION: the standalone NL-CoordSync installer is RETIRED as an operator ask
+(NY-1784327382-f3e8) — cross-machine status ships as part of the supervisor installer when
+the continuous-operation plan builds. Until then peers stay local-only (cockpit renders
+the honest empty state).
+
+Q1/Q2/Q3 adopted as binding for the continuous-operation plan: full-auto + full-disclosure
++ operator-injectable backlog (NOTE: task 3 shipped keyboard rank reorder; drag-drop
+proper + backlog-row editing joins the plan's UI scope); park+progressive-backoff with
+dynamically discovered throughput ceilings (limits drift — measure, don't assume); never
+wait, Inbox carries the trail.
+
+## Disposition
+
+Round 3 = the continuous-operation program plan draft (arch-review gate before build),
+absorbing: supervisor (Q5 contract), reap-at-landing doctrine amendment, backlog
+drag-drop/edit UI, progressive-backoff resume policy, supervisor-tick consolidation
+(coord floor + health tick + doctor cache refresh under one scheduled task).
+
+---
+
+# Round 3 — machine affinity, hygiene enforcement, push-not-poll (2026-07-19 late)
+
+## Operator (condensed)
+
+(1) Specify in the backlog which machine each item builds on? Master Plans have phases,
+each phase its own plan doc — same-machine building for a whole program + easy delegation
++ plans linked to each other. (2) If the orchestrator owns its own hygiene, what makes it
+DILIGENT? Edge cases/challenges? (3) Did we agree on deterministic session status updates,
+such that the orchestrator only checks in when updates STOP arriving?
+
+## Orchestrator answers (round 3)
+
+### 1. Machine affinity — yes, but attach it to the PROGRAM, not the item
+
+- Plan headers gain `program: <slug>` + `phase: n/m` (machine-readable form of the
+  existing Master-Plan convention: nl-overhaul specs b-f, observability program). The
+  backlog row inherits its program's linkage; the roadmap tree renders program → phases.
+- Affinity attaches to the program: `machine-affinity: <hostname|person-machine label>`
+  (people-map vocabulary from task 7). One claim covers all phases. Default unset = any
+  machine claims. Operator can set/change it in the backlog UI (Q1 round-2 mandate).
+- WHY same-machine is mechanically real: worktree state, program context continuity,
+  per-machine harness deploy verification (~/.claude is per-machine), and no cross-machine
+  merge races inside one program's file surface.
+- Claim mechanics: LEASED, git-serialized. `claimed-by: <machine> @ <ts>` in the program
+  header (or state manifest); first push wins; the lease renews on heartbeat and EXPIRES
+  on silence (machine down ≠ program stuck — another machine may adopt after expiry via
+  the reconcile-git/disk-first salvage discipline). Affinity is advisory; availability wins.
+
+### 2. Hygiene diligence — make it transactional + audited, never rely on memory
+
+Self-discipline is a Pattern; the harness hierarchy demands Mechanism where it matters:
+- **Landing is a transaction**: cherry-pick → gates → flip → REAP is one unit; the landing
+  record in the state manifest is written only when the reap line is present. A COMPLETED
+  Status flip is GATED on zero unreaped worktrees/branches attributable to the plan
+  (cheap closing gate at plan-lifecycle time).
+- **Supervisor audits the orchestrator** (watchdog-for-watchdog): the per-machine tick runs
+  `worktree count ≤ live-dispatch count + K`; breach auto-files an Inbox item same-day.
+  Doctor keeps the trend check as the slow backstop.
+- Edge cases (each with its mitigation):
+  a. Crash mid-landing (picked but unreaped) → manifest records landed-pending-reap; the
+     successor session's reconcile step finishes half-done landings first.
+  b. Conflict-resolved cherry-picks defeat patch-id equivalence (PROVEN today: git cherry
+     reports + for union-resolved landings) → the reap consumes the LANDING RECORD
+     ("branch X landed as master-sha Y"), never patch-id archaeology.
+  c. Windows file locks (AV/editors/node) fail `worktree remove` → retry-with-backoff,
+     then Inbox escalation; NEVER silent skip (silent skip = the pile again).
+  d. Never reap a live agent → liveness from the dispatch registry (manifest in-flight
+     list), not mtime guessing.
+  e. Reviewer worktrees: report-only discipline (write to final message + scratchpad,
+     never the worktree) keeps them auto-cleanable; untracked-scratch-only counts as
+     clean-with-salvage-copy.
+  f. Orchestrator death: hygiene obligations transfer via the manifest; successor's first
+     move is reconcile (finish reaps, adopt in-flight). Was 20+ min of forensics this
+     weekend; the manifest makes it ~1 min mechanical.
+
+### 3. Push-not-poll — agreed, half-built, one missing piece
+
+- AGREED and now explicit: sessions/builders emit status at MECHANICAL touchpoints (hooks
+  fire regardless of model memory — no cooperative discipline). The orchestrator consumes
+  notifications + heartbeat files and intervenes ONLY on silence beyond the expected
+  cadence. Silence IS the signal (same law as the peer keepalive).
+- Exists today: per-session heartbeats at lifecycle points (Wave O), Stop-marker scan,
+  task-completion notifications (harness re-invokes the orchestrator), event publish (t7).
+- MISSING piece: a mid-flight liveness tick. Turn-boundary heartbeats can't distinguish a
+  builder legitimately quiet through a 2h suite from a wedged one. Fix: touch the
+  heartbeat at PostToolUse (every tool call) — then silence >~5min genuinely means
+  stalled/dead and thresholds can be tight. This is one hook line + budget check.
+- Escalation ladder when silence trips (reading is free; messaging/respawning costs):
+  read state (transcript mtime, worktree activity, pid) → one backoff wait → resume
+  nudge → fresh re-dispatch with the old worktree as salvage input. Never parallel
+  re-dispatch without standing down the original (this weekend's race lesson).
+
+## Disposition
+
+All three fold into the continuous-operation plan draft (round-4 artifact): program/phase
+headers + leased affinity claims; transactional landing + supervisor audit + the six edge
+mitigations; PostToolUse heartbeat tick + stall ladder.

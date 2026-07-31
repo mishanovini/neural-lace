@@ -262,6 +262,7 @@ if [ "$BLOCKED" -eq 1 ]; then
     done
   fi
   echo "" >&2
+  echo "This gate: ~/.claude/hooks/pre-push-scan.sh (source: adapters/claude-code/hooks/pre-push-scan.sh)" >&2
   exit 1
 fi
 

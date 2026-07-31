@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-77df4f3d",
+  "created_at": "2026-07-30T00:35:11Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group hooks-lib (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "f09af28f8b0eef433b79383358dad2ac3f3e4da5",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/git-command-parse.sh",
+      "blob_sha": "7fdff820205024fdf81b8444023c9824541cd3f9"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — one resolver consumed by both gates as the same function; 11760/11760 generated cross-product against a parser-independent oracle; degraded parses resolve toward detection; 115/0 under both /bin/bash 3.2.57 and bash 5.3.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

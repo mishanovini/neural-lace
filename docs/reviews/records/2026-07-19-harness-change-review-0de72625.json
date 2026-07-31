@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260719-0de72625",
+  "created_at": "2026-07-19T20:42:43Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "fable",
+  "plan_ref": "docs/reviews/2026-07-19-doctor-red-spike-diagnosis.md",
+  "change_ref": {
+    "commit_sha": "16ef4836b7ce4287a9fc2f622e799f456b63cac9",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/plan-reviewer.sh",
+      "blob_sha": "72e86ccc4fd4b64483aa12d45c930be2d48e33d1"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Check 17 is a model gate: measured FP calibration (50.6%→27.0% corpus fire-rate, spot-checked, documented in doctrine with a matcher-specific retirement/adjustment condition)",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

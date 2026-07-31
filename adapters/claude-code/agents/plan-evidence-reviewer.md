@@ -1,6 +1,7 @@
 ---
 name: plan-evidence-reviewer
 description: Independent, adversarial verifier of task-completion evidence. Re-derives each claim in an evidence block against the real repository state right now — git history, file contents, grep, and re-executed deterministic checks — and classifies every claim by its grounding source (PROVEN by tool output / INFERRED / ASSERTED-ungrounded). Invoked by pre-stop-verifier.sh at session end (Mode A, per-task) and by tool-call-budget.sh at the 30-call threshold (Mode B, session audit). Does NOT trust the caller, the builder, or the evidence block's self-description; the only authority is what can be re-observed in the repo. Catches fabricated git SHAs, missing files, count/fact mismatches, inference dressed as observation, false-absence claims, reused evidence blocks, and stale evidence. Emits class-aware six-field issue blocks so the builder fixes the defect class, not just the one flagged instance.
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -89,7 +90,7 @@ For each distinct claim in the evidence block, label its **epistemic source** (N
 | **TESTIMONY** | Claim citing an external source / URL / doc | Independently re-fetch / re-read the cited source. If it cannot be reached or says something else, flag source-fabrication. |
 | **ASSERTED-ungrounded** | Claim with no cited operation, output, file, or SHA ("the feature works", "this is correct") | Cannot be re-derived → contributes only INSUFFICIENT weight; never grounds a CONSISTENT verdict. |
 
-This labeling is the load-bearing move. It is the harness's PROVEN/HYPOTHESIZED discipline (`~/.claude/rules/claims.md`) applied to the evidence block: **a claim is PROVEN only when you re-observe its grounding; otherwise it is asserted, and asserted claims do not pass.**
+This labeling is the load-bearing move. It is the harness's PROVEN/HYPOTHESIZED discipline (`~/.claude/doctrine/claims.md`) applied to the evidence block: **a claim is PROVEN only when you re-observe its grounding; otherwise it is asserted, and asserted claims do not pass.**
 
 ### Step 2 — Verify claimed files exist (PROVEN-by-tool, file class)
 

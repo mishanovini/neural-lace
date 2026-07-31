@@ -81,6 +81,7 @@ if [ "${1:-}" = "--self-test" ]; then
   (
     cd "$TMPDIR_ST" || exit 1
     git init -q . >/dev/null 2>&1
+    git config core.hooksPath ""  # don't fire machine-global harness git hooks in fixtures
     git config user.email "selftest@example.test"
     git config user.name "selftest"
     mkdir -p supabase/migrations
@@ -326,6 +327,8 @@ fi
   echo "  4. Re-run the commit"
   echo ""
   echo "To bypass (not recommended): git commit --no-verify"
+  echo ""
+  echo "This gate: ~/.claude/hooks/migration-claude-md-gate.sh (source: adapters/claude-code/hooks/migration-claude-md-gate.sh)"
   echo "================================================================"
 } >&2
 exit 1

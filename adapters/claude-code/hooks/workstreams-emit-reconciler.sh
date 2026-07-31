@@ -2,7 +2,7 @@
 # conv-tree-emit-reconciler.sh — LAYER B of the four-layer Conv Tree
 # auto-emit enforcement chain (see rules/conv-tree-orchestrator-emit.md).
 #
-# Runs as a Stop hook AFTER conversation-tree-emit.sh --on-stop. Opens
+# Runs as a Stop hook AFTER workstreams-emit.sh --on-stop. Opens
 # $TRANSCRIPT_PATH JSONL (agent-uneditable), enumerates every Dispatch
 # spawn the session made, and compares to the per-session correlation
 # ledger Layer A wrote. If a transcript spawn has NO matching ledger
@@ -28,9 +28,30 @@
 
 set -uo pipefail
 
-LOG_DIR="$HOME/.claude/logs"
+# shellcheck disable=SC1091
+{ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/nl-paths.sh" 2>/dev/null; } || true
+
+# Log + ledger destinations: sandboxed when HARNESS_SELFTEST=1 or invoked as
+# --self-test itself (self-test isolation — E.2 remediation) so no self-test
+# run appends to the real machine's ~/.claude/logs/conversation-tree-emit.log
+# or ~/.claude/state/conversation-tree-emit/ regardless of HOME. Prefers an
+# explicit HARNESS_SELFTEST_DIR; falls back to a PID-scoped tmp sandbox
+# otherwise (signal-ledger.sh's convention). Shares the SAME log filename as
+# workstreams-emit.sh by design (Layer A/B of the same enforcement chain —
+# see header) so both hooks' sandboxing must resolve identically when both
+# are exercised under the same HARNESS_SELFTEST_DIR.
+if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "${1:-}" == "--self-test" ]]; then
+  export HARNESS_SELFTEST=1
+  _WER_SANDBOX="${HARNESS_SELFTEST_DIR:-${TMPDIR:-/tmp}/workstreams-emit-selftest/$$}"
+  export HARNESS_SELFTEST_DIR="$_WER_SANDBOX"
+  LOG_DIR="$_WER_SANDBOX/logs"
+  LEDGER_DIR="$_WER_SANDBOX/state/conversation-tree-emit"
+else
+  LOG_DIR="$HOME/.claude/logs"
+  LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+fi
 LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
-LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
 
 _log() {
   mkdir -p "$LOG_DIR" 2>/dev/null || true
@@ -41,14 +62,14 @@ trap '_die_safe "uncaught (line $LINENO)"' ERR
 
 _have() { command -v "$1" >/dev/null 2>&1; }
 
-# Mirror conversation-tree-emit.sh's session-id sanitization so ledger
+# Mirror workstreams-emit.sh's session-id sanitization so ledger
 # filenames line up.
 _sid_safe() {
   local sid="$1"
   printf '%s' "$sid" | tr -c 'A-Za-z0-9._-' '-' | sed 's/-\+/-/g; s/^-//; s/-$//'
 }
 
-# Mirror conversation-tree-emit.sh's _sha1 helper.
+# Mirror workstreams-emit.sh's _sha1 helper.
 _sha1() {
   if _have sha1sum; then sha1sum | cut -d' ' -f1
   elif _have shasum; then shasum -a 1 | cut -d' ' -f1
@@ -59,13 +80,12 @@ _resolve_emit_hook() {
   # Prefer the SIBLING emit hook in this script's own directory (in the live
   # install that IS ~/.claude/hooks; in a repo checkout it is the repo copy —
   # keeping reconciler and writer at the same version). Then the live-install
-  # name, then the pre-rename backward-compat shim (Workstreams rename
-  # 2026-06-01).
+  # name. The primary workstreams-emit.sh always exists; the pre-rename
+  # backward-compat shim (Workstreams rename 2026-06-01) retired to attic/
+  # past its 2026-06-30 delete-by date — no fallback to it.
   local cand="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/workstreams-emit.sh"
   if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   cand="$HOME/.claude/hooks/workstreams-emit.sh"
-  if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
-  cand="$HOME/.claude/hooks/conversation-tree-emit.sh"
   if [[ -f "$cand" ]]; then printf '%s' "$cand"; return 0; fi
   printf '%s' ""
 }
@@ -118,7 +138,7 @@ _count_ledger_entries() {
 }
 
 # Reconcile: for any transcript spawn without a matching ledger entry,
-# re-fire conversation-tree-emit.sh --on-spawn with a synthesized
+# re-fire workstreams-emit.sh --on-spawn with a synthesized
 # tool_input. The emit hook is idempotent on deterministic event_id, so
 # this is safe to run unconditionally.
 _reconcile() {
@@ -251,6 +271,18 @@ _self_test() {
   local pass=0 fail=0
   local tmp; tmp=$(mktemp -d 2>/dev/null || echo "/tmp/cte-rec-st-$$")
   mkdir -p "$tmp"
+  # Re-point THIS process's own LOG_FILE/LEDGER_DIR (resolved once at
+  # top-of-script, before --self-test dispatch reached here) at the SAME
+  # "$tmp" the child `bash "$SELF"` self-invocations below will inherit via
+  # HARNESS_SELFTEST_DIR, so this self-test's own log-content assertions
+  # (log_before/log_after) read from the identical file the children wrote
+  # to (E.2 remediation — mirrors workstreams-emit.sh's identical fix).
+  export HARNESS_SELFTEST=1
+  export HARNESS_SELFTEST_DIR="$tmp"
+  LOG_DIR="$tmp/logs"
+  LEDGER_DIR="$tmp/state/conversation-tree-emit"
+  LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
+  mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
   local emit_hook; emit_hook=$(_resolve_emit_hook)
   if [[ -z "$emit_hook" ]]; then
     echo "self-test: cannot locate ~/.claude/hooks/workstreams-emit.sh"
@@ -334,7 +366,10 @@ JSONL
       [[ -f "$_root/neural-lace/workstreams-ui/state/state.js" ]] && ST_LIB="$_root/neural-lace/workstreams-ui/state/state.js"
       [[ -z "$ST_LIB" && -f "$_root/workstreams-ui/state/state.js" ]] && ST_LIB="$_root/workstreams-ui/state/state.js"
     fi
-    [[ -z "$ST_LIB" ]] && ST_LIB="$HOME/claude-projects/neural-lace/neural-lace/workstreams-ui/state/state.js"
+    if [[ -z "$ST_LIB" ]] && command -v nl_workstreams_ui >/dev/null 2>&1; then
+      local _ui; _ui="$(nl_workstreams_ui 2>/dev/null)"
+      [[ -n "$_ui" && -f "$_ui/state/state.js" ]] && ST_LIB="$_ui/state/state.js"
+    fi
   fi
   _bd_checked() { # statefile -> checked-state of the first wi-bd-* item (or MISSING)
     node -e 'var s=require(process.argv[1]);var st=s.readState({statePath:process.argv[2]});var out="MISSING";st.snapshot.nodes.forEach(function(n){(n.items||[]).forEach(function(it){if(/^wi-bd-/.test(it.item_id))out=String(it.checked)})});process.stdout.write(out)' "$ST_LIB" "$1" 2>/dev/null

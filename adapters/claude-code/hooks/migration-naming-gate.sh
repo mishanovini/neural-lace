@@ -36,7 +36,7 @@
 #   re-staging an existing integer migration does not trip the gate. The
 #   discipline binds NEW migrations only; the back-catalog is frozen.
 #
-# Rule: ~/.claude/rules/parallel-dev-discipline.md (Practice 7)
+# Rule: ~/.claude/doctrine/parallel-dev-discipline.md (Practice 7)
 #
 # Exit codes:
 #   0 — commit allowed (no offending newly-added migration)
@@ -188,10 +188,16 @@ _main_check() {
     echo "  # then re-stage and commit. Two machines one second apart still differ."
     echo ""
     echo "Accepted prefix forms: YYYYMMDDHHMMSS_  |  YYYYMMDDHHMMSS-  |  YYYYMMDD-HHMMSS_"
-    echo "Rule: ~/.claude/rules/parallel-dev-discipline.md (Practice 7)"
+    echo "Rule: ~/.claude/doctrine/parallel-dev-discipline.md (Practice 7)"
     echo ""
     echo "(Existing integer-named migrations already in history are grandfathered —"
     echo " only NEWLY-ADDED files are checked. This binds NEW migrations only.)"
+    echo ""
+    echo "NOTE: this block prevented the ENTIRE command from running — including any"
+    echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run"
+    echo "the non-commit part as its own call first, then commit separately."
+    echo ""
+    echo "This gate: ~/.claude/hooks/migration-naming-gate.sh (source: adapters/claude-code/hooks/migration-naming-gate.sh)"
   } >&2
   return 1
 }
@@ -250,7 +256,7 @@ _self_test() {
   _scenario() { # name setup_fn expect(BLOCK|ALLOW)
     local name="$1" setup="$2" expect="$3"
     local d="$tmp/$name"
-    mkdir -p "$d" && ( cd "$d" && git init --quiet && git config user.email t@example.com && git config user.name T )
+    mkdir -p "$d" && ( cd "$d" && git init --quiet && git config core.hooksPath "" && git config user.email t@example.com && git config user.name T )
     ( cd "$d" && eval "$setup" )
     local rc=0
     ( cd "$d" && CLAUDE_TOOL_INPUT='{"tool_input":{"command":"git commit -m x"}}' _main_check 2>/dev/null ) || rc=$?

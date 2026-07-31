@@ -18,7 +18,7 @@ All three sub-tasks completed. Along the way the session surfaced five harness g
 ### 1. `~/claude-projects/` hardcoded fallback path doesn't exist on this machine
 
 **Where:** `adapters/claude-code/hooks/conversation-tree-emit.sh` line 126, `_resolve_gui_state_path()` fallback branch.
-**What:** Falls back to `$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/tree-state.json` when `_main_repo_root()` can't resolve. Misha's actual repo is at `~/dev/Pocket Technician/neural-lace/`. `~/claude-projects/` doesn't exist on this machine.
+**What:** Falls back to `$HOME/claude-projects/neural-lace/neural-lace/conversation-tree-ui/state/tree-state.json` when `_main_repo_root()` can't resolve. Misha's actual repo is at `~/dev/<org-dir>/neural-lace/`. `~/claude-projects/` doesn't exist on this machine.
 **Impact:** When the emit hook runs outside a git context, writes go to a non-existent path. Already happening: `~/.claude/logs/conv-tree-read.log` shows multiple invocations citing the `claude-projects/...` path.
 **Suggested fix:** Resolve the project root from a per-machine convention file (e.g. `~/.claude/local/projects.config.json`'s root entry) instead of hardcoding the conventional path. Or: read `~/.claude/CLAUDE.md`'s "Accounts & Auto-Switching" directive for the per-machine projects root.
 **Status:** Open. Also filed as a `backlog-added` event in Conv Tree (low priority).

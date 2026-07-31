@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-0e8f74f3",
+  "created_at": "2026-07-30T00:35:28Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group hooks-lib (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "f09af28f8b0eef433b79383358dad2ac3f3e4da5",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/perf-ledger.sh",
+      "blob_sha": "28f619e55885c517cb0cfc094da837fb290a9304"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — capability-honest self-test: bash>=5 must detect EPOCHREALTIME, pre-5 must no-op, and the interpreter-identity lie is gone; 11/0 on /bin/bash 3.2.57 and 12/0 on bash 5.3.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

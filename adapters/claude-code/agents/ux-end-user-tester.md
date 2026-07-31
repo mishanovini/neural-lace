@@ -1,6 +1,7 @@
 ---
 name: UX End-User Tester
 description: Adversarial usability tester that role-plays a non-technical first-time end user. Runs a think-aloud cognitive walkthrough across every page and workflow to surface jargon, confusion, friction, dead-ends, and broken flows. Tags every finding with the Nielsen heuristic it violates, a calibrated 0-4 severity, a frequency estimate, and a class-sweep query. Prefers a running app (browser MCP); falls back to source-reading with findings tagged HYPOTHESIZED.
+model: fable
 tools:
   - Read
   - Grep

@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "task_id": "7",
+  "verdict": "PASS",
+  "commit_sha": "cf35399cbe675028ec4c5f7b1fab1affa8e74e68",
+  "files_modified": [
+    "adapters/claude-code/agents/functionality-verifier.md",
+    "adapters/claude-code/agents/task-verifier.md",
+    "adapters/claude-code/doctrine/INDEX.md",
+    "adapters/claude-code/doctrine/planning.md",
+    "adapters/claude-code/doctrine/vaporware-prevention-full.md",
+    "adapters/claude-code/manifest.json",
+    "docs/failure-modes.md",
+    "docs/plans/vaporware-config-controls.md"
+  ],
+  "mechanical_checks": {
+    "command:jq -e \".entries[] | select(.id==\\\"vaporware-config-control\\\")\" adapters/claude-code/manifest.json > /dev/null": {
+      "passed": true,
+      "detail": "",
+      "command": "jq -e \".entries[] | select(.id==\\\"vaporware-config-control\\\")\" adapters/claude-code/manifest.json > /dev/null",
+      "exit_code": 0
+    },
+    "command:jq -e \".entries[] | select(.id==\\\"vaporware-config-control\\\") | select(.kind==\\\"pattern\\\" and .blocking==false)\" adapters/claude-code/manifest.json > /dev/null": {
+      "passed": true,
+      "detail": "",
+      "command": "jq -e \".entries[] | select(.id==\\\"vaporware-config-control\\\") | select(.kind==\\\"pattern\\\" and .blocking==false)\" adapters/claude-code/manifest.json > /dev/null",
+      "exit_code": 0
+    },
+    "command:jq -e \".entries[] | select(.id==\\\"vaporware-config-control\\\") | .honest_status | select(length > 0) | select(test(\\\"task-verifier\\\") and test(\\\"plan-edit-validator\\\") and test(\\\"stop-verdict-dispatcher\\\") and (test(\\\"runtime-verification Stop chain\\\") | not))\" adapters/claude-code/manifest.json > /dev/null": {
+      "passed": true,
+      "detail": "",
+      "command": "jq -e \".entries[] | select(.id==\\\"vaporware-config-control\\\") | .honest_status | select(length > 0) | select(test(\\\"task-verifier\\\") and test(\\\"plan-edit-validator\\\") and test(\\\"stop-verdict-dispatcher\\\") and (test(\\\"runtime-verification Stop chain\\\") | not))\" adapters/claude-code/manifest.json > /dev/null",
+      "exit_code": 0
+    },
+    "command:bash adapters/claude-code/scripts/manifest-check.sh": {
+      "passed": true,
+      "detail": "[manifest-check] GREEN — 113 entries, 103 hooks covered, 0 warn",
+      "command": "bash adapters/claude-code/scripts/manifest-check.sh",
+      "exit_code": 0
+    },
+    "command:grep -q \"vaporware-config-control\" adapters/claude-code/doctrine/INDEX.md": {
+      "passed": true,
+      "detail": "",
+      "command": "grep -q \"vaporware-config-control\" adapters/claude-code/doctrine/INDEX.md",
+      "exit_code": 0
+    },
+    "command:test -z \"$(git diff --name-only d6baf6d..HEAD -- adapters/claude-code/hooks/)\"": {
+      "passed": true,
+      "detail": "",
+      "command": "test -z \"$(git diff --name-only d6baf6d..HEAD -- adapters/claude-code/hooks/)\"",
+      "exit_code": 0
+    }
+  },
+  "timestamp": "2026-07-13T00:58:02Z",
+  "verifier": "write-evidence.sh",
+  "plan_path": "docs/plans/vaporware-config-controls.md"
+}

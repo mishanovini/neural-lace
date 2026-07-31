@@ -1,0 +1,36 @@
+2026-07-30T05:47:55Z	hook=decision-context-gate	session=st1	count=3	sig=271db2a4f357
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-no-fence).
+
+2026-07-30T05:47:56Z	hook=decision-context-gate	session=st5	count=3	sig=cabe3f620a1f
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-fence-invalid:ZERR).
+
+2026-07-30T05:49:10Z	hook=decision-context-gate	session=st1	count=4	sig=271db2a4f357
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-no-fence).
+
+2026-07-30T05:49:11Z	hook=decision-context-gate	session=st5	count=4	sig=cabe3f620a1f
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-fence-invalid:ZERR).
+
+2026-07-30T05:49:58Z	hook=decision-context-gate	session=st1	count=5	sig=271db2a4f357
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-no-fence).
+
+2026-07-30T05:49:59Z	hook=decision-context-gate	session=st5	count=5	sig=cabe3f620a1f
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-fence-invalid:ZERR).
+
+2026-07-30T05:50:38Z	hook=decision-context-gate	session=st1	count=6	sig=271db2a4f357
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-no-fence).
+
+2026-07-30T05:50:38Z	hook=decision-context-gate	session=st5	count=6	sig=cabe3f620a1f
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-fence-invalid:ZERR).
+
+2026-07-30T05:50:54Z	hook=decision-context-gate	session=st1	count=7	sig=271db2a4f357
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-no-fence).
+
+2026-07-30T05:50:54Z	hook=decision-context-gate	session=st5	count=7	sig=cabe3f620a1f
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-fence-invalid:ZERR).
+
+2026-07-30T05:51:10Z	hook=decision-context-gate	session=st1	count=8	sig=271db2a4f357
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-no-fence).
+
+2026-07-30T05:51:10Z	hook=decision-context-gate	session=st5	count=8	sig=cabe3f620a1f
+  error: Decision-context gate: tier-1 trigger without valid fence (tier1-fence-invalid:ZERR).
+

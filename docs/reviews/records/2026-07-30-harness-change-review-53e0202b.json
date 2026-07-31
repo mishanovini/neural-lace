@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-53e0202b",
+  "created_at": "2026-07-30T06:01:26Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group scripts-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "e1fc56050726987bb140a77018750f04ee0182ad",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/nl-issue.sh",
+      "blob_sha": "be3f38fdad3836e09d733942d75650b352d3a2a4"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — real BSD-sed BRE-alternation fix (sed -nE) plus additive operator-verbatim source field with both-direction dedup guards; 32/0 under /bin/bash 3.2.57 including children pinned to 3.2 via PATH.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer agent (scripts-2 sweep) via write-review-record.sh",
+  "payload": {}
+}

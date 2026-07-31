@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260720-79170b4e",
+  "created_at": "2026-07-20T17:45:15Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/reviews/2026-07-20-f1-f3-rederived-harness-review.md",
+  "change_ref": {
+    "commit_sha": "09f29b7",
+    "branch": "build/cockpit-health-int"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/coord-sync.sh",
+      "blob_sha": "5a9ba6b8be22d9ab4f17111d1ef7de56f272b018"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-push.sh",
+      "blob_sha": "79245cdb892a6679cc3d4d3a2e578a9c999d3a00"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Both files PASS — register the harness-change-review records and let the fix go live. REQUIRED-FIX 1-4 are each implemented exactly as specced, the --force flag is confirmed to bypass only coord-push's throttle (a plain non-force git push, §9-safe), nothing rode along",
+    "findings_summary": "PASS delta review of F1 fix; 3 Minor informational (defense-in-depth branch; pre-existing manual-path lock residual already nl-issued; local-ref staleness)"
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

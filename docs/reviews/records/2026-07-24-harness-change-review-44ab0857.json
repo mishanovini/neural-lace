@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260724-44ab0857",
+  "created_at": "2026-07-24T01:31:53Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-opus-4-8",
+  "plan_ref": "docs/plans/agent-efficiency-fixes-2026-07.md",
+  "change_ref": {
+    "commit_sha": "a676242",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/context-watermark.sh",
+      "blob_sha": "a2ed3dac097f11353c590466c7eab5737877d0f7"
+    },
+    {
+      "path": "adapters/claude-code/scripts/supervisor-tick.sh",
+      "blob_sha": "c0ddec1236ac8429241a4e8f936e3dce58fe5860"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Both files PASS as deployable harness artifacts. context-watermark.sh (blob a2ed3dac...) is a correctly non-blocking writer whose deploy delta fixes a proven false-alarm incident; supervisor-tick.sh (blob c0ddec12...) is a correctly non-blocking surfacer that provably cannot fork-storm",
+    "findings_summary": "Scoped review of two week-landed files that reached master via the work-side machine without records (cross-machine gap filed). Zero Critical/Major; 3 Minor advisory residuals all disclosed in-code. Self-tests 20/20 + 16/16. Note: supervisor-tick deploys INERT until operator registers NL-SupervisorTick via install-coord-sync-task.ps1."
+  },
+  "written_by": "orchestrator (session 29f2930a) transcribing the scoped review verdict",
+  "payload": {}
+}

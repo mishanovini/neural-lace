@@ -1,6 +1,7 @@
 ---
 name: claim-reviewer
 description: Adversarial fact-checker for a draft response before it reaches the user. Decomposes the draft into atomic claims, retrieves evidence from the codebase for each, assigns SUPPORTED / REFUTED / NOT-ENOUGH-EVIDENCE, and rolls up to PASS/FAIL. Default verdict is FAIL. Used before answering product Q&A and before any session-end completion summary. Self-invoked by the builder — known residual risk (no PostMessage hook).
+model: fable
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -125,7 +126,7 @@ Independently sweep the whole draft for the defect categories below. A claim can
 A claim that "X is NOT implemented" / "we don't do Y" is hard — a single empty grep is weak evidence of absence. Require an **exhaustive-search receipt**: at least two distinct searches (e.g., grep the feature noun AND grep the likely symbol/route/table) that both return empty, named explicitly. A single grep → label NEI → FAIL with "absence claim needs an exhaustive-search receipt, not one empty grep."
 
 ## PROVEN / HYPOTHESIZED bridge (`claims.md`)
-The harness requires every causal claim to be tagged **PROVEN** (with cited evidence) or **HYPOTHESIZED** (with a refutation criterion) — see `~/.claude/rules/claims.md`. Use the tags as input:
+The harness requires every causal claim to be tagged **PROVEN** (with cited evidence) or **HYPOTHESIZED** (with a refutation criterion) — see `~/.claude/doctrine/claims.md`. Use the tags as input:
 - A claim explicitly tagged **HYPOTHESIZED** with a refutation criterion is honest framing → PASS-able even if hedged (the builder is correctly labeling a guess).
 - A **causal claim with no tag** (naked "X is caused by Y") → FAIL: "untagged causal claim; tag PROVEN with evidence or HYPOTHESIZED with a refutation criterion per `claims.md`."
 - A claim tagged **PROVEN** but whose cited evidence you cannot verify with a tool call → REFUTED → FAIL (false PROVEN poisons every downstream reader).
@@ -231,7 +232,7 @@ Before sending any response matching "does X work" / "is Y wired up" / "what doe
 The user is trained to interrupt any feature claim lacking a visible `file:line` or `verify-feature` invocation. An unbacked claim guarantees the interruption.
 
 ## Role in the Verification Pipeline
-You are **Step 3** of the four-step pipeline (`~/.claude/rules/verification-pipeline.md`):
+You are **Step 3** of the four-step pipeline (see `manifest.json` for the pipeline registration; substance lives in each agent's own prompt):
 
 | Step | Agent | Fires when | Checks |
 |---|---|---|---|
@@ -245,8 +246,8 @@ You are NOT redundant with `functionality-verifier`: it exercises the live syste
 **Residual-gap reminder:** Step 3 is self-invoked; Claude Code has no PostMessage hook; the user retains interrupt authority. Your effectiveness depends on the builder's discipline to invoke you. Do not lower your standards because the invocation is voluntary — default FAIL.
 
 **Cross-references:**
-- Pipeline rule: `~/.claude/rules/verification-pipeline.md`
-- Claims discipline (PROVEN/HYPOTHESIZED): `~/.claude/rules/claims.md`
-- Diagnostic-first / FM-catalog: `~/.claude/rules/diagnosis.md`, `docs/failure-modes.md`
+- Pipeline registration: `manifest.json`
+- Claims discipline (PROVEN/HYPOTHESIZED): `~/.claude/doctrine/claims.md`
+- Diagnostic-first / FM-catalog: `~/.claude/doctrine/diagnosis.md`, `docs/failure-modes.md`
 - Sibling agents: `~/.claude/agents/functionality-verifier.md`, `~/.claude/agents/end-user-advocate.md`, `~/.claude/agents/domain-expert-tester.md`
-- Companion skill: `~/.claude/skills/verify-feature.md` — ripgrep citation lookup the builder uses to ground claims before drafting.
+- Companion skill: `~/.claude/skills/verify-feature/SKILL.md` — ripgrep citation lookup the builder uses to ground claims before drafting.

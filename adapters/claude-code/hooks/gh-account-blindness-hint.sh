@@ -58,8 +58,20 @@
 #
 # Hook event: PostToolUse, matcher "Bash" (L1); SessionStart (L2, --session-start).
 # Self-test: invoke with --self-test (uses *_OVERRIDE env stubs; no real gh).
+#
+# REFACTOR (GH-AUTH-AUTOSWITCH-WORKORG-01, 2026-07-07): the owner/account
+# resolution helpers (_account_for_owner, _active_account, _load_accounts,
+# _accounts_path, _all_accounts) now live in hooks/lib/gh-account-lib.sh,
+# shared with the new PreToolUse gh-account-autoswitch.sh hook, so the two
+# mechanisms do not diverge. This file keeps its own event-specific logic
+# (not-found-signature scan, owner/repo slug extraction, the advisory text,
+# the SessionStart broadcast) and thin wrappers below delegate to the lib.
 
 set -u
+
+_GHLIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
+# shellcheck disable=SC1091
+. "${_GHLIB_DIR}/lib/gh-account-lib.sh" 2>/dev/null || true
 
 # ============================================================
 # Error signatures that mean "not found / forbidden"
@@ -137,67 +149,25 @@ _extract_owner_repo() {
 }
 
 # Path to accounts.config.json. GHBLIND_ACCOUNTS wins (self-test).
-_accounts_path() {
-  printf '%s' "${GHBLIND_ACCOUNTS:-$HOME/.claude/local/accounts.config.json}"
-}
+# Delegates to hooks/lib/gh-account-lib.sh (shared with gh-account-autoswitch.sh).
+_accounts_path() { gh_accounts_path; }
 
 # Load + CR-strip + JSON-validate accounts config. Echoes content; rc!=0 on
 # missing/empty/malformed/no-jq.
-_load_accounts() {
-  command -v jq >/dev/null 2>&1 || return 1
-  local path content
-  path="$(_accounts_path)"
-  [ -f "$path" ] || return 1
-  content="$(tr -d '\r' < "$path" 2>/dev/null)"
-  [ -n "$content" ] || return 1
-  printf '%s' "$content" | jq -e . >/dev/null 2>&1 || return 1
-  printf '%s' "$content"
-}
+_load_accounts() { gh_load_accounts; }
 
 # Given an owner, echo the gh_user account that should be active for it, or
 # empty if owner is not known to the config. Mapping:
 #   - owner == some entry's gh_user (or legacy `user`)  -> that gh_user
 #   - owner listed in some entry's owners[]             -> that entry's gh_user
 # Case-insensitive comparison (GitHub logins are case-insensitive).
-_account_for_owner() {
-  local owner="$1" content
-  content="$(_load_accounts)" || { printf ''; return 0; }
-  printf '%s' "$content" | jq -r --arg owner "$owner" '
-    [ (.work // []), (.personal // []) ]
-    | map(if type=="array" then . else [.] end) | add
-    | map(select(type=="object"))
-    | map({ acct: (.gh_user // .user // empty),
-            owns: ([ (.gh_user // .user // empty) ] + (.owners // [])) })
-    | map(select(.acct != null and .acct != ""))
-    | map(select( any(.owns[]; ascii_downcase == ($owner|ascii_downcase)) ))
-    | (.[0].acct // empty)
-  ' 2>/dev/null | tr -d '\r'
-}
+_account_for_owner() { gh_account_for_owner "$1"; }
 
 # List "<type> <gh_user>" lines for every account in the config (L2).
-_all_accounts() {
-  local content
-  content="$(_load_accounts)" || return 1
-  printf '%s' "$content" | jq -r '
-    [ {t:"work", a:(.work // [])}, {t:"personal", a:(.personal // [])} ]
-    | map(.t as $t | (if (.a|type)=="array" then .a else [.a] end) | map({t:$t, e:.}))
-    | add // []
-    | map(select(.e|type=="object"))
-    | map("\(.t) \(.e.gh_user // .e.user // "?")")
-    | .[]
-  ' 2>/dev/null | tr -d '\r'
-}
+_all_accounts() { gh_all_accounts; }
 
 # Currently-active gh account login. GHBLIND_ACTIVE wins (self-test).
-_active_account() {
-  if [ -n "${GHBLIND_ACTIVE:-}" ]; then printf '%s' "$GHBLIND_ACTIVE"; return 0; fi
-  command -v gh >/dev/null 2>&1 || { printf ''; return 0; }
-  # `gh auth status` prints the account login one line ABOVE "Active account: true".
-  gh auth status 2>&1 | awk '
-    /Logged in to .* account/ { line=$0; sub(/.* account[[:space:]]+/,"",line); sub(/[[:space:]].*/,"",line); acct=line }
-    /Active account: true/    { print acct; exit }
-  ' | tr -d '\r'
-}
+_active_account() { gh_active_account; }
 
 # ============================================================
 # L1 — PostToolUse hint

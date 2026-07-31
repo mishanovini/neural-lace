@@ -2,7 +2,7 @@
 title: Component C cross-machine sync rewrites the live dev checkout mid-session
 date: 2026-06-02
 type: process
-status: pending
+status: decided
 auto_applied: false
 originating_context: feat/event-driven-heartbeat build session (replacing the polling heartbeat scheduled task)
 decision_needed: How should active manual development coexist with the Component C cross-machine-sync daemon, which performs branch checkouts / cherry-picks / resets (and triggers install.sh) on the SAME working tree a session is developing in?
@@ -75,6 +75,8 @@ viable interim. D is a must-have guard regardless of which of A/B/C is chosen �
 
 [pending Misha — recommend C (sync in a dedicated clone, never the dev checkout) + A (interactive-session lock stopgap) + D (never `git add -A` / `install.sh` from a transient sync branch)]
 
+2026-07-02: absorbed as nl-overhaul task B.12 (interactive-lock stopgap now; dedicated sync clone as the Wave E/F durable fix). Operator approved.
+
 ## Preservation state (this session; the daemon fix itself is unimplemented)
 
 - Heartbeat work preserved at anchor commit `d67b4e7` (object DB; `--self-test` OK 45/45).
@@ -130,6 +132,33 @@ safe to run on every session boundary.
 
 ## Implementation log
 
-(none — the A/C/D design decision is unmade; no implementation of the daemon fix has
-landed. Only the reversible interim stopgap above (config pause) has been applied. This
-section flips to populated when the chosen fix is implemented.)
+- **2026-07-02 — Option A (stopgap) landed as nl-overhaul task B.12:**
+  `adapters/claude-code/hooks/lib/interactive-session-lock.sh` — the sourced guard
+  library every unattended tree-mutator must call before its first mutation.
+- **Wave F task F.6 — Option C (durable fix) landed:**
+  `adapters/claude-code/scripts/sync-pt-to-personal.sh` rebuilt on the dedicated-clone
+  architecture (all mutating git ops in `~/.claude/sync-clone/<repo>`, never a live
+  checkout; ISL verdict branching: log-and-proceed on a normal caller, refuse only when
+  the caller IS the clone). Option D is subsumed: the dedicated clone never runs
+  `git add -A` or `install.sh` against a human's tree.
+- **2026-07-12 — PAUSED-config disposition (closes this discovery's last open
+  question, per `docs/plans/master-drift-autocorrection-2026-07.md` D3):** the
+  2026-06-02 stopgap file
+  `~/.claude/local/workstreams-sync.config.PAUSED-2026-06-02-thrash-investigation`
+  is ABSENT from disk (verified by forced directory listing; no active
+  `workstreams-sync.config` exists either), and its only-ever consumer — the
+  `sync-events` subcommand of `broadcast-active-session.sh` — exists nowhere in the
+  current tree (`grep -rn sync-events adapters/` → 0 matches) nor in the live
+  `~/.claude/scripts|hooks` (backups excluded); it lived only on the never-merged
+  `feat/component-c-cross-machine-sync` branch, which no longer exists on any remote.
+  **The pause-lift question is MOOT** — nothing reads that config today, so neither
+  restoring nor deleting it changes any runtime behavior. No restore, no delete, no
+  new config. If Component-C cross-machine sync is ever rebuilt, it must inherit the
+  ISL contract + the F.6 dedicated-clone architecture by design (the
+  interactive-session-lock.sh header already binds it verbatim) — it must NOT re-arm
+  via the old config name.
+- **2026-07-12 — the drift-correction class this discovery warned about now has its
+  own guarded mechanism:** `adapters/claude-code/scripts/master-drift-autocorrect.sh`
+  (FF-only remote-master corrector, dedicated clone, ISL-guarded, session-start
+  dispatched — `docs/plans/master-drift-autocorrection-2026-07.md`), built to this
+  discovery's Option C/D constraints from day one.

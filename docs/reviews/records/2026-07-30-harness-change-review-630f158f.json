@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-630f158f",
+  "created_at": "2026-07-30T05:52:56Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 review sweep — operator authorization 2026-07-29 (adversarial reviewer agents as reviewing principal)",
+  "change_ref": {
+    "commit_sha": "a41b0e10b6737cad903e779ac6cc8eef108b1b76",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/ensure-cockpit.sh",
+      "blob_sha": "3cdd8523ec4e7d49ed8d5e3e36fccfbfaa964c4e"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — Darwin LaunchAgent path is stub-before-side-effect, tmp+mv, bounded launchctl, and branch-isolated; 40/46 at HEAD with the identical 6 failures proven pre-existing on master (17/6).",
+    "findings_summary": "Operator-directed (decision 065); KeepAlive SuccessfulExit:false respects EADDRINUSE single-instance; mode 644->755 fixes silently-inert exec; 6 fails = powershell-absent fixture gap, identical on master"
+  },
+  "written_by": "harness-reviewer subagent (group scripts-1)",
+  "payload": {}
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-6a531633",
+  "created_at": "2026-07-30T06:01:14Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group scripts-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "e1fc56050726987bb140a77018750f04ee0182ad",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/f4-retro.sh",
+      "blob_sha": "fa6d1db454e4d5094528aedf2483a401c41f01c2"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — portable bounded waiver-density call and touch -t fixture stamping; self-test result identical to master (27/5 + pre-existing TMP unbound), zero regression; known-failing suite is baseline-sanctioned.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer agent (scripts-2 sweep) via write-review-record.sh",
+  "payload": {}
+}
