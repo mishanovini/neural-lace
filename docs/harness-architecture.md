@@ -15,9 +15,9 @@ Tier-4 exhaustive machine-derived inventory.
 
 | Metric | Count |
 |---|---|
-| Total manifest entries | 151 |
+| Total manifest entries | 153 |
 | Unique hook scripts | 125 |
-| Blocking gates (`blocking: true`) | 39 |
+| Blocking gates (`blocking: true`) | 40 |
 
 ## Hooks by event
 
@@ -113,6 +113,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | manual | estate-registration-lib | writer | no | lib/estate-registration-lib.sh |
 | manual | harness-doctor | surfacer | no | harness-doctor.sh |
 | manual | harness-hygiene-scan | gate | yes | harness-hygiene-scan.sh |
+| manual | intended-functionality-if-statement | gate | yes | plan-reviewer.sh |
 | manual | loe-backfill | writer | no | scripts/loe-backfill.sh |
 | manual | ntfy-push | surfacer | no | — |
 | manual | perf-tick-snapshot | writer | no | lib/perf-tick-snapshot.sh |
@@ -129,6 +130,7 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 | precommit | decisions-index | gate | yes | decisions-index-gate.sh |
 | precommit | docs-freshness | gate | yes | docs-freshness-gate.sh |
 | precommit | harness-hygiene-scan | gate | yes | harness-hygiene-scan.sh |
+| precommit | intended-functionality-if-statement | gate | yes | plan-reviewer.sh |
 | precommit | migration-claude-md | gate | yes | migration-claude-md-gate.sh |
 | precommit | plan-reviewer | gate | yes | plan-reviewer.sh |
 | precommit | review-finding-fix | gate | yes | review-finding-fix-gate.sh |
@@ -142,8 +144,8 @@ One row per (entry, event) pair — an entry wired to N events appears N times, 
 
 | kind | blocking | warn/non-blocking |
 |---|---|---|
-| gate | 39 | 17 |
-| writer | 0 | 40 |
+| gate | 40 | 17 |
+| writer | 0 | 41 |
 | surfacer | 0 | 22 |
 | pattern | 0 | 30 |
 | convention | 0 | 3 |
@@ -159,9 +161,9 @@ distinction between total blocking:true entries and blocking CHAIN POSITIONS).
 |---|---|
 | stop | 8 |
 | session-start | 15 |
-| pretool | 33 |
+| pretool | 34 |
 | posttool | 6 |
-| none | 89 |
+| none | 90 |
 
 ## Doctrine index
 
@@ -198,6 +200,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/gh-merge-canonical.md | 1 (gh-merge-canonical) |
 | doctrine/git.md | 6 (cross-repo-drift-gate, deploy-automation-mode, gh-account-autoswitch, gh-account-hint, git-freshness, pre-push-divergence) |
 | doctrine/harness-dev.md | 9 (claude-md-hygiene, discovery-cheatsheet, docs-freshness, harness-doctor, harness-hygiene-scan, session-start-auto-install, session-start-surfacer-pack, signal-ledger-flush, wave-d-retired-shims) |
+| doctrine/intended-functionality.md | 1 (intended-functionality-if-statement) |
 | doctrine/interactive-process-fidelity.md | 1 (interactive-process-fidelity) |
 | doctrine/local-edit-authorization.md | 1 (local-edit-authorization) |
 | doctrine/mechanical-evidence.md | 1 (mechanical-evidence) |
@@ -227,7 +230,7 @@ it rather than duplicating it, so the two generators cannot disagree).
 | doctrine/worktree-isolation.md | 1 (worktree-advisor) |
 | rules/constitution.md | 1 (constitution) |
 
-Entries with no doctrine_file (`-`): 46.
+Entries with no doctrine_file (`-`): 47.
 
 ## Full entry listing
 
@@ -302,7 +305,9 @@ Entries with no doctrine_file (`-`): 46.
 | harness-doctor | surfacer | SessionStart, manual | no | session-start | diagnostic tool — invoked on demand (harness-doctor.sh --quick); chain wiring is a post-Wave-D decision |
 | harness-hygiene-scan | gate | manual, precommit | yes | none | invoked via pre-commit-gate.sh chain and manual --full-tree runs; not directly wired in settings.json.template |
 | harness-kpis | writer | — | no | none | scripts/harness-kpis.sh — weekly KPI report from the signal ledger (E.5); scheduled-task registration documented, not a hook. |
+| intended-functionality-if-statement | gate | manual, precommit | yes | pretool | Fires via pre-commit-gate.sh -> plan-reviewer.sh Check 19 on staged docs/plans/*.md; NOT directly wired in settings.json.template (same invocation path as the plan-reviewer entry). CHOKEPOINT: pre-commit-gate.sh -> plan-reviewer.sh Check 19. SCOPE (the blocking claim is deliberately narrow): BLOCKS a plan not already ACTIVE in HEAD (new plans, and DRAFT->ACTIVE flips); WARNs on plans already ACTIVE in HEAD; SKIPs non-ACTIVE plans and any plan outside a repository; UNDECIDABLE currently WARNs rather than blocks (warn-mode cycle, see retirement_condition). BYPASS PATHS (enumerated mechanically, not by reading — the first draft listed 4 and adversarial review found 3 more): (1) commit with --no-verify - NAMED-AND-ACCEPTED, closing it needs server-side enforcement this estate lacks. (2) `git -C <dir> commit` and other invocation shapes that do not match the settings.json.template PreToolUse matcher regex - NAMED-AND-ACCEPTED, verified NO-MATCH against the literal regex, and no real .git/hooks/pre-commit exists behind it; this defeats the whole pre-commit-gate chain and is not this unit's to fix. (3) Status other than ACTIVE - CLOSED-BY-DESIGN as SKIP: pre-ACTIVE iteration is never blocked, matching check17-draft-status-exempt. (4) DRAFT-commit then flip to ACTIVE - CLOSED: the grandfather is a CONTENT test (was the HEAD version ACTIVE, or did it already carry the section?), not a path-presence test, so the flip is treated as a new ACTIVE plan. Covered by self-test ee4. (5) Reword until the checker ACCEPTs - OPEN, NOT CLOSED, and the cost is ONE APPENDED CLAUSE, not determination. Appending a clause about what the artifact DOES satisfies the state-change test and vetoes the restatement rule: 'The gate is wired into pre-commit and blocks bad commits for the team.' -> ACCEPT, and 'The hook is registered in settings.json and starts on every user session.' -> ACCEPT - both opening with WRONG examples from the doctrine page itself. The obvious closure (require the change verb's subject to BE the human referent) was REJECTED because it false-blocks legitimate outcomes whose subject is a thing ('my work continues without me touching anything'). A mechanical vocabulary matcher cannot decide this class; this one raises the floor rather than closing the door. functionality-verifier STEP ZERO is the compensating judgement layer. (6) Plans already ACTIVE in HEAD - CLOSED-BY-DESIGN as WARN-only: blocking 46 pre-existing plans on next edit is the trust-erosion shape that turns a Mechanism into an override habit. (7) if-statement-check.sh absent, or exiting outside {0,1,2} - NAMED-AND-ACCEPTED: fails OPEN with a loud WARN. A checker that is missing or crashed is a harness defect, not a plan defect, and must not be reported to a builder as one. NOTE (updated 2026-07-30, harness-reviewer M1): the first-class `chokepoint` and `bypass_paths` fields this entry's prose used to say the schema rejected are now DEFINED in manifest.schema.json and POPULATED on this entry -- the enumeration below is mirrored there verbatim. This entry was blocking:true with neither field and on neither of harness-doctor.sh's grandfather lists, so check_deterministic_process_proof RED'd on it from the moment that check landed one commit later. |
 | interactive-process-fidelity | pattern | — | no | none | — |
+| limit-resume | writer | — | no | none | Two of three hook chokepoints are SPLICES (not new settings.json.template entries — SessionStart is at its 8/8 cap, and consolidating into the general-purpose per-session/per-turn surfacer scripts every session already runs through mirrors the ensure-cockpit/ensure-coord-sync/session-heartbeat splice convention): scripts/install-limit-resume.sh `ensure` + scripts/limit-resume.sh `arm` are called from hooks/session-start-digest.sh's run_digest() (LIMIT-RESUME SESSIONSTART CALLSITE); scripts/limit-resume.sh `disarm` is called from hooks/workstreams-stop-writer.sh (LIMIT-RESUME STOP CALLSITE), both reentry-guard-protected for free by their host hook's own existing NL_HOOK_REENTRY early-exit. The THIRD chokepoint is a genuinely NEW literal hooks[] entry in settings.json.template's UserPromptSubmit array (`limit-resume.sh arm`, backgrounded via nohup+disown) — chosen because that event carries no doctor-enforced chain budget today. State is keyed PER SESSION under $STATE_DIR/armed/<key>.{json,attempts,next-eligible,giveup} (F3 fix); disarm removes only the calling session's own files. install-limit-resume.sh's script-path resolution now FAILS CLOSED (logs a refusal, installs nothing) when the only candidate is inside a linked worktree, rather than the original version's silent fallback to a worktree-relative path — F2 fix, PROVEN live on this machine (a LaunchAgent was found already registered against this very build's own throwaway worktree checkout; bootout+rm'd immediately, and re-verified after the fix by temporarily placing the corrected scripts at the real main-checkout path and confirming the installed plist's ProgramArguments now resolves there, not the worktree). macOS only: Darwin-gated (silent no-op elsewhere); a Windows Task Scheduler equivalent (scripts/install-limit-resume-task.ps1) mirrors this repo's established install-*-task.ps1 pattern but is UNTESTED on this machine (no Windows box available) — logged in docs/backlog.md. Self-test: limit-resume.sh 21/21 scenarios (both bash interpreters -- S15/S16/S17 are round-2 regressions for the allowlist inversion and the lock-ownership fix; S18/S19 are round-3 regressions for the reentry-guard fix; S20/S21 are round-4 regressions for the ownership-token lock fix), install-limit-resume.sh 7/7 (both interpreters), harness-doctor.sh's own check_limit_resume_watchdog 5/5 new scenarios including per-session isolation. harness-doctor.sh's FULL --self-test tally is confirmed environment-sensitive for reasons unrelated to this build: this session's own run reports 153/154 (one pre-existing failure, orphaned-worktree-work-live-owned-green); an independent harness-reviewer run in the same worktree reported 151/154 (three pre-existing failures, the other two in the Windows-only obs-scheduled-tasks-red family, plausibly SKIP-vs-FAIL depending on whether scheduled-task-health.sh resolves in a given shell). Both runs agree the count is pre-existing and unrelated: `git diff --stat -- adapters/claude-code/hooks/harness-doctor.sh` is purely additive (146 insertions, 0 deletions), and neither the orphan check nor the scheduled-task check is touched by this diff. Real end-to-end evidence (not self-test): a real launchd-triggered tick (`launchctl kickstart -k`) against the real `claude` binary, both before and after the review-driven rewrite, produced a clean CLI-level rejection (non-UUID / unknown session) with NO PATH/environment error, proving DEFECT 1 fixed under real launchd conditions on both code versions; the SAME real hb_classify oracle was independently confirmed to correctly classify a genuinely dead real session on this machine (dead pid, 14h-stale heartbeat) as 'crashed' (eligible). A literal observed SUCCESS (`claude -p --resume` returning a continued transcript) was not captured — the auto-mode classifier blocked further manipulation of that real session's identifiable state mid-demonstration, and this was not circumvented; logged honestly rather than fabricated. golden_scenario's success path is therefore proven by self-test (S5, stub-based) and by construction (identical code path, identical liveness oracle, differing only in the target CLI call's outcome) but not by a live non-stub observation — a residual gap named here, not hidden. |
 | local-edit-authorization | gate | PreToolUse | yes | pretool | — |
 | loe-backfill | writer | manual | no | none | — |
 | master-drift-autocorrect | writer | — | no | none | scripts/master-drift-autocorrect.sh — FF-only remote-master drift corrector (docs/plans/master-drift-autocorrection-2026-07.md). Not event-wired itself: dispatched BACKGROUNDED by hooks/session-start-git-freshness.sh (the git-freshness entry's hook) on remote-vs-remote master SHA inequality or a non-quiet ~/.claude/state/master-drift/<repo>.status, and directly invocable by hand. All mutating git ops run in the F.6 dedicated sync clone (~/.claude/sync-clone/<repo>); true divergence is surfaced (one digest line), never auto-merged; kill switch MASTER_DRIFT_AUTOCORRECT=0. Doctor predicate: check_master_drift_autocorrect (quick: script + --self-test entrypoint + hook wiring; --full additionally runs the script's --self-test). Runbook: docs/runbooks/master-drift-autocorrect.md. |

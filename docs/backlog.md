@@ -2565,8 +2565,46 @@ requested alongside the roadmap rollup fix).
   claims are the cardinal defect shipped an unbuilt enforcement claim. Header corrected
   to PATTERN + a named correction rather than silently edited.
   TO CLOSE: (1) schema gains both properties; (2) a real doctor check; (3) backfill the
-  39 blocking units (dated grandfather acceptable, per the review-record precedent);
+  blocking units (dated grandfather acceptable, per the review-record precedent);
   only then does the Enforcement line come back.
+  **UPDATE 2026-07-30 (harness-reviewer follow-up):** (1) and (2) are DONE — the schema
+  defines both fields, and `check_deterministic_process_proof` REDs on a blocking entry
+  missing EITHER (tightened from both-missing-only). The doctrine header now states the
+  hybrid state instead of the stale "NONE YET", which had itself become an INVERSE
+  vaporware claim (asserting the schema "would REJECT both keys" after the same commit
+  added them). Also corrected: the unit count was 40, not 39 — `intended-functionality-
+  if-statement` was blocking:true with neither field and on no grandfather list, so the
+  doctor RED'd from the moment the check landed; it is now backfilled with a real
+  chokepoint + 8 enumerated bypasses. (3) REMAINS OPEN: 38 of 40 blocking units still
+  carry neither field and are exempted only by the dated grandfather list. This entry
+  closes when that list reaches empty. Re-derive, never quote:
+  `jq -r '.entries[]|select(.blocking==true)|select((((.chokepoint//"")|length)==0) or (((.bypass_paths//[])|length)==0))|.id' adapters/claude-code/manifest.json | wc -l`
+- **REVIEW-COVERAGE-DB-IS-UNGATED-REPO-CONTENT-01** (HIGH, PROVEN 2026-07-30 by
+  harness-reviewer against live fixtures, partially closed same day): the coverage
+  database `review-record-push-gate.sh` consults (`docs/reviews/records/{index,
+  grandfather-manifest}.json`) is unprotected repo content the pushing agent can author
+  in the SAME push, and neither `rrg_in_surface` nor `scope-enforcement-gate.sh:188`
+  gates that path. Three routes each took the gate from rc=1 to rc=0. CLOSED: a
+  self-authored grandfather row (rows are now verified against the manifest's own
+  `cutover_ref`), and deleting both coverage files (the bootstrap fail-open is now
+  scoped to repos without `adapters/claude-code/manifest.json`). **STILL OPEN:** a
+  self-written `{kind:"harness-change-review", verdict:"PASS"}` row in `index.json`
+  still covers the pusher's own content — indistinguishable at push time from the
+  legitimate `review-runner.sh finalize` flow, which writes exactly that row in exactly
+  that push. Detected only post-hoc by the doctor's `review-index-consistency` check,
+  which `deterministic-process.md:31-33` names as auditing-instead-of-enforcement.
+  TO CLOSE: an independence signal the pushing agent cannot mint — a reviewer-side
+  signature over `{path, blob_sha, verdict}`, or a server-side required-status-check.
+  Tracked alongside `docs/plans/review-independence.md`.
+  CLASS LESSON (the reason this is HIGH and not a one-off): a gate whose verdict depends
+  on repo-resident state must treat that state as part of its own trust boundary.
+- **DOCTOR-BUDGET-BLOCKING-GATES-RED-15-OF-14-01** (MEDIUM, PROVEN pre-existing
+  2026-07-30): `harness-doctor.sh --quick` REDs `budget-blocking-gates: blocking
+  session-event units: 15/14`. Reproduced identically against HEAD's manifest with the
+  same full adapter tree, so it predates and is unrelated to the deterministic-process
+  work. Not fixed there to avoid bundling an unrelated demotion decision into a review-
+  findings commit. TO CLOSE: demote one unit via `scripts/gate-demotion.sh` or
+  consolidate per ADR 059 D7 — an explicit budget decision, not a mechanical fix.
 - **REVIEW-RECORD-GATE-STAGE-AND-COMMIT-FAIL-OPEN-01** (CRITICAL, PROVEN 2026-07-30 by a
   builder that self-reported it, orchestrator-confirmed by code read):
   `review-record-commit-gate.sh:427-428` reads the index at PreToolUse:

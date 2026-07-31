@@ -180,7 +180,7 @@
           "chokepoint": {
             "type": ["string", "null"],
             "minLength": 1,
-            "description": "OPTIONAL per adapters/claude-code/doctrine/deterministic-process.md: the firing event this unit's enforcement runs at, in verifiable form (e.g. 'pre-push', 'Stop', 'PreToolUse Bash'). Names the NARROWEST chokepoint every path to the outcome traverses — not merely a convenient layer (Rule 1). harness-doctor.sh's check_deterministic_process_proof flags a blocking:true entry ONLY when BOTH this field AND bypass_paths are absent (a closed DETERMINISTIC_PROCESS_GRANDFATHERED exempt-list covers legacy entries predating this field) — declaring only one of the two is not yet flagged; a both-required bar is a possible future tightening, not enforced today."
+            "description": "OPTIONAL per adapters/claude-code/doctrine/deterministic-process.md: the firing event this unit's enforcement runs at, in verifiable form (e.g. 'pre-push', 'Stop', 'PreToolUse Bash'). Names the NARROWEST chokepoint every path to the outcome traverses — not merely a convenient layer (Rule 1); if the declared chokepoint is local-only while other paths (a GitHub web-UI merge, `gh pr merge`) reach the outcome without it, say so in this field rather than overclaiming. harness-doctor.sh's check_deterministic_process_proof REDs a blocking:true entry missing EITHER this field OR bypass_paths — TIGHTENED 2026-07-30 from both-missing-only (harness-reviewer M7: declaring only a chokepoint discharged nothing, while bypass_paths is the load-bearing half). A closed, dated DETERMINISTIC_PROCESS_GRANDFATHERED exempt-list covers legacy entries predating this field, as does added_after < '2026-07'."
           },
           "bypass_paths": {
             "type": ["array", "null"],
@@ -188,7 +188,7 @@
               "type": "string",
               "minLength": 1
             },
-            "description": "OPTIONAL per adapters/claude-code/doctrine/deterministic-process.md: every known route to the outcome that skips this unit's chokepoint, each entry stating its own CLOSED (with how) or NAMED-AND-ACCEPTED (with why) disposition inline — an empty list claims none exist and is a lie unless someone enumerated them. harness-doctor.sh's check_deterministic_process_proof flags a blocking:true entry ONLY when BOTH this field AND chokepoint are absent (same grandfather exempt-list as chokepoint) — see that field's description for the current both-missing-only enforcement scope."
+            "description": "OPTIONAL per adapters/claude-code/doctrine/deterministic-process.md: every known route to the outcome that skips this unit's chokepoint, each entry stating its own CLOSED (with how) or NAMED-AND-ACCEPTED (with why) disposition inline — an empty list claims none exist and is a lie unless someone enumerated them. Prefer MECHANICAL enumeration to careful reading: the routes found by executing a fixture are the ones a reader's own assumptions hide. harness-doctor.sh's check_deterministic_process_proof REDs a blocking:true entry missing EITHER this field OR chokepoint (same grandfather exempt-list; see that field's description for the 2026-07-30 tightening)."
           }
         },
         "allOf": [

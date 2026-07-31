@@ -85,6 +85,39 @@ fi
 if [ -n "$REVIEW_GATE" ] && [ -f "$REVIEW_GATE" ]; then
   echo "$REF_INPUT" | bash "$REVIEW_GATE" "$@"
 else
+  # THE ENFORCING BYTES ARE MUTABLE (harness-reviewer M8, 2026-07-30).
+  #
+  # core.hooksPath points at this repo's WORKING TREE, so a `git checkout` to
+  # any commit predating the gate, a `git stash`, or a one-line edit removes
+  # the gate globally. Previously that produced only a WARNING and the push
+  # proceeded — the harness repo could silently un-gate itself, which is the
+  # bypass path with the lowest cost of every one enumerated.
+  #
+  # A repo carrying adapters/claude-code/manifest.json IS the harness repo:
+  # there, a missing gate is a DEFECT and the push is refused. Everywhere else
+  # (an ordinary project repo that merely shares this global hooksPath) it
+  # stays a warning, because those repos have no review-record gate to run and
+  # blocking them would be a pure false positive.
+  REPO_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
+  if [ -n "$REPO_TOPLEVEL" ] && [ -f "$REPO_TOPLEVEL/adapters/claude-code/manifest.json" ]; then
+    echo "================================================================" >&2
+    echo "PUSH BLOCKED — the authoritative review gate is MISSING" >&2
+    echo "================================================================" >&2
+    echo "review-record-push-gate.sh was not found, but this repo IS the" >&2
+    echo "harness repo (adapters/claude-code/manifest.json is present)." >&2
+    echo >&2
+    echo "The harness repo must not be able to silently disarm its own gate:" >&2
+    echo "a checkout to a pre-gate commit, a stash, or an edit that removes" >&2
+    echo "the file would otherwise let unreviewed harness content reach the" >&2
+    echo "remote with nothing but a warning." >&2
+    echo >&2
+    echo "Expected at: $REVIEW_GATE" >&2
+    echo >&2
+    echo "Restore it (e.g. 'git checkout master -- adapters/claude-code/" >&2
+    echo "hooks/review-record-push-gate.sh') and push again." >&2
+    echo "================================================================" >&2
+    exit 1
+  fi
   echo "WARNING: review-record-push-gate.sh not found — the AUTHORITATIVE review-record gate did NOT run for this push" >&2
 fi
 

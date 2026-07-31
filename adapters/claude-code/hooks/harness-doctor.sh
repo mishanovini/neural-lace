@@ -2410,18 +2410,49 @@ for (const p of problems) console.log(p);
 # anywhere in the manifest, because nothing required it. This check is the
 # mechanized version of that enumeration requirement, same shape as
 # check_new_gate_evidence_bar immediately above (which this file mirrors
-# deliberately — one generator pattern, not two that could drift).
+# deliberately — one generator pattern, not two that could drift). That
+# "cannot drift" claim was FALSE as written and is now MECHANIZED instead of
+# asserted: the two implementations DID drift. The jq fallback bound `.id`
+# against the grandfather ARRAY rather than the entry, so jq errored, the
+# `2>/dev/null` ate the message, `$out` came back empty, and the check was a
+# SILENT NO-OP on every machine without `node` (harness-reviewer C1,
+# 2026-07-30 — PROVEN end-to-end: `--quick` with node masked out of PATH
+# emitted ZERO deterministic-process-proof lines while the node path RED'd).
+# Both branches now fail LOUD on a parser error, and the self-test scenarios
+# `dpp-jq-*` re-run the RED/GREEN/grandfather fixtures with `node` masked out
+# of PATH so the fallback is EXERCISED on every run, never trusted to match
+# by inspection.
+#
+# WHAT REDS — BOTH fields required (harness-reviewer M7, 2026-07-30). The
+# original check fired only on "declares NEITHER", so a new blocking gate
+# could discharge the whole obligation by writing `chokepoint: "pre-push"`
+# and never enumerating a single bypass — while `bypass_paths` is the
+# load-bearing half (C2 proved four unenumerated live routes around the one
+# entry that DID populate it in good faith). New entries are authored
+# deliberately, so the FP cost of requiring both is nil: measured 2026-07-30,
+# exactly two non-grandfathered blocking:true entries exist and one already
+# carries both fields.
 #
 # GRANDFATHER EXEMPT-LIST (dated, closed enumeration — same convention as
 # check_new_gate_evidence_bar's PRE_BAR_GRANDFATHERED, NOT a date-range
 # pattern): every `blocking:true` id that existed BEFORE this check landed
-# and had neither field yet. Measured 2026-07-30, the day this check was
-# written: 38 of the manifest's 39 `blocking:true` entries (the 39th,
-# review-record-commit-gate, was demoted to blocking:false in the SAME
-# commit that added this check, so it needs no grandfathering at all; the
-# two NEW entries this commit adds — review-record-push-gate and its
-# authorize script — carry real chokepoint/bypass_paths and are likewise not
-# grandfathered). RETIREMENT: shrink this list as each id gains real fields;
+# and had neither field yet. RE-DERIVE THE COUNTS MECHANICALLY rather than
+# quoting the constant a past reader measured — the previous version of this
+# comment said "39 blocking:true entries" and was ALREADY STALE at landing
+# (the true count was 40; the 40th, `intended-functionality-if-statement`,
+# landed one commit earlier, appeared in NEITHER grandfather list, and RED'd
+# the live doctor from the moment this check shipped — harness-reviewer M1):
+#   jq '[.entries[]|select(.blocking==true)]|length' adapters/claude-code/manifest.json
+#   jq -r '.entries[]|select(.blocking==true)|select((((.chokepoint//"")|length)==0) or (((.bypass_paths//[])|length)==0))|.id' adapters/claude-code/manifest.json
+# review-record-commit-gate was demoted to blocking:false in the SAME commit
+# that added this check, so it needs no grandfathering at all. Of the two
+# entries that commit added: `review-record-push-gate` carries real
+# chokepoint + bypass_paths; `authorize-review-record-push-override` is
+# blocking:false and therefore OUT OF SCOPE for this check entirely — it
+# declares NEITHER field and no added_after, and an earlier draft of this
+# comment wrongly claimed both new entries "carry real chokepoint/
+# bypass_paths" (harness-reviewer M4).
+# RETIREMENT: shrink this list as each id gains real fields;
 # it must reach empty. A NEW blocking:true entry landing after this check
 # exists gets ZERO ID-BASED grandfather (harness-reviewer follow-up pass,
 # 2026-07-30: an earlier draft of this comment claimed "ZERO grandfather...
@@ -2461,7 +2492,13 @@ check_deterministic_process_proof() {
     return 0
   fi
 
-  local out
+  # Parser errors are LOUD (harness-reviewer C1): the previous version sent
+  # BOTH branches' stderr to /dev/null, so a broken expression was
+  # indistinguishable from a clean manifest -- the exact silent-no-op shape
+  # deterministic-process.md calls theatre. stderr is captured and surfaced
+  # as a WARN that names, in plain words, that the check did NOT run.
+  local out parse_rc parse_err
+  parse_err="$(mktemp 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/dpp-parse-err.$$")"
   if command -v node >/dev/null 2>&1; then
     out="$(node -e '
 const fs = require("fs");
@@ -2504,12 +2541,19 @@ for (const e of m.entries || []) {
   if (typeof addedAfter === "string" && addedAfter.trim().length > 0 && addedAfter < "2026-07") continue;
   const hasChoke = typeof e.chokepoint === "string" && e.chokepoint.trim().length > 0;
   const hasBypass = Array.isArray(e.bypass_paths) && e.bypass_paths.length > 0;
-  if (!hasChoke && !hasBypass) {
-    problems.push(e.id + ": blocking:true declares NEITHER chokepoint nor bypass_paths (deterministic-process.md proof obligation — name the firing event and enumerate every known bypass, each CLOSED or NAMED-AND-ACCEPTED)");
+  // BOTH required (harness-reviewer M7): chokepoint alone discharges nothing
+  // -- bypass_paths is the load-bearing half. Name WHICH half is missing so
+  // the message is actionable rather than a generic re-statement.
+  const missing = [];
+  if (!hasChoke) missing.push("chokepoint");
+  if (!hasBypass) missing.push("bypass_paths");
+  if (missing.length) {
+    problems.push(e.id + ": blocking:true does not declare " + missing.join(" or ") + " (deterministic-process.md proof obligation — name the firing event AND enumerate every known bypass, each CLOSED with how or NAMED-AND-ACCEPTED with why; an empty enumeration claims none exist and is a lie unless someone looked)");
   }
 }
 for (const p of problems) console.log(p);
-' "$manifest" 2>/dev/null)"
+' "$manifest" 2>"$parse_err")"
+    parse_rc=$?
   else
     out="$(jq -r '
 [
@@ -2527,12 +2571,28 @@ for (const p of problems) console.log(p);
   "stop-verdict-dispatcher","synthetic-runner-ci","tdd-gate","wire-check",
   "work-integrity","new-gate-complete"
 ] as $gf |
-(.entries[] | select(.blocking == true) | select(($gf | index(.id)) == null) |
-  select((((.added_after // "") | length) == 0) or ((.added_after // "") >= "2026-07")) |
-  select((((.chokepoint // "") | length) == 0) and (((.bypass_paths // []) | length) == 0)) |
-  "\(.id): blocking:true declares NEITHER chokepoint nor bypass_paths (deterministic-process.md proof obligation — name the firing event and enumerate every known bypass, each CLOSED or NAMED-AND-ACCEPTED)")
-' "$manifest" 2>/dev/null)"
+(.entries[] | select(.blocking == true) as $e |
+  select(($gf | index($e.id)) == null) |
+  select(((($e.added_after // "") | length) == 0) or (($e.added_after // "") >= "2026-07")) |
+  ([ (if (($e.chokepoint // "") | length) > 0 then empty else "chokepoint" end),
+     (if (($e.bypass_paths // []) | length) > 0 then empty else "bypass_paths" end)
+   ] | select(length > 0)) as $missing |
+  "\($e.id): blocking:true does not declare \($missing | join(" or ")) (deterministic-process.md proof obligation — name the firing event AND enumerate every known bypass, each CLOSED with how or NAMED-AND-ACCEPTED with why; an empty enumeration claims none exist and is a lie unless someone looked)")
+' "$manifest" 2>"$parse_err")"
+    parse_rc=$?
   fi
+
+  # A parser failure is NOT "nothing to report" (harness-reviewer C1). Surface
+  # it, name that the check did not run, and keep going -- a broken expression
+  # must never masquerade as a clean manifest.
+  if [[ "${parse_rc:-0}" -ne 0 ]]; then
+    local perr; perr="$(tr '\n' ' ' < "$parse_err" 2>/dev/null | cut -c1-300)"
+    _warn "deterministic-process-proof" "the manifest parser FAILED (rc=${parse_rc}) — this check did NOT run, so a missing chokepoint/bypass_paths declaration would go unreported: ${perr:-no stderr captured}"
+    rm -f "$parse_err" 2>/dev/null
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  rm -f "$parse_err" 2>/dev/null
 
   if [[ -n "$out" ]]; then
     local line
@@ -3653,6 +3713,73 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _run_quick() {
     local dir="$1"
     HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
+  }
+
+  # ------------------------------------------------------------
+  # NODE-MASKED EXECUTION (harness-reviewer C1, 2026-07-30).
+  #
+  # Four checks in this file are dual-path: node preferred, jq fallback
+  # (extract_manifest_gates -> claim-honesty; _count_chain_entries ->
+  # budget-chains; new-gate-evidence-bar; deterministic-process-proof). Every
+  # one of them ran ONLY its node branch in the self-test, because the machine
+  # that runs the suite has node. The jq branches were therefore asserted to
+  # match by INSPECTION -- and one of them did not: deterministic-process-
+  # proof's jq expression indexed the grandfather ARRAY with `.id`, so jq
+  # errored, `2>/dev/null` swallowed it, and the check was a silent no-op on
+  # every node-less machine. The comment claiming "one generator pattern, not
+  # two that could drift" was the only thing holding the two in sync.
+  #
+  # This helper makes the fallback EXECUTE: a PATH containing every tool the
+  # doctor needs EXCEPT node. Built once, reused by every parity scenario.
+  # ------------------------------------------------------------
+  _NONODE_DIR=""
+  _nonode_path() {
+    if [[ -z "$_NONODE_DIR" ]]; then
+      _NONODE_DIR="$(mktemp -d 2>/dev/null)" || return 1
+      local _t _p
+      for _t in jq git grep sed awk bash sh find sort uniq head tail cat wc tr \
+                date mkdir rm cp mv chmod ls dirname basename realpath stat env \
+                xargs comm diff touch tee cut expr mktemp readlink od printf \
+                which id whoami uname; do
+        _p="$(command -v "$_t" 2>/dev/null)"
+        [[ -n "$_p" ]] && ln -sf "$_p" "$_NONODE_DIR/$_t" 2>/dev/null
+      done
+    fi
+    printf '%s' "$_NONODE_DIR"
+  }
+
+  _run_quick_nonode() {
+    local dir="$1" shim
+    shim="$(_nonode_path)" || { printf 'NONODE-SHIM-UNAVAILABLE'; return 0; }
+    HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" PATH="$shim" \
+      bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
+  }
+
+  # _assert_node_jq_parity <label> <scenario-dir> <check-id> <want-nonempty:0|1>
+  # Runs the SAME fixture through both branches and requires byte-identical
+  # output for that check. want_nonempty=1 additionally requires the jq branch
+  # to have produced SOMETHING -- without it, two silently-broken branches
+  # would agree on emptiness and the parity assertion would pass vacuously,
+  # which is exactly the failure being regression-tested.
+  _assert_node_jq_parity() {
+    local label="$1" dir="$2" check_id="$3" want_nonempty="${4:-0}"
+    local node_out jq_out
+    node_out="$(_run_quick "$dir" | grep -- "$check_id" | LC_ALL=C sort)"
+    jq_out="$(_run_quick_nonode "$dir" | grep -- "$check_id" | LC_ALL=C sort)"
+    local ok=1 why=""
+    if [[ "$node_out" != "$jq_out" ]]; then ok=0; why="branches DIVERGE"; fi
+    if [[ "$want_nonempty" == "1" && -z "$jq_out" ]]; then
+      ok=0; why="jq branch produced NOTHING on a fixture that must report (silent no-op)"
+    fi
+    if [[ "$ok" -eq 1 ]]; then
+      echo "self-test (${label}): PASS" >&2
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (${label}): FAIL (${why}) for check '${check_id}'" >&2
+      echo "--- node branch ---" >&2; printf '%s\n' "$node_out" >&2
+      echo "--- jq branch (node masked) ---" >&2; printf '%s\n' "$jq_out" >&2
+      FAILED=$((FAILED + 1))
+    fi
   }
 
   _assert() {
@@ -4885,25 +5012,15 @@ MANIFEST_EOF
     PASSED=$((PASSED + 1))
   fi
 
-  # ---- ONLY ONE of the two fields present stays GREEN under THIS check (the
-  # doctrine's RED condition is "declaring neither"; a chokepoint with no
-  # bypass_paths yet is a partial start, not the "neither" case this
-  # mechanized check enforces — a stricter "both required" bar is a
-  # possible future tightening, tracked as a follow-up, not built here) ----
-  D=$(_scenario_dir dpp-partial-green)
-  _stamp_claim_honesty_green "$D"
-  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
-{
-  "schema_version": 1,
-  "entries": [
-    { "id": "new-blocking-gate-chokepoint-only", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "chokepoint": "pre-push", "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
-  ]
-}
-MANIFEST_EOF
-  _write_settings "$D/live/settings.json"
-  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
-  OUT="$(_run_quick "$D")"; RC=$?
-  _assert "deterministic-process-proof-partial-fields-still-green" 0 "$RC" "" "$OUT"
+  # ---- (RETIRED 2026-07-30, harness-reviewer M7) The scenario that used to
+  # sit here asserted that declaring ONLY `chokepoint` stays GREEN, on the
+  # reasoning that the doctrine's RED condition was "declaring neither". That
+  # reasoning mechanized only half the obligation: a new blocking gate could
+  # discharge it by naming a firing event and never enumerating one bypass,
+  # while `bypass_paths` is the load-bearing half. Both halves are now
+  # required, and the inverted scenarios live below as
+  # `deterministic-process-proof-chokepoint-only-red` and its bypass-only
+  # mirror. ----
 
   # ---- blocking:false entries are never checked, regardless of fields ----
   D=$(_scenario_dir dpp-nonblocking-green)
@@ -4920,6 +5037,152 @@ MANIFEST_EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "deterministic-process-proof-nonblocking-not-checked" 0 "$RC" "" "$OUT"
+
+  # ---- ESCAPE-CLAUSE FIXTURES (harness-reviewer M6): the
+  # `added_after < "2026-07"` exemption had ZERO coverage, so a BACKDATED
+  # field silently exempted a brand-new blocking gate and nothing would have
+  # noticed. Both sides of the boundary are now pinned. ----
+
+  # A pre-cutover date with NEITHER field stays GREEN. This DOCUMENTS the
+  # escape rather than endorsing it: the exemption exists so this file's own
+  # dozens of throwaway fixtures (which conventionally set added_after
+  # "2026-04") do not all flip RED. If this scenario ever fails, the exemption
+  # was removed and those fixtures need revisiting.
+  D=$(_scenario_dir dpp-backdated-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "backdated-blocking-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-04" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-backdated-exempt-green" 0 "$RC" "" "$OUT"
+
+  # The BOUNDARY: exactly "2026-07" (the cutover month itself) is NOT exempt
+  # and must RED. The comparison is a string `<`, so this pins the off-by-one
+  # that would otherwise let the whole cutover month through.
+  D=$(_scenario_dir dpp-boundary-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "boundary-blocking-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-boundary-2026-07-red" 1 "$RC" "RED deterministic-process-proof.*boundary-blocking-gate" "$OUT"
+
+  # ---- BOTH-FIELDS-REQUIRED (harness-reviewer M7): declaring only
+  # `chokepoint` and never enumerating a bypass no longer discharges the
+  # obligation. This scenario was previously asserted GREEN
+  # ("deterministic-process-proof-partial-fields-still-green"); the inversion
+  # IS the fix. ----
+  D=$(_scenario_dir dpp-chokepoint-only-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-chokepoint-only", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "chokepoint": "pre-push", "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-chokepoint-only-red" 1 "$RC" "RED deterministic-process-proof.*chokepoint-only.*bypass_paths" "$OUT"
+
+  # And the mirror: bypass_paths with no chokepoint also REDs, naming the
+  # missing half. Without this the "both required" claim would only be half
+  # tested, which is the same class of gap M7 itself reported.
+  D=$(_scenario_dir dpp-bypass-only-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-bypass-only", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "bypass_paths": ["git push --no-verify -- NAMED-AND-ACCEPTED"], "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-bypass-only-red" 1 "$RC" "RED deterministic-process-proof.*bypass-only.*chokepoint" "$OUT"
+
+  # ---- NODE/JQ PARITY (harness-reviewer C1 generalization): every dual-path
+  # check in this file is re-run with `node` masked out of PATH and required
+  # to produce byte-identical output. This is the regression test for the
+  # ACTUAL defect (a jq branch that errored into silence) and, more
+  # importantly, for its CLASS -- the four checks below are the complete set
+  # of node-preferred/jq-fallback checks in this file. ----
+  D=$(_scenario_dir dpp-jq-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # want_nonempty=1: this fixture MUST report. An empty jq branch here is
+  # precisely the C1 silent no-op.
+  _assert_node_jq_parity "dpp-jq-parity-red" "$D" "deterministic-process-proof" 1
+
+  D=$(_scenario_dir dpp-jq-grandfather)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "new-blocking-gate-not-grandfathered", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # Exercises the grandfather-list lookup itself -- the exact expression that
+  # drifted (`$gf | index(.id)` vs `$gf | index($e.id)`).
+  _assert_node_jq_parity "dpp-jq-parity-grandfather" "$D" "deterministic-process-proof" 1
+
+  D=$(_scenario_dir ngeb-jq-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-gate-incomplete", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "chokepoint": "pre-push", "bypass_paths": ["--no-verify -- NAMED-AND-ACCEPTED"] }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  _assert_node_jq_parity "ngeb-jq-parity-red" "$D" "new-gate-evidence-bar" 1
+
+  D=$(_scenario_dir c5-jq-red)
+  if _copy_manifest_tooling "$D"; then :; fi
+  _write_manifest_fixture "$D" no-honest
+  # extract_manifest_gates is the dual-path helper behind claim-honesty.
+  _assert_node_jq_parity "claim-honesty-jq-parity-red" "$D" "claim-honesty" 1
+
+  D=$(_scenario_dir bc-jq-red)
+  _stamp_claim_honesty_green "$D"
+  _write_chain_settings "$D" "Stop" 7 "stop-dummy"
+  # _count_chain_entries is the dual-path helper behind budget-chains.
+  _assert_node_jq_parity "budget-chains-jq-parity-red" "$D" "budget-chains" 1
 
   # ---- Check: line-endings (NL-FINDING-038). RED fixture — a repo shell
   # surface carries CRLF bytes (the Wave-F F.1 whole-file-conversion class).

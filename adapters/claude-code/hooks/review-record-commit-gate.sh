@@ -610,25 +610,67 @@ _rrcg_self_test() {
   [[ "$rc" == "0" ]] && pass "commit during rebase allowed" || fail "blocked mid-rebase (rc=$rc) — would strand the operator"
   rm -f "$R/$gd/REBASE_HEAD" "$gd/REBASE_HEAD" 2>/dev/null
 
-  echo "Scenario 8: REVIEW_RECORD_GATE_OVERRIDE is INERT — the removed mechanism changes nothing"
+  echo "Scenario 8: REVIEW_RECORD_GATE_OVERRIDE is INERT — proven by STDERR DIFFERENTIAL, not by rc"
   # RETIRED 2026-07-30 (was: "escape hatch requires a REASON, and is logged").
   # The override branch this scenario tested no longer exists — the commit
-  # never blocks regardless, so there is nothing left to waive. What is still
-  # worth proving: setting the old env var (any shape — empty, substantive,
-  # placeholder) has NO differential effect any more, and nothing is logged
-  # to the old override log (a stale mechanism must not silently keep firing).
+  # never blocks regardless, so there is nothing left to waive.
+  #
+  # REWRITTEN 2026-07-30 (harness-reviewer M2). The previous version asserted
+  # rc=0 on a gate that ALWAYS exits 0, and said so in its own message ("as it
+  # would be regardless") — a tautology, not a test. MUTATION-PROVEN vacuous:
+  # resurrecting the branch as
+  #     if [[ -n "${REVIEW_RECORD_GATE_OVERRIDE:-}" ]]; then return 0; fi
+  # immediately before the REMOVED comment in _rrcg_main, writing no audit
+  # log, left ALL FIVE of the old assertions passing.
+  #
+  # The observable the env var CAN still move is the ADVISORY BANNER this gate
+  # prints to stderr for uncovered content. A resurrected early-return
+  # suppresses it entirely. So the real invariant is a DIFFERENTIAL: with and
+  # without the variable, stderr must be BYTE-IDENTICAL. Measured against the
+  # mutant: 1923 bytes unset vs 0 bytes set — the assertion below fails, and
+  # the mutant dies. Against the real gate: 1923 vs 1923.
   rm -f "$T/ovr.log" 2>/dev/null
+
+  # Stage UNCOVERED in-surface content so the advisory banner has a reason to
+  # fire; an empty index makes the differential observable rather than vacuous
+  # in a second, quieter way.
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  echo '# unreviewed, for the differential' > "$R/adapters/claude-code/hooks/lib/differential.sh"
+  printf '{"entries":[]}\n' > "$R/docs/reviews/records/index.json"
+  ( cd "$R" && git add -A ) >/dev/null 2>&1
+
+  _rrcg_stderr_without() {
+    printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' \
+      | ( cd "$R" && env -u REVIEW_RECORD_GATE_OVERRIDE REVIEW_RECORD_GATE_LOG="$T/ovr.log" bash "$SELF" ) 2>&1 >/dev/null
+  }
+  _rrcg_stderr_with() {
+    printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' \
+      | ( cd "$R" && REVIEW_RECORD_GATE_LOG="$T/ovr.log" REVIEW_RECORD_GATE_OVERRIDE="$1" bash "$SELF" ) 2>&1 >/dev/null
+  }
+
+  local base_err; base_err="$(_rrcg_stderr_without)"
+  if [[ -n "$base_err" ]]; then
+    pass "baseline: the advisory banner IS emitted for uncovered content ($(printf '%s' "$base_err" | wc -c | tr -d ' ') bytes) — the differential below is observable"
+  else
+    fail "baseline: no advisory banner emitted, so the differential assertion would be vacuous"
+  fi
+
+  local v ovr_err
   for v in "" "production is down and this hotfix cannot wait for review" "x" "testing"; do
-    rc="$(REVIEW_RECORD_GATE_LOG="$T/ovr.log" REVIEW_RECORD_GATE_OVERRIDE="$v" bash -c \
-      "printf '{\"tool_name\":\"Bash\",\"tool_input\":{\"command\":\"git commit -m x\"}}' | ( cd '$R' && bash '$SELF' ) >/dev/null 2>&1; echo \$?")"
-    [[ "$rc" == "0" ]] && pass "REVIEW_RECORD_GATE_OVERRIDE=\"$v\" -> commit still allowed (rc=0, as it would be regardless)" \
-      || fail "REVIEW_RECORD_GATE_OVERRIDE=\"$v\" changed the outcome (rc=$rc) — the removed branch is somehow still live"
+    ovr_err="$(_rrcg_stderr_with "$v")"
+    if [[ "$ovr_err" == "$base_err" ]]; then
+      pass "REVIEW_RECORD_GATE_OVERRIDE=\"$v\" -> stderr BYTE-IDENTICAL to unset (the var moves nothing)"
+    else
+      fail "REVIEW_RECORD_GATE_OVERRIDE=\"$v\" CHANGED the gate's output ($(printf '%s' "$base_err" | wc -c | tr -d ' ') -> $(printf '%s' "$ovr_err" | wc -c | tr -d ' ') bytes) — the removed branch is live again"
+    fi
   done
+
   if [[ -f "$T/ovr.log" ]]; then
     fail "the retired override-audit log was written to — REVIEW_RECORD_GATE_OVERRIDE is not actually inert"
   else
     pass "no override audit log entry written — the mechanism is genuinely gone, not just unreachable"
   fi
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
 
   echo "Scenario 9: coverage staged in the SAME commit satisfies the gate (one-pass fix)"
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1

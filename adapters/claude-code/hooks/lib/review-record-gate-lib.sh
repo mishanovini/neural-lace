@@ -148,6 +148,22 @@ _rrg_read_json() {
 
 RRG_RECORDS_RELDIR="docs/reviews/records"
 
+# _rrg_is_harness_repo <repo_root> <ref-or-empty> -- rc 0 iff this checkout/ref
+# contains adapters/claude-code/manifest.json, i.e. it is the harness repo
+# itself (the repo whose OWN gate this is). Used to scope the bootstrap
+# fail-open below: "the harness repo has no coverage database" is a DEFECT,
+# while "some unrelated fixture/product repo has none" is the ordinary case
+# the fail-open exists to serve.
+_rrg_is_harness_repo() {
+  local repo_root="$1" ref="$2"
+  if [[ -n "$ref" ]]; then
+    command -v git >/dev/null 2>&1 || return 1
+    git -C "$repo_root" cat-file -e "${ref}:adapters/claude-code/manifest.json" 2>/dev/null
+    return $?
+  fi
+  [[ -f "$repo_root/adapters/claude-code/manifest.json" ]]
+}
+
 # rrg_is_covered <repo_root> <ref-or-empty> <full_relpath> <blob_sha>
 #   full_relpath is repo-root-relative, e.g.
 #   adapters/claude-code/hooks/model-pin-gate.sh
@@ -170,13 +186,55 @@ rrg_is_covered() {
   # data doesn't exist yet must not be bricked by the gate either. Distinct
   # from "the files exist but have no matching entry" (a real, correctly-
   # enforced non-coverage case, handled below).
+  #
+  # SCOPED TO NON-HARNESS REPOS (harness-reviewer C2-B, 2026-07-30). PROVEN
+  # bypass before this scoping: `git rm` BOTH coverage files in the same push
+  # that adds an unreviewed hook took the gate from rc=1 to rc=0 -- deleting
+  # the evidence database was a complete, one-command escape. The fail-open's
+  # legitimate purpose is a checkout that never HAD the database; a repo
+  # carrying adapters/claude-code/manifest.json IS the harness repo, where a
+  # missing coverage database is a defect, not a pre-bootstrap state. There,
+  # absence resolves toward NOT-COVERED (this file's own "bailouts resolve
+  # toward block" principle) so the caller blocks and says why.
   if [[ -z "$gf" ]] && [[ -z "$idx" ]]; then
+    if _rrg_is_harness_repo "$repo_root" "$ref"; then
+      return 1
+    fi
     return 0
   fi
 
+  # GRANDFATHER ARM, BOUND TO ITS OWN cutover_ref (harness-reviewer C2-A,
+  # 2026-07-30). PROVEN bypass before this binding: committing a self-authored
+  # {path, blob_sha} row for brand-new unreviewed content into
+  # grandfather-manifest.json IN THE SAME PUSH took the gate from rc=1 to
+  # rc=0. A grandfather row's ONLY legitimate meaning is "this exact content
+  # already existed at the recorded cutover point", and that is mechanically
+  # checkable rather than taken on trust: the row verifies iff the path
+  # actually carried that blob AT cutover_ref. Self-authored rows for new
+  # content cannot satisfy it, because the blob did not exist there.
+  # VERIFIED against live data 2026-07-30: all 275 real rows verify, so the
+  # false-positive rate on legitimate content is zero, not merely expected to
+  # be low.
+  # RESIDUAL, NAMED not closed: an actor who ALSO rewrites cutover_ref to
+  # their own commit satisfies this check. That escalation is far more
+  # conspicuous (it must survive harness-doctor.sh's
+  # review-grandfather-integrity check, which re-derives the ENTIRE manifest
+  # at the claimed cutover_ref and byte-compares) but it is post-hoc
+  # detection, not pre-push prevention. Enumerated in manifest.json's
+  # review-record-push-gate.bypass_paths.
   if [[ -n "$gf" ]] && printf '%s' "$gf" | jq -e --arg p "$relpath" --arg s "$sha" \
        '(.entries // [])[] | select(.path == $p and .blob_sha == $s)' >/dev/null 2>&1; then
-    return 0
+    local _cutover _at_cutover
+    _cutover="$(printf '%s' "$gf" | jq -r '.cutover_ref // empty' 2>/dev/null)"
+    if [[ -n "$_cutover" ]] && command -v git >/dev/null 2>&1; then
+      _at_cutover="$(git -C "$repo_root" rev-parse --verify --quiet "${_cutover}:${relpath}" 2>/dev/null)"
+      if [[ "$_at_cutover" == "$sha" ]]; then
+        return 0
+      fi
+    fi
+    # The row did not verify against its own cutover_ref -- do NOT honor it.
+    # Fall through to the index arm, which may still legitimately cover this
+    # content via a real PASS review record.
   fi
 
   if [[ -n "$idx" ]] && printf '%s' "$idx" | jq -e --arg p "$relpath" --arg s "$sha" \
@@ -300,14 +358,50 @@ _rrg_self_test() {
   fi
 
   # ---- coverage: grandfather match ----
+  # The fixture is a REAL git repo with a REAL cutover commit, because the
+  # grandfather arm now verifies each row against the manifest's own
+  # cutover_ref (harness-reviewer C2-A). A fixture that skipped that -- as the
+  # first version of this scenario did -- would only prove the jq row-match,
+  # the half that was never broken, and would have stayed green against the
+  # exact bypass this binding closes. Author-written fixtures that model less
+  # than the real artifact are this codebase's recurring trap.
   mkdir -p "$tmp/repo/docs/reviews/records"
-  printf '{"entries":[{"path":"adapters/claude-code/hooks/alpha.sh","blob_sha":"%s"}]}\n' "$sha" \
-    > "$tmp/repo/docs/reviews/records/grandfather-manifest.json"
+  ( cd "$tmp/repo" && git init -q . && git config user.email t@example.com \
+      && git config user.name T && git add -A && git commit -q -m "cutover" ) >/dev/null 2>&1
+  local cutover_sha
+  cutover_sha=$(cd "$tmp/repo" && git rev-parse HEAD)
+  printf '{"cutover_ref":"%s","entries":[{"path":"adapters/claude-code/hooks/alpha.sh","blob_sha":"%s"}]}\n' \
+    "$cutover_sha" "$sha" > "$tmp/repo/docs/reviews/records/grandfather-manifest.json"
   printf '{"entries":[]}\n' > "$tmp/repo/docs/reviews/records/index.json"
   if rrg_is_covered "$tmp/repo" "" "adapters/claude-code/hooks/alpha.sh" "$sha"; then
-    echo "PASS: grandfathered blob is covered"; pass=$((pass+1))
+    echo "PASS: grandfathered blob (verified at cutover_ref) is covered"; pass=$((pass+1))
   else
     echo "FAIL: grandfathered blob should be covered"; fail=$((fail+1))
+  fi
+
+  # ---- coverage: a SELF-AUTHORED grandfather row for content that never
+  # existed at cutover_ref must NOT be honored (harness-reviewer C2-A; the
+  # PROVEN bypass was committing exactly this row in the same push) ----
+  printf '#!/bin/bash\necho unreviewed\n' > "$tmp/repo/adapters/claude-code/hooks/evil.sh"
+  local evil_sha
+  evil_sha=$(rrg_blob_sha_of_file "$tmp/repo/adapters/claude-code/hooks/evil.sh")
+  printf '{"cutover_ref":"%s","entries":[{"path":"adapters/claude-code/hooks/evil.sh","blob_sha":"%s"}]}\n' \
+    "$cutover_sha" "$evil_sha" > "$tmp/repo/docs/reviews/records/grandfather-manifest.json"
+  if rrg_is_covered "$tmp/repo" "" "adapters/claude-code/hooks/evil.sh" "$evil_sha"; then
+    echo "FAIL: a self-authored grandfather row for post-cutover content was honored"; fail=$((fail+1))
+  else
+    echo "PASS: self-authored grandfather row rejected (blob absent at cutover_ref)"; pass=$((pass+1))
+  fi
+
+  # ---- coverage: a grandfather manifest with NO cutover_ref cannot be
+  # verified, so its rows are not honored (removing the field must not become
+  # its own bypass) ----
+  printf '{"entries":[{"path":"adapters/claude-code/hooks/alpha.sh","blob_sha":"%s"}]}\n' "$sha" \
+    > "$tmp/repo/docs/reviews/records/grandfather-manifest.json"
+  if rrg_is_covered "$tmp/repo" "" "adapters/claude-code/hooks/alpha.sh" "$sha"; then
+    echo "FAIL: a cutover_ref-less grandfather manifest was honored"; fail=$((fail+1))
+  else
+    echo "PASS: cutover_ref-less grandfather manifest is not honored"; pass=$((pass+1))
   fi
 
   # ---- coverage: NOT covered (grandfather + index exist, both empty) ----
@@ -320,15 +414,33 @@ _rrg_self_test() {
 
   # ---- coverage: bootstrap fail-open (NEITHER file exists at all -- a
   # checkout that predates the gate's own bootstrap, e.g. a throwaway
-  # fixture repo) must be treated as COVERED, not blocked ----
+  # fixture repo) must be treated as COVERED, not blocked. NOTE this fixture
+  # has NO adapters/claude-code/manifest.json, so it is NOT the harness repo
+  # -- that is what keeps the fail-open available to it (see the next
+  # scenario for the harness-repo case, which must behave oppositely) ----
   mkdir -p "$tmp/repo-nobootstrap/adapters/claude-code/hooks"
   printf '#!/bin/bash\necho v1\n' > "$tmp/repo-nobootstrap/adapters/claude-code/hooks/alpha.sh"
   local nb_sha
   nb_sha=$(rrg_blob_sha_of_file "$tmp/repo-nobootstrap/adapters/claude-code/hooks/alpha.sh")
   if rrg_is_covered "$tmp/repo-nobootstrap" "" "adapters/claude-code/hooks/alpha.sh" "$nb_sha"; then
-    echo "PASS: bootstrap fail-open (no records dir at all -> covered)"; pass=$((pass+1))
+    echo "PASS: bootstrap fail-open (no records dir, non-harness repo -> covered)"; pass=$((pass+1))
   else
     echo "FAIL: bootstrap fail-open should have reported covered"; fail=$((fail+1))
+  fi
+
+  # ---- coverage: the SAME missing-database state in the HARNESS repo (it
+  # carries adapters/claude-code/manifest.json) must NOT fail open
+  # (harness-reviewer C2-B: `git rm` of both coverage files took the live
+  # push gate from rc=1 to rc=0) ----
+  mkdir -p "$tmp/repo-harness-nodb/adapters/claude-code/hooks"
+  printf '#!/bin/bash\necho v1\n' > "$tmp/repo-harness-nodb/adapters/claude-code/hooks/alpha.sh"
+  printf '{"schema_version":1,"entries":[]}\n' > "$tmp/repo-harness-nodb/adapters/claude-code/manifest.json"
+  local hn_sha
+  hn_sha=$(rrg_blob_sha_of_file "$tmp/repo-harness-nodb/adapters/claude-code/hooks/alpha.sh")
+  if rrg_is_covered "$tmp/repo-harness-nodb" "" "adapters/claude-code/hooks/alpha.sh" "$hn_sha"; then
+    echo "FAIL: deleting the coverage database in the HARNESS repo failed open"; fail=$((fail+1))
+  else
+    echo "PASS: missing coverage database in the harness repo is NOT covered"; pass=$((pass+1))
   fi
 
   # ---- coverage: index PASS match ----

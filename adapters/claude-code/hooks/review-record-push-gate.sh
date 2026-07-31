@@ -180,6 +180,31 @@ _rrpg_log_override() {
     "${repo:-unknown}" "$sha" "$reason" >> "$log" 2>/dev/null || true
 }
 
+# _rrpg_infra_warn <what-was-missing> -- the LOUD half of an infrastructure
+# fail-open (harness-reviewer C3). The gate still allows the push (a missing
+# binary must not brick a machine), but never silently: the operator sees, in
+# plain words, that this push was NOT checked. Deliberately worded as a
+# statement of fact about THIS push rather than a generic "warning: jq
+# missing", because the thing that matters is the review status of the bytes
+# now heading for the remote, not the tooling trivia that caused it.
+_rrpg_infra_warn() {
+  local why="$1"
+  {
+    echo "================================================================"
+    echo "REVIEW-RECORD PUSH GATE — COULD NOT RUN; THIS PUSH WAS *NOT* CHECKED"
+    echo "================================================================"
+    echo "Reason: ${why}."
+    echo
+    echo "Unreviewed harness content may be reaching the remote right now."
+    echo "This is a FAIL-OPEN (a missing tool must not brick your ability to"
+    echo "push), not a pass — nothing about review coverage was verified."
+    echo
+    echo "If you did not expect this, stop and check the push:"
+    echo "  bash adapters/claude-code/hooks/review-record-push-gate.sh --self-test"
+    echo "================================================================"
+  } >&2
+}
+
 _rrpg_mtime_epoch() {
   local f="$1"
   [[ -f "$f" ]] || { echo 0; return; }
@@ -315,19 +340,60 @@ _rrpg_main() {
   [[ -n "$stdin_buf" ]] || return 0
   [[ -n "$remote" ]] || return 0   # no remote name -> not our path
 
-  command -v git >/dev/null 2>&1 || return 0
-  command -v jq  >/dev/null 2>&1 || return 0
+  # ------------------------------------------------------------
+  # INFRA FAIL-OPENS ARE LOUD (harness-reviewer C3, 2026-07-30).
+  #
+  # These three arms previously returned 0 with ZERO bytes of stderr. PROVEN:
+  # with a shim PATH carrying git/grep/sed but NOT jq, the gate returned rc=0
+  # silently -- so `PATH=<no-jq> git push` was a ONE-TOKEN INLINE PREFIX that
+  # defeated the authoritative review gate without a trace. That is precisely
+  # the shape this file's own header (Rule 2, above) declares is NOT a
+  # legitimate override: an inline env var the agent sets in the same command
+  # it is authorizing. They still fail OPEN -- a missing binary must never
+  # brick a machine's ability to push -- but they now SAY SO, so a defeated
+  # gate is visible in the push output instead of indistinguishable from a
+  # clean pass.
+  #
+  # ORDERING IS DELIBERATE: the "is this the harness repo?" test runs BEFORE
+  # the jq/lib arms, so a machine without jq pushing from an unrelated repo
+  # gets silence (correct -- this gate has no business there) while the SAME
+  # machine pushing the harness repo gets the warning. Making the jq arm loud
+  # ahead of the scope test would spam every push from every repo on the box,
+  # which is the trust-erosion shape that turns a real warning into noise
+  # people learn to scroll past.
+  # ------------------------------------------------------------
+  if ! command -v git >/dev/null 2>&1; then
+    _rrpg_infra_warn "git is not on PATH, so the pushed range cannot be computed"
+    return 0
+  fi
 
   local repo_root
-  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || return 0
-  [[ -f "$repo_root/adapters/claude-code/manifest.json" ]] || return 0   # not the harness repo
+  if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || [[ -z "$repo_root" ]]; then
+    _rrpg_infra_warn "the repository root could not be resolved (\`git rev-parse --show-toplevel\` failed)"
+    return 0
+  fi
+
+  # Scope limit, NOT a fail-open: this gate only governs the harness repo.
+  # Silence here is correct and must stay silent.
+  [[ -f "$repo_root/adapters/claude-code/manifest.json" ]] || return 0
+
+  if ! command -v jq >/dev/null 2>&1; then
+    _rrpg_infra_warn "jq is not on PATH, so review coverage cannot be read"
+    return 0
+  fi
 
   # shellcheck source=/dev/null
-  source "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" 2>/dev/null || return 0
-  command -v rrg_in_surface >/dev/null 2>&1 || return 0
-  command -v rrg_is_covered >/dev/null 2>&1 || return 0
-  command -v rrg_blob_sha_of_ref >/dev/null 2>&1 || return 0
-  command -v rrg_validate_waiver_reason >/dev/null 2>&1 || return 0
+  if ! source "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" 2>/dev/null; then
+    _rrpg_infra_warn "lib/review-record-gate-lib.sh could not be sourced from $_RRPG_SELF_DIR"
+    return 0
+  fi
+  local _fn
+  for _fn in rrg_in_surface rrg_is_covered rrg_blob_sha_of_ref rrg_validate_waiver_reason; do
+    if ! command -v "$_fn" >/dev/null 2>&1; then
+      _rrpg_infra_warn "lib/review-record-gate-lib.sh sourced but does not define ${_fn}()"
+      return 0
+    fi
+  done
 
   # review-independence RI1b (docs/plans/review-independence.md) is NOT
   # spliced in here, unlike review-record-commit-gate.sh. harness-reviewer
@@ -493,17 +559,57 @@ _rrpg_self_test() {
   ( cd "$R" && git add -A && git commit -qm "reset index" ) >/dev/null 2>&1
   BASE_SHA="$(cd "$R" && git rev-parse HEAD)"
 
-  echo "Scenario 3: PASS — grandfathered content allows the push"
+  echo "Scenario 3: PASS — genuinely pre-cutover content allows the push"
+  # MODELLED AS REAL GRANDFATHERING (rewritten 2026-07-30, harness-reviewer
+  # C2-A). The previous version of this scenario committed the content AND a
+  # grandfather row naming it in the SAME commit -- which is not
+  # grandfathering, it is precisely the self-authored-coverage BYPASS the
+  # cutover_ref binding now closes. It passed for the wrong reason, and it
+  # would have stayed green through the entire vulnerability. Real
+  # grandfathering means the blob EXISTED at the recorded cutover point:
+  # commit the content first, record THAT commit as cutover_ref, then push a
+  # range that spans it.
   echo '# pre-cutover content' > "$R/adapters/claude-code/hooks/lib/legacy.sh"
-  local leg_blob; leg_blob="$(cd "$R" && git hash-object adapters/claude-code/hooks/lib/legacy.sh)"
-  printf '{"entries":[{"path":"adapters/claude-code/hooks/lib/legacy.sh","blob_sha":"%s"}]}\n' "$leg_blob" \
-    > "$R/docs/reviews/records/grandfather-manifest.json"
-  ( cd "$R" && git add -A && git commit -qm "feat: legacy content" ) >/dev/null 2>&1
+  ( cd "$R" && git add -A && git commit -qm "pre-cutover: legacy content" ) >/dev/null 2>&1
+  local CUTOVER_SHA; CUTOVER_SHA="$(cd "$R" && git rev-parse HEAD)"
+  local leg_blob; leg_blob="$(cd "$R" && git rev-parse "HEAD:adapters/claude-code/hooks/lib/legacy.sh")"
+  printf '{"cutover_ref":"%s","entries":[{"path":"adapters/claude-code/hooks/lib/legacy.sh","blob_sha":"%s"}]}\n' \
+    "$CUTOVER_SHA" "$leg_blob" > "$R/docs/reviews/records/grandfather-manifest.json"
+  ( cd "$R" && git add -A && git commit -qm "bootstrap grandfather at cutover" ) >/dev/null 2>&1
   local S3_SHA; S3_SHA="$(cd "$R" && git rev-parse HEAD)"
+  # Range spans the cutover commit, so legacy.sh IS in the ACMR diff and is
+  # genuinely subjected to the coverage check rather than skipped.
   rc="$(run origin "refs/heads/master $S3_SHA refs/heads/master $BASE_SHA")"
-  [[ "$rc" == "0" ]] && pass "grandfathered push ALLOWED (rc=0)" || fail "blocked despite grandfather coverage (rc=$rc)"
+  [[ "$rc" == "0" ]] && pass "genuinely grandfathered push ALLOWED (rc=0)" || fail "blocked despite grandfather coverage (rc=$rc)"
+
+  echo "Scenario 3b: BLOCK — a SELF-AUTHORED grandfather row does NOT cover new content"
+  # The C2-A bypass, as a regression test: brand-new unreviewed content plus a
+  # grandfather row naming it, both committed in the same push. PROVEN to
+  # return rc=0 before the cutover_ref binding landed.
+  echo '# unreviewed, never at cutover' > "$R/adapters/claude-code/hooks/lib/forged.sh"
+  local forged_blob; forged_blob="$(cd "$R" && git hash-object adapters/claude-code/hooks/lib/forged.sh)"
+  printf '{"cutover_ref":"%s","entries":[{"path":"adapters/claude-code/hooks/lib/forged.sh","blob_sha":"%s"}]}\n' \
+    "$CUTOVER_SHA" "$forged_blob" > "$R/docs/reviews/records/grandfather-manifest.json"
+  ( cd "$R" && git add -A && git commit -qm "forge grandfather coverage" ) >/dev/null 2>&1
+  local S3B_SHA; S3B_SHA="$(cd "$R" && git rev-parse HEAD)"
+  rc="$(run origin "refs/heads/master $S3B_SHA refs/heads/master $S3_SHA")"
+  [[ "$rc" == "1" ]] && pass "self-authored grandfather row BLOCKED (rc=1)" \
+    || fail "a self-authored grandfather row covered brand-new content (rc=$rc) — C2-A is open"
+
+  echo "Scenario 3c: BLOCK — deleting BOTH coverage files does not fail open in the harness repo"
+  # The C2-B bypass, as a regression test: `git rm` the coverage database in
+  # the same push that carries unreviewed content. PROVEN rc=0 before the
+  # bootstrap fail-open was scoped to non-harness repos.
+  ( cd "$R" && git rm -q -f docs/reviews/records/index.json docs/reviews/records/grandfather-manifest.json \
+      && git commit -qm "remove the coverage database" ) >/dev/null 2>&1
+  local S3C_SHA; S3C_SHA="$(cd "$R" && git rev-parse HEAD)"
+  rc="$(run origin "refs/heads/master $S3C_SHA refs/heads/master $S3_SHA")"
+  [[ "$rc" == "1" ]] && pass "coverage-database deletion BLOCKED (rc=1)" \
+    || fail "deleting both coverage files failed open (rc=$rc) — C2-B is open"
+
   ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
   printf '{"entries":[]}\n' > "$R/docs/reviews/records/grandfather-manifest.json"
+  printf '{"entries":[]}\n' > "$R/docs/reviews/records/index.json"
   ( cd "$R" && git add -A && git commit -qm "reset grandfather" ) >/dev/null 2>&1
   BASE_SHA="$(cd "$R" && git rev-parse HEAD)"
 
@@ -587,6 +693,41 @@ _rrpg_self_test() {
   local FHEAD; FHEAD="$(cd "$FR" && git rev-parse HEAD)"
   rc="$(printf '%s\n' "refs/heads/master $FHEAD refs/heads/master $FBASE" | ( cd "$FR" && bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "0" ]] && pass "foreign repo not gated" || fail "gated a foreign repo (rc=$rc)"
+
+  echo "Scenario 11b: INFRA FAIL-OPEN IS LOUD — no jq means the push is announced as UNCHECKED"
+  # harness-reviewer C3. PROVEN before this fix: with a shim PATH carrying
+  # git/grep/sed but NOT jq, the gate returned rc=0 with ZERO bytes of stderr,
+  # so `PATH=<no-jq> git push` was a one-token inline prefix that silently
+  # defeated the authoritative review gate. It still fails OPEN (a missing
+  # binary must not brick a machine's ability to push) -- what is asserted
+  # here is that it can no longer do so INVISIBLY.
+  local SHIM="$T/nojq"; mkdir -p "$SHIM"
+  local _t _p
+  for _t in git grep sed awk bash sh find sort head tail cat wc tr date mkdir rm cp mv ls dirname basename stat env mktemp cut; do
+    _p="$(command -v "$_t" 2>/dev/null)"; [[ -n "$_p" ]] && ln -sf "$_p" "$SHIM/$_t"
+  done
+  if PATH="$SHIM" command -v jq >/dev/null 2>&1; then
+    fail "self-test bug: the no-jq shim still exposes jq, so this scenario proves nothing"
+  else
+    # Re-use the golden-case uncovered push, which BLOCKS when jq is present.
+    local nojq_err="$T/nojq-stderr.txt"
+    printf '%s\n' "refs/heads/master $S1_SHA refs/heads/master $ORIG_BASE_SHA" \
+      | ( cd "$R" && PATH="$SHIM" bash "$SELF" origin ) >/dev/null 2>"$nojq_err"
+    local nojq_msg; nojq_msg="$(cat "$nojq_err" 2>/dev/null)"
+    if [[ -n "$nojq_msg" ]]; then
+      pass "a jq-less run emits a warning instead of silence ($(printf '%s' "$nojq_msg" | wc -c | tr -d ' ') bytes)"
+    else
+      fail "a jq-less run produced ZERO bytes of stderr — the gate is silently defeated by a PATH prefix"
+    fi
+    case "$nojq_msg" in
+      *"NOT*"*|*"NOT"*) pass "the warning states plainly that this push was NOT checked" ;;
+      *) fail "the warning does not say the push went unchecked" ;;
+    esac
+    case "$nojq_msg" in
+      *jq*) pass "the warning names the missing dependency" ;;
+      *) fail "the warning does not name what was missing" ;;
+    esac
+  fi
 
   echo "Scenario 12: FP budget — a docs-only change in range is allowed"
   mkdir -p "$R/docs"

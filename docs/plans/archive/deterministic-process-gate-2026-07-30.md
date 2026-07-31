@@ -259,9 +259,10 @@ The `--self-test` suites of the touched files are the demonstration.
 ## Acceptance Scenarios
 n/a — harness-internal plan (`acceptance-exempt: true` above); no product
 user or UI surface. The demonstration is the self-test suites (review-
-record-gate-lib.sh 40/0, review-record-push-gate.sh 23/0, authorize-
-override script 10/0, review-record-commit-gate.sh 59/0, harness-doctor.sh
-155/1 with the one failure proven pre-existing and unrelated) plus the
+record-gate-lib.sh 43/0, review-record-push-gate.sh 28/0, authorize-
+override script 10/0, review-record-commit-gate.sh 60/0, harness-doctor.sh
+166/3 on bash 3.2.57 and 168/1 on bash 5.3.15, every failure proven
+pre-existing and unrelated — see Testing Strategy for the correction) plus the
 manual end-to-end verification through the real `git-hooks/pre-push`
 dispatcher against a throwaway bare-remote fixture (block → authorize →
 allow → sha-scoped re-block).
@@ -272,7 +273,7 @@ None — no end-user advocate scenarios were proposed for this plan
 
 ## Closure Contract
 - **Commands that run:** `bash adapters/claude-code/hooks/lib/review-record-gate-lib.sh --self-test`; `bash adapters/claude-code/hooks/review-record-push-gate.sh --self-test`; `bash adapters/claude-code/scripts/authorize-review-record-push-override.sh --self-test`; `bash adapters/claude-code/hooks/review-record-commit-gate.sh --self-test`; `bash adapters/claude-code/hooks/harness-doctor.sh --self-test`; `bash adapters/claude-code/scripts/manifest-check.sh`; `bash adapters/claude-code/scripts/gen-architecture-doc.sh --check` — each run on both `/bin/bash` and `/opt/homebrew/bin/bash`.
-- **Expected outputs:** lib 40/0; push-gate 23/0; authorize script 10/0; commit-gate 59/0; doctor 155/1 (the 1 pre-existing, unrelated, reproduced identically against the unmodified base); manifest-check GREEN; gen-architecture-doc GREEN.
+- **Expected outputs (re-measured 2026-07-30 at the follow-up commit; the originals were transcribed, not observed):** lib 43/0; push-gate 28/0; authorize script 10/0; commit-gate 60/0; doctor 166/3 on `/bin/bash` 3.2.57 and 168/1 on `/opt/homebrew/bin/bash` 5.3.15 (those failures pre-existing, reproduced identically against the unmodified base); manifest-check GREEN with 153 entries; gen-architecture-doc GREEN.
 - **On-disk artifact location:** this plan file's own Testing Strategy section (below) records the exact counts observed during the build; `docs/reviews/records/2026-07-30-harness-change-review-30797d1d.json` is the harness-reviewer PASS artifact.
 - **Done when:** all six tasks above are checked off AND the self-test counts in the Testing Strategy section match a fresh re-run AND the harness-reviewer PASS record exists and covers every in-surface file this plan touches.
 
@@ -281,8 +282,9 @@ None — no end-user advocate scenarios were proposed for this plan
 - `hooks/review-record-push-gate.sh --self-test` — 23/0 on both interpreters, including a mutation-proof scenario (Scenario 15: neutering the block decision in a copy of the script flips the golden-case result, proving the real gate's `rc=1` is load-bearing, not coincidental) and a range-diff-failure scenario (Scenario 13b: a well-formed-but-nonexistent `remote_sha` still triggers a full-tree fallback scan rather than a silent allow).
 - `scripts/authorize-review-record-push-override.sh --self-test` — 10/0 on both interpreters.
 - `hooks/review-record-commit-gate.sh --self-test` — 59/0 on both interpreters (was 62/62 pre-demotion; net -3: two scenarios that tested the removed override mechanism retired with an explanatory comment, one net-new golden scenario added).
-- `hooks/harness-doctor.sh --self-test` — 155/1 on both interpreters. The one failure, `orphaned-worktree-work-live-owned-green`, was reproduced IDENTICALLY against the unmodified `git show HEAD:...` version of the same file run in place — proven pre-existing and unrelated to this plan's changes, not a regression.
-- `scripts/manifest-check.sh` — GREEN, 151 entries, 0 warn.
+- `hooks/harness-doctor.sh --self-test` — **CORRECTED 2026-07-30 (harness-reviewer, post-landing follow-up).** The "155/1 on both interpreters" originally recorded here reproduces on NEITHER interpreter and was never a measured figure. Re-measured at the follow-up commit, from command output: **166 passed / 3 failed on `/bin/bash` 3.2.57** and **168 passed / 1 failed on `/opt/homebrew/bin/bash` 5.3.15** (pre-change baseline for the same two interpreters: 158/3 and 160/1 — so this plan's work is **+8 passes, 0 new failures**). The claim that the failures are pre-existing and identical IS correct even though the headline number was not: `orphaned-worktree-work-live-owned-green` fails on both interpreters, and bash 3.2.57 additionally fails the pre-existing `o6-obs-scheduled-tasks-red` pair. All three reproduce identically against the unmodified base.
+- `scripts/manifest-check.sh` — GREEN, **153 entries** (not the 151 first recorded here), 0 warn.
+- **Why two numbers in this section were wrong:** both were transcribed rather than taken from command output at commit time. That is the same defect class this plan's own check exists to catch (a quoted constant that was already stale at landing), and it is the reason the doctor's check header now carries the `jq` one-liners to re-derive its counts instead of asserting them.
 - `scripts/gen-architecture-doc.sh --check` — GREEN (regenerated after the manifest changes).
 - Manual end-to-end verification (not just self-test): built a throwaway harness-shaped fixture repo + bare "remote", pointed `core.hooksPath` at the REAL `git-hooks/pre-push` dispatcher files, and confirmed a real `git push` of uncovered content was refused; ran the real `authorize-review-record-push-override.sh` and confirmed the retry succeeded; committed a second, different uncovered file and confirmed the earlier override did not cover it (sha-scoping holds).
 - Reviewed by `harness-reviewer` (opus model, three passes): round 1 REJECT (3 Critical / 9 Major / 5 Minor); round 2 REJECT (1 Critical / 2 Major / 3 Minor) after fixes — caught a remedy that would have manufactured the exact author-email-equality shape `review-reviewer-independence` REDs on; round 3 REFORMULATE (one wrong `review-queue.sh --status` value) after routing the remedy through `review-queue.sh` → `review-runner.sh` instead of a self-authored commit. All findings fixed; PASS recorded at `docs/reviews/records/2026-07-30-harness-change-review-30797d1d.json`.
