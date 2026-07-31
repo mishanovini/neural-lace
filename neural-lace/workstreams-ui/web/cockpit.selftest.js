@@ -2729,7 +2729,11 @@ ok('R17-C11 command-render.js is served by server.js at /command-render.js (same
 // ---- wiring: every caller named in the deliverable actually calls
 // renderCat/CommandRender, not just the shared module existing in isolation.
 ok('R17-C12 inbox.js applies command-aware rendering to context lines, option outcomes, my-pick, and reply-with (audit F1\'s own enumerated surfaces)',
-  /ctxBox\.appendChild\(renderCat\(el\('div', 'ib-context-line'\), line\)\)/.test(inboxJs) &&
+  // Round 18: matched the local variable name `ctxBox`, so a pure rename
+  // (ctxBox -> deferredContext, when background was demoted below the
+  // trade-offs table) reddened it while the BEHAVIOUR was untouched. Now
+  // matches the rendering call itself, which is what the assertion is about.
+  /appendChild\(renderCat\(el\('div', 'ib-context-line'\), line\)\)/.test(inboxJs) &&
   /renderCat\(document\.createElement\('td'\), o\.option\)/.test(inboxJs) &&
   /renderCat\(document\.createElement\('td'\), o\.outcome\)/.test(inboxJs) &&
   /renderCat\(pickInline, item\.my_pick\)/.test(inboxJs) &&

@@ -359,6 +359,11 @@
     var head = el('div', 'ib-anatomy-head', (item.kind === 'question' ? 'Question: ' : 'Decision needed: ') + item.title);
     box.appendChild(head);
 
+    // Background prose is BUILT with the context (so the action/prose split
+    // happens in one place) but APPENDED after the trade-offs table and my
+    // pick — see the ordering note at block 3.
+    var deferredContext = null;
+
     // 2. Context (decisions only — questions carry no structure). Shows the
     // first 5 lines directly; INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01
     // fix (round 14): content beyond 5 lines is NEVER silently dropped —
@@ -395,20 +400,28 @@
         box.appendChild(doBox);
       }
 
+      // Held, not appended here — see the ordering note below.
       if (proseLines.length) {
-        var ctxBox = el('div', 'ib-context');
+        deferredContext = el('div', 'ib-context');
         // R17 deliverable 2 (audit F1): a context line can itself BE a
         // command (the live defect: "run: powershell -File ... -> the task
         // registers…" rendered as one prose run with no delimiter).
-        proseLines.slice(0, 5).forEach(function (line) { ctxBox.appendChild(renderCat(el('div', 'ib-context-line'), line)); });
+        proseLines.slice(0, 5).forEach(function (line) { deferredContext.appendChild(renderCat(el('div', 'ib-context-line'), line)); });
         if (proseLines.length > 5) {
-          ctxBox.appendChild(el('div', 'ib-context-more', '+' + (proseLines.length - 5) + ' more line(s) of background — see "Raw verbatim" below'));
+          deferredContext.appendChild(el('div', 'ib-context-more', '+' + (proseLines.length - 5) + ' more line(s) of background — see "Raw verbatim" below'));
         }
-        box.appendChild(ctxBox);
       }
     }
 
     // 3. Trade-offs table (decisions only).
+    // Round 18 (operator): "the info ... doesn't do a fantastic job of
+    // providing context to help me understand the issue and determine what
+    // to do about it." This table IS the decision content — what happens
+    // each way — and it was rendered BELOW several paragraphs of system
+    // background, so the operator read architecture before ever seeing
+    // their choices. Order now follows how a decision is actually made:
+    // what to run -> what happens either way -> what I recommend -> and
+    // only then the background explaining why any of it exists.
     var table = optionsTable(item.options);
     if (table) box.appendChild(table);
 
@@ -422,6 +435,9 @@
       pickBox.appendChild(pickInline);
       box.appendChild(pickBox);
     }
+
+    // 4a. Background LAST of the explanatory blocks — demoted, never dropped.
+    if (deferredContext) box.appendChild(deferredContext);
 
     // 4b. Links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 part b) —
     // producer `--link` entries PLUS anchors extracted from the raw text
