@@ -1,6 +1,24 @@
 <!-- scaffold-created: 2026-07-17T12:57:41Z by start-plan.sh slug=orphaned-worktree-guard-reformulation -->
 # Plan: Orphaned Worktree Guard Reformulation
-Status: ACTIVE
+Status: ABANDONED
+
+## Disposition 2026-07-31 (operator: "dispositions") — SUPERSEDED, capability DELIVERED elsewhere
+
+Not abandoned for lack of value: this plan's intent — *detect worktrees holding unintegrated
+content with no live owner* — was **delivered by the Accountable Estate program** while this plan
+sat idle:
+- **T1 (shipped + verified):** the estate janitor/inventory detects stranded worktrees and surfaces
+  them in the brief's found-list.
+- **T4 (shipped + verified):** deterministic closers + no-orphan registration at spawn-worktree
+  prevent the orphan class at creation rather than detecting it after the fact.
+
+Live proof of the need, 2026-07-31: five stranded worktrees were found holding 12 patches not on
+master. Those patches were pushed to both remotes (salvage), then verified as **superseded
+duplicates** — the same work had landed on master from other worktrees. No loss, and the detection
++ prevention this plan specified is now mechanically in place.
+
+Operator principle recorded (2026-07-30): *ignored ≠ unimportant — it means the system had no
+queue.* This plan is closed because the capability EXISTS, not because the goal was dropped.
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: GUARD-REFORMULATE-01
