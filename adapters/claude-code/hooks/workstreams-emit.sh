@@ -1259,9 +1259,16 @@ _self_test() {
   # standing second destination for anything whose ask-id does not resolve.
   # So an absence assertion, and equally a "no FURTHER emission" count
   # assertion, is only meaningful over the WHOLE progress-log directory.
-  # Every such assertion in this suite is directory-scoped; presence
-  # assertions may stay file-scoped, since naming the exact destination is a
-  # STRONGER claim rather than a vacuous one.
+  #
+  # SCOPE OF THIS SWEEP, stated narrowly (an earlier draft of this comment
+  # claimed "every such assertion in this suite", which was over-broad):
+  # every absence / no-further-emission assertion in the PROGRESS-LOG lane
+  # (PL*, RPL*) is directory-scoped. NOT swept, and deliberately named so the
+  # gap is visible rather than implied: NLA2 and NLA4 assert over a single
+  # `ls ... | head -n1`-picked file in the GOVERNOR-LEDGER lane, which is a
+  # different store with a different layout -- same vacuity class, different
+  # sweep, not done here. Presence assertions may stay file-scoped anywhere,
+  # since naming the exact destination is a STRONGER claim, not a vacuous one.
   _ts_grep_dir() {
     local n; n=$(cat "$1"/*.jsonl 2>/dev/null | grep -cE "$2" 2>/dev/null | tr -d ' \n')
     case "$n" in ''|*[!0-9]*) n=0 ;; esac
@@ -2340,6 +2347,34 @@ PLANEOF
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Handoff","prompt":"Here is what was dispatched:\n- NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\nJust report."},"session_id":"sess-rpl-7h"}' >/dev/null 2>&1 )
   _ck "RPL7h the doctrine's list-prefix escape works: a '- '-prefixed header on line 2 emits 0" "$(_ts_count_dir "$plog_rpl7h")" "0"
 
+  # ------------------------------------------------------------------------
+  # RPL7i/RPL7j — THE WINDOW IS OVER THE JOINED TEXT, NOT OVER THE PROMPT
+  # (harness-reviewer round 3, 2026-07-30). _dispatch_text joins
+  # [prompt, description, content] with newlines and the window is applied to
+  # THAT, so the header's admitted region spans a SECOND INPUT FIELD: a short
+  # prompt leaves description-borne lines inside the first N. Every artifact
+  # said "the first N lines of your prompt", which is wrong in a way an author
+  # cannot act on -- the same field-scope error class as F2 itself, one level
+  # up. An untested claim about a second input field is also the exact F4
+  # shape RPL7g/RPL7h exist to prevent, so both directions are pinned here.
+  #
+  # RPL7i: 3-line prompt + header alone in `description` -> joined line 4 ->
+  # EMITS (residual, asserted deliberately).
+  local plog_rpl7i="$tmp/pl-rpl7i"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7i" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7i" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7i.json" CLAUDE_SESSION_ID="sess-rpl-7i" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"prompt":"Review the failed run.\nDo not build.\nJust report.","description":"NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder"},"session_id":"sess-rpl-7i"}' >/dev/null 2>&1 )
+  _ck "RPL7i (RESIDUAL, second input field) a header carried in the DESCRIPTION field after a 3-line prompt lands on JOINED line 4 and EMITS -- the window spans prompt+description+content, not the prompt" "$(_ts_count_dir "$plog_rpl7i")" "1"
+
+  # RPL7j: the same description, behind a 10-line prompt -> joined line 11 ->
+  # silent. Proves RPL7i is genuinely about JOINED position and not about the
+  # description field being read unconditionally.
+  local plog_rpl7j="$tmp/pl-rpl7j"
+  ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7j" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7j" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-7j.json" CLAUDE_SESSION_ID="sess-rpl-7j" \
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"prompt":"L1\nL2\nL3\nL4\nL5\nL6\nL7\nL8\nL9\nL10","description":"NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder"},"session_id":"sess-rpl-7j"}' >/dev/null 2>&1 )
+  _ck "RPL7j the SAME description behind a 10-line prompt lands on joined line 11 and emits 0 -- confirming JOINED position is the rule, not field identity" "$(_ts_count_dir "$plog_rpl7j")" "0"
+
   # RPL7c: THE LANE IS NOT COLLATERAL DAMAGE. A real dispatch -- whose prompt
   # OPENS with the header, which is what doctrine/orchestrator-pattern.md
   # already mandates in those words -- still emits exactly one event. Without
@@ -3200,14 +3235,27 @@ _extract_nl_attribution() {
   #
   # THE RESIDUAL IS: any quoted header that STARTS A LINE -- with arbitrary
   # leading whitespace, including the indentation a fenced or indented paste
-  # adds -- ANYWHERE within the first NL_ATTRIBUTION_MAX_LINE lines still
-  # emits. It is NOT limited to "a prompt that literally begins with a quoted
-  # header". Measured against this exact code: a 2-line preamble + fenced
-  # paste EMITS; a 4-space-indented paste EMITS; a TAB-indented header on line
-  # 2 EMITS; a 3-line preamble + fence (header on line 5, the last admitted
-  # line) EMITS. Silent: header on line 6, and any `> ` or `- ` prefix.
-  # Pinned by RPL7d/RPL7e/RPL7f (the n-1 / n / n+1 boundary triple) and
-  # RPL7g/RPL7h (the documented escapes).
+  # adds -- within the first NL_ATTRIBUTION_MAX_LINE lines of the JOINED
+  # `prompt + description + content` text still emits. It is NOT limited to
+  # "a prompt that literally begins with a quoted header".
+  #
+  # THE WINDOW IS OVER THE JOINED TEXT, NOT OVER THE PROMPT (corrected in
+  # round 3). _dispatch_text (see its definition above) joins the three
+  # tool_input fields with newlines BEFORE this function applies the window,
+  # so the admitted region spans a SECOND INPUT FIELD whenever the prompt is
+  # short: a 3-line prompt with the header alone in `description` puts it on
+  # JOINED line 4 and EMITS (RPL7i), while the same description behind a
+  # 10-line prompt is silent (RPL7j). Saying "the first N lines of your
+  # prompt" is therefore advice an author cannot act on.
+  #
+  # Measured against this exact code -- EMITS: a 2-line preamble + fenced
+  # paste; a 4-space-indented paste; a TAB-indented header on line 2; a
+  # 3-line preamble + fence (header on line 5, the last admitted line); a
+  # header in `description` behind a short prompt. SILENT: header on joined
+  # line 6+, any `> ` or `- ` prefix, and a mid-sentence quote.
+  # Pinned by RPL7d/RPL7e/RPL7f (the n-1 / n / n+1 boundary triple),
+  # RPL7g/RPL7h (the documented escapes) and RPL7i/RPL7j (the joined-input
+  # scope).
   #
   # WHY THE EARLIER WORDING WAS WRONG, because the mechanism generalizes:
   # RPL7b passes with a preamble that happens to run EIGHT lines, clearing the

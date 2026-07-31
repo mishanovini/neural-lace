@@ -27,7 +27,9 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 - **DETERMINISTIC-PROCESS-PROOF-OBLIGATION-UNWIRED-01 — `deterministic-process.md` mandates `chokepoint` + `bypass_paths` on every blocking manifest unit, but `manifest.schema.json` FORBIDS both keys and 0 of 40 blocking units carry them** (added 2026-07-30 while building the Intended-Functionality gate; label: `harness-gap`, `priority:high`). PROVEN, three independent observations: (1) `adapters/claude-code/doctrine/deterministic-process.md` §"The proof obligation" states *"Every `\"blocking\": true` manifest unit declares: `chokepoint` … `bypass_paths` …"* and its header claims *"`harness-doctor.sh` REDs on one declaring neither"*; (2) `python3 -c` over `manifest.json` returns `chokepoint: []` and `bypass_paths: []` across all 149 pre-existing entries, of which **40** are `blocking: true`; (3) adding those two keys to a new entry makes `manifest-check.sh` emit `RED schema: unknown key 'chokepoint' (additionalProperties: false)` and the same for `bypass_paths` — i.e. the schema actively rejects compliance with the doctrine. **This is precisely the constitution §10 "theatre" defect the same doctrine file names** ("documented enforcement that does not fire … wire it or delete the claim"): the proof obligation is documented, unsatisfiable, and unchecked. The doctrine landed 2026-07-30 in commit `e91cdfa`, one commit before this was found. **Not fixed here** — the correct fix touches `manifest.schema.json` plus a backfill decision across all 40 blocking units, which is an operator/orchestrator-owned scope call, not a side effect of an unrelated build. **Workaround used by the new `intended-functionality-if-statement` entry (so no information is lost):** its chokepoint and its four enumerated bypass paths are written inline into `honest_status`, with a note naming this contradiction. **Fix (future session):** (a) add `chokepoint` (string) and `bypass_paths` (array of strings) as optional properties to `adapters/claude-code/schemas/manifest.schema.json`; (b) decide whether the doctor's claimed RED is built now or the claim is softened until the 40-unit backfill lands — per §10 the claim must not outlive the mechanism; (c) backfill the 40 blocking units, or scope the requirement to `added_after >= 2026-07` and say so in the doctrine.
 - **REVIEW-RECORD-GATE-STAGE-AND-COMMIT-FAIL-OPEN-01 — `review-record-commit-gate.sh` silently fails open when `git add` and `git commit` are ONE compound command** (found 2026-07-30 while committing the ROADMAP-FALSE-ETERNAL-RUNNING-01 second pass; label: `harness-gap`, `priority:high`, constitution §10 theater). **PROVEN by executed trace, all three runs against the same worktree changes:** with the files STAGED, `{"command":"git commit -m x"}` → **exit 2 (BLOCKED)** and `{"command":"git add -A && git status --short && git commit -F …"}` → **exit 2 (BLOCKED)**; with the IDENTICAL changes left UNSTAGED, that same compound command → **exit 0, zero output**. Cause: the gate resolves staged-file coverage by reading the git INDEX at PreToolUse time — which is *before* the `git add` in the very command it is judging has run — so it sees an empty index, matches its own documented bailout #1 ("No staged in-surface file → silent allow, the common case"), and allows. **Consequence, live:** commit `d0430ca` landed `adapters/claude-code/hooks/workstreams-emit.sh` (an in-surface file; new blob `62a6346d…`, NOT the blob `e36a925d…` that `docs/reviews/records/grandfather-manifest.json` pins for that path, and covered by no PASS record in `docs/reviews/records/`) with **no review record and no block** — exactly the state the gate exists to prevent. This is not a bypass-env story: no `REVIEW_RECORD_GATE_OVERRIDE` was set and none was needed. **Severity reasoning:** `git add -A && git commit` is an extremely common single-call shape (it is what the agent above used unprompted), so the gate's real-world coverage is far below its documented coverage — and the failure is SILENT, so nobody learns it happened. **Candidate fixes:** (a) when the command itself stages (`git add …`, `git commit -a/-A`), resolve coverage against the WORKING TREE rather than the index — the gate's own "bailouts resolve toward BLOCK" principle already argues for this; (b) failing that, detect a staging verb in the same command string and resolve toward BLOCK with a message telling the operator to stage first and re-run; (c) add a self-test scenario for the unstaged-compound shape — the existing suite covers command-position parsing (Scenarios 14/21) but never varies INDEX state, which is why this was invisible. **Composes with:** the gate's existing NL-FINDING-016 remedy-chain note (a fix and its retry are never one compound command) — the same one-call habit that note accommodates is what defeats the gate here.
-  **SCOPE CORRECTION (same day, before this entry was acted on — the finding is real but NARROWER than first written).** A JIT doctrine injection surfaced **Amendment H (2026-07-30, `deterministic-process.md`)**, which already demotes `review-record-commit-gate.sh` to **ADVISORY** and moves authority to a new `hooks/review-record-push-gate.sh` wired into `git-hooks/pre-push`, reading coverage **at the COMMITTED blob**. A push-time check over committed blobs is **structurally immune to this fail-open** — there is no index-vs-worktree timing window at push time — so Amendment H closes the class by architecture, not by patching the parser. **Therefore: do NOT spend effort fixing the commit gate's index timing.** What remains true and worth acting on: (a) this branch (`wip/harness-hardening-2026-07-29`, base `17c0d4c`) and **`origin/master` at the same SHA** contain NEITHER the push gate NOR the advisory demotion — verified with `git cat-file -e origin/master:adapters/claude-code/hooks/review-record-push-gate.sh` → *does not exist* — so on the merge target the commit gate is still documented-BLOCKING and still fails open exactly as measured; (b) **the live `~/.claude/` harness is AHEAD of `origin/master`** — it HAS `review-record-push-gate.sh` and its commit gate mentions ADVISORY 9 times — meaning an unmerged change is deployed on this machine, which is its own drift worth a look; (c) the fail-open window persists for anyone on master until Amendment H lands there. Class for the ledger is unchanged and still worth recording: *a blocking gate whose precondition is evaluated before the command that establishes it*.
+  **SCOPE CORRECTION (same day, before this entry was acted on — the finding is real but NARROWER than first written).** A JIT doctrine injection surfaced **Amendment H (2026-07-30, `deterministic-process.md`)**, which already demotes `review-record-commit-gate.sh` to **ADVISORY** and moves authority to a new `hooks/review-record-push-gate.sh` wired into `git-hooks/pre-push`, reading coverage **at the COMMITTED blob**. A push-time check over committed blobs is **structurally immune to this fail-open** — there is no index-vs-worktree timing window at push time — so Amendment H closes the class by architecture, not by patching the parser. **Therefore: do NOT spend effort fixing the commit gate's index timing.** What remains true and worth acting on: **`origin/master` (`17c0d4c`) has neither** — verified `git cat-file -e origin/master:adapters/claude-code/hooks/review-record-push-gate.sh` → *does not exist* — so on the merge target the commit gate is still documented-BLOCKING and still fails open exactly as measured, and **the fail-open window persists for anyone on master until Amendment H lands there.**
+  **DRIFT CLAIM RETRACTED (round 3).** An earlier revision of this entry said "this branch and `origin/master` contain NEITHER" and called the live harness "AHEAD of origin/master … drift worth a look". **That was FALSE and the operator was told it.** The BRANCH `wip/harness-hardening-2026-07-29` (tip `366a88b`) has had BOTH since **`3a6e821`, authored 2026-07-30 17:03:00** — verified `git log --diff-filter=A wip/harness-hardening-2026-07-29 -- …push-gate.sh`, and its commit gate carries 9× ADVISORY. That is ~40 minutes BEFORE the sentence was written. Live `~/.claude/` installs from the branch, so live-having-them is **ordinary in-flight state, not out-of-band drift** — there is nothing to investigate.
+  **Root cause of MY error, recorded because it generalizes:** I resolved a claim about *the branch* against *my detached worktree's base* (`17c0d4c`), which is merely where this worktree was cut from and says nothing about where the branch has moved since. **Class: worktree-base-reported-as-branch-state. Standing rule: any claim about what a branch or a merge target contains resolves against `git rev-parse <branch>` / `git cat-file -e <branch>:<path>` / `git log <branch> -- <path>` — NEVER against the current worktree's HEAD or base.** Class for the ledger is unchanged and still worth recording: *a blocking gate whose precondition is evaluated before the command that establishes it*.
 
 - **ESTATE-T9-EVIDENCE-POINTERS-NOISE-01 — close-plan.sh's T9 "Evidence pointers" derivation inherits generate_completion_report's pre-existing high-churn-file noise** (added 2026-07-30 from accountable-estate T9's live acceptance demonstration; label: `harness-gap`, `priority:low`). T9's `generate_closure_outcome_section` deliberately reuses `generate_completion_report`'s EXISTING files-to-modify -> `git log --oneline --no-merges -- <path>` derivation ("one implementation, not two"), but that derivation was already noisy for any plan whose `## Files to Modify/Create` names a high-churn shared file (e.g. `docs/backlog.md`, touched by thousands of unrelated commits repo-wide) — observed live closing `context-watermark-opus5-window.md` for real: its "Evidence pointers" section filled with `sort -u`-ordered (effectively SHA-random, not date-ordered) commits spanning the WHOLE repo's history, none related to that plan's actual W1-W3 work. This is a PRE-EXISTING characteristic (the Completion Report's own "Commits referencing these files" section has the identical noise, confirmed by inspecting the same archived plan), not a T9 regression — T9 inherited it by design (shared derivation) rather than building a second, competing one. **Not fixed here** (T9's own scope discipline: reuse the existing derivation, don't fork a second evidence-pointer algorithm mid-task). **Candidate fixes for a future session:** (a) bound `git log` to commits between the plan's own first-commit and close timestamps (`--since`/`--until`), which would exclude the vast majority of a shared file's unrelated history; (b) exclude known always-touched shared files (`docs/backlog.md`, `SCRATCHPAD.md`, `NEEDS-YOU.md`) from the evidence-pointer file list specifically, while still listing them in the Completion Report's own file list; (c) cap by commit-message keyword/slug relevance rather than a bare `head -N`. **Composes with:** any future rework of `generate_completion_report` itself, since fixing the shared derivation fixes both consumers at once.
 
@@ -2210,11 +2212,21 @@ anchor is independently load-bearing, not one redundant with the other); M6 awk-
   inert" — was outright FALSE and is retracted). **TRUE RESIDUAL: any quoted header that
   STARTS A LINE — with arbitrary leading whitespace, including the indentation a fenced or
   indented paste adds — anywhere within the first `NL_ATTRIBUTION_MAX_LINE` (default 5) lines
-  still emits a real `task_started`.** PROVEN against the shipping parser: 2-line preamble +
-  fenced paste → EMITS; 4-space-indented paste → EMITS; TAB-indented header on line 2 →
-  EMITS; 3-line preamble + fence (header on line 5, the last admitted line) → EMITS. Silent:
-  header on line 6+ (RPL7e), `> ` prefix (RPL7g), `- ` prefix (RPL7h). **Operative rule for
-  authors quoting a header: keep it below line 5, or prefix it with `> ` or `- `.** This
+  **of the JOINED `prompt + description + content`** still emits a real `task_started`.**
+  PROVEN against the shipping parser: 2-line preamble + fenced paste → EMITS; 4-space-indented
+  paste → EMITS; TAB-indented header on line 2 → EMITS; 3-line preamble + fence (header on
+  line 5, the last admitted line) → EMITS. Silent: header on line 6+ (RPL7e), `> ` prefix
+  (RPL7g), `- ` prefix (RPL7h).
+  **THE WINDOW IS OVER THE JOINED TEXT, NOT OVER THE PROMPT** (corrected in round 3; every
+  earlier statement here said "the first 5 lines of your prompt", which is advice an author
+  cannot act on). `_dispatch_text` (`workstreams-emit.sh:3110`) joins `[prompt, description,
+  content]` with newlines BEFORE the window applies, so the admitted region spans a SECOND
+  INPUT FIELD whenever the prompt is short: a 3-line prompt with the header alone in
+  `description` lands on JOINED line 4 and EMITS (RPL7i), while the same description behind a
+  10-line prompt is silent (RPL7j). Same field-scope error class as F2 itself, one level up.
+  **Operative rule for authors quoting a header: keep it below line 5 of the JOINED text AND
+  out of the `description` field of a short-prompt dispatch — or just prefix it with `> ` /
+  `- `, which is robust because it does not require counting lines across three fields.** This
   matters because it is the shape of a REAL handoff/review prompt (short preamble, then a
   fenced paste), not an exotic one, and the failure direction is a FALSE green — the one
   remaining known path to the original defect. Closing it needs an out-of-band field the prose
@@ -2229,16 +2241,25 @@ anchor is independently load-bearing, not one redundant with the other); M6 awk-
   **The residual is pinned in BOTH directions**, so it cannot drift silently either way:
   loosening the anchor reddens RPL7/RPL7b/RPL7e/RPL7g/RPL7h (mutations M5/M5b/M5c), and
   TIGHTENING it reddens the two residual-asserting pins RPL7d/RPL7f (mutation M8).
-  **AVAILABLE TIGHTENING LEVER, measured and deliberately NOT taken in this pass:** setting
-  `NL_ATTRIBUTION_MAX_LINE=1` (header must be line 1) narrows the residual to "the prompt
-  literally opens with a quoted header" — and M8 shows it breaks **no real-lane scenario in
-  the suite**, only the two pins that exist to document the current residual. It is NOT taken
-  here because the suite cannot see the cost: it would silently drop attribution for any real
-  dispatch whose header sits under a title line or blank-line preamble, and adoption is
-  already ~10% (`NL-ATTRIBUTION-ADOPTION-12-PERCENT-01`) — trading a narrower false-green
-  window for more missing greens is an operator call, not a builder's, and it should be made
-  together with the constructor work that would make header position uniform in the first
-  place. Flagged here so the lever is visible rather than rediscovered.
+  **TIGHTENING LEVER — evaluated at 5 / 2 / 1, decision recorded (round 3).** Measured, both
+  interpreters: `NL_ATTRIBUTION_MAX_LINE=2` and `=1` each redden **exactly RPL7d + RPL7f**
+  (the two residual pins) and nothing else — identical kill sets, 116 passed / 3 failed
+  (the third being pre-existing ST11). **`=2` was the missing middle option:** an earlier
+  revision of this entry framed the choice as 5-vs-1, which was a false dichotomy — `=2`
+  eliminates the fence-paste shapes that land at joined lines 3-5 while still admitting the
+  one cost case that argued against `=1` (a real header under a title or blank line).
+  **DECISION: keep the default at 5 for now, and sequence the tightening AFTER a header
+  constructor exists.** Reasoning: the cost of tightening is genuinely UNMEASURABLE today —
+  header POSITION is not recorded in the emit log, so there is no way to count how many real
+  dispatches would fall outside a 2-line window; once a constructor emits the header, position
+  becomes uniform by construction and the cost goes to zero, at which point `=2` (or `=1`) is
+  free. Tightening first would trade a measurable false-green reduction for an unmeasurable
+  missing-green increase, against an adoption rate already at ~10-14%.
+  **FRAMING ERROR CORRECTED:** the previous revision called this "an operator call, not a
+  builder's". That was wrong — a one-line-reversible env default is **decide-and-go under
+  constitution §8** (undoing it is a single edit), so it is mine to decide with a trail, which
+  is what this paragraph now is. The operator-call framing was permission-seeking dressed as
+  deference.
 - **`harness-doctor.sh --quick`: the RED set is UNCHANGED by this work — 17 red / 8 warn at
   both `17c0d4c` and `d0430ca`, identical RED names, empty diff** (corrected 2026-07-30 by an
   independent harness-reviewer measurement; my original "13 RED → 14 RED, one added" was
@@ -2398,12 +2419,20 @@ a3fcb6ea-7fab-460d-8506-e2a655016f09): of **103** distinct dispatch identities, 
 carried an `NL-ATTRIBUTION: plan=… task=…` header — ~12%. The hook's own WARN counter reached
 **4090** unattributed dispatches in that single session.
 
-**RE-MEASURED over the whole log the same day (supersedes the ~12% figure above, which was
-computed over distinct identities in one window rather than over all dispatch lines):
-`822 attributed=1` out of `8081` `builder-dispatch` lines = **10.2%**, WARN high-water
-**5146** and still climbing during the measurement itself.** An independent reviewer measured
-10.1% / 4963 twenty minutes earlier; the log is live, so both are correct at their timestamps
-and the trend is the point.
+**THE PERCENTAGE IS NOT A STABLE FACT — DO NOT QUOTE ONE.** Three measurements the same day:
+~12% (distinct identities in one window), 10.2% (822/8081 lines), 13.8% (899/6522, an
+independent reviewer). They disagree partly on numerator/denominator choice and partly
+because **`~/.claude/logs/conversation-tree-emit.log` ROTATES — the denominator is not
+monotonic**, so a later reading can legitimately be over a SMALLER log. Record the command
+and BOTH terms, never a bare rate:
+```
+L=~/.claude/logs/conversation-tree-emit.log
+grep -c 'builder-dispatch item=' "$L"                          # denominator (rotates!)
+grep 'builder-dispatch item=' "$L" | grep -c 'attributed=1'    # numerator
+grep -o 'unattributed dispatch #[0-9]*' "$L" | grep -o '[0-9]*' | sort -n | tail -1
+```
+All readings agree on the only durable conclusion: **adoption is ~10-14% and the WARN counter
+(4090 → 4963 → 5146 → 5623 across the day) only climbs.**
 
 **THE ADOPTION MECHANISM DOES NOT EXIST — this is the load-bearing finding, not the
 percentage.** `grep -rn 'NL-ATTRIBUTION'` over `agents/`, `templates/`, `skills/`,

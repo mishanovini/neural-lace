@@ -222,11 +222,13 @@ For each batch of tasks (one if serial, up to 5 if parallel):
 
 **THE RESIDUAL, STATED FROM THE EXECUTED BOUNDARY (restated 2026-07-30 — the previous wording here was FALSE and is retracted).** This paragraph used to say *"if you are writing a prompt that QUOTES a dispatch header, you no longer need to mangle it — a quoted header below the prose that introduces it is inert."* **That is wrong for any preamble shorter than five lines, which is the shape a real handoff prompt actually has.** Measured against the shipping parser: a 2-line preamble + fenced paste **emits**; a 4-space-indented paste **emits**; a TAB-indented header on line 2 **emits**; a 3-line preamble + fence (header on line 5) **emits**.
 
-The true residual: **any quoted header that STARTS A LINE — with arbitrary leading whitespace, including fence or tab indentation — anywhere within the first 5 lines will emit a real `task_started`.**
+The true residual: **any quoted header that STARTS A LINE — with arbitrary leading whitespace, including fence or tab indentation — anywhere within the first 5 lines of the JOINED text will emit a real `task_started`.**
 
-**OPERATIVE RULE when you are quoting or pasting a dispatch header** (both PROVEN inert, pinned by scenarios RPL7g/RPL7h):
-- keep the quoted header **below line 5** of your prompt (a header on line 6+ is silent — RPL7e), **or**
-- prefix the line with `> ` (blockquote) or `- ` (list item).
+**THE WINDOW IS OVER THE JOINED TEXT, NOT OVER YOUR PROMPT** (corrected 2026-07-30, round 3 — every earlier statement of this residual said "the first 5 lines of your prompt", which is advice an author cannot act on). `workstreams-emit.sh`'s `_dispatch_text` joins `[prompt, description, content]` with newlines BEFORE the window is applied, so the admitted region **spans a second input field** whenever the prompt is short. PROVEN: a 3-line prompt with the header alone in `description` lands on JOINED line 4 and **emits** (RPL7i); the same `description` behind a 10-line prompt is silent (RPL7j).
+
+**OPERATIVE RULE when you are quoting or pasting a dispatch header** (both prefixes PROVEN inert, pinned by RPL7g/RPL7h):
+- keep the quoted header **below line 5 of the JOINED prompt + description + content** (a header on joined line 6+ is silent — RPL7e), **and** keep it **out of the `description` field of a short-prompt dispatch**, **or**
+- prefix the line with `> ` (blockquote) or `- ` (list item) — the robust option, since it does not depend on counting lines across three fields.
 
 **If you are writing a real dispatch, put the header first.** Closing the residual entirely needs an out-of-band field the prose cannot forge; nothing available at PreToolUse distinguishes a quoted header from a real one at the same position.
 
