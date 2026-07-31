@@ -2028,8 +2028,9 @@ ok('T4-7f mutation control: linkRowNode is REACHED for every entry in a non-empt
 ok('T4-7g server-side: extractAnchorsFromText + mergeLinks populate `links` from inline anchors even when the producer supplied NO --link entries at all (part b of the fix)',
   /function extractAnchorsFromText\(text\)/.test(inboxRoutesJs) && /function mergeLinks\(/.test(inboxRoutesJs) &&
   /links: mergeLinks\(/.test(inboxRoutesJs));
-ok('T4-7h context beyond 5 lines is NEVER silently dropped with no note — a "+N more" line points to the Raw verbatim details below (still the full raw_text, never truly lost)',
-  /item\.context\.length > 5/.test(inboxJs) && /more line\(s\) — see "Raw verbatim" below/.test(inboxJs));
+ok('T4-7h BACKGROUND beyond 5 lines is never silently dropped with no note — a "+N more" line points to the Raw verbatim details below. Round 18: the cap now applies to proseLines only, NEVER to the whole context, because the old cap dropped the operator\'s STEP 3 command (see R18-IB block for the executed proof)',
+  /proseLines\.length > 5/.test(inboxJs) && /more line\(s\) of background — see "Raw verbatim" below/.test(inboxJs) &&
+  !/item\.context\.slice\(0, 5\)/.test(inboxJs));
 ok('T4-7i server-side title extraction strips a redundant "Decision needed:"\/"Question:" prefix the producer already included on line 1 (the live double-label bug)',
   /replace\(\/\^\(decision needed\|question\)\\s\*:\\s\*\/i, ''\)/.test(inboxRoutesJs));
 ok('T4-7j server-side: the arrow-format options grammar ("Option NAME -> outcome") is a SECOND accepted shape alongside the markdown table, both accumulating into the same options[] array',
@@ -2742,6 +2743,75 @@ ok('R17-C14 app.js applies it to the Q2 "what needs me" card text (.nm-text) AND
 ok('R17-C15 both renderCat wrappers (inbox.js and app.js) degrade to plain textContent when window.CommandRender failed to load — never a throw, never raw HTML injection from an absent global',
   (inboxJs.match(/node\.textContent = String\(text == null \? '' : text\)/g) || []).length >= 1 &&
   (js.match(/node\.textContent = String\(text == null \? '' : text\)/g) || []).length >= 1);
+
+// ============================================================
+// R18-IB (2026-07-31) — THE INBOX READABILITY ROUND. Operator, verbatim:
+// "it's kind of a wall of text and much of it is spent explaining it to me,
+// and it's not very easy to find exactly what it is that's actually
+// needed"; "Any commands that are needed from me should also stand out and
+// make it easy for me to copy"; "the page keeps refreshing on its own,
+// which forces the view back to the top of the page".
+//
+// These REAL-EXECUTE command-render.js (pure half, no DOM) against the
+// operator's OWN live item NY-1785425479-0d4d. The line strings below are
+// the actual rendered content from that item, not invented fixtures — this
+// is the corpus the shipped UI failed on.
+// ============================================================
+if (cmdRender) {
+  // The measured root cause: the producer writes numbered steps, and the
+  // step label defeated the whole-line command test, so the ONE line the
+  // item exists to deliver rendered as flat prose with no copy button.
+  ok('R18-IB1 a bare command is detected (pre-existing behaviour, control — proves the next assertion fails for the LABEL and not for the command)',
+    cmdRender.isCommandLine('git pull') === true &&
+    cmdRender.isCommandLine('powershell -File adapters\\claude-code\\scripts\\install-coord-sync-task.ps1') === true);
+  ok('R18-IB2 a STEP-LABELLED command is now detected as an action — the operator\'s live "STEP 2: git pull" and "STEP 3: powershell -File ..." rendered as unfenced prose before this fix',
+    cmdRender.isActionLine('STEP 2: git pull') === true &&
+    cmdRender.isActionLine('STEP 3: powershell -File adapters\\claude-code\\scripts\\install-coord-sync-task.ps1') === true &&
+    cmdRender.isActionLine('2. git pull') === true);
+  ok('R18-IB3 the copy payload is the COMMAND ONLY — pasting must never carry "STEP 3: " into a shell',
+    (function () {
+      var h = cmdRender.renderCommandAwareText('STEP 3: powershell -File install.ps1');
+      var m = h.match(/data-copy-text="([^"]*)"/);
+      return !!m && m[1] === 'powershell -File install.ps1';
+    })());
+  ok('R18-IB4 the label itself survives as visible prose outside the fence (the operator still needs to see the ordering)',
+    cmdRender.renderCommandAwareText('STEP 3: powershell -File install.ps1').indexOf('STEP 3: <span class="cmd-fence">') === 0);
+  ok('R18-IB5 narrow by construction: ordinary prose, and a step whose remainder is NOT a known command, stay prose — no false fences',
+    cmdRender.isActionLine('Reply with: done (after step 3), or DEFER.') === false &&
+    cmdRender.isActionLine('Background: coord-sync pushes each machine\'s live session state every 60s.') === false &&
+    cmdRender.isActionLine('STEP 1: cd into your neural-lace checkout.') === false);
+  ok('R18-IB6 escaping still holds through the new label path — a labelled command containing a tag renders inert, never a live element',
+    (function () {
+      var h = cmdRender.renderCommandAwareText('STEP 1: git <script>alert(1)</script>');
+      return h.indexOf('<script>') === -1 && h.indexOf('&lt;script&gt;') !== -1;
+    })());
+  // The truncation defect, stated as the operator experienced it.
+  ok('R18-IB7 the operator\'s real 6-line context yields 2 action lines and 4 prose lines — under the OLD 5-line whole-context cap the 6th line (STEP 3, the actual command) was the one dropped',
+    (function () {
+      var ctx = [
+        'Background: coord-sync pushes each machine\'s live session state to the shared coordination repo every 60s.',
+        'This Mac has published since 2026-07-30T06:47Z; the desktop never has.',
+        'What actually went wrong: your PowerShell was at C:\\Users\\misha, OUTSIDE the neural-lace repo.',
+        'Do this on the Windows desktop in PowerShell, one command at a time:',
+        'STEP 2: git pull',
+        'STEP 3: powershell -File adapters\\claude-code\\scripts\\install-coord-sync-task.ps1',
+      ];
+      var actions = ctx.filter(cmdRender.isActionLine);
+      var prose = ctx.filter(function (l) { return !cmdRender.isActionLine(l); });
+      var droppedByOldCap = ctx.slice(5);
+      return actions.length === 2 && prose.length === 4 &&
+        droppedByOldCap.length === 1 && cmdRender.isActionLine(droppedByOldCap[0]) === true;
+    })());
+}
+// The refresh-jump fix (inbox.js load()): source checks — the guard lives
+// inside a fetch .then() in a browser IIFE, so it is not requireable here.
+// Labelled as a wiring check, not a behavioural proof.
+ok('R18-IB8 wiring: the 30s tick no longer re-renders unconditionally — an unchanged item set skips renderAll() entirely, and the signature EXCLUDES generated_at (which changes every tick and would defeat the guard)',
+  /lastRenderSig/.test(inboxJs) && /if \(unchanged\)/.test(inboxJs) &&
+  /JSON\.stringify\(\{ a: j\.answerable \|\| \[\], q: j\.quarantined \|\| \[\] \}\)/.test(inboxJs) &&
+  !/generated_at[^\n]*sig/.test(inboxJs));
+ok('R18-IB9 wiring: when the item set HAS changed, scroll position is preserved across the rebuild instead of being reset to the top',
+  /var keepY = window\.scrollY/.test(inboxJs) && /if \(keepY\) window\.scrollTo\(0, keepY\)/.test(inboxJs));
 
 // ============================================================
 // R20 (2026-07-30) — THE RUNNING-CLAIM SWEEP. Operator-reported, twice:

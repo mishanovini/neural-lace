@@ -1731,6 +1731,31 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-my-pick { margin: 4px 0; font-weight: 600; color: var(--text); }
 .ib-context-more { margin: 2px 0; color: var(--muted); font-style: italic; }
 
+/* ---- "Run this" — the actual ask, hoisted above the explanation
+   (Round 18, operator: "it's not very easy to find exactly what it is
+   that's actually needed"). Deliberately the loudest thing in the card:
+   accent rule + raised panel, so the eye lands here before the prose. --- */
+.ib-needed {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel2, rgba(127, 127, 127, 0.08));
+}
+.ib-needed-head {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.ib-needed-line { margin: 4px 0; }
+/* Inside this block a command is the point, so let it use the full width
+   rather than sharing a line with its step label. */
+.ib-needed-line .cmd-fence { display: flex; width: 100%; margin-top: 2px; }
+.ib-needed-line .cmd-fence-code { flex: 1 1 auto; }
+
 /* ---- links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01) ---- */
 .ib-links { margin: 6px 0; }
 .ib-drill-label { font-weight: 600; }
