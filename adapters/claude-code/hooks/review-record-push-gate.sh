@@ -237,6 +237,104 @@ _rrpg_fresh_override() {
   return 1
 }
 
+# ===========================================================================
+# PATH ENUMERATION PRIMITIVES — git's path OUTPUT ENCODING is not the path
+# (harness-reviewer CRITICAL 2, round 4).
+# ===========================================================================
+#
+# THE CLASS, stated so it generalizes past this gate: `git diff --name-only`
+# does not emit paths. It emits a RENDERING of paths, and under git's default
+# `core.quotePath=true` that rendering is C-quoted — the whole path is wrapped
+# in double quotes and non-ASCII bytes become \NNN octal escapes. Feed that
+# rendering to a path PREDICATE and the predicate answers a question about a
+# string that is not the path.
+#
+# PROVEN end-to-end against a bare remote, BEFORE this fix: a brand-new
+#   adapters/claude-code/hooks/pré-push-gate.sh
+# pushed rc=0 with ZERO gate bytes and landed ON the remote, because
+# `--name-only` emitted
+#   "adapters/claude-code/hooks/pr\303\251-push-gate.sh"
+# and rrg_in_surface returns OUT for that quoted form while returning IN for
+# the raw path. THE PREDICATE WAS CORRECT AND THE CALLER WAS WRONG. This
+# directly breached the gate's headline invariant and falsified the surface
+# arms' own claim that "a new file of any kind under these trees is IN surface
+# by default" — it was in-surface by default only for paths git chose not to
+# quote.
+#
+# WHICH BYTES TRIGGER IT — measured, not assumed (probe output, git 2.x):
+#   path                     plain      -c quotePath=false      -z (either)
+#   ----                     -----      ------------------      -----------
+#   pré-push-gate.sh         QUOTED     raw                     raw
+#   back\slash.sh            QUOTED     STILL QUOTED            raw
+#   two words.sh             raw        raw                     raw
+#
+# So `-c core.quotePath=false` ALONE IS NOT ENOUGH: backslash (and a literal
+# double-quote) survive it, because quoting those is not what quotePath
+# governs. A space, meanwhile, is never quoted — which is exactly why this
+# defect hid: the obvious "weird path" probe passes.
+#
+# THE FIX IS BOTH TOKENS PLUS NUL FRAMING: `-c core.quotePath=false` for the
+# encoding, `-z` for the framing, consumed with `while IFS= read -r -d ''`
+# (bash 3.2.57 verified: 3/3 records incl. non-ASCII and backslash). NUL cannot
+# survive a shell variable — command substitution strips it — so every
+# enumeration goes to a FILE and is read from there. That is why these helpers
+# take an outfile rather than echoing.
+#
+# RULE FOR THE NEXT GATE: every harness consumer of git path output must
+# disable quoting AND use NUL separation before feeding a path to a predicate.
+# The sibling consumers that feed THIS gate's surface predicate
+# (review-record-commit-gate.sh, lib/review-queue-auto-enqueue-lib.sh) are
+# fixed in the same commit; the wider harness-wide audit is filed as
+# GIT-PATH-QUOTING-CLASS-01 in docs/backlog.md with its full enumeration.
+# ---------------------------------------------------------------------------
+
+_RRPG_TMPDIR=""
+# _rrpg_ensure_tmpdir -- one scratch dir per invocation, removed on exit.
+# rc 1 if it could not be created (callers must treat that as "cannot verify"
+# and BLOCK, never as "nothing changed"). Read the result from
+# $_RRPG_TMPDIR — deliberately NOT echoed.
+#
+# IT MUST NOT BE CALLED IN A COMMAND SUBSTITUTION, and that is why it does not
+# echo. An earlier draft did `_tmp="$(_rrpg_tmpdir)"`, which runs the whole
+# body in a SUBSHELL: the `trap ... EXIT` was registered on the subshell and
+# fired the instant the substitution closed, so every enumeration below wrote
+# into a directory that had already been removed. Every arm then failed, every
+# push took the uncomputable branch, and 17 previously-green scenarios went
+# red at once — fail-CLOSED, so it was loud, but it is the exact shape of a
+# "cleanup ran too early" bug that fails OPEN in a gate built the other way
+# round.
+_rrpg_ensure_tmpdir() {
+  [[ -n "$_RRPG_TMPDIR" ]] && return 0
+  _RRPG_TMPDIR="$(mktemp -d "${TMPDIR:-/tmp}/rrpg.XXXXXX" 2>/dev/null)" || return 1
+  trap 'rm -rf "$_RRPG_TMPDIR" 2>/dev/null' EXIT
+  return 0
+}
+
+# _rrpg_diff_z <repo_root> <outfile> <diff-args...> -- NUL-separated RAW paths.
+# The two tokens are baked in here rather than at each call site precisely so a
+# future caller cannot reintroduce CRITICAL 2 by forgetting one of them.
+_rrpg_diff_z() {
+  local repo_root="$1" out="$2"; shift 2
+  git -C "$repo_root" -c core.quotePath=false diff --name-only -z "$@" > "$out" 2>/dev/null
+}
+
+# _rrpg_diff_raw_z <repo_root> <outfile> <range> -- NUL-separated --raw records.
+# Record shape (verified by probe):  ":<srcmode> <dstmode> <srcsha> <dstsha> <status>" NUL "<path>" NUL
+# --no-renames keeps it one path per record, so the two-read consumption loop
+# below stays in frame.
+_rrpg_diff_raw_z() {
+  local repo_root="$1" out="$2"; shift 2
+  git -C "$repo_root" -c core.quotePath=false diff --raw -z --no-renames "$@" > "$out" 2>/dev/null
+}
+
+# _rrpg_contains <needle> <haystack...> -- rc 0 iff needle is present.
+_rrpg_contains() {
+  local needle="$1"; shift
+  local x
+  for x in "$@"; do [[ "$x" == "$needle" ]] && return 0; done
+  return 1
+}
+
 # ------------------------------------------------------------
 # Range resolution — same proven logic as pre-push-scan.sh (PROVEN over the
 # 2026-05 credential-scanner rollout; not reimplemented from scratch here).
@@ -277,7 +375,7 @@ _rrpg_block_message() {
   # disp[] carries the annotation (human consumers). Both are passed flattened
   # with an explicit count n because bash 3.2 cannot pass two arrays directly.
   # Self-test Scenario 22 `bash -n`s the emitted remedy so this cannot regress.
-  local repo_root="$1" remote_ref="$2" sha="$3" degraded="$4" n="$5"; shift 5
+  local repo_root="$1" remote_ref="$2" sha="$3" degraded="$4" mode_hits="$5" n="$6"; shift 6
   local -a paths=() disp=()
   local _i
   for (( _i=0; _i<n; _i++ )); do paths+=("$1"); shift; done
@@ -290,8 +388,10 @@ _rrpg_block_message() {
     if [[ "$degraded" == "1" ]]; then
       echo "NOTE: could not compute the exact pushed range (the remote-tracked"
       echo "sha was unresolvable locally) — scanned the ENTIRE tree at $sha"
-      echo "instead. Some files listed below may already be on the remote from"
-      echo "an earlier push; try \`git fetch\` first if this looks wrong."
+      echo "for changes, and used the remote-tracking ref as the baseline for"
+      echo "the removal and mode arms. Some files listed below may already be"
+      echo "on the remote from an earlier push; try \`git fetch\` first if this"
+      echo "looks wrong."
       echo
     fi
     echo "Pushing $remote_ref at $sha would land UNREVIEWED harness content on"
@@ -309,6 +409,28 @@ _rrpg_block_message() {
     echo "have dispatch capability and is the actor at push time — enforcement"
     echo "belongs where the required action is possible."
     echo
+    # THE REMEDY MUST BE SATISFIABLE, not merely runnable (Scenario 22's
+    # principle, one layer up). For a MODE-ONLY change the review pathway is
+    # structurally incapable of clearing the block: a review record attests to
+    # {path, blob_sha}, the blob did not change, so the freshly-written record
+    # is byte-identical to the coverage that already existed and the mode arm
+    # fires again. Saying "get it reviewed" there would send the operator round
+    # a loop that cannot terminate. Route 2 is the only route, and the block
+    # says so rather than letting them discover it.
+    if [[ "$mode_hits" == "1" ]]; then
+      echo "ONE OR MORE ENTRIES ABOVE IS A FILE-MODE CHANGE. Read this first:"
+      echo "a review record attests to {path, blob_sha}. A mode change leaves"
+      echo "the blob identical, so REVIEWING IT CANNOT CLEAR THIS BLOCK — the"
+      echo "record you would get back is the coverage you already have. For"
+      echo "those entries, option 2 below is the ONLY route."
+      echo
+      echo "Why the mode is gated at all: git refuses to execute a hook that is"
+      echo "not marked executable, so a 100755 → 100644 on a dispatcher under"
+      echo "adapters/claude-code/git-hooks/ disarms the entire chain silently —"
+      echo "and unlike a local \`core.hooksPath\` change, THIS ONE SHIPS to every"
+      echo "clone. If the mode change is intentional, say so in the reason."
+      echo
+    fi
     echo "TO PROCEED, ONE of:"
     echo
     echo "  1. Get the content reviewed through the SANCTIONED, INDEPENDENT"
@@ -391,6 +513,38 @@ _rrpg_missing_lib_block() {
     echo
     echo "Restore it and push again:"
     echo "  git checkout master -- adapters/claude-code/hooks/lib/review-record-gate-lib.sh"
+    echo "================================================================"
+  } >&2
+}
+
+# _rrpg_uncomputable_block <remote_ref> <local_sha> <range> <why>
+# AN ARM THAT COULD NOT BE COMPUTED IS NOT AN EMPTY ARM (harness-reviewer
+# CRITICAL 1, round 4). The degraded path recomputes every arm of the subject
+# set or lands here; there is deliberately no third option in which the gate
+# continues with a subset. Loud, and it names WHICH arm and WHY, because the
+# operator's next move differs: a `git fetch` fixes the usual cause outright.
+_rrpg_uncomputable_block() {
+  local remote_ref="$1" sha="$2" range="$3" why="$4"
+  {
+    echo "================================================================"
+    echo "REVIEW-RECORD PUSH GATE — PUSH BLOCKED (subject set uncomputable)"
+    echo "================================================================"
+    echo "Could not compute the full set of files this push would change on"
+    echo "$remote_ref at $sha."
+    echo
+    echo "Range attempted: $range"
+    echo "What failed:     $why"
+    echo
+    echo "A gate that continues with a PARTIALLY computed subject set is a"
+    echo "bypass that fires exactly when the gate is least sure of itself —"
+    echo "so this refuses instead. The usual cause is that the remote has"
+    echo "advanced and the local object store has never seen its tip:"
+    echo
+    echo "  git fetch --all && git push"
+    echo
+    echo "If the push is genuinely urgent and cannot wait for a fetch:"
+    echo "  bash adapters/claude-code/scripts/authorize-review-record-push-override.sh \\"
+    echo "    \"why this cannot wait for the range to be computable\" --sha $sha"
     echo "================================================================"
   } >&2
 }
@@ -587,8 +741,36 @@ _rrpg_main() {
       continue
     fi
 
-    local range files deleted diff_rc range_degraded=0
+    local range diff_rc del_rc raw_rc range_degraded=0
     range="$(_rrpg_range "$local_sha" "$remote_sha")"
+
+    # Every enumeration lands in a FILE (NUL framing cannot survive a
+    # variable — see the PATH ENUMERATION PRIMITIVES header). A tmpdir we
+    # cannot create is "cannot verify", not "nothing changed".
+    # _rrpg_refuse <why> -- the ONE exit used by every uncomputable-arm path.
+    # Honours the operator override FIRST: the block message it would
+    # otherwise print names the override as the way out, and a remedy that
+    # the code does not actually accept is the Scenario-22 defect one layer
+    # up (runnable, but not satisfiable).
+    _rrpg_refuse() {
+      local why="$1" _o
+      if _o="$(_rrpg_fresh_override "$local_sha")" && [[ -n "$_o" ]]; then
+        _rrpg_log_override "$local_sha" "$_o" "$repo_root"
+        echo "review-record-push-gate: OVERRIDDEN for $local_sha — \"$_o\" (logged for audit; subject set was uncomputable: $why)" >&2
+        return 1
+      fi
+      saw_block=1
+      _rrpg_uncomputable_block "$remote_ref" "$local_sha" "$range" "$why"
+      return 0
+    }
+
+    local _tmp
+    if ! _rrpg_ensure_tmpdir; then
+      _rrpg_refuse "could not create a scratch directory for the path enumerations"
+      continue
+    fi
+    _tmp="$_RRPG_TMPDIR"
+    local F_CHANGED="$_tmp/changed.z" F_DELETED="$_tmp/deleted.z" F_RAW="$_tmp/raw.z"
     # ------------------------------------------------------------
     # ENUMERATE BY THE CODES THROUGH WHICH THE SUBJECT CAN CHANGE **OR LEAVE**
     # THE SURFACE -- not by a hand-picked filter list. (harness-reviewer
@@ -613,76 +795,142 @@ _rrpg_main() {
     # hooks/victim-gate.sh docs/victim-gate.sh` pushed rc=0 with ZERO gate
     # bytes emitted, and the path was gone from the remote.
     #
-    # THE FIX IS TWO TOKENS, each measured before adoption:
-    #   * ACMR -> ACMRT   catches the typechange. FP cost: 0 commits, 0 files
-    #                     over all 1763 master commits -- free.
-    #   * --no-renames    makes `git rm`-shaped output of a rename: the source
-    #                     is reported as a plain D instead of being folded into
-    #                     an R pair, so the vanished path is enumerated. FP
-    #                     cost: 38 files across 7 of 1763 commits (0.40%),
-    #                     which is CHEAPER than the 0.45% deletion arm already
-    #                     accepted below.
+    # A FIFTH VERB: the file stays, the bytes stay, and the MODE changes.
+    # (harness-reviewer CRITICAL 3, round 4.)
+    #
+    #   verb                     name-status   ACMRT sees   D sees   coverage
+    #   ----                     -----------   ----------   ------   --------
+    #   chmod -x (mode only)     M <path>      <path>       --       PASSES
+    #
+    # A mode-only change IS enumerated as M, but the coverage key is
+    # {path, blob_sha} and the blob is UNCHANGED — so rrg_is_covered returns
+    # true and the gate waves it through. PROVEN against a bare remote:
+    # `git update-index --chmod=-x adapters/claude-code/git-hooks/pre-push`
+    # pushed rc=0, gate SILENT, and the remote carries mode 100644 for the
+    # dispatcher that decides whether this whole chain runs. Mode is OUTSIDE
+    # the coverage key entirely, so it is enumerated on its own arm below.
+    #
+    # THE FIX IS THREE TOKENS AND A FOURTH ARM, each measured before adoption.
+    # RE-DERIVED 2026-07-30 over an EXPLICITLY NAMED population (harness-
+    # reviewer MAJOR 1: the prior revision quoted 1763 while measuring 1593,
+    # and the comparative it supported did not survive either denominator):
+    #
+    #   POPULATION — 1593 non-merge commits. Excluding merges is deliberate:
+    #   a merge's `c^..c` diff re-attributes its whole side branch. Command:
+    #     git rev-list --no-merges master | wc -l          -> 1593
+    #     git rev-list master | wc -l                      -> 1763
+    #     git rev-list --first-parent master | wc -l       -> 1106
+    #   Per-arm command (in-surface paths only, rrg_in_surface applied):
+    #     for c in $(git rev-list --no-merges master); do
+    #       git -c core.quotePath=false diff --name-only -z <FILTER> "$c^..$c"
+    #     done
+    #
+    #   * ACMR -> ACMRT    typechange.  0 commits /   0 files (0.00%) — free.
+    #   * --no-renames     rename src.  7 commits /  38 files (0.44%).
+    #   * D arm (already accepted)      8 commits / 104 files (0.50%).
+    #   * MODE arm (new, ANY transition) 5 commits / 116 files (0.31%).
+    #       of which 100755->100644 (the disarm direction) alone is
+    #       1 commit / 1 file (0.06%), and 100644->100755 is 4 / 115 (0.25%).
+    #
+    # THE MODE ARM TAKES *ANY* TRANSITION, NOT JUST THE DISARM DIRECTION.
+    # Restricting it to 100755->100644 would buy 0.25 percentage points and
+    # cost a directional exemption branch in the very control that exists to
+    # make metadata changes visible — the same reasoning that refused the
+    # within-surface rename exemption one round ago. The honest statement is
+    # the general one: the coverage key does not carry mode, in either
+    # direction, so any mode transition is UNCOVERED. At 0.31% it is CHEAPER
+    # than the deletion arm already accepted at 0.50% on the same population.
     #
     # RULE FOR THE NEXT GATE: every gate deriving a subject set from `git diff`
     # must enumerate by the codes through which its subject can change or LEAVE
-    # the surface; and every self-test carries a `git mv` case and a typechange
-    # case BESIDE its `git rm` case, because one outcome with four verbs needs
-    # four probes. Scenarios 17/17b/17c are that matrix.
+    # the surface; and any control that authorizes CONTENT BY HASH must state
+    # what metadata the hash does NOT cover (mode, symlink-ness, path encoding)
+    # and either cover it or enumerate it as a named bypass. Scenarios
+    # 17/17b/17c/17d/17e/17f/17g are that matrix — SEVEN cases, because the
+    # matrix is the boundary of the last test run, never of the outcome.
     # ------------------------------------------------------------
-    files="$(git -C "$repo_root" diff --name-only --diff-filter=ACMRT "$range" 2>/dev/null)"
-    diff_rc=$?
-    # DELETIONS ARE PART OF THE SUBJECT SET (harness-reviewer CRITICAL 3).
-    # --diff-filter=ACMR excludes D, so `git rm hooks/victim-gate.sh` was a
-    # rc=0 no-op: deleting a gate was invisible to the gate. Enumerated
+    _rrpg_diff_z     "$repo_root" "$F_CHANGED" --diff-filter=ACMRT "$range"; diff_rc=$?
+    # DELETIONS ARE PART OF THE SUBJECT SET (harness-reviewer CRITICAL 3,
+    # round 2). --diff-filter=ACMR excludes D, so `git rm hooks/victim-gate.sh`
+    # was a rc=0 no-op: deleting a gate was invisible to the gate. Enumerated
     # separately because a deleted path has no blob at local_sha, so it can
     # never take the ordinary coverage path. --no-renames additionally forces a
     # rename's SOURCE into this set (see the table above); without it, `git mv`
     # out of the surface is a silent rc=0.
-    deleted="$(git -C "$repo_root" diff --name-only --diff-filter=D --no-renames "$range" 2>/dev/null)"
-    if [[ "$diff_rc" -ne 0 ]]; then
+    _rrpg_diff_z     "$repo_root" "$F_DELETED" --diff-filter=D --no-renames "$range"; del_rc=$?
+    _rrpg_diff_raw_z "$repo_root" "$F_RAW" "$range"; raw_rc=$?
+
+    if [[ "$diff_rc" -ne 0 || "$del_rc" -ne 0 || "$raw_rc" -ne 0 ]]; then
       range_degraded=1
-      # BAILOUT RESOLVES TOWARD BLOCK (this file's own stated principle,
-      # applied one line earlier than the blob-resolution case below): a
-      # `git diff` failure (e.g. remote_sha unresolvable locally -- PROVEN
-      # reachable on both a plain push and a --force push when the local
-      # object store lacks remote_sha) is "cannot compute the pushed range",
-      # NOT "nothing changed". Silently continuing here previously scored a
-      # computation error as a clean, empty subject set -- the review-record-
-      # commit-gate.sh Scenario 11 class of hole (blob resolution), one layer
-      # up (range resolution). Retry against the maximally strict range
-      # (empty-tree..local_sha, the SAME fallback _rrpg_range already uses for
-      # a genuine first push) so a transient/unresolvable remote_sha degrades
-      # to "scan everything in the pushed tree" rather than "scan nothing".
-      # Same filter set as the primary enumeration above (ACMRT) -- a fallback
-      # that scans with a WEAKER filter than the path it replaces would reopen
-      # the typechange hole precisely when the gate is least sure of itself.
-      files="$(git -C "$repo_root" diff --name-only --diff-filter=ACMRT "${EMPTY_TREE}..${local_sha}" 2>/dev/null)"
-      diff_rc=$?
-      if [[ "$diff_rc" -ne 0 ]]; then
-        # Even the empty-tree diff failed (should not happen against a real
-        # commit) -- genuinely cannot verify. Block rather than guess.
-        saw_block=1
-        {
-          echo "================================================================"
-          echo "REVIEW-RECORD PUSH GATE — PUSH BLOCKED (cannot verify)"
-          echo "================================================================"
-          echo "Could not compute the set of files changed by this push (range"
-          echo "'$range' failed to diff, and the empty-tree fallback also failed)."
-          echo "Refusing to push rather than silently skipping the review check."
-          echo "================================================================"
-        } >&2
+      # ==========================================================
+      # A DEGRADED SCAN RE-DERIVES **EVERY** ARM OR FAILS CLOSED.
+      # (harness-reviewer CRITICAL 1, round 4.)
+      #
+      # THE CLASS: a fallback that recomputes a SUBSET of the subject set is a
+      # bypass that fires exactly when the gate is least sure of itself. The
+      # previous revision recomputed only `files` (ACMRT, from the empty tree)
+      # and left `deleted` at its FAILED, empty value — and EMPTY_TREE..local
+      # structurally cannot emit a D, so the entire deletion arm silently
+      # vanished. PROVEN against a bare remote: remote advanced by one
+      # unfetched commit, then `git rm` of an in-surface gate + push --force
+      # -> rc=0, gate SILENT, divergence-check SILENT, path GONE from the
+      # remote. The comment three lines up reasoned about not scanning "with a
+      # WEAKER filter than the path it replaces" and then applied that
+      # reasoning to only one of the two enumerations.
+      #
+      # PER-ARM rc, NOT ONE SHARED rc: `del_rc` and `raw_rc` are captured
+      # independently above, because the change arm succeeding tells you
+      # nothing about whether the removal arm did.
+      #
+      # THE CHANGE ARM degrades UPWARD: empty-tree..local_sha is a strict
+      # SUPERSET of any range, so "scan everything in the pushed tree" is
+      # never weaker than the range it replaces.
+      #
+      # THE REMOVAL AND MODE ARMS CANNOT: both are differential by nature and
+      # need a REAL baseline. The remote-tracking refs are exactly that — the
+      # pusher's last known remote state, an anchor this push does not write
+      # (the same anchor the identity check above already trusts). Every
+      # tracking ref that resolves contributes to a UNION, so a stale one can
+      # only ADD subjects, never remove them. If NOT ONE resolves, the arms
+      # are uncomputable and the push is REFUSED — never continued with a
+      # silently empty arm.
+      # ==========================================================
+      _rrpg_diff_z "$repo_root" "$F_CHANGED" --diff-filter=ACMRT "${EMPTY_TREE}..${local_sha}"; diff_rc=$?
+
+      : > "$F_DELETED"; : > "$F_RAW"
+      local _bl _base_ok=0
+      for _bl in $(rrg_remote_tracking_refs "$repo_root" "$remote_ref" 2>/dev/null); do
+        git -C "$repo_root" rev-parse --verify --quiet "${_bl}^{commit}" >/dev/null 2>&1 || continue
+        _rrpg_diff_z     "$repo_root" "$_tmp/d1.z" --diff-filter=D --no-renames "${_bl}..${local_sha}" || continue
+        _rrpg_diff_raw_z "$repo_root" "$_tmp/r1.z" "${_bl}..${local_sha}" || continue
+        cat "$_tmp/d1.z" >> "$F_DELETED"
+        cat "$_tmp/r1.z" >> "$F_RAW"
+        _base_ok=1
+      done
+
+      if [[ "$diff_rc" -ne 0 || "$_base_ok" -ne 1 ]]; then
+        local _why="the deletion and mode arms could not be computed — no"
+        _why="$_why remote-tracking ref for $remote_ref resolved to a commit, and"
+        _why="$_why the empty tree structurally cannot report a removal or a mode"
+        _why="$_why transition (it has nothing to remove FROM)"
+        [[ "$diff_rc" -ne 0 ]] && _why="the change arm's empty-tree fallback also failed"
+        _rrpg_refuse "$_why"
         continue
       fi
     fi
-    [[ -n "$files" ]] || [[ -n "$deleted" ]] || continue
+    [[ -s "$F_CHANGED" ]] || [[ -s "$F_DELETED" ]] || [[ -s "$F_RAW" ]] || continue
 
     # PARALLEL ARRAYS, kept in lockstep (see _rrpg_block_message's header):
     # uncovered_paths[] is the BARE path for machine consumers, uncovered[] is
     # the human rendering which may carry an annotation. Every push site below
     # appends to BOTH, in the same order.
     local -a uncovered=() uncovered_paths=()
+    local mode_hits=0
     local f sha
-    while IFS= read -r f; do
+    # NUL-FRAMED (CRITICAL 2): `read -r -d ''` from the enumeration FILE, never
+    # a here-string over a variable — NUL cannot survive command substitution,
+    # and a line-framed read is exactly what let a C-quoted path through.
+    while IFS= read -r -d '' f; do
       [[ -n "$f" ]] || continue
       rrg_in_surface "$f" || continue
       sha="$(rrg_blob_sha_of_ref "$repo_root" "$local_sha" "$f" 2>/dev/null)" || sha=""
@@ -698,34 +946,63 @@ _rrpg_main() {
         uncovered_paths+=("$f")
         uncovered+=("$f")
       fi
-    done <<< "$files"
+    done < "$F_CHANGED"
 
     # In-surface DELETIONS **AND RENAME SOURCES** (--no-renames, above). A path
     # that left its location has no blob at local_sha, so rrg_is_covered can
     # never return true for it -- it is UNCOVERED by construction and the
     # operator override is its only route.
     #
-    # MEASURED cost before choosing this, re-derived 2026-07-30 rather than
-    # inherited (see docs/plans/review-gate-identity-anchor-2026-07-30.md):
-    #   * plain deletions   : 8 of 1763 master commits (0.45%), 104 files.
-    #   * rename sources    : +7 commits (0.40%), +38 files, of which 37 are
+    # MEASURED cost before choosing this, re-derived 2026-07-30 over a NAMED
+    # population (harness-reviewer MAJOR 1 — the figures below previously
+    # quoted 1763 while the scan that produced them excluded merges, and the
+    # "cheaper than the accepted arm" comparative did not survive either
+    # denominator). Population and command are stated in the enumeration
+    # header above; both figures are over the SAME 1593 non-merge commits:
+    #   * plain deletions   : 8 of 1593 non-merge commits (0.50%), 104 files.
+    #   * rename sources    : 7 of 1593 (0.44%), 38 files, of which 37 are
     #                         renames OUT of the surface and 1 is a rename
     #                         WITHIN it (rules/conversation-tree-state.md ->
     #                         rules/workstreams-state.md, e272c3e).
     # The within-surface case is deliberately NOT suppressed: special-casing
     # "source vanished but destination is in-surface" would add an exemption
     # branch to the very control that exists to make vanishing hard, to save
-    # one commit in 1763. The override exists for exactly this.
+    # one commit in 1593. The override exists for exactly this.
     # The historical hits are routine, not contrived -- scripts/
     # sync-pt-to-personal.sh -> attic/ and the ADR-058 rules/*.md ->
     # doctrine/*-full.md migration moved governance files off a reviewed
     # surface with zero coverage, which is the hole, not the noise.
-    while IFS= read -r f; do
+    while IFS= read -r -d '' f; do
       [[ -n "$f" ]] || continue
       rrg_in_surface "$f" || continue
+      _rrpg_contains "$f" ${uncovered_paths[@]+"${uncovered_paths[@]}"} && continue
       uncovered_paths+=("$f")
       uncovered+=("$f (DELETED by this push — removing an in-surface file needs the same authorization as changing it)")
-    done <<< "$deleted"
+    done < "$F_DELETED"
+
+    # ------------------------------------------------------------
+    # THE MODE ARM (harness-reviewer CRITICAL 3). Record shape, NUL-framed:
+    #   ":<srcmode> <dstmode> <srcsha> <dstsha> <status>" NUL "<path>" NUL
+    # so the loop reads TWO records per entry. --no-renames guarantees one path
+    # per record, which is what keeps that pairing in frame.
+    #
+    # A 000000 on either side is a creation or a deletion, already enumerated
+    # by the A and D arms — a mode TRANSITION needs two real modes, or the arm
+    # would double-report every added file.
+    # ------------------------------------------------------------
+    local _meta _mpath _sm _dm
+    while IFS= read -r -d '' _meta && IFS= read -r -d '' _mpath; do
+      [[ -n "$_mpath" ]] || continue
+      _sm="${_meta%% *}"; _sm="${_sm#:}"
+      _dm="${_meta#* }"; _dm="${_dm%% *}"
+      [[ "$_sm" == "$_dm" ]] && continue
+      [[ "$_sm" == "000000" || "$_dm" == "000000" ]] && continue
+      rrg_in_surface "$_mpath" || continue
+      mode_hits=1
+      _rrpg_contains "$_mpath" ${uncovered_paths[@]+"${uncovered_paths[@]}"} && continue
+      uncovered_paths+=("$_mpath")
+      uncovered+=("$_mpath (FILE MODE $_sm → $_dm — mode is OUTSIDE the {path, blob_sha} coverage key, so no review record can attest to it)")
+    done < "$F_RAW"
 
     [[ "${#uncovered[@]}" -eq 0 ]] && continue
 
@@ -740,7 +1017,7 @@ _rrpg_main() {
     # Count first, then BOTH arrays flattened (bash 3.2 cannot pass two arrays).
     # Safe to expand unguarded: this line is unreachable when uncovered is empty
     # (the `-eq 0 && continue` above), which matters under `set -u` on bash 3.2.
-    _rrpg_block_message "$repo_root" "$remote_ref" "$local_sha" "$range_degraded" \
+    _rrpg_block_message "$repo_root" "$remote_ref" "$local_sha" "$range_degraded" "$mode_hits" \
       "${#uncovered_paths[@]}" "${uncovered_paths[@]}" "${uncovered[@]}"
   done <<< "$stdin_buf"
 
@@ -759,6 +1036,21 @@ _rrpg_self_test() {
   local T; T="$(mktemp -d)" || { echo "cannot mktemp"; return 1; }
   local SELF="$_RRPG_SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
   export HARNESS_SELFTEST_DIR="$T/hs"
+
+  # ------------------------------------------------------------
+  # THE CHILD GATE RUNS UNDER THE INTERPRETER BEING TESTED.
+  #
+  # Every scenario below drives the gate as a CHILD PROCESS. Those calls used
+  # a bare `bash`, which resolves through PATH — on this machine that is
+  # /opt/homebrew/bin/bash 5.3. So `/bin/bash review-record-push-gate.sh
+  # --self-test` ran the harness under 3.2.57 while every gate body it
+  # exercised ran under 5.3, and the portability floor was never actually
+  # tested: a bash-4-only construct in the gate would have gone green on the
+  # 3.2 run. $BASH is the absolute path of the interpreter currently running
+  # this function, so both halves now agree.
+  # ------------------------------------------------------------
+  local _RRPG_TEST_BASH="${BASH:-bash}"
+  echo "self-test interpreter: $_RRPG_TEST_BASH (${BASH_VERSION:-unknown})"
 
   # ---- fixture repo, harness-shaped (manifest.json + empty coverage files) ----
   local R="$T/repo"
@@ -779,11 +1071,11 @@ _rrpg_self_test() {
   local ORIG_BASE_SHA="$BASE_SHA"
 
   run() { # $1=remote-name $2="local_ref local_sha remote_ref remote_sha"; echoes rc
-    printf '%s\n' "$2" | ( cd "$R" && bash "$SELF" "$1" ) >/dev/null 2>&1
+    printf '%s\n' "$2" | ( cd "$R" && "$_RRPG_TEST_BASH" "$SELF" "$1" ) >/dev/null 2>&1
     echo $?
   }
   run_capture() { # same, but echoes stderr
-    printf '%s\n' "$2" | ( cd "$R" && bash "$SELF" "$1" ) 2>&1 >/dev/null
+    printf '%s\n' "$2" | ( cd "$R" && "$_RRPG_TEST_BASH" "$SELF" "$1" ) 2>&1 >/dev/null
   }
 
   echo "Scenario 1: GOLDEN CASE — uncovered in-surface content BLOCKS the push"
@@ -883,7 +1175,7 @@ _rrpg_self_test() {
   printf 'SHA: %s\nGranted: now\nReason: production is down and this cannot wait for review\nRepo: %s\n' "$S4_SHA" "$R" \
     > "$STATE/review-record-push-override-${S4_SHA}-2026-01-01T00-00-00Z.txt"
   rc="$(printf '%s\n' "refs/heads/master $S4_SHA refs/heads/master $BASE_SHA" \
-        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE" bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE" "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "0" ]] && pass "valid override marker ALLOWS the push (rc=0)" || fail "valid override did not allow (rc=$rc)"
   if grep -q "production is down" "$STATE/../hs"/*review-record-push-gate-overrides.log 2>/dev/null \
      || grep -rq "production is down" "$T"/*/review-record-push-gate-overrides.log 2>/dev/null; then
@@ -894,13 +1186,13 @@ _rrpg_self_test() {
 
   echo "Scenario 5: OVERRIDE — a marker for a DIFFERENT sha does not apply"
   rc="$(printf '%s\n' "refs/heads/master $S4_SHA refs/heads/master $BASE_SHA" \
-        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$T/state-empty" bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$T/state-empty" "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "1" ]] && pass "no marker at all -> still BLOCKS (rc=1)" || fail "blocked without a marker did not fire (rc=$rc)"
   local STATE5="$T/state5"; mkdir -p "$STATE5"
   printf 'SHA: %s\nGranted: now\nReason: production is down and this cannot wait for review\nRepo: %s\n' "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" "$R" \
     > "$STATE5/review-record-push-override-deadbeefdeadbeefdeadbeefdeadbeefdeadbeef-2026-01-01T00-00-00Z.txt"
   rc="$(printf '%s\n' "refs/heads/master $S4_SHA refs/heads/master $BASE_SHA" \
-        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE5" bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE5" "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "1" ]] && pass "marker for a DIFFERENT sha does not apply — still BLOCKS (rc=1)" \
     || fail "wrong-sha marker was honored (rc=$rc) — sha-scoping is broken"
 
@@ -912,7 +1204,7 @@ _rrpg_self_test() {
   touch -t 202001010000 "$STATE6/review-record-push-override-${S4_SHA}-2020-01-01T00-00-00Z.txt" 2>/dev/null \
     || touch -d "2020-01-01" "$STATE6/review-record-push-override-${S4_SHA}-2020-01-01T00-00-00Z.txt" 2>/dev/null
   rc="$(printf '%s\n' "refs/heads/master $S4_SHA refs/heads/master $BASE_SHA" \
-        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE6" bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE6" "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "1" ]] && pass "STALE marker does not apply — still BLOCKS (rc=1)" \
     || fail "stale marker was honored (rc=$rc) — TTL enforcement is broken"
 
@@ -921,13 +1213,13 @@ _rrpg_self_test() {
   printf 'SHA: %s\nGranted: now\nReason: skip\nRepo: %s\n' "$S4_SHA" "$R" \
     > "$STATE7/review-record-push-override-${S4_SHA}-2026-01-01T00-00-00Z.txt"
   rc="$(printf '%s\n' "refs/heads/master $S4_SHA refs/heads/master $BASE_SHA" \
-        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE7" bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE7" "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "1" ]] && pass "placeholder-reason marker does not apply — still BLOCKS (rc=1)" \
     || fail "invalid-reason marker was honored (rc=$rc) — reason re-validation is broken"
 
   echo "Scenario 8: REVIEW_RECORD_GATE_OVERRIDE (the commit-time env-var escape hatch) has NO effect here"
   rc="$(printf '%s\n' "refs/heads/master $S4_SHA refs/heads/master $BASE_SHA" \
-        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$T/state-empty2" REVIEW_RECORD_GATE_OVERRIDE="production is down and this cannot wait" bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+        | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$T/state-empty2" REVIEW_RECORD_GATE_OVERRIDE="production is down and this cannot wait" "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "1" ]] && pass "commit-time env-var override is inert at the authoritative layer (still rc=1)" \
     || fail "REVIEW_RECORD_GATE_OVERRIDE bypassed the authoritative gate (rc=$rc) — Rule 2 violated"
   ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
@@ -953,7 +1245,7 @@ _rrpg_self_test() {
   echo '# changed' >> "$FR/scripts/deploy.sh"
   ( cd "$FR" && git add -A && git commit -qm change ) >/dev/null 2>&1
   local FHEAD; FHEAD="$(cd "$FR" && git rev-parse HEAD)"
-  rc="$(printf '%s\n' "refs/heads/master $FHEAD refs/heads/master $FBASE" | ( cd "$FR" && bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+  rc="$(printf '%s\n' "refs/heads/master $FHEAD refs/heads/master $FBASE" | ( cd "$FR" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "0" ]] && pass "foreign repo not gated" || fail "gated a foreign repo (rc=$rc)"
 
   echo "Scenario 11b: INFRA FAIL-OPEN IS LOUD — no jq means the push is announced as UNCHECKED"
@@ -974,7 +1266,7 @@ _rrpg_self_test() {
     # Re-use the golden-case uncovered push, which BLOCKS when jq is present.
     local nojq_err="$T/nojq-stderr.txt"
     printf '%s\n' "refs/heads/master $S1_SHA refs/heads/master $ORIG_BASE_SHA" \
-      | ( cd "$R" && PATH="$SHIM" bash "$SELF" origin ) >/dev/null 2>"$nojq_err"
+      | ( cd "$R" && PATH="$SHIM" "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>"$nojq_err"
     local nojq_msg; nojq_msg="$(cat "$nojq_err" 2>/dev/null)"
     if [[ -n "$nojq_msg" ]]; then
       pass "a jq-less run emits a warning instead of silence ($(printf '%s' "$nojq_msg" | wc -c | tr -d ' ') bytes)"
@@ -1010,28 +1302,122 @@ _rrpg_self_test() {
   echo '# uncovered from the very first push' > "$FP/adapters/claude-code/hooks/lib/x.sh"
   ( cd "$FP" && git add -A && git commit -qm "feat: x" ) >/dev/null 2>&1
   local FP_HEAD; FP_HEAD="$(cd "$FP" && git rev-parse HEAD)"
-  rc="$(printf '%s\n' "refs/heads/master $FP_HEAD refs/heads/master $ZERO_SHA" | ( cd "$FP" && bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+  rc="$(printf '%s\n' "refs/heads/master $FP_HEAD refs/heads/master $ZERO_SHA" | ( cd "$FP" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "1" ]] && pass "first-push with uncovered content BLOCKS (rc=1)" || fail "first-push uncovered content was not caught (rc=$rc)"
 
-  echo "Scenario 13b: UNRESOLVABLE remote_sha (git diff fails) falls back to empty-tree scan, not silent allow"
+  echo "Scenario 13b: UNRESOLVABLE remote_sha with NO usable baseline — REFUSES (never continues on a partial subject set)"
   # harness-reviewer PROVEN reachability: a real bare-remote fixture shows
   # pre-push firing with a remote_sha the local object store does not have,
   # on BOTH a plain push and a --force push (fetch-first races, force-push
   # after a remote rewrite). Simulate that exact shape: a remote_sha that is
   # a well-formed but NONEXISTENT sha, so `git diff remote_sha..local_sha`
   # fails outright rather than returning an empty/degenerate result.
+  #
+  # THIS FIXTURE HAS NO REMOTE CONFIGURED, so there is no remote-tracking ref
+  # to re-derive the removal and mode arms from. Under the round-4 rule
+  # ("re-derive EVERY arm or fail closed") that is not a degraded scan, it is
+  # an UNCOMPUTABLE one, and the gate must refuse rather than scan a subset.
+  # Scenario 13c below is the same failure WITH a usable baseline.
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
   echo '# unreviewed, unresolvable-range fixture' > "$R/adapters/claude-code/hooks/lib/unresolvable-range.sh"
   ( cd "$R" && git add -A && git commit -qm "feat: unresolvable range fixture" ) >/dev/null 2>&1
   local S13B_SHA; S13B_SHA="$(cd "$R" && git rev-parse HEAD)"
   local BOGUS_SHA="deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"   # well-formed, does not exist
+  ( cd "$R" && git remote 2>/dev/null | grep -q . ) \
+    && fail "fixture bug: \$R has a remote configured — Scenario 13b no longer isolates the no-baseline case" \
+    || pass "fixture genuinely has no remote-tracking ref to fall back to"
   rc="$(run origin "refs/heads/master $S13B_SHA refs/heads/master $BOGUS_SHA")"
-  [[ "$rc" == "1" ]] && pass "unresolvable remote_sha falls back to scanning the full pushed tree — still BLOCKS (rc=1)" \
+  [[ "$rc" == "1" ]] && pass "unresolvable remote_sha with no baseline REFUSES (rc=1)" \
     || fail "FAIL-OPEN: a git-diff failure was scored as an empty (clean) file list (rc=$rc)"
   local msg13b; msg13b="$(run_capture origin "refs/heads/master $S13B_SHA refs/heads/master $BOGUS_SHA")"
-  case "$msg13b" in *"could not compute the exact pushed range"*) pass "block message discloses the range-computation fallback (not silently reusing the precise-path wording)" ;; \
-    *) fail "fallback fired but the block message never says so"; esac
+  case "$msg13b" in *"subject set uncomputable"*) pass "block message says the SUBJECT SET was uncomputable, not that the tree was clean" ;; \
+    *) fail "refusal fired but the block message never says why"; esac
+  case "$msg13b" in *"deletion and mode arms could not be computed"*) pass "message names WHICH arms could not be computed" ;; \
+    *) fail "message does not name the uncomputable arms"; esac
   ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+
+  # ==========================================================================
+  # Scenario 13c/13d: THE DEGRADED-RANGE FALLBACK. (harness-reviewer CRITICAL
+  # 1, round 4.)
+  #
+  # THE DEFECT: the fallback recomputed `files` with ACMRT from EMPTY_TREE..
+  # local_sha but left `deleted` at its FAILED (empty) value -- and
+  # EMPTY_TREE..local structurally cannot emit a D, so the ENTIRE deletion arm
+  # silently vanished exactly when the gate was least sure of itself. PROVEN
+  # against a bare remote: remote advanced by one unfetched commit, then
+  # `git rm` of an in-surface gate + `git push --force` -> rc=0, gate SILENT,
+  # divergence-check SILENT, path GONE from the remote.
+  #
+  # 13c fixes the ARM (a removal survives the degrade); 13d fixes nothing new
+  # but pins that the degrade still ANNOUNCES itself, which is how an operator
+  # tells "scanned precisely" from "scanned from a stale baseline".
+  # ==========================================================================
+  echo "Scenario 13c: CRITICAL 1 — a DELETION must survive the degraded-range fallback (was: silently dropped)"
+  # A fixture WITH a remote-tracking ref: clone the repo so origin/master
+  # exists as a real, resolvable baseline the push does not write.
+  local DG="$T/degraded"
+  git clone -q "$R" "$DG" >/dev/null 2>&1
+  ( cd "$DG" && git config user.email t@example.com && git config user.name T ) >/dev/null 2>&1
+  echo '# an in-surface gate present at the baseline' > "$DG/adapters/claude-code/hooks/degraded-victim.sh"
+  ( cd "$DG" && git add -A ) >/dev/null 2>&1
+  # COVER **EVERY** IN-SURFACE FILE IN THIS FIXTURE, not just the victim.
+  # The degraded path scans EMPTY_TREE..local_sha for the change arm, i.e. the
+  # WHOLE pushed tree — so any other uncovered in-surface file (the gate copy,
+  # the lib copy, manifest.json) would block this push for a reason that has
+  # nothing to do with the deletion arm, and Scenario 13c plus its mutation
+  # proof would both be green while proving nothing. The rc=0 control below
+  # is what turns that from an assumption into a check.
+  _dg_cover_all() {
+    local f s first=1
+    { printf '{"entries":['
+      for f in $(cd "$DG" && git ls-files); do
+        case "$f" in adapters/claude-code/*) ;; *) continue ;; esac
+        s="$(cd "$DG" && git hash-object "$f")"
+        [[ $first -eq 1 ]] || printf ','
+        first=0
+        printf '{"path":"%s","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}' "$f" "$s"
+      done
+      printf ']}\n'
+    } > "$DG/docs/reviews/records/index.json"
+  }
+  _dg_cover_all
+  ( cd "$DG" && git add -A && git commit -qm "add the victim; cover every in-surface file" ) >/dev/null 2>&1
+  # Move origin/master forward to the victim-present state so the tracking ref
+  # is a baseline in which the file EXISTS -- otherwise its removal is not
+  # visible from that baseline and the scenario would prove nothing.
+  ( cd "$DG" && git update-ref refs/remotes/origin/master HEAD ) >/dev/null 2>&1
+  local DG_WITH_VICTIM; DG_WITH_VICTIM="$(cd "$DG" && git rev-parse HEAD)"
+  # Guard: origin/master must really exist and really carry the victim, or the
+  # baseline this scenario depends on is not there.
+  if ( cd "$DG" && git cat-file -e "refs/remotes/origin/master:adapters/claude-code/hooks/degraded-victim.sh" 2>/dev/null ); then
+    pass "fixture: origin/master carries the victim, so its removal is visible from that baseline"
+  else
+    fail "fixture bug: origin/master does not carry the victim — Scenario 13c proves nothing"
+  fi
+  # THE CONTROL: the very same DEGRADED push, with NOTHING deleted, must be
+  # ALLOWED. If this is rc=1 the fixture has unrelated uncovered content and
+  # every assertion below is meaningless.
+  rc="$(printf '%s\n' "refs/heads/master $DG_WITH_VICTIM refs/heads/master $BOGUS_SHA" \
+        | ( cd "$DG" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+  [[ "$rc" == "0" ]] && pass "CONTROL: the same degraded push with no deletion is ALLOWED (rc=0) — nothing unrelated is uncovered" \
+    || fail "fixture bug: the degraded fixture blocks (rc=$rc) even with nothing deleted — Scenario 13c would prove nothing"
+  ( cd "$DG" && git rm -q -f adapters/claude-code/hooks/degraded-victim.sh \
+      && git commit -qm "chore: delete the gate under a degraded range" ) >/dev/null 2>&1
+  local S13C_SHA; S13C_SHA="$(cd "$DG" && git rev-parse HEAD)"
+  rc="$(printf '%s\n' "refs/heads/master $S13C_SHA refs/heads/master $BOGUS_SHA" \
+        | ( cd "$DG" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+  [[ "$rc" == "1" ]] && pass "deletion under a DEGRADED range still BLOCKS (rc=1) — the removal arm was re-derived from the tracking ref" \
+    || fail "CRITICAL 1 OPEN: the degraded fallback dropped the deletion arm (rc=$rc)"
+  local msg13c; msg13c="$(printf '%s\n' "refs/heads/master $S13C_SHA refs/heads/master $BOGUS_SHA" \
+        | ( cd "$DG" && "$_RRPG_TEST_BASH" "$SELF" origin ) 2>&1 >/dev/null)"
+  case "$msg13c" in *degraded-victim.sh*) pass "message names the file deleted under the degraded range" ;; \
+    *) fail "message omits the deleted file"; esac
+
+  echo "Scenario 13d: the degraded scan ANNOUNCES itself (an operator must be able to tell it from a precise scan)"
+  case "$msg13c" in *"could not compute the exact pushed range"*) pass "block message discloses that the range was degraded" ;; \
+    *) fail "the scan degraded silently — indistinguishable from a precise scan"; esac
+  case "$msg13c" in *"remote-tracking ref as the baseline"*) pass "message names WHICH baseline the removal/mode arms used" ;; \
+    *) fail "message does not say which baseline the removal arm fell back to"; esac
 
   echo "Scenario 14: integration — the real authorize script writes a marker this gate honors"
   local ARSCRIPT="$_RRPG_SELF_DIR/../scripts/authorize-review-record-push-override.sh"
@@ -1042,9 +1428,9 @@ _rrpg_self_test() {
     local S14_SHA; S14_SHA="$(cd "$R" && git rev-parse HEAD)"
     local STATE14="$T/state14"; mkdir -p "$STATE14"
     ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE14" \
-        bash "$ARSCRIPT" "production is down and this hotfix cannot wait for review" ) >/dev/null 2>&1
+        "$_RRPG_TEST_BASH" "$ARSCRIPT" "production is down and this hotfix cannot wait for review" ) >/dev/null 2>&1
     rc="$(printf '%s\n' "refs/heads/master $S14_SHA refs/heads/master $BASE_SHA" \
-          | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE14" bash "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+          | ( cd "$R" && REVIEW_RECORD_PUSH_OVERRIDE_STATE_DIR="$STATE14" "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
     [[ "$rc" == "0" ]] && pass "marker written by the real authorize script is honored by the gate (rc=0)" \
       || fail "gate did not honor a marker from the real authorize script (rc=$rc)"
   else
@@ -1074,7 +1460,7 @@ _rrpg_self_test() {
   sed 's/\[\[ "\$saw_block" -eq 1 \]\] && return 1/[[ "$saw_block" -eq 1 ]] \&\& return 0/' "$SELF" > "$MUTANT"
   if grep -q '\[\[ "\$saw_block" -eq 1 \]\] && return 0' "$MUTANT"; then
     rc="$(printf '%s\n' "refs/heads/master $S1_SHA refs/heads/master $ORIG_BASE_SHA" \
-          | ( cd "$R" && bash "$MUTANT" origin ) >/dev/null 2>&1; echo $?)"
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT" origin ) >/dev/null 2>&1; echo $?)"
     if [[ "$rc" == "0" ]]; then
       pass "mutant (block decision neutered) WRONGLY allows the golden-case push (rc=0) — proves the real gate's rc=1 is load-bearing"
     else
@@ -1170,6 +1556,107 @@ _rrpg_self_test() {
     *) fail "message omits the typechanged file"; esac
 
   # ==========================================================================
+  # Scenarios 17e/17f: THE PATH IS NOT ITS RENDERING. (harness-reviewer
+  # CRITICAL 2, round 4.) `git diff --name-only` C-quotes non-ASCII and
+  # backslash under git's default core.quotePath, and rrg_in_surface answers
+  # OUT for the quoted form while answering IN for the raw path -- so a brand
+  # new in-surface file was classified out-of-surface and landed unreviewed.
+  # PROVEN against a bare remote at rc=0 with ZERO gate bytes.
+  #
+  # 17f additionally pins the SPACE case as a CONTROL: a space is never
+  # quoted, so it passed all along. That is exactly why this hid -- the
+  # obvious "weird filename" probe is the one shape that was never broken.
+  # ==========================================================================
+  echo "Scenario 17e: CRITICAL 2 — a NON-ASCII in-surface path is gated (git C-quotes it: \"...pr\\303\\251...\")"
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+  printf '#!/bin/bash\n# brand new unreviewed harness code\n' > "$R/adapters/claude-code/hooks/pré-push-gate.sh"
+  ( cd "$R" && git add -A && git commit -qm "feat: non-ascii gate" ) >/dev/null 2>&1
+  local S17NA_SHA; S17NA_SHA="$(cd "$R" && git rev-parse HEAD)"
+  # Guard: git must REALLY be quoting this path, or the scenario is asserting
+  # against an ordinary ASCII path and proves nothing about the encoding.
+  local q17; q17="$(cd "$R" && git diff --name-only "$BASE_SHA..$S17NA_SHA" | grep -c '^"' 2>/dev/null)"
+  [[ "${q17:-0}" -ge 1 ]] && pass "fixture really is C-quoted by git's default --name-only rendering" \
+    || fail "fixture bug: git did not quote the path — Scenario 17e proves nothing"
+  rc="$(run origin "refs/heads/master $S17NA_SHA refs/heads/master $BASE_SHA")"
+  [[ "$rc" == "1" ]] && pass "non-ASCII in-surface path BLOCKS (rc=1)" \
+    || fail "a C-quoted path was classified OUT of surface and landed unreviewed (rc=$rc) — CRITICAL 2 is open"
+  local msg17na; msg17na="$(run_capture origin "refs/heads/master $S17NA_SHA refs/heads/master $BASE_SHA")"
+  case "$msg17na" in *"pré-push-gate.sh"*) pass "message names the file in its RAW form, not the C-quoted rendering" ;; \
+    *) fail "message omits the non-ASCII file (or prints the escaped rendering)"; esac
+
+  echo "Scenario 17f: CRITICAL 2 — a BACKSLASH path is gated (core.quotePath=false alone does NOT fix this one), and a SPACE path is the control"
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+  printf '#!/bin/bash\n# unreviewed\n' > "$R/adapters/claude-code/hooks/back\\slash.sh"
+  ( cd "$R" && git add -A && git commit -qm "feat: backslash gate" ) >/dev/null 2>&1
+  local S17BS_SHA; S17BS_SHA="$(cd "$R" && git rev-parse HEAD)"
+  rc="$(run origin "refs/heads/master $S17BS_SHA refs/heads/master $BASE_SHA")"
+  [[ "$rc" == "1" ]] && pass "backslash in-surface path BLOCKS (rc=1)" \
+    || fail "a backslash path was classified OUT of surface (rc=$rc) — the -z framing is missing"
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+  printf '#!/bin/bash\n# unreviewed\n' > "$R/adapters/claude-code/hooks/two words.sh"
+  ( cd "$R" && git add -A && git commit -qm "feat: spaced gate" ) >/dev/null 2>&1
+  local S17SP_SHA; S17SP_SHA="$(cd "$R" && git rev-parse HEAD)"
+  rc="$(run origin "refs/heads/master $S17SP_SHA refs/heads/master $BASE_SHA")"
+  [[ "$rc" == "1" ]] && pass "CONTROL: a space path blocks too (it always did — git never quotes a space)" \
+    || fail "the space path regressed (rc=$rc)"
+
+  # ==========================================================================
+  # Scenario 17g: THE FIFTH VERB — MODE. (harness-reviewer CRITICAL 3,
+  # round 4.) The file stays, the bytes stay, the mode changes: the coverage
+  # key is {path, blob_sha}, so the blob still matches its PASS record and the
+  # gate waved it through. PROVEN against a bare remote with
+  # `git update-index --chmod=-x` on the pre-push DISPATCHER -- rc=0, gate
+  # SILENT, remote carries 100644, and git refuses to run a non-executable
+  # hook, so every clone from that point has the whole chain disarmed.
+  # ==========================================================================
+  echo "Scenario 17g: CRITICAL 3 — a MODE-ONLY change on a COVERED in-surface file BLOCKS (blob is unchanged, so coverage matched)"
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+  mkdir -p "$R/adapters/claude-code/git-hooks"
+  printf '#!/bin/bash\n# dispatcher\n' > "$R/adapters/claude-code/git-hooks/pre-push"
+  chmod +x "$R/adapters/claude-code/git-hooks/pre-push"
+  local disp_blob; disp_blob="$(cd "$R" && git hash-object adapters/claude-code/git-hooks/pre-push)"
+  printf '{"entries":[{"path":"adapters/claude-code/git-hooks/pre-push","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}]}\n' "$disp_blob" \
+    > "$R/docs/reviews/records/index.json"
+  ( cd "$R" && git add -A && git commit -qm "add a COVERED, executable dispatcher" ) >/dev/null 2>&1
+  local MODE_BASE; MODE_BASE="$(cd "$R" && git rev-parse HEAD)"
+  # Sanity: pushing the covered dispatcher must be ALLOWED, or the block below
+  # could be firing on non-coverage rather than on the mode.
+  rc="$(run origin "refs/heads/master $MODE_BASE refs/heads/master $BASE_SHA")"
+  [[ "$rc" == "0" ]] && pass "baseline: the dispatcher is genuinely COVERED (rc=0) — a later block cannot be blamed on coverage" \
+    || fail "fixture bug: the dispatcher is not covered (rc=$rc) — Scenario 17g would prove nothing"
+  ( cd "$R" && git update-index --chmod=-x adapters/claude-code/git-hooks/pre-push \
+      && git commit -qm "chore: index-only chmod -x of the dispatcher" ) >/dev/null 2>&1
+  local S17MODE_SHA; S17MODE_SHA="$(cd "$R" && git rev-parse HEAD)"
+  # Guard: the fixture must really be a MODE-ONLY change -- same blob, new mode.
+  local m_before m_after b_before b_after
+  m_before="$(cd "$R" && git ls-tree "$MODE_BASE" adapters/claude-code/git-hooks/pre-push | awk '{print $1}')"
+  m_after="$(cd "$R" && git ls-tree "$S17MODE_SHA" adapters/claude-code/git-hooks/pre-push | awk '{print $1}')"
+  b_before="$(cd "$R" && git rev-parse "$MODE_BASE:adapters/claude-code/git-hooks/pre-push")"
+  b_after="$(cd "$R" && git rev-parse "$S17MODE_SHA:adapters/claude-code/git-hooks/pre-push")"
+  if [[ "$m_before" == "100755" && "$m_after" == "100644" && "$b_before" == "$b_after" ]]; then
+    pass "fixture really is MODE-ONLY (100755 -> 100644, blob unchanged at $b_after)"
+  else
+    fail "fixture bug: expected 100755->100644 with an unchanged blob, got $m_before->$m_after ($b_before vs $b_after)"
+  fi
+  rc="$(run origin "refs/heads/master $S17MODE_SHA refs/heads/master $MODE_BASE")"
+  [[ "$rc" == "1" ]] && pass "mode-only disarm of the dispatcher BLOCKS (rc=1)" \
+    || fail "a mode-only change passed coverage and landed (rc=$rc) — CRITICAL 3 is open"
+  local msg17mode; msg17mode="$(run_capture origin "refs/heads/master $S17MODE_SHA refs/heads/master $MODE_BASE")"
+  case "$msg17mode" in *"FILE MODE 100755"*) pass "message names the mode transition explicitly" ;; \
+    *) fail "message does not name the mode transition"; esac
+  # THE REMEDY MUST BE SATISFIABLE, not just runnable: for a mode-only change
+  # the review pathway is structurally incapable of clearing the block (the
+  # record would attest to the same blob it already attests to), so the block
+  # must say so rather than sending the operator round a loop.
+  case "$msg17mode" in *"REVIEWING IT CANNOT CLEAR THIS BLOCK"*) \
+    pass "block states that review cannot clear a mode-only change, and routes to the override" ;; \
+    *) fail "block offers the review pathway for a mode change it can never satisfy"; esac
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+  printf '{"entries":[]}\n' > "$R/docs/reviews/records/index.json"
+  ( cd "$R" && git add -A && git commit -qm "reset index after mode scenario" ) >/dev/null 2>&1
+  BASE_SHA="$(cd "$R" && git rev-parse HEAD)"
+
+  # ==========================================================================
   # Scenario 22: THE REMEDY MUST BE RUNNABLE. (harness-reviewer MAJOR 1.)
   # CLASS: decorated-list-element-reused-as-machine-argument. The human bullet
   # annotation ("foo.sh (DELETED by this push -- ...)") was spliced verbatim
@@ -1208,14 +1695,14 @@ _rrpg_self_test() {
   local NOLIB="$T/nolib"; mkdir -p "$NOLIB"
   cp "$SELF" "$NOLIB/review-record-push-gate.sh"
   rc="$(printf '%s\n' "refs/heads/master $S1_SHA refs/heads/master $ORIG_BASE_SHA" \
-        | ( cd "$R" && bash "$NOLIB/review-record-push-gate.sh" origin ) >/dev/null 2>&1; echo $?)"
+        | ( cd "$R" && "$_RRPG_TEST_BASH" "$NOLIB/review-record-push-gate.sh" origin ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "1" ]] && pass "missing library in the harness repo BLOCKS (rc=1)" \
     || fail "deleting the gate's own library disarmed it (rc=$rc)"
   local nolib_foreign_err rc_f
   nolib_foreign_err="$(printf '%s\n' "refs/heads/master $FHEAD refs/heads/master $FBASE" \
-        | ( cd "$FR" && bash "$NOLIB/review-record-push-gate.sh" origin ) 2>&1 >/dev/null)"
+        | ( cd "$FR" && "$_RRPG_TEST_BASH" "$NOLIB/review-record-push-gate.sh" origin ) 2>&1 >/dev/null)"
   rc_f="$(printf '%s\n' "refs/heads/master $FHEAD refs/heads/master $FBASE" \
-        | ( cd "$FR" && bash "$NOLIB/review-record-push-gate.sh" origin ) >/dev/null 2>&1; echo $?)"
+        | ( cd "$FR" && "$_RRPG_TEST_BASH" "$NOLIB/review-record-push-gate.sh" origin ) >/dev/null 2>&1; echo $?)"
   if [[ "$rc_f" == "0" && -z "$nolib_foreign_err" ]]; then
     pass "a foreign repo with no library is silently ignored (rc=0, 0 bytes) — FP budget intact"
   else
@@ -1262,7 +1749,7 @@ _rrpg_self_test() {
     fail "Scenario 19 did not record a dispatcher-change commit — nothing to mutate against"
   else
     rc="$(printf '%s\n' "refs/heads/master $DISPATCHER_SHA refs/heads/master $BASE_SHA" \
-          | ( cd "$R" && bash "$MUT4DIR/gate.sh" origin ) >/dev/null 2>&1; echo $?)"
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUT4DIR/gate.sh" origin ) >/dev/null 2>&1; echo $?)"
     if [[ "$rc" == "0" ]]; then
       pass "mutant (no git-hooks/* arm) WRONGLY allows the unreviewed dispatcher push (rc=0) — proves the surface arm is load-bearing"
     else
@@ -1310,7 +1797,7 @@ _rrpg_self_test() {
     "$SELF" > "$MUTANT2"
   if grep -q '^  \[\[ -f "\$repo_root/adapters/claude-code/manifest.json" \]\] || return 0' "$MUTANT2"; then
     rc="$(printf '%s\n' "refs/heads/master $S16_SHA refs/heads/master $BASE_SHA" \
-          | ( cd "$R" && bash "$MUTANT2" origin ) >/dev/null 2>&1; echo $?)"
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT2" origin ) >/dev/null 2>&1; echo $?)"
     if [[ "$rc" == "0" ]]; then
       pass "mutant (working-tree-anchored scope test) WRONGLY allows the manifest-deletion push (rc=0) — proves the anchor is load-bearing"
     else
@@ -1332,10 +1819,10 @@ _rrpg_self_test() {
   local MUT3DIR="$T/mutant-del"; mkdir -p "$MUT3DIR/lib"
   cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT3DIR/lib/" 2>/dev/null
   local MUTANT3="$MUT3DIR/gate.sh"
-  sed 's#^    deleted="\$(git -C .*#    deleted=""#' "$SELF" > "$MUTANT3"
-  if grep -q '^    deleted=""$' "$MUTANT3"; then
+  sed 's#^    _rrpg_diff_z     "\$repo_root" "\$F_DELETED".*del_rc=\$?#    : > "$F_DELETED"; del_rc=0#' "$SELF" > "$MUTANT3"
+  if grep -q '^    : > "\$F_DELETED"; del_rc=0$' "$MUTANT3"; then
     rc="$(printf '%s\n' "refs/heads/master $S17_SHA refs/heads/master $V_BASE" \
-          | ( cd "$R" && bash "$MUTANT3" origin ) >/dev/null 2>&1; echo $?)"
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT3" origin ) >/dev/null 2>&1; echo $?)"
     if [[ "$rc" == "0" ]]; then
       pass "mutant (no deletion enumeration) WRONGLY allows the git-rm push (rc=0) — proves the D arm is load-bearing"
     else
@@ -1356,10 +1843,10 @@ _rrpg_self_test() {
   local MUT5DIR="$T/mutant-norenames"; mkdir -p "$MUT5DIR/lib"
   cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT5DIR/lib/" 2>/dev/null
   local MUTANT5="$MUT5DIR/gate.sh"
-  sed 's#\(^    deleted="\$(git -C .*--diff-filter=D\) --no-renames#\1#' "$SELF" > "$MUTANT5"
-  if grep -q '^    deleted=.*--diff-filter=D "\$range"' "$MUTANT5"; then
+  sed 's#\(^    _rrpg_diff_z     "\$repo_root" "\$F_DELETED" --diff-filter=D\) --no-renames#\1#' "$SELF" > "$MUTANT5"
+  if grep -q '^    _rrpg_diff_z     "\$repo_root" "\$F_DELETED" --diff-filter=D "\$range"' "$MUTANT5"; then
     rc="$(printf '%s\n' "refs/heads/master $S17MV_SHA refs/heads/master $V_BASE" \
-          | ( cd "$R" && bash "$MUTANT5" origin ) >/dev/null 2>&1; echo $?)"
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT5" origin ) >/dev/null 2>&1; echo $?)"
     if [[ "$rc" == "0" ]]; then
       pass "mutant (no --no-renames) WRONGLY allows the git-mv push (rc=0) — proves the token is load-bearing"
     else
@@ -1370,26 +1857,123 @@ _rrpg_self_test() {
   fi
 
   # ==========================================================================
-  # Scenario 21c: MUTATION-PROOF #5 — the T in ACMRT, isolated. Scenario 17c
-  # asserts a typechange blocks; this proves that assertion is carried by the T
-  # code being enumerated. Remove ONE character; the typechange attack must
-  # succeed again.
+  # Scenario 21c: MUTATION-PROOF #5 — the typechange, now DOUBLY covered.
+  #
+  # HONEST RESULT, recorded rather than engineered away: once the round-4 mode
+  # arm landed, reverting ACMRT to ACMR was NO LONGER sufficient to re-open
+  # the typechange hole — because a regular-file -> symlink IS a mode
+  # transition (100644 -> 120000), so the mode arm catches it independently.
+  # The single-token mutant went green-blocking and this scenario would have
+  # read as "the mutation did not land" if left as written.
+  #
+  # Rather than contrive a mutant that isolates a now-redundant token, the
+  # scenario asserts what is actually true, in two parts:
+  #   (a) REDUNDANCY IS REAL — removing only the T still blocks. That is
+  #       defense-in-depth, and it is worth pinning so a future reader does
+  #       not "simplify" ACMRT back to ACMR believing it is free.
+  #   (b) THE COVERAGE IS LOAD-BEARING — removing the T *and* the mode arm
+  #       re-opens the hole, proving nothing else in the gate catches it.
   # ==========================================================================
-  echo "Scenario 21c: MUTATION-PROOF — reverting ACMRT to ACMR must re-open the typechange hole"
+  echo "Scenario 21c: MUTATION-PROOF — the typechange is covered TWICE (ACMRT and the mode arm); removing both re-opens it"
   local MUT6DIR="$T/mutant-acmrt"; mkdir -p "$MUT6DIR/lib"
   cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT6DIR/lib/" 2>/dev/null
-  local MUTANT6="$MUT6DIR/gate.sh"
-  sed 's#\(^    files="\$(git -C .*--diff-filter=ACMR\)T#\1#' "$SELF" > "$MUTANT6"
-  if grep -q '^    files=.*--diff-filter=ACMR "\$range"' "$MUTANT6"; then
+  local MUTANT6="$MUT6DIR/gate.sh" MUTANT6B="$MUT6DIR/gate-both.sh"
+  sed 's#\(^    _rrpg_diff_z     "\$repo_root" "\$F_CHANGED" --diff-filter=ACMR\)T#\1#' "$SELF" > "$MUTANT6"
+  sed 's#^    _rrpg_diff_raw_z "\$repo_root" "\$F_RAW".*raw_rc=\$?#    : > "$F_RAW"; raw_rc=0#' "$MUTANT6" > "$MUTANT6B"
+  if ! grep -q '^    _rrpg_diff_z     "\$repo_root" "\$F_CHANGED" --diff-filter=ACMR "\$range"' "$MUTANT6"; then
+    fail "could not construct the ACMRT mutant (sed anchor not found — script drifted)"
+  elif ! grep -q '^    : > "\$F_RAW"; raw_rc=0$' "$MUTANT6B"; then
+    fail "could not construct the ACMRT+mode double mutant (sed anchor not found — script drifted)"
+  else
     rc="$(printf '%s\n' "refs/heads/master $S17TC_SHA refs/heads/master $V_BASE" \
-          | ( cd "$R" && bash "$MUTANT6" origin ) >/dev/null 2>&1; echo $?)"
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT6" origin ) >/dev/null 2>&1; echo $?)"
+    [[ "$rc" == "1" ]] && pass "REDUNDANCY PROVEN: ACMR-only still blocks the typechange (rc=1) — the mode arm covers it independently" \
+      || fail "ACMR-only allowed the typechange (rc=$rc) — the redundancy this scenario documents does not exist"
+    rc="$(printf '%s\n' "refs/heads/master $S17TC_SHA refs/heads/master $V_BASE" \
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT6B" origin ) >/dev/null 2>&1; echo $?)"
     if [[ "$rc" == "0" ]]; then
-      pass "mutant (ACMR, no T) WRONGLY allows the typechange push (rc=0) — proves the T is load-bearing"
+      pass "double mutant (no T, no mode arm) WRONGLY allows the typechange push (rc=0) — proves nothing ELSE in the gate catches it"
     else
-      fail "mutant still blocked (rc=$rc) — the ACMRT mutation did not land, this scenario proves nothing"
+      fail "double mutant still blocked (rc=$rc) — the typechange mutation did not land, this scenario proves nothing"
+    fi
+  fi
+
+  # ==========================================================================
+  # Scenario 21d: MUTATION-PROOF #6 — the MODE arm, isolated. Scenario 17g
+  # asserts a mode-only change blocks; this proves that assertion is carried
+  # by the --raw enumeration and not by some other arm incidentally catching
+  # the same commit (the blob IS covered there, so no other arm should).
+  # ==========================================================================
+  echo "Scenario 21d: MUTATION-PROOF — dropping the --raw mode enumeration must re-open the chmod hole"
+  local MUT7DIR="$T/mutant-mode"; mkdir -p "$MUT7DIR/lib"
+  cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT7DIR/lib/" 2>/dev/null
+  local MUTANT7="$MUT7DIR/gate.sh"
+  sed 's#^    _rrpg_diff_raw_z "\$repo_root" "\$F_RAW".*raw_rc=\$?#    : > "$F_RAW"; raw_rc=0#' "$SELF" > "$MUTANT7"
+  if grep -q '^    : > "\$F_RAW"; raw_rc=0$' "$MUTANT7"; then
+    rc="$(printf '%s\n' "refs/heads/master $S17MODE_SHA refs/heads/master $MODE_BASE" \
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT7" origin ) >/dev/null 2>&1; echo $?)"
+    if [[ "$rc" == "0" ]]; then
+      pass "mutant (no mode enumeration) WRONGLY allows the chmod push (rc=0) — proves the mode arm is load-bearing"
+    else
+      fail "mutant still blocked (rc=$rc) — the mode mutation did not land, this scenario proves nothing"
     fi
   else
-    fail "could not construct the ACMRT mutant (sed anchor not found — script drifted)"
+    fail "could not construct the mode mutant (sed anchor not found — script drifted)"
+  fi
+
+  # ==========================================================================
+  # Scenario 21e: MUTATION-PROOF #7 — the DEGRADED-ARM re-derivation,
+  # isolated. Restore the exact pre-fix shape (the fallback populates the
+  # change arm and leaves the removal arm at its failed, empty value) and
+  # confirm CRITICAL 1 succeeds again. Deleting ONE line is the whole defect.
+  # ==========================================================================
+  echo "Scenario 21e: MUTATION-PROOF — leaving the removal arm unpopulated in the degraded branch must re-open CRITICAL 1"
+  local MUT8DIR="$T/mutant-degraded"; mkdir -p "$MUT8DIR/lib"
+  cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT8DIR/lib/" 2>/dev/null
+  local MUTANT8="$MUT8DIR/gate.sh"
+  sed '/cat "\$_tmp\/d1.z" >> "\$F_DELETED"/d' "$SELF" > "$MUTANT8"
+  if grep -q 'cat "\$_tmp/d1.z" >> "\$F_DELETED"' "$MUTANT8"; then
+    fail "could not construct the degraded-arm mutant (the cat survived the sed)"
+  else
+    rc="$(printf '%s\n' "refs/heads/master $S13C_SHA refs/heads/master $BOGUS_SHA" \
+          | ( cd "$DG" && "$_RRPG_TEST_BASH" "$MUTANT8" origin ) >/dev/null 2>&1; echo $?)"
+    if [[ "$rc" == "0" ]]; then
+      pass "mutant (removal arm left empty on degrade) WRONGLY allows the deletion push (rc=0) — proves the re-derivation is load-bearing"
+    else
+      fail "mutant still blocked (rc=$rc) — the degraded-arm mutation did not land, this scenario proves nothing"
+    fi
+  fi
+
+  # ==========================================================================
+  # Scenario 21f: MUTATION-PROOF #8 — the PATH ENCODING fix, isolated.
+  # Restore BOTH halves of the pre-fix shape (line-framed `--name-only` with
+  # git's default quoting, consumed by a line-framed `read -r`) and confirm
+  # the non-ASCII path lands again. The mutant must stay DISCRIMINATING: it
+  # has to keep blocking the plain-ASCII golden case, or it would be proving
+  # "the gate stopped working" rather than "the encoding fix is load-bearing".
+  # ==========================================================================
+  echo "Scenario 21f: MUTATION-PROOF — reverting to line-framed, C-quoted enumeration must re-open the non-ASCII hole"
+  local MUT9DIR="$T/mutant-quote"; mkdir -p "$MUT9DIR/lib"
+  cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT9DIR/lib/" 2>/dev/null
+  local MUTANT9="$MUT9DIR/gate.sh"
+  sed -e 's#git -C "\$repo_root" -c core.quotePath=false diff --name-only -z "\$@" > "\$out"#git -C "$repo_root" diff --name-only "$@" > "$out"#' \
+      -e "s#while IFS= read -r -d '' f; do#while IFS= read -r f; do#" \
+      "$SELF" > "$MUTANT9"
+  if grep -q 'git -C "\$repo_root" diff --name-only "\$@" > "\$out"' "$MUTANT9" \
+     && ! grep -q "while IFS= read -r -d '' f; do" "$MUTANT9"; then
+    rc="$(printf '%s\n' "refs/heads/master $S17NA_SHA refs/heads/master $BASE_SHA" \
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT9" origin ) >/dev/null 2>&1; echo $?)"
+    local rc_ascii; rc_ascii="$(printf '%s\n' "refs/heads/master $S1_SHA refs/heads/master $ORIG_BASE_SHA" \
+          | ( cd "$R" && "$_RRPG_TEST_BASH" "$MUTANT9" origin ) >/dev/null 2>&1; echo $?)"
+    if [[ "$rc" == "0" && "$rc_ascii" == "1" ]]; then
+      pass "mutant (line-framed, quoted) WRONGLY allows the non-ASCII push (rc=0) while still blocking the ASCII one (rc=1) — proves the encoding fix is load-bearing AND the mutant is discriminating"
+    elif [[ "$rc" == "0" ]]; then
+      fail "mutant allows the non-ASCII push but ALSO stopped blocking the ASCII golden case (rc=$rc_ascii) — the mutation is too broad to prove the encoding claim"
+    else
+      fail "mutant still blocked the non-ASCII push (rc=$rc) — the encoding mutation did not land, this scenario proves nothing"
+    fi
+  else
+    fail "could not construct the encoding mutant (sed anchors not found — script drifted)"
   fi
 
   rm -rf "$T"

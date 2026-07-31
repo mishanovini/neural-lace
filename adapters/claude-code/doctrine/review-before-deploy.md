@@ -47,15 +47,54 @@ so a new sibling defaults IN. Re-derive the exemption list with
 `git ls-files 'adapters/claude-code/hooks/*' 'adapters/claude-code/scripts/*'
 | grep -vE '\.(sh|js|ts|py|ps1)$'`.
 
-**Subject-set enumeration (Amendment H):** `review-record-push-gate.sh`
-enumerates the pushed range with `--diff-filter=ACMRT` **plus** a separate
-`--diff-filter=D --no-renames` pass. "The enforcing file is gone from its
-path" is ONE outcome with FOUR verbs — edit `M`, `git rm` `D`, `git mv`
-`R100 <old> <new>` (ACMR emits only the DESTINATION, D emits nothing), and
-typechange `T` (excluded by BOTH). Any gate deriving a subject set from
-`git diff` must enumerate by the codes through which its subject can change
-**or leave** the surface, and every self-test carries a `git mv` case and a
-typechange case beside its `git rm` case.
+**Subject-set enumeration (Amendment H, extended round 4):**
+`review-record-push-gate.sh` enumerates the pushed range on THREE arms —
+`--diff-filter=ACMRT`, a separate `--diff-filter=D --no-renames` pass, and a
+`--raw` pass for FILE MODE. "The enforcing file no longer enforces at its
+path" is ONE outcome with FIVE verbs: edit `M`, `git rm` `D`, `git mv`
+`R100 <old> <new>` (ACMR emits only the DESTINATION, D emits nothing),
+typechange `T` (excluded by BOTH), and **mode-only `chmod` `M` with an
+unchanged blob — enumerated, but it PASSED coverage, because the authorized
+key is `{path, blob_sha}` and the blob never moved.** `review-record-commit-
+gate.sh` and `lib/review-queue-auto-enqueue-lib.sh` carry ACMRT + the `D`
+pass too (round 4): advisory-only is a reason for a softer CONSEQUENCE, never
+for a smaller SUBJECT SET.
+
+Three rules, each earned by a proven bypass:
+
+1. **Enumerate by the codes through which the subject can change *or leave*
+   the surface.** Every self-test carries a `git mv`, a typechange, and a
+   mode-only case beside its `git rm` case.
+2. **A control that authorizes content BY HASH must state what metadata the
+   hash does NOT cover** — mode, symlink-ness, path encoding, filename case —
+   and either cover it or enumerate it as a named bypass. See
+   `manifest.json` `review-record-push-gate.bypass_paths[16]` for this
+   control's exhaustive statement.
+3. **Git path OUTPUT is a rendering, not the path.** Every harness consumer
+   of `git diff --name-only` / `ls-files` that feeds a path PREDICATE must use
+   `-c core.quotePath=false` **and** `-z`, consumed with
+   `while IFS= read -r -d ''`. Measured: `core.quotePath=false` alone still
+   quotes a backslash; a space is never quoted, which is why the obvious probe
+   misses this. A C-quoted `hooks/pré-push-gate.sh` was classified
+   out-of-surface and landed on a real remote at rc=0.
+
+**Degraded scans re-derive EVERY arm or fail closed (round 4).** When the
+pushed range cannot be diffed (an unfetched remote tip — reachable on a plain
+push and on `--force`), the change arm degrades UPWARD to
+`EMPTY_TREE..local_sha`, a strict superset. The removal and mode arms cannot:
+both are differential and re-derive from the remote-tracking refs (an anchor
+the push does not write), unioned across every ref that resolves. If none
+resolves, the push is REFUSED. A fallback that recomputes a SUBSET of the
+subject set is a bypass that fires exactly when the gate is least sure of
+itself — the previous revision recomputed only the change arm and silently
+dropped the whole deletion arm, and `EMPTY_TREE..local` structurally cannot
+emit a `D`.
+
+**A remedy must be SATISFIABLE, not merely runnable.** For a mode-only change
+the review pathway can never clear the block (the record would attest to the
+blob it already attests to), so that block routes to the operator override and
+says why. Scenario 22 pins that the emitted remedy PARSES; Scenario 17g pins
+that it can actually be FOLLOWED.
 
 **Coverage (Amendments D+E):** covered iff `{path, blob_sha}` is in
 `grandfather-manifest.json` (pre-cutover, exempt) OR in `index.json` with

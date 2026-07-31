@@ -299,6 +299,140 @@ First task: 1.
   gate). Found by this builder while reproducing Critical 1, not reported by the
   reviewer. Tier 2.
 
+---
+
+## Round 4 — evidence (harness-reviewer REJECT on `3ec297a`)
+
+Recorded HERE, in a TRACKED file, rather than in `.claude/state/observed-errors.md`
+(harness-reviewer MINOR b): that path is untracked, so citing it as an evidence
+trail resolves to nothing for any reader of the repo — a constitution §2 miss.
+
+The reviewer's closing point, which governs this round: **"four verbs" was never
+the boundary of the outcome; it was the boundary of the last test matrix.** Two
+of the three CRITICALs below reach the already-named outcome through a dimension
+no verb enumerates (a fallback's arm coverage; the enumeration's output
+encoding), and the third adds a fifth verb.
+
+### The seven-case matrix, executed end-to-end
+
+Fixture: a real bare remote, a clone with `core.hooksPath` pointing at the
+repo's own `adapters/claude-code/git-hooks`, the live gate installed as the real
+pre-push hook, and every in-surface file COVERED at the baseline (so a block is
+never attributable to unrelated uncovered content). Each row is a real
+`git push`; "remote" is `git ls-tree -r master` on the bare repo afterwards.
+
+| # | input shape | pre-fix | remote after (pre-fix) | post-fix |
+|---|---|---|---|---|
+| 1 | CONTROL: new unreviewed `hooks/plain-new.sh` | rc=1 BLOCKED | unchanged | rc=1 BLOCKED |
+| 2 | **degraded range** — remote advanced by an unfetched commit, then `git rm` of an in-surface gate + `push --force` | **rc=0, gate SILENT** | **`hooks/victim-gate.sh` GONE** | rc=1 BLOCKED |
+| 3 | **C-quoted path** — new `hooks/pré-push-gate.sh` | **rc=0, gate SILENT** | **`"hooks/pr\303\251-push-gate.sh"` PRESENT** | rc=1 BLOCKED |
+| 4 | **backslash path** — new `hooks/back\slash.sh` | **rc=0, gate SILENT** | **`"hooks/back\\slash.sh"` PRESENT** | rc=1 BLOCKED |
+| 5 | CONTROL: space path — new `hooks/two words.sh` | rc=1 BLOCKED | unchanged | rc=1 BLOCKED |
+| 6 | **`chmod -x` dispatcher** (working tree) | **rc=0, no hook ran** | **`git-hooks/pre-push` mode 100644** | **rc=0 — NOT closable, see below** |
+| 7 | **`update-index --chmod=-x` dispatcher** | **rc=0, gate SILENT** | **`git-hooks/pre-push` mode 100644** | rc=1 BLOCKED |
+
+Row 5 is the load-bearing control: a space is never C-quoted, which is exactly
+why rows 3–4 survived every previous "weird filename" probe.
+
+Row 6 is stated as NOT CLOSED, with the impossibility argument rather than an
+assertion. `core.hooksPath` names a working-tree file and git checks the
+executable bit BEFORE running it, so for that push **no hook executes at all**.
+PROVEN, not inferred: the transcript carries git's own `hook was ignored because
+it's not set as executable` hint and does NOT carry the dispatcher's own first
+line of output. What IS closed for row 6 is the DETECTION — invoking the gate
+directly on that same commit emits
+`adapters/claude-code/git-hooks/pre-push (FILE MODE 100755 → 100644 …)`.
+Enumerated as `bypass_paths[14](c2)`, inheriting `(a)`'s argument and needing
+the same missing piece: a server-side required status check.
+
+### False-positive figures, re-derived over a NAMED population
+
+MAJOR 1: the prior revision quoted **1763** while the scan that produced the
+numerators **excluded merges**, and the comparative it supported ("0.40% is
+cheaper than the accepted 0.45%") survives neither denominator.
+
+```sh
+git rev-list --no-merges master   | wc -l   # 1593  <- the scanned population
+git rev-list master               | wc -l   # 1763
+git rev-list --first-parent master| wc -l   # 1106
+# per arm, in-surface paths only:
+for c in $(git rev-list --no-merges master); do
+  git -c core.quotePath=false diff --name-only -z <FILTER> "$c^..$c"
+done   # piped through rrg_in_surface
+```
+
+| arm | commits | files | of 1593 non-merge |
+|---|---|---|---|
+| deletions `D` | 8 | 104 | 0.50% |
+| rename sources (`--no-renames` increment) | 7 | 38 | 0.44% |
+| typechange `T` | 0 | 0 | 0.00% |
+| mode transitions (`--raw`, any direction) | 5 | 116 | 0.31% |
+| — of which `100755→100644` only | 1 | 1 | 0.06% |
+
+The rename arm is cheaper than the deletion arm already accepted — 0.44% vs
+0.50% — and that comparison is now between two figures over the SAME population,
+which is the only form in which it means anything. The mode arm is taken in
+BOTH directions (0.31%, still cheaper than the accepted deletion arm) rather
+than only the disarm direction (0.06%), because a directional exemption branch
+in the control that exists to make metadata visible repeats the mistake the
+within-surface-rename exemption was refused for one round earlier.
+
+### Suite counts — both interpreters, by absolute path, sequential
+
+| suite | `/bin/bash` 3.2.57 | `/opt/homebrew/bin/bash` 5.3.15 |
+|---|---|---|
+| `hooks/review-record-push-gate.sh` | 75 passed, 0 failed | 75 passed, 0 failed |
+| `hooks/lib/review-record-gate-lib.sh` | 75 passed, 0 failed | 75 passed, 0 failed |
+| `hooks/review-record-commit-gate.sh` | 67 passed, 0 failed | 67 passed, 0 failed |
+
+Baseline at the imported `3ec297a`: 53 / 75 / 60.
+
+**These counts mean something they did not mean before.** Both suites drove the
+gate as a CHILD PROCESS via a bare `bash`, which resolves through PATH — 5.3 on
+this machine. So `/bin/bash …​ --self-test` ran the harness at the 3.2 floor
+while every gate body it exercised ran at 5.3, and a bash-4-only construct would
+have gone green on the "3.2" run. Both suites now invoke the child through
+`$BASH` and print the interpreter they are using.
+
+### Mutation proofs (each new arm, isolated)
+
+| scenario | mutation | result |
+|---|---|---|
+| 21 | deletion enumeration → empty | git-rm attack passes again |
+| 21b | drop `--no-renames` | git-mv attack passes again |
+| 21c | drop `T`; then drop `T` **and** the mode arm | ACMR-only STILL blocks (redundancy PROVEN); double mutant re-opens it |
+| 21d | neuter the `--raw` mode arm | chmod attack passes again |
+| 21e | delete one line so the degraded branch leaves the removal arm empty | CRITICAL 1 re-opens |
+| 21f | revert to line-framed C-quoted enumeration | non-ASCII passes again **while still blocking plain ASCII** (discriminating, not merely broken) |
+
+Commit-gate scenarios 24/25/26 were each confirmed RED against exactly their own
+mutant and no other — the arms had landed BLIND, with the suite staying at its
+previous count while ACMRT→ACMR and a neutered deletion arm both left it green.
+
+### Doctor — named-check delta, never a bare count
+
+MINOR a: the prior commit's "16 RED before, 16 after" is unreproducible and
+would have concealed movement in BOTH directions. At `3ec297a` vs this tree,
+both runs report **15 RED / 37 checks**, and the SETS differ:
+
+- **FIXED:** `wave-f-f2-docs` — MAJOR 2, closed by re-running
+  `scripts/gen-architecture-doc.sh` in this commit.
+- **NEW:** `obs-writers-firing` — NOT caused by this diff. It reports that
+  `~/.claude/state/signal-ledger.jsonl` "has NOT grown since the last doctor
+  check", i.e. it is machine-live state tripped by running the doctor twice in
+  quick succession to compute this very delta. Environment-scoped, like
+  `obs-heartbeats-fresh` and the `budget-worktrees-branches` family.
+
+### Compact/full doctrine sweep
+
+MAJOR 3: `review-before-deploy-full.md` still described the retired
+extension-scoped surface. Fixed as an explicit SUPERSEDED note that names what
+it retracts (rather than a silent rewrite), and the pair sweep is now documented
+in that file. The sweep command uses `grep -oE`, **not** `rg`: on this machine
+`rg` is a shell FUNCTION from the Claude Code shell snapshot, so it resolves in
+an agent's tool shell and vanishes in a plain `bash script.sh` — verified by the
+first run of the sweep failing `rg: command not found` on every file.
+
 ## Definition of Done
 - [ ] All tasks checked off
 - [ ] All tests pass

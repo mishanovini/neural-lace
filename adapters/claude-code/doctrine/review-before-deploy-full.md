@@ -17,18 +17,66 @@ proven misses.
 
 ## Trigger surface — recursive-walk rationale (harness-review REFORMULATE fixup, 2026-07-16)
 
-**Enforced set == admitted-and-deployed set.** Both carriers walk
-`hooks/**/*.sh` and `scripts/**/*.sh` RECURSIVELY (a `find`, not a flat
-top-level glob) — a flat `scripts/*.sh` glob previously missed
-`scripts/lib/*.sh` (e.g. `imperative-classifier.sh`) entirely, and would
-silently miss any future `scripts/host-setup/*.sh` too, even though
-`sync_directory`/`git ls-tree -r` deploy those files just the same as
-top-level ones. `rules/**` is walked recursively for the same reason (no
-nested `rules/*.md` exists today, but the surface glob is recursive and a
-flat glob would silently miss one added later). `settings.json.template`
-is gated at BOTH its real call sites — the `--replace-settings` mode
-(which always applies it) and the normal flow's missing-`settings.json`
-copy — not just the one a narrower fix might touch.
+**Enforced set == admitted-and-deployed set.** Both carriers walk the
+carrier-chain trees RECURSIVELY (a `find`, not a flat top-level glob) — a flat
+`scripts/*.sh` glob previously missed `scripts/lib/*.sh` (e.g.
+`imperative-classifier.sh`) entirely, and would silently miss any future
+`scripts/host-setup/*.sh` too, even though `sync_directory`/`git ls-tree -r`
+deploy those files just the same as top-level ones. `rules/**` is walked
+recursively for the same reason (no nested `rules/*.md` exists today, but the
+surface glob is recursive and a flat glob would silently miss one added
+later). `settings.json.template` is gated at BOTH its real call sites — the
+`--replace-settings` mode (which always applies it) and the normal flow's
+missing-`settings.json` copy — not just the one a narrower fix might touch.
+
+> **SUPERSEDED IN PART, 2026-07-30 (Amendment H).** This section used to say
+> the carriers walk `hooks/**/*.sh` and `scripts/**/*.sh` — an
+> EXTENSION-SCOPED surface that Amendment H retired. The recursion rationale
+> above still holds and is why the surface is recursive; the extension
+> allowlist does not. The four carrier-chain trees (`hooks/`, `scripts/`,
+> `git-hooks/`, `schemas/`) are now matched **WHOLESALE**, with an exact-path
+> exemption list, because an extension allowlist is itself a hand-written list
+> that drifts silently: `hooks/lib/evil.mjs`, `hooks/evil.rb`,
+> `schemas/x.yaml` were each PROBED and confirmed NOT-COVERED under the old
+> arms. `git-hooks/` additionally cannot be extension-filtered at all — its
+> load-bearing members (`pre-push`, `pre-commit`, `post-commit`,
+> `pre-merge-commit`) are extensionless. Canonical statement:
+> `doctrine/review-before-deploy.md` "Amendment H surface shape"; implementation:
+> `hooks/lib/review-record-gate-lib.sh` `rrg_in_surface`.
+>
+> **Why this correction is filed here and not silently rewritten:** the
+> compact and the full drifted apart in OPPOSITE directions twice in two
+> rounds — first a retraction landed in the full and missed the JIT-delivered
+> compact, then this fix landed in the compact and missed the full. The pair
+> is now swept mechanically; see "Compact/full drift sweep" below.
+
+## Compact/full drift sweep (harness-reviewer MAJOR 3, 2026-07-30)
+
+Every `<name>-full.md` and its `<name>.md` compact must agree on the PATH
+GLOBS they quote — that is the specific thing that has now drifted twice.
+Run this before landing any doctrine edit that touches a surface definition:
+
+```sh
+for f in adapters/claude-code/doctrine/*-full.md; do
+  b="${f%-full.md}.md"; [ -f "$b" ] || continue
+  d=$(diff <(grep -oE '[a-z-]+/\*\*?/?\*?\.[a-z]+' "$f" | sort -u) \
+           <(grep -oE '[a-z-]+/\*\*?/?\*?\.[a-z]+' "$b" | sort -u))
+  [ -n "$d" ] && { echo "=== $f vs $b ==="; echo "$d"; }
+done
+```
+
+`grep -oE`, not `rg`: on this machine `rg` is a SHELL FUNCTION supplied by the
+Claude Code shell snapshot, so it resolves inside an agent's tool shell and
+vanishes in a plain `bash script.sh` subprocess — a documented command that
+silently does not run is the same theatre class this doctrine exists to
+prevent. Verified: `command -v rg` reports a function, and the loop above
+using `rg` failed with `rg: command not found` on every file.
+
+A non-empty diff is not automatically a defect (a full may legitimately
+discuss a glob the compact omits), but it IS the list a doctrine edit must
+walk before claiming the pair is consistent. Current state of that walk
+(2026-07-30, re-executed at this commit): see the sweep result recorded in
+`docs/plans/review-gate-identity-anchor-2026-07-30.md`.
 
 ## Amendment G — the cockpit product surface (2026-07-30)
 

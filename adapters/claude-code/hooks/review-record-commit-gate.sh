@@ -400,14 +400,42 @@ _rrcg_main() {
   command -v rrg_in_surface >/dev/null 2>&1 || return 0
   command -v rrg_is_covered >/dev/null 2>&1 || return 0
 
-  # Exemption 2: ACMR excludes deletions — a removed blob cannot be reviewed.
-  local staged
-  staged="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)" || return 0
-  [[ -n "$staged" ]] || return 0    # exemption 1: nothing staged
+  # ------------------------------------------------------------
+  # SUBJECT-SET ENUMERATION — same rule as the authoritative push gate.
+  # (harness-reviewer MAJOR 4 + CRITICAL 2, round 4.)
+  #
+  # MAJOR 4: the sibling gate's doctrine says, in the present tense, that "any
+  # gate deriving a subject set from `git diff` must enumerate by the codes
+  # through which its subject can change or LEAVE the surface". This carrier
+  # used ACMR — no T, no deletion pass — so the rule this repo states as
+  # universal was violated by its own second carrier the moment it landed.
+  # Advisory-only is a reason for the CONSEQUENCE to be softer (this gate
+  # warns, it never blocks), not for the SUBJECT SET to be smaller: an
+  # advisory that cannot see the change it is advising about is silent
+  # exactly when it matters, and it also feeds the auto-enqueue splice that
+  # files the review-queue item the push gate will later demand.
+  #
+  # CRITICAL 2: `--name-only` without `-z` emits C-QUOTED paths for non-ASCII
+  # and backslash, and rrg_in_surface answers OUT for the quoted rendering —
+  # PROVEN on the push gate against a bare remote with
+  # `hooks/pré-push-gate.sh`. The same call, the same predicate, the same
+  # defect. Both tokens (`-c core.quotePath=false` AND `-z`) are required:
+  # quotePath alone still quotes a backslash.
+  # ------------------------------------------------------------
+  local _rrcg_tmp
+  _rrcg_tmp="$(mktemp -d "${TMPDIR:-/tmp}/rrcg.XXXXXX" 2>/dev/null)" || return 0
+  local _staged_z="$_rrcg_tmp/staged.z" _deleted_z="$_rrcg_tmp/deleted.z"
+  git -C "$repo_root" -c core.quotePath=false diff --cached --name-only -z \
+      --diff-filter=ACMRT > "$_staged_z" 2>/dev/null || { rm -rf "$_rrcg_tmp"; return 0; }
+  git -C "$repo_root" -c core.quotePath=false diff --cached --name-only -z \
+      --diff-filter=D --no-renames > "$_deleted_z" 2>/dev/null || : > "$_deleted_z"
+  if [[ ! -s "$_staged_z" && ! -s "$_deleted_z" ]]; then
+    rm -rf "$_rrcg_tmp"; return 0    # exemption 1: nothing staged
+  fi
 
   local -a uncovered=()
   local path sha covered_count=0
-  while IFS= read -r path; do
+  while IFS= read -r -d '' path; do
     [[ -n "$path" ]] || continue
     rrg_in_surface "$path" || continue
     # THE INDEX, NOT THE WORKING TREE (harness-review Critical, 2026-07-29).
@@ -433,7 +461,17 @@ _rrcg_main() {
     else
       covered_count=$((covered_count+1))
     fi
-  done <<< "$staged"
+  done < "$_staged_z"
+
+  # The removal arm (deletions AND rename sources — see the header). A staged
+  # path that is leaving has no index blob, so it can never take the coverage
+  # path above; it is uncovered by construction.
+  while IFS= read -r -d '' path; do
+    [[ -n "$path" ]] || continue
+    rrg_in_surface "$path" || continue
+    uncovered+=("$path (DELETED/RENAMED-AWAY by this commit)")
+  done < "$_deleted_z"
+  rm -rf "$_rrcg_tmp"
 
   # The record that satisfies coverage must itself be STAGED, or it is not part
   # of the commit the gate just authorized (harness-reviewer Major, 2026-07-29).
@@ -514,6 +552,13 @@ _rrcg_self_test() {
   printf '{"entries":[]}\n' > "$R/docs/reviews/records/grandfather-manifest.json"
   ( cd "$R" && git add -A && git commit -qm init ) >/dev/null 2>&1
 
+  # THE CHILD GATE RUNS UNDER THE INTERPRETER BEING TESTED — same reasoning as
+  # review-record-push-gate.sh's _RRPG_TEST_BASH: a bare `bash` resolves
+  # through PATH (5.3 on this machine), so a `/bin/bash ... --self-test` run
+  # was exercising the 3.2 floor only in the harness, never in the gate body.
+  local _RRCG_TEST_BASH="${BASH:-bash}"
+  echo "self-test interpreter: $_RRCG_TEST_BASH (${BASH_VERSION:-unknown})"
+
   run() { # $1 = command string; echoes rc
     # Build the JSON with jq, not printf: a command containing double quotes
     # (`git commit -m "feat: x"` — the overwhelmingly common real shape) makes a
@@ -522,7 +567,7 @@ _rrcg_self_test() {
     # "passed the gate" for that reason alone.
     local payload
     payload="$(jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}')"
-    printf '%s' "$payload" | ( cd "$R" && bash "$SELF" ) >/dev/null 2>&1
+    printf '%s' "$payload" | ( cd "$R" && "$_RRCG_TEST_BASH" "$SELF" ) >/dev/null 2>&1
     echo $?
   }
 
@@ -540,7 +585,7 @@ _rrcg_self_test() {
   run_capture() {
     local payload
     payload="$(jq -nc --arg c "$1" '{tool_name:"Bash",tool_input:{command:$c}}')"
-    RUN_MSG="$(printf '%s' "$payload" | ( cd "$R" && bash "$SELF" ) 2>&1 1>/dev/null)"
+    RUN_MSG="$(printf '%s' "$payload" | ( cd "$R" && "$_RRCG_TEST_BASH" "$SELF" ) 2>&1 1>/dev/null)"
     RUN_RC=$?
   }
 
@@ -651,11 +696,11 @@ _rrcg_self_test() {
 
   _rrcg_stderr_without() {
     printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' \
-      | ( cd "$R" && env -u REVIEW_RECORD_GATE_OVERRIDE REVIEW_RECORD_GATE_LOG="$T/ovr.log" bash "$SELF" ) 2>&1 >/dev/null
+      | ( cd "$R" && env -u REVIEW_RECORD_GATE_OVERRIDE REVIEW_RECORD_GATE_LOG="$T/ovr.log" "$_RRCG_TEST_BASH" "$SELF" ) 2>&1 >/dev/null
   }
   _rrcg_stderr_with() {
     printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' \
-      | ( cd "$R" && REVIEW_RECORD_GATE_LOG="$T/ovr.log" REVIEW_RECORD_GATE_OVERRIDE="$1" bash "$SELF" ) 2>&1 >/dev/null
+      | ( cd "$R" && REVIEW_RECORD_GATE_LOG="$T/ovr.log" REVIEW_RECORD_GATE_OVERRIDE="$1" "$_RRCG_TEST_BASH" "$SELF" ) 2>&1 >/dev/null
   }
 
   local base_err; base_err="$(_rrcg_stderr_without)"
@@ -699,7 +744,7 @@ _rrcg_self_test() {
     || fail "blocked despite an in-index PASS record (rc=$rc) — the gate would be unsatisfiable in one pass"
 
   echo "Scenario 10: fail-open — not a git repo"
-  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | ( cd "$T" && bash "$SELF" ) >/dev/null 2>&1; echo $?)"
+  rc="$(printf '{"tool_name":"Bash","tool_input":{"command":"git commit -m x"}}' | ( cd "$T" && "$_RRCG_TEST_BASH" "$SELF" ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "0" ]] && pass "outside a git repo -> allowed (never brick)" || fail "blocked outside a repo (rc=$rc)"
 
   echo "Scenario 11: INDEX vs WORKING TREE — the Critical the reviewer proved (E10)"
@@ -768,7 +813,7 @@ _rrcg_self_test() {
   printf '{"records":[]}\n' > "$FR/docs/reviews/records/index.json"
   echo '# deploy' > "$FR/scripts/deploy.sh"
   ( cd "$FR" && git add -A ) >/dev/null 2>&1
-  rc="$(printf '%s' "$(jq -nc '{tool_name:"Bash",tool_input:{command:"git commit -m x"}}')" | ( cd "$FR" && bash "$SELF" ) >/dev/null 2>&1; echo $?)"
+  rc="$(printf '%s' "$(jq -nc '{tool_name:"Bash",tool_input:{command:"git commit -m x"}}')" | ( cd "$FR" && "$_RRCG_TEST_BASH" "$SELF" ) >/dev/null 2>&1; echo $?)"
   [[ "$rc" == "0" ]] && pass "a non-harness repo with scripts/*.sh is NOT gated" || fail "gated a foreign repo (rc=$rc)"
 
   # ==========================================================================
@@ -791,7 +836,7 @@ _rrcg_self_test() {
   runfrom() { # $1 = cwd, $2 = command string; echoes rc
     local payload
     payload="$(jq -nc --arg c "$2" '{tool_name:"Bash",tool_input:{command:$c}}')"
-    printf '%s' "$payload" | ( cd "$1" && bash "$SELF" ) >/dev/null 2>&1
+    printf '%s' "$payload" | ( cd "$1" && "$_RRCG_TEST_BASH" "$SELF" ) >/dev/null 2>&1
     echo $?
   }
   # Same subshell-scoping caveat as run_capture above -- call as a plain
@@ -799,7 +844,7 @@ _rrcg_self_test() {
   runfrom_capture() { # $1 = cwd, $2 = command string; sets RUN_RC, RUN_MSG
     local payload
     payload="$(jq -nc --arg c "$2" '{tool_name:"Bash",tool_input:{command:$c}}')"
-    RUN_MSG="$(printf '%s' "$payload" | ( cd "$1" && bash "$SELF" ) 2>&1 1>/dev/null)"
+    RUN_MSG="$(printf '%s' "$payload" | ( cd "$1" && "$_RRCG_TEST_BASH" "$SELF" ) 2>&1 1>/dev/null)"
     RUN_RC=$?
   }
   # `git commit` is assembled at runtime so this suite's own source does not
@@ -918,11 +963,11 @@ EOF
   ( cd "$R" && git add adapters/claude-code/hooks/lib/admission-lib.sh ) >/dev/null 2>&1
   local ps_payload
   ps_payload="$(jq -nc --arg c "$CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')"
-  RUN_MSG="$(printf '%s' "$ps_payload" | ( cd "$R" && bash "$SELF" ) 2>&1 1>/dev/null)"; rc=$?
+  RUN_MSG="$(printf '%s' "$ps_payload" | ( cd "$R" && "$_RRCG_TEST_BASH" "$SELF" ) 2>&1 1>/dev/null)"; rc=$?
   [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
   case "$RUN_MSG" in *admission-lib.sh*) pass "a PowerShell-tool commit is still detected/warned" ;; *) fail "PowerShell detection silently stopped"; esac
   ps_payload="$(jq -nc --arg c "Set-Location $R; $CV -m x" '{tool_name:"PowerShell",tool_input:{command:$c}}')"
-  RUN_MSG="$(printf '%s' "$ps_payload" | ( cd "$OUT" && bash "$SELF" ) 2>&1 1>/dev/null)"; rc=$?
+  RUN_MSG="$(printf '%s' "$ps_payload" | ( cd "$OUT" && "$_RRCG_TEST_BASH" "$SELF" ) 2>&1 1>/dev/null)"; rc=$?
   [[ "$rc" == "0" ]] || fail "advisory commit unexpectedly blocked (rc=$rc)"
   case "$RUN_MSG" in *admission-lib.sh*) pass "PowerShell Set-Location + commit is still detected/warned" ;; *) fail "PowerShell Set-Location detection silently stopped"; esac
 
@@ -988,8 +1033,8 @@ EOF
     local payload23
     payload23="$(jq -nc --arg c 'git commit -m "feat: ri1b fixture"' '{tool_name:"Bash",tool_input:{command:$c}}')"
     RQ_AUTO_ENQUEUE_MODE=sync REVIEW_QUEUE_STATE_DIR="$RQDIR" \
-      bash -c 'export RQ_AUTO_ENQUEUE_MODE REVIEW_QUEUE_STATE_DIR; printf "%s" "$1" | (cd "$2" && bash "$3") >/dev/null 2>&1' \
-      _ "$payload23" "$R" "$SELF"
+      "$_RRCG_TEST_BASH" -c 'export RQ_AUTO_ENQUEUE_MODE REVIEW_QUEUE_STATE_DIR; printf "%s" "$1" | (cd "$2" && "$4" "$3") >/dev/null 2>&1' \
+      _ "$payload23" "$R" "$SELF" "$_RRCG_TEST_BASH"
     if ls "$RQDIR"/rq-*.json >/dev/null 2>&1 \
        && grep -l "ri1b-fixture.sh" "$RQDIR"/rq-*.json >/dev/null 2>&1; then
       pass "auto-enqueue wrote a review-queue.sh item naming the uncovered file"
@@ -1001,6 +1046,63 @@ EOF
   else
     fail "review-queue-auto-enqueue-lib.sh or scripts/review-queue.sh missing from this checkout — RI1b splice cannot be verified"
   fi
+
+  # ==========================================================================
+  # Scenarios 24-26: THE ROUND-4 ARMS. (harness-reviewer MAJOR 4 + CRITICAL 2.)
+  #
+  # These exist because the arms landed BLIND: after widening this carrier's
+  # enumeration to ACMRT + a --no-renames D pass + NUL-framed unquoted paths,
+  # the suite stayed at its previous count, and a mutation probe confirmed why
+  # — flipping ACMRT back to ACMR and neutering the deletion arm BOTH left the
+  # suite fully green. A new arm whose removal does not turn a test red is not
+  # covered, it is decorated. Each scenario below was checked to go RED against
+  # its own mutant before being kept.
+  #
+  # This gate is ADVISORY (rc=0 on every path), so the oracle is the DETECTION
+  # TEXT, never the exit code — the same convention run_capture's header sets.
+  # ==========================================================================
+  echo "Scenario 24: MAJOR 4 — a TYPECHANGE of an in-surface file is DETECTED (ACMR excluded T)"
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  mkdir -p "$R/adapters/claude-code/hooks"
+  echo '# a gate that exists at the baseline' > "$R/adapters/claude-code/hooks/tc-victim.sh"
+  ( cd "$R" && git add -A && git commit -qm "add tc victim" ) >/dev/null 2>&1
+  rm -f "$R/adapters/claude-code/hooks/tc-victim.sh"
+  ln -s /dev/null "$R/adapters/claude-code/hooks/tc-victim.sh"
+  ( cd "$R" && git add -A ) >/dev/null 2>&1
+  local tcm; tcm="$(cd "$R" && git ls-files -s adapters/claude-code/hooks/tc-victim.sh | awk '{print $1}')"
+  [[ "$tcm" == "120000" ]] && pass "fixture really is a typechange (index mode 120000)" \
+    || fail "fixture bug: expected index mode 120000, got '$tcm' — Scenario 24 proves nothing"
+  run_capture 'git commit -m "chore: swap for a symlink"'
+  [[ "$RUN_RC" == "0" ]] && pass "typechange commit ALLOWED (rc=0 — this carrier is advisory)" \
+    || fail "advisory gate blocked a typechange (rc=$RUN_RC)"
+  case "$RUN_MSG" in *tc-victim.sh*) pass "typechange is DETECTED and named in the advisory" ;; \
+    *) fail "typechange invisible to this carrier — the T arm is not wired"; esac
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+
+  echo "Scenario 25: MAJOR 4 — a RENAME of an in-surface file OUT of the surface is DETECTED (the source vanishes)"
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  mkdir -p "$R/docs"
+  ( cd "$R" && git mv adapters/claude-code/hooks/tc-victim.sh docs/tc-victim.sh ) >/dev/null 2>&1
+  run_capture 'git commit -m "chore: move the gate out of the surface"'
+  [[ "$RUN_RC" == "0" ]] && pass "rename-out commit ALLOWED (rc=0 — advisory)" \
+    || fail "advisory gate blocked a rename (rc=$RUN_RC)"
+  case "$RUN_MSG" in *"adapters/claude-code/hooks/tc-victim.sh"*) \
+    pass "the VANISHED SOURCE path is detected and named (needs the --no-renames D pass)" ;; \
+    *) fail "a rename out of the surface is invisible to this carrier — the D/--no-renames arm is not wired"; esac
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+
+  echo "Scenario 26: CRITICAL 2 — a NON-ASCII in-surface path is DETECTED (git C-quotes it)"
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
+  printf '#!/bin/bash\n# unreviewed\n' > "$R/adapters/claude-code/hooks/pré-commit-gate.sh"
+  ( cd "$R" && git add -A ) >/dev/null 2>&1
+  local q26; q26="$(cd "$R" && git diff --cached --name-only | grep -c '^"' 2>/dev/null)"
+  [[ "${q26:-0}" -ge 1 ]] && pass "fixture really is C-quoted by git's default --name-only rendering" \
+    || fail "fixture bug: git did not quote the path — Scenario 26 proves nothing"
+  run_capture 'git commit -m "feat: non-ascii"'
+  case "$RUN_MSG" in *"pré-commit-gate.sh"*) \
+    pass "non-ASCII in-surface path is DETECTED and named in RAW form" ;; \
+    *) fail "a C-quoted path was classified OUT of surface by this carrier — CRITICAL 2 is open here"; esac
+  ( cd "$R" && git reset -q --hard ) >/dev/null 2>&1
 
   rm -rf "$T"
   echo
