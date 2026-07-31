@@ -2238,3 +2238,34 @@ requested alongside the roadmap rollup fix).
   step. A RANGE-aware entry point (taking an explicit path+blob-sha list rather than
   re-deriving from the index) would let the push gate auto-enqueue independent review for
   content it blocks or overrides too — not built in this pass.
+
+## NL-ISSUES-TRIAGE-20260731 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 109 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 2d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+- **LEARNING-LEDGER-CAPTURES-MACHINE-NOISE-AS-OPERATOR-VERBATIM-01** (HIGH, MEASURED
+  2026-07-31): the operator-defect learning loop built today is being poisoned at the source.
+  Of 25 nl-issue rows tagged `[src:operator-verbatim]`, **17 are SYSTEM `<task-notification>`
+  blocks, not the operator** — only 8 carry the operator's real words. The PROBLEM-CAPTURE
+  vocabulary in workstreams-read.sh fires on the injected task-notification text (which
+  contains complaint-shaped words from agent reports) as if the operator had typed it.
+  CONSEQUENCE: the ledger whose entire purpose is capturing operator-reported defects — the
+  thing that is supposed to make the harness learn without the operator having to shout —
+  is 68% machine noise. Its class-rollup escalation therefore escalates on agent chatter.
+  EXACT SAME CLASS as the Requests-tab defect fixed today (machine output displacing the
+  operator's own words; there the 401 error string overwrote a real request title).
+  FIX: PROBLEM-CAPTURE must exclude injected system blocks — a turn whose text begins with
+  `[SYSTEM NOTIFICATION` or contains a `<task-notification>` element is NOT operator input,
+  by the same rule the session prompt states outright. Add a RED fixture per shape.
+- **SPAWN-TASK-CHIPS-ARE-A-NON-DETERMINISTIC-HANDOFF-01** (HIGH, operator 2026-07-31:
+  "What happened to you agreeing not to spawn sessions through chips? ... it probably sat
+  there for hours before I saw it"): a spawn_task chip reaches the operator ONLY if they
+  happen to look — deterministic-process.md rule 3 (a step nothing invokes is not part of
+  the process). task_28b9098f sat unseen for hours. Root cause of THIS instance: the
+  constraint was never carried into subagent dispatch briefs, so a builder spawned it.
+  FIX: (a) every dispatch brief carries "do not spawn_task chips; file to docs/backlog.md
+  or needs-you.sh instead"; (b) anything genuinely needing the operator goes to NEEDS-YOU.md
+  AND is stated in chat the same turn — the durable ledger is the deterministic surface,
+  the chip is not.
