@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-30T22:37:52Z",
+  "generated_at": "2026-07-31T00:06:30Z",
   "plans_total": 167,
   "coverage": {
     "wall_clock_pct": 100,
@@ -53,7 +53,7 @@
       "class": "harness-mechanism",
       "count": 94,
       "task_count": {
-        "p50": 3,
+        "p50": 4,
         "p90": 13,
         "n": 94
       },
@@ -826,6 +826,18 @@
       "has_evidence": false
     },
     {
+      "slug": "deterministic-process-gate-2026-07-30",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 11,
+      "wall_clock_days": 0.00,
+      "first_commit": "2026-07-30T17:03:00-07:00",
+      "last_commit": "2026-07-30T17:06:06-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
+    },
+    {
       "slug": "diagnostic-first-protocol-enforcement",
       "mode": "code",
       "class": "general-multi-file",
@@ -1256,18 +1268,6 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
-    },
-    {
-      "slug": "limit-resume-watchdog-2026-07-30",
-      "mode": "code",
-      "class": "harness-mechanism",
-      "task_count": 1,
-      "wall_clock_days": 0.00,
-      "first_commit": "2026-07-30T15:37:30-07:00",
-      "last_commit": "2026-07-30T15:37:30-07:00",
-      "builder_sessions": null,
-      "tokens": null,
-      "has_evidence": false
     },
     {
       "slug": "master-drift-autocorrection-2026-07",

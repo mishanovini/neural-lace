@@ -2142,7 +2142,7 @@ and does not explain it.
 **Action:** none required beyond what `PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` already tracks.
 **Filed by:** plan-phase-builder, false-eternal-running-fix build, 2026-07-30 (investigation
 requested alongside the roadmap rollup fix).
-- **REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01** (CRITICAL, measured 2026-07-30):
+- **REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01** — Resolved (CRITICAL, measured 2026-07-30):
   review-record-commit-gate.sh demands a harness-reviewer PASS record before a builder
   subagent may commit — but builder subagents have NO Task/Agent-dispatch tool, so they
   cannot invoke harness-reviewer. The gate's prescribed remedy is UNREACHABLE from the
