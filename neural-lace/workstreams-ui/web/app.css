@@ -23,6 +23,30 @@
   --err: #f87171;
   --info: #60a5fa;
   --interrupt: #fb7185; /* the ONE accent for interrupt-worthy classes */
+  /* Round 12 (ux-ia-auditor live audit, item 5): --done is the roadmap's
+     "complete" neutral — deliberately the DARKEST gray that still clears
+     WCAG AA 4.5:1 against --panel (#1f2937): measured #87909e = 4.55:1;
+     #6b7280 measures 3.04:1 and #7a8494 measures 3.88:1, both FAIL. Do not
+     round this to a "nicer" gray without re-measuring. --ok (green) is
+     retired from the roadmap entirely (see the .rm-* rules below) — a
+     single static green fill made a 2/14 plan and a 6/6 plan look
+     identical (measured: 100% of fill pixels on the live page were that
+     one green, 0 non-green). */
+  --done: #87909e;
+  /* Round 16 (operator: "let's use green instead of blue for the running
+     items because blue looks like links"): --info (blue) is retired from
+     every NON-LINK signal in the roadmap — it is now spent EXCLUSIVELY on
+     real interactive links/anchors. "Running" (a real live_sessions entry,
+     never merely in-progress-with-nobody-attending — same distinction
+     Round 15's roll-up fix drew) gets its own green, deliberately a
+     brighter/more saturated shade than the roadmap's OWN retired --ok
+     (#34d399, see --done's note above: that green used to mean "complete"
+     and was retired for making every fill look identical) — a different
+     green reads as a genuinely NEW signal, not a reversion to the
+     old complete-fill meaning. #4ade80 measured 8.42:1 against --panel
+     (#1f2937) — comfortably above the 4.5:1 body-text floor. Word/weight
+     carriers are unchanged (WCAG 1.4.1: colour is reinforcement only). */
+  --running: #4ade80;
 }
 
 * { box-sizing: border-box; }
@@ -72,6 +96,12 @@ header .spacer { flex: 1; }
 }
 .tab-btn:hover { color: var(--text); }
 .tab-btn[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); }
+/* Round 12 item 9 (inbox count honesty): a derived count badge needs THREE
+   visually distinct states — a real number, unknown/loading ("(—)"), and a
+   CONFIRMED error ("(!)"). Pre-fix, a broken /api/inbox left the tab
+   showing the hardcoded loading "(—)" forever, which read as "probably
+   fine" rather than "this is broken". */
+.ib-tabcount-error { color: var(--interrupt); font-weight: 700; }
 .tab-panel[hidden] { display: none; } /* same [hidden]-override footgun this file already documents below */
 
 /* ---- Harness Health tab's own toolbar (refresh + reconciler badge —
@@ -95,6 +125,13 @@ header .spacer { flex: 1; }
 .diag-row:last-child { margin-bottom: 0; }
 .diag-healed { color: var(--ok); }
 .diag-errors { color: var(--err); font-weight: 600; }
+
+/* Machines section (PEERS-SURFACE-RETIRED-01) — minimal person -> host chip
+   row, reusing .diag-row's own spacing rhythm + asks.js's .peer-state-*
+   chip colors (no new color rules). */
+.machines-section { max-width: 1400px; margin: 0 auto 24px; }
+.machines-person-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.machines-person-label { font-weight: 600; }
 
 button.ghost {
   background: transparent;
@@ -181,6 +218,13 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   border: 1px solid var(--interrupt);
   color: var(--text);
 }
+/* R17 deliverable 7 (audit F9): the needs-me interrupt chip is now a real
+   <button> navigating to #inbox/<id> (session-waiting chips stay plain
+   text — out of scope this round, no roadmap-task binding is exposed to
+   this pane yet). Cursor + a visibly inert disabled state for the honest
+   no-id fallback. */
+.chip.interrupt-chip:not([disabled]) { cursor: pointer; }
+.chip.interrupt-chip[disabled] { opacity: 0.6; cursor: default; }
 
 /* ---- ask-tree landing — ask-rooted-workstreams-p1 Task 13 (REPLACES the
    Task 1 walking-skeleton block wholesale). Project sections (collapsible,
@@ -325,7 +369,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .ask-card-meta { font-size: 11px; color: var(--muted); }
 
 .ask-verbatim-details { margin: 4px 0; }
-.ask-verbatim-summary { font-size: 11px; color: var(--info); cursor: pointer; list-style: revert; }
+.ask-verbatim-summary { font-size: 11px; color: var(--accent); cursor: pointer; list-style: revert; } /* R16 row 79: blue = links only */
 .ask-verbatim-body { font-size: 12px; margin-top: 4px; padding: 6px 8px; background: var(--bg); border-radius: 6px; }
 .ask-verbatim-label { color: var(--muted); font-size: 11px; margin-bottom: 2px; }
 
@@ -348,11 +392,11 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   border: 1px solid var(--border2);
 }
 .ask-progress-seg.seg-done { background: var(--ok); }
-.ask-progress-seg.seg-inflight { background: var(--info); }
+.ask-progress-seg.seg-inflight { background: var(--running); } /* R16 row 79: running = green */
 .ask-progress-seg.seg-notstarted { background: transparent; }
 .ask-progress-text { font-size: 11px; color: var(--muted); }
 .ask-drilldown-details { font-size: 12px; }
-.ask-drilldown-summary { cursor: pointer; color: var(--info); }
+.ask-drilldown-summary { cursor: pointer; color: var(--accent); } /* R16 row 79: blue = links only */
 .ask-drilldown-body { margin-top: 8px; padding: 8px 10px; background: var(--bg); border-radius: 6px; display: flex; flex-direction: column; gap: 12px; }
 
 .ask-status-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; }
@@ -376,7 +420,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
    chip/id/evidence line, without changing that line's own layout. */
 .ask-task-row { display: flex; align-items: center; gap: 8px; font-size: 12px; flex-wrap: wrap; }
 .chip.ask-task-status.task-status-done { color: var(--ok); border-color: var(--ok); }
-.chip.ask-task-status.task-status-in_flight { color: var(--info); border-color: var(--info); }
+.chip.ask-task-status.task-status-in_flight { color: var(--running); border-color: var(--running); } /* R16 row 79 */
 .chip.ask-task-status.task-status-not_started { color: var(--muted); border-color: var(--border2); }
 .ask-task-id { font-family: monospace; }
 .ask-task-evidence { font-size: 11px; color: var(--muted); }
@@ -412,6 +456,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .ask-artifact-ts { color: var(--muted); font-size: 11px; }
 
 .ask-link-resolved a { color: var(--info); }
+/* COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — a repo-file reference in the ask
+   tree is now a <button> opening the in-page docs viewer instead of a dead
+   `file://` anchor. Same UA-chrome reset + link appearance as
+   .todo-pointer-link-btn / .rm-plan-link-btn. */
+.ask-link-doc-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer; color: var(--info);
+}
+.ask-link-doc-btn:hover { text-decoration: underline; }
 .ask-copy-btn { margin-left: 2px; }
 
 .ask-lifecycle-row { margin-top: 8px; }
@@ -471,7 +524,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .peer-task-row { display: flex; align-items: center; gap: 6px; }
 .peer-task-id { font-size: 11px; color: var(--muted); }
 .chip.peer-task-status.task-status-done { color: var(--ok); border-color: var(--ok); }
-.chip.peer-task-status.task-status-in_flight { color: var(--info); border-color: var(--info); }
+.chip.peer-task-status.task-status-in_flight { color: var(--running); border-color: var(--running); } /* R16 row 79 */
 .chip.peer-task-status.task-status-not_started { color: var(--muted); border-color: var(--border2); }
 
 .peer-sessions { margin-top: 6px; display: flex; flex-direction: column; gap: 4px; }
@@ -564,6 +617,17 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .todo-pointer-body { flex: 1; min-width: 0; }
 .todo-pointer-title { font-size: 13px; }
 .todo-pointer-link { color: var(--info); text-decoration: underline; }
+/* R17 deliverable 2a (operator, live: "the links on the Inbox tab don't
+   work") — the pointer row's title is now sometimes a <button> opening
+   the in-page doc modal (the old `file://` href was dead — a browser
+   loading this page over http silently blocks it, same class as the
+   Round 15 roadmap plan-link fix above); reset UA button chrome so it
+   still READS as the same underlined link, not a boxed button. */
+.todo-pointer-link-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.todo-pointer-link-btn:hover { text-decoration: underline; }
 .todo-pointer-preview {
   font-size: 12px;
   color: var(--muted);
@@ -623,6 +687,17 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .backlog-header-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .backlog-counts-summary { color: var(--muted); }
 .backlog-open-file-link { color: var(--info); }
+/* COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — "open backlog.md" is now a <button>
+   opening the in-page docs viewer (the old `file://` href was dead: a
+   browser loading this page over http silently refuses it — PROVEN live at
+   :7733, it was the only file:// anchor in the whole DOM). Reset UA button
+   chrome so it still READS as the same link it always was, matching
+   .todo-pointer-link-btn / .rm-plan-link-btn above. */
+.backlog-open-file-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer; color: var(--info);
+}
+.backlog-open-file-btn:hover { text-decoration: underline; }
 .backlog-toggle-btn { margin-left: auto; }
 
 .backlog-tier-group { margin-bottom: 8px; }
@@ -693,7 +768,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .backlog-row-preview { font-size: 12px; color: var(--muted); }
 .chip.backlog-overdue { color: var(--warn); border-color: var(--warn); }
 .chip.backlog-badge { color: var(--muted); border-color: var(--border2); }
-.chip.backlog-badge-inflight { color: var(--info); border-color: var(--info); }
+.chip.backlog-badge-inflight { color: var(--running); border-color: var(--running); } /* R16 row 79 */
 .chip.backlog-badge-terminal { color: var(--ok); border-color: var(--ok); }
 
 .backlog-row-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 2px; }
@@ -764,7 +839,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   background: color-mix(in srgb, var(--err) 10%, var(--panel2));
 }
 .pane-error-title { color: var(--err); font-weight: 700; margin-bottom: 4px; }
-.pane-error-cmd { font-family: monospace; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+/* R17 deliverable 3 (audit F2): plain-language headline leads (above);
+   scope honesty names which panel is affected; actions (Retry/Copy
+   details) come next; the command + stderr fold into <details> below —
+   never the primary content a non-developer reader sees first. */
+.pane-error-scope { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.pane-error-actions { display: flex; gap: 6px; align-items: center; margin-bottom: 6px; }
+.pane-error-details { margin-top: 4px; }
+.pane-error-details summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.pane-error-cmd { font-family: monospace; font-size: 12px; color: var(--muted); margin: 6px 0; }
 .pane-error-stderr {
   font-family: monospace;
   font-size: 11px;
@@ -800,6 +883,14 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
   font-weight: 600;
   border: 1px solid var(--border2);
   min-height: 20px;
+  /* Round 12 contrast fix (item 7, live-measured): a chip rendered as a
+     real <button> (rm-project-chip, rm-status-stalled/unknown,
+     rm-rollup-badge, ...) has no explicit background here, so it fell
+     back to the UA default button face — measured live as rgb(239,239,239)
+     ("#efefef"), a light gray box in a dark theme (1.56:1-class failure).
+     A <span>-based chip already looked fine (UA spans have no background) —
+     only the interactive ones needed this. */
+  background: transparent;
 }
 .state-chip.state-working { color: var(--ok); border-color: var(--ok); }
 .state-chip.state-waiting-on-me { color: var(--interrupt); border-color: var(--interrupt); background: color-mix(in srgb, var(--interrupt) 15%, transparent); }
@@ -820,7 +911,10 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 }
 .needs-me-card:last-child { margin-bottom: 0; }
 .nm-head { display: flex; gap: 8px; align-items: center; margin-bottom: 4px; }
-.chip.section-chip { color: var(--info); border-color: var(--info); }
+/* R17 deliverable 7 (audit F9): trailing action, right-aligned in the row
+   (same pattern as .why-btn's own margin-left: auto). */
+.nm-open-inbox-btn { margin-left: auto; }
+.chip.section-chip { color: var(--accent); border-color: var(--accent); } /* R16 row 79: blue = links only */
 .nm-session { font-size: 11px; color: var(--muted); }
 .nm-session.session-gone { color: var(--warn); font-style: italic; }
 .nm-text { font-size: 13px; white-space: pre-wrap; margin-bottom: 6px; }
@@ -845,7 +939,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .shipped-list { list-style: none; margin: 0; padding: 0; }
 .shipped-list li { padding: 3px 0; font-size: 13px; }
 .shipped-subject { color: var(--muted); }
-.shipped-decision { color: var(--info); }
+.shipped-decision { color: var(--accent); } /* R16 row 79: blue = links only */
 .shipped-failures { margin-top: 6px; color: var(--err); font-size: 12px; }
 
 /* ---- Q4 health ---- */
@@ -973,9 +1067,55 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .dp-head input { flex: 1; background: var(--bg); border: 1px solid var(--border2); color: var(--text); border-radius: 6px; padding: 6px 8px; }
 .dp-body { overflow: auto; padding: 6px; }
 .doc-row { display: block; width: 100%; text-align: left; margin-bottom: 4px; font-size: 12px; }
+.doc-row-empty { color: var(--muted); font-size: 12px; padding: 6px 2px; }
 .doc-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--border); background: var(--panel2); }
 .doc-title { flex: 1; font-weight: 600; font-size: 13px; }
-.doc-body { padding: 12px 14px; white-space: pre-wrap; font-family: monospace; font-size: 12px; overflow: auto; }
+/* Round 16 deliverable 2 (operator: "the plans are now displaying in a
+   popup but it's still not rendering the formatting"): #docBody is the
+   ONE shared viewer both the plan-doc modal (roadmap.js#openPlanDocModal)
+   and this Docs panel (app.js#openDoc) render into — a real markdown->HTML
+   render (web/md-render.js#renderMarkdown) replaces the raw
+   white-space:pre-wrap/monospace text dump. Monospace now scopes to code
+   only (.md-code / inline <code>), not the whole document. */
+.doc-body { padding: 12px 14px; font-size: 13px; line-height: 1.6; overflow: auto; }
+.doc-body h1, .doc-body h2, .doc-body h3, .doc-body h4, .doc-body h5, .doc-body h6 {
+  margin: 0.6em 0 0.3em; line-height: 1.3;
+}
+.doc-body h1 { font-size: 20px; }
+.doc-body h2 { font-size: 17px; }
+.doc-body h3 { font-size: 15px; }
+.doc-body h4, .doc-body h5, .doc-body h6 { font-size: 13px; }
+.doc-body p { margin: 0.5em 0; }
+.doc-body strong { font-weight: 700; }
+.doc-body em { font-style: italic; }
+.doc-body code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.92em; background: var(--panel2); border: 1px solid var(--border);
+  border-radius: 3px; padding: 0 4px;
+}
+.doc-body pre.md-code {
+  background: var(--panel2); border: 1px solid var(--border); border-radius: 4px;
+  padding: 8px 10px; overflow: auto; margin: 0.5em 0;
+}
+.doc-body pre.md-code code { background: none; border: none; padding: 0; }
+.doc-body ul, .doc-body ol { margin: 0.4em 0; padding-left: 22px; }
+.doc-body li { margin: 2px 0; }
+.doc-body li.md-task { list-style: none; margin-left: -18px; }
+.doc-body .md-cb { display: inline-block; width: 1.1em; }
+.doc-body li.md-task-done { color: var(--muted); }
+.doc-body blockquote {
+  margin: 0.5em 0; padding: 2px 10px; border-left: 3px solid var(--border2); color: var(--muted);
+}
+.doc-body table.md-table { border-collapse: collapse; margin: 0.6em 0; font-size: 12px; }
+.doc-body table.md-table th, .doc-body table.md-table td {
+  border: 1px solid var(--border); padding: 3px 8px; text-align: left;
+}
+.doc-body table.md-table th { background: var(--panel2); }
+/* the ONE real link colour in this surface; a repo-relative reference that
+   isn't a live href renders as inert, muted text — never blue (Round 16's
+   own "blue = link only" rule, applied here too). */
+.doc-body a { color: var(--info); }
+.doc-body .md-doc-link { color: var(--muted); border-bottom: 1px dotted var(--border2); }
 
 /* ---- responsive: single column below ~800px, Q2 first (already is via
    grid-template-areas source order) — ux-review amendment 13 (polish) ---- */
@@ -1029,24 +1169,166 @@ button, a, [role="button"] { min-height: 24px; }
 
 /* ---- tree nodes ---- */
 .rm-tree { padding: 4px 0; }
+/* ROUND 13 fix 5 (operator: "child items are not visibly obvious
+   children... more space between child tasks and their own parent than
+   between them and the next plan"): the connecting rail now READS as
+   hanging off the parent — a touch darker/thicker for a TASK node than a
+   PLAN node, so the eye can tell "this line belongs to what's above it"
+   at a glance, not just "every node has an identical rail". */
 .rm-node { border-left: 2px solid var(--border); margin: 2px 0 2px 4px; padding-left: 6px; }
+.rm-kind-task.rm-node { border-left-color: var(--border2); }
+/* ---- Round 12 (ux-ia-auditor live audit, item 1/sev 3): the row was
+   `display:flex; flex-wrap:wrap`, so optional content (a project chip here,
+   a marker there) shifted every LATER element — measured live across 16
+   real rows: the status chip started anywhere in x∈[465,757] (292px
+   swing), the fraction in x∈[628,974] (346px swing). A CSS grid with a
+   FIXED column per role fixes this by construction, PROVIDED every row
+   appends exactly one (possibly-empty) cell per column — see roadmap.js's
+   titleCell/taskSpanCell/fractionCellForRow/exceptionGlyphCell/
+   exceptionLabelCell, which do exactly that.
+   ROUND 13 fix 1 (operator walkthrough, live-measured): the dedicated
+   marker column (56px + its own 10px gap either side) was EMPTY on
+   105/112 real rows (93.75%) — a pure dead zone between the chevron and
+   the title on nearly every row. RETIRED; markerChips(item) now renders
+   inside the title cell (roadmap.js). Columns, left to right:
+     1. 16px  — disclosure chevron
+     2. 1fr   — title (state-colored, item 5) + transient marker chips
+                (new / added-mid-build) + rare reference-lifecycle badges
+                (dangling-parent/cycle)
+     3. 190px — the task-span text (item 2 + Round 13 fix 6: "T3 next" /
+                "all done", the done-half retired — the bar already says
+                how much) OR a master's two labeled fractions (spans into
+                column 4) OR, for a TASK row, "next"/"running" (fix 4)
+     4. 76px  — the progress bar + "n/m" fraction text (tabular-nums)
+     5. 46px  — the EXCEPTION glyph (item 4) — empty for the three
+                DERIVABLE states, a small icon for the three the fraction
+                cannot derive (stalled/merged-unverified/unknown)
+     6. 132px — the EXCEPTION label chip (loud, full text) + any collapsed-
+                descendant roll-up badges (C1) ---- */
 .rm-node > summary.rm-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: 16px minmax(0,1fr) 190px 76px 46px 132px;
   align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  gap: 10px;
   cursor: pointer;
   padding: 3px 4px;
   min-height: 24px;
 }
 .rm-node > summary.rm-row:hover { background: var(--panel2); }
-.rm-title { font-weight: 600; }
-.rm-kind-task .rm-title { font-weight: 400; }
-.rm-children { margin-left: 14px; }
-.rm-drill { display: none; padding: 4px 8px 6px 20px; font-size: 12px; color: var(--muted); }
+.rm-cell { min-width: 0; }
+.rm-cell-exglyph { overflow: hidden; }
+.rm-cell-title { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.rm-title {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* Round 13 fix 5: tasks read visibly SMALLER than the plan that owns them
+   (12px vs the plan's 14px) — a size ladder on top of the existing
+   indentation + rail, so "this is a child" is legible even before reading
+   a single word of the title. */
+.rm-kind-task .rm-title { font-weight: 400; font-size: 12px; }
+/* Round 13 fix 4: the leading done-glyph on a completed TASK row — text
+   (not color-only, WCAG 1.4.1), inherits the row's rm-title-complete dim
+   colour so it reads as PART of the dimmed line, not a loud accent. */
+.rm-task-check { color: var(--done); }
+.rm-cell-taskspan {
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Round 13 fix 4: the per-task "next"/"running" affordance — text +
+   weight/colour, never colour-only. "next" is a POSITIONAL claim (weight
+   only, same neutral the column already uses); "running" is a claim
+   backed by a REAL live_sessions entry on this exact task, so it earns the
+   one loud colour. Round 15 (operator, twice: "the running indicator is
+   small and not obvious"): promoted to a real `chip` (bordered pill,
+   background tint — the SAME loud treatment every other status signal in
+   this view uses) instead of plain inline text, and bumped a notch above
+   the base chip's 11px. ROUND 16 (operator: "let's use green instead of
+   blue for the running items because blue looks like links"): --info ->
+   --running (#4ade80, 8.42:1 on --panel — see the variable's own note). */
+.rm-task-next { font-weight: 600; color: var(--text); }
+.chip.rm-task-running {
+  font-weight: 700; font-size: 12px; color: var(--running); border-color: var(--running);
+  background: color-mix(in srgb, var(--running) 18%, transparent);
+}
+/* the plan-row "<id> running" token (deriveTaskSpanLabel) — same colour as
+   the leaf chip above and the running-green title, text-based (the word
+   "running" is the non-colour carrier, WCAG 1.4.1). */
+.rm-taskspan-running { color: var(--running); font-weight: 600; }
+.rm-cell-exglyph { font-size: 13px; text-align: center; }
+.rm-cell-exception { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.rm-cell-mastersummary { grid-column: 3 / 5; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+/* ---- six states, TITLE-carried (item 5 — recession not emphasis: the
+   eye lands on the title, leftmost + largest, not on an 11px chip at the
+   far right). LUMINANCE for the two common/normal-traffic states + a
+   neutral for complete; HUE reserved for the three exceptions — with 4
+   in-progress / 10 not-started measured live, hue-coding the common case
+   would spend the scarce colour budget on the unremarkable (app.css:7-9's
+   own discipline). Every ratio measured against the REAL row background,
+   --panel #1f2937 (rows are transparent over the pane).
+   ROUND 13 fix 2 (operator, Round 12 walkthrough — INVERTED from Round 12:
+   "It's the completed items that should be dimmed gray, not the unstarted
+   items"): not-started is now NORMAL weight/colour (var(--text), the
+   body's own default reading colour, 11.86:1 on --panel) — it is complete
+   that stays the ONE dim state (var(--done), unchanged from Round 12,
+   4.55:1). in-progress/stalled/merged-unverified/unknown are the loud
+   exceptions and are UNCHANGED by this fix. ---- */
+/* Round 15 (operator, TWICE now — Round 12 asked for this exact thing and
+   it did not land): in-progress titles get one loud colour, not merely
+   brighter white — the same hue every other "active right now" signal in
+   this view uses (leaf running chip, taskspan token, roll-up badge), so a
+   bright title reads as PART OF ONE running-state language instead of a
+   shade of the neutral ladder.
+   ROUND 16 (operator, live walkthrough: "let's use green instead of blue
+   for the running items because blue looks like links"): --info (#60a5fa,
+   5.9:1) -> --running (#4ade80, 8.42:1 on --panel #1f2937) — comfortably
+   above the 4.5:1 body-text floor, let alone the 3:1 large/bold-text floor
+   this is set at (600 weight). --info is now reserved EXCLUSIVELY for real
+   interactive links across this view (the operator's own stated reason). */
+.rm-title.rm-title-not-started { color: var(--text); font-weight: 400; }                /* 11.86:1 */
+/* Operator 2026-07-30: GREEN means ACTIVELY RUNNING, nothing else — an
+   in-progress-but-idle plan title must not read as live. Accent (violet)
+   keeps row 69's "distinct from white" requirement without lying green. */
+.rm-title.rm-title-in-progress { color: var(--accent); font-weight: 600; }
+.rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note; the ONLY dim state now */
+.rm-title.rm-title-stalled { color: var(--interrupt); font-weight: 600; }               /* 5.45:1 */
+.rm-title.rm-title-merged-unverified { color: var(--warn); font-weight: 600; }          /* 8.79:1 */
+.rm-title.rm-title-unknown { color: var(--warn); font-weight: 400; border-bottom: 1px dashed var(--warn); } /* 8.79:1 + dashed, never color-only */
+/* Round 13 fix 5: .rm-children carries BOTH the indentation AND the
+   spacing ladder — a small top margin (tight parent->first-child) and a
+   LARGER bottom margin (breathing room before the NEXT sibling row
+   starts). An OPEN node's own immediate children also get a faint tint
+   distinct from the project-group tint (fix 3) — a visually nested "card
+   within a card" so an expanded subtree reads as one contained region. */
+.rm-children { margin: 2px 0 12px 14px; }
+.rm-node[open] > .rm-children {
+  background: rgba(255, 255, 255, 0.025);
+  border-radius: 4px;
+  padding: 0 4px 4px 2px; /* top trimmed to 0 — the wrapper's own 2px margin already supplies it */
+}
+/* Round 13 fix 5: padding trimmed 4/6px -> 2/2px (top/bottom) — one more
+   cut at the live-measured parent->first-child gap's actual source,
+   alongside .rm-plan-link-row's own trimmed margin below. ROUND 16: the
+   title-edit/rank-button chrome that used to sit here (a hidden-until-
+   hover row reserving 24px of block-height even while invisible — see the
+   retired comment this replaced) is GONE entirely (deliverables 3/4: the
+   buttons caused the exact "GUI jumps around" the operator complained
+   about, and plan-title editing is removed outright) — the parent->child
+   gap is now governed by this padding + .rm-children's own 2px top margin
+   alone, no reclaim hack needed. */
+.rm-drill { display: none; padding: 2px 8px 2px 20px; font-size: 12px; color: var(--muted); }
 .rm-node[open] > .rm-drill { display: block; }
 .rm-drill-label { font-weight: 600; }
-.rm-from-requests, .rm-status-reason, .rm-title-edit, .rm-rank-row, .rm-item-chrome { margin: 3px 0; }
+.rm-from-requests, .rm-status-reason, .rm-rank-row { margin: 3px 0; }
 
 /* ---- round-6 gap 1/7A/7B/7B-i: task-leaf structure as LISTS, never a
    paragraph wall — lead sentences, sub-bullet subtasks, live agent leaves.
@@ -1065,41 +1347,69 @@ button, a, [role="button"] { min-height: 24px; }
 .rm-agent-unknown .rm-agent-glyph { color: var(--warn); }
 .rm-agent-text { font-size: 12px; }
 
-/* ---- round-6 gap 4: compact icon chrome — hidden until hover OR
-   focus-within (never hover-only — WCAG 2.2 2.5.7 stands: a keyboard user
-   tabbing into the row reveals it via :focus-within before the browser
-   paints a focused-but-invisible frame). Opacity (not visibility/display)
-   keeps every button genuinely focusable throughout. No transition — the
-   reveal is INSTANT on focus, so a keyboard user is never looking at a
-   focused-but-still-invisible control even for one frame. ---- */
-.rm-title-edit, .rm-item-chrome {
-  opacity: 0;
-  pointer-events: none;
+/* ---- ROUND 16 deliverables 3/4/5 — the hover-reveal edit/rank-button
+   chrome that used to live here (round-6 gap 4) is RETIRED outright: the
+   operator's own words, "I don't like the buttons appearing below the
+   plan doc links; they force the GUI underneath to jump around
+   awkwardly, and they're also unnecessary... I don't see any need to
+   edit the name of the plan titles." Plan titles come from the H1, full
+   stop — no edit affordance anywhere in this view. Build-order reordering
+   is now DRAG-AND-DROP on the row's own grip handle (below), backed by
+   the SAME /api/roadmap/rank endpoint the retired buttons called.
+   WCAG 2.2 2.5.7 (drag must not be the ONLY operable path) is held by a
+   NON-VISUAL keyboard path: Cmd/Ctrl+ArrowUp/Down on a focused plan row
+   fires the identical move — no second, dedicated visible control, so
+   there is no chrome row left to jump the layout around. ---- */
+.rm-drag-handle {
+  display: inline-block;
+  width: 14px;
+  flex: 0 0 auto;
+  cursor: grab;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+  text-align: center;
+  opacity: 0.55;
 }
-.rm-node > .rm-drill:hover .rm-title-edit,
-.rm-node > .rm-drill:hover .rm-item-chrome,
-.rm-title-edit:focus-within,
-.rm-item-chrome:focus-within {
-  opacity: 1;
-  pointer-events: auto;
-}
-/* an OPEN title editor (input/save/cancel visible) must never be hidden
-   again by a stray mouseout — the row stays visible for the whole edit
-   (JS toggles .rm-editing on open/close; no :has() dependency) */
-.rm-title-edit.rm-editing { opacity: 1; pointer-events: auto; }
-.rm-icon-btn { min-width: 24px; padding: 3px 6px; font-size: 13px; line-height: 1; }
+.rm-drag-handle:hover, .rm-node.rm-dragging .rm-drag-handle { opacity: 1; }
+.rm-node.rm-dragging { opacity: 0.5; }
+/* drop indicator: a bright line on the edge the dragged row would land
+   against — never colour-only (the cursor position + browser's own drag
+   affordance carry the same information; this is reinforcement). */
+.rm-row.rm-drop-before { box-shadow: inset 0 2px 0 var(--accent); }
+.rm-row.rm-drop-after { box-shadow: inset 0 -2px 0 var(--accent); }
 
 /* ---- round-6 gap 6: sibling PLAN nodes under an intent render as a
    connected series of numbered "phases" (the operator's own mental model —
    "phase one through four"). The connector line is ADDITIVE to the "Phase
-   N of M" TEXT label, never color/line-only. ---- */
-.rm-phase-step { position: relative; padding-left: 16px; margin: 2px 0; }
+   N of M" TEXT label, never color/line-only.
+   ROUND 13 fix 5 gave this a 30px bottom margin + a DELIBERATE break in
+   the connector (the rationale: "these are separate plans"). ROUND 16
+   REVERSES that call (operator, live walkthrough, verbatim): "I don't
+   like the spaces between the plans. It looks awkward with the spacing
+   between the nesting lines" — the Round 13 break is exactly what reads
+   as awkward once seen live: a 24px stretch of pure blank space with NO
+   rail, between two rails that each stop short of reaching it. Fix:
+   the margin shrinks to a single-digit gap BEYOND the row's own 3px
+   padding (.rm-row's `padding: 3px 4px` — see below), and the connector's
+   `bottom` offset is widened so the SAME rail now reaches all the way to
+   the next step's own line start — one continuous filament down the
+   whole group, never a visible break. The parent->child proximity law
+   (child gap < inter-plan gap) still holds: removing the title-edit/
+   rank-button chrome entirely (Round 16 deliverables 3/4 — see the
+   .rm-drag-handle/.rm-drop-before/.rm-drop-after rules above, which
+   replace it) trims the parent->first-child gap even further than
+   Round 13's own fix did, so the ladder (child gap ~4-6px < inter-plan
+   gap 8px) is wider than before, not narrower, despite the inter-plan gap
+   itself shrinking. Live-measured before/after via getBoundingClientRect
+   at 1400px: see the Round 16 evidence entry in the plan's Decisions Log. */
+.rm-phase-step { position: relative; padding-left: 16px; margin: 2px 0 8px; }
 .rm-phase-step::before {
   content: '';
   position: absolute;
   left: 5px;
   top: 18px;
-  bottom: -6px;
+  bottom: -26px; /* reaches the next step's own connector start (8px gap + its 18px top offset) — continuous, not broken */
   width: 2px;
   background: var(--border2);
 }
@@ -1113,28 +1423,59 @@ button, a, [role="button"] { min-height: 24px; }
   margin-bottom: 1px;
 }
 
-/* ---- six-value status chips (C5): text + color, never color-only ---- */
+/* ---- six-value status chips (C5): text + color, never color-only.
+   Round 12 item 4 (operator: "showing the 'in progress'/'complete' status
+   next to the progress bar is also redundant"): the chip is now the
+   EXCEPTION column ONLY — roadmap.js's statusChip() returns null for the
+   three DERIVABLE states (not-started/complete/in-progress, which the
+   fraction + task-span text already say), so only stalled/merged-
+   unverified/unknown ever reach these rules. .rm-status-not-started/
+   -in-progress/-complete are dead CSS today (kept, harmless, in case a
+   future caller — e.g. a non-grid surface — reuses the chip builder
+   without the exception gate) but never render inside the tree row.
+   Round 16: swept off --info along with every other non-link roadmap
+   signal (see --running's variable note) for the same consistency even
+   though this rule never renders live today. ---- */
 .chip.rm-status { white-space: nowrap; }
 .chip.rm-status-not-started { color: var(--muted); border-color: var(--border2); }
-.chip.rm-status-in-progress { color: var(--info); border-color: var(--info); }
+/* Operator 2026-07-30: green = ACTIVELY RUNNING only — an idle in-progress
+   plan's status chip must not read live. Accent, matching the title ladder. */
+.chip.rm-status-in-progress { color: var(--accent); border-color: var(--accent); }
 .chip.rm-status-merged-unverified { color: var(--warn); border-color: var(--warn); }
-.chip.rm-status-complete { color: var(--ok); border-color: var(--ok); }
+.chip.rm-status-complete { color: var(--done); border-color: var(--done); } /* retired --ok (green) — see --done's note */
 .chip.rm-status-stalled { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; cursor: pointer; }
 .chip.rm-status-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; cursor: pointer; }
 
-/* ---- progress: the bar NEVER travels without its "n/m" text ---- */
-.rm-progress { display: inline-flex; align-items: center; gap: 4px; }
+/* ---- progress: the bar NEVER travels without its "n/m" text. Round 12
+   item 1: tabular-nums so "5/6" and "12/14" align digit-for-digit down a
+   column of rows. Round 12 item 5: the track was --panel2 (#182230),
+   measured 1.09:1 against the real --panel background — effectively
+   invisible, so an EMPTY bar read as "no bar at all"; --border (#374151)
+   is the live-legible track. The fill is now STATUS-COLORED via the
+   rm-fill-<value> modifier (roadmap.js's progressNode) instead of one
+   static green for every state — see --done's note for why green is
+   retired from the roadmap entirely; this bar feeds BOTH the tree row
+   (column 5) and the kanban card, so the fix lands in both places at
+   once. ---- */
+.rm-progress { display: inline-flex; align-items: center; gap: 4px; width: 100%; overflow: hidden; }
 .rm-progress-bar {
   display: inline-block;
-  width: 72px;
+  flex: 0 0 28px;
+  width: 28px;
   height: 8px;
   border-radius: 4px;
-  background: var(--panel2);
+  background: var(--border);
   border: 1px solid var(--border2);
   overflow: hidden;
 }
-.rm-progress-fill { display: block; height: 100%; background: var(--ok); }
-.rm-progress-text { font-size: 12px; color: var(--muted); }
+.rm-progress-fill { display: block; height: 100%; background: var(--muted); }
+.rm-fill-not-started { background: var(--border2); }
+.rm-fill-in-progress { background: #38bdf8; } /* sky — 6.85:1, distinct from the retired --ok green */
+.rm-fill-complete { background: var(--done); }
+.rm-fill-stalled { background: var(--interrupt); }
+.rm-fill-merged-unverified { background: var(--warn); }
+.rm-fill-unknown { background: var(--warn); }
+.rm-progress-text { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* ---- roll-up badges (C1/R4): visible on COLLAPSED ancestors; when a
    branch is open its children's own chips carry the signal, so the
@@ -1143,28 +1484,49 @@ button, a, [role="button"] { min-height: 24px; }
 .rm-rollups { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 details[open] > summary .rm-rollups { display: none; }
 .chip.rm-rollup-badge { cursor: pointer; }
+/* Round 15: "running" joins the roll-up badge machinery. ROUND 16
+   (operator: green not blue for running — see --running's variable
+   note): --info -> --running. */
+.chip.rm-rollup-running { color: var(--running); border-color: var(--running); font-weight: 600; }
 .chip.rm-rollup-waiting-on-you, .chip.rm-rollup-crashed { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; }
 .chip.rm-rollup-blocked-on, .chip.rm-rollup-limit-parked { color: var(--warn); border-color: var(--warn); }
+/* 2026-07-30: 'idle-dispatch' is deliberately --warn, NOT the --interrupt
+   that 'crashed' uses. It is the softer claim ("this task went quiet; its
+   session is still alive"), and colouring it like a crash would re-create
+   in CSS exactly the false-urgency the reason-code split removed. */
+.chip.rm-rollup-idle-dispatch { color: var(--warn); border-color: var(--warn); }
 .chip.rm-rollup-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; }
 
 /* ---- markers (I1/I2): text markers, never color-only ---- */
 .rm-new-marker { font-size: 10px; color: var(--accent); border: 1px solid var(--accent); border-radius: 3px; padding: 0 3px; }
-.chip.rm-marker-midbuild { color: var(--info); border-color: var(--info); font-style: italic; }
-.rm-completed-when { font-size: 11px; color: var(--muted); }
+/* Round 16 sweep: "added mid-build" is a novelty marker, not a running/
+   in-progress signal and not a link — --info -> --accent (the SAME hue
+   the sibling "new" marker just above already uses for "recently
+   changed," a more honest pairing than the retired blue). Blue (--info)
+   is now spent EXCLUSIVELY on real interactive links in this view. */
+.chip.rm-marker-midbuild { color: var(--accent); border-color: var(--accent); font-style: italic; }
+/* rm-completed-when RETIRED (Round 12 item 3): duplicated the status
+   chip's own "complete, 37h ago" text verbatim; the chip is gone for the
+   complete state too now (item 4), so there is nothing left to duplicate
+   and nothing to replace it with — the task-span text + fraction already
+   carry "how far through" without an age string. */
+/* ---- filter-match note (Round 12 item 8): surfaces WHICH descendant
+   task/plan matched a filter query, directly under the row that matched —
+   ALWAYS visible (not gated by [open], unlike .rm-drill) since the row
+   itself may still be collapsed. Round 16 sweep: non-interactive text, not
+   a link — --info -> --accent (same "worth noticing" hue as the markers
+   above; blue is reserved for real links now). ---- */
+.rm-filter-match-note { font-size: 11px; color: var(--accent); padding: 0 4px 4px 26px; }
 
 /* ---- completed aging roll-up rows ---- */
 .rm-completed-rollup { margin: 4px 0 4px 4px; border-left: 2px dotted var(--border); padding-left: 6px; }
 .rm-completed-rollup-summary { cursor: pointer; color: var(--muted); font-size: 12px; padding: 3px 4px; min-height: 24px; }
 
-/* ---- title edit + rank + feedback ---- */
-.rm-title-input {
-  background: var(--panel2);
-  border: 1px solid var(--border2);
-  color: var(--text);
-  border-radius: 4px;
-  padding: 3px 6px;
-  min-width: 240px;
-}
+/* ---- rank-move + override feedback (Round 16: the title-input styling
+   that used to live here is retired along with the edit affordance
+   itself — this element/CSS is gone, not merely unused, per deliverable
+   4). The feedback line is still shared by the merged-unverified override
+   button and the keyboard/drag reorder path below. ---- */
 .rm-edit-feedback { font-size: 12px; margin-top: 3px; }
 .rm-edit-feedback.rm-feedback-ok { color: var(--ok); }
 .rm-edit-feedback.rm-feedback-err { color: var(--err); }
@@ -1266,10 +1628,20 @@ details[open] > summary .rm-rollups { display: none; }
 .rl-row[open] > .rl-drill { display: block; }
 .rl-title-edit, .rl-recency, .rl-subhead { margin: 4px 0; }
 .rl-subhead { font-weight: 600; color: var(--text); }
+/* R17 deliverable 6 (audit F3): the ledger's missing exit verb. */
+.rl-actions { display: flex; gap: 6px; align-items: center; margin: 4px 0; }
+/* R17 deliverable 2b (audit F4b): a collapsed run of identical timeline
+   events — same <details> disclosure convention as the app's other
+   roll-ups (rm-completed-rollup etc.), dimmer text (it's noise, not
+   content) until expanded. */
+.rl-collapsed-run { margin: 2px 0; }
+.rl-collapsed-run-summary { cursor: pointer; color: var(--muted); font-size: 12px; }
+.rl-collapsed-run-list { list-style: none; margin: 2px 0 2px 14px; padding: 0; border-left: 1px dotted var(--border2); }
 
 /* ---- current-state chip (collapsed anatomy): text + color, never color-only ---- */
 .chip.rl-state-chip { white-space: nowrap; }
-.chip.rl-state-chip-open { color: var(--info); border-color: var(--info); }
+/* R16 row 79: blue is reserved exclusively for links — open-state uses accent */
+.chip.rl-state-chip-open { color: var(--accent); border-color: var(--accent); }
 .chip.rl-state-chip-promoted { color: var(--ok); border-color: var(--ok); }
 .chip.rl-state-chip-done { color: var(--ok); border-color: var(--ok); }
 .chip.rl-state-chip-dismissed { color: var(--muted); border-color: var(--border2); }
@@ -1310,7 +1682,8 @@ details[open] > summary .rm-rollups { display: none; }
 .rl-event-age { font-size: 11px; color: var(--muted); }
 .rl-event-origin .rl-event-text { font-weight: 600; }
 .rl-event-promoted .rl-event-text { color: var(--ok); font-weight: 600; }
-.rl-event-amendment .rl-event-text { color: var(--info); font-style: italic; }
+/* R16 row 79: blue is reserved exclusively for links — amendments use accent */
+.rl-event-amendment .rl-event-text { color: var(--accent); font-style: italic; }
 .rl-event-feedback { font-size: 11px; }
 .rl-event-feedback.rl-feedback-ok { color: var(--ok); }
 .rl-event-feedback.rl-feedback-err { color: var(--err); }
@@ -1356,6 +1729,38 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-options-table th, .ib-options-table td { border: 1px solid var(--border2); padding: 3px 8px; text-align: left; }
 .ib-options-table th { color: var(--muted); font-weight: 600; }
 .ib-my-pick { margin: 4px 0; font-weight: 600; color: var(--text); }
+.ib-context-more { margin: 2px 0; color: var(--muted); font-style: italic; }
+
+/* ---- "Run this" — the actual ask, hoisted above the explanation
+   (Round 18, operator: "it's not very easy to find exactly what it is
+   that's actually needed"). Deliberately the loudest thing in the card:
+   accent rule + raised panel, so the eye lands here before the prose. --- */
+.ib-needed {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel2, rgba(127, 127, 127, 0.08));
+}
+.ib-needed-head {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.ib-needed-line { margin: 4px 0; }
+/* Inside this block a command is the point, so let it use the full width
+   rather than sharing a line with its step label. */
+.ib-needed-line .cmd-fence { display: flex; width: 100%; margin-top: 2px; }
+.ib-needed-line .cmd-fence-code { flex: 1 1 auto; }
+
+/* ---- links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01) ---- */
+.ib-links { margin: 6px 0; }
+.ib-drill-label { font-weight: 600; }
+.ib-link-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 2px 0; word-break: break-all; }
+.ib-link-row a { color: var(--info); }
 
 /* ---- reply (the ANSWER lifecycle verb, C3a — pointer + copyable stub) ---- */
 .ib-reply { margin: 6px 0; }
@@ -1395,6 +1800,28 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-edit-feedback.ib-feedback-ok { color: var(--ok); }
 .ib-edit-feedback.ib-feedback-err { color: var(--err); }
 
+/* ---- R17 deliverable 2 (audit F1 — the operator's own top complaint:
+   "it's not clear where the command begins and ends") — shared fenced-
+   command chip (web/command-render.js). Generalizes the ONE surface that
+   already got this right (.ib-resume-cmd-input above: readonly monospace
+   input + Copy button) into a single reusable pattern: a monospace <code>
+   + an inline Copy button, visually distinct from surrounding prose so a
+   command's start/end is never ambiguous. .cat-line is the per-line
+   wrapper renderCommandAwareText() emits (one per input line — narrative
+   prose lines have no chip at all, only a genuinely-detected command). ---- */
+.cat-line { margin: 1px 0; }
+.cmd-fence {
+  display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap;
+  background: var(--panel2); border: 1px solid var(--border2);
+  border-radius: 4px; padding: 2px 4px; margin: 1px 0;
+}
+.cmd-fence-code { font-family: monospace; font-size: 12px; color: var(--text); white-space: pre-wrap; word-break: break-all; }
+.cmd-copy-btn {
+  font-size: 11px; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid var(--border2); background: var(--panel); color: var(--text); cursor: pointer;
+}
+.cmd-copy-btn:hover { background: var(--panel2); }
+
 /* ---- below-the-fold raw verbatim + session lineage ---- */
 .ib-raw-details { margin-top: 6px; }
 .ib-raw-body { padding: 4px 0 0 4px; }
@@ -1411,14 +1838,42 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-my-items-wrap { margin-top: 20px; padding-top: 10px; border-top: 1px solid var(--border); }
 
 /* ---- Round 9 (operator audit 2026-07-23) ---- */
-/* R9-2: project group — a visible header naming what the phases belong to. */
-.rm-project-group { margin: 10px 0 14px; }
+/* R9-2: project group — a visible header naming what the phases belong to.
+   ROUND 13 fix 3 (operator: "I still don't see how all these plans are
+   grouped together" — the header floated above an unbounded list): a
+   visible CONTAINER — left rail + a faint background tint — now spans
+   every plan row in the group. Survives filtering for free: renderTree
+   re-groups the already-FILTERED set on every render (applyFilters runs
+   first), so this wrapper just as reliably encloses whatever's left, even
+   down to a single row; nothing here is gated on filter state. The
+   Shipped group gets the SAME treatment, dimmer — see .rm-shipped-group
+   below. */
+.rm-project-group {
+  margin: 10px 0 14px;
+  border-left: 2px solid var(--border2);
+  background: rgba(255, 255, 255, 0.02);
+  border-radius: 6px;
+  padding: 6px 10px 10px;
+}
 .rm-project-group-head {
   font-size: 13px; font-weight: 600; color: var(--text);
-  padding: 4px 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
+  padding: 0 0 6px; border-bottom: 1px solid var(--border); margin-bottom: 6px;
 }
 /* R9-3: per-item project tag (text chip, never color-only). */
 .rm-project-tag { font-size: 10px; opacity: 0.75; }
+/* R17 Round 17 deliverable 4 (operator 2026-07-30, decision A): top-level
+   display groups (Neural Lace / Pocket Technician / Personal / any
+   '(ungrouped)' catch-all) sit ABOVE the existing per-project group. A
+   plain <details> so a group with zero in-progress plans collapses by
+   default (renderTopGroup in roadmap.js sets .open) while the group NAME
+   (and an honest empty-state line) always stays visible via <summary>. */
+.rm-top-group { margin: 4px 0 20px; }
+.rm-top-group-head {
+  cursor: pointer; font-size: 15px; font-weight: 700; color: var(--text);
+  padding: 4px 0 8px; border-bottom: 1px solid var(--border2); margin-bottom: 8px;
+}
+.rm-top-group-body { padding-left: 2px; }
+.rm-top-group .rm-empty-note { font-size: 12px; color: var(--muted); padding: 4px 0 4px 2px; }
 /* R9-7: unattributed live sessions — one top-of-tree collapsible node. */
 .rm-unbound-sessions {
   margin: 0 0 10px; padding: 4px 8px;
@@ -1445,21 +1900,82 @@ details[open] > summary .rm-rollups { display: none; }
 @media (max-width: 1100px) {
   .rm-layout { flex-direction: column; }
   .rm-sidebar { flex: none; max-width: none; width: 100%; }
+  /* ROADMAP-NARROW-VIEWPORT-COLLAPSE-01 (P1, live-verified 2026-07-29):
+     `.roadmap-section { flex: 1 1 0 }` is written for the DESKTOP row layout,
+     where the flex main axis is WIDTH. The moment this query flips .rm-layout
+     to column, that same rule governs HEIGHT — and because .pane sets
+     `overflow: hidden`, the flex spec gives the item an automatic minimum
+     main-size of 0. With no ancestor supplying spare height for flex-grow to
+     distribute, the section collapses to its flex-basis (0) instead of its
+     content height: measured `#roadmapSection` height = 2px while its own
+     `#roadmapBody` child reported 563px. Every row stayed in the DOM and the
+     entire tree was invisible. `flex-basis: auto` makes the column case size
+     to content, which is what the row case never needed to say out loud. */
+  .rm-layout > .roadmap-section { flex: 1 1 auto; min-height: 0; }
 }
 /* R9 follow-up 2026-07-24: the ledger takes the hidden interim tree's flex
    slot so the column handle splits a real pair again. */
 .ws-layout .requests-ledger-in-layout { flex: 1 1 0; min-width: 0; margin: 0; }
-.rm-plan-link-row { margin: 2px 0 6px; font-size: 12px; }
-.rm-plan-link { overflow-wrap: anywhere; }
+/* Round 13 fix 5: bottom margin trimmed 6px -> 2px — same parent->child
+   gap cut as .rm-drill's padding above; the link stays fully visible,
+   just no longer padded out with extra dead space beneath it. */
+.rm-plan-link-row { margin: 2px 0 2px; font-size: 12px; }
+/* Round 12 item 7 (pre-existing contrast bug, live-measured): rm-plan-link
+   had NO color rule at all, so every one of the 16 plan links rendered at
+   the browser default visited/unvisited blue (#0000EE), 1.56:1 on the
+   dark panel — a hard WCAG 1.4.3 failure.
+   ROUND 16 sweep (operator: "blue looks like links" — so reserve it for
+   ONLY real links): the base rule is now a NEUTRAL colour — it also
+   covers the rare plain-text fallback span (plan_doc: null, no working
+   link at all), which rendering blue would be the exact "looks like a
+   link but isn't" defect this whole round is about. The compound
+   `.rm-plan-link-btn` rule below (present only on the real clickable
+   button) re-adds blue at higher specificity, so the genuine link still
+   reads as one. */
+.rm-plan-link { overflow-wrap: anywhere; color: var(--muted); }
+/* Round 15 (operator, verified live): the plan link is now a <button>
+   opening the in-page docs viewer (the old `file:///` href was dead —
+   confirmed live, no navigation/network on click) — reset UA button chrome
+   so it still READS as the same underlined-on-hover link, not a boxed
+   button; button.ghost's own `color: var(--text)` rule would otherwise
+   outrank the plain `.rm-plan-link` selector above on specificity
+   (type+class beats class-only), so this reset avoids `.ghost` entirely
+   rather than fighting the cascade. */
+.rm-plan-link-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer;
+}
+.rm-plan-link.rm-plan-link-btn { color: var(--info); } /* the ONE real link — blue stays here */
+.rm-plan-link-btn:hover { text-decoration: underline; }
 /* R10 (operator round 10, 2026-07-27) */
 .rm-chevron { display: inline-block; width: 12px; font-size: 10px; opacity: 0.6; transition: transform 0.12s; }
 details[open] > .rm-row > .rm-chevron { transform: rotate(90deg); }
-.rm-phase-inline { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; opacity: 0.65; margin-right: 6px; white-space: nowrap; }
+/* rm-phase-inline RETIRED (Round 12 item 3): rendered the "#N OF 16"
+   ordinal, PROVEN unstable — filtering to "T3" renumbered Accountable
+   Estate from "#12 OF 16" to "#2 OF 3" live. A render-position count is
+   not an identity; roadmap.js no longer computes or appends it. The
+   connected phase-series CONNECTOR LINE (rm-phase-step/rm-phase-series
+   below) is unaffected — the operator's complaint was the unstable
+   NUMBER, not the sibling-sequence visual. */
 .rm-project-group-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.rm-group-progress { display: inline-flex; align-items: center; gap: 6px; }
-.rm-group-progress-bar { display: inline-block; width: 90px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
-.rm-group-progress-fill { display: block; height: 100%; background: var(--ok, #4a4); }
-.rm-group-progress-text { font-size: 11px; opacity: 0.8; }
+/* rm-group-progress(-bar/-fill/-text) RETIRED (Round 12 item 3, R10-3's
+   aggregate bar): live-verified THIRD restatement of the header's own
+   "... complete" bucket count — "neural-lace — 16 plans... (2 complete)"
+   was immediately followed by a separate "2/16 complete" bar+line saying
+   the identical fact again. */
+/* Round 12 item 6: the top-level "Shipped" group (a fully-complete PLAN
+   leaving the main list) reuses rm-completed-rollup's box styling but
+   gets its own class so it's distinguishable from a nested per-parent
+   "N completed" roll-up (task 3's existing 7-day-window mechanism, which
+   this item does NOT change). */
+.rm-shipped-group > summary { font-weight: 600; }
+/* Round 13 fix 3: the SAME containment treatment as .rm-project-group,
+   dimmer — .rm-completed-rollup already gives every roll-up (this one
+   included) a dotted rail + padding spanning its own body; this adds the
+   faint background tint at HALF the live group's opacity (0.01 vs 0.02),
+   so Shipped reads as one contained, quieter region instead of floating
+   loose the way an unbounded list did before fix 3. */
+.rm-shipped-group { background: rgba(255, 255, 255, 0.01); border-radius: 4px; }
 
 /* R11 (round 11, 2026-07-28) — master-plan hierarchy: docs/reviews/
    2026-07-28-roadmap-hierarchy-ux-review.md */

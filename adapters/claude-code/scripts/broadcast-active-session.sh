@@ -290,9 +290,17 @@ _check_local() {
   # field (pre-v2.1 schema) are skipped too (fail-open; a re-claim from the
   # live owning session repo-scopes them within one throttle window).
   if [ -d "$CLAIMS_DIR" ]; then
-    local cutoff f br wt ts rid
-    cutoff=$(date -d "-${CLAIM_FRESH_SECONDS} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo "")
-    if [ -n "$cutoff" ]; then
+    local fresh_min f br wt ts rid
+    # `find -mmin`, not a `date -d`-built cutoff (macos-portability M4).
+    # The old form built the cutoff with GNU-only `date -d`, so on stock
+    # macOS $cutoff was empty and this whole block was skipped — the
+    # broadcast silently reported ZERO same-machine ownership signals
+    # while looking like it had checked. See the fuller note at
+    # concurrent-ownership-gate.sh:_load_fresh_claims. `-mmin` is
+    # supported by both GNU and BSD find and needs no date fork at all.
+    fresh_min=$(( (CLAIM_FRESH_SECONDS + 59) / 60 ))
+    [ "$fresh_min" -gt 0 ] || fresh_min=1
+    if [ -n "$fresh_min" ]; then
       while IFS= read -r f; do
         [ -f "$f" ] || continue
         br=$(sed -nE 's/.*"branch"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)
@@ -306,7 +314,7 @@ _check_local() {
         [ -n "$cur_root" ] && [ "$wt" = "$cur_root" ] && continue
         count=$((count + 1))
         out+="  • claim: branch '${br}' by session in '${wt}' (since ${ts})"$'\n'
-      done < <(find "$CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -newermt "$cutoff" 2>/dev/null)
+      done < <(find "$CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -mmin "-${fresh_min}" 2>/dev/null)
     fi
   fi
 

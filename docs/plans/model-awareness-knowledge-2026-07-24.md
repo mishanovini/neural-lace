@@ -33,3 +33,9 @@ facts known by default rather than rediscovered.
 ## Notes
 The lesson is the reference until the doctrine wiring lands. The follow-up is deliberately a
 separate, reviewed change — this plan does not itself modify any always-loaded or JIT surface.
+## In-flight scope updates
+- 2026-07-29: adapters/claude-code/scripts/model-availability.sh — the ACTUAL fable->opus fallback (operator directive: "Fable is supposed to always fail back to Opus"). Stateless canonical-derived reconcile; the pin is the only executing decision point (decision 063 + the 2026-07-24 lesson prove no runtime fallback exists).
+- 2026-07-29: adapters/claude-code/hooks/model-pin-gate.sh — exhausted-tier reroute backstop: blocks a dispatch still pinned to a tier marked unavailable, naming the override.
+- 2026-07-29: adapters/claude-code/hooks/session-start-digest.sh — SessionStart reconcile splice so the borrow ends by itself when the budget resets (operator: "Opus is a fallback, not the primary option").
+- 2026-07-29: adapters/claude-code/doctrine/model-selection.md — corrected: the previous text claimed "runtime applies the fallback", which no code implements.
+- 2026-07-29: adapters/claude-code/doctrine/model-selection-full.md — same correction, with the three verified facts and the real procedure.

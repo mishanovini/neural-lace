@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-1a8414fb",
+  "created_at": "2026-07-30T06:01:09Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group agents-manifest-config (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "e1fc56050726987bb140a77018750f04ee0182ad",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/settings.json.template",
+      "blob_sha": "5de5b93d397c6ac5fd5b3ba4e30004b883fa1474"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — Mechanism wiring for review-record-commit-gate.sh on Bash|PowerShell: hook exists at mode 100755 (index and disk), benign-command fail-open rc=0 and full suite 61/0 both under /bin/bash 3.2.57; matcher placement consistent with the existing Bash|PowerShell block; remedy chain closed (scope-enforcement-gate _is_system_managed_path exempts docs/reviews/records/*, regression s35); audited escape hatch REVIEW_RECORD_GATE_OVERRIDE with >=20-char reason; FP rate measured with population stated (~22% of post-bootstrap in-surface commits — the intended block class, operator-directed block-mode); golden case f6562b2 replayed as scenario 1.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer via write-review-record.sh",
+  "payload": {}
+}

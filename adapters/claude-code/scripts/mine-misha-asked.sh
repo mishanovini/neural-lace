@@ -416,8 +416,15 @@ do_scan() {
     # Compute age
     local age_days="null"
     if [[ -n "$first_ts" ]]; then
+      # GNU spelling, then the BSD equivalent (macos-portability M4).
+      # Before this, every age on macOS came out `null` because `date -d`
+      # failed and the empty guard below quietly skipped the arithmetic —
+      # the report still rendered, just with the age column blank.
       local ts_epoch
-      ts_epoch=$(date -d "$first_ts" +%s 2>/dev/null || echo "")
+      ts_epoch=$(date -u -d "$first_ts" +%s 2>/dev/null \
+        || date -u -j -f '%Y-%m-%dT%H:%M:%SZ' "$first_ts" +%s 2>/dev/null \
+        || date -u -j -f '%Y-%m-%d %H:%M:%S' "$first_ts" +%s 2>/dev/null \
+        || echo "")
       if [[ -n "$ts_epoch" ]]; then
         age_days=$(( (now_epoch - ts_epoch) / 86400 ))
       fi

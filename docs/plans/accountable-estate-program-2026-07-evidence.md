@@ -297,6 +297,229 @@ F9/F10/edge-3/edge-4/edge-5 reproduce; no regressions on either spliced host (re
 **Status: T3 remains UNVERIFIED.** These fixes have not themselves been re-reviewed. Both agents are
 being re-dispatched against the amended build.
 
+## Task T3
+
+```
+EVIDENCE BLOCK
+==============
+Task ID: T3
+Task description: Admission lib (slots + rate + HALT + drain flag), OBSERVE MODE ONLY.
+Verified at: 2026-07-29T21:40Z
+Verifier: task-verifier (pass 4 FAIL conf 9 -> D-1..D-5 fixed at 5f0eb73 -> targeted 16b
+  re-verification -> PASS conf 9). Verdict text follows, verbatim from the verifier.
+Subject SHA: 5f0eb73
+Verdict: PASS
+Confidence: 9
+```
+
+verify(accountable-estate): T3 flipped by task-verifier — PASS conf 9 · Scenario 16b
+re-verified at 5f0eb73 with BOTH failure branches RED-proven: mut2 (both
+workstreams-emit.sh guard arms deleted, 6 comments intact so a text match still passes)
+-> `FAIL: HOST(S) WRITING TO REAL STATE: hooks/workstreams-emit.sh`, 47/1 exit 1 on both
+interpreters, restore cmp-identical -> 48/0; and an unrunnable host -> `FAIL: HOST(S)
+NEVER RAN — oracle vacuous for: ...(rc=1,no-summary)`, the condition that read 48/0 PASS
+pre-fix · hosts run under "${BASH:-bash}", verified to resolve to /bin/bash and
+/opt/homebrew/bin/bash respectively (D-2) · CONV_TREE_STATE_LIB is the host's documented
+first-precedence resolution (workstreams-emit.sh:193) at the real 6412-byte state.js,
+not a bypass · suite 48/0 exit 0 on /bin/bash 3.2.57 AND /opt/homebrew/bin/bash 5.3.15
+by absolute path · observe-mode invariant independently re-derived: 6 would-block rungs
+each rc 0 under set -e with the LEDGER ROW asserting the would-block verdict, 7/7 both
+interpreters, RED proven by mutating admission-lib.sh:610 to enforcing (verifier oracle
+dies at rung 1; builder suite 42/4) · zero rows into real operator state: find
+~/.claude/state/governor -newer <marker> = 0 across all suite runs; apparent ledger
+growth proven concurrent live traffic by isolated repeat + 40s idle baseline · 4 splices
+live: 1008 real production source=emit-feed rows through live PreToolUse
+Task|Agent|Workflow, plus source=worktree kind=builder and source=resumer incl.
+reason_hint=stormcapqueued · ledger clean (0 fixture ids, 0 kind:"0") · no doctor
+regression (13 pre-existing branch REDs, none naming admission) · D-3/D-4/D-5 verified
+landed · outcome-metric re-check 2026-08-05T03:33Z.
+
+Runtime verification: test adapters/claude-code/hooks/lib/admission-lib.sh::--self-test (48/0, exit 0, /bin/bash 3.2.57 and /opt/homebrew/bin/bash 5.3.15, absolute path)
+Runtime verification: file adapters/claude-code/hooks/lib/admission-lib.sh::"${BASH:-bash}" "$_hp" --self-test
+Runtime verification: file adapters/claude-code/hooks/lib/admission-lib.sh::HOST(S) NEVER RAN — oracle vacuous for:
+Runtime verification: sql SELECT source, verdict, kind FROM ledger — sed 's/.*"source":"\([^"]*\)".*/\1/' ~/.claude/state/governor/ledger/Mishas-Mac-mini.jsonl | sort | uniq -c -> 1008 emit-feed; 0 fixture ids; 0 kind:"0"
+
+Non-blocking follow-ups filed the same turn: N-1 (16b PASS message says rc=0 while the
+criterion admits rc!=0-with-summary; workstreams-emit returns rc=1) and N-2 (add a
+positive control asserting a row APPEARS under an explicit ADM_STATE_DIR probe).
+
+## Task T4 - Deterministic closers, closure-gates-new-work WIP rule, no-orphan registration
+
+BUILDER CLAIM - NOT VERIFIER-CONFIRMED
+======================================
+Built by a worktree-isolated builder (PARALLEL dispatch mode), branch
+worktree-agent-a5767be8802694747 (worktree
+.claude/worktrees/agent-a5767be8802694747), merged onto the accountable-estate
+line at fa0f490/409ba26 before this build started. The T4 checkbox is
+deliberately LEFT UNCHECKED: task-verifier is the only checkbox flipper; no
+task-verifier has run on this work. Treat everything below as a builder's
+self-report to be independently re-derived. task-verifier verdict: N/A
+(orchestrator runs it sequentially after cherry-picking, per PARALLEL mode).
+
+Claimed at: 2026-07-29T22:10:00Z (approx, this session)
+
+WHAT SHIPPED (the three pieces from the task text)
+---------------------------------------------------
+1. **Deterministic closer generalized to a second work-item type:**
+   `adapters/claude-code/scripts/close-worktree.sh` (NEW). Verify (a
+   `--plan`/`--task` naming a task-verifier PASS evidence block, or an
+   explicit `--verified` vouch — no silent third path) -> integration check
+   (branch already an ancestor of a resolved base, OR an explicit
+   `--keep-branch --reason '<why>'`; refuses otherwise — T5's merge lock is
+   NOT built, so this closer does not merge, only checks-and-refuses or
+   defers to the existing PR flow) -> `spawn-worktree.sh --remove` (worktree
+   remove + safe branch delete/preserve) -> no-orphan de-registration. 17/0
+   self-test on both interpreters, RED-proven by mutating the verify gate to
+   always-pass (drove 2 of 17 to FAIL).
+2. **Closure-gates-new-work WIP rule in the admission lib, OBSERVE MODE
+   ONLY:** `adapters/claude-code/hooks/lib/admission-lib.sh` gained a fifth
+   ladder rung, `would-block:wip-exceeded`, scoped DELIBERATELY to
+   `source=worktree` (see the file's own block comment for the derived-not-
+   declared reasoning: only the worktree path has a real registration-backed
+   open-item count today). Default `ADM_WIP_LIMIT=6` (this machine's own
+   measured budget, not invented). Never blocks — Scenario 18b re-confirms
+   rc 0 even when the rung fires. 57/0 self-test on both interpreters (was
+   48/0 before this task; +9 assertions, 0 regressions), RED-proven by
+   mutation (removing the rung's `if` block drove 3 of the 9 new assertions
+   to FAIL: 54/3).
+3. **No-orphan registration at spawn-worktree:**
+   `adapters/claude-code/hooks/lib/estate-registration-lib.sh` (NEW) — one
+   JSON file per open work-item (`reg_register`/`reg_close`/`reg_is_open`/
+   `reg_open_count`/`reg_has_any_record`), same HARNESS_SELFTEST sandboxing
+   convention as admission-lib.sh. `spawn-worktree.sh` writes an open
+   registration (slug/path/branch/host + optional `--plan`/`--task`/`--who`)
+   immediately after a successful `--apply` create, and closes it (with a
+   disposition) in `remove_worktree()` on `--remove`. 29/0 self-test on both
+   interpreters. `spawn-worktree.sh`'s OWN self-test gained 2 new scenarios
+   (registration on create, incl. zero-attribution; de-registration on
+   remove, incl. an explicit `--disposition` override on a kept-unmerged
+   branch) — both RED-proven by mutation (removing either splice drove the
+   corresponding new assertion to FAIL; restored to green after).
+
+OUTCOME METRIC — DERIVABLE, AND ACTUALLY RUN (constitution s4: exercise the
+real path, cite the output)
+-----------------------------------------------------------------------------
+`adapters/claude-code/scripts/estate-attribution-check.sh` (NEW) derives
+"zero unattributable worktrees/branches older than 48h" by joining
+`git worktree list` + branch-commit age against `estate-registration-lib.sh`'s
+open-OR-closed record for each slug. 9/0 self-test on both interpreters,
+RED-proven by mutation (disabling the registration check drove 3 of 9 to
+FAIL: 6/3).
+
+Command (run live against THIS repo's real estate, not a fixture):
+  bash adapters/claude-code/scripts/estate-attribution-check.sh --repo /Users/misha/Claude/neural-lace
+
+BEFORE result: `zero unattributable worktrees older than 48h`.
+HONEST CAVEAT (PROVEN, not just asserted): this zero is an artifact of
+freshness, not of attribution. `git worktree list` on this repo showed 26
+secondary worktrees at build time (up from "18 vs a budget of 6" in this
+task's own ground truth — active parallel building continued through the
+session); none carry a registration (the mechanism did not exist when they
+were created); and every one's last commit is under 12 hours old (sampled 5
+branches directly via `git log -1 --format='%ci (%cr)'`, all "4-6 hours
+ago"). None have yet crossed the 48h threshold, so none appear in this run
+regardless of attribution. Cross-checked against `worktree-hygiene-sweep.sh
+--stranded` (a DIFFERENT, liveness-based tool with no age gate — see
+estate-attribution-check.sh's header for why the two are not measuring the
+same thing), which reported 25 "no live owner" rows the same session (all
+"last commit 0d ago") — consistent with, and a superset of, this task's
+prompt-cited "7+ stranded" figure from earlier in the session (worktree
+count and staleness both grew during the build, not shrank).
+AFTER disposition: filed as docs/backlog.md's
+ESTATE-T4-PRE-EXISTING-UNREGISTERED-WORKTREES-01 with a 2026-08-01 re-check
+date (program rule 2) — long enough for today's worktrees to cross 48h in
+either direction, and for at least one worktree created AFTER this commit to
+also cross it, which is the first point this metric can demonstrate holding
+zero for genuinely-covered work rather than reading zero merely because
+nothing was old enough to test. Recurrence of a POST-T4 unattributable
+worktree at that re-check auto-reopens the row; a PRE-T4 one is expected
+debt, not a regression.
+
+NOT DONE (deliberately, named rather than hidden)
+--------------------------------------------------
+- No REAL worktree was created against the shared main checkout to
+  end-to-end demonstrate create-via-spawn-worktree.sh -> registered ->
+  close-via-close-worktree.sh -> de-registered against PRODUCTION state: this
+  builder runs isolated in its own worktree and mutating the shared
+  checkout's own worktree list is out of scope for that isolation. The exact
+  same sequence IS demonstrated, mutation-proven, against throwaway fixture
+  repos in all three scripts' own --self-test suites (run twice each, both
+  interpreters, RED/GREEN both directions) — the isolated-worktree
+  equivalent of "exercise the real path."
+- T5 (merge lock) is not built; close-worktree.sh's integration check
+  therefore refuses an unmerged branch rather than merging it, or requires
+  an explicit `--keep-branch --reason`. Named in the script's own header as
+  the exact point T5's merge script should slot in.
+- The WIP rung is scoped to `source=worktree` only, not emit-feed/resumer —
+  named as deliberate (no registration-backed open-item count exists for
+  those paths yet) in both admission-lib.sh's header and this block.
+
+RETIREMENT (program rule 3)
+----------------------------
+docs/conventions/worktree-per-session.md's Cleanup section: the bare,
+memory-reliant "run `spawn-worktree.sh --remove <slug>` ... at session end"
+recommendation is RETIRED as the top-level closer instruction, superseded by
+`close-worktree.sh` (verify + integration-check + remove + de-registration in
+one deterministic call). `spawn-worktree.sh --remove` remains the
+lower-level primitive close-worktree.sh itself calls — not deleted, just no
+longer the recommended entry point.
+
+RE-CHECK DATE (program rule 2)
+--------------------------------
+2026-08-01 — re-run estate-attribution-check.sh against this repo; see the
+docs/backlog.md finding above for the auto-reopen condition.
+
+Runtime verification: test adapters/claude-code/hooks/lib/estate-registration-lib.sh::--self-test (29/0, both interpreters)
+Runtime verification: test adapters/claude-code/scripts/spawn-worktree.sh::--self-test (registration+de-registration scenarios, both interpreters)
+Runtime verification: test adapters/claude-code/hooks/lib/admission-lib.sh::--self-test (57/0, both interpreters, WIP rung Scenario 18/18b/18c/18d/18e)
+Runtime verification: test adapters/claude-code/scripts/close-worktree.sh::--self-test (17/0, both interpreters)
+Runtime verification: test adapters/claude-code/scripts/estate-attribution-check.sh::--self-test (9/0, both interpreters)
+Runtime verification: file adapters/claude-code/scripts/estate-attribution-check.sh::bash adapters/claude-code/scripts/estate-attribution-check.sh --repo /Users/misha/Claude/neural-lace -> zero unattributable worktrees older than 48h (with the freshness caveat above)
+
+## Task T4
+
+EVIDENCE BLOCK
+==============
+Task ID: T4
+Task description: Deterministic closers: generalize close-plan.sh pattern per work-item type + the closure-gates-new-work WIP rule in the admission lib + no-orphan registration at spawn-worktree. Outcome metric: zero unattributable worktrees/branches older than 48 h. Verification: full.
+Verified at: 2026-07-29T22:40:00Z (flip same day)
+Verifier: task-verifier — PASS, confidence 9
+Subject SHAs: 26414fa (build) + fc94550 (orchestrator invocation-independence fix, differentially RED-proven against 26414fa's own 15/2 rc=127)
+
+PROVEN highlights (verifier's own re-derivation, 12 checks):
+- All five suites at claimed counts under BOTH /bin/bash 3.2.57 AND /opt/homebrew/bin/bash
+  5.3.15 by absolute path; close-worktree ALSO by relative path (17/0; pre-fix copy
+  reproduces `bash: ./close-worktree.sh: No such file or directory` x2, 15/2).
+- OBSERVE-ONLY behaviorally, by the verifier's own probe: 7 fixture registrations ->
+  `verdict=would-block:wip-exceeded rc=0`, ledger row `"mode":"observe"`; emit-feed
+  unaffected (scope is worktree-only).
+- T3 survival BY IDENTITY: the pre-T4 48 PASS lines all present in the 57; the +9 are
+  exactly Scenarios 18/18b-18e. 16b still RED-proves (guard arms deleted -> 56/1 naming
+  the host).
+- Mutations at claimed counts: WIP rung removed -> 54/3; verify-gate always-pass -> 15/2.
+- Real state bracket: zero suite-attributable rows; every in-window delta attributed to
+  ambient emit-feed traffic by content AND by continued growth after suites stopped.
+- Outcome metric live: `zero unattributable worktrees older than 48h`; full-population
+  cross-check (26/26 fresh-unregistered via --age-hours 0) proves the zero is a pure
+  age-gate artifact exactly as the builder disclosed; backlog row
+  ESTATE-T4-PRE-EXISTING-UNREGISTERED-WORKTREES-01 with re-check 2026-08-01.
+- Composed e2e in a fixture: spawn(registers, plan/task/who labels) -> orphan flagged ->
+  close(verify->integrate->remove->de-register, disposition:merged) -> attribution sees
+  open AND closed records correctly.
+- Rule-3 retirement real: worktree-per-session.md:238 dated RETIRED block superseding the
+  memory-reliant --remove instruction.
+
+Runtime verification: test adapters/claude-code/hooks/lib/estate-registration-lib.sh::--self-test (29/0 both interpreters)
+Runtime verification: test adapters/claude-code/hooks/lib/admission-lib.sh::--self-test (57/0 both; RED 54/3 on WIP-rung removal, 56/1 on 16b guard deletion)
+Runtime verification: test adapters/claude-code/scripts/spawn-worktree.sh::--self-test (SELFTEST PASS both)
+Runtime verification: test adapters/claude-code/scripts/close-worktree.sh::--self-test (17/0 both, absolute AND relative; RED 15/2 on verify-gate mutation)
+Runtime verification: test adapters/claude-code/scripts/estate-attribution-check.sh::--self-test (9/0 both)
+Runtime verification: file adapters/claude-code/scripts/estate-attribution-check.sh::zero unattributable worktrees older than 48h
+
+Non-blocking observations filed as ledger rows the same turn: branch-without-worktree
+metric gap (HYPOTHESIZED, refuter named); 16b's silent dependency on the untracked nested
+checkout's state.js (environment-dependent-count class, latent on fresh clones).
+
 ### T3 TASK-VERIFIER VERDICT — 2026-07-29 (desktop machine, the designated verifier)
 
 EVIDENCE BLOCK
@@ -369,6 +592,41 @@ Outcome-metric note (Program rule 2): the metric "7 days of would-block ledger s
 ## Task T7 - LOE v1: per-PLAN actuals mining + plan-reviewer band surfacing
 
 ### T7 TASK-VERIFIER VERDICT — 2026-07-30 (desktop machine, the designated verifier)
+## Task T5
+
+EVIDENCE BLOCK
+==============
+Task ID: T5
+Task description: Estate merge lock + single deterministic merge script (coord-sync single-writer idiom); closers call it; nothing else merges. Outcome metric: zero master divergence events while active (re-check 14 d). Verification: full.
+Verified at: 2026-07-30T06:20Z (flip same day)
+Verifier: task-verifier — PASS, confidence 9
+Subject SHA: 8be2e3d
+
+PROVEN (verifier's own re-derivation, 14 checks): estate-merge 52/0 and close-worktree 26/0
+reproduced on BOTH /bin/bash 3.2.57 AND /opt/homebrew/bin/bash 5.3.15 by BOTH absolute and
+relative invocation (8 suite runs); force-push mutation from a scratch copy against a
+first-proven-green baseline -> 51/1 caught by the STATIC guarantee (constitution §9
+load-bearing); graduation-disabled mutation -> 20/6 with exactly the claimed failure set;
+composed e2e on the REAL scripts in a sandboxed fixture: spawn(register, plan/task/who) ->
+genuinely-unintegrated commit -> close --verified -> estate-merge fast-forward under the mkdir
+lock -> master tree contains the change + registration closed disposition=merged + one
+merges.log row; MUTUAL EXCLUSION proven by a genuine two-process race (A merged under a
+4s-held lock, B refused rc=2, one winner, one log row, no-ff rationale recorded); real repo
+refs and real estate-merge state untouched by every run (movements attributed to concurrent
+sessions via reflog); runbook step-6 retirement is a real dated, honestly-scoped supersession
+(kept fully required for the Part-A union reconcile); live outcome metric CLEAN against both
+real targets; clock start 2026-07-30T05:56:59Z, re-check 2026-08-13T05:56Z.
+
+Runtime verification: test adapters/claude-code/scripts/estate-merge.sh::--self-test (52/0, both interpreters, both invocation styles)
+Runtime verification: test adapters/claude-code/scripts/close-worktree.sh::--self-test (26/0, both interpreters, both invocation styles)
+Runtime verification: file adapters/claude-code/scripts/close-worktree.sh::_cw_estate_merge
+Runtime verification: file docs/runbooks/master-reconcile-and-estate-cleanup.md::SCOPE NOTE (accountable-estate T5
+
+Two verifier-filed follow-ups (nl-issues, non-gating): exit-code doc says 3, suite exits 1
+(cosmetic); close-worktree Scenario 8's real-log absence assertion will false-FAIL after the
+first production merge — needs the before/after-delta idiom.
+
+## Task T7
 
 EVIDENCE BLOCK
 ==============
@@ -478,3 +736,119 @@ Residuals (weighed into the verdict, none of them refuting the delivered mechani
   - Check 18 resolves the table per-repo, so plans in downstream product repos (no docs/loe/) get the "run loe-backfill.sh" nudge rather than bands. Correct by design (calibration is per-corpus), noted so it is not later mistaken for a bug.
 
 Outcome-metric note (Program rule 2): clause 1 ("every new plan carries class+band annotations") is forward-looking and cannot be a present fact at build time; what IS demonstrated present-tense is the full causal chain that produces it — the template writes the field, the v2-vintage-gated nudge catches plans that lack it, and a plan that has it renders real mined bands (checks 10/11/13/14). Clause 2 is the unbuilt seam above. Re-check date: at the next plan creation from the template (the nudge/band render is observable immediately) and at the next plan closure (which will demonstrate the staleness the missing splice implies).
+Task description: LOE v1: per-PLAN actuals mining (archived plans + evidence + git history), 3-5 plan classes, P50/P90 bands + concentration flag surfaced by plan-reviewer. Outcome metric: every new plan carries class+band annotations; actuals append at close. Verification: full.
+Verified at: 2026-07-30T07:55:00Z (flip same day)
+Verifier: task-verifier — FAIL conf 9 (first Mac cross-check) -> two gating fixes at a8b114c -> targeted re-check -> PASS conf 9
+Subject SHAs: fd48741 (desktop build) + b5dfaf1 (review remediation) + 6ffe534 (163-plan artifact) + a8b114c (Mac-gating fixes)
+
+PROVEN with exact before/after pairs: loe-backfill scenario 4 FAIL("got null")/exit 1 both
+interpreters at 8604509 -> "all scenarios matched expectations"/exit 0 both at a8b114c
+(GNU `date -d` -> M4 dual-branch; the adversarial negative-offset probe on the BSD branch
+held); the DECISIVE live mine on this Mac went wall_clock coverage 0% -> 100% with spot
+values BYTE-IDENTICAL to the independently desktop-mined committed artifact (10.89==10.89,
+13.93==13.93, 0.19==0.19 — two machines, two date implementations, same actuals); dd6
+FAIL -> PASS both interpreters (`${4:-}` -> unset-only `${4-}`); mining honesty proven
+against git-history ground truth (3/3 exact); surfacing re-demonstrated LIVE at a8b114c
+(band INFO line + nudge WARN + vintage silence); review chain 9708ced genuine with both
+spot-checked Majors landed.
+Non-gating, classified: iv4 pre-existing at fd48741^ (filed PLAN-REVIEWER-IV4-MACOS-
+PREEXISTING-01); append-at-close = operator-authorized WIP-1 deferral — OWNER: T9 (per
+this flip, citing loe-backfill.sh's header splice spec); outcome metric is mechanism-true
+via template+nudge, HYPOTHESIZED for the next template-created plan (refuter: that plan
+lacking loe-class).
+
+Runtime verification: test adapters/claude-code/scripts/loe-backfill.sh::--self-test (exit 0 both interpreters at a8b114c; exit 1 both at 8604509)
+Runtime verification: test adapters/claude-code/hooks/plan-reviewer.sh::dd6 (PASS both at a8b114c; FAIL both at 8604509)
+Runtime verification: file docs/loe/loe-calibration.json::plans_total
+Runtime verification: file adapters/claude-code/templates/plan-template.md::loe-class
+
+## Task T9 — Outcome-gated closure semantics (verifier record)
+
+EVIDENCE BLOCK
+==============
+Task ID: T9
+Task description: Outcome-gated closure semantics for harness plans (metric + re-check + auto-reopen), applied to THIS program first. LOE: MEDIUM, 2 bs. Verification: full.
+Verified at: 2026-07-30T15:20:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's own three-part contract (metric + re-check + auto-reopen + "applied to THIS program first") + the harness-internal functionality signal (--self-test on both interpreters) + a real production plan closure as live demonstration (c7b8c22/43117a0).
+
+Comprehension-gate: skipped — rung field missing (plan has no `rung:` header; treated as rung 0 per Decision 020a)
+
+Operator invariants: none registered (exit 3)
+
+Checks run:
+1. close-plan.sh self-test, system bash
+   Command: /bin/bash adapters/claude-code/scripts/close-plan.sh --self-test
+   Output: self-test summary: 30 passed, 0 failed (of 27 scenarios); EXIT=0
+   Result: PASS
+2. close-plan.sh self-test, Homebrew bash
+   Command: /opt/homebrew/bin/bash adapters/claude-code/scripts/close-plan.sh --self-test
+   Output: 30 passed, 0 failed; EXIT=0. T9 regression scenarios present and green: S22 prose-mention-does-not-orphan-verdict, S23 outcome-gated-plan-missing-section-blocks, S24 outcome-gated-plan-closes-preserves-metric-plus-t7-splice-plus-event, S25 non-opted-in-plan-still-gets-default-outcome-section (observe-only), S26 scope-slash-tasks-heading-variant, S27 multiline-outcome-metric-survives-verbatim.
+   Result: PASS
+3. plan-recheck-sweep.sh self-test, both interpreters
+   Command: /bin/bash (and /opt/homebrew/bin/bash) adapters/claude-code/scripts/plan-recheck-sweep.sh --self-test
+   Output: 8 passed, 0 failed on BOTH (past-date reopens; future-date does not; recurrence-nonzero reopens; recurrence-zero does not; idempotent 2nd sweep; unparseable-date skip; --quick silent/one-line; S8 plan_reopened event asserted)
+   Result: PASS
+4. session-start-digest.sh self-test
+   Command: /opt/homebrew/bin/bash adapters/claude-code/hooks/session-start-digest.sh --self-test → 91/91 OK. /bin/bash → 88 passed, 3 failed; failures are S1 monitor-alerts + S4 auto-ack ONLY (pre-existing on bash 3.2); T9's S21a/S21b feed_plan_recheck scenarios PASS on BOTH interpreters.
+   Result: PASS (3 failures pre-existing, isolated, not T9 scenarios)
+5. manifest-check
+   Command: bash adapters/claude-code/scripts/manifest-check.sh
+   Output: [manifest-check] GREEN — 148 entries, 122 hooks covered, 0 warn; entry id=plan-recheck-sweep at entries/145 with golden_scenario naming T9
+   Result: PASS
+6. Live sweep probe against the real repo (read path of the production wiring)
+   Command: bash adapters/claude-code/scripts/plan-recheck-sweep.sh --quick --repo /Users/misha/Claude/neural-lace
+   Output: empty, exit 0 — correct: the only archived Closure Outcome (context-watermark-opus5-window) has a future Re-check date 2026-09-28T00:00:00Z
+   Result: PASS
+7. Parser-fix RED arm (pre-fix source inspected, not trusted from the commit message)
+   Command: git show 7f74f54^:adapters/claude-code/scripts/close-plan.sh | grep -n 'Task\[\[:space:\]\]'
+   Output: old awk block boundary at old-line 423 was /Task[[:space:]]+(ID:[[:space:]]*)?[A-Za-z0-9.-]+/ — matches ANY "Task <word>" prose line (e.g. "Task description:"), resetting found_id/found_pass and orphaning real verdicts; old found_pass accepted only "Verdict: PASS". New code (close-plan.sh:604-613) anchors to literal ^Task ID: and accepts "PASS conf N" (close-plan.sh:591). S22 is the pinned regression.
+   Result: PASS (bug real before, fixed after, regression scenario pinned)
+8. "Applied to THIS program first"
+   Files: docs/plans/accountable-estate-program-2026-07.md:9 `outcome-gated: true` + populated ## Closure Outcome (lines 211-228) with a non-placeholder Outcome metric and Re-check date: 2026-08-13T05:56:00Z
+   Result: PASS
+9. Live demonstration closure (real production run, not fixture)
+   Files: docs/plans/archive/context-watermark-opus5-window.md — Status: COMPLETED, populated ## Closure Outcome (metric lines 155-158; bare machine-parseable Re-check date line 159 `2026-09-28T00:00:00Z`; Evidence pointers present); unarchived original absent from docs/plans/ (ls confirms). T7 append-at-close splice fired live: docs/loe/loe-calibration.json plans_total == 166 (was 163), regenerated in 43117a0 by the demo close itself. macos-portability-2026-07.md remains OPEN in docs/plans/ (deliberately not closed, M6 unfinished) — consistent.
+   Result: PASS
+10. Events + emitter registration
+   File: adapters/claude-code/hooks/lib/progress-log-lib.sh:396-412 (plan_outcome_recorded, plan_reopened natural keys), :153 (_PL_KNOWN_EMITTERS includes plan-recheck-sweep). Asserted at runtime by close-plan S24 and sweep S8.
+   Result: PASS
+11. Docs impact: plan predates the `Docs impact:` convention (no task in this plan carries the field) — grandfathered per verifier protocol.
+
+Runtime verification: test adapters/claude-code/scripts/close-plan.sh::--self-test
+Runtime verification: test adapters/claude-code/scripts/plan-recheck-sweep.sh::--self-test
+Runtime verification: test adapters/claude-code/hooks/session-start-digest.sh::--self-test
+Runtime verification: file docs/plans/archive/context-watermark-opus5-window.md::Re-check date: 2026-09-28T00:00:00Z
+Runtime verification: file docs/plans/accountable-estate-program-2026-07.md::outcome-gated: true
+Runtime verification: functionality-verifier T9::SKIP (rationale: harness-internal mechanism with --self-test; the maintainer-facing functionality signal — self-tests on both interpreters plus a live --quick invocation and a real production close in git history — was exercised directly by this verifier; no Task tool available in this verification environment)
+
+DEPENDENCY TRACE
+================
+Step 1: maintainer runs `close-plan.sh close <slug>` on an outcome-gated plan
+  ↓ Verified at: close-plan.sh:1494 (verify_closure_outcome_declared gate, opt-in via `outcome-gated: true`) — S23 blocks placeholder/missing section
+Step 2: close writes ## Closure Outcome unconditionally (observe-only for non-opted-in plans)
+  ↓ Verified at: close-plan.sh:1590 (write_closure_outcome_section) — S24 preserves author metric verbatim, S25 default section, S27 multiline verbatim; live demo archive file lines 151-184
+Step 3: T7 append-at-close splice fires
+  ↓ Verified at: close-plan.sh:1690 (`bash "$SCRIPT_DIR/loe-backfill.sh" ... || true`, the seam loe-backfill.sh documents) — live proof: loe-calibration.json plans_total 163→166 in 43117a0
+Step 4: plan_outcome_recorded event emitted
+  ↓ Verified at: progress-log-lib.sh:396-403 — asserted by close-plan S24
+Step 5: next session start → digest chokepoint invokes the sweep
+  ↓ Verified at: session-start-digest.sh:1353 (call site) → :619 feed_plan_recheck → plan-recheck-sweep.sh --quick — S21a/b green on BOTH interpreters; live --quick run silent/exit 0
+Step 6: passed re-check date or failing recurrence command → auto-reopen (git mv back, Status flip, Reopen Log, backlog row, needs-you entry, plan_reopened event; idempotent)
+  ↓ Verified at: plan-recheck-sweep.sh self-test S1-S8 (8/8 both interpreters), progress-log-lib.sh:404-412
+
+Git evidence:
+  Files modified in recent history (all within the T9 window, 2026-07-30):
+    - adapters/claude-code/scripts/close-plan.sh (7f74f54)
+    - adapters/claude-code/scripts/plan-recheck-sweep.sh (NEW, 9135fb7)
+    - adapters/claude-code/hooks/session-start-digest.sh (9135fb7)
+    - adapters/claude-code/hooks/lib/progress-log-lib.sh (7f74f54)
+    - adapters/claude-code/manifest.json (7f74f54)
+    - docs/plans/archive/context-watermark-opus5-window.md (c7b8c22 close, 43117a0 truncation correction)
+    - docs/loe/loe-calibration.json/.md (43117a0)
+    - docs/backlog.md ESTATE-T9-EVIDENCE-POINTERS-NOISE-01 follow-up (5ea5d29)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: all three halves of the task's contract were independently re-executed against real oracles — (1) metric+re-check WRITE half: close-plan.sh --self-test 30/0 on BOTH /bin/bash 3.2.57 and Homebrew bash with the six T9 scenarios green, plus a real production closure (context-watermark-opus5-window archived COMPLETED with populated Closure Outcome and the unarchived original gone); (2) AUTO-REOPEN half: plan-recheck-sweep.sh --self-test 8/8 both interpreters + live --quick probe silent/exit-0 against the real archive + SessionStart wiring green (S21a/b both interpreters); (3) "applied to THIS program first": outcome-gated: true + populated Closure Outcome with metric and re-check date in this plan itself. The parser-fix RED arm was verified against the actual pre-fix source (7f74f54^), not taken from the commit message. Known residue: ESTATE-T9-EVIDENCE-POINTERS-NOISE-01 (noisy Evidence pointers) filed in backlog by design, and the sweep's honest-gap disclosure (interactive-session chokepoint, not a true periodic tick) is documented in the script header — neither contradicts the task contract.

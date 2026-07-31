@@ -98,6 +98,13 @@ DEFAULT_MODE="warn"
 # --self-test handler
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm the shared libs' HARNESS_SELFTEST sandbox guard for this run, EXPORTed so
+  # re-invocations below inherit it. Without this, signal-ledger.sh resolves its
+  # PRODUCTION path and this self-test appends fabricated rows to the operator's
+  # real ~/.claude/state/signal-ledger.jsonl. PROVEN behaviorally: the same run
+  # in a clean HOME with the guard unset created .claude/state/signal-ledger.jsonl
+  # before this line existed and creates nothing under .claude/ with it.
+  export HARNESS_SELFTEST=1
   SELF_TEST_HOOK="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/$(basename "${BASH_SOURCE[0]}")"
   if [[ ! -f "$SELF_TEST_HOOK" ]]; then
     echo "self-test: cannot resolve own path" >&2

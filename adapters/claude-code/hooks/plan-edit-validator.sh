@@ -54,6 +54,13 @@ if ! declare -F od_backlog_health >/dev/null 2>&1; then
   { source "$_PEV_SELF_DIR/../tests/fixtures/wave-o/O.9/od-backlog-shim.sh" 2>/dev/null; } || true
 fi
 
+# ---- SE4 (status-event-ledger plan): flip-time ledger emission ----
+# Guarded source, best-effort (see emit_flip_ledger_event below) -- a
+# missing/broken lib must never brick the checkbox-flip authorization path
+# this hook exists to gate.
+# shellcheck disable=SC1091
+{ source "$_PEV_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null; } || true
+
 # ============================================================
 # Lock helpers (plan-edit-validator concurrency protection)
 # ============================================================
@@ -1043,8 +1050,242 @@ Backlog items absorbed: FIXTURE-SURFACE-01 (fixture absorption); FIXTURE-REF-OPE
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F16/F17 (SE4, status-event-ledger plan) — end-to-end: REAL flagless
+  # subprocess invocation of an AUTHORIZED checkbox flip, proving the
+  # flip-time ledger emit fires with the real {verdict, confidence,
+  # verifier} extracted from the real evidence source.
+  #
+  # PATH SHIM NOTE (honest, not a workaround of MY code): this hook's
+  # PRE-EXISTING evidence-freshness check (`stat -c %Y`, several call
+  # sites) is a known GNU-only spelling with no BSD-stat fallback
+  # (docs/backlog.md PORTABILITY-STAT-SED-SWEEP-01/02 already tracks this
+  # class -- e.g. agent-heartbeat.sh's identical bug, fixed under M5; this
+  # file's own occurrences are NOT yet swept and are OUT OF SCOPE for this
+  # task). On stock-macOS `/usr/bin/stat` (no `-c` support) that GNU-only
+  # call always falls through to its `|| echo 0` sentinel, so `age` is
+  # always astronomically large and check_evidence_first/
+  # check_mechanical_or_contract_evidence NEVER authorize ANY flip on this
+  # exact class of machine -- confirmed directly: `stat -c %Y <file>`
+  # errors "illegal option -- c" here. Rather than silently working around
+  # this in production code (out of this task's scope) or leaving SE4
+  # entirely unproven end-to-end on this machine, this scenario prepends a
+  # tiny local `stat` shim (translating `-c %Y` to the real `stat -f %m`)
+  # onto ONLY this subprocess's PATH -- exercising the REAL, unmodified
+  # authorization + emit code exactly as it runs on a machine where GNU
+  # stat (or this shim) is available, without touching any committed file.
+  # ============================================================
+  F16_BINSHIM="$TMPDIR_SELFTEST/binshim"
+  mkdir -p "$F16_BINSHIM"
+  cat > "$F16_BINSHIM/stat" <<'SHIM'
+#!/bin/bash
+if [[ "$1" == "-c" && "$2" == "%Y" ]]; then
+  shift 2
+  /usr/bin/stat -f %m "$@"
+else
+  /usr/bin/stat "$@"
+fi
+SHIM
+  chmod +x "$F16_BINSHIM/stat"
+
+  # ---- F16: full-level (prose evidence) flip emits verdict+confidence+verifier ----
+  F16_DIR="$TMPDIR_SELFTEST/f16/docs/plans"
+  mkdir -p "$F16_DIR"
+  printf '# F16 Plan\n\n## Tasks\n\n- [ ] SE.4.1 Do the flip-emit thing\n' > "$F16_DIR/f16-plan.md"
+  cat > "$F16_DIR/f16-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.1
+Verified at: 2026-07-30T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 8
+EVID
+  F16_LEDGER="$TMPDIR_SELFTEST/f16-ledger.jsonl"
+  rm -f "$F16_LEDGER"
+  F16_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f16-plan.md","old_string":"- [ ] SE.4.1 Do the flip-emit thing","new_string":"- [x] SE.4.1 Do the flip-emit thing"}}' "$F16_DIR")"
+  set +e
+  F16_OUT="$(printf '%s' "$F16_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F16_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F16=$?
+  set -e
+  if [[ "$RC_F16" -eq 0 ]] \
+     && [[ -f "$F16_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=SE.4.1' "$F16_LEDGER" \
+     && grep -q 'verdict=PASS' "$F16_LEDGER" \
+     && grep -q 'confidence=8' "$F16_LEDGER" \
+     && grep -qi 'verifier=task-verifier' "$F16_LEDGER"; then
+    echo "self-test (F16) e2e-prose-flip-emits-verdict-confidence-verifier: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F16) e2e-prose-flip-emits-verdict-confidence-verifier: FAIL (rc=$RC_F16 out=$F16_OUT ledger=$(cat "$F16_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F17: structured (mechanical-level) evidence flip emits verdict +
+  # verifier, honestly "unknown" confidence (the schema has no such field) ----
+  F17_DIR="$TMPDIR_SELFTEST/f17/docs/plans"
+  mkdir -p "$F17_DIR/f17-plan-evidence"
+  printf '# F17 Plan\n\n## Tasks\n\n- [ ] SE.4.2 Do the mechanical flip-emit thing — Verification: mechanical\n' > "$F17_DIR/f17-plan.md"
+  cat > "$F17_DIR/f17-plan-evidence/SE.4.2.evidence.json" <<JSON
+{
+  "schema_version": 1,
+  "task_id": "SE.4.2",
+  "verdict": "PASS",
+  "commit_sha": "abc1234",
+  "files_modified": ["foo.md"],
+  "mechanical_checks": {"exists:foo.md": {"passed": true}},
+  "timestamp": "2026-07-30T00:00:00Z",
+  "verifier": "write-evidence.sh"
+}
+JSON
+  F17_LEDGER="$TMPDIR_SELFTEST/f17-ledger.jsonl"
+  rm -f "$F17_LEDGER"
+  F17_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f17-plan.md","old_string":"- [ ] SE.4.2 Do the mechanical flip-emit thing — Verification: mechanical","new_string":"- [x] SE.4.2 Do the mechanical flip-emit thing — Verification: mechanical"}}' "$F17_DIR")"
+  set +e
+  F17_OUT="$(printf '%s' "$F17_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F17_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F17=$?
+  set -e
+  if [[ "$RC_F17" -eq 0 ]] \
+     && [[ -f "$F17_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=SE.4.2' "$F17_LEDGER" \
+     && grep -q 'verdict=PASS' "$F17_LEDGER" \
+     && grep -q 'confidence=unknown' "$F17_LEDGER" \
+     && grep -q 'verifier=write-evidence.sh' "$F17_LEDGER"; then
+    echo "self-test (F17) e2e-structured-flip-emits-honest-unknown-confidence: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F17) e2e-structured-flip-emits-honest-unknown-confidence: FAIL (rc=$RC_F17 out=$F17_OUT ledger=$(cat "$F17_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F18 (harness-review REFORMULATE finding 1(a)) — a FAIL->fix->PASS
+  # re-verification: the SAME evidence.md accumulates TWO blocks for the
+  # SAME task_id (an earlier FAIL, then a later PASS conf 8 after the fix
+  # landed -- the real 3404bd1 T7 FLIP shape). The ledger must report the
+  # LAST block's fields (PASS/8), never the first (FAIL) -- proving the
+  # awk's early-exit-on-first-match bug is closed.
+  #
+  # NOTE on the first block's shape: it deliberately has NO "Runtime
+  # verification:" line (the first attempt's build failed before reaching
+  # a runtime check -- Verdict: FAIL/Confidence: 3 still stand alone as a
+  # real, if minimal, evidence entry). This is load-bearing for the
+  # fixture, not just flavor: check_evidence_first's OWN awk (the
+  # AUTHORIZER, unrelated to and out of scope for this finding -- filed
+  # separately, see docs/backlog.md) double-prints "MATCH" when a block
+  # satisfying its (task_id==wanted && has_runtime) condition is followed
+  # by ANOTHER "EVIDENCE BLOCK" header, because its bare `exit 0` inside
+  # the main body still runs the END rule against the pre-reset state --
+  # two "MATCH" lines fail the caller's exact `[[ "$result" == "MATCH" ]]`
+  # comparison and the flip never gets authorized at all. Keeping block 1's
+  # has_runtime false side-steps that SEPARATE pre-existing bug so this
+  # fixture can cleanly exercise the one this finding actually targets: the
+  # ledger EMIT path's own last-match-wins fix in `_pev_extract_prose_flip_
+  # fields`, which does not gate on has_runtime and reproduces the original
+  # bug (and its fix) regardless of block 1's shape. ----
+  F18_DIR="$TMPDIR_SELFTEST/f18/docs/plans"
+  mkdir -p "$F18_DIR"
+  printf '# F18 Plan\n\n## Tasks\n\n- [ ] SE.4.3 Do the reverify-flip thing\n' > "$F18_DIR/f18-plan.md"
+  cat > "$F18_DIR/f18-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.3
+Verified at: 2026-07-29T00:00:00Z
+Verifier: task-verifier agent (first attempt)
+
+Verdict: FAIL
+Confidence: 3
+
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.3
+Verified at: 2026-07-30T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check (re-verified after the fix landed)
+
+Verdict: PASS
+Confidence: 8
+EVID
+  F18_LEDGER="$TMPDIR_SELFTEST/f18-ledger.jsonl"
+  rm -f "$F18_LEDGER"
+  F18_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f18-plan.md","old_string":"- [ ] SE.4.3 Do the reverify-flip thing","new_string":"- [x] SE.4.3 Do the reverify-flip thing"}}' "$F18_DIR")"
+  set +e
+  F18_OUT="$(printf '%s' "$F18_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F18_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F18=$?
+  set -e
+  if [[ "$RC_F18" -eq 0 ]] \
+     && [[ -f "$F18_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=SE.4.3' "$F18_LEDGER" \
+     && grep -q 'verdict=PASS' "$F18_LEDGER" \
+     && grep -q 'confidence=8' "$F18_LEDGER" \
+     && ! grep -q 'verdict=FAIL' "$F18_LEDGER"; then
+    echo "self-test (F18) two-block-reverify-emits-LAST-verdict-not-first: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F18) two-block-reverify-emits-LAST-verdict-not-first: FAIL (rc=$RC_F18 out=$F18_OUT ledger=$(cat "$F18_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F19 (harness-review REFORMULATE finding 1(b)) — a mechanical-level
+  # task with BOTH a valid structured .evidence.json (verdict PASS, the
+  # artifact that actually authorized this flip via
+  # check_mechanical_or_contract_evidence's Path A) AND a STALE/wrong prose
+  # evidence.md sitting alongside it (a different verdict + verifier, as
+  # would happen if an earlier full-level attempt left a prose block
+  # behind). The ledger must read the structured file -- the source the
+  # authorizer actually used -- never the stale prose, proving
+  # flip_ledger_fields's level-aware ordering fix. ----
+  F19_DIR="$TMPDIR_SELFTEST/f19/docs/plans"
+  mkdir -p "$F19_DIR/f19-plan-evidence"
+  printf '# F19 Plan\n\n## Tasks\n\n- [ ] SE.4.4 Do the mechanical-prefers-structured thing — Verification: mechanical\n' > "$F19_DIR/f19-plan.md"
+  cat > "$F19_DIR/f19-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.4
+Verifier: stale-source-must-not-be-read
+Runtime verification: stale prose block that must NOT win over the structured file
+
+Verdict: FAIL
+Confidence: 2
+EVID
+  cat > "$F19_DIR/f19-plan-evidence/SE.4.4.evidence.json" <<'JSON'
+{
+  "schema_version": 1,
+  "task_id": "SE.4.4",
+  "verdict": "PASS",
+  "commit_sha": "def5678",
+  "files_modified": ["bar.md"],
+  "mechanical_checks": {"exists:bar.md": {"passed": true}},
+  "timestamp": "2026-07-30T00:00:00Z",
+  "verifier": "write-evidence.sh"
+}
+JSON
+  F19_LEDGER="$TMPDIR_SELFTEST/f19-ledger.jsonl"
+  rm -f "$F19_LEDGER"
+  F19_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f19-plan.md","old_string":"- [ ] SE.4.4 Do the mechanical-prefers-structured thing — Verification: mechanical","new_string":"- [x] SE.4.4 Do the mechanical-prefers-structured thing — Verification: mechanical"}}' "$F19_DIR")"
+  set +e
+  F19_OUT="$(printf '%s' "$F19_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F19_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F19=$?
+  set -e
+  if [[ "$RC_F19" -eq 0 ]] \
+     && [[ -f "$F19_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=SE.4.4' "$F19_LEDGER" \
+     && grep -q 'verdict=PASS' "$F19_LEDGER" \
+     && grep -q 'confidence=unknown' "$F19_LEDGER" \
+     && grep -q 'verifier=write-evidence.sh' "$F19_LEDGER" \
+     && ! grep -q 'stale-source-must-not-be-read' "$F19_LEDGER"; then
+    echo "self-test (F19) mechanical-level-ledger-reads-structured-not-stale-prose: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F19) mechanical-level-ledger-reads-structured-not-stale-prose: FAIL (rc=$RC_F19 out=$F19_OUT ledger=$(cat "$F19_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 15 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 19 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1458,6 +1699,172 @@ WARNMSG
   return 0
 }
 
+# ============================================================
+# SE4 (status-event-ledger plan, taxonomy event #7 "verification verdict +
+# checkbox flip") — flip-time ledger emission.
+# ============================================================
+#
+# WHY HERE, NOT SOMEWHERE ELSE: this hook is ALREADY the deterministic
+# chokepoint every checkbox flip must pass through (that is its entire
+# reason for existing — "the only entity allowed to flip a checkbox is
+# task-verifier"). The authorization decision itself (mechanical/contract
+# via check_mechanical_or_contract_evidence, full via check_evidence_first)
+# already happened by the time we reach `exit 0`; this section only RE-READS
+# the same evidence source to extract {verdict, confidence, verifier} for
+# the emit — it never changes the authorization decision and never blocks.
+#
+# Emits unconditionally on every AUTHORIZED flip (never on a blocked one —
+# there is no verdict to report for a denied edit). Fail-open throughout:
+# any missing lib, missing field, or parse failure degrades to "unknown"
+# rather than aborting the (already-decided) exit 0.
+#
+# HARNESS-REVIEW FIX (2026-07-30, REFORMULATE finding 1): the awk below
+# used to `exit 0` the moment it hit the block matching wanted_id, emitting
+# THAT block's fields immediately. On a FAIL->fix->PASS re-verification (a
+# real, recurring pattern in this repo -- see 3404bd1's T7 FLIP history --
+# task-verifier appends a NEW evidence block for the SAME task_id after a
+# fix, rather than replacing the old one) the evidence file accumulates
+# multiple same-id blocks in file order, and the early exit reported the
+# FIRST (stale, often FAIL) block's verdict/confidence forever, even though
+# the flip being authorized right now is backed by the LAST (current, PASS)
+# block. Fixed by dropping the exit: every block's fields are provisionally
+# recorded when in_block && t == wanted_id, and each new match OVERWRITES
+# the previous one, so whichever block is LAST in file order wins -- emit
+# happens exactly once, at true END, from the final recorded state.
+
+# _pev_extract_prose_flip_fields <evidence_file> <task_id>
+#   Echoes "verdict|confidence|verifier" for the LAST block matching
+#   task_id (file order) -- see the HARNESS-REVIEW FIX note above for why
+#   "last", not "first". Missing fields render as "unknown", never empty
+#   (so the pipe-delimited triple always has exactly 3 components for the
+#   caller's `read`).
+_pev_extract_prose_flip_fields() {
+  local evidence_file="$1" wanted_id="$2"
+  awk -v wanted_id="$wanted_id" '
+    function emit(vv, cc, rr) {
+      if (vv == "") vv = "unknown"
+      if (cc == "") cc = "unknown"
+      if (rr == "") rr = "unknown"
+      gsub(/\|/, "/", vv); gsub(/\|/, "/", cc); gsub(/\|/, "/", rr)
+      print vv "|" cc "|" rr
+    }
+    function record_if_match() {
+      if (in_block && t == wanted_id) { found=1; lv=v; lc=c; lr=r }
+    }
+    BEGIN { in_block=0; t=""; v=""; c=""; r=""; found=0; lv=""; lc=""; lr="" }
+    /^EVIDENCE BLOCK/ {
+      record_if_match()
+      in_block=1; t=""; v=""; c=""; r=""; next
+    }
+    /^Task ID:/ {
+      if (in_block) { s=$0; sub(/^Task ID:[[:space:]]*/,"",s); sub(/[[:space:]].*$/,"",s); t=s }
+      next
+    }
+    /^Verdict:/ {
+      if (in_block) { s=$0; sub(/^Verdict:[[:space:]]*/,"",s); sub(/[[:space:]].*$/,"",s); v=s }
+      next
+    }
+    /^Confidence:/ {
+      if (in_block) { s=$0; sub(/^Confidence:[[:space:]]*/,"",s); sub(/[[:space:]].*$/,"",s); c=s }
+      next
+    }
+    /^Verifier:/ {
+      if (in_block) { s=$0; sub(/^Verifier:[[:space:]]*/,"",s); r=s }
+      next
+    }
+    END { record_if_match(); if (found) emit(lv, lc, lr) }
+  ' "$evidence_file" 2>/dev/null
+}
+
+# _pev_extract_json_flip_fields <structured_evidence_json>
+#   Structured evidence.schema.json has no `confidence` field (mechanical
+#   checks don't carry a calibrated confidence score) -- honestly "unknown",
+#   never fabricated.
+_pev_extract_json_flip_fields() {
+  local structured_file="$1"
+  local v r
+  v="$(jq -r '.verdict // "unknown"' "$structured_file" 2>/dev/null)" || v=""
+  r="$(jq -r '.verifier // "write-evidence.sh"' "$structured_file" 2>/dev/null)" || r=""
+  [[ -z "$v" ]] && v="unknown"
+  [[ -z "$r" ]] && r="unknown"
+  printf '%s|unknown|%s' "$v" "$r"
+}
+
+# flip_ledger_fields <plan_file> <task_id> [level]
+#   Echoes "verdict|confidence|verifier", reading whichever evidence source
+#   ACTUALLY AUTHORIZED this flip -- mirroring the real authorizer's own
+#   preference order for the given `level`, not a single fixed order for
+#   every task (HARNESS-REVIEW FIX, 2026-07-30, REFORMULATE finding 1(b)).
+#   `level` defaults to "full" when omitted/empty.
+#     - mechanical/contract: check_mechanical_or_contract_evidence tries
+#       structured `.evidence.json` FIRST (Path A) and only falls back to
+#       prose with a `Commit:` line (Path B) if the structured file is
+#       missing/stale/non-matching -- so the ledger must ALSO try
+#       structured first here, or it can report a stale/unrelated prose
+#       block that happens to sit in the SAME evidence.md (e.g. a leftover
+#       block from an earlier full-level attempt on the same task) even
+#       though the flip was actually authorized by the structured JSON.
+#     - full (default): check_evidence_first tries prose FIRST (Path A) and
+#       falls back to structured (Path B) -- unchanged from before this fix.
+flip_ledger_fields() {
+  local plan_file="$1" task_id="$2" level="${3:-full}"
+  local plan_dir plan_slug structured_file evidence_file
+  plan_dir=$(dirname "$plan_file")
+  plan_slug=$(basename "$plan_file" .md)
+  structured_file="$plan_dir/${plan_slug}-evidence/${task_id}.evidence.json"
+  evidence_file="${plan_file%.md}-evidence.md"
+
+  if [[ "$level" == "mechanical" ]] || [[ "$level" == "contract" ]]; then
+    if [[ -f "$structured_file" ]]; then
+      _pev_extract_json_flip_fields "$structured_file"
+      return 0
+    fi
+    if [[ -f "$evidence_file" ]]; then
+      local out_mc
+      out_mc="$(_pev_extract_prose_flip_fields "$evidence_file" "$task_id")" || out_mc=""
+      if [[ -n "$out_mc" ]]; then
+        printf '%s' "$out_mc"
+        return 0
+      fi
+    fi
+    printf 'unknown|unknown|unknown'
+    return 0
+  fi
+
+  if [[ -f "$evidence_file" ]]; then
+    local out
+    out="$(_pev_extract_prose_flip_fields "$evidence_file" "$task_id")" || out=""
+    if [[ -n "$out" ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+  fi
+  if [[ -f "$structured_file" ]]; then
+    _pev_extract_json_flip_fields "$structured_file"
+    return 0
+  fi
+  printf 'unknown|unknown|unknown'
+}
+
+# emit_flip_ledger_event <plan_file> <task_id> [level]
+#   Best-effort, never fails the caller (every internal step is guarded).
+#   `level` (VERIFICATION_LEVEL) is threaded through to flip_ledger_fields
+#   so the ledger reads the SAME evidence source the authorizer used.
+emit_flip_ledger_event() {
+  local plan_file="$1" task_id="$2" level="${3:-full}"
+  command -v ledger_emit_typed >/dev/null 2>&1 || return 0
+  local fields v c r
+  fields="$(flip_ledger_fields "$plan_file" "$task_id" "$level" 2>/dev/null)" || fields=""
+  [[ -z "$fields" ]] && fields="unknown|unknown|unknown"
+  IFS='|' read -r v c r <<< "$fields" || true
+  [[ -z "$v" ]] && v="unknown"
+  [[ -z "$c" ]] && c="unknown"
+  [[ -z "$r" ]] && r="unknown"
+  ledger_emit_typed "plan-edit-validator" "flip-verdict" \
+    "plan=$(basename "$plan_file") task=${task_id} verdict=${v} confidence=${c} verifier=${r}" 2>/dev/null || true
+  return 0
+}
+
 # For Edit calls: look at old_string vs new_string
 if [[ "$TOOL_NAME" == "Edit" ]]; then
   if [[ "$HAS_NESTED" == "true" ]]; then
@@ -1532,12 +1939,19 @@ ERR
 
       if [[ "$VERIFICATION_LEVEL" == "mechanical" ]] || [[ "$VERIFICATION_LEVEL" == "contract" ]]; then
         if [[ -n "$TASK_ID" ]] && check_mechanical_or_contract_evidence "$FILE_PATH" "$TASK_ID" "$VERIFICATION_LEVEL"; then
+          # SE4: flip-time ledger emit (best-effort; never affects this exit).
+          # VERIFICATION_LEVEL is threaded through so the ledger reads the
+          # SAME evidence source (structured-first) that authorized THIS
+          # flip -- see flip_ledger_fields's header comment.
+          { emit_flip_ledger_event "$FILE_PATH" "$TASK_ID" "$VERIFICATION_LEVEL"; } 2>/dev/null || true
           # Lock auto-releases on exit via the EXIT trap.
           exit 0
         fi
       else
         # Default `full` behavior: existing evidence-first escape hatch
         if [[ -n "$TASK_ID" ]] && check_evidence_first "$FILE_PATH" "$TASK_ID"; then
+          # SE4: flip-time ledger emit (best-effort; never affects this exit).
+          { emit_flip_ledger_event "$FILE_PATH" "$TASK_ID" "$VERIFICATION_LEVEL"; } 2>/dev/null || true
           # Lock auto-releases on exit via the EXIT trap.
           exit 0
         fi

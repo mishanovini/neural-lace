@@ -137,6 +137,18 @@ fi
 
 _have() { command -v "$1" >/dev/null 2>&1; }
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# shellcheck disable=SC1091
+{ source "$_F4_HOOKS_LIB/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "f4-retro: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ----------------------------------------------------------------------
 # _f4_repo_root — resolve the canonical repo root (git-root of THIS
 # script's location, via nl-paths.sh, never cwd).
@@ -419,12 +431,13 @@ f4_metric2_per_gate_alarm() {
   fi
   local wd_script="$_F4_SELF_DIR/waiver-density.sh"
   [[ -f "$wd_script" ]] || { printf ''; return 0; }
+  # Bounded on every platform (was: unbounded whenever `timeout` was absent,
+  # i.e. on any stock Mac). This one is only supplementary detail rather than
+  # a load-bearing count — but "best-effort" is an argument for tolerating a
+  # FAILED call, not for tolerating one that never returns: an unbounded
+  # waiver-density scan over a large ledger would hang f4-retro itself.
   local out=""
-  if _have timeout; then
-    out="$(timeout 15 bash "$wd_script" --report 2>/dev/null)"
-  else
-    out="$(bash "$wd_script" --report 2>/dev/null)"
-  fi
+  out="$(nl_run_bounded 15 bash "$wd_script" --report 2>/dev/null)"
   printf '%s' "$out" | awk -F'|' '/\| *YES *\|/ { gsub(/^ +| +$/, "", $2); gsub(/^ +| +$/, "", $3); print $2, $3 }'
   return 0
 }
@@ -819,6 +832,28 @@ _f4_run_self_test() {
 
   export HARNESS_SELFTEST=1
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=../hooks/lib/portable-time.sh
+  . "$_F4_SELF_DIR/../hooks/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source hooks/lib/portable-time.sh" >&2; exit 2; }
+
+  # _f4_stamp <file> <YYYY-MM-DD> — give <file> the mtime of that calendar
+  # day, expressed in the SAME clock _f4_epoch uses so the fixture and the
+  # metric's window comparison cannot drift apart. `touch -t` is the one
+  # spelling GNU and BSD both accept; nl_epoch_to_touch_ts renders it.
+  # Pre-sweep these sites read
+  #   touch -d '2026-07-05' f || touch -t 202607050000 f || : > f
+  # where arm 1 is GNU-only and arm 3 TRUNCATES the file instead of aging it —
+  # a silent wrong-result path, not a fallback.
+  _f4_stamp() {
+    local f="$1" day="$2" e ts
+    e="$(_f4_epoch "$day")" || e=""
+    [[ -n "$e" ]] || { fail "_f4_stamp: could not resolve epoch for $day"; return 1; }
+    ts="$(nl_epoch_to_touch_ts "$e")" || ts=""
+    [[ -n "$ts" ]] || { fail "_f4_stamp: could not render touch stamp for $day"; return 1; }
+    touch -t "$ts" "$f" || { fail "_f4_stamp: touch -t $ts failed for $f"; return 1; }
+  }
+
   # ------------------------------------------------------------
   # Fixture 1: unresolved-stop-hooks.log with dated + undated lines.
   # ------------------------------------------------------------
@@ -867,12 +902,12 @@ _f4_run_self_test() {
   # ------------------------------------------------------------
   # Fixture 2: waiver files with known mtimes + ledger waiver events.
   # ------------------------------------------------------------
-  touch -d '2026-07-05' "$TMP/state/acceptance-waiver-slugA-1.txt" 2>/dev/null \
-    || touch -t 202607050000 "$TMP/state/acceptance-waiver-slugA-1.txt" 2>/dev/null \
-    || : > "$TMP/state/acceptance-waiver-slugA-1.txt"
-  touch -d '2026-06-01' "$TMP/state/acceptance-waiver-slugB-1.txt" 2>/dev/null \
-    || touch -t 202606010000 "$TMP/state/acceptance-waiver-slugB-1.txt" 2>/dev/null \
-    || : > "$TMP/state/acceptance-waiver-slugB-1.txt"
+  # slugA is INSIDE the 2026-07-03..2026-07-24 window, slugB is before it —
+  # metric2's whole job is telling those apart, so both stamps must land.
+  : > "$TMP/state/acceptance-waiver-slugA-1.txt"
+  : > "$TMP/state/acceptance-waiver-slugB-1.txt"
+  _f4_stamp "$TMP/state/acceptance-waiver-slugA-1.txt" 2026-07-05
+  _f4_stamp "$TMP/state/acceptance-waiver-slugB-1.txt" 2026-06-01
   {
     printf '{"ts":"2026-07-06T00:00:00Z","session_id":"s1","gate":"gate-a","event":"waiver","detail":"fixture"}\n'
     printf '{"ts":"2026-06-01T00:00:00Z","session_id":"s1","gate":"gate-a","event":"waiver","detail":"before window"}\n'
@@ -903,7 +938,7 @@ _f4_run_self_test() {
   : > "$TMP/alerts/acked-one.json.acked"
   local stale="$TMP/alerts/stale-unacked.json"
   : > "$stale"
-  touch -d '2026-06-01' "$stale" 2>/dev/null || touch -t 202606010000 "$stale" 2>/dev/null || true
+  _f4_stamp "$stale" 2026-06-01
 
   local m3 m3_total m3_acked m3_over7d
   m3="$(f4_metric3_signal_consumption)"

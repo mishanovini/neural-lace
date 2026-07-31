@@ -269,4 +269,24 @@ marker_state="${SESSION_HEARTBEAT_MARKER_STATE:-none}"
 bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event turn-end --marker "$marker_state" >/dev/null 2>&1 || true
 # ---- END WAVE-O O.2 CALLSITE ----------------------------------------------
 
+# ---- LIMIT-RESUME STOP CALLSITE: disarm the turn-scoped watchdog marker --
+# This Stop fires at the end of EVERY turn (see the WAVE-O turn-trace
+# bookkeeping above, which already depends on that fact), not once per
+# session -- so "disarm on Stop" means "this specific turn ended cleanly,"
+# the correct half of the turn-scoped design in scripts/limit-resume.sh's
+# own header. Paired with the arm splice in session-start-digest.sh
+# (SessionStart) and the new UserPromptSubmit hooks[] entry in
+# settings.json.template (re-arms at the START of the NEXT turn): net
+# effect, the marker is armed for exactly as long as a turn is actively in
+# flight -- the only window a usage-limit kill can land in -- and disarmed
+# while genuinely idle between turns. disarm() itself is a no-op from any
+# cwd that is not the main checkout, so a worktree-isolated builder
+# session's own Stop can never wipe the main interactive session's armed
+# marker (self-tested: limit-resume.sh --self-test S8). Reentry-suppressed
+# for free: this whole hook already exited above under NL_HOOK_REENTRY=1,
+# so an automation-resumed child's own Stop never re-fires this disarm
+# out of turn.
+bash "$HOOKS_DIR/../scripts/limit-resume.sh" disarm "clean-stop" >/dev/null 2>&1 || true
+# ---- END LIMIT-RESUME STOP CALLSITE ----------------------------------------
+
 exit 0

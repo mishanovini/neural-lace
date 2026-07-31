@@ -105,6 +105,14 @@ run() {
 # ============================ SELF-TEST ============================
 self_test() {
   local tmp pass=0 fail=0 out
+  # Portable fixture aging (macos-portability-2026-07 M4) — sourced in the
+  # self-test only, so the surfacer's SessionStart path is unaffected.
+  local _sws_pt
+  _sws_pt="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/portable-time.sh"
+  if ! . "$_sws_pt" 2>/dev/null; then
+    echo "self-test: cannot source $_sws_pt (needed to backdate fixtures portably)" >&2
+    return 1
+  fi
   tmp="$(mktemp -d)"
   mkrun() { # $1=runid  $2=started  $3=result  $4=age_min  [$5=acked]
     local d="$tmp/projects/p/s/subagents/workflows/$1"
@@ -114,10 +122,13 @@ self_test() {
     for ((i=0;i<$2;i++)); do echo '{"type":"started","agentId":"a'"$i"'"}' >> "$d/journal.jsonl"; done
     for ((i=0;i<$3;i++)); do echo '{"type":"result","agentId":"a'"$i"'"}' >> "$d/journal.jsonl"; done
     [ "${5:-}" = "acked" ] && touch "$d/.stall-acked"
-    # set mtime to $4 minutes ago
-    local secs=$(( $4 * 60 ))
-    touch -d "@$(( $(date +%s) - secs ))" "$d/journal.jsonl" 2>/dev/null \
-      || touch -t "$(date -d "@$(( $(date +%s) - secs ))" +%Y%m%d%H%M.%S 2>/dev/null)" "$d/journal.jsonl" 2>/dev/null || true
+    # set mtime to $4 minutes ago. No `|| true`: every scenario below
+    # keys off this age, so an un-aged journal makes a "stalled" fixture
+    # test a fresh run under the stalled scenario's name.
+    if ! nl_touch_age "$d/journal.jsonl" $(( $4 * 60 )); then
+      echo "self-test: could not backdate $d/journal.jsonl" >&2
+      return 1
+    fi
   }
   # Sandbox the agent-heartbeat namespace too, so run() step (2) never scans the
   # real ~/.claude/state/heartbeats/agents and pollutes these workflow scenarios.

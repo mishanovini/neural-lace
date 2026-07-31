@@ -112,6 +112,20 @@ async function main() {
   const RECENT_ASK_TS = new Date(Date.now() - 2 * 86400000).toISOString(); // 2 days ago
   const ANCIENT_ASK_TS = new Date(Date.now() - 400 * 86400000).toISOString(); // well over a year ago
 
+  // RECENT_TASK_STARTED_TS_* (false-eternal-running fix, 2026-07-30):
+  // task_started fixture timestamps must now be relative to the ACTUAL
+  // test-run time, not a fixed 2026-07-15 date — deriveItemStatus's new
+  // task_started idle-expiry (COCKPIT_TASK_STARTED_IDLE_MIN, default
+  // 60min) would otherwise treat every pre-existing "in-progress" fixture
+  // below as stale-by-construction regardless of when this suite runs
+  // (same worktree-mtime-independence concern RECENT_ASK_TS/ANCIENT_ASK_TS
+  // already solve for plan-archival recency, applied to this new axis).
+  // Two distinct values (10min, 9min ago) preserve rich-plan/1's original
+  // two-events-in-order shape (the second event is the more recent one).
+  const RECENT_TASK_STARTED_TS = new Date(Date.now() - 10 * 60000).toISOString(); // 10 min ago
+  const RECENT_TASK_STARTED_TS_2 = new Date(Date.now() - 9 * 60000).toISOString(); // 9 min ago
+  const STALE_TASK_STARTED_TS = new Date(Date.now() - 2 * 60 * 60000).toISOString(); // 2h ago — past the 60min default idle window
+
   // ---- fixture plan files -------------------------------------------------
   // demo-plan: 3 tasks — 1 done, 1 started-in-flight, 1 untouched. Linked
   // to ask-alpha.
@@ -200,6 +214,43 @@ async function main() {
     '    a confident bucket.',
     '  - **Complete oracle (A4):** per-project completion-oracle config with',
     '    three named classes.',
+    '',
+  ].join('\n'));
+  // stale-dispatch-plan (false-eternal-running fix, 2026-07-30 — the
+  // OPERATOR-REPORTED real defect: three roadmap tasks rendered "running"
+  // for hours because the DISPATCHING session that once touched them was
+  // still alive, even though none of them had been re-dispatched in a
+  // while). ONE task, task_started attached to sess-op-1 — the SAME
+  // fixture session rich-plan/1 uses, whose heartbeat file is written
+  // fresh at suite-start (genuinely live the whole run) — but its
+  // task_started event (below) is deliberately STALE (2h ago, well past
+  // the 60min default idle window), unlike rich-plan/1's recent one. This
+  // is the exact real-world shape: alive dispatcher, abandoned task.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'stale-dispatch-plan.md'), [
+    '# Plan: Stale Dispatch', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task dispatched once, hours ago, never revisited',
+    '',
+  ].join('\n'));
+  // corrupt-ts-plan (MALFORMED-IS-NOT-ABSENT fix, 2026-07-30): ONE task
+  // whose task_started event is PRESENT but carries an unparseable `ts`
+  // (a truncated/corrupt write). Attached to sess-op-1, the same
+  // genuinely-live heartbeat session — so before the fix the unparseable
+  // timestamp collapsed to null, the idle gate silently switched OFF, and
+  // the task rendered a green in-progress from evidence nobody could read.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'corrupt-ts-plan.md'), [
+    '# Plan: Corrupt Timestamp', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task whose task_started timestamp cannot be parsed',
+    '',
+  ].join('\n'));
+  // waiting-plan (ROADMAP-WAITING-ON-YOU-SIGNAL-01, round 14): ONE task,
+  // started (task_started event below, unlinked lane) by a session with NO
+  // heartbeat file at all -- reaches deriveItemStatus's stalled branch via
+  // activity:'no-heartbeat', the real precondition buildWaitingOnYouMap's
+  // stalledSignals.waitingOnYouId needs to actually win the precedence over
+  // the 'crashed' fallback (see derive-lib.js's deriveStalledReason).
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'waiting-plan.md'), [
+    '# Plan: Waiting', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task genuinely stalled, waiting on an operator decision',
     '',
   ].join('\n'));
   // ROUND 8 (b): redesign-plan has NO linked ask at all — the operator's
@@ -319,6 +370,15 @@ async function main() {
   ].join('\n'));
   const emptyRepoDir = path.join(tmp, 'empty-repo-no-plans');
   fs.mkdirSync(emptyRepoDir, { recursive: true });
+  // R17 (2026-07-30, decision A — multi-project GROUPING) fixture: a
+  // FOURTH configured repo using the LEGACY flat-string config form (no
+  // `group` declared) — its plans must land in the honest '(ungrouped)'
+  // catch-all, never a silently-guessed default group.
+  const flatRepoDir = path.join(tmp, 'flat-repo');
+  fs.mkdirSync(path.join(flatRepoDir, 'docs', 'plans'), { recursive: true });
+  fs.writeFileSync(path.join(flatRepoDir, 'docs', 'plans', 'flat-project-plan.md'), [
+    '# Plan: Flat Project Effort', '', 'Status: ACTIVE', '', '## Tasks', '', '- [ ] 1. do the flat-project thing', '',
+  ].join('\n'));
   // The projects-config env override starts pointed at a NONEXISTENT file —
   // configuredRepoRoots() must degrade to [] honestly, so the zero-config
   // default (S1-era GETs below) stays single-repo (R9-8's own binding rule).
@@ -388,7 +448,7 @@ async function main() {
 
   // ---- fixture progress events ------------------------------------------
   fs.writeFileSync(path.join(progressDir, 'ask-alpha.jsonl'), [
-    JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:00:00Z', plan_slug: 'demo-plan', task_id: '2', session_id: 'sess-op-1' }),
+    JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'demo-plan', task_id: '2', session_id: 'sess-op-1' }),
     JSON.stringify({ type: 'task_done', ts: '2026-07-14T18:00:00Z', plan_slug: 'demo-plan', task_id: '1', session_id: 'sess-op-1', evidence_link: '' }),
   ].join('\n') + '\n');
   // rich-plan's task 1 is in-progress with TWO attached sessions — sess-op-1
@@ -396,8 +456,8 @@ async function main() {
   // session with NO heartbeat file at all) — the 7B-i fixture, covering
   // both the "running" and the "unknown, no heartbeat evidence" leaf.
   fs.writeFileSync(path.join(progressDir, 'ask-rich.jsonl'), [
-    JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:00:00Z', plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-op-1' }),
-    JSON.stringify({ type: 'task_started', ts: '2026-07-15T09:05:00Z', plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-ghost' }),
+    JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-op-1' }),
+    JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS_2, plan_slug: 'rich-plan', task_id: '1', session_id: 'sess-ghost' }),
   ].join('\n') + '\n');
   // redesign-plan and recent-plan are both UNLINKED — their task_done
   // events land in the shared "unlinked" orphan lane (progress-log-lib.sh's
@@ -408,7 +468,43 @@ async function main() {
   fs.writeFileSync(path.join(progressDir, 'unlinked.jsonl'), [
     JSON.stringify({ type: 'task_done', ts: '2026-07-20T09:00:00Z', plan_slug: 'redesign-plan', task_id: '1' }),
     JSON.stringify({ type: 'task_done', ts: RECENT_ASK_TS, plan_slug: 'recent-plan', task_id: '1' }),
+    // waiting-plan/1: started by a session with NO heartbeat file anywhere
+    // -- sessionActivityForIds returns 'no-heartbeat' (never 'crashed' via
+    // an old timestamp; genuinely absent), reaching the stalled branch.
+    JSON.stringify({ type: 'task_started', ts: '2026-07-10T09:00:00Z', plan_slug: 'waiting-plan', task_id: '1', session_id: 'sess-waiting-ghost' }),
+    // stale-dispatch-plan/1 (false-eternal-running fix): task_started
+    // attached to sess-op-1 — the SAME live-heartbeat session rich-plan/1
+    // uses — but 2h in the past, well past the 60min default idle window.
+    // The "alive dispatcher, abandoned task" shape the real deployed
+    // roadmap showed for hours (operator report, 2026-07-30).
+    JSON.stringify({ type: 'task_started', ts: STALE_TASK_STARTED_TS, plan_slug: 'stale-dispatch-plan', task_id: '1', session_id: 'sess-op-1' }),
+    // corrupt-ts-plan/1 (MALFORMED-IS-NOT-ABSENT fix): the event EXISTS and
+    // names a real live session, but its ts is unparseable — Date.parse ->
+    // NaN. The pre-fix code mapped that NaN to null (== "no evidence"),
+    // which disabled the idle gate and rendered green. It must render
+    // 'unknown' instead: we cannot read this task's own start evidence.
+    JSON.stringify({ type: 'task_started', ts: 'not-a-timestamp', plan_slug: 'corrupt-ts-plan', task_id: '1', session_id: 'sess-op-1' }),
   ].join('\n') + '\n');
+
+  // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (round 14): the needs-you ledger
+  // sandbox buildWaitingOnYouMap's lazy require('./inbox-routes.js') reads.
+  // A real, answerable decision item explicitly naming docs/plans/waiting-
+  // plan.md + "task 1" -- the ONLY conservative match shape this producer
+  // accepts (plan-parse.js's extractPlanTaskReferences).
+  const needsYouStateDir = path.join(tmp, 'needs-you-state');
+  fs.mkdirSync(needsYouStateDir, { recursive: true });
+  process.env.NEEDS_YOU_STATE_DIR = needsYouStateDir;
+  fs.writeFileSync(path.join(needsYouStateDir, 'ledger.json'), JSON.stringify({
+    schema_version: 1,
+    items: [{
+      id: 'NY-waiting-1', section: 'decision', state: 'open', created_at: '2026-07-10T10:00:00Z',
+      lint_warnings: [],
+      text: '### Which approach for the stuck task?\n' +
+        'docs/plans/waiting-plan.md -- task 1 is blocked on this call.\n' +
+        '| Option | What happens |\n|---|---|\n| A | goes one way |\n| B | goes the other |\n' +
+        'My pick: A.\nReply with: "a" or "b".',
+    }],
+  }));
 
   delete require.cache[require.resolve('./roadmap-routes.js')];
   const roadmapRoutes = require('./roadmap-routes.js');
@@ -470,8 +566,8 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 21 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
-      items.length === 21, topIds.join(','));
+    ok('S1e exactly 24 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture] + stale-dispatch-plan [false-eternal-running fix, 2026-07-30] + corrupt-ts-plan [malformed-is-not-absent fix, 2026-07-30]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
+      items.length === 24, topIds.join(','));
     ok('R11 child-a-fixture no longer appears in the TOP-LEVEL list (it renders once, nested under its master)',
       topIds.indexOf('child-a-fixture') === -1, topIds.join(','));
 
@@ -787,6 +883,100 @@ async function main() {
       demoT1 && Array.isArray(demoT1.live_sessions) && demoT1.live_sessions.length === 0,
       demoT1 && JSON.stringify(demoT1.live_sessions));
 
+    // ---- Round 15 (operator, repeated): "if I expand a plan I can see the
+    // tasks in progress, but the plan itself doesn't show anything is in
+    // progress" — rich-plan/1 genuinely carries a live_sessions entry
+    // (S18 above), so the OWNING PLAN (rich-plan) must roll that up as a
+    // counted "running" attention class (C1's roll-up law applied to the
+    // running state, real execution against the SAME fixture S18 uses —
+    // not a synthetic one). ----
+    const richPlan = findItem(items, 'rich-plan');
+    ok('S20 the running roll-up propagates from a live task to its OWNING PLAN (rich-plan.roll_up.running.count >= 1, exemplar names the actual running task)',
+      richPlan && richPlan.roll_up && richPlan.roll_up.running && richPlan.roll_up.running.count >= 1 &&
+      richPlan.roll_up.running.exemplar === 'rich-plan/1',
+      richPlan && JSON.stringify(richPlan.roll_up));
+    // redesign-plan is PARTIALLY DONE (task 1 checked, task 2 never
+    // started — status.value='in-progress' purely from done>0) but has NO
+    // live task anywhere: exactly the distinction this whole fix protects
+    // — merely-partial must never be confused with actively-running.
+    // ---- S20c-e: false-eternal-running fix (2026-07-30, operator-reported
+    // real defect) — stale-dispatch-plan/1 is attached to sess-op-1, the
+    // SAME live-heartbeat session rich-plan/1 uses (S18/S20 above prove
+    // that session genuinely renders "running" when its task_started is
+    // recent). The ONLY difference here is task_started age (2h vs
+    // ~10min) — isolating that this is what the fix keys on, not merely
+    // "sess-op-1 is somehow different." ----
+    const staleTask = findItem(items, 'stale-dispatch-plan/1');
+    ok('S20c a task whose ONLY attached session has a LIVE heartbeat, but whose own task_started is 2h stale (past the 60min default idle window), renders status.value=stalled — NOT in-progress (the exact operator-reported defect: dispatching session alive, task itself abandoned)',
+      staleTask && staleTask.status && staleTask.status.value === 'stalled' && staleTask.status.reason_class === 'idle-dispatch',
+      staleTask && JSON.stringify(staleTask.status));
+    // S20c-reason (2026-07-30 reason-code split): the badge must not claim
+    // a crash. sess-op-1's heartbeat is written FRESH at suite start (this
+    // fixture's own premise, shared with S18/S20), so "stalled — crashed"
+    // was a demonstrably false statement that pointed the operator at a
+    // dead-session investigation which does not exist. Asserting the
+    // negative explicitly: the previous code produced exactly 'crashed'
+    // here, so this line is what fails if the fold ever returns.
+    ok('S20c-reason the stale task\'s reason_class is "idle-dispatch" and NEVER "crashed" — its session heartbeat is fresh by construction, so a crash claim would be false (constitution §1)',
+      staleTask && staleTask.status.reason_class !== 'crashed' &&
+      staleTask.status.reason_class === 'idle-dispatch' &&
+      /still alive/.test(staleTask.status.label),
+      staleTask && JSON.stringify(staleTask.status));
+    ok('S20d that same task\'s live_sessions leaf for sess-op-1 ALSO renders stalled (not "running") despite the session\'s heartbeat genuinely being live — the leaf and the task-level badge must agree',
+      staleTask && Array.isArray(staleTask.live_sessions) && staleTask.live_sessions.length === 1 &&
+      staleTask.live_sessions[0].status.value === 'stalled',
+      staleTask && JSON.stringify(staleTask.live_sessions));
+    const staleDispatchPlan = findItem(items, 'stale-dispatch-plan');
+    ok('S20e the OWNING PLAN carries NO running roll-up entry for the stale-dispatched task (this is the actual rollup-gate fix: a merely non-empty live_sessions array no longer counts as "running" by itself — line 1314\'s original bug)',
+      staleDispatchPlan && (!staleDispatchPlan.roll_up || !staleDispatchPlan.roll_up.running),
+      staleDispatchPlan && JSON.stringify(staleDispatchPlan.roll_up));
+    // S20e-reason: the roll-up badge the operator actually SEES on the plan
+    // row must carry the honest class too. The leaf, the task badge and the
+    // plan roll-up previously DISAGREED — the leaf said "still alive", the
+    // task badge and this roll-up both said "crashed".
+    ok('S20e-reason the owning plan rolls up an "idle-dispatch" attention badge, NOT a "crashed" one — the plan row, the task badge and the session leaf now tell the operator the same story',
+      staleDispatchPlan && staleDispatchPlan.roll_up &&
+      staleDispatchPlan.roll_up['idle-dispatch'] && staleDispatchPlan.roll_up['idle-dispatch'].count === 1 &&
+      !staleDispatchPlan.roll_up.crashed,
+      staleDispatchPlan && JSON.stringify(staleDispatchPlan.roll_up));
+
+    // ---- S20g: MALFORMED IS NOT ABSENT, proven end-to-end through the
+    // real route (not just the derive unit). corrupt-ts-plan/1's
+    // task_started exists and names the LIVE sess-op-1, but its ts cannot
+    // be parsed — pre-fix this rendered a green in-progress.
+    const corruptTask = findItem(items, 'corrupt-ts-plan/1');
+    ok('S20g a task whose task_started event is PRESENT but carries an unparseable ts renders status.value=unknown through the real /api/roadmap route — never the pre-fix green in-progress derived from evidence that could not be read',
+      corruptTask && corruptTask.status && corruptTask.status.value === 'unknown' &&
+      corruptTask.status.value !== 'in-progress' &&
+      /unparseable/.test(corruptTask.status.label),
+      corruptTask && JSON.stringify(corruptTask.status));
+    ok('S20h that same task contributes an "unknown" attention badge to its owning plan (an unreadable input surfaces to the operator instead of vanishing into a confident green)',
+      (function () {
+        const p = findItem(items, 'corrupt-ts-plan');
+        return p && p.roll_up && p.roll_up.unknown && p.roll_up.unknown.count === 1 && !p.roll_up.running;
+      })(),
+      JSON.stringify((findItem(items, 'corrupt-ts-plan') || {}).roll_up));
+
+    ok('S20b a merely-partial plan (redesign-plan: 1/2 done, task 2 never started, no live session anywhere) carries NO running roll-up entry — status.value can be "in-progress" from done>0 alone, which must NOT be confused with a REAL live session',
+      redesign && redesign.status && redesign.status.value === 'in-progress' &&
+      redesign.roll_up && !redesign.roll_up.running,
+      redesign && JSON.stringify({ status: redesign.status, roll_up: redesign.roll_up }));
+
+    // ---- Round 15: plan_doc {project,path} — the plan-link fix (the old
+    // client-side `file:///` href was a DEAD link, live-verified; plan_doc
+    // reuses the EXISTING /api/doc resolver, same helper server.selftest.js
+    // S25d already proves resolves a REAL project root). This sandbox's
+    // fixture plans live under a mktemp repo no project config maps to, so
+    // the HONEST value here is null — the "never a fabricated link"
+    // fallback path this suite CAN exercise; the happy-path resolution
+    // itself is S25d's job (same deriveLib.projectDocRefFor call).
+    ok('S21 plan_doc is present (possibly null) on every plan node — a fixture repo outside every configured project root resolves null, never a guessed/fabricated {project,path}',
+      richPlan && ('plan_doc' in richPlan) && richPlan.plan_doc === null,
+      richPlan && JSON.stringify(richPlan.plan_doc));
+    ok('S21b plan_path is unchanged (still the absolute path) — plan_doc is an ADDITION, not a replacement',
+      richPlan && typeof richPlan.plan_path === 'string' && richPlan.plan_path.indexOf('rich-plan.md') !== -1,
+      richPlan && richPlan.plan_path);
+
     // ============================================================
     // ROUND 9 (2026-07-23) — the operator's cold-start walkthrough FAIL,
     // docs/reviews/2026-07-17-cockpit-ux-design-input.md "Round 9" — the
@@ -867,8 +1057,11 @@ async function main() {
       topIds.indexOf('other-repo-plan') === -1);
     const projectsConfigPath = path.join(tmp, 'fixture-projects.json');
     fs.writeFileSync(projectsConfigPath, JSON.stringify({
-      'other-project': otherRepoDir,
+      // Object form (R17): declares a top-level display group explicitly.
+      'other-project': { root: otherRepoDir, group: 'Pocket Technician' },
       'empty-project': emptyRepoDir,
+      // Legacy flat-string form (R17): no group -> honest '(ungrouped)'.
+      'flat-project': flatRepoDir,
     }));
     process.env.ROADMAP_PROJECTS_CONFIG = projectsConfigPath;
     const rMulti = await httpGet(PORT, '/api/roadmap');
@@ -882,6 +1075,182 @@ async function main() {
       multiIds.indexOf('demo-plan') !== -1 && multiIds.indexOf('redesign-plan') !== -1);
     ok('R9-8d a THIRD configured repo with NO docs/plans/ at all contributes NOTHING — honest absence, never a crash, never a synthesized item',
       rMulti.status === 200 && rMulti.json.ok === true);
+
+    // ---- R17 (2026-07-30, decision A): multi-project display GROUPING --
+    // redesign-plan (not demo-plan): demo-plan is linked to ask-alpha, whose
+    // OWN registry `project` field ('fixture-proj') wins over the path-
+    // derived one (see the `projectKey` precedence in derivePlanRootNode) —
+    // an unrelated pre-existing quirk this test must not trip over.
+    // redesign-plan has NO linked ask, so its project is purely
+    // planProjectFromPath(absPath) === path.basename(repoDir), the exact
+    // self-detection this test verifies.
+    const selfPlanForGroup = findItem(multiItems, 'redesign-plan');
+    ok('R17-G1 the self repo\'s own plans carry project_group "Neural Lace" (intrinsic — this app\'s own home repo has no config/projects.json entry to read a group from)',
+      selfPlanForGroup && selfPlanForGroup.project_group === 'Neural Lace',
+      selfPlanForGroup && selfPlanForGroup.project_group);
+    const otherRepoItem = findItem(multiItems, 'other-repo-plan');
+    ok('R17-G2 a configured repo using the OBJECT config form ({root, group}) carries the DECLARED group ("Pocket Technician") on its plans — never a hardcoded default',
+      otherRepoItem && otherRepoItem.project_group === 'Pocket Technician',
+      otherRepoItem && otherRepoItem.project_group);
+    const flatRepoItem = findItem(multiItems, 'flat-project-plan');
+    ok('R17-G3 a configured repo using the LEGACY flat-string config form (no group declared) lands its plans in the honest "(ungrouped)" catch-all, never silently defaulted into one of the named groups',
+      flatRepoItem && flatRepoItem.project_group === '(ungrouped)',
+      flatRepoItem && flatRepoItem.project_group);
+
+    // ------------------------------------------------------------------
+    // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (2026-07-29 round 14) —
+    // a SCANNED plan file (docs/plans/, not registry-linked) with a
+    // surviving-but-unrecognized Status: token, or an unreadable scan
+    // read, must NEVER render a confident not-started bucket, and must
+    // NEVER silently vanish from the tree. Placed BEFORE S14 below (which
+    // permanently corrupts the ask-registry for the rest of this run) —
+    // these fixtures include a registry-override-backed "done-plan" sanity
+    // check that needs the registry still readable.
+    // ------------------------------------------------------------------
+
+    // (a) live repro of the advocate's fx-corrupt2 fixture: a Status:
+    // header survives ("WHAT") but is outside the known enum, plus
+    // binary garbage bytes in the body -- zero parseable tasks.
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-corrupt2.md'),
+      Buffer.from('garbage\nStatus: WHAT\n\x01\xff\n', 'binary'));
+    const rCorruptA = await httpGet(PORT, '/api/roadmap');
+    const corruptAItem = findItem(rCorruptA.json.items, 'fx-corrupt2');
+    ok('S15 a scanned plan with an unrecognized Status: token ("WHAT") renders unknown("plan parse failed"), NEVER a confident not-started bucket (ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01a)',
+      corruptAItem && corruptAItem.status.value === 'unknown' && /plan parse failed/.test(corruptAItem.status.reason) &&
+      /unrecognized Status/.test(corruptAItem.status.reason),
+      JSON.stringify(corruptAItem && corruptAItem.status));
+
+    // A KNOWN status (ACTIVE) but a genuinely fresh, taskless plan stub
+    // (ordinary prose, no `## Tasks` yet) must STAY not-started — the
+    // corruption signature (binary/control bytes), not mere taskless-ness,
+    // is what distinguishes a corrupt plan from a legitimately new one.
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-fresh-stub.md'),
+      '# Plan: Fresh Stub\n\nStatus: ACTIVE\n\nTasks not written yet -- just an idea.\n');
+    const rFreshStub = await httpGet(PORT, '/api/roadmap');
+    const freshStubItem = findItem(rFreshStub.json.items, 'fx-fresh-stub');
+    ok('S15b a genuinely fresh, taskless plan stub (ordinary prose, KNOWN status) still renders not-started -- taskless-ness ALONE never triggers the corruption path',
+      freshStubItem && freshStubItem.status.value === 'not-started',
+      JSON.stringify(freshStubItem && freshStubItem.status));
+
+    // A KNOWN status (ACTIVE) but taskless AND corrupt (binary/control
+    // bytes, zero tasks) -- the OTHER half of the required fix.
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-corrupt-taskless.md'),
+      Buffer.from('# Plan: Corrupt Taskless\n\nStatus: ACTIVE\n\n\x01\x02\xff garbage, no real tasks\n', 'binary'));
+    const rCorruptTaskless = await httpGet(PORT, '/api/roadmap');
+    const corruptTasklessItem = findItem(rCorruptTaskless.json.items, 'fx-corrupt-taskless');
+    ok('S15c a KNOWN-status plan that is BOTH taskless AND shows the binary-corruption signature renders unknown("plan parse failed"), never not-started (ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01, "zero tasks AND unparseable structure" clause)',
+      corruptTasklessItem && corruptTasklessItem.status.value === 'unknown' && /plan parse failed/.test(corruptTasklessItem.status.reason),
+      JSON.stringify(corruptTasklessItem && corruptTasklessItem.status));
+
+    // (e) ROADMAP-STATUSLESS-CORRUPT-VANISH-01 (advocate re-run S7 residual):
+    // the header itself is DESTROYED — no Status: line survives at all — but
+    // the body carries the binary-corruption signature. Pre-fix this file
+    // VANISHED from the tree (the no-header branch returned silently); the
+    // fix surfaces it as unknown. Its control: a clean header-less evidence
+    // stub must STILL be excluded — flooding the tree with every .md was
+    // Round 14's correct fear, and the corruption signature is the line.
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-corrupt3.md'),
+      Buffer.from('\x01\x02\xffgarbage where the header was\n\n- [x] 1. a task that survived\n- [ ] 2. another\n', 'binary'));
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-clean-stub-evidence.md'),
+      '# Evidence — some plan\n\nOrdinary prose, no Status header, no corruption.\n');
+    const rHeaderless = await httpGet(PORT, '/api/roadmap');
+    const headerlessItem = findItem(rHeaderless.json.items, 'fx-corrupt3');
+    const cleanStubItem = findItem(rHeaderless.json.items, 'fx-clean-stub-evidence');
+    ok('S15e a plan whose HEADER was destroyed (no Status: line + binary-corruption signature) surfaces as unknown("header destroyed"), NEVER vanishes (ROADMAP-STATUSLESS-CORRUPT-VANISH-01)',
+      headerlessItem && headerlessItem.status.value === 'unknown' && /no Status header/.test(headerlessItem.status.reason),
+      JSON.stringify(headerlessItem && headerlessItem.status));
+    ok('S15f a CLEAN header-less .md (evidence stub) stays EXCLUDED — the corruption signature, not header-less-ness, is the trigger (no tree flooding)',
+      !cleanStubItem, JSON.stringify(cleanStubItem || null));
+    fs.rmSync(path.join(repoDir, 'docs', 'plans', 'fx-corrupt3.md'), { force: true });
+    fs.rmSync(path.join(repoDir, 'docs', 'plans', 'fx-clean-stub-evidence.md'), { force: true });
+
+    // (c) an unreadable (EACCES) scanned plan file must surface as an
+    // unknown root, never silently skipped by the scan's catch. chmod 000
+    // is a no-op for root/some sandboxes -- probe first, skip honestly.
+    {
+      const probePath2 = path.join(repoDir, 'docs', 'plans', '.eacces-probe2');
+      fs.writeFileSync(probePath2, 'x');
+      fs.chmodSync(probePath2, 0o000);
+      let probeBlocked2 = true;
+      try { fs.readFileSync(probePath2, 'utf8'); probeBlocked2 = false; } catch (_) { probeBlocked2 = true; }
+      fs.chmodSync(probePath2, 0o644);
+      fs.rmSync(probePath2, { force: true });
+      if (!probeBlocked2) {
+        console.log('  SKIP: S15d EACCES-scanned-plan scenario -- chmod 000 is a no-op in this sandbox (likely running as root)');
+      } else {
+        fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-unreadable.md'), '# Plan: Unreadable\n\nStatus: ACTIVE\n\n## Tasks\n\n- [ ] 1. x\n');
+        fs.chmodSync(path.join(repoDir, 'docs', 'plans', 'fx-unreadable.md'), 0o000);
+        const rUnreadable = await httpGet(PORT, '/api/roadmap');
+        const unreadableItem = findItem(rUnreadable.json.items, 'fx-unreadable');
+        ok('S15d a scanned plan file that exists but cannot be READ (EACCES) surfaces as unknown("plan file unreadable"), NEVER silently skipped/vanished (ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01c)',
+          unreadableItem && unreadableItem.status.value === 'unknown' && /plan file unreadable/.test(unreadableItem.status.reason),
+          JSON.stringify(unreadableItem && unreadableItem.status));
+        fs.chmodSync(path.join(repoDir, 'docs', 'plans', 'fx-unreadable.md'), 0o644);
+      }
+    }
+
+    // ------------------------------------------------------------------
+    // ROADMAP-SUPERSEDED-RENDERS-PENDING-01 (2026-07-29 round 14) — an
+    // authored Status: SUPERSEDED/ABANDONED plan must render `complete`
+    // (so it joins the client's existing Shipped grouping) with a
+    // distinct terminal_label, NEVER as an ordinary pending item.
+    // ------------------------------------------------------------------
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-superseded.md'), [
+      '# Plan: Old Polish Plan', '', 'Status: SUPERSEDED', '', '## Tasks', '',
+      '- [ ] 1. never finished before being superseded',
+      '', // deliberately NOT all-done — the pre-fix bug applied the task-count ladder regardless
+    ].join('\n'));
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'fx-abandoned.md'), [
+      '# Plan: Abandoned Idea', '', 'Status: ABANDONED', '', '## Tasks', '',
+      '- [ ] 1. never started',
+      '',
+    ].join('\n'));
+    const rSuperseded = await httpGet(PORT, '/api/roadmap');
+    const supersededItem = findItem(rSuperseded.json.items, 'fx-superseded');
+    ok('S16 a Status: SUPERSEDED plan (with UNDONE tasks) renders status.value:"complete" (joins Shipped), never "not-started"/"in-progress" among live work',
+      supersededItem && supersededItem.status.value === 'complete',
+      JSON.stringify(supersededItem && supersededItem.status));
+    ok('S16b ...carrying a distinct terminal_label:"superseded" (so the client renders it as its OWN labeled chip, never indistinguishable from ordinary shipped work)',
+      supersededItem && supersededItem.status.terminal_label === 'superseded',
+      JSON.stringify(supersededItem && supersededItem.status));
+    const abandonedItem = findItem(rSuperseded.json.items, 'fx-abandoned');
+    ok('S16c a Status: ABANDONED plan renders the same complete+terminal_label pattern, labeled "abandoned"',
+      abandonedItem && abandonedItem.status.value === 'complete' && abandonedItem.status.terminal_label === 'abandoned',
+      JSON.stringify(abandonedItem && abandonedItem.status));
+    const completedFixtureItem = findItem(rSuperseded.json.items, 'done-plan');
+    ok('S16d a genuinely complete plan (done-plan, S10\'s operator-override fixture) is UNCHANGED by this fix — still complete, but with NO terminal_label (ordinary shipped work, not a superseded/abandoned one)',
+      completedFixtureItem && completedFixtureItem.status.value === 'complete' && !completedFixtureItem.status.terminal_label,
+      JSON.stringify(completedFixtureItem && completedFixtureItem.status));
+
+    // ------------------------------------------------------------------
+    // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (2026-07-29 round 14, the S6
+    // blocker) — buildWaitingOnYouMap's END-TO-END wiring: a real needs-you
+    // ledger item conservatively matched to waiting-plan/1 (fixture set up
+    // at the top of this file) must make THAT task -- and only that task --
+    // render stalled(waiting-on-you) with a real #inbox/<id> unblock link,
+    // never a generic 'crashed' fallback.
+    // ------------------------------------------------------------------
+    const rWaiting = await httpGet(PORT, '/api/roadmap');
+    const waitingTask = findItem(rWaiting.json.items, 'waiting-plan/1');
+    ok('S17 waiting-plan/1 (started, no heartbeat anywhere, referenced by a real needs-you ledger item) renders stalled(waiting-on-you) -- the waitingOnYouId signal WINS over the generic crashed fallback',
+      waitingTask && waitingTask.status.value === 'stalled' && waitingTask.status.reason_class === 'waiting-on-you',
+      JSON.stringify(waitingTask && waitingTask.status));
+    ok('S17b ...carrying a real status.unblock {label, hash} pointing at #inbox/NY-waiting-1 -- the PRE-EXISTING, previously-never-populated consumer field (this file\'s own header, line ~96) the client already renders as a real link',
+      waitingTask && waitingTask.status.unblock && waitingTask.status.unblock.hash === '#inbox/NY-waiting-1',
+      JSON.stringify(waitingTask && waitingTask.status.unblock));
+    // Roll-up: the plan-level ancestor must show the counted waiting-on-you
+    // badge (C1 roll-up law), never masked by the plan's own in-progress-ish
+    // status.
+    const waitingPlanRoot = findItem(rWaiting.json.items, 'waiting-plan');
+    ok('S17c the waiting-plan ROOT rolls up the waiting-on-you badge from its stalled descendant (C1: attention states propagate to every collapsed ancestor)',
+      waitingPlanRoot && waitingPlanRoot.roll_up && waitingPlanRoot.roll_up['waiting-on-you'] && waitingPlanRoot.roll_up['waiting-on-you'].count === 1,
+      JSON.stringify(waitingPlanRoot && waitingPlanRoot.roll_up));
+    // Conservative matching: a plan/task pair NOT explicitly named anywhere
+    // in the ledger must NEVER be marked waiting-on-you (no fuzzy matching).
+    const unrelatedTask = findItem(rWaiting.json.items, 'demo-plan/2');
+    ok('S17d conservative matching: an UNRELATED task (demo-plan/2, never mentioned in the ledger) is NEVER marked waiting-on-you -- no fuzzy/global matching',
+      unrelatedTask && unrelatedTask.status.reason_class !== 'waiting-on-you',
+      JSON.stringify(unrelatedTask && unrelatedTask.status));
 
     // ---- S14: error honesty — a torn registry file never crashes the route,
     // AND (round 8) the roadmap now SURVIVES a corrupt registry entirely,

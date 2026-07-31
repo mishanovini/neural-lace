@@ -108,8 +108,22 @@ _hhs_waived_files() {
 # ---------- self-test ----------------------------------------------------
 
 if [ "${1:-}" = "--self-test" ]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (signal-ledger.sh) for this run and
+  # EXPORT it so re-invocations inherit it. Without it the lib resolves its
+  # PRODUCTION path and this self-test appends to the operator's real
+  # ~/.claude/state/signal-ledger.jsonl. PROVEN behaviorally: clean-HOME probe
+  # created .claude/state/signal-ledger.jsonl without it, nothing with it.
+  export HARNESS_SELFTEST=1
   TMPDIR_ST=$(mktemp -d)
   trap 'rm -rf "$TMPDIR_ST"' EXIT
+
+  # Portable fixture aging (macos-portability-2026-07 M4), sourced inside
+  # the self-test branch so the scan's normal path is untouched.
+  _HHS_PT="$(dirname "${BASH_SOURCE[0]}")/lib/portable-time.sh"
+  if ! . "$_HHS_PT" 2>/dev/null; then
+    echo "self-test: cannot source $_HHS_PT (needed to backdate fixtures portably)" >&2
+    exit 1
+  fi
 
   # Build a minimal denylist
   mkdir -p "$TMPDIR_ST/adapters/claude-code/patterns"
@@ -263,9 +277,11 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "Because: dirty.txt is a self-test fixture, not a real leak"
     echo "Files: dirty.txt"
   } > "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt"
-  touch -d '2 hours ago' "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt" 2>/dev/null \
-    || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt" 2>/dev/null \
-    || true
+  # No `|| true`: an un-aged waiver inverts this scenario silently.
+  if ! nl_touch_age "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt" 7200; then
+    echo "self-test: could not backdate the stale-waiver fixture" >&2
+    exit 1
+  fi
   ST_W3_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
   ST_W3_RC=$?
   rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt"

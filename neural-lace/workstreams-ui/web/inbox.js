@@ -99,6 +99,15 @@
   myItemsWrap.className = 'ib-my-items-wrap';
   body.appendChild(myItemsWrap);
 
+  // R17 deliverable 2: ONE event-delegated copy-button listener per
+  // persistent container — both wraps are created once above and never
+  // recreated (only their children are wiped/rebuilt on each render), so
+  // wiring here catches every cmd-copy-btn a future render adds, forever.
+  if (window.CommandRender && typeof window.CommandRender.wireCommandCopyButtons === 'function') {
+    window.CommandRender.wireCommandCopyButtons(inboxSectionsWrap);
+    window.CommandRender.wireCommandCopyButtons(myItemsWrap);
+  }
+
   function $(id) { return document.getElementById(id); }
   var shell = window.WorkstreamsShell || null;
   var formatAge = (shell && shell.formatAge) || function (iso) {
@@ -139,6 +148,20 @@
       navigator.clipboard.writeText(text).catch(function () {});
     }
   }
+  // R17 deliverable 2 (audit F1): renders server-authored prose that CAN
+  // carry a runnable command as fenced, copyable chips instead of plain
+  // prose (window.CommandRender, command-render.js — loaded before this
+  // file, index.html). Degrades to plain textContent (never a throw, never
+  // raw HTML injection) if the shared module failed to load, same
+  // defensive convention as roadmap.js/app.js's MdRender fallback.
+  function renderCat(node, text) {
+    if (window.CommandRender && typeof window.CommandRender.renderCommandAwareText === 'function') {
+      node.innerHTML = window.CommandRender.renderCommandAwareText(text);
+    } else {
+      node.textContent = String(text == null ? '' : text);
+    }
+    return node;
+  }
 
   // ============================================================
   // state
@@ -147,6 +170,9 @@
   var openSetQ = {};      // quarantined item id -> details-open bool
   var replyEdits = {};    // item id -> in-progress (uncommitted) reply-stub text
   var lastPayload = null;
+  // Signature of the ITEMS currently rendered (see load()). Null until the
+  // first successful render; deliberately excludes generated_at.
+  var lastRenderSig = null;
   var lastFetchFailed = false;
   var lastDerivedAt = null;
   var landingId = null;
@@ -157,8 +183,20 @@
     ageLabel.textContent = 'derived ' + formatAge(lastDerivedAt) + (lastFetchFailed ? ' — STALE (last refresh failed)' : '');
     ageLabel.classList.toggle('stale', lastFetchFailed);
   }
-  function setTabCount(n) {
+  // Round 12 item 9 (inbox count honesty): a derived count badge needs
+  // THREE visually distinct states — a real number, unknown/loading
+  // ("(—)", before the first response ever lands), and a CONFIRMED error
+  // ("(!)", styled --interrupt). Pre-fix, a broken /api/inbox left the tab
+  // showing the hardcoded loading "(—)" FOREVER — a broken surface reading
+  // as a reassuring "probably fine" rather than "this is broken".
+  function setTabCount(n, isError) {
     if (!tabCount) return;
+    if (isError) {
+      tabCount.textContent = '(!)';
+      tabCount.classList.add('ib-tabcount-error');
+      return;
+    }
+    tabCount.classList.remove('ib-tabcount-error');
     tabCount.textContent = (n === null || n === undefined) ? '(—)' : '(' + n + ')';
   }
 
@@ -177,7 +215,15 @@
     var wrap = el('div', 'ib-reply');
     wrap.appendChild(el('div', 'ib-reply-channel', 'How to answer: ' + item.reply_channel));
     if (item.reply_with) {
-      wrap.appendChild(el('div', 'ib-reply-with', 'Reply with: ' + item.reply_with));
+      // R17 deliverable 2 (audit F1): reply_with can itself be/contain a
+      // command the operator is meant to run — fenced + copyable, never
+      // plain prose indistinguishable from the "Reply with: " label.
+      var replyWithBox = el('div', 'ib-reply-with');
+      replyWithBox.appendChild(document.createTextNode('Reply with: '));
+      var replyWithInline = document.createElement('span');
+      renderCat(replyWithInline, item.reply_with);
+      replyWithBox.appendChild(replyWithInline);
+      wrap.appendChild(replyWithBox);
     }
     var stubRow = el('div', 'ib-reply-stub-row');
     var input = document.createElement('input');
@@ -200,6 +246,60 @@
   }
 
   // ============================================================
+  // links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01, round 14) — the
+  // server's `item.links[]` (producer `--link` entries PLUS anchors
+  // extractAnchorsFromText found inline in the raw text — see server
+  // header) had NO rendering surface anywhere in this file before this
+  // fix (a real, live defect: the field existed, nothing ever read it).
+  // Duplicated from asks.js's own absoluteLinkNode/isAbsoluteHref
+  // (this codebase's established small-duplicated-helper convention —
+  // see this file's header + auditor.js's "WHY THE READERS BELOW ARE
+  // DUPLICATED"): an http(s) URL becomes a REAL clickable <a> (always
+  // resolves); anything else (a repo-relative path, an NY-/wf_ id) is
+  // plain text + a copy button, NEVER a fabricated/relative href — "a
+  // dead link is worse than no link" (this defect's own binding rule).
+  // ============================================================
+  function makeCopyBtn(text, label) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost small ib-copy-btn';
+    b.textContent = label || 'copy';
+    b.title = 'copy "' + text + '" to clipboard';
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      copyToClipboard(text);
+      var orig = b.textContent;
+      b.textContent = 'copied';
+      setTimeout(function () { b.textContent = orig; }, 1200);
+    });
+    return b;
+  }
+  function linkRowNode(value) {
+    var row = el('div', 'ib-link-row');
+    if (typeof value !== 'string' || value === '') { row.textContent = '(none)'; return row; }
+    if (/^https?:\/\//i.test(value)) {
+      var a = document.createElement('a');
+      a.href = value; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      a.textContent = value;
+      row.appendChild(a);
+      return row;
+    }
+    // Not an absolute URL (a repo-relative path, or an NY-/wf_ id) — never
+    // a clickable href that cannot honestly resolve; plain text + copy so
+    // the reference is still visible and usable, never silently dropped.
+    row.appendChild(document.createTextNode(value));
+    row.appendChild(makeCopyBtn(value));
+    return row;
+  }
+  function linksBlock(links) {
+    if (!links || !links.length) return null;
+    var wrap = el('div', 'ib-links');
+    wrap.appendChild(el('div', 'ib-drill-label', 'Links: '));
+    links.forEach(function (l) { wrap.appendChild(linkRowNode(l)); });
+    return wrap;
+  }
+
+  // ============================================================
   // trade-offs table (decisions only — §3 anatomy step 3)
   // ============================================================
   function optionsTable(options) {
@@ -215,8 +315,11 @@
     var tbody = document.createElement('tbody');
     options.forEach(function (o) {
       var tr = document.createElement('tr');
-      tr.appendChild(el('td', '', o.option));
-      tr.appendChild(el('td', '', o.outcome));
+      // R17 deliverable 2 (audit F1): option/outcome cells can carry a
+      // command (e.g. an outcome reading "run: powershell -File ...") —
+      // fence it, never plain prose.
+      tr.appendChild(renderCat(document.createElement('td'), o.option));
+      tr.appendChild(renderCat(document.createElement('td'), o.outcome));
       tbody.appendChild(tr);
     });
     table.appendChild(tbody);
@@ -256,19 +359,91 @@
     var head = el('div', 'ib-anatomy-head', (item.kind === 'question' ? 'Question: ' : 'Decision needed: ') + item.title);
     box.appendChild(head);
 
-    // 2. Context (<=5 lines, decisions only — questions carry no structure).
+    // Background prose is BUILT with the context (so the action/prose split
+    // happens in one place) but APPENDED after the trade-offs table and my
+    // pick — see the ordering note at block 3.
+    var deferredContext = null;
+
+    // 2. Context (decisions only — questions carry no structure). Shows the
+    // first 5 lines directly; INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01
+    // fix (round 14): content beyond 5 lines is NEVER silently dropped —
+    // it is still fully present in raw_text (the "Raw verbatim" details
+    // below), but the primary anatomy now says so explicitly ("+N more —
+    // see Raw verbatim below") instead of just stopping with no note.
     if (item.context && item.context.length) {
-      var ctxBox = el('div', 'ib-context');
-      item.context.slice(0, 5).forEach(function (line) { ctxBox.appendChild(el('div', 'ib-context-line', line)); });
-      box.appendChild(ctxBox);
+      // Round 18 (operator, 2026-07-31): "it's kind of a wall of text and
+      // much of it is spent explaining it to me, and it's not very easy to
+      // find exactly what it is that's actually needed."
+      //
+      // TWO defects, both MEASURED on the operator's own live item
+      // NY-1785425479-0d4d:
+      //  (1) the runnable steps sat BELOW four paragraphs of background, so
+      //      the ask was the last thing found rather than the first;
+      //  (2) the 5-line cap dropped "STEP 3: powershell -File ..." entirely
+      //      — the single line the whole item exists to deliver — leaving
+      //      only "+1 more line(s) — see Raw verbatim below".
+      // Truncating the ANSWER to protect the reader from the EXPLANATION is
+      // backwards. So: partition, hoist the actions, never truncate them,
+      // and cap only the prose that caused the wall in the first place.
+      var isAction = (window.CommandRender && typeof window.CommandRender.isActionLine === 'function')
+        ? window.CommandRender.isActionLine
+        : function () { return false; };
+      var actionLines = [], proseLines = [];
+      item.context.forEach(function (line) { (isAction(line) ? actionLines : proseLines).push(line); });
+
+      if (actionLines.length) {
+        var doBox = el('div', 'ib-needed');
+        doBox.appendChild(el('div', 'ib-needed-head', actionLines.length === 1 ? 'Run this' : 'Run these, in order'));
+        actionLines.forEach(function (line) {
+          doBox.appendChild(renderCat(el('div', 'ib-needed-line'), line));
+        });
+        box.appendChild(doBox);
+      }
+
+      // Held, not appended here — see the ordering note below.
+      if (proseLines.length) {
+        deferredContext = el('div', 'ib-context');
+        // R17 deliverable 2 (audit F1): a context line can itself BE a
+        // command (the live defect: "run: powershell -File ... -> the task
+        // registers…" rendered as one prose run with no delimiter).
+        proseLines.slice(0, 5).forEach(function (line) { deferredContext.appendChild(renderCat(el('div', 'ib-context-line'), line)); });
+        if (proseLines.length > 5) {
+          deferredContext.appendChild(el('div', 'ib-context-more', '+' + (proseLines.length - 5) + ' more line(s) of background — see "Raw verbatim" below'));
+        }
+      }
     }
 
     // 3. Trade-offs table (decisions only).
+    // Round 18 (operator): "the info ... doesn't do a fantastic job of
+    // providing context to help me understand the issue and determine what
+    // to do about it." This table IS the decision content — what happens
+    // each way — and it was rendered BELOW several paragraphs of system
+    // background, so the operator read architecture before ever seeing
+    // their choices. Order now follows how a decision is actually made:
+    // what to run -> what happens either way -> what I recommend -> and
+    // only then the background explaining why any of it exists.
     var table = optionsTable(item.options);
     if (table) box.appendChild(table);
 
     // 4. My pick.
-    if (item.my_pick) box.appendChild(el('div', 'ib-my-pick', 'My pick: ' + item.my_pick));
+    // R17 deliverable 2 (audit F1): my_pick, fenced when it's/contains a command.
+    if (item.my_pick) {
+      var pickBox = el('div', 'ib-my-pick');
+      pickBox.appendChild(document.createTextNode('My pick: '));
+      var pickInline = document.createElement('span');
+      renderCat(pickInline, item.my_pick);
+      pickBox.appendChild(pickInline);
+      box.appendChild(pickBox);
+    }
+
+    // 4a. Background LAST of the explanatory blocks — demoted, never dropped.
+    if (deferredContext) box.appendChild(deferredContext);
+
+    // 4b. Links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 part b) —
+    // producer `--link` entries PLUS anchors extracted from the raw text
+    // server-side; see linksBlock's own header for the resolution rule.
+    var links = linksBlock(item.links);
+    if (links) box.appendChild(links);
 
     // 5. Reply-with (the ANSWER lifecycle verb).
     if (!isQuarantined) box.appendChild(replyBlock(item, say));
@@ -486,16 +661,53 @@
     myItemsFeedbackTimer = setTimeout(function () { myItemsFeedbackEl.hidden = true; }, isError ? 8000 : 3000);
   }
 
-  // duplicated absolute-href helper (this codebase's own convention — see
-  // asks.js/attic/todo.js precedent; no shared client-side module system).
+  // R17 deliverable 2a (operator, live: "the links on the Inbox tab don't
+  // work") — PROVEN root cause: this used to also emit a `file://` href for
+  // an absolute local path, which a browser loading this page over http
+  // silently blocks (the link LOOKED clickable and did nothing — the exact
+  // class row 70 already fixed for roadmap plan links). A repo-file path is
+  // now routed through the in-page doc modal instead (openInboxDocModal,
+  // below) via item.doc_ref (server-resolved {project,path}, the SAME
+  // deriveLib.projectDocRefFor plan_doc already uses); this helper now only
+  // ever returns a REAL, openable href — an http(s) URL — never file://.
   function myItemsFileUrl(p) {
     if (typeof p !== 'string' || p === '') return null;
     if (/^https?:\/\//i.test(p)) return p;
-    var norm = p.replace(/\\/g, '/');
-    if (/^[A-Za-z]:\//.test(norm)) return 'file:///' + norm;
-    if (/^\/\//.test(norm)) return null; // UNC — copy-only is the honest fallback
-    if (/^\//.test(norm)) return 'file://' + norm;
-    return null;
+    return null; // local path — never a fabricated file:// href; see doc_ref above
+  }
+
+  // openInboxDocModal(project, docPath) — reuses the EXISTING docModal DOM
+  // + /api/doc + the shared window.MdRender pipeline (roadmap.js's
+  // openPlanDocModal is the same pattern, duplicated per this codebase's
+  // own small-shared-helper convention — see this file's header).
+  function openInboxDocModal(project, docPath) {
+    var docModal = $('docModal'), docTitle = $('docTitle'), docBody = $('docBody'), docOpenEditor = $('docOpenEditor');
+    if (!docModal || !docTitle || !docBody) return;
+    docTitle.textContent = project + ' / ' + docPath;
+    docBody.textContent = 'loading…';
+    docModal.hidden = false;
+    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) {
+          if (window.MdRender && typeof window.MdRender.renderMarkdown === 'function') {
+            docBody.innerHTML = window.MdRender.renderMarkdown(j.content);
+          } else {
+            docBody.textContent = j.content;
+          }
+        } else {
+          docBody.textContent = 'error: ' + (j && j.error);
+        }
+      })
+      .catch(function (err) { docBody.textContent = 'error: ' + err; });
+    if (docOpenEditor) {
+      docOpenEditor.onclick = function () {
+        fetch('/api/doc/open', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: project, path: docPath }),
+        }).catch(function () {});
+      };
+    }
   }
 
   // operator item row — editable + checkable (ports attic/todo.js's
@@ -524,7 +736,10 @@
     });
     row.appendChild(cb);
 
-    var textSpan = el('span', 'todo-item-text' + (item.checked ? ' todo-item-checked' : ''), item.text);
+    // R17 deliverable 2 (audit F1): My-items text can quote a command
+    // verbatim (that's exactly what noise_flag items already are) — fence it.
+    var textSpan = el('span', 'todo-item-text' + (item.checked ? ' todo-item-checked' : ''));
+    renderCat(textSpan, item.text);
     if (item.noise_flag) {
       var noiseMark = el('span', 'todo-noise-flag', ' ⚑ quotes internal identifiers');
       noiseMark.title = 'This item quotes harness-internal command/script names. Rendered in full — flagged for awareness only.';
@@ -591,21 +806,38 @@
 
     var pbody = el('div', 'todo-pointer-body');
     var titleRow = el('div', 'todo-pointer-title');
-    var link = document.createElement('a');
-    link.className = 'todo-pointer-link';
-    link.title = 'resolves when you answer the underlying item — click to go there';
-    link.textContent = item.title || ('(untitled ' + (item.section || 'item') + ')');
-    var href = myItemsFileUrl(item.raw_link);
-    if (href) {
-      link.href = href;
-      link.target = '_blank';
-      link.rel = 'noopener noreferrer';
+    var titleText = item.title || ('(untitled ' + (item.section || 'item') + ')');
+    // R17 deliverable 2a: a repo-file link (item.doc_ref, server-resolved)
+    // opens the SAME in-page doc modal roadmap.js's plan links use — a
+    // REAL <button> (this file's own "no click-only divs/dead hrefs"
+    // convention), never a `file://` anchor a browser silently blocks.
+    // Only when doc_ref cannot be resolved (raw_link outside every known
+    // project root) does this fall back to an http(s) href, or — with
+    // neither — an honest disabled affordance (never a fabricated link).
+    if (item.doc_ref && item.doc_ref.project && item.doc_ref.path) {
+      var docBtn = btn('todo-pointer-link todo-pointer-link-btn', titleText, function () {
+        openInboxDocModal(item.doc_ref.project, item.doc_ref.path);
+      });
+      docBtn.title = 'open ' + item.doc_ref.path;
+      titleRow.appendChild(docBtn);
     } else {
-      link.href = '#';
-      link.setAttribute('aria-disabled', 'true');
-      link.addEventListener('click', function (e) { e.preventDefault(); });
+      var link = document.createElement('a');
+      link.className = 'todo-pointer-link';
+      link.textContent = titleText;
+      var href = myItemsFileUrl(item.raw_link);
+      if (href) {
+        link.title = 'resolves when you answer the underlying item — click to go there';
+        link.href = href;
+        link.target = '_blank';
+        link.rel = 'noopener noreferrer';
+      } else {
+        link.title = 'no openable link for this item';
+        link.href = '#';
+        link.setAttribute('aria-disabled', 'true');
+        link.addEventListener('click', function (e) { e.preventDefault(); });
+      }
+      titleRow.appendChild(link);
     }
-    titleRow.appendChild(link);
     pbody.appendChild(titleRow);
 
     if (item.body) {
@@ -740,20 +972,56 @@
         if (!j || j.ok === false) {
           lastFetchFailed = true;
           setAgeLabel();
+          setTabCount(null, true); // Round 12 item 9: never a confident "(—)" on a broken ledger
           if (!lastPayload) renderErrorState(j && j.error);
           return;
         }
-        lastPayload = j;
         lastFetchFailed = false;
         lastDerivedAt = j.generated_at;
         setAgeLabel();
+
+        // Round 18 (operator, 2026-07-31): "the page keeps refreshing on
+        // its own, which forces the view back to the top of the page,
+        // which makes it difficult for me to read when the page is
+        // jumping around like that."
+        //
+        // The 30s tick called renderAll() UNCONDITIONALLY, so every tick
+        // rebuilt the whole list and dropped scroll to 0 — even though
+        // `generated_at` is the only field that actually changes on a
+        // typical tick. Two guards, cheapest first:
+        //   1. If the ITEMS are byte-identical to what is already on
+        //      screen, do not touch the DOM at all. This is the common
+        //      case (the inbox changes when the operator or a session
+        //      writes to it, i.e. rarely), so most ticks now cost nothing
+        //      and cannot move the viewport. `generated_at` is excluded
+        //      from the signature precisely because it changes every tick
+        //      and would defeat the guard.
+        //   2. When items HAVE changed a re-render is required, so
+        //      preserve the scroll position across it rather than letting
+        //      the rebuild reset it. Same technique restoreState() already
+        //      uses for view switches.
+        var sig;
+        try {
+          sig = JSON.stringify({ a: j.answerable || [], q: j.quarantined || [] });
+        } catch (_) { sig = null; }
+        var unchanged = (sig !== null && lastPayload && sig === lastRenderSig);
+        lastPayload = j;
+        if (unchanged) {
+          var q0 = whenLoadedQueue.splice(0);
+          q0.forEach(function (cb) { try { cb(); } catch (_) {} });
+          return;
+        }
+        lastRenderSig = sig;
+        var keepY = window.scrollY;
         renderAll();
+        if (keepY) window.scrollTo(0, keepY);
         var q = whenLoadedQueue.splice(0);
         q.forEach(function (cb) { try { cb(); } catch (_) {} });
       })
       .catch(function (err) {
         lastFetchFailed = true;
         setAgeLabel();
+        setTabCount(null, true); // Round 12 item 9
         if (!lastPayload) renderErrorState(String(err));
       });
   }

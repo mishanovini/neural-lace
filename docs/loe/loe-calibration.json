@@ -1,6 +1,6 @@
 {
-  "generated_at": "2026-07-30T00:55:25Z",
-  "plans_total": 163,
+  "generated_at": "2026-07-31T00:06:30Z",
+  "plans_total": 167,
   "coverage": {
     "wall_clock_pct": 100,
     "builder_sessions_pct": 1.2,
@@ -51,22 +51,22 @@
     },
     {
       "class": "harness-mechanism",
-      "count": 90,
+      "count": 94,
       "task_count": {
         "p50": 4,
         "p90": 13,
-        "n": 90
+        "n": 94
       },
       "wall_clock_days": {
-        "p50": 0.04,
-        "p90": 6.90,
-        "n": 90
+        "p50": 0.03,
+        "p90": 6.62,
+        "n": 94
       },
       "builder_sessions": {
         "p50": 1,
         "p90": 1,
         "n": 2,
-        "coverage_pct": 2.2
+        "coverage_pct": 2.1
       },
       "concentration_flag": false
     },
@@ -200,6 +200,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
+    },
+    {
+      "slug": "anti-vaporware-config-controls-generalization",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 1,
+      "wall_clock_days": 0.01,
+      "first_commit": "2026-07-29T22:59:44-07:00",
+      "last_commit": "2026-07-29T23:08:56-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
     },
     {
       "slug": "architecture-simplification-gate-relaxation",
@@ -550,6 +562,18 @@
       "has_evidence": true
     },
     {
+      "slug": "context-watermark-opus5-window",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 3,
+      "wall_clock_days": 0.30,
+      "first_commit": "2026-07-30T00:26:51-07:00",
+      "last_commit": "2026-07-30T07:32:56-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
+    },
+    {
       "slug": "context-watermark-window-autodetect",
       "mode": "code",
       "class": "harness-mechanism",
@@ -800,6 +824,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
+    },
+    {
+      "slug": "deterministic-process-gate-2026-07-30",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 11,
+      "wall_clock_days": 0.00,
+      "first_commit": "2026-07-30T17:03:00-07:00",
+      "last_commit": "2026-07-30T17:06:06-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
     },
     {
       "slug": "diagnostic-first-protocol-enforcement",
@@ -1592,6 +1628,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
+    },
+    {
+      "slug": "problems-persist-mechanism",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 0,
+      "wall_clock_days": 0.00,
+      "first_commit": "2026-07-29T14:15:57-07:00",
+      "last_commit": "2026-07-29T14:18:47-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
     },
     {
       "slug": "register-driven-session-enforcement-2026-06-13",

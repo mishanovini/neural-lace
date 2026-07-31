@@ -30,24 +30,24 @@ would not have prevented anything.
 
 ## Scope / Tasks
 
-- [ ] V1 — Replace the 11-line always-loaded directive in `CLAUDE.md` with a <=4-line pointer
+- [x] V1 — Replace the 11-line always-loaded directive in `CLAUDE.md` with a <=4-line pointer
       bullet (Pattern-class verbs, no "does NOT apply / is overridden" mechanism claim).
       Verification: mechanical (line count; `claude-md-hygiene-gate.sh` check 2c no longer
-      classifies it as extractable rule-body).
-- [ ] V2 — Create `doctrine/verification-dispatch.md` carrying the body: the rule, the
+      classifies it as extractable rule-body). [verified 2026-07-29 by task-verifier; landed in 84f5a3c]
+- [x] V2 — Create `doctrine/verification-dispatch.md` carrying the body: the rule, the
       trigger table, an explicit NOT-triggers exemption set, model-routing guidance (pass an
       explicit `model`; retry on opus on a spend-limit error), the say-so-explicitly clause,
-      and the GOLDEN CASE. Verification: full (JIT injection observed firing).
-- [ ] V3 — Fix `manifest.json` `entries[93]` (`review-before-deploy`) `jit_triggers.paths` to
+      and the GOLDEN CASE. Verification: full (JIT injection observed firing). [verified 2026-07-29 by task-verifier; landed in 84f5a3c]
+- [x] V3 — Fix `manifest.json` `entries[93]` (`review-before-deploy`) `jit_triggers.paths` to
       route to the surfaces the gate GOVERNS (`hooks/`, `scripts/`, `agents/`, `rules/`,
       `manifest.json`), not only the two files that implement its carriers.
-      Verification: full (edit a `hooks/` file, observe the doctrine inject).
-- [ ] V4 — Add the `verification-dispatch` manifest entry, honestly labelled PATTERN with the
-      missing commit-time mechanism named. Verification: mechanical (`manifest-check.sh`).
-- [ ] V5 — File the two review-surface gaps `harness-reviewer` surfaced as nl-issues:
+      Verification: full (edit a `hooks/` file, observe the doctrine inject). [verified 2026-07-29 by task-verifier; landed in fe78ed3]
+- [x] V4 — Add the `verification-dispatch` manifest entry, honestly labelled PATTERN with the
+      missing commit-time mechanism named. Verification: mechanical (`manifest-check.sh`). [verified 2026-07-29 by task-verifier; landed in fe78ed3 — 2 pre-existing estate-* REDs noted, neither from this plan]
+- [x] V5 — File the two review-surface gaps `harness-reviewer` surfaced as nl-issues:
       `rrg_in_surface` returns OUT for `CLAUDE.md` and `doctrine/*.md` (the highest-leverage
       behavior files are outside the review surface), and the Fable-exhaustion event.
-      Verification: mechanical (rows in the ledger).
+      Verification: mechanical (rows in the ledger). [verified 2026-07-29 by task-verifier; ledger lines 7-8, ts 2026-07-29T03:32:30Z]
 - [ ] V6 — DEFERRED, NOT IN THIS PLAN: the commit-time carrier gate (a PreToolUse hook
       sourcing `rrg_in_surface`/`rrg_is_covered` to block a `git commit` of an uncovered
       in-surface file). `harness-reviewer` named this "the single most important thing to
@@ -61,6 +61,8 @@ would not have prevented anything.
 - `adapters/claude-code/doctrine/verification-dispatch.md` — V2
 - `adapters/claude-code/manifest.json` — V3, V4
 - `docs/plans/verification-dispatch-directive.md` — this plan
+- `docs/plans/verification-dispatch-directive-evidence.md` — task-verifier's V1-V5
+  reconciliation EVIDENCE BLOCKs (2026-07-29)
 
 ## Assumptions
 - A project `CLAUDE.md` instruction genuinely outranks an application-layer default. The
@@ -90,3 +92,11 @@ bullet as extractable rule-body.
 - 2026-07-28: docs/plans/verification-dispatch-directive.md — this plan
 - 2026-07-28: adapters/claude-code/rules/constitution.md — V7: §3 cold-reader bar extended to cover ASKS as well as decisions, and the §2 ask bullet reduced to the genuine delta (harness-reviewer REFORMULATE: two-thirds of the first draft restated §3)
 - 2026-07-28: adapters/claude-code/scripts/needs-you.sh — V8: `_ny_lint_ask_text`, the WARN-ONLY carrier for `--section question` (harness-reviewer: that section was completely unlinted while the decision twin has been linted since 53d3bee)
+- 2026-07-29: adapters/claude-code/hooks/review-record-commit-gate.sh — V6 LANDED (was deferred): the commit-time carrier harness-reviewer called "the single most important thing to fix". Blocking, at operator direction 2026-07-29 ("If it's valuable, then build and deploy it").
+- 2026-07-29: adapters/claude-code/scripts/measure-review-gate-fp.sh — V6's section-10 evidence instrument: replays the gate predicate over real history so the FP rate is measured retroactively instead of via a warn period.
+- 2026-07-29: adapters/claude-code/hooks/harness-claim-lint.sh — V6 adjunct: warn-only lint for the three defect classes that recurred within one session (self-invalidating sandbox tests, unmeasured absolute claims, guards their callers do not arm).
+- 2026-07-29: `adapters/claude-code/hooks/lib/git-command-parse.sh` — the shared commit-target resolver. harness-reviewer REJECTED the gate three times for the SAME class (wrong-subject-resolution); the fix had existed since 2026-06-10 inside scope-enforcement-gate (HARNESS-GAP-47). Extracted so the harness has ONE parser instead of two that disagree.
+- 2026-07-29: `adapters/claude-code/hooks/scope-enforcement-gate.sh` — re-pointed at the shared lib; byte-equivalence proven by a 120/120 differential (exit code AND stderr) over 40 commands x 3 cwds on both interpreters.
+
+- 2026-07-29: adapters/claude-code/hooks/lib/git-command-parse.sh — V6 round 3, CLASS fix: harness-reviewer rejected the gate three times for fixing instances while shipping the class (hand-rolled shell parsing). The reviewer named the remedy: extract scope-enforcement-gate's tokenize/analyze-git-segment/parse-cd-target primitives to a shared lib so the harness has ONE commit-target resolver instead of two that disagree. This is that lib (gcp_ API, own self-test 64/0 on bash 5.3 + 3.2).
+- 2026-07-29: adapters/claude-code/hooks/scope-enforcement-gate.sh — V6 round 3: sources the extracted lib instead of defining the six parsing primitives. Behaviour-preserving by mandate; proven by a pre/post differential over a 40-command corpus x 3 cwds (120/120 identical rc+stderr) on both interpreters, plus its unchanged 35/35 suite.

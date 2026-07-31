@@ -91,11 +91,38 @@ find_transcripts() {
   if [ -z "$since" ]; then
     find "$base" -name "*.jsonl" -type f 2>/dev/null
   else
-    # GNU date / BSD date both accept relative durations via -d/-v
-    local cutoff_ts
-    cutoff_ts=$(date -d "$since ago" +%s 2>/dev/null) \
-      || cutoff_ts=$(date -v "-${since// /}" +%s 2>/dev/null) \
-      || cutoff_ts=$(($(date +%s) - 604800))  # default 7 days
+    # Relative cutoff, portably (macos-portability-2026-07 M4).
+    #
+    # The previous BSD fallback was BROKEN and silently so: it built
+    # `date -v -"${since// /}"`, i.e. `-7days` for since="7 days", and
+    # BSD date rejects that ("Cannot apply date adjustment" — it wants a
+    # single-letter unit, `-7d`). So on macOS BOTH the GNU and the "BSD"
+    # branch failed and the third fallback fired, silently turning ANY
+    # --since window into a hardcoded 7 days. `--since '90 days'` quietly
+    # measured the last week and reported it as ninety.
+    #
+    # Now: normalize "<n> <unit>" to BSD's `-<n><U>` spelling, and if the
+    # window still cannot be computed, say so and stop rather than
+    # substituting a different window behind the caller's back.
+    local cutoff_ts sn su
+    cutoff_ts=$(date -d "$since ago" +%s 2>/dev/null)
+    if [ -z "$cutoff_ts" ]; then
+      sn="${since%% *}"; su="${since#* }"
+      case "$su" in
+        second*|sec|s) su=S ;; minute*|min|m) su=M ;; hour*|h) su=H ;;
+        day*|d)        su=d ;; week*|w)       su=w ;;
+        month*)        su=m ;; year*|y)       su=y ;;
+        *)             su='' ;;
+      esac
+      case "$sn" in ''|*[!0-9]*) sn='' ;; esac
+      [ -n "$sn" ] && [ -n "$su" ] && \
+        cutoff_ts=$(date -v "-${sn}${su}" +%s 2>/dev/null)
+    fi
+    if [ -z "$cutoff_ts" ]; then
+      echo "error: cannot interpret --since '$since' on this platform" >&2
+      echo "       (expected forms: '7 days', '36 hours', '2 weeks')" >&2
+      return 1
+    fi
     find "$base" -name "*.jsonl" -type f 2>/dev/null | while read -r f; do
       local mt
       mt=$(stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null)

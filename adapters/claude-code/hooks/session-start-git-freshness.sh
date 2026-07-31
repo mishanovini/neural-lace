@@ -61,6 +61,23 @@ WIP_BRANCH_PATTERN='^(wip|feat|feature|fix|bugfix|salvage|backup|rebase|reconver
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 MD_RUNBOOK="docs/runbooks/master-drift-autocorrect.md"
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# This hook runs at SessionStart, so an unbounded network `git fetch` against
+# a hung remote delays every session on the machine. The previous
+# `command -v timeout || <fetch anyway>` guard did not mis-report, but it
+# quietly ran UNBOUNDED on stock macOS, which is exactly the failure the
+# bound exists to prevent. nl_run_bounded keeps the bound on every platform.
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "session-start-git-freshness: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ============================================================
 # Helpers
 # ============================================================
@@ -88,15 +105,11 @@ _is_wip_branch() {
   printf '%s' "$b" | grep -qE "$WIP_BRANCH_PATTERN"
 }
 
-# Run git fetch --all with a best-effort timeout. Suppresses normal output;
-# errors are echoed to stderr (the SessionStart layer ignores stderr but the
-# operator can see them on direct invocation).
+# Run git fetch --all under a real wall-clock bound on every platform.
+# Suppresses normal output; errors are echoed to stderr (the SessionStart
+# layer ignores stderr but the operator can see them on direct invocation).
 _safe_fetch_all() {
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "$FETCH_TIMEOUT_SECONDS" git fetch --all --quiet 2>&1 | head -5 >&2 || return 0
-  else
-    git fetch --all --quiet 2>&1 | head -5 >&2 || return 0
-  fi
+  nl_run_bounded "$FETCH_TIMEOUT_SECONDS" git fetch --all --quiet 2>&1 | head -5 >&2 || return 0
 }
 
 # Echoes the count of commits on $1 that are not on $2 (i.e. how far $1 is

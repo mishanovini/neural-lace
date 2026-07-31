@@ -219,11 +219,26 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" && "${1:-}" == "--self-test" ]]; then
   _pl_pass() { _PL_PASSED=$((_PL_PASSED + 1)); echo "  PASS: $1"; }
   _pl_fail() { _PL_FAILED=$((_PL_FAILED + 1)); echo "  FAIL: $1" >&2; }
 
-  echo "Scenario 1: EPOCHREALTIME availability detection"
-  if pl_available; then
-    _pl_pass "pl_available() true on this bash (\$EPOCHREALTIME='${EPOCHREALTIME}')"
+  echo "Scenario 1: EPOCHREALTIME availability detection (capability-honest)"
+  # task-verifier 2026-07-29 (P1 re-verification, FAIL conf 9): this scenario used to
+  # demand pl_available()==true unconditionally and, on failure, diagnosed with
+  # `$(bash --version | head -1)` — a PATH-resolved bash, so a /bin/bash 3.2.57 run
+  # reported "this host: GNU bash 5.3.15": the interpreter-identity lie (the last
+  # surviving site of the class scope-enforcement-gate Scenario 38 exists to kill).
+  # The honest contract is capability-aware: bash >=5 must detect EPOCHREALTIME;
+  # pre-5 must report unavailable — BOTH are passes for the interpreter under test.
+  if [[ "${BASH_VERSINFO[0]:-0}" -ge 5 ]]; then
+    if pl_available; then
+      _pl_pass "pl_available() true on bash ${BASH_VERSION} (\$EPOCHREALTIME='${EPOCHREALTIME}')"
+    else
+      _pl_fail "pl_available() false — expected true on bash >=5 (running: ${BASH_VERSION})"
+    fi
   else
-    _pl_fail "pl_available() false — expected true on bash >=5 (this host: $(bash --version | head -1))"
+    if pl_available; then
+      _pl_fail "pl_available() true on pre-5 bash ${BASH_VERSION} — EPOCHREALTIME cannot exist here; detection is broken"
+    else
+      _pl_pass "pl_available() false on bash ${BASH_VERSION} — the documented pre-5 no-op contract"
+    fi
   fi
 
   echo "Scenario 2: no-op fallback when EPOCHREALTIME is forced-unavailable"
@@ -249,22 +264,33 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" && "${1:-}" == "--self-test" ]]; then
   [[ "$_PL_MS" == "5000" ]] && _pl_pass "exact 5s -> 5000ms" \
     || _pl_fail "expected 5000, got $_PL_MS"
 
-  echo "Scenario 4: ledger line schema + daily-rotation filename (sandboxed)"
+  echo "Scenario 4: ledger line schema + daily-rotation filename (sandboxed, capability-honest)"
   _PL_T="$(mktemp -d 2>/dev/null || mktemp -d -t pltst)"
   export PERF_LEDGER_DIR="$_PL_T/perf"
   export PERF_LEDGER_DATE_OVERRIDE="20260723"
   pl_meter_begin
   pl_meter_end "self-test-hook"
   _PL_EXPECTED_FILE="$_PL_T/perf/chain-20260723.jsonl"
-  if [[ -f "$_PL_EXPECTED_FILE" ]]; then
-    _pl_pass "ledger file rotated to the overridden date: $_PL_EXPECTED_FILE"
+  if [[ "${BASH_VERSINFO[0]:-0}" -ge 5 ]]; then
+    if [[ -f "$_PL_EXPECTED_FILE" ]]; then
+      _pl_pass "ledger file rotated to the overridden date: $_PL_EXPECTED_FILE"
+    else
+      _pl_fail "expected ledger file at $_PL_EXPECTED_FILE — found: $(ls "$_PL_T/perf" 2>/dev/null)"
+    fi
+    if [[ -f "$_PL_EXPECTED_FILE" ]] && grep -qE '^\{"ts":"[^"]+","hook":"self-test-hook","ms":[0-9]+\}$' "$_PL_EXPECTED_FILE"; then
+      _pl_pass "ledger line matches the {ts,hook,ms} schema"
+    else
+      _pl_fail "ledger line schema mismatch: $(cat "$_PL_EXPECTED_FILE" 2>/dev/null)"
+    fi
   else
-    _pl_fail "expected ledger file at $_PL_EXPECTED_FILE — found: $(ls "$_PL_T/perf" 2>/dev/null)"
-  fi
-  if [[ -f "$_PL_EXPECTED_FILE" ]] && grep -qE '^\{"ts":"[^"]+","hook":"self-test-hook","ms":[0-9]+\}$' "$_PL_EXPECTED_FILE"; then
-    _pl_pass "ledger line matches the {ts,hook,ms} schema"
-  else
-    _pl_fail "ledger line schema mismatch: $(cat "$_PL_EXPECTED_FILE" 2>/dev/null)"
+    # Pre-5: the documented contract is NO-OP — pl_meter_end must write NOTHING.
+    # The old expectations demanded a ledger write the lib's own contract forbids
+    # here, so the suite failed 3.2 for honoring its own design (P1 re-verification).
+    if [[ ! -f "$_PL_EXPECTED_FILE" ]]; then
+      _pl_pass "pre-5 bash ${BASH_VERSION}: no ledger written — the documented no-op contract holds"
+    else
+      _pl_fail "pre-5 bash wrote a ledger line — the no-op contract is broken: $(cat "$_PL_EXPECTED_FILE")"
+    fi
   fi
 
   echo "Scenario 5: pl_meter_end with no matching pl_meter_begin is a safe no-op (does not write)"

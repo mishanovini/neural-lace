@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-7e2b7263",
+  "created_at": "2026-07-30T00:27:59Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group hooks-1 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/check-harness-sync.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/continuation-enforcer.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/customer-facing-review-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decision-context-replay.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/discovery-surfacer.sh",
+      "blob_sha": "fcb8d8ec802f501cee4fd7dc18b6108f3043bad2"
+    },
+    {
+      "path": "adapters/claude-code/hooks/gh-account-autoswitch.sh",
+      "blob_sha": "6291649868884c48bc88730b3c602dfe8e8075f2"
+    },
+    {
+      "path": "adapters/claude-code/hooks/outcome-evidence-gate.sh",
+      "blob_sha": "02e25adf33dbe4dd3f34ff39841aa7aba22404eb"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-status-archival-sweep.sh",
+      "blob_sha": "65d14d259ed6860d5df74b44ec58d26a54738b2b"
+    },
+    {
+      "path": "adapters/claude-code/hooks/product-acceptance-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-worktree-advisor.sh",
+      "blob_sha": "294fa57199fe2878d97f078c22f3ec1ebc75d64e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/systems-design-gate.sh",
+      "blob_sha": "ee6b17494ffca0322ae2dfc61a03efa701d7d1a4"
+    },
+    {
+      "path": "adapters/claude-code/hooks/tool-call-budget.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit-reconciler.sh",
+      "blob_sha": "5db04394e8062dac80beb4410eea35b3c8240959"
+    },
+    {
+      "path": "adapters/claude-code/hooks/worktree-teardown-gate.sh",
+      "blob_sha": "b3846635b379ae8c0930e1e52980b00cd466754d"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS: mode-only change 100644->100755; diff against master is zero content lines (verified via git diff --stat and --summary); the exec bit is the fix for the theatre class where git ignored mode-644 hooks; no behavior, parsing, or portability surface changed",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer agent (hooks-1 sweep)",
+  "payload": {}
+}

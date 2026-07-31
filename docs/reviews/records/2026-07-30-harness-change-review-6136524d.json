@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-6136524d",
+  "created_at": "2026-07-30T07:07:49Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group delta-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "3404bd1e92a1c4836d32fe8cee6dbef2d1e88f98",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/plan-reviewer.sh",
+      "blob_sha": "1d5de563487883515d847a4730b82855d6201844"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — one-line self-test fixture fix (dash-form default so dd6's explicit-empty legacy-plan argument survives instead of being replaced by the v2 default) plus the executable-bit fix; dd6 call site verified passing an explicit empty fourth argument; PROVEN strict improvement by running both blobs under /bin/bash 3.2.57: master fails BOTH iv4 and dd6, HEAD fixes dd6 and leaves only iv4, which is pre-existing and filed as PLAN-REVIEWER-IV4-MACOS-PREEXISTING-01.",
+    "findings_summary": "Pre-existing, not this diff: iv4 (check13-mechanical-level-runtime-exempt) red on macOS, identical on master at fd48741^; filed 2026-07-30."
+  },
+  "written_by": "harness-reviewer via write-review-record.sh (delta-2 sweep)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

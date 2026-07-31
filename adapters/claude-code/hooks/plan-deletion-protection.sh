@@ -95,6 +95,13 @@ _pdp_has_fresh_waiver() {
 # Self-test entry point (handled BEFORE input parsing)
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm the shared libs' HARNESS_SELFTEST guard (perf-ledger, signal-ledger) for
+  # this whole run and EXPORT it so the child scenarios spawned below inherit
+  # it. Without it those libs resolve their PRODUCTION paths and this self-test
+  # appends to the operator's real ~/.claude/state/signal-ledger.jsonl. PROVEN
+  # behaviorally: clean-HOME probe created .claude/state/signal-ledger.jsonl
+  # without it, nothing under .claude/ with it.
+  export HARNESS_SELFTEST=1
   # Defined further down; jump to it
   SELF_TEST=1
 fi
@@ -833,6 +840,15 @@ inspect_command() {
 run_self_test() {
   local total=0 passed=0 failed_names=""
 
+  # Portable fixture aging (macos-portability-2026-07 M4) — sourced here,
+  # not at file scope, so the gate's PreToolUse path pays nothing for a
+  # helper only the fixtures use.
+  local _pdp_pt="$_PDP_SELF_DIR/lib/portable-time.sh"
+  if ! . "$_pdp_pt" 2>/dev/null; then
+    echo "self-test: cannot source $_pdp_pt (needed to backdate fixtures portably)" >&2
+    return 2
+  fi
+
   # P1 perf-ledger sandboxing (perf-telemetry-2026-07 plan): scenarios below
   # spawn REAL child `bash "$SELF_PATH"` subprocesses (by design — see the
   # cheap pre-filter's comment: they are NOT marked SELF_TEST so the harness
@@ -955,9 +971,12 @@ run_self_test() {
       echo "Purpose: this gate exists to prevent accidental plan-file loss"
       echo "Because: this is a self-test scenario exercising the waiver valve"
     } > .claude/state/plan-deletion-waiver-selftest.txt
-    touch -d '2 hours ago' .claude/state/plan-deletion-waiver-selftest.txt 2>/dev/null \
-      || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M.%S 2>/dev/null)" .claude/state/plan-deletion-waiver-selftest.txt 2>/dev/null \
-      || true
+    # No `|| true`: leaving the waiver fresh would silently invert this
+    # scenario ("stale waiver must be rejected") into its opposite.
+    if ! nl_touch_age .claude/state/plan-deletion-waiver-selftest.txt 7200; then
+      echo "self-test: could not backdate the stale-waiver fixture" >&2
+      exit 2
+    fi
   }
   setup_uncommitted_plan_with_weak_waiver() {
     setup_uncommitted_plan

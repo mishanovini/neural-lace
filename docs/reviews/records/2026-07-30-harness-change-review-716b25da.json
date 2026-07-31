@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-716b25da",
+  "created_at": "2026-07-30T00:36:14Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "fable",
+  "plan_ref": "docs/plans/macos-portability-2026-07.md",
+  "change_ref": {
+    "commit_sha": "7886762",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/agent-heartbeat.sh",
+      "blob_sha": "10241d98b56416d69f989bd9447b044ab2d5ec02"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — Mechanism-class surfacer portability fix: BSD-safe _mtime_epoch and sed -E bool pluck, plus a genuine negative control (6a: corrupt-ts file with FRESH mtime is NOT surfaced) that kills the two-bugs-cancel false green; self-test 20/0 re-run by reviewer under /bin/bash 3.2.57.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer agent (scripts-1 sweep, operator-authorized 2026-07-29) via write-review-record.sh",
+  "payload": {}
+}

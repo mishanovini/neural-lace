@@ -149,10 +149,21 @@ const planParse = require('./plan-parse.js');
 const WEB_DIR = path.join(__dirname, '..', 'web');
 const COMPLETED_AGE_DAYS = Number(process.env.ROADMAP_COMPLETED_AGE_DAYS) || 7;
 
-// The five roll-up attention classes, in the pinned precedence order
+// The roll-up attention classes, in the pinned precedence order
 // (adjudication (b) + delta R4: precedence governs display ORDER only —
 // one badge per class present, a higher class never masks a lower one).
-const ROLLUP_CLASSES = ['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown'];
+//
+// DERIVED from derive-lib's ATTENTION_PRECEDENCE (2026-07-30), never
+// re-typed. This used to be a hand-maintained duplicate of that list, and
+// the duplication was actively harmful rather than merely redundant:
+// absorbOneChildRollUp (below) falls back to 'blocked-on' for any
+// reason_class it does not recognise, so the moment derive-lib gained a
+// new reason the copy here did not know about, every affected task
+// silently rolled up as "stalled — blocked on a predecessor" — a
+// fabricated dependency claim. Caught by S20e-reason when 'idle-dispatch'
+// was added. One source of truth means a new reason can never again be
+// silently re-attributed to an unrelated class.
+const ROLLUP_CLASSES = deriveLib.ATTENTION_PRECEDENCE.slice();
 
 function sendJson(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -269,6 +280,33 @@ function isEligiblePlanStatus(statusText) {
   return !PLAN_STATUS_EXCLUDE_RE.test(t);
 }
 
+// ----------------------------------------------------------------------
+// ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 / ROADMAP-SUPERSEDED-RENDERS-
+// PENDING-01 (2026-07-29 round 14) shared vocabulary — the harness's own
+// terminal-status enum (ADR 052 + plan-lifecycle.sh's extract_status:
+// "ACTIVE / COMPLETED / DEFERRED / ABANDONED / SUPERSEDED / etc.") is the
+// only set of Status: tokens this derivation trusts enough to run the
+// normal task-count ladder on unconditionally. Anything else surviving
+// past isEligiblePlanStatus (a real Status: line, just not one of these —
+// e.g. binary corruption landing "Status: WHAT" in place of a real token)
+// is NOT a confident bucket (C5) — see scanPlanDir's read-failure/unknown-
+// status handling below.
+// ----------------------------------------------------------------------
+const KNOWN_PLAN_STATUS_TOKENS = { ACTIVE: true, COMPLETED: true, DEFERRED: true, ABANDONED: true, SUPERSEDED: true };
+function planStatusToken(statusText) {
+  const m = /^([A-Za-z][A-Za-z0-9_-]*)/.exec(String(statusText || '').trim());
+  return m ? m[1].toUpperCase() : '';
+}
+// PLAN_BODY_CORRUPTION_RE — control/binary bytes (outside the common
+// whitespace \t\n\r already handled by line-splitting) anywhere in a
+// scanned plan's body are a strong corruption signal: a genuine markdown
+// plan is prose + task lines, never raw binary/control bytes. Used ONLY
+// as the second half of the "zero tasks AND unparseable structure" test
+// in scanPlanDir — never applied when tasks parsed successfully (a normal
+// plan's continuation-line text can legitimately contain unusual but
+// PRINTABLE punctuation, which this never flags).
+const PLAN_BODY_CORRUPTION_RE = /[\x00-\x08\x0E-\x1F\x7F]/;
+
 // scanPlanDir(dir, opts) -> [{slug, absPath, archived, mtimeMs}] for every
 // eligible top-level *.md file directly inside `dir` (non-recursive — a
 // subdirectory like fragments/ or archive/ itself is never descended into
@@ -301,14 +339,70 @@ function scanPlanDir(dir, opts) {
     if (!e.isFile() || !/\.md$/i.test(e.name)) return;
     const abs = path.join(dir, e.name);
     let stat;
-    try { stat = fs.statSync(abs); } catch (_) { return; }
+    try { stat = fs.statSync(abs); } catch (_) { return; } // vanished mid-scan race — genuinely gone, not this file's fault
     const slug = e.name.replace(/\.md$/i, '');
     if (typeof options.cutoffMs === 'number' && !(options.recentSlugs && options.recentSlugs[slug])) {
       return; // aging is gated here and this slug has no recency evidence
     }
     let text;
-    try { text = fs.readFileSync(abs, 'utf8'); } catch (_) { return; }
-    if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
+    try {
+      text = fs.readFileSync(abs, 'utf8');
+    } catch (err) {
+      // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (c): the file EXISTS
+      // (readdirSync/statSync above both succeeded) but could not be
+      // read — a genuine permission/race failure, never silently skipped
+      // the way an ineligible-status file legitimately is below. Matches
+      // the registry-linked path's own `damaged` handling (derivePlanRootNode
+      // via planParse.loadPlanFile) — surfaced as an unknown root instead
+      // of vanishing from the tree.
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan file unreadable (' + (err && err.code ? err.code : String(err)) + ')' });
+      return;
+    }
+    const statusText = planParse.parsePlanStatus(text);
+    if (!isEligiblePlanStatus(statusText)) {
+      // ROADMAP-STATUSLESS-CORRUPT-VANISH-01 (advocate re-run S7 residual,
+      // 2026-07-30): a file with NO Status: header is normally not an
+      // independent plan — evidence stubs, fragments, reference docs — and
+      // stays excluded; flagging every header-less .md would flood the tree
+      // (Round 14's correct rationale). But ABSENT header + the
+      // binary-corruption signature in the body is the one combination whose
+      // likeliest story is "a plan whose header was destroyed", and C5
+      // forbids exactly this rendering: vanishing. Recognized-but-ineligible
+      // statuses (REFERENCE/NORMATIVE) keep their unconditional exclusion —
+      // their header survived, so their author's intent is legible.
+      if (!statusText && PLAN_BODY_CORRUPTION_RE.test(text)) {
+        out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+          scanIssue: 'plan parse failed (no Status header + corrupt content — header destroyed?)' });
+      }
+      return;
+    }
+
+    // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (a): the Status: header
+    // survives but its value is outside the known enum (see
+    // KNOWN_PLAN_STATUS_TOKENS above) — e.g. binary corruption landed
+    // "Status: WHAT" where a real token belongs. The OLD code let this
+    // through as an eligible plan and zero parseable tasks then defaulted
+    // it to a confident "not-started" (live repro: fx-corrupt2). Never a
+    // confident bucket for a status this derivation doesn't recognize.
+    if (!KNOWN_PLAN_STATUS_TOKENS[planStatusToken(statusText)]) {
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan parse failed (unrecognized Status: "' + statusText.trim() + '")' });
+      return;
+    }
+
+    // A KNOWN status token survives, but the body is BOTH taskless AND
+    // shows the binary/control-byte corruption signature — never
+    // legitimate markdown prose. A genuinely fresh plan stub (zero tasks,
+    // ordinary prose, no `## Tasks` written yet) is NOT flagged here —
+    // only the corruption signature, so this never guesses on a plan that
+    // is merely new.
+    if (planParse.parseTasks(text).length === 0 && PLAN_BODY_CORRUPTION_RE.test(text)) {
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan parse failed (unparseable body — zero tasks, corrupt content)' });
+      return;
+    }
+
     out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs });
   });
   return out;
@@ -407,6 +501,15 @@ function newestLinkTs(links) {
 // default", so this reads the raw JSON directly and stays scoped to repos
 // the operator actually configured. A malformed/absent config file is an
 // honest zero-length list (never a crash, never a silent guess).
+// R17 (operator 2026-07-30, decision A — multi-project grouping): each
+// entry supports TWO forms — the pre-existing flat string (`"Circuit":
+// "/abs/path"`, no group — those plans land in the honest '(ungrouped)'
+// display bucket, see projectGroupFor below) AND a new object form
+// (`"Circuit": { "root": "...", "group": "Pocket Technician" }`) that
+// additionally declares which top-level DISPLAY GROUP the repo's plans
+// belong to. `group` is deliberately read straight from the config file,
+// never defaulted/guessed here — the operator's own binding rule for this
+// round ("default group... for Circuit is NOT hardcoded").
 function configuredRepoRoots() {
   const cfgPath = process.env.ROADMAP_PROJECTS_CONFIG ||
     path.join(__dirname, '..', 'config', 'projects.json');
@@ -415,9 +518,45 @@ function configuredRepoRoots() {
   const out = [];
   Object.keys(raw || {}).forEach((key) => {
     if (key === '_comment') return;
-    if (typeof raw[key] === 'string' && raw[key]) out.push({ key: key, root: raw[key] });
+    const val = raw[key];
+    if (typeof val === 'string' && val) { out.push({ key: key, root: val, group: '' }); return; }
+    if (val && typeof val === 'object' && typeof val.root === 'string' && val.root) {
+      out.push({ key: key, root: val.root, group: (typeof val.group === 'string' ? val.group : '') });
+    }
   });
   return out;
+}
+
+// projectGroupFor(projectKey) -> the top-level DISPLAY GROUP a plan's
+// project belongs to. The self repo's group is intrinsic ('Neural Lace' —
+// this app's own home repo; it has no config/projects.json entry to read
+// a group from, since that file is for OTHER repos). "Self" is identified
+// by comparing projectKey against path.basename(planScanRoot()) — the
+// SAME derivation planProjectFromPath uses for the self repo's own plans
+// (discoverPlanFiles's `{key:'self', root:scanRoot}` entry) — never a
+// hardcoded literal like 'neural-lace', which would silently break under
+// ROADMAP_PLAN_SCAN_ROOT overrides (this file's own test suite included).
+// Every OTHER project key's group comes from the SAME configuredRepoRoots()
+// the repo-scan already reads (object-form entries only); a flat-string
+// entry (no group declared) or an entirely unrecognized project key both
+// fall to the honest '(ungrouped)' catch-all — never a silently-guessed
+// default.
+const SELF_PROJECT_GROUP = 'Neural Lace';
+const UNGROUPED_PROJECT_GROUP = '(ungrouped)';
+function projectGroupFor(projectKey) {
+  if (projectKey && projectKey === path.basename(planScanRoot())) return SELF_PROJECT_GROUP;
+  // Matched by the REPO ROOT's own basename, not the config KEY: a plan's
+  // `project` value is planProjectFromPath's path-derived repo dirname
+  // (same as the `{key:'self', root:...}` convention discoverPlanFiles
+  // uses), which the operator's chosen config KEY need not equal (a
+  // config key is just a human label picked for the JSON file; the real
+  // Circuit case happens to have key===basename==="Circuit", but that is
+  // a coincidence, not a guarantee this lookup may rely on).
+  const configured = configuredRepoRoots();
+  for (let i = 0; i < configured.length; i++) {
+    if (path.basename(configured[i].root) === projectKey) return configured[i].group || UNGROUPED_PROJECT_GROUP;
+  }
+  return UNGROUPED_PROJECT_GROUP;
 }
 
 function discoverPlanFiles(scanRoot, planAskLinks) {
@@ -524,16 +663,33 @@ function mapDerivedValue(value) {
   return value === 'merged-deploy-unverified' ? 'merged-unverified' : value;
 }
 
+// STALLED_REASON_PHRASE — human text for reason codes whose bare machine
+// name would MISLEAD in the badge. Only codes listed here are rewritten;
+// every other code keeps its existing verbatim rendering (the label is
+// 'stalled — ' + code), so this map adds meaning without disturbing any
+// pre-existing label string. 'idle-dispatch' needs it precisely because the
+// operator's complaint was being pointed at the wrong investigation: the
+// badge must say the session is ALIVE and the task merely went quiet, not
+// leave a terse code that reads like a synonym for 'crashed'.
+const STALLED_REASON_PHRASE = {
+  'idle-dispatch': 'no recent dispatch (the session that touched it is still alive)',
+};
+
 function statusObj(value, opts) {
   const o = opts || {};
   let label;
-  if (value === 'unknown') label = 'status unknown — ' + (o.reason || 'derivation failed');
+  // ROADMAP-SUPERSEDED-RENDERS-PENDING-01: an AUTHORED terminal label
+  // (superseded/abandoned) always wins the display text — see the
+  // derivePlanRootNode call site for who sets this and why value stays
+  // 'complete' underneath (Shipped-group membership, no new enum value).
+  if (o.terminal_label) label = o.terminal_label;
+  else if (value === 'unknown') label = 'status unknown — ' + (o.reason || 'derivation failed');
   else if (value === 'merged-unverified') label = 'merged — deploy unverified';
-  else if (value === 'stalled') label = 'stalled — ' + (o.reason || 'reason unavailable');
+  else if (value === 'stalled') label = 'stalled — ' + (STALLED_REASON_PHRASE[o.reason] || o.reason || 'reason unavailable');
   else if (value === 'complete') label = 'complete' + (o.override ? ' (operator override)' : '');
   else if (value === 'in-progress') label = 'in progress';
   else label = 'not started';
-  return { value: value, reason: o.reason || '', reason_class: o.reason_class || '', label: label, since: o.since || '' };
+  return { value: value, reason: o.reason || '', reason_class: o.reason_class || '', label: label, since: o.since || '', terminal_label: o.terminal_label || '' };
 }
 
 function statusFromDerived(derived, opts) {
@@ -549,13 +705,37 @@ function statusFromDerived(derived, opts) {
   });
 }
 
-// deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) -> [AgentLeaf]
+// deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs,
+// startedIdleExpired) -> [AgentLeaf]
 // Round 7B-i: currently-running background agents/sessions render as live
 // sub-task leaves under the task they serve. A session with NO matching
 // heartbeat record renders 'unknown' (named-absence, C5) — never guessed.
-function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) {
+//
+// `startedIdleExpired` (false-eternal-running fix, 2026-07-30) — the SAME
+// flag deriveLib.deriveItemStatus already computed for this task (see its
+// own header): the attached session's heartbeat can be genuinely live
+// (that session — almost always the DISPATCHING orchestrator, not a
+// per-task worker — really is alive) while STILL being worthless evidence
+// that this specific task has any current activity, once its own
+// task_started is older than the idle window. Without this, a session leaf
+// would render 'running' by heartbeat alone even when the task-level
+// status (deriveTaskNode, above) has already downgraded to 'stalled' for
+// the identical reason — an inconsistency between the task's own badge and
+// its child leaf that this parameter closes.
+function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdleExpired, taskStatusValue) {
   const th = deriveLib.activityThresholdsMs();
   const ids = (sessionIds || []).filter(Boolean);
+  // A leaf may claim 'running' ONLY when the task's own derived status is
+  // 'in-progress' (2026-07-30). Found by S20g/S20h: a task whose own
+  // task_started evidence was unreadable derived 'unknown', yet its leaves
+  // still rendered 'running' off the session heartbeat alone — and the
+  // owning plan then rolled up a green "1 running" badge for a task the
+  // server had just admitted it could not classify. The leaf, the task
+  // badge and the plan roll-up must never contradict each other; the task
+  // status is the authority, and a leaf can only ever narrow it.
+  // `undefined` keeps the pre-existing behaviour for any caller that has
+  // not been updated (it is passed explicitly by deriveTaskNode).
+  const taskProvenRunning = taskStatusValue === undefined || taskStatusValue === 'in-progress';
   return ids.map((sid) => {
     const hb = (heartbeats || []).find((h) => h && h.session_id === sid);
     if (!hb) {
@@ -568,14 +748,34 @@ function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs) {
     }
     const ageMs = nowMs - Date.parse(hb.last_activity_ts);
     const ageCls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
-    const value = ageCls === 'crashed' ? 'stalled' : 'running';
+    // The task's own status could not be established at all — say so on the
+    // leaf rather than upgrading a live heartbeat into a running claim the
+    // task badge itself does not make.
+    if (!taskProvenRunning && taskStatusValue === 'unknown') {
+      return {
+        id: taskId + '/agent/' + sid,
+        kind: 'agent',
+        title: 'session ' + sid + (hb.branch ? ' (' + hb.branch + ')' : ''),
+        status: {
+          value: 'unknown',
+          label: 'status unknown — this session is alive, but this task\'s own start evidence could not be read',
+          reason: '', since: hb.last_activity_ts || '',
+        },
+      };
+    }
+    const value = (ageCls === 'crashed' || startedIdleExpired || !taskProvenRunning) ? 'stalled' : 'running';
+    const label = value === 'running'
+      ? 'running'
+      : (ageCls !== 'crashed'
+        ? 'stalled — this task has not been (re-)dispatched in a while, even though the session that touched it is still alive'
+        : 'stalled — no recent heartbeat');
     return {
       id: taskId + '/agent/' + sid,
       kind: 'agent',
       title: 'session ' + sid + (hb.branch ? ' (' + hb.branch + ')' : ''),
       status: {
         value: value,
-        label: value === 'running' ? 'running' : 'stalled — no recent heartbeat',
+        label: label,
         reason: '', since: hb.last_activity_ts || '',
       },
     };
@@ -643,26 +843,120 @@ function deriveUnboundSessionsNode(hbCtx) {
   };
 }
 
+// buildWaitingOnYouMap(scanRoot) -> { '<slug>/<task_id>': <needs-you ledger
+// id>, ... } — ROADMAP-WAITING-ON-YOU-SIGNAL-01 (2026-07-29 round 14): the
+// producer half of deriveStalledReason's `waitingOnYouId` input (task-1-
+// owned consumer, unit-proven but never populated in production —
+// inbox-routes.js:55-68's own honest-limit note this closes).
+//
+// Reuses GET /api/inbox's OWN derivation (inbox-routes.buildInboxPayload) —
+// never a second ledger parse (a lazy require here, not a module-load-time
+// one, since roadmap-routes.js is required BY server.js alongside
+// inbox-routes.js — deferring the require avoids any load-order coupling
+// between sibling route modules, matching this file's existing
+// derive-cache.js lazy-require precedent above).
+//
+// MATCHING (conservative — "a false badge is worse than a missing one",
+// this defect's own binding rule): plan-parse.js's extractPlanTaskReferences
+// finds CANDIDATE (slug, taskId) pairs via two explicit shapes only (its own
+// header has the full rule — the app's own `#roadmap/<slug>/<task-id>`
+// address, or a `docs/plans/<slug>.md` anchor + an explicit "task <id>"
+// mention in the SAME text) — no fuzzy title/keyword matching. Every
+// candidate is then VERIFIED against the plan's REAL parsed task list
+// before being trusted; an unverified candidate is silently dropped, never
+// fabricated. Only status:'ok' (a TRUSTED ledger read) is consulted — an
+// unavailable/not-yet-derived ledger contributes nothing (never a guess).
+//
+// A bare plan-slug reference (no specific task id) does NOT mark anything
+// here — the six-value enum has no plan-ROOT 'stalled' state (only task
+// nodes reach deriveItemStatus's stalled branch; a plan's own not-started/
+// in-progress status is derived from child task counts, never from
+// deriveItemStatus directly) — an honest, documented limit rather than an
+// invented "first stalled task in this plan" heuristic.
+function buildWaitingOnYouMap(scanRoot) {
+  const map = {};
+  let payload;
+  try {
+    payload = require('./inbox-routes.js').buildInboxPayload();
+  } catch (_) {
+    return map; // inbox derivation unavailable — honest no-op, never a crash here
+  }
+  if (!payload || payload.status !== 'ok') return map; // only a TRUSTED read is a signal source
+  (payload.answerable || []).forEach((item) => {
+    const haystack = String(item.raw_text || '') + ' ' + (Array.isArray(item.links) ? item.links.join(' ') : '');
+    planParse.extractPlanTaskReferences(haystack).forEach((ref) => {
+      const roadmapId = ref.slug + '/' + ref.taskId;
+      if (map[roadmapId]) return; // first (oldest, per buildInboxPayload's own sort) match wins
+      const abs = planParse.resolvePlanAbsPath(scanRoot, ref.slug);
+      if (!abs) return;
+      const loaded = planParse.loadPlanFile(abs);
+      if (!loaded.ok) return;
+      const isRealTask = (loaded.tasks || []).some((t) => t.id === ref.taskId);
+      if (!isRealTask) return; // never a fabricated correlation
+      map[roadmapId] = item.id;
+    });
+  });
+  return map;
+}
+
 // deriveTaskNode(slug, t, ...) — id scheme is now `<slug>/<task_id>` (the
 // ask_id segment is gone: plans, not asks, are the root, so a task's
 // address is relative to its plan alone).
 function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabel) {
   let status;
   let completedAt = '';
+  let startedIdleExpired = false;
   const taskSessionIds = (sessionsByTask && sessionsByTask[t.id]) || [];
   if (t.done) {
     completedAt = doneTs[t.id] || '';
     status = statusObj('complete', { since: completedAt });
   } else {
+    // ROADMAP-WAITING-ON-YOU-SIGNAL-01: this task's own roadmap id
+    // ('<slug>/<task_id>') is the key buildWaitingOnYouMap's producer
+    // above keys the map by — an EXACT match, never a substring/fuzzy one.
+    const waitingOnYouId = (hbCtx.waitingOnYou && hbCtx.waitingOnYou[slug + '/' + t.id]) || null;
+    // False-eternal-running fix (2026-07-30): startedAtMs is THIS task's
+    // own most-recent task_started event age — see deriveLib.deriveItemStatus's
+    // header for why the attached session's heartbeat alone (sessionIds/
+    // heartbeats below) can never prove this SPECIFIC task has current
+    // activity (that session is the DISPATCHING session, not a per-task
+    // worker, and stays alive across many unrelated dispatches).
+    // MALFORMED IS NOT ABSENT (fail-open fix, 2026-07-30): this used to
+    // collapse an unparseable ts to `null` — indistinguishable from "no
+    // task_started at all" — which silently disabled the idle gate and
+    // restored the pre-fix green-forever behaviour on exactly the corrupt
+    // input we least want to trust. NaN is now passed THROUGH so
+    // deriveItemStatus can tell the two apart and render 'unknown' for
+    // present-but-unreadable evidence (its own branch documents why),
+    // mirroring how the heartbeat side already treats an unparseable
+    // last_activity_ts. `null` remains reserved for genuine absence.
+    const startedAtMs = startedTs[t.id] ? Date.parse(startedTs[t.id]) : null;
     const derived = deriveLib.deriveItemStatus({
       done: false,
       startedEvent: !!startedTs[t.id],
+      startedAtMs: startedAtMs,
       sessionIds: taskSessionIds,
       heartbeats: hbCtx.heartbeats,
       heartbeatsStoreOk: hbCtx.heartbeatsStoreOk,
       nowMs: hbCtx.nowMs,
+      stalledSignals: waitingOnYouId ? { waitingOnYouId: waitingOnYouId } : undefined,
     });
     status = statusFromDerived(derived, { since: startedTs[t.id] || '' });
+    startedIdleExpired = !!derived.startedIdleExpired;
+    // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (S6's "clicking it expands the
+    // path; the #inbox/<id> link lands focused + highlighted" leg): feeds
+    // the PRE-EXISTING, previously-never-populated `status.unblock
+    // {label, hash}` field (documented at this file's own header, line
+    // ~96 — "OPTIONAL {label, hash}") that web/roadmap.js's reasonRow
+    // already renders as a real navigate-on-click link (line ~866) — no
+    // new client-side plumbing needed, the consumer was unit-built and
+    // simply never fed. Only set when the signal actually won the
+    // stalled-reason precedence (deriveStalledReason ranks waiting-on-you
+    // first, so if it was supplied it always wins — this mirrors that
+    // fact rather than re-deriving it).
+    if (waitingOnYouId && status.value === 'stalled' && status.reason_class === 'waiting-on-you') {
+      status.unblock = { label: 'open in Inbox', hash: '#inbox/' + encodeURIComponent(waitingOnYouId) };
+    }
   }
 
   const struct = deriveLib.splitTaskStructure(t.description);
@@ -673,7 +967,7 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     body_points: deriveLib.splitIntoSentences(s.body),
   }));
   const liveSessions = (!t.done && taskSessionIds.length)
-    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs)
+    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs, startedIdleExpired, status.value)
     : [];
   // R9-7b bookkeeping: a session id ATTACHED to a not-done task is
   // "attributed" regardless of whether a matching heartbeat file exists —
@@ -920,13 +1214,31 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
   const operatorTitle = (firstLink && firstLink.title_source === 'operator') ? firstLink.title : '';
   const askAutoTitle = (firstLink && firstLink.title_source !== 'operator') ? (firstLink.title || '') : '';
   const provClass = planProvenanceClass(pf.slug, headerExtras.provenanceField, !!(linkedAsks && linkedAsks.length));
+  const projectKey = (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath);
   const node = {
     id: pf.slug,
     kind: 'plan',
     title: operatorTitle || headerExtras.h1Title || askAutoTitle || pf.slug,
     title_source: operatorTitle ? 'operator' : 'auto',
-    project: (linkedAsks[0] && linkedAsks[0].project) || planProjectFromPath(pf.absPath),
+    project: projectKey,
+    // R17 deliverable 4: the top-level DISPLAY GROUP this plan's project
+    // belongs to (see projectGroupFor above) — a NEW field, additive to
+    // the existing `project` (per-repo) grouping the client already uses;
+    // never replaces it.
+    project_group: projectGroupFor(projectKey),
     plan_path: pf.absPath, // R9 follow-up (operator 2026-07-24): every phase IS a plan file — link it
+    // Round 15 (operator, verified live): the client's ONLY prior rendering
+    // of plan_path was a raw `file:///` href — a dead link from an http-
+    // served page (no navigation, no network activity, confirmed live at
+    // :7733). `plan_doc` reuses the EXISTING /api/doc {project,path}
+    // resolver (asks.js's plan-drilldown already does this — same
+    // deriveLib.projectDocRefFor helper, "no new link handling", ux-review
+    // amendment 6) so roadmap.js can open the SAME in-page docs viewer
+    // instead of growing a second one. null when the plan lives outside
+    // every configured/discovered project root (config/projects.json
+    // absent an entry, or the root not on this machine) — the client falls
+    // back to plain text + copy, never a fabricated link.
+    plan_doc: deriveLib.projectDocRefFor(pf.absPath),
     parent_plan: headerExtras.parentPlan, // R11-A: '' = standalone; slug = child of that master
     provenance: provClass.provenance, provenance_reason: provClass.provenance_reason,
     rank: null, added_ts: addedTs, added_mid_build: false,
@@ -951,12 +1263,45 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     return node;
   }
 
+  // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01: a SCAN-path corruption
+  // signal (unreadable file, unrecognized Status: token, or a taskless
+  // body with binary/control bytes — see scanPlanDir's own header) renders
+  // unknown(reason) here, matching the registry-linked path's own
+  // loadPlanFile-failure handling directly below. Never a confident
+  // not-started/in-progress bucket for a plan whose derivation input has
+  // already failed. Checked AFTER doneAsk (an ask-registry override never
+  // depends on the plan FILE being readable at all — same precedent as
+  // the loadPlanFile-failure check below).
+  if (pf.scanIssue) {
+    node.status = statusObj('unknown', { reason: pf.scanIssue, since: '' });
+    return node;
+  }
+
   const loaded = planParse.loadPlanFile(pf.absPath);
   if (!loaded.ok) {
     const reason = loaded.reason === 'damaged'
       ? 'plan file unreadable (' + (loaded.error || 'read failed') + ')'
       : 'plan file not found (docs/plans/' + pf.slug + '.md)';
     node.status = statusObj('unknown', { reason: reason, since: '' });
+    return node;
+  }
+
+  // ROADMAP-SUPERSEDED-RENDERS-PENDING-01: an AUTHORED terminal status
+  // (SUPERSEDED/ABANDONED) on an otherwise-readable, otherwise-eligible
+  // plan never runs through the task-count-derived not-started/in-
+  // progress/complete ladder below — it renders `status.value: 'complete'`
+  // (so the EXISTING Shipped grouping, web/roadmap.js's status.value===
+  // 'complete' check, picks it up with zero new client-side plumbing —
+  // never the pending/live list) with a distinct `terminal_label` so the
+  // operator can still tell it apart from real shipped work (live case:
+  // cockpit-ui-polish, superseded by THIS plan's own closure contract).
+  // COMPLETED is deliberately NOT special-cased here — an all-done
+  // COMPLETED plan already derives 'complete' correctly via the normal
+  // ladder below.
+  const authoredToken = planStatusToken(loaded.status);
+  if (authoredToken === 'SUPERSEDED' || authoredToken === 'ABANDONED') {
+    node.status = statusObj('complete', { terminal_label: authoredToken === 'SUPERSEDED' ? 'superseded' : 'abandoned' });
+    node.completed_at = new Date(pf.mtimeMs || Date.now()).toISOString();
     return node;
   }
 
@@ -1035,10 +1380,46 @@ function absorbIntoRollUp(agg, cls, count, exemplar) {
 function absorbOneChildRollUp(agg, child) {
   const st = child.status || {};
   if (st.value === 'stalled') {
-    const cls = ROLLUP_CLASSES.indexOf(st.reason_class) !== -1 ? st.reason_class : 'blocked-on';
+    // Unrecognised reason -> 'unknown', NOT 'blocked-on' (2026-07-30).
+    // The old fallback invented a specific, wrong, actionable claim ("this
+    // is blocked on a predecessor") out of what is really an absence of
+    // classification, and it fired silently for every reason code this
+    // file had not been taught. 'unknown' is the honest bucket for "we
+    // could not classify this" and already exists for exactly that.
+    const cls = ROLLUP_CLASSES.indexOf(st.reason_class) !== -1 ? st.reason_class : 'unknown';
     absorbIntoRollUp(agg, cls, 1, child.id);
   }
   if (st.value === 'unknown') absorbIntoRollUp(agg, 'unknown', 1, child.id);
+  // Round 15 (operator, repeated across rounds): "if I expand a plan I can
+  // see the tasks that are in progress, but the plan itself doesn't show
+  // there's anything in progress." A child genuinely carrying a live
+  // session (the SAME live_sessions signal the leaf task row already
+  // renders as "running") rolls up exactly like stalled/unknown do — C1's
+  // roll-up law applied to the running state, not just attention states:
+  // every collapsed ancestor gets a counted "N running" badge, one click
+  // from the active row. Independent of status.value === 'in-progress'
+  // (which also fires on mere recent-activity with no session currently
+  // attached, or on a done>0-but-idle plan — see derivePlanRootNode's own
+  // `anyInProgress || done > 0` branch) — only an ACTUALLY attached live
+  // session counts as "running" here, so a merely-partial plan is never
+  // mislabeled as actively worked on.
+  //
+  // FALSE-ETERNAL-RUNNING FIX (2026-07-30, operator-reported: green roadmap
+  // chips for tasks nobody was actively working): the ORIGINAL check here
+  // was `child.live_sessions.length` alone — merely NON-EMPTY, independent
+  // of whether those sessions are alive, stalled, or crashed. live_sessions
+  // can (and, on the real deployed roadmap, routinely does) hold entries
+  // whose OWN status.value is 'stalled' or 'unknown' (deriveLiveAgentLeaves
+  // renders those explicitly, right above) — counting the array's mere
+  // presence rolled up "running" for a task whose only evidence was a
+  // session that had gone quiet or was never heartbeat-confirmed at all.
+  // Require an ACTUALLY-running leaf: at least one live_sessions entry
+  // whose own status.value is 'running' (deriveLiveAgentLeaves already
+  // folds the task_started idle-expiry into that value — see its header —
+  // so this one check also inherits that fix, with no separate age math
+  // needed here).
+  const hasRunningLeaf = (child.live_sessions || []).some((s) => s && s.status && s.status.value === 'running');
+  if (hasRunningLeaf) absorbIntoRollUp(agg, 'running', 1, child.id);
   Object.keys(child.roll_up || {}).forEach((cls) => {
     absorbIntoRollUp(agg, cls, child.roll_up[cls].count, child.roll_up[cls].exemplar);
   });
@@ -1243,6 +1624,11 @@ function buildRoadmapTree() {
   // not-done task) — mutated-through-hbCtx is the same threading pattern
   // heartbeats/nowMs already use for this exact request-scoped object.
   const hbCtx = { heartbeats: hbResult.heartbeats, heartbeatsStoreOk: hbResult.ok, nowMs: Date.now(), boundSessionIds: {} };
+  // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (2026-07-29 round 14): read ONCE per
+  // request (same convention as heartbeats above), handed to every task's
+  // own derivation below via hbCtx — see buildWaitingOnYouMap's header for
+  // the full matching contract.
+  hbCtx.waitingOnYou = buildWaitingOnYouMap(scanRoot);
 
   let items = planFiles.map((pf) => {
     const linkedAsks = planAskLinks[pf.slug] || [];
@@ -1481,6 +1867,12 @@ module.exports = {
   isEligiblePlanStatus,
   ROLLUP_CLASSES,
   COMPLETED_AGE_DAYS,
+  // round-14 fix exports (test/reuse hooks — ROADMAP-CORRUPT-PLAN-CONFIDENT-
+  // BUCKET-01 / ROADMAP-SUPERSEDED-RENDERS-PENDING-01)
+  scanPlanDir,
+  planStatusToken,
+  KNOWN_PLAN_STATUS_TOKENS,
+  derivePlanRootNode,
   // round-9 fix-round exports (test/reuse hooks)
   planFileHeaderExtras,
   planProvenanceClass,

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-386c4dea",
+  "created_at": "2026-07-30T05:59:49Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group agents-manifest-config (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "180ca1b5b2c095a66821c6ed896179c402db1dfe",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/config/selftest-sweep-exclusions.txt",
+      "blob_sha": "69b42409b87af762e477a05a92c45be7ab318a2f"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — ledger verified: both attic paths exist, reasons state root causes >=40 chars, --check GREEN (2 entries, 0 red) and --list yields exactly the 2 paths under /bin/bash 3.2.57; doctor wiring (check_selftest_exclusions_wiring/-_selftest) confirmed at harness-doctor.sh:2572/2598. Minor: header says doctor WARNs on a stale entry, but the doctor never runs --verify (the WARN carrier) — staleness actually surfaces as an intermittent self-test S11 RED, defect filed against scripts/selftest-sweep-exclusions.sh.",
+    "findings_summary": "Minor doc inaccuracy: stale-entry channel is S11 RED (flaky, env-coupled) not the documented --verify WARN; carrier defect belongs to scripts/selftest-sweep-exclusions.sh."
+  },
+  "written_by": "harness-reviewer via write-review-record.sh",
+  "payload": {}
+}

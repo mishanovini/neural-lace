@@ -17,8 +17,11 @@ Incident that prompted this rule: full doc.
 | interactive main / orchestrator | operator's launch choice | — |
 | spawn_task / cron / cloud | explicit per-task | — |
 
-`agents/*.md` frontmatter pins the PRIMARY (chain[0]); runtime applies the fallback if
-the primary is unavailable. Fallback mechanics: full doc.
+`agents/*.md` frontmatter pins the model. **NOTHING applies a fallback automatically** —
+the platform fixes a subagent's model at dispatch and an exhausted tier KILLS the agent
+rather than downgrading it (decision 063; lesson 2026-07-24). When a tier is unavailable,
+run `scripts/model-availability.sh apply <tier>` — it repins every affected agent to its
+chain fallback, which is the only thing that actually changes what runs. `restore` undoes it.
 
 **How to spawn:** pass an explicit `model` on every Agent/Workflow spawn, OR rely on the
 target agent's pinned frontmatter. Cheap search → `explorer`/`research` (haiku). Real code

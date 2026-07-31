@@ -241,8 +241,11 @@ lb_wall_clock() {
 lb_wall_clock_days() {
   local first="$1" last="$2"
   local f_epoch l_epoch
-  f_epoch="$(date -d "$first" +%s 2>/dev/null)"
-  l_epoch="$(date -d "$last" +%s 2>/dev/null)"
+  # T7 verifier (Mac cross-check, 2026-07-30): `date -d` is GNU-only — BSD date
+  # errors, every wall-clock actual nulled, and a Mac mine silently overwrote
+  # the good table at 0% coverage. Portable dual-branch, M4's established form.
+  f_epoch="$(date -d "$first" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%S' "${first%%[+Z]*}" +%s 2>/dev/null)"
+  l_epoch="$(date -d "$last" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%S' "${last%%[+Z]*}" +%s 2>/dev/null)"
   if [[ -z "$f_epoch" || -z "$l_epoch" ]]; then
     return
   fi

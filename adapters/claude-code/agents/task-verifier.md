@@ -297,6 +297,52 @@ Verdict propagation (Decision 020d):
 
 Boundary cases: reviewer invocation itself fails (error/timeout/unparseable) → INCOMPLETE (`comprehension-reviewer invocation failed — <stderr>`); never default to PASS on infrastructure failure. Malformed `rung:` (`rung: high`) → INCOMPLETE (`rung field malformed — expected integer 0-5`). The gate adds ~30s per R2+ task; reviewer invocations do not count against tool-call-budget. Cross-refs: `comprehension-gate.md`, `comprehension-reviewer.md`, `docs/decisions/020-comprehension-gate-semantics.md`, `comprehension-template.md`, `FM-023`.
 
+### Step 1.6: Operator-invariant check (the requirement ledger)
+
+Every other step on this page checks the work against the PLAN. The plan is the
+builder's *interpretation* of what the operator asked for, so those steps
+faithfully verify the interpretation — including whatever it dropped. This step
+is the only one that checks the work against the operator's actual words, which
+outrank the plan wherever they differ.
+
+Run it here, before the expensive checks, because a violated operator invariant
+is a FAIL no amount of green typecheck can redeem:
+
+```bash
+bash ~/.claude/scripts/ask-registry.sh invariant-check --plan-slug <plan-slug>
+```
+
+Route on the exit code — **3 and 4 are not passes**:
+- **0** — every registered invariant folds to `holds`. Record the line
+  `Operator invariants: N/N hold` and proceed to Step 2.
+- **1** — at least one invariant is `violated`, `unverifiable`, or has no
+  verdict at all. Read the printed rows. For each non-holding invariant, decide
+  it yourself from the diff and record a verdict with a citation:
+  `ask-registry.sh invariant-verdict --requirement-id <r> --invariant-id <i>
+  --verdict holds|violated|unverifiable --evidence <file:line|path|command|SHA>`
+  (`holds` is refused without `--evidence`, and also when the evidence is blank
+  after trimming or could not be a citation in any reading — `x`, `.`, `-`,
+  `trust me`. The shape test wants a `:`+digit, a 7+ char hex SHA, or a `/`; it
+  makes no judgement about the citation's quality. Do not pass `--ask-id`: it is
+  resolved from the requirement.) Re-run the check. If any invariant
+  is still `violated` after your own adjudication → **return FAIL**, quoting the
+  invariant text and the operator's verbatim sentence. A task cannot be PASSed
+  while it violates a recorded operator invariant, even if every `Done when:`
+  criterion in the plan is satisfied — that combination is the exact 2026-07-28
+  failure shape, and when it occurs the *plan* is what is wrong.
+- **3** — no invariants are registered for this plan. This is the common case
+  and is NOT a failure signal; the ledger is opt-in. Record
+  `Operator invariants: none registered (exit 3)` and proceed. Do **not**
+  invent invariants to fill the gap — you are the verifier, not the operator.
+  If the plan's Goal quotes an operator sentence carrying an obvious unbuilt
+  second clause, say so in your Reason line as a HYPOTHESIZED risk instead.
+- **4** — the ledger could not be read (no jq, no registry). Record
+  `Operator invariants: NOT EVALUATED (exit 4)` and proceed; never render this
+  as a pass, and never let it upgrade your confidence.
+
+Add the resulting line to the evidence block (see Step 7). Doctrine:
+`~/.claude/doctrine/operator-requirement-ledger.md`.
+
 ### Step 2: Inspect the git history
 - `git log --oneline` for recent commits.
 - For each claimed-modified file: `git log --oneline -- <file>`; verify it was touched within the plan's execution window; if newly created, verify it exists at the claimed path.
@@ -353,6 +399,11 @@ Comprehension-gate: PASS (confidence N) — <one-sentence summary>
                   | skipped — rung field missing
                   | FAIL — see comprehension-reviewer per-gap feedback
                   | INCOMPLETE — <reviewer's specific reason>
+
+Operator invariants: N/N hold
+                   | none registered (exit 3)
+                   | NOT EVALUATED (exit 4) — <reason>
+                   | VIOLATED: <invariant text> — operator's words: "<verbatim>"
 
 Checks run:
 1. <check name>

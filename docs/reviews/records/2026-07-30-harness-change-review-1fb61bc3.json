@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-1fb61bc3",
+  "created_at": "2026-07-30T00:35:28Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group hooks-lib (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "f09af28f8b0eef433b79383358dad2ac3f3e4da5",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/observability-derive.sh",
+      "blob_sha": "596b8b68c70a936f44f3a4be477a75505bfc63fa"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — bash-3.2 floor restored for the waiting-set and per-gate tallies with a mutation-justified multi-gate scenario 5b; 16 FAILs plus an arithmetic crash on master reduce to 5 pre-existing, baselined environment-sensitive FAILs.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

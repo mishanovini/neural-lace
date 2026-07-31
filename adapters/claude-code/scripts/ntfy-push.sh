@@ -428,8 +428,23 @@ RECEOF
   # Substitute the real log path (avoids quoting the sandbox path into the
   # heredoc verbatim in a way that could break on spaces — this repo's path
   # historically contains a space).
-  sed -i "s#__LOG__#$recorder_log#" "$recorder" 2>/dev/null || \
-    { local tmp; tmp=$(mktemp); sed "s#__LOG__#$recorder_log#" "$recorder" > "$tmp"; mv "$tmp" "$recorder"; }
+  # PORTABLE IN-PLACE EDIT (macos-portability M2, 2026-07-29).
+  # This was `sed -i "s#...#" "$recorder" || <tmp+mv fallback>`. `sed -i` with
+  # no suffix argument is GNU-only: BSD sed consumes the SCRIPT as the backup
+  # suffix and then treats the PATH as the sed command, so on macOS the primary
+  # form ALWAYS failed (measured rc=1, substitution not applied):
+  #   sed: 1: "/var/folders/.../curl-recorder.sh": invalid command code f
+  # The ||-fallback was silently carrying the entire self-test, and it depended
+  # on sed failing in exactly that way. Doing the tmp+mv unconditionally
+  # removes the dead primary and the reliance on a specific failure mode.
+  # NOT `sed -i ''`: that is the macOS-only form and breaks GNU sed, which
+  # would invert the bug onto the Windows machines. tmp+mv works on both.
+  local _np_tmp="${recorder}.tmp.$$"
+  if sed "s#__LOG__#$recorder_log#" "$recorder" > "$_np_tmp" 2>/dev/null; then
+    mv -f "$_np_tmp" "$recorder"
+  else
+    rm -f "$_np_tmp" 2>/dev/null
+  fi
   chmod +x "$recorder"
   export NTFY_CURL_CMD="$recorder"
   : > "$recorder_log"

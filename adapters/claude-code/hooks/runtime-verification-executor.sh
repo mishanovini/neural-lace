@@ -49,6 +49,25 @@
 
 set -u
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# `timeout` is GNU coreutils and is ABSENT on stock macOS. This file used to
+# call it bare, so on a Mac the curl branch below got rc=127 and reported
+# "curl exit 127" — blaming the operator's evidence for a missing tool and
+# failing every curl evidence line on the machine. nl_run_bounded prefers
+# real GNU `timeout` (unchanged behavior on Windows/Git-bash and on a
+# coreutils Mac) and otherwise bounds the command itself.
+# Sourced defensively: on a partial install the shim keeps the hook working
+# and SAYS SO rather than dropping the bound silently.
+{ source "$(dirname "${BASH_SOURCE[0]}")/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "runtime-verification-executor: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 if [[ $# -lt 1 ]]; then
   echo "Usage: $0 <evidence-file|->" >&2
   exit 2
@@ -194,9 +213,16 @@ while IFS= read -r line; do
       # precisely because we rejected shell metacharacters above).
       # shellcheck disable=SC2206
       curl_args=($rest)
-      # Force our safe flags in front regardless of what the builder wrote
-      response=$(timeout 10 curl -s --max-time 8 --connect-timeout 3 "${curl_args[@]}" 2>&1)
+      # Force our safe flags in front regardless of what the builder wrote.
+      # The outer bound is belt-and-braces over curl's own --max-time 8; it
+      # exists to catch a curl that wedges before its own timer arms.
+      response=$(nl_run_bounded 10 curl -s --max-time 8 --connect-timeout 3 "${curl_args[@]}" 2>&1)
       curl_exit=$?
+      if [[ $curl_exit -eq 124 ]]; then
+        FAILURES+="  FAIL: '$line' — curl exceeded the 10s bound (killed): $(echo "$response" | head -c 200)"$'\n'
+        FAIL_COUNT=$((FAIL_COUNT + 1))
+        continue
+      fi
       if [[ $curl_exit -ne 0 ]]; then
         FAILURES+="  FAIL: '$line' — curl exit $curl_exit: $(echo "$response" | head -c 200)"$'\n'
         FAIL_COUNT=$((FAIL_COUNT + 1))

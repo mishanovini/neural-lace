@@ -195,6 +195,14 @@ const DETAIL_ALLOWED_KEYS = new Set([
   'plan_rows', 'plan_slug', 'plan_doc', 'path', 'tasks', 'id', 'done', 'in_flight',
   'waiting_items', 'needs_you_id', 'defect', 'message', 'title', 'body', 'links',
   'session_id', 'added', 'raw_link',
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — the doc-ref siblings of the four
+  // absolute-path fields asks.js renders (raw_link, links[], verbatim_ref,
+  // evidence_link). Each is a {project, path} pair (or null) resolved by
+  // deriveLib.projectDocRefFor, carrying NO new link handling: the client
+  // drills through the EXISTING /api/doc + /api/doc/open resolver, exactly
+  // as `plan_doc` already does. They stay OUT of HREF_KEYS for the same
+  // reason plan_doc does — a {project, path} pair is not an href.
+  'doc_ref', 'link_refs', 'verbatim_doc_ref', 'evidence_doc_ref',
   'artifacts', 'sha',
   'sessions', 'role', 'state', 'resumed_from', 'task_id',
   'drift_badges',

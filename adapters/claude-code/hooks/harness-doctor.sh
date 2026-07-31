@@ -22,7 +22,13 @@
 #                       and the repo. Never runs self-tests. Fast (<2s
 #                       typical). Exit 0 iff zero RED lines.
 #   --full            : quick + check 8 (self-test sweep across every live
-#                       hook that declares --self-test). Exit 0 iff zero RED.
+#                       hook that declares --self-test) + check 9 (the
+#                       portability sweep vs its committed baseline).
+#                       Exit 0 iff zero RED.
+#   --portability     : check 9 ONLY — run scripts/portability-sweep.sh
+#                       against the repo under the stock system interpreter
+#                       and RED when the failing set grew relative to
+#                       docs/portability-baseline.txt. Minutes, not seconds.
 #   --self-test       : fixture suite in mktemp -d sandboxes
 #                       (HARNESS_SELFTEST=1). One RED-producing fixture AND
 #                       one GREEN fixture per check class (1-7), plus a
@@ -85,7 +91,21 @@
 #                             the string "--self-test" with
 #                             HARNESS_SELFTEST=1 timeout 1500
 #                             bash <hook> --self-test </dev/null; RED per
-#                             non-zero exit.
+#                             non-zero exit. Scope is hooks/*.sh AND
+#                             hooks/lib/*.sh (the lib glob was added by
+#                             macos-portability-2026-07 M5 — a top-level
+#                             glob never matched the subdirectory, so 20
+#                             libraries' assertions had never run here).
+#   9. portability-sweep    : (--full and --portability) run
+#                             scripts/portability-sweep.sh over the REPO
+#                             under the stock system interpreter
+#                             (/bin/bash by default) and RED when a script's
+#                             --self-test FAILS or TIMES OUT while absent
+#                             from the committed baseline
+#                             docs/portability-baseline.txt. A new script
+#                             with a passing suite is not a regression; a
+#                             baseline entry that now passes is a WARN, not
+#                             a RED. See check_portability_sweep's header.
 #
 # WAVE F BUDGET CHECKS (task F.1, specs-f §F.1 — all in --quick)
 # ===============================================================
@@ -160,6 +180,24 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck disable=SC1091
 { source "$SCRIPT_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
+
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# The self-test sweep below bounds every child `--self-test` with a wall-clock
+# budget. That bound used to be a bare `timeout`, which is GNU coreutils and
+# absent on stock macOS: rc=127 came back for EVERY hook and the doctor
+# RED-flagged the entire harness with "--self-test exited 127" — the loudest
+# possible false alarm, and one the operator cannot distinguish from a real
+# mass failure. nl_run_bounded keeps the bound on every platform.
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "harness-doctor: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
 
 # ------------------------------------------------------------
 # resolve_repo_root — echoes the repo root, or empty if unresolvable.
@@ -1729,6 +1767,74 @@ check_pin_f_waiver_purpose_clauses() {
 }
 
 # ------------------------------------------------------------
+# Check: limit-resume-watchdog (2026-07-30, manifest entry "limit-resume")
+#
+# Makes a NON-FIRING or STUCK watchdog VISIBLE instead of silent (the
+# operator's own build requirement: "a doctor check or an honest_status
+# line that makes a NON-FIRING watchdog visible instead of silent").
+# Reads ${live_home}/state/limit-resume/armed/*.json — ONE file per
+# TRACKED SESSION (per-session keying, harness-reviewer REJECT finding
+# F3 fix: a single machine-global marker let two concurrent sessions in
+# different repos clobber each other's tracked state) — HARNESS_DOCTOR_
+# HOME/NL_REPO_ROOT-overridable, exactly like check_obs_cockpit_fresh's
+# heartbeat-dir read, so this check is fixture-testable the same way.
+#
+# Per tracked session, two WARN conditions (both WARN, not RED — they
+# report a real-world operational fact, not a structural harness defect
+# the doctor can prove; matches check_obs_cockpit_fresh's own
+# WARN-not-RED precedent for "expected-but-not-currently-up"):
+#
+#   1. <key>.giveup present -> the watchdog tried MAX_RETRIES times and
+#      gave up; that session likely never got resumed. The single most
+#      important thing this check exists to surface — a silent giveup is
+#      exactly "non-firing but nobody notices."
+#   2. no .attempts file yet AND armed_at is older than
+#      LIMIT_RESUME_STALE_ARMED_MINUTES (default 70 -- comfortably past
+#      limit-resume.sh's own MIN_SILENCE_SECONDS floor, default 1800s/
+#      30min, plus roughly two 15-minute tick intervals of margin, so a
+#      HEALTHY watchdog respecting its own floor never false-positives
+#      here) -> the LaunchAgent is very likely not ticking at all (not
+#      loaded, a PATH-resolution defect recurring, etc.), since a healthy
+#      watchdog would have made its first attempt by now. This is the
+#      DEFECT-1-CLASS regression detector: the exact "every tick fails
+#      silently" shape that motivated this whole build.
+# ------------------------------------------------------------
+check_limit_resume_watchdog() {
+  local live_home="$1"
+  local armed_dir="${live_home}/state/limit-resume/armed"
+  [[ -d "$armed_dir" ]] || { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local f
+  for f in "$armed_dir"/*.json; do
+    [[ -e "$f" ]] || continue
+    local key="${f##*/}"; key="${key%.json}"
+    local giveup_f="${armed_dir}/${key}.giveup"
+    local attempts_f="${armed_dir}/${key}.attempts"
+    local sid; sid="$(sed -nE 's/.*"session_id"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$f" 2>/dev/null | head -1)"
+
+    if [[ -f "$giveup_f" ]]; then
+      local detail; detail="$(cat "$giveup_f" 2>/dev/null | tr -d '\n')"
+      _warn "limit-resume-giveup" "the limit-resume watchdog gave up on session '${sid:-unknown}' (${detail}) — it may still be waiting on a usage-limit reset; disarm (rm ${f}) once you've confirmed it's no longer needed, or investigate why ${LIMIT_RESUME_MAX_RETRIES:-8} attempts all failed (${live_home}/state/limit-resume/log.txt)"
+    elif [[ ! -f "$attempts_f" ]]; then
+      local armed_at now_epoch armed_epoch age_min stale_min
+      armed_at="$(sed -nE 's/.*"armed_at"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/p' "$f" 2>/dev/null | head -1)"
+      stale_min="${LIMIT_RESUME_STALE_ARMED_MINUTES:-70}"
+      if [[ -n "$armed_at" ]]; then
+        now_epoch=$(date -u +%s 2>/dev/null || echo 0)
+        armed_epoch=$(date -u -d "$armed_at" +%s 2>/dev/null || date -u -j -f "%Y-%m-%dT%H:%M:%SZ" "$armed_at" +%s 2>/dev/null || echo 0)
+        if [[ "$armed_epoch" -gt 0 ]]; then
+          age_min=$(( (now_epoch - armed_epoch) / 60 ))
+          if [[ "$age_min" -ge "$stale_min" ]]; then
+            _warn "limit-resume-stale-armed" "watchdog marker for session '${sid:-unknown}' has been armed for ${age_min}m with zero recorded attempts (>= ${stale_min}m threshold -- comfortably past the watchdog's own 30min initial-silence floor) — the LaunchAgent may not be ticking at all (check: launchctl list | grep local.neurallace.limit-resume), OR (round-5 review finding, instance-only) a SIGKILLed tick left a wedged attempt.lock whose recorded owner pid was later reused by an unrelated process (check: cat ~/.claude/state/limit-resume/attempt.lock/owner, then whether that pid is this watchdog); this is the exact 'every tick fails silently' shape (DEFECT 1) this build exists to catch"
+          fi
+        fi
+      fi
+    fi
+  done
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: budget-chains (Wave F, task F.1, specs-f §F.1 item 1)
 # Stop <= 6, SessionStart <= 8 chain entries, checked against BOTH the
 # committed template and the live settings.json. A single check id
@@ -2291,6 +2397,214 @@ for (const p of problems) console.log(p);
 }
 
 # ------------------------------------------------------------
+# Check: deterministic-process-proof (adapters/claude-code/doctrine/
+# deterministic-process.md, operator directive 2026-07-30: "We should never
+# need to review whether the reviewers fired. Make them a deterministic part
+# of the process."). The proof obligation: every `blocking:true` manifest
+# entry declares BOTH `chokepoint` (the firing event, in verifiable form)
+# and `bypass_paths` (every known route around it, each CLOSED or
+# NAMED-AND-ACCEPTED). An entry declaring NEITHER is exactly the golden case
+# the doctrine names: review-record-commit-gate.sh was `blocking:true` at a
+# convenient PreToolUse layer with an unauthenticated env-var override and a
+# cherry-pick exemption — four live bypass paths that were never enumerated
+# anywhere in the manifest, because nothing required it. This check is the
+# mechanized version of that enumeration requirement, same shape as
+# check_new_gate_evidence_bar immediately above (which this file mirrors
+# deliberately — one generator pattern, not two that could drift). That
+# "cannot drift" claim was FALSE as written and is now MECHANIZED instead of
+# asserted: the two implementations DID drift. The jq fallback bound `.id`
+# against the grandfather ARRAY rather than the entry, so jq errored, the
+# `2>/dev/null` ate the message, `$out` came back empty, and the check was a
+# SILENT NO-OP on every machine without `node` (harness-reviewer C1,
+# 2026-07-30 — PROVEN end-to-end: `--quick` with node masked out of PATH
+# emitted ZERO deterministic-process-proof lines while the node path RED'd).
+# Both branches now fail LOUD on a parser error, and the self-test scenarios
+# `dpp-jq-*` re-run the RED/GREEN/grandfather fixtures with `node` masked out
+# of PATH so the fallback is EXERCISED on every run, never trusted to match
+# by inspection.
+#
+# WHAT REDS — BOTH fields required (harness-reviewer M7, 2026-07-30). The
+# original check fired only on "declares NEITHER", so a new blocking gate
+# could discharge the whole obligation by writing `chokepoint: "pre-push"`
+# and never enumerating a single bypass — while `bypass_paths` is the
+# load-bearing half (C2 proved four unenumerated live routes around the one
+# entry that DID populate it in good faith). New entries are authored
+# deliberately, so the FP cost of requiring both is nil: measured 2026-07-30,
+# exactly two non-grandfathered blocking:true entries exist and one already
+# carries both fields.
+#
+# GRANDFATHER EXEMPT-LIST (dated, closed enumeration — same convention as
+# check_new_gate_evidence_bar's PRE_BAR_GRANDFATHERED, NOT a date-range
+# pattern): every `blocking:true` id that existed BEFORE this check landed
+# and had neither field yet. RE-DERIVE THE COUNTS MECHANICALLY rather than
+# quoting the constant a past reader measured — the previous version of this
+# comment said "39 blocking:true entries" and was ALREADY STALE at landing
+# (the true count was 40; the 40th, `intended-functionality-if-statement`,
+# landed one commit earlier, appeared in NEITHER grandfather list, and RED'd
+# the live doctor from the moment this check shipped — harness-reviewer M1):
+#   jq '[.entries[]|select(.blocking==true)]|length' adapters/claude-code/manifest.json
+#   jq -r '.entries[]|select(.blocking==true)|select((((.chokepoint//"")|length)==0) or (((.bypass_paths//[])|length)==0))|.id' adapters/claude-code/manifest.json
+# review-record-commit-gate was demoted to blocking:false in the SAME commit
+# that added this check, so it needs no grandfathering at all. Of the two
+# entries that commit added: `review-record-push-gate` carries real
+# chokepoint + bypass_paths; `authorize-review-record-push-override` is
+# blocking:false and therefore OUT OF SCOPE for this check entirely — it
+# declares NEITHER field and no added_after, and an earlier draft of this
+# comment wrongly claimed both new entries "carry real chokepoint/
+# bypass_paths" (harness-reviewer M4).
+# RETIREMENT: shrink this list as each id gains real fields;
+# it must reach empty. A NEW blocking:true entry landing after this check
+# exists gets ZERO ID-BASED grandfather (harness-reviewer follow-up pass,
+# 2026-07-30: an earlier draft of this comment claimed "ZERO grandfather...
+# must declare both fields or RED" WITHOUT qualifying which mechanism —
+# FALSE as written, since the added_after < '2026-07' exemption immediately
+# below is a SECOND, independent escape a backdated field still claims).
+# The id-list alone would require both fields; the date threshold does not.
+#
+# added_after < '2026-07' ALSO SKIPS (same threshold check_new_gate_
+# evidence_bar already uses, reused deliberately rather than inventing a
+# second cutover convention): this file's OWN self-test builds dozens of
+# throwaway fixture manifests for OTHER checks (budget-blocking-gates,
+# wave-f-f2-docs, manifest-check, claim-honesty, orphaned-worktree, ...),
+# each declaring its own synthetic `blocking:true` entry under a made-up id
+# ("wired-gate", "fixture-gate-N", "a", ...) that is obviously not in this
+# check's id-based grandfather list. Every one of those pre-existing
+# fixtures already sets `added_after: "2026-04"` specifically to predate the
+# evidence-bar's own 2026-07 cutover; reusing that exact field+threshold
+# means this NEW check inherits the same exemption for free instead of
+# false-positiving across a huge swath of this file's unrelated self-test
+# scenarios (PROVEN: without this threshold, 8+ unrelated pre-existing
+# scenarios flipped RED the moment this check was wired in). An entry with
+# added_after missing entirely is NOT exempted by this rule (only a present,
+# pre-2026-07 value is) -- it still needs the id-based grandfather or the
+# fields.
+check_deterministic_process_proof() {
+  local live_home="$1" repo_root="$2"
+  local manifest
+  if ! manifest="$(resolve_manifest "$live_home" "$repo_root")"; then
+    _warn "deterministic-process-proof" "no manifest.json found — skipped (pre-C.1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "deterministic-process-proof" "neither node nor jq available — skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  # Parser errors are LOUD (harness-reviewer C1): the previous version sent
+  # BOTH branches' stderr to /dev/null, so a broken expression was
+  # indistinguishable from a clean manifest -- the exact silent-no-op shape
+  # deterministic-process.md calls theatre. stderr is captured and surfaced
+  # as a WARN that names, in plain words, that the check did NOT run.
+  local out parse_rc parse_err
+  parse_err="$(mktemp 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/dpp-parse-err.$$")"
+  if command -v node >/dev/null 2>&1; then
+    out="$(node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+
+// DETERMINISTIC_PROCESS_GRANDFATHERED: see the check header comment above.
+// Closed enumeration, dated 2026-07-30 — shrink as each id gains real
+// chokepoint/bypass_paths fields; never grow it by pattern-matching a date.
+const DETERMINISTIC_PROCESS_GRANDFATHERED = [
+  "agent-teams", "backlog-plan-atomicity", "bug-persistence",
+  "claude-md-hygiene", "closure-outcome-declared", "concurrent-ownership-gate",
+  "decisions-index", "deploy-automation-mode", "docs-freshness",
+  "env-local-protection", "find-disk-scan-gate", "findings-ledger",
+  "gh-merge-canonical", "harness-hygiene-scan", "local-edit-authorization",
+  "migration-claude-md", "model-availability", "model-pin", "no-test-skip",
+  "parallel-dev-migration-naming", "plan-deletion-protection",
+  "plan-edit-validator", "plan-reviewer", "pre-commit-chain",
+  "pre-push-divergence", "pre-push-test", "review-before-deploy",
+  "review-finding-fix", "runtime-verification", "secret-hygiene-prepush",
+  "secret-scan-ci-backstop", "session-honesty", "spec-freeze",
+  "stop-verdict-dispatcher", "synthetic-runner-ci", "tdd-gate", "wire-check",
+  "work-integrity",
+  // "new-gate-complete" below is a SELF-TEST FIXTURE id (the new-gate-
+  // evidence-bar-green scenario, elsewhere in this file), not a real
+  // manifest id -- it deliberately sets added_after to 2026-07 to exercise
+  // THAT other bar and predates chokepoint/bypass_paths entirely. Listed
+  // here, not via date exemption, so the date-threshold logic above stays
+  // meaningful for everything else (see the added_after < 2026-07 note).
+  "new-gate-complete",
+];
+
+const problems = [];
+for (const e of m.entries || []) {
+  if (e.blocking !== true) continue;
+  if (DETERMINISTIC_PROCESS_GRANDFATHERED.includes(e.id)) continue;
+  // Same 2026-07 threshold check_new_gate_evidence_bar uses -- see header
+  // comment above for why (the pre-existing self-test fixtures in this file
+  // conventionally set added_after to 2026-04 for exactly this reason).
+  const addedAfter = e.added_after;
+  if (typeof addedAfter === "string" && addedAfter.trim().length > 0 && addedAfter < "2026-07") continue;
+  const hasChoke = typeof e.chokepoint === "string" && e.chokepoint.trim().length > 0;
+  const hasBypass = Array.isArray(e.bypass_paths) && e.bypass_paths.length > 0;
+  // BOTH required (harness-reviewer M7): chokepoint alone discharges nothing
+  // -- bypass_paths is the load-bearing half. Name WHICH half is missing so
+  // the message is actionable rather than a generic re-statement.
+  const missing = [];
+  if (!hasChoke) missing.push("chokepoint");
+  if (!hasBypass) missing.push("bypass_paths");
+  if (missing.length) {
+    problems.push(e.id + ": blocking:true does not declare " + missing.join(" or ") + " (deterministic-process.md proof obligation — name the firing event AND enumerate every known bypass, each CLOSED with how or NAMED-AND-ACCEPTED with why; an empty enumeration claims none exist and is a lie unless someone looked)");
+  }
+}
+for (const p of problems) console.log(p);
+' "$manifest" 2>"$parse_err")"
+    parse_rc=$?
+  else
+    out="$(jq -r '
+[
+  "agent-teams","backlog-plan-atomicity","bug-persistence","claude-md-hygiene",
+  "closure-outcome-declared","concurrent-ownership-gate","decisions-index",
+  "deploy-automation-mode","docs-freshness","env-local-protection",
+  "find-disk-scan-gate","findings-ledger","gh-merge-canonical",
+  "harness-hygiene-scan","local-edit-authorization","migration-claude-md",
+  "model-availability","model-pin","no-test-skip",
+  "parallel-dev-migration-naming","plan-deletion-protection",
+  "plan-edit-validator","plan-reviewer","pre-commit-chain",
+  "pre-push-divergence","pre-push-test","review-before-deploy",
+  "review-finding-fix","runtime-verification","secret-hygiene-prepush",
+  "secret-scan-ci-backstop","session-honesty","spec-freeze",
+  "stop-verdict-dispatcher","synthetic-runner-ci","tdd-gate","wire-check",
+  "work-integrity","new-gate-complete"
+] as $gf |
+(.entries[] | select(.blocking == true) as $e |
+  select(($gf | index($e.id)) == null) |
+  select(((($e.added_after // "") | length) == 0) or (($e.added_after // "") >= "2026-07")) |
+  ([ (if (($e.chokepoint // "") | length) > 0 then empty else "chokepoint" end),
+     (if (($e.bypass_paths // []) | length) > 0 then empty else "bypass_paths" end)
+   ] | select(length > 0)) as $missing |
+  "\($e.id): blocking:true does not declare \($missing | join(" or ")) (deterministic-process.md proof obligation — name the firing event AND enumerate every known bypass, each CLOSED with how or NAMED-AND-ACCEPTED with why; an empty enumeration claims none exist and is a lie unless someone looked)")
+' "$manifest" 2>"$parse_err")"
+    parse_rc=$?
+  fi
+
+  # A parser failure is NOT "nothing to report" (harness-reviewer C1). Surface
+  # it, name that the check did not run, and keep going -- a broken expression
+  # must never masquerade as a clean manifest.
+  if [[ "${parse_rc:-0}" -ne 0 ]]; then
+    local perr; perr="$(tr '\n' ' ' < "$parse_err" 2>/dev/null | cut -c1-300)"
+    _warn "deterministic-process-proof" "the manifest parser FAILED (rc=${parse_rc}) — this check did NOT run, so a missing chokepoint/bypass_paths declaration would go unreported: ${perr:-no stderr captured}"
+    rm -f "$parse_err" 2>/dev/null
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  rm -f "$parse_err" 2>/dev/null
+
+  if [[ -n "$out" ]]; then
+    local line
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      _red "deterministic-process-proof" "${line}"
+    done <<< "$out"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: line-endings (NL-FINDING-038, Wave-F F.1 incident; live-mirror scan
 # added for LIVE-MIRROR-CRLF-01). On Windows a file-edit can silently
 # rewrite a whole tracked script LF -> CRLF: before .gitattributes landed
@@ -2498,11 +2812,89 @@ check_master_drift_selftest() {
     return 0
   fi
   local out rc last_line
-  out="$(HARNESS_SELFTEST=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$md_script" --self-test </dev/null 2>&1)"
+  out="$(HARNESS_SELFTEST=1 nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$md_script" --self-test </dev/null 2>&1)"
+  rc=$?
+  if [[ "$rc" -eq 124 ]]; then
+    _red "master-drift-autocorrect" "master-drift-autocorrect.sh --self-test exceeded the ${DOCTOR_SELFTEST_TIMEOUT:-1500}s bound and was killed"
+  elif [[ "$rc" -ne 0 ]]; then
+    last_line="$(printf '%s\n' "$out" | tail -n 1)"
+    _red "master-drift-autocorrect" "master-drift-autocorrect.sh --self-test exited ${rc}: ${last_line}"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: selftest-sweep-exclusions (docs/plans/macos-portability-2026-07.md
+# M6). M6 disposed of the 3 residual attic/ self-test failures: one FIXED
+# (attic/workstreams-state-gate.sh), two formally EXCLUDED via the ledger
+# adapters/claude-code/config/selftest-sweep-exclusions.txt. M6's own wording
+# is "silence is not" an acceptable outcome, and constitution §10 calls
+# documented-enforcement-that-never-fires the cardinal harness defect — so the
+# ledger gets a doctor predicate rather than a comment.
+#
+# QUICK half (here): zero-subprocess structural predicate only, matching the
+# doctor's quick<2s contract and the fork-storm discipline of the 07-20
+# lesson. It asserts the MECHANISM exists — a ledger with no reader is a
+# ledger nothing enforces:
+#   - ledger absent            -> silent (nothing excluded; also the bare
+#                                 fixture-repo case, tolerate-absent like the
+#                                 E.6/E.7/E.8 and master-drift predicates)
+#   - ledger present, reader missing / no --self-test entrypoint -> RED
+# The CONTENT predicates (C1 path exists / C2 reason states a root cause /
+# C3 no live surface silenced) and C4 (each excluded script still fails) run
+# in --full via check_selftest_exclusions_selftest below, because they need
+# the reader's parser and, for C4, real child processes.
+# ------------------------------------------------------------
+check_selftest_exclusions_wiring() {
+  local repo_root="$1"
+  [[ -z "$repo_root" ]] && { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local ledger="${repo_root}/adapters/claude-code/config/selftest-sweep-exclusions.txt"
+  local reader="${repo_root}/adapters/claude-code/scripts/selftest-sweep-exclusions.sh"
+
+  if [[ ! -f "$ledger" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if [[ ! -f "$reader" ]]; then
+    _red "selftest-exclusions" "${ledger} exists but its reader scripts/selftest-sweep-exclusions.sh does not — the exclusion ledger is unenforced text"
+  elif ! grep -q -- '--self-test' "$reader" 2>/dev/null; then
+    _red "selftest-exclusions" "scripts/selftest-sweep-exclusions.sh has no --self-test entrypoint — its C1/C2/C3/C4 controls are unverified"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# --full companion: run the reader's own controls. `--check` covers C1/C2/C3
+# against the shipped ledger; `--self-test` re-runs those against RED/GREEN
+# fixtures AND covers C4 (every excluded script still fails, the fixed one
+# still passes) against the REAL scripts. Absence-tolerant; bounded exactly
+# like check_selftest_sweep. Runs the child under THIS interpreter ("$BASH"),
+# never a bare `bash` — a bare `bash` would silently report a verdict for
+# whichever interpreter happens to be first on PATH.
+check_selftest_exclusions_selftest() {
+  local repo_root="$1"
+  [[ -z "$repo_root" ]] && { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  local reader="${repo_root}/adapters/claude-code/scripts/selftest-sweep-exclusions.sh"
+  if [[ ! -f "$reader" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local out rc last_line
+  out="$(NL_REPO_ROOT="$repo_root" nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" "$BASH" "$reader" --check </dev/null 2>&1)"
   rc=$?
   if [[ "$rc" -ne 0 ]]; then
     last_line="$(printf '%s\n' "$out" | tail -n 1)"
-    _red "master-drift-autocorrect" "master-drift-autocorrect.sh --self-test exited ${rc}: ${last_line}"
+    _red "selftest-exclusions" "selftest-sweep-exclusions.sh --check exited ${rc}: ${last_line}"
+  fi
+
+  out="$(HARNESS_SELFTEST=1 NL_REPO_ROOT="$repo_root" nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" "$BASH" "$reader" --self-test </dev/null 2>&1)"
+  rc=$?
+  if [[ "$rc" -eq 124 ]]; then
+    _red "selftest-exclusions" "selftest-sweep-exclusions.sh --self-test exceeded the ${DOCTOR_SELFTEST_TIMEOUT:-1500}s bound and was killed"
+  elif [[ "$rc" -ne 0 ]]; then
+    last_line="$(printf '%s\n' "$out" | tail -n 1)"
+    _red "selftest-exclusions" "selftest-sweep-exclusions.sh --self-test exited ${rc}: ${last_line}"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
@@ -2793,6 +3185,154 @@ check_review_grandfather_integrity() {
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
+# ------------------------------------------------------------
+# Check: review-reviewer-independence (docs/plans/review-independence.md,
+# RI3). A `harness-change-review` PASS record is a self-approval if the SAME
+# git identity both authored the reviewed content AND authored the commit
+# that added the record approving it -- the exact class this whole plan
+# exists to structurally eliminate (an authoring session dispatching
+# harness-reviewer and then writing its own PASS record).
+#
+# WHY GIT-COMMIT AUTHORSHIP, NOT THE JSON reviewer_principal FIELD: session
+# ids and hostnames live in the (uncommitted, per-machine)
+# ~/.claude/state/review-queue/ queue items, never in the repo -- a doctor
+# check that scans committed history cannot see them after the fact, and
+# post-pivot (docs/decisions/067-review-independence-same-session-pathway.
+# md) same-hostname/same-account review is the EXPECTED case, not a
+# violation, so comparing those JSON fields would false-positive on every
+# normal same-machine review. Git commit authorship is the one signal that
+# is BOTH durable (survives in history forever) AND per-content (not
+# per-account) -- exactly the "unforgeable half" named in the operator's
+# 2026-07-29 design-sharpening message.
+#
+# MECHANISM: for each `kind: harness-change-review`, `verdict: PASS` record,
+# compare the git author email of `change_ref.commit_sha` (the reviewed
+# commit, as recorded by write-review-record.sh at capture time) against
+# the git author email of the commit that ADDED the record file itself
+# (review-runner.sh's own commit, per RI2 -- the first, and by the
+# append-only convention the ONLY, commit to add that path).
+#
+#   RED  : both emails resolve and are IDENTICAL, AND the record's own
+#          introducing commit is at-or-after the CUTOVER commit below --
+#          self-approval that happened after independent review was
+#          actually available as a mechanism.
+#   WARN : either commit is unresolvable (a missing change_ref, or the
+#          record file was never committed) -- cannot verify, not a
+#          violation; OR the self-approval shape is present but the
+#          record PRE-DATES the cutover (grandfathered).
+#
+# CUTOVER (Amendment-E-style bootstrap, same "never brick a fresh/stale
+# checkout" principle grandfather-manifest.json already established for
+# review-before-deploy): a 2026-07-29 harness-change-review sweep, run
+# under the operator's OWN direct authorization BEFORE review-queue.sh/
+# review-runner.sh existed, wrote ~58+ self-authored PASS records as a
+# deliberate, known stopgap -- not a silently-smuggled violation. Flagging
+# all of them RED the instant this check ships would be a mechanically
+# "correct" but operationally false signal (it reads as "58 NEW problems
+# just appeared," when nothing changed about those records -- the
+# MECHANISM to avoid self-approval simply did not exist yet when they were
+# written). `_RRI_CUTOVER_COMMIT` pins the commit that introduced this
+# check (RI3, docs/plans/review-independence.md) -- a record whose own
+# introducing commit is NOT a descendant of that commit predates the
+# mechanism and is grandfathered (WARN, not RED). This is a real design
+# decision, documented in docs/plans/review-independence.md's Decisions
+# Log, not silently applied.
+# ------------------------------------------------------------
+# CUTOVER REDESIGN (delta-sweep reviewer 2026-07-30, PROVEN dead arm): the
+# original cutover was a pinned COMMIT SHA (b68e27cc...) tested via
+# merge-base --is-ancestor. That SHA existed only on the builder worktree
+# branch -- the RI3 work was rebased in as different SHAs -- so on master the
+# ancestry test could never succeed and every future self-approval would
+# read as grandfathered WARN forever: documented enforcement that cannot
+# fire (constitution s10 theatre). Cutover is now an ISO-8601 DATE compared
+# against the record's own created_at field: rebases and cherry-picks cannot
+# invalidate a date, and records are append-only with created_at stamped by
+# write-review-record.sh. Overridable for self-test fixtures.
+_RRI_CUTOVER_ISO="${REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO:-2026-07-30T09:00:00Z}"
+
+check_review_reviewer_independence() {
+  local live_home="$1" repo_root="$2"
+  [[ -z "$repo_root" ]] && { _warn "review-reviewer-independence" "repo root unresolved -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local records_dir="${repo_root}/docs/reviews/records"
+  if [[ ! -d "$records_dir" ]]; then
+    _warn "review-reviewer-independence" "no docs/reviews/records/ directory yet -- skipped (pre-bootstrap checkout)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  command -v jq >/dev/null 2>&1 || { _warn "review-reviewer-independence" "jq unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  command -v git >/dev/null 2>&1 || { _warn "review-reviewer-independence" "git unavailable -- skipped"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  # QUICK-PATH COST (same review): two full-history git-log walks per PASS
+  # record measured ~0.077s x 93 records in --quick (25.7s against its <2s
+  # contract), growing linearly forever. The authorship walk now runs ONLY
+  # in --full; --quick does the O(1) date classification and emits the
+  # single grandfather summary below.
+  local _rri_deep=0
+  # RRI_FORCE_DEEP=1 is a TEST SEAM (self-test fixtures only — running every
+  # fixture through a full multi-minute --full to reach this walk would be
+  # absurd); production quick runs never set it.
+  [[ "${MODE:-}" == "--full" || "${MODE:-}" == "full" || "${RRI_FORCE_DEEP:-0}" == "1" ]] && _rri_deep=1
+
+  local f base kind verdict reviewed_commit record_relpath reviewed_author
+  local record_commit_sha record_author post_cutover created_at
+  local _rri_grandfathered=0
+  shopt -s nullglob
+  for f in "$records_dir"/*.json; do
+    [[ -f "$f" ]] || continue
+    base="$(basename "$f")"
+    [[ "$base" == "index.json" || "$base" == "grandfather-manifest.json" ]] && continue
+
+    kind=$(jq -r '.kind // empty' "$f" 2>/dev/null)
+    verdict=$(jq -r '.verdict // empty' "$f" 2>/dev/null)
+    [[ "$kind" == "harness-change-review" && "$verdict" == "PASS" ]] || continue
+
+    reviewed_commit=$(jq -r '.change_ref.commit_sha // empty' "$f" 2>/dev/null)
+    if [[ -z "$reviewed_commit" ]]; then
+      _warn "review-reviewer-independence" "${base}: no change_ref.commit_sha recorded -- cannot verify independence, skipped"
+      continue
+    fi
+    reviewed_author=$(git -C "$repo_root" log -1 --format=%ae "$reviewed_commit" -- 2>/dev/null)
+    if [[ -z "$reviewed_author" ]]; then
+      _warn "review-reviewer-independence" "${base}: reviewed commit ${reviewed_commit} does not resolve in this checkout -- cannot verify independence, skipped"
+      continue
+    fi
+
+    created_at=$(jq -r '.created_at // empty' "$f" 2>/dev/null)
+    post_cutover=0
+    # ISO-8601 strings compare correctly as strings; empty created_at is
+    # treated as post-cutover (a record missing its stamp should be LOOKED AT,
+    # never silently amnestied).
+    if [[ -z "$created_at" || ! "$created_at" < "$_RRI_CUTOVER_ISO" ]]; then
+      post_cutover=1
+    fi
+    if [[ "$post_cutover" -eq 0 ]]; then
+      _rri_grandfathered=$((_rri_grandfathered + 1))
+      continue
+    fi
+    # Post-cutover: the expensive authorship walk, --full only.
+    if [[ "$_rri_deep" -ne 1 ]]; then
+      continue
+    fi
+    record_relpath="docs/reviews/records/${base}"
+    record_commit_sha=$(git -C "$repo_root" log --diff-filter=A --format=%H -- "$record_relpath" 2>/dev/null | tail -n 1)
+    record_author=$(git -C "$repo_root" log --diff-filter=A --format=%ae -- "$record_relpath" 2>/dev/null | tail -n 1)
+    if [[ -z "$record_author" ]] || [[ -z "$record_commit_sha" ]]; then
+      _warn "review-reviewer-independence" "${base}: post-cutover record never committed (or adding commit unresolvable) -- cannot verify independence"
+      continue
+    fi
+    [[ "$reviewed_author" == "$record_author" ]] || continue
+    _red "review-reviewer-independence" "${base}: SELF-APPROVAL -- the reviewed commit (${reviewed_commit}) and the commit that added this PASS record were both authored by ${reviewed_author}. A review-record must be committed by a genuinely different principal (docs/decisions/067-review-independence-same-session-pathway.md); route through review-queue.sh + review-runner.sh."
+  done
+  shopt -u nullglob
+  # ONE summary line for the whole grandfathered population (was one WARN per
+  # record: 94 WARNs drowning 10 real REDs in a single run).
+  if [[ "$_rri_grandfathered" -gt 0 ]]; then
+    _warn "review-reviewer-independence" "${_rri_grandfathered} pre-cutover record(s) grandfathered (created_at < ${_RRI_CUTOVER_ISO}) -- not enforced retroactively; post-cutover records are RED on self-approval (authorship walk runs in --full)"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
 check_selftest_sweep() {
   local live_home="$1"
   # T2 origin guard (agent-efficiency-fixes-2026-07, docs/lessons/2026-07-20-
@@ -2813,8 +3353,16 @@ check_selftest_sweep() {
   local hooks_dir="${live_home}/hooks"
   [[ -d "$hooks_dir" ]] || { _warn "selftest-sweep" "no live hooks directory — nothing to check"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
 
+  # SCOPE FIX (plan docs/plans/macos-portability-2026-07.md, task M5): this
+  # loop used to glob ONLY "$hooks_dir"/*.sh. A top-level glob never matches a
+  # subdirectory, so every hooks/lib/*.sh suite — 20 libraries, including the
+  # ones that carry the harness's shared primitives (admission-lib,
+  # git-command-parse, nl-paths, portable-time, portable-timeout, the
+  # observability derivers) — was INVISIBLE to this sweep. Their assertions
+  # existed and never ran here. Adding the lib glob makes the doctor's
+  # "--full ran every live self-test" claim true instead of nearly true.
   local hook
-  for hook in "$hooks_dir"/*.sh; do
+  for hook in "$hooks_dir"/*.sh "$hooks_dir"/lib/*.sh; do
     [[ -f "$hook" ]] || continue
     grep -q -- '--self-test' "$hook" 2>/dev/null || continue
     local out rc
@@ -2825,14 +3373,181 @@ check_selftest_sweep() {
     # NL_SELFTEST_SWEEP=1 marks this child as launched by the sanctioned sweep
     # entrypoint (provenance only — child scripts are not required to gate on
     # it; the reentry guard above is what actually blocks unsanctioned fan-out).
-    out="$(HARNESS_SELFTEST=1 NL_SELFTEST_SWEEP=1 timeout "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$hook" --self-test </dev/null 2>&1)"
+    out="$(HARNESS_SELFTEST=1 NL_SELFTEST_SWEEP=1 nl_run_bounded "${DOCTOR_SELFTEST_TIMEOUT:-1500}" bash "$hook" --self-test </dev/null 2>&1)"
     rc=$?
-    if [[ "$rc" -ne 0 ]]; then
+    # Label with the path relative to hooks/, not the bare basename: now that
+    # lib/ is in scope a bare basename could name two different files.
+    local label="${hook#$hooks_dir/}"
+    if [[ "$rc" -eq 124 ]]; then
+      _red "selftest-sweep" "${label} --self-test exceeded the ${DOCTOR_SELFTEST_TIMEOUT:-1500}s bound and was killed"
+    elif [[ "$rc" -ne 0 ]]; then
       local last_line
       last_line="$(printf '%s\n' "$out" | tail -n 1)"
-      _red "selftest-sweep" "$(basename "$hook") --self-test exited ${rc}: ${last_line}"
+      _red "selftest-sweep" "${label} --self-test exited ${rc}: ${last_line}"
     fi
   done
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ============================================================
+# Check 9: portability-sweep  (--full and --portability only)
+# ============================================================
+# WHY (plan docs/plans/macos-portability-2026-07.md, task M5)
+# ----------------------------------------------------------
+# check_selftest_sweep above answers "do the live hooks' self-tests pass?"
+# under whatever `bash` happens to be first on PATH. That is NOT the same
+# question as "does this harness still work on a stock Mac", and the harness
+# has already paid for the difference: authored on Windows (Git-bash, bash
+# 5.x, GNU coreutils), it arrived on Apple's bash 3.2.57 + BSD userland with
+# 14 of 52 self-test-capable scripts failing. The plan's M1-M4 fixed the
+# named GNU-isms. Nothing stopped the next one.
+#
+# This check is that stop. It runs scripts/portability-sweep.sh against the
+# REPO (not the live mirror — the repo is what an author edits, and the live
+# mirror lags until install.sh runs) under an explicitly-named interpreter,
+# and compares the failing set to a COMMITTED baseline file.
+#
+# THE RED CONDITION, exactly
+# --------------------------
+#   RED iff some discovered script's --self-test FAILS or TIMES OUT and that
+#   script is NOT listed in docs/portability-baseline.txt.
+#
+# Consequences of stating it that way, all deliberate:
+#   - A newly added script whose self-test FAILS -> RED (it is not in the
+#     baseline). This is the authoring-time catch the plan asked for.
+#   - A newly added script whose self-test PASSES -> not RED. Growth of the
+#     harness is not a regression.
+#   - A baseline entry that now passes -> not RED, but the sweep prints
+#     "baseline STALE" and this check WARNs, so amnesty cannot quietly
+#     outlive the bug it was granted for.
+#   - Raising the bar means editing a committed text file, which shows up in
+#     a diff and in review. There is no number in this script to nudge.
+#
+# Absence handling matches every other tolerant doctor predicate: no runner
+# in the repo -> WARN and skip (a pre-M5 checkout or a bare self-test
+# fixture). Runner present but baseline missing -> RED: a half-installed
+# mechanism is worse than none, because it reads as protection.
+#
+# Recursion: the sweep runs harness-doctor.sh --self-test among its ~163
+# suites, and that suite runs `--full` against fixture repos. The sweep
+# exports NL_PORTABILITY_SWEEP_ACTIVE=1, and this check no-ops when it sees
+# it, so the fan-out is hard-bounded at depth 1.
+#
+# ENV (all optional; defaults are what --full uses)
+#   DOCTOR_PORTABILITY_INTERP        interpreter (default /bin/bash — the
+#                                    stock system one is the portability-
+#                                    relevant one; on Linux it is GNU bash
+#                                    and the check simply reports fewer
+#                                    failures, never a false RED)
+#   DOCTOR_PORTABILITY_ROOTS         roots to sweep (default the runner's own)
+#   DOCTOR_PORTABILITY_PER_TIMEOUT   per-suite bound (default 120)
+#   DOCTOR_PORTABILITY_BUDGET        total bound (default 2400)
+#   DOCTOR_PORTABILITY_BASELINE      baseline path override
+# ============================================================
+check_portability_sweep() {
+  local live_home="$1" repo_root="$2"
+
+  if [[ "${NL_PORTABILITY_SWEEP_ACTIVE:-0}" == "1" ]]; then
+    _warn "portability-sweep" "already running inside a portability sweep — skipping (depth guard)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if command -v hook_reentry_should_suppress >/dev/null 2>&1 && hook_reentry_should_suppress; then
+    _warn "portability-sweep" "reentrant/automation-spawned invocation — skipping the portability sweep (NL-FINDING-040 guard)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  if [[ -z "${repo_root:-}" ]]; then
+    _warn "portability-sweep" "no repo root resolved — the portability sweep needs the repo (it checks what an author edits, not the live mirror)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local sweep="${repo_root}/adapters/claude-code/scripts/portability-sweep.sh"
+  if [[ ! -f "$sweep" ]]; then
+    _warn "portability-sweep" "scripts/portability-sweep.sh not present in ${repo_root} — mechanism not installed on this checkout/fixture"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local baseline="${DOCTOR_PORTABILITY_BASELINE:-${repo_root}/docs/portability-baseline.txt}"
+  if [[ ! -f "$baseline" ]]; then
+    _red "portability-sweep" "scripts/portability-sweep.sh exists but its baseline is missing (${baseline}) — the regression check cannot run, so the 'portability is protected' claim is currently false; regenerate with: bash adapters/claude-code/scripts/portability-sweep.sh --write-baseline docs/portability-baseline.txt"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local interp="${DOCTOR_PORTABILITY_INTERP:-/bin/bash}"
+  if [[ ! -x "$interp" ]]; then
+    local fallback
+    fallback="$(command -v bash 2>/dev/null)"
+    if [[ -z "$fallback" ]]; then
+      _warn "portability-sweep" "no usable interpreter (${interp} not executable, no bash on PATH) — skipped"
+      CHECKS_RUN=$((CHECKS_RUN + 1))
+      return 0
+    fi
+    _warn "portability-sweep" "${interp} is not executable here — falling back to ${fallback}; the sweep's interpreter claim is only as portable as that binary"
+    interp="$fallback"
+  fi
+
+  local budget="${DOCTOR_PORTABILITY_BUDGET:-2400}"
+  local per="${DOCTOR_PORTABILITY_PER_TIMEOUT:-120}"
+  local out rc
+  # The runner bounds itself; the outer bound is belt-and-braces against a
+  # runner that wedges before its own budget logic engages.
+  local roots_arg=()
+  [[ -n "${DOCTOR_PORTABILITY_ROOTS:-}" ]] && roots_arg=(--roots "${DOCTOR_PORTABILITY_ROOTS}")
+  out="$(nl_run_bounded $(( budget + 120 )) "$interp" "$sweep" \
+           --repo-root "$repo_root" \
+           --interpreter "$interp" \
+           --baseline "$baseline" \
+           --per-script-timeout "$per" \
+           --total-budget "$budget" \
+           ${roots_arg[@]+"${roots_arg[@]}"} </dev/null 2>&1)"
+  rc=$?
+
+  if [[ "$rc" -eq 124 ]]; then
+    _red "portability-sweep" "the sweep itself exceeded $(( budget + 120 ))s and was killed — no portability signal from this run"
+  elif [[ "$rc" -eq 1 ]]; then
+    # Emit one RED per new failure so the operator sees WHAT regressed, not
+    # just that something did.
+    # Match ONLY the runner's dedicated REGRESSION marker.
+    #
+    # The first version of this loop matched '  FAIL  '* — which also matches
+    # every row of the sweep's own report body (`  FAIL    hooks/x.sh  ...`),
+    # so one genuine regression was reported as 54 REDs, 53 of them scripts
+    # already in the baseline, with the real one last. Caught by running the
+    # end-to-end injected-regression demo; a code read had missed it. The
+    # marker is emitted by portability-sweep.sh's baseline-comparison section
+    # and appears nowhere else in its output.
+    local line emitted=0
+    while IFS= read -r line; do
+      case "$line" in
+        '  REGRESSION '*)
+          _red "portability-sweep" "NEW self-test failure under ${interp} (not in ${baseline##*/}): $(printf '%s' "$line" | sed -e 's/^  REGRESSION //')"
+          emitted=$((emitted + 1))
+          ;;
+      esac
+    done <<< "$out"
+    if [[ "$emitted" -eq 0 ]]; then
+      _red "portability-sweep" "the sweep reported new failures under ${interp} but no line could be parsed — full output: $(printf '%s' "$out" | tail -n 20 | tr '\n' ' ')"
+    fi
+  elif [[ "$rc" -ne 0 ]]; then
+    _red "portability-sweep" "portability-sweep.sh exited ${rc} (setup error, not a test result): $(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 3 | tr '\n' ' ')"
+  fi
+
+  # Partial coverage and stale amnesty are WARNs — real information, but not
+  # a regression claim.
+  local skipped
+  skipped="$(printf '%s\n' "$out" | sed -n 's/.*skip=\([0-9][0-9]*\).*/\1/p' | tail -n 1)"
+  if [[ -n "$skipped" && "$skipped" != "0" ]]; then
+    _warn "portability-sweep" "${skipped} suite(s) never ran — the ${budget}s total budget was exhausted, so this run's coverage is partial (raise DOCTOR_PORTABILITY_BUDGET or fix the slow suites)"
+  fi
+  if printf '%s' "$out" | grep -q 'baseline STALE'; then
+    _warn "portability-sweep" "the baseline lists script(s) that now PASS — remove them so the amnesty does not outlive the bug: $(printf '%s\n' "$out" | sed -n '/baseline STALE/,/^$/p' | grep '^  [a-z]' | tr '\n' ' ')"
+  fi
+
   CHECKS_RUN=$((CHECKS_RUN + 1))
 }
 
@@ -2863,6 +3578,7 @@ run_quick_checks() {
   check_obs_ask_capture_completeness "$live_home" "$repo_root"
   check_needs_you_headers "$live_home" "$repo_root"
   check_pin_f_waiver_purpose_clauses "$live_home" "$repo_root"
+  check_limit_resume_watchdog "$live_home"
   check_line_endings "$live_home" "$repo_root"
   check_budget_chains "$live_home" "$repo_root"
   check_budget_blocking_gates "$live_home" "$repo_root"
@@ -2871,11 +3587,14 @@ run_quick_checks() {
   check_budget_worktrees_branches "$live_home" "$repo_root"
   check_orphaned_worktree_work "$live_home" "$repo_root"
   check_new_gate_evidence_bar "$live_home" "$repo_root"
+  check_deterministic_process_proof "$live_home" "$repo_root"
   check_master_drift_autocorrect "$live_home" "$repo_root"
+  check_selftest_exclusions_wiring "$repo_root"
   check_model_pins "$live_home" "$repo_root"
   check_review_surface_cross_check "$live_home" "$repo_root"
   check_review_index_consistency "$live_home" "$repo_root"
   check_review_grandfather_integrity "$live_home" "$repo_root"
+  check_review_reviewer_independence "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -2994,6 +3713,89 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _run_quick() {
     local dir="$1"
     HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
+  }
+
+  # ------------------------------------------------------------
+  # NODE-MASKED EXECUTION (harness-reviewer C1, 2026-07-30).
+  #
+  # Four checks in this file are dual-path: node preferred, jq fallback
+  # (extract_manifest_gates -> claim-honesty; _count_chain_entries ->
+  # budget-chains; new-gate-evidence-bar; deterministic-process-proof). Every
+  # one of them ran ONLY its node branch in the self-test, because the machine
+  # that runs the suite has node. The jq branches were therefore asserted to
+  # match by INSPECTION -- and one of them did not: deterministic-process-
+  # proof's jq expression indexed the grandfather ARRAY with `.id`, so jq
+  # errored, `2>/dev/null` swallowed it, and the check was a silent no-op on
+  # every node-less machine. The comment claiming "one generator pattern, not
+  # two that could drift" was the only thing holding the two in sync.
+  #
+  # This helper makes the fallback EXECUTE: a PATH containing every tool the
+  # doctor needs EXCEPT node. Built once, reused by every parity scenario.
+  # ------------------------------------------------------------
+  _NONODE_DIR=""
+  _nonode_path() {
+    if [[ -z "$_NONODE_DIR" ]]; then
+      _NONODE_DIR="$(mktemp -d 2>/dev/null)" || return 1
+      local _t _p
+      for _t in jq git grep sed awk bash sh find sort uniq head tail cat wc tr \
+                date mkdir rm cp mv chmod ls dirname basename realpath stat env \
+                xargs comm diff touch tee cut expr mktemp readlink od printf \
+                which id whoami uname; do
+        _p="$(command -v "$_t" 2>/dev/null)"
+        [[ -n "$_p" ]] && ln -sf "$_p" "$_NONODE_DIR/$_t" 2>/dev/null
+      done
+    fi
+    printf '%s' "$_NONODE_DIR"
+  }
+
+  _run_quick_nonode() {
+    local dir="$1" shim
+    shim="$(_nonode_path)" || { printf 'NONODE-SHIM-UNAVAILABLE'; return 0; }
+    HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" PATH="$shim" \
+      bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
+  }
+
+  # _assert_node_jq_parity <label> <scenario-dir> <check-id> <want-nonempty:0|1>
+  # Runs the SAME fixture through both branches and requires byte-identical
+  # output for that check. want_nonempty=1 additionally requires the jq branch
+  # to have produced SOMETHING -- without it, two silently-broken branches
+  # would agree on emptiness and the parity assertion would pass vacuously,
+  # which is exactly the failure being regression-tested.
+  #
+  # THE TWO FAILURE MODES ARE DISTINCT, AND THE ORDER BELOW DECIDES WHICH ONE
+  # YOU SEE (recorded 2026-07-30 because a commit message got this wrong and
+  # nothing in the tree contradicted it -- harness-reviewer MINOR):
+  #   "branches DIVERGE"  -- the two branches BOTH reported, but differently.
+  #                          This is what a reverted grandfather cutover_ref
+  #                          binding produces: the check still emits a verdict,
+  #                          just the wrong one.
+  #   "produced NOTHING"  -- the jq branch emitted no line at all. This needs
+  #                          the check to go SILENT, which for the fail-open
+  #                          arms means reverting the loud-WARN too, not only
+  #                          the binding.
+  # The DIVERGE test runs first and want_nonempty only OVERWRITES `why` when
+  # jq_out is genuinely empty, so a non-empty-but-different jq branch can never
+  # report "produced NOTHING". Do not quote one failure mode as evidence for a
+  # mutation that actually triggers the other.
+  _assert_node_jq_parity() {
+    local label="$1" dir="$2" check_id="$3" want_nonempty="${4:-0}"
+    local node_out jq_out
+    node_out="$(_run_quick "$dir" | grep -- "$check_id" | LC_ALL=C sort)"
+    jq_out="$(_run_quick_nonode "$dir" | grep -- "$check_id" | LC_ALL=C sort)"
+    local ok=1 why=""
+    if [[ "$node_out" != "$jq_out" ]]; then ok=0; why="branches DIVERGE"; fi
+    if [[ "$want_nonempty" == "1" && -z "$jq_out" ]]; then
+      ok=0; why="jq branch produced NOTHING on a fixture that must report (silent no-op)"
+    fi
+    if [[ "$ok" -eq 1 ]]; then
+      echo "self-test (${label}): PASS" >&2
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (${label}): FAIL (${why}) for check '${check_id}'" >&2
+      echo "--- node branch ---" >&2; printf '%s\n' "$node_out" >&2
+      echo "--- jq branch (node masked) ---" >&2; printf '%s\n' "$jq_out" >&2
+      FAILED=$((FAILED + 1))
+    fi
   }
 
   _assert() {
@@ -3455,6 +4257,83 @@ EOF
   _write_chain_settings "$D" "SessionStart" 9 "ss-dummy"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-chains-sessionstart-red" 1 "$RC" "RED budget-chains.*SessionStart chain has 9" "$OUT"
+
+  # ---- Check: limit-resume-watchdog. No state dir at all -> silent
+  # (WARN-free), RC 0. ----
+  D=$(_scenario_dir lr-clean)
+  _stamp_claim_honesty_green "$D"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if [[ "$RC" == "0" ]] && ! printf '%s' "$OUT" | grep -q "limit-resume"; then
+    echo "self-test (limit-resume-watchdog-clean-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (limit-resume-watchdog-clean-silent): FAIL (rc=${RC}, unexpected output)" >&2
+    printf '%s\n' "$OUT" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- Check: limit-resume-watchdog. giveup sentinel present -> WARN
+  # (never RED -- an operational fact, not a harness defect), RC still 0.
+  # Per-session layout (F3 fix): armed/<key>.json + sibling <key>.giveup. ----
+  D=$(_scenario_dir lr-giveup)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/limit-resume/armed"
+  echo 'gave up after 8 attempts at 2026-07-30T10:00:00Z' > "$D/live/state/limit-resume/armed/selftest-sid.giveup"
+  printf '{"session_id":"selftest-sid","cwd":"/tmp/x","armed_at":"2026-07-30T10:00:00Z"}\n' > "$D/live/state/limit-resume/armed/selftest-sid.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "limit-resume-watchdog-giveup-warn" 0 "$RC" "WARN limit-resume-giveup.*selftest-sid" "$OUT"
+
+  # ---- Check: limit-resume-watchdog. Armed, zero attempts, armed_at
+  # 90 minutes ago (>= 70m stale threshold, comfortably past the
+  # watchdog's own 30min initial-silence floor) -> stale-armed WARN, the
+  # DEFECT-1-CLASS ("every tick fails silently") regression detector. ----
+  D=$(_scenario_dir lr-stale-armed)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/limit-resume/armed"
+  STALE_TS="$(date -u -v-90M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-90 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"session_id":"stale-sid","cwd":"/tmp/x","armed_at":"%s"}\n' "$STALE_TS" > "$D/live/state/limit-resume/armed/stale-sid.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "limit-resume-watchdog-stale-armed-warn" 0 "$RC" "WARN limit-resume-stale-armed.*stale-sid" "$OUT"
+
+  # ---- Check: limit-resume-watchdog. Armed, zero attempts, armed_at only
+  # 5 minutes ago -> too fresh to be suspicious (well within the
+  # watchdog's own 30min floor), no WARN. ----
+  D=$(_scenario_dir lr-fresh-armed)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/limit-resume/armed"
+  FRESH_TS="$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"session_id":"fresh-sid","cwd":"/tmp/x","armed_at":"%s"}\n' "$FRESH_TS" > "$D/live/state/limit-resume/armed/fresh-sid.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if [[ "$RC" == "0" ]] && ! printf '%s' "$OUT" | grep -q "limit-resume"; then
+    echo "self-test (limit-resume-watchdog-fresh-armed-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (limit-resume-watchdog-fresh-armed-silent): FAIL (rc=${RC}, unexpected output)" >&2
+    printf '%s\n' "$OUT" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- Check: limit-resume-watchdog. Per-session isolation (F3 fix): TWO
+  # tracked sessions, only ONE has given up -> exactly one WARN, naming
+  # the RIGHT session, and the healthy one's own id never appears in a
+  # WARN line. ----
+  D=$(_scenario_dir lr-two-sessions)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/state/limit-resume/armed"
+  echo 'gave up after 8 attempts at 2026-07-30T10:00:00Z' > "$D/live/state/limit-resume/armed/bad-sid.giveup"
+  printf '{"session_id":"bad-sid","cwd":"/tmp/x","armed_at":"2026-07-30T10:00:00Z"}\n' > "$D/live/state/limit-resume/armed/bad-sid.json"
+  FRESH_TS2="$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-5 minutes' +%Y-%m-%dT%H:%M:%SZ)"
+  printf '{"session_id":"healthy-sid","cwd":"/tmp/y","armed_at":"%s"}\n' "$FRESH_TS2" > "$D/live/state/limit-resume/armed/healthy-sid.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if [[ "$RC" == "0" ]] && printf '%s' "$OUT" | grep -q "WARN limit-resume-giveup.*bad-sid" \
+     && ! printf '%s' "$OUT" | grep -q "healthy-sid"; then
+    echo "self-test (limit-resume-watchdog-two-session-isolation): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (limit-resume-watchdog-two-session-isolation): FAIL (rc=${RC})" >&2
+    printf '%s\n' "$OUT" >&2
+    FAILED=$((FAILED + 1))
+  fi
 
   # ---- Check: budget-blocking-gates. Counting rule (specs-d §D.0.4, fixed
   # during Wave-F integration): blocking:true AND wired_template:true AND
@@ -4062,6 +4941,264 @@ MANIFEST_EOF
     echo "self-test (new-gate-evidence-bar-grandfather-leak-no-false-red): PASS" >&2
     PASSED=$((PASSED + 1))
   fi
+
+  # ---- Check: deterministic-process-proof (adapters/claude-code/doctrine/
+  # deterministic-process.md). RED fixture — a NON-grandfathered blocking:true
+  # entry declaring NEITHER chokepoint nor bypass_paths ----
+  D=$(_scenario_dir dpp-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-red" 1 "$RC" "RED deterministic-process-proof.*new-blocking-gate-no-proof" "$OUT"
+
+  # ---- GREEN fixture — the SAME shape, but with real chokepoint AND
+  # bypass_paths declared. Proves this check does not blanket-RED every
+  # blocking:true entry, only ones missing BOTH fields ----
+  D=$(_scenario_dir dpp-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-with-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "chokepoint": "pre-push", "bypass_paths": ["git push --no-verify -- NAMED-AND-ACCEPTED"], "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-green" 0 "$RC" "" "$OUT"
+
+  # ---- GRANDFATHER exempt-list GREEN fixture — a legacy blocking:true id
+  # (from the closed DETERMINISTIC_PROCESS_GRANDFATHERED list) with NEITHER
+  # field is exempt, not RED ----
+  D=$(_scenario_dir dpp-grandfather-green)
+  _stamp_claim_honesty_green "$D"
+  # added_after:"2026-07" on both -- present (avoids new-gate-evidence-bar's
+  # unconditional missing-added_after RED) and these two ids are ALSO in
+  # THAT check's own PRE_BAR_GRANDFATHERED list, so its full-bar fields
+  # (golden_scenario et al.) are not required either.
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07" },
+    { "id": "work-integrity", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-grandfather-green" 0 "$RC" "" "$OUT"
+
+  # ---- GRANDFATHER exempt-list is CLOSED, not a blanket allowance for every
+  # blocking:true entry: grandfathered ids alongside ONE non-grandfathered id
+  # missing both fields — only the non-grandfathered one REDs ----
+  D=$(_scenario_dir dpp-grandfather-leak-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "work-integrity", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "new-blocking-gate-not-grandfathered", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-grandfather-leak-red" 1 "$RC" "RED deterministic-process-proof.*new-blocking-gate-not-grandfathered" "$OUT"
+  if printf '%s' "$OUT" | grep -qE "deterministic-process-proof: (session-honesty|work-integrity):"; then
+    echo "self-test (deterministic-process-proof-grandfather-leak-no-false-red): FAIL (a grandfathered id RED'd — exempt-list leaked)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (deterministic-process-proof-grandfather-leak-no-false-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- (RETIRED 2026-07-30, harness-reviewer M7) The scenario that used to
+  # sit here asserted that declaring ONLY `chokepoint` stays GREEN, on the
+  # reasoning that the doctrine's RED condition was "declaring neither". That
+  # reasoning mechanized only half the obligation: a new blocking gate could
+  # discharge it by naming a firing event and never enumerating one bypass,
+  # while `bypass_paths` is the load-bearing half. Both halves are now
+  # required, and the inverted scenarios live below as
+  # `deterministic-process-proof-chokepoint-only-red` and its bypass-only
+  # mirror. ----
+
+  # ---- blocking:false entries are never checked, regardless of fields ----
+  D=$(_scenario_dir dpp-nonblocking-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "advisory-only-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": false, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-nonblocking-not-checked" 0 "$RC" "" "$OUT"
+
+  # ---- ESCAPE-CLAUSE FIXTURES (harness-reviewer M6): the
+  # `added_after < "2026-07"` exemption had ZERO coverage, so a BACKDATED
+  # field silently exempted a brand-new blocking gate and nothing would have
+  # noticed. Both sides of the boundary are now pinned. ----
+
+  # A pre-cutover date with NEITHER field stays GREEN. This DOCUMENTS the
+  # escape rather than endorsing it: the exemption exists so this file's own
+  # dozens of throwaway fixtures (which conventionally set added_after
+  # "2026-04") do not all flip RED. If this scenario ever fails, the exemption
+  # was removed and those fixtures need revisiting.
+  D=$(_scenario_dir dpp-backdated-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "backdated-blocking-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-04" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-backdated-exempt-green" 0 "$RC" "" "$OUT"
+
+  # The BOUNDARY: exactly "2026-07" (the cutover month itself) is NOT exempt
+  # and must RED. The comparison is a string `<`, so this pins the off-by-one
+  # that would otherwise let the whole cutover month through.
+  D=$(_scenario_dir dpp-boundary-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "boundary-blocking-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-boundary-2026-07-red" 1 "$RC" "RED deterministic-process-proof.*boundary-blocking-gate" "$OUT"
+
+  # ---- BOTH-FIELDS-REQUIRED (harness-reviewer M7): declaring only
+  # `chokepoint` and never enumerating a bypass no longer discharges the
+  # obligation. This scenario was previously asserted GREEN
+  # ("deterministic-process-proof-partial-fields-still-green"); the inversion
+  # IS the fix. ----
+  D=$(_scenario_dir dpp-chokepoint-only-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-chokepoint-only", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "chokepoint": "pre-push", "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-chokepoint-only-red" 1 "$RC" "RED deterministic-process-proof.*chokepoint-only.*bypass_paths" "$OUT"
+
+  # And the mirror: bypass_paths with no chokepoint also REDs, naming the
+  # missing half. Without this the "both required" claim would only be half
+  # tested, which is the same class of gap M7 itself reported.
+  D=$(_scenario_dir dpp-bypass-only-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-bypass-only", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "bypass_paths": ["git push --no-verify -- NAMED-AND-ACCEPTED"], "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-bypass-only-red" 1 "$RC" "RED deterministic-process-proof.*bypass-only.*chokepoint" "$OUT"
+
+  # ---- NODE/JQ PARITY (harness-reviewer C1 generalization): every dual-path
+  # check in this file is re-run with `node` masked out of PATH and required
+  # to produce byte-identical output. This is the regression test for the
+  # ACTUAL defect (a jq branch that errored into silence) and, more
+  # importantly, for its CLASS -- the four checks below are the complete set
+  # of node-preferred/jq-fallback checks in this file. ----
+  D=$(_scenario_dir dpp-jq-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # want_nonempty=1: this fixture MUST report. An empty jq branch here is
+  # precisely the C1 silent no-op.
+  _assert_node_jq_parity "dpp-jq-parity-red" "$D" "deterministic-process-proof" 1
+
+  D=$(_scenario_dir dpp-jq-grandfather)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "new-blocking-gate-not-grandfathered", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # Exercises the grandfather-list lookup itself -- the exact expression that
+  # drifted (`$gf | index(.id)` vs `$gf | index($e.id)`).
+  _assert_node_jq_parity "dpp-jq-parity-grandfather" "$D" "deterministic-process-proof" 1
+
+  D=$(_scenario_dir ngeb-jq-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-gate-incomplete", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "chokepoint": "pre-push", "bypass_paths": ["--no-verify -- NAMED-AND-ACCEPTED"] }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  _assert_node_jq_parity "ngeb-jq-parity-red" "$D" "new-gate-evidence-bar" 1
+
+  D=$(_scenario_dir c5-jq-red)
+  if _copy_manifest_tooling "$D"; then :; fi
+  _write_manifest_fixture "$D" no-honest
+  # extract_manifest_gates is the dual-path helper behind claim-honesty.
+  _assert_node_jq_parity "claim-honesty-jq-parity-red" "$D" "claim-honesty" 1
+
+  D=$(_scenario_dir bc-jq-red)
+  _stamp_claim_honesty_green "$D"
+  _write_chain_settings "$D" "Stop" 7 "stop-dummy"
+  # _count_chain_entries is the dual-path helper behind budget-chains.
+  _assert_node_jq_parity "budget-chains-jq-parity-red" "$D" "budget-chains" 1
 
   # ---- Check: line-endings (NL-FINDING-038). RED fixture — a repo shell
   # surface carries CRLF bytes (the Wave-F F.1 whole-file-conversion class).
@@ -5139,6 +6276,162 @@ EOF
     echo "self-test (review-grandfather-integrity-green): SKIP (real tooling not found)" >&2
   fi
 
+  # ---- review-reviewer-independence: RED fixture -- the SAME git author
+  # wrote the reviewed commit AND committed the PASS record approving it
+  # (docs/plans/review-independence.md RI3; self-approval, the class this
+  # whole plan exists to eliminate) ----
+  D=$(_scenario_dir review-reviewer-independence-red)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" && git init -q -b main )
+  ( cd "$D/repo" && git config user.email "author@example.com" && git config user.name "Author Session" )
+  mkdir -p "$D/repo/adapters/claude-code/hooks" "$D/repo/docs/reviews/records"
+  printf '#!/bin/bash\necho v1\n' > "$D/repo/adapters/claude-code/hooks/real.sh"
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: add real.sh" )
+  RI_REVIEWED_SHA=$(git -C "$D/repo" rev-parse HEAD)
+  RI_BLOB_SHA=$(git -C "$D/repo" rev-parse "HEAD:adapters/claude-code/hooks/real.sh")
+  cat > "$D/repo/docs/reviews/records/2026-07-30-harness-change-review-selfapproval.json" <<EOF
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-selfapproval","created_at":"2026-07-30T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"${RI_REVIEWED_SHA}","branch":"main"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"${RI_BLOB_SHA}"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","reviewer_principal":{"hostname":"h","account":"a","session_id":"same-session"},"independence":"pathway","payload":{}}
+EOF
+  printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+  # SAME author (Author Session) commits the record -- this is the
+  # self-approval shape.
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: self-approve real.sh" )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # FIXTURE DRIFT FIX (final-3 reviewer 2026-07-30, PROVEN dead three ways):
+  # the old override exported the retired SHA-cutover var, the record's
+  # created_at pre-dated the default ISO cutover, and _run_quick never runs
+  # the authorship walk. Now: ISO cutover earlier than the record's
+  # created_at (2026-07-30T00:00:00Z) + the RRI_FORCE_DEEP test seam so the
+  # walk actually executes.
+  export REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO="2026-01-01T00:00:00Z"
+  export RRI_FORCE_DEEP=1
+  OUT="$(_run_quick "$D")"; RC=$?
+  unset REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO RRI_FORCE_DEEP
+  _assert "review-reviewer-independence-red" 1 "$RC" "RED review-reviewer-independence" "$OUT"
+
+  # ---- review-reviewer-independence: GREEN fixture -- a DIFFERENT git
+  # author committed the PASS record than the one who authored the
+  # reviewed commit ----
+  D=$(_scenario_dir review-reviewer-independence-green)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" && git init -q -b main )
+  ( cd "$D/repo" && git config user.email "author@example.com" && git config user.name "Author Session" )
+  mkdir -p "$D/repo/adapters/claude-code/hooks" "$D/repo/docs/reviews/records"
+  printf '#!/bin/bash\necho v1\n' > "$D/repo/adapters/claude-code/hooks/real.sh"
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: add real.sh" )
+  RI_REVIEWED_SHA=$(git -C "$D/repo" rev-parse HEAD)
+  RI_BLOB_SHA=$(git -C "$D/repo" rev-parse "HEAD:adapters/claude-code/hooks/real.sh")
+  cat > "$D/repo/docs/reviews/records/2026-07-30-harness-change-review-independent.json" <<EOF
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-independent","created_at":"2026-07-30T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"${RI_REVIEWED_SHA}","branch":"main"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"${RI_BLOB_SHA}"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","reviewer_principal":{"hostname":"h","account":"a","session_id":"reviewer-session"},"independence":"pathway","payload":{}}
+EOF
+  printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+  # DIFFERENT author (Runner Process) commits the record -- the genuine
+  # independent-reviewer shape this plan builds toward.
+  ( cd "$D/repo" && git config user.email "runner@example.com" && git config user.name "Runner Process" )
+  ( cd "$D/repo" && git add -A && git commit -q -m "runner: PASS record for real.sh" )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # Same ISO+deep environment as the RED twin — without it this no-RED
+  # assertion is vacuous (the walk never runs in quick mode).
+  export REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO="2026-01-01T00:00:00Z"
+  export RRI_FORCE_DEEP=1
+  OUT="$(_run_quick "$D")"
+  unset REVIEW_REVIEWER_INDEPENDENCE_CUTOVER_ISO RRI_FORCE_DEEP
+  if printf '%s' "$OUT" | grep -q "RED review-reviewer-independence"; then
+    echo "self-test (review-reviewer-independence-green): FAIL (unexpected RED: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (review-reviewer-independence-green): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- review-reviewer-independence: WARN-graceful fixture -- a record
+  # with no change_ref.commit_sha (e.g. a hand-authored or pre-RI3 record)
+  # never REDs; it is a "cannot verify," not a violation ----
+  D=$(_scenario_dir review-reviewer-independence-unresolvable)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" && git init -q -b main )
+  ( cd "$D/repo" && git config user.email "author@example.com" && git config user.name "Author Session" )
+  mkdir -p "$D/repo/docs/reviews/records"
+  cat > "$D/repo/docs/reviews/records/2026-07-30-harness-change-review-nocommitsha.json" <<'EOF'
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-nocommitsha","created_at":"2026-07-30T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"","branch":"main"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","payload":{}}
+EOF
+  printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+  ( cd "$D/repo" && git add -A && git commit -q -m "unresolvable fixture" )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"
+  if printf '%s' "$OUT" | grep -q "RED review-reviewer-independence"; then
+    echo "self-test (review-reviewer-independence-unresolvable-not-red): FAIL (unexpected RED: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (review-reviewer-independence-unresolvable-not-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- review-reviewer-independence: PRE-CUTOVER GRANDFATHER fixture --
+  # the exact self-approval shape (same author on both the reviewed commit
+  # and the record's commit), but using the REAL production default
+  # _RRI_CUTOVER_ISO (2026-07-30T09:00:00Z, no override -- unlike the RED/
+  # GREEN twins above, which must override it since a from-scratch fixture
+  # repo has no way to predate a real production timestamp otherwise). The
+  # record's own `created_at` (2026-07-29T00:00:00Z, below) string-compares
+  # as EARLIER than that default, so check_review_reviewer_independence's
+  # ISO-date comparison classifies it PRE-cutover on its own -- no test-seam
+  # override needed for this one. Must WARN, never RED: this is the
+  # 2026-07-29 sweep's exact shape (docs/plans/review-independence.md
+  # Decisions Log) -- a deliberate, operator-authorized stopgap predating
+  # the mechanism, not a violation to flag retroactively. ----
+  D=$(_scenario_dir review-reviewer-independence-pre-cutover-warn)
+  _stamp_claim_honesty_green "$D"
+  ( cd "$D/repo" && git init -q -b main )
+  ( cd "$D/repo" && git config user.email "author@example.com" && git config user.name "Author Session" )
+  mkdir -p "$D/repo/adapters/claude-code/hooks" "$D/repo/docs/reviews/records"
+  printf '#!/bin/bash\necho v1\n' > "$D/repo/adapters/claude-code/hooks/real.sh"
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: add real.sh" )
+  RI_REVIEWED_SHA=$(git -C "$D/repo" rev-parse HEAD)
+  RI_BLOB_SHA=$(git -C "$D/repo" rev-parse "HEAD:adapters/claude-code/hooks/real.sh")
+  cat > "$D/repo/docs/reviews/records/2026-07-30-harness-change-review-precutover.json" <<EOF
+{"schema_version":1,"kind":"harness-change-review","record_id":"hcr-precutover","created_at":"2026-07-29T00:00:00Z","verdict":"PASS","reviewer":"harness-reviewer","reviewer_model":"opus","plan_ref":"x","change_ref":{"commit_sha":"${RI_REVIEWED_SHA}","branch":"main"},"covered_files":[{"path":"adapters/claude-code/hooks/real.sh","blob_sha":"${RI_BLOB_SHA}"}],"dispatch_evidence":{"transcript_ref":"","verdict_quote":"PASS","findings_summary":""},"written_by":"test","payload":{}}
+EOF
+  printf '{"schema_version":1,"entries":[]}\n' > "$D/repo/docs/reviews/records/index.json"
+  ( cd "$D/repo" && git add -A && git commit -q -m "author: self-approve real.sh (pre-cutover sweep shape)" )
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"
+  if printf '%s' "$OUT" | grep -q "RED review-reviewer-independence"; then
+    echo "self-test (review-reviewer-independence-pre-cutover-warn): FAIL (unexpected RED -- pre-cutover content must be grandfathered: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  elif printf '%s' "$OUT" | grep -q "WARN review-reviewer-independence.*pre-cutover record(s) grandfathered"; then
+    echo "self-test (review-reviewer-independence-pre-cutover-warn): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (review-reviewer-independence-pre-cutover-warn): FAIL (expected the grandfather WARN line, got: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- B3 (delta-sweep reviewer 2026-07-30): the RI deep-walk's PRODUCTION
+  # trigger (`[[ "${MODE:-}" == "--full" || "${MODE:-}" == "full" ...`,
+  # ~check_review_reviewer_independence) has zero fixture coverage above --
+  # all four RI fixtures reach the walk via the RRI_FORCE_DEEP test seam,
+  # never by actually setting MODE=full. A cheap structural (grep-shaped)
+  # self-test is the pragmatic middle ground: proving MODE==full genuinely
+  # drives the walk at runtime would mean running a real multi-minute
+  # --full sweep per fixture, which the --quick-cost fix earlier in this
+  # same check exists specifically to avoid paying on every self-test run.
+  # This instead pins the SOURCE shape of the gating line itself, so a
+  # future edit that silently drops the production MODE check (leaving only
+  # the test seam) fails loudly here instead of only in an untested
+  # production --full run. ----
+  if grep -q '"\${MODE:-}" == "--full" || "\${MODE:-}" == "full" || "\${RRI_FORCE_DEEP:-0}" == "1"' "$SELF_TEST_HOOK"; then
+    echo "self-test (review-reviewer-independence-mode-full-gating-present): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (review-reviewer-independence-mode-full-gating-present): FAIL (the RI deep-walk's _rri_deep gating line no longer matches the expected MODE==full || RRI_FORCE_DEEP shape -- verify the production trigger, not only the test seam, still gates the authorship walk)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
   # ---- Check 8 (--full only): RED fixture — a stub hook's --self-test fails ----
   D=$(_scenario_dir c7-red)
   _stamp_claim_honesty_green "$D"
@@ -5156,6 +6449,29 @@ EOF
   cp "$D/live/hooks/failing.sh" "$D/repo/adapters/claude-code/hooks/failing.sh"
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
   _assert "8-selftest-sweep-red" 1 "$RC" "RED selftest-sweep" "$OUT"
+
+  # ---- Check 8 DEDUP (mode-dispatch tail, harness-review Major): the
+  # dispatch tail previously called check_selftest_sweep AND
+  # check_master_drift_selftest TWICE in --full mode (a mis-indented stray
+  # `fi` split what should have been ONE MODE==full block into two
+  # sequential ones), doubling --full's dominant runtime cost and
+  # duplicating every sweep RED line. Presence-of-a-RED assertions (the one
+  # right above, and P7/c8 elsewhere) cannot catch duplication -- they pass
+  # whether the line appears once or twice. This counts it: ONE failing
+  # fixture hook must yield EXACTLY ONE "RED selftest-sweep ... failing.sh"
+  # line, never two. ----
+  # (B1, delta-sweep reviewer 2026-07-30: this whole --self-test handler is
+  # top-level script code guarded by `if [[ "${1:-}" == "--self-test" ]]`,
+  # not a shell function -- `local` here errors "local: can only be used in
+  # a function" on both interpreters, once per run. No `local` keyword.)
+  dup_count=$(printf '%s\n' "$OUT" | grep -c "RED selftest-sweep.*failing\.sh")
+  if [[ "$dup_count" -eq 1 ]]; then
+    echo "self-test (8-selftest-sweep-not-duplicated): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (8-selftest-sweep-not-duplicated): FAIL (expected exactly 1 RED line for the one failing fixture hook, got ${dup_count} -- dispatch tail is calling check_selftest_sweep more than once in --full mode)" >&2
+    FAILED=$((FAILED + 1))
+  fi
 
   # ---- Check 8: GREEN fixture — a stub hook's --self-test passes ----
   D=$(_scenario_dir c7-green)
@@ -5223,6 +6539,37 @@ EOF
   cp "$D/live/hooks/session-start-digest.sh" "$D/repo/adapters/claude-code/hooks/session-start-digest.sh"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "e1-no-selftest-entrypoint-red" 1 "$RC" "RED wave-e-e1-digest.*no --self-test entrypoint" "$OUT"
+
+  # ---- Check 8 SCOPE (macos-portability-2026-07 M5): the sweep must reach
+  # hooks/lib/*.sh.
+  #
+  # Before this fix the loop globbed only "$hooks_dir"/*.sh. A top-level glob
+  # never matches a subdirectory, so all 20 live hooks/lib/*.sh suites — the
+  # harness's shared primitives — were invisible to --full: their assertions
+  # existed and never ran. Nothing in this suite noticed, because no fixture
+  # had ever put a hook in lib/.
+  #
+  # This fixture's ONLY failing suite is in lib/. Delete the lib glob from
+  # check_selftest_sweep and --full comes back rc 0, so this scenario fails —
+  # which is what makes it a test of the scope rather than a restatement of
+  # it. The expected RED text also pins the LABEL to the hooks-relative path
+  # (lib/failing-lib.sh), since a bare basename can now collide between
+  # hooks/x.sh and hooks/lib/x.sh.
+  D=$(_scenario_dir c8-lib-scope)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/live/hooks/lib"
+  cat > "$D/live/hooks/lib/failing-lib.sh" <<'EOF'
+#!/bin/bash
+if [ "${BASH_SOURCE[0]:-$0}" = "${0}" ] && [ "${1:-}" = "--self-test" ]; then
+  echo "self-test: intentional lib failure" >&2
+  exit 1
+fi
+EOF
+  chmod +x "$D/live/hooks/lib/failing-lib.sh"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
+  _assert "8-selftest-sweep-covers-hooks-lib" 1 "$RC" "RED selftest-sweep: lib/failing-lib.sh" "$OUT"
 
   # ---- Check 8 (T2, agent-efficiency-fixes-2026-07): a reentrant/
   # automation-spawned invocation of --full NEVER fans out into the
@@ -5323,6 +6670,189 @@ EOF
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
   _assert "9-ssf-explicit-invocation-never-suppressed" 0 "$RC" "GREEN" "$OUT"
 
+  # ================================================================
+  # Check 9 (portability-sweep) — macos-portability-2026-07 task M5
+  # ================================================================
+  # These scenarios run the REAL scripts/portability-sweep.sh (copied into a
+  # fixture repo together with the real hooks/lib/portable-timeout.sh it
+  # sources) against tiny stub suites. The runner is genuine; only the
+  # scripts it grades are stubs, which is the only way to make "a NEW failing
+  # script REDs / a NEW passing script does not" deterministic.
+  #
+  # NL_PORTABILITY_SWEEP_ACTIVE=0 is set explicitly on every invocation: this
+  # whole suite is itself one of the ~163 scripts the real sweep runs, so
+  # without the override these scenarios would silently take the depth-guard
+  # skip path (and pass by default) whenever the doctor's own self-test was
+  # launched from a sweep.
+  _PORT_REAL_SWEEP="$(dirname "$SELF_TEST_HOOK")/../scripts/portability-sweep.sh"
+  _PORT_REAL_TIMEOUT="$(dirname "$SELF_TEST_HOOK")/lib/portable-timeout.sh"
+  if [[ -f "$_PORT_REAL_SWEEP" && -f "$_PORT_REAL_TIMEOUT" ]]; then
+    _port_fixture() {
+      local label="$1"
+      local d
+      d=$(_scenario_dir "$label")
+      mkdir -p "$d/repo/adapters/claude-code/hooks/lib" "$d/repo/docs"
+      cp "$_PORT_REAL_SWEEP" "$d/repo/adapters/claude-code/scripts/portability-sweep.sh"
+      cp "$_PORT_REAL_TIMEOUT" "$d/repo/adapters/claude-code/hooks/lib/portable-timeout.sh"
+      printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo ok; exit 0; fi\nexit 0\n' \
+        > "$d/repo/adapters/claude-code/hooks/pp-pass.sh"
+      printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo "summary: 0 passed, 1 failed" >&2; exit 1; fi\nexit 0\n' \
+        > "$d/repo/adapters/claude-code/hooks/pp-known-fail.sh"
+      chmod +x "$d/repo/adapters/claude-code/hooks"/*.sh
+      printf 'FAIL\thooks/pp-known-fail.sh\n' > "$d/repo/docs/portability-baseline.txt"
+      _write_settings "$d/live/settings.json"
+      cp "$d/live/settings.json" "$d/repo/adapters/claude-code/settings.json.template"
+      printf '%s' "$d"
+    }
+    _port_run() {
+      local d="$1"; shift
+      HARNESS_DOCTOR_HOME="$d/live" NL_REPO_ROOT="$d/repo" \
+      NL_PORTABILITY_SWEEP_ACTIVE=0 \
+      DOCTOR_PORTABILITY_ROOTS="hooks" \
+      DOCTOR_PORTABILITY_PER_TIMEOUT=10 \
+      DOCTOR_PORTABILITY_BUDGET=90 \
+      "$@" bash "$SELF_TEST_HOOK" --portability "$d/repo" 2>&1
+    }
+
+    # P1 — a failing suite that IS in the baseline is NOT a regression.
+    D=$(_port_fixture c11-port-baselined)
+    OUT="$(_port_run "$D")"; RC=$?
+    _assert "9c-portability-baselined-failure-is-green" 0 "$RC" "GREEN" "$OUT"
+
+    # P2 — THE RED CONDITION. A newly added script whose --self-test fails and
+    # which is absent from the baseline must RED, and must be NAMED.
+    D=$(_port_fixture c11-port-new-fail)
+    printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo "boom" >&2; exit 1; fi\nexit 0\n' \
+      > "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    chmod +x "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    OUT="$(_port_run "$D")"; RC=$?
+    # The pattern names the REGRESSION branch specifically, not just
+    # "RED portability-sweep". Mutation-verified during this task's build: an
+    # earlier version matched the bare check id, and mutating the rc==1 arm
+    # away still passed — the rc!=0 "setup error" arm emitted a RED with the
+    # same id and echoed the sweep's tail (which contains the script name),
+    # so BOTH this assertion and the naming assertion below passed while the
+    # regression branch was dead. Pinning the branch's own wording is what
+    # makes the mutation bite.
+    _assert "9c-portability-new-failure-reds" 1 "$RC" "RED portability-sweep: NEW self-test failure" "$OUT"
+    if printf '%s\n' "$OUT" | grep 'RED portability-sweep: NEW self-test failure' | grep -q "pp-new-fail.sh"; then
+      echo "self-test (9c-portability-new-failure-is-named): PASS" >&2; PASSED=$((PASSED + 1))
+    else
+      echo "self-test (9c-portability-new-failure-is-named): FAIL (no NEW-failure RED line named the offending script): $OUT" >&2; FAILED=$((FAILED + 1))
+    fi
+    # EXACTLY ONE red. The fixture has three suites: one passing, one failing
+    # AND baselined, one failing and NOT baselined — so precisely one thing
+    # regressed. Asserting the COUNT (not just "a RED appeared") is what
+    # catches an over-broad output parser: the first version of this check
+    # matched the sweep's report body as well as its regression section and
+    # turned one regression into 54 REDs, 53 of them already-baselined
+    # scripts. Nothing in this suite noticed until the end-to-end injected-
+    # regression demo was run by hand.
+    _PORT_REDS="$(printf '%s\n' "$OUT" | grep -c 'RED portability-sweep')"
+    if [ "${_PORT_REDS:-0}" -eq 1 ]; then
+      echo "self-test (9c-portability-one-regression-yields-exactly-one-red): PASS" >&2; PASSED=$((PASSED + 1))
+    else
+      echo "self-test (9c-portability-one-regression-yields-exactly-one-red): FAIL (expected 1 RED, got ${_PORT_REDS} — the output parser is matching more than the regression section): $OUT" >&2; FAILED=$((FAILED + 1))
+    fi
+
+    # P3 — the symmetric half: a newly added script whose --self-test PASSES
+    # must NOT RED. A check that reddened on any new script would be useless.
+    D=$(_port_fixture c11-port-new-pass)
+    printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo fine; exit 0; fi\nexit 0\n' \
+      > "$D/repo/adapters/claude-code/hooks/pp-new-pass.sh"
+    chmod +x "$D/repo/adapters/claude-code/hooks/pp-new-pass.sh"
+    OUT="$(_port_run "$D")"; RC=$?
+    _assert "9c-portability-new-passing-script-is-green" 0 "$RC" "GREEN" "$OUT"
+
+    # P4 — runner present, baseline absent: RED. A half-installed mechanism
+    # reads as protection while providing none.
+    D=$(_port_fixture c11-port-no-baseline)
+    rm -f "$D/repo/docs/portability-baseline.txt"
+    OUT="$(_port_run "$D")"; RC=$?
+    _assert "9c-portability-missing-baseline-reds" 1 "$RC" "RED portability-sweep.*baseline is missing" "$OUT"
+
+    # P5 — depth guard: inside a sweep, the check skips instead of recursing,
+    # even when a real regression is present.
+    D=$(_port_fixture c11-port-depth)
+    printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then exit 1; fi\nexit 0\n' \
+      > "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    chmod +x "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" \
+           NL_PORTABILITY_SWEEP_ACTIVE=1 DOCTOR_PORTABILITY_ROOTS="hooks" \
+           bash "$SELF_TEST_HOOK" --portability "$D/repo" 2>&1)"; RC=$?
+    _assert "9c-portability-depth-guard-skips" 0 "$RC" "WARN portability-sweep.*depth guard" "$OUT"
+
+    # P6 — a baseline entry that now passes is WARNed (stale amnesty), never
+    # REDded. Silence here would let an obsolete exemption live forever.
+    D=$(_port_fixture c11-port-stale)
+    printf 'FAIL\thooks/pp-known-fail.sh\nFAIL\thooks/pp-pass.sh\n' > "$D/repo/docs/portability-baseline.txt"
+    OUT="$(_port_run "$D")"; RC=$?
+    _assert "9c-portability-stale-baseline-warns-not-reds" 0 "$RC" "WARN portability-sweep.*now PASS" "$OUT"
+
+    # P7 — the check is genuinely wired into --full, not only into the new
+    # --portability mode. Asserted on OUTPUT (not rc) because --full also runs
+    # every other check against a bare fixture.
+    D=$(_port_fixture c11-port-full)
+    printf '#!/bin/bash\nif [[ "${1:-}" == "--self-test" ]]; then echo "boom" >&2; exit 1; fi\nexit 0\n' \
+      > "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    chmod +x "$D/repo/adapters/claude-code/hooks/pp-new-fail.sh"
+    OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" \
+           NL_PORTABILITY_SWEEP_ACTIVE=0 DOCTOR_PORTABILITY_ROOTS="hooks" \
+           DOCTOR_PORTABILITY_PER_TIMEOUT=10 DOCTOR_PORTABILITY_BUDGET=90 \
+           bash "$SELF_TEST_HOOK" --full "$D/repo" 2>&1)"; RC=$?
+    if printf '%s' "$OUT" | grep -q "RED portability-sweep"; then
+      echo "self-test (9c-portability-wired-into-full): PASS" >&2; PASSED=$((PASSED + 1))
+    else
+      echo "self-test (9c-portability-wired-into-full): FAIL (--full did not run check 9): $OUT" >&2; FAILED=$((FAILED + 1))
+    fi
+  else
+    echo "self-test (9c-portability): FAIL (scripts/portability-sweep.sh or hooks/lib/portable-timeout.sh not found next to this hook — check 9 went UNTESTED)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- selftest-exclusions (macos-portability M6): the exclusion ledger must
+  # never become unenforced text. Three scenarios; all use "$BASH" rather than
+  # a bare `bash` so the verdict is for the interpreter actually under test.
+  # RED: a ledger with no reader — the exact "comment a future sweep ignores"
+  # failure M6 was written to prevent.
+  D=$(_scenario_dir m6-excl-red)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '%s\n' "adapters/claude-code/attic/x.sh  a reason long enough to clear the minimum bar" \
+    > "$D/repo/adapters/claude-code/config/selftest-sweep-exclusions.txt"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" "$BASH" "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "m6-exclusions-ledger-without-reader-red" 1 "$RC" "RED selftest-exclusions" "$OUT"
+
+  # RED: a reader that carries no --self-test entrypoint — its C1/C2/C3/C4
+  # controls would be unverifiable, which is the same theater one level down.
+  D=$(_scenario_dir m6-excl-red2)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '%s\n' "adapters/claude-code/attic/x.sh  a reason long enough to clear the minimum bar" \
+    > "$D/repo/adapters/claude-code/config/selftest-sweep-exclusions.txt"
+  printf '%s\n' '#!/bin/bash' 'exit 0' \
+    > "$D/repo/adapters/claude-code/scripts/selftest-sweep-exclusions.sh"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" "$BASH" "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "m6-exclusions-reader-without-selftest-red" 1 "$RC" "RED selftest-exclusions" "$OUT"
+
+  # GREEN: ledger + reader declaring --self-test.
+  D=$(_scenario_dir m6-excl-green)
+  _stamp_claim_honesty_green "$D"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '%s\n' "adapters/claude-code/attic/x.sh  a reason long enough to clear the minimum bar" \
+    > "$D/repo/adapters/claude-code/config/selftest-sweep-exclusions.txt"
+  printf '%s\n' '#!/bin/bash' 'case "${1:-}" in --self-test) exit 0 ;; esac' 'exit 0' \
+    > "$D/repo/adapters/claude-code/scripts/selftest-sweep-exclusions.sh"
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" "$BASH" "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "m6-exclusions-wired-green" 0 "$RC" "" "$OUT"
+  if printf '%s' "$OUT" | grep -q "selftest-exclusions"; then
+    echo "self-test (m6-exclusions-green-is-silent): FAIL (green fixture still mentioned selftest-exclusions)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (m6-exclusions-green-is-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2
   if [[ "$FAILED" -gt 0 ]]; then
@@ -5352,6 +6882,10 @@ MODE="${1:-quick}"
 case "$MODE" in
   --quick|quick) MODE="quick" ;;
   --full|full) MODE="full" ;;
+  # --portability runs ONLY check 9. `--full` also runs it, but --full is a
+  # multi-minute run of every live self-test; an author who just touched a
+  # shell script wants the portability answer alone.
+  --portability|portability) MODE="portability" ;;
   *) MODE="quick" ;;
 esac
 
@@ -5396,11 +6930,27 @@ if [[ "${NL_SESSIONSTART_ORIGIN:-0}" == "1" ]]; then
   fi
 fi
 
-run_quick_checks "$LIVE_HOME" "$REPO_ROOT"
+if [[ "$MODE" == "portability" ]]; then
+  check_portability_sweep "$LIVE_HOME" "$REPO_ROOT"
+else
+  run_quick_checks "$LIVE_HOME" "$REPO_ROOT"
 
-if [[ "$MODE" == "full" ]]; then
-  check_selftest_sweep "$LIVE_HOME"
-  check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
+  # SINGLE MODE==full block (harness-review Major, fixed): a mis-indented
+  # stray `fi` previously split what should have been ONE full-mode block
+  # into two sequential ones, so check_selftest_sweep and
+  # check_master_drift_selftest each ran TWICE per --full invocation --
+  # doubling --full's multi-minute dominant runtime cost and duplicating
+  # every sweep RED line. All four full-mode-only checks now run from
+  # exactly this one block, exactly once each. Self-test
+  # "8-selftest-sweep-not-duplicated" counts the RED lines a single failing
+  # fixture hook produces (must be exactly 1) so a future regression of
+  # this exact shape fails loudly instead of merely costing time.
+  if [[ "$MODE" == "full" ]]; then
+    check_selftest_sweep "$LIVE_HOME"
+    check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
+    check_portability_sweep "$LIVE_HOME" "$REPO_ROOT"
+    check_selftest_exclusions_selftest "$REPO_ROOT"
+  fi
 fi
 
 if [[ "$RED_COUNT" -eq 0 ]]; then

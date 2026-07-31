@@ -250,6 +250,167 @@ _verify_normalized_copy() {
 }
 
 # ============================================================
+# Self-sync guard (SELF-SYNC-01, 2026-07-29)
+# ============================================================
+# PROVEN data loss, twice in ten minutes on 2026-07-29 once the post-commit
+# auto-deploy hook was armed: on a SYMLINK-based install, ~/.claude/hooks is
+# a symlink back into adapters/claude-code/hooks. install.sh then runs
+#   sync_directory "$ADAPTER_DIR/hooks/lib" "$CLAUDE_DIR/hooks/lib"
+# whose TARGET resolves, THROUGH that symlink, onto the SOURCE ITSELF:
+#   source: /Users/.../adapters/claude-code/hooks/lib
+#   target: /Users/.../adapters/claude-code/hooks/lib   <- SAME DIRECTORY
+# sync_directory's existing `[ -L "$dst" ]` fast path never sees this — the
+# PARENT is the symlink, the leaf (lib) is a real directory — so control
+# reaches `rm -rf "$dst"`, which deletes the source tree, and the copy loop
+# then finds an empty source: "synced hooks/lib/ (0 files)". 19 files and
+# ~12,400 lines (admission-lib.sh among them) were destroyed that way.
+#
+# The fix is DETECTION, not redesign: resolve both sides to a physical path
+# and SKIP the sync when they name the same object, loudly and with the
+# reason. On a copy-based install (the Windows machines) source and target
+# are genuinely different paths, so the guard never fires and behaviour there
+# is byte-identical to before — that is the acceptance bar, pinned by
+# tests/install-self-sync-guard-test.sh scenarios S5/S6/S7/S9.
+#
+# Defined here, BEFORE any MODE branch, so --dry-run's preview can use it too
+# (a dry run that promises a sync the real run will skip is a lie).
+
+# Print the PHYSICAL (fully symlink-resolved) absolute path of $1 on stdout.
+#
+# Handles, per the four topologies this guard must cover: symlinks anywhere
+# in the path (including a symlinked PARENT with a real leaf — the topology
+# that caused the loss), `..` components, trailing slashes, relative input,
+# and a path that DOES NOT EXIST YET (resolve the deepest existing ancestor,
+# re-append the missing tail).
+#
+# Portability: stock macOS has no `realpath` and its `readlink` has no -f, so
+# `cd ... && pwd -P` is the only universally available idiom. Works on bash
+# 3.2.57 (macOS system bash) and 5.x alike — no arrays, no `local -n`, no
+# process substitution, no GNU-only flags.
+resolve_real_path() {
+  local p="$1"
+  local tail="" dir base rdir link
+  local depth=0
+
+  [ -n "$p" ] || return 1
+  # Make relative input absolute before any resolution.
+  case "$p" in
+    /*) : ;;
+    *)  p="$PWD/$p" ;;
+  esac
+  # Strip trailing slashes ("/foo/" and "/foo///" == "/foo"; bare "/" stays).
+  while [ "$p" != "/" ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+
+  # Anything that exists as a directory: `cd` follows every symlink in the
+  # chain (leaf AND ancestors) and `pwd -P` prints the physical answer, which
+  # also collapses any `..` components. This is the case that matters for
+  # every sync_directory call.
+  if [ -d "$p" ]; then
+    (cd "$p" 2>/dev/null && pwd -P) || return 1
+    return 0
+  fi
+
+  # A symlink to a FILE (or a dangling symlink): `cd` cannot help, so follow
+  # the link chain by hand. Bounded at 40 hops so a symlink cycle terminates
+  # instead of hanging the installer.
+  while [ -L "$p" ] && [ "$depth" -lt 40 ]; do
+    link="$(readlink "$p" 2>/dev/null)" || break
+    [ -n "$link" ] || break
+    case "$link" in
+      /*) p="$link" ;;
+      *)  dir="${p%/*}"
+          if [ -z "$dir" ] || [ "$dir" = "$p" ]; then dir="/"; fi
+          p="$dir/$link" ;;
+    esac
+    while [ "$p" != "/" ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+    depth=$((depth + 1))
+    if [ -d "$p" ]; then
+      (cd "$p" 2>/dev/null && pwd -P) || return 1
+      return 0
+    fi
+  done
+
+  # A plain file, or a path that does not exist yet: peel leaf components
+  # until an existing directory is found, resolve THAT physically, and
+  # re-append what was peeled. This is what makes a not-yet-created target
+  # comparable at all (without it the guard could not run before first
+  # install).
+  while :; do
+    base="${p##*/}"
+    dir="${p%/*}"
+    if [ -z "$dir" ]; then dir="/"; fi
+    if [ -n "$tail" ]; then tail="$base/$tail"; else tail="$base"; fi
+    if [ -d "$dir" ]; then
+      rdir="$(cd "$dir" 2>/dev/null && pwd -P)" || return 1
+      if [ "$rdir" = "/" ]; then
+        printf '/%s\n' "$tail"
+      else
+        printf '%s/%s\n' "$rdir" "$tail"
+      fi
+      return 0
+    fi
+    if [ "$dir" = "/" ]; then
+      printf '/%s\n' "$tail"
+      return 0
+    fi
+    p="$dir"
+  done
+}
+
+# Returns 0 (and prints the shared physical path) when sync source $1 and
+# sync target $2 are the SAME object on disk; returns 1 — the normal,
+# copy-based-install case — otherwise. Deliberately fails CLOSED as "not the
+# same" if either side cannot be resolved, so an unresolvable path can never
+# silently suppress a legitimate sync.
+_sync_self_check() {
+  local src_real dst_real
+  src_real="$(resolve_real_path "$1" 2>/dev/null)" || return 1
+  dst_real="$(resolve_real_path "$2" 2>/dev/null)" || return 1
+  [ -n "$src_real" ] || return 1
+  [ -n "$dst_real" ] || return 1
+  [ "$src_real" = "$dst_real" ] || return 1
+  printf '%s\n' "$src_real"
+  return 0
+}
+
+# The single skip announcement used by every sync path. Returns 0 when the
+# sync WAS a self-sync (caller must return without touching the filesystem),
+# 1 when the caller should proceed exactly as before.
+#   $1 src   $2 dst   $3 label   $4 "file" | "directory"
+sync_is_self_sync() {
+  local shared
+  shared="$(_sync_self_check "$1" "$2")" || return 1
+  echo "  SKIPPED $3 -- source and target are the SAME $4 on disk:"
+  echo "      $shared"
+  echo "    WHY: this machine has a SYMLINK-based install (a ~/.claude/ entry"
+  echo "    links back into the repo), so this sync's target resolves onto its"
+  echo "    own source. Syncing it would delete the source first and then find"
+  echo "    nothing left to copy back -- that is exactly how"
+  echo "    adapters/claude-code/hooks/lib was destroyed on 2026-07-29."
+  echo "    This is EXPECTED on a symlink-based machine and is NOT an error:"
+  echo "    the live path already serves the repo's files directly, so there"
+  echo "    is nothing to deploy. Copy-based installs are unaffected."
+  return 0
+}
+
+# Returns 0 when $1 resolves to a path INSIDE the repo's adapter dir — i.e. a
+# "live ~/.claude/" path that is really a REPO file reached through a
+# symlink. Used to stop the prune steps (which delete live-side files whose
+# repo twin is gone) from deleting repo files on a symlinked install: same
+# root cause as the sync bug above, different code path.
+_resolves_into_adapter_dir() {
+  local p_real adapter_real
+  p_real="$(resolve_real_path "$1" 2>/dev/null)" || return 1
+  adapter_real="$(resolve_real_path "$ADAPTER_DIR" 2>/dev/null)" || return 1
+  [ -n "$p_real" ] || return 1
+  [ -n "$adapter_real" ] || return 1
+  case "$p_real" in
+    "$adapter_real"|"$adapter_real"/*) return 0 ;;
+  esac
+  return 1
+}
+
+# ============================================================
 # --help
 # ============================================================
 
@@ -537,6 +698,16 @@ if [ "$MODE" = "dry-run" ]; then
     local src="$1"
     local dst="$2"
     local label="$3"
+    # SELF-SYNC-01: the real flow will SKIP this sync (source and target are
+    # the same path on disk), so the preview must say so rather than promise
+    # a replace/relink that never happens. Not counted as a change.
+    local shared
+    if shared="$(_sync_self_check "$src" "$dst")"; then
+      echo "  [WOULD SKIP -- self-sync guard]     $dst ($label)"
+      echo "      source and target are the same path on disk: $shared"
+      echo "      symlink-based install; nothing to deploy -- this is NOT an error."
+      return
+    fi
     if [ -e "$dst" ] && [ ! -L "$dst" ]; then
       echo "  [WOULD REPLACE -- backup existing] $dst ($label)"
       backups=$((backups + 1))
@@ -951,6 +1122,13 @@ sync_file() {
   local dst="$2"
   local label="$3"
 
+  # SELF-SYNC-01: bail BEFORE the `rm -f "$dst"` below. When $dst resolves
+  # onto $src (symlinked parent), that rm deletes the source file and the
+  # following `ln -s` leaves a dangling link pointing at what it just erased.
+  if sync_is_self_sync "$src" "$dst" "$label" "file"; then
+    return 0
+  fi
+
   if ! backup_if_real_file "$dst"; then
     echo "  SKIPPED sync of $label -- backup verification failed (see error above); live file left untouched" >&2
     return 1
@@ -975,6 +1153,12 @@ sync_directory() {
   local src="$1"
   local dst="$2"
   local label="$3"
+
+  # SELF-SYNC-01: bail BEFORE the `rm -rf "$dst"` below. This is the guard
+  # that would have saved hooks/lib on 2026-07-29.
+  if sync_is_self_sync "$src" "$dst" "$label/" "directory"; then
+    return 0
+  fi
 
   if ! backup_if_real_file "$dst"; then
     echo "  SKIPPED sync of $label/ -- backup verification failed (see error above); live directory left untouched" >&2
@@ -1118,6 +1302,14 @@ prune_stale_rules() {
   # If ~/.claude/rules is a symlink to the repo dir, there is nothing to
   # prune independently -- it always mirrors the repo exactly.
   [ -L "$live_rules" ] && return 0
+  # SELF-SYNC-01, same root cause one level up: ~/.claude itself (or any
+  # ancestor) may be the symlink, leaving `rules` a REAL directory that is
+  # nonetheless the repo's own rules/. `rm -f` here would then delete repo
+  # files. Nothing to prune in that case by definition -- live IS repo.
+  if _sync_self_check "$repo_rules" "$live_rules" >/dev/null 2>&1; then
+    echo "  (skipping rules/ prune -- live rules/ IS the repo's rules/ on this symlinked install)"
+    return 0
+  fi
 
   local pruned=0
   shopt -s nullglob 2>/dev/null || true
@@ -1188,6 +1380,14 @@ prune_retired_files() {
   for rel in "${PRUNED_FILES[@]}"; do
     f="$CLAUDE_DIR/$rel"
     if [ -f "$f" ]; then
+      # SELF-SYNC-01: on a symlinked install this "live" path resolves INTO
+      # the repo, so the rm below would delete a REPO file rather than a
+      # stale live copy. If the repo still carries the file it is not
+      # retired-but-lingering, it is the source of truth -- leave it alone.
+      if _resolves_into_adapter_dir "$f"; then
+        echo "  (skipping prune of retired $rel -- it resolves into the repo on this symlinked install, not a stale live copy)"
+        continue
+      fi
       rm -f "$f"
       echo "  pruned retired $rel (superseded — see install.sh PRUNED_FILES)"
     fi

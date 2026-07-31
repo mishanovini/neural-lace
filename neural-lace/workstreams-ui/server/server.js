@@ -703,10 +703,21 @@ function buildBacklogPayload() {
   };
   const bp = backlogMdPath();
   const filePathAbs = payloadSchema.isAbsoluteHref(bp) ? bp : '';
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 (class sweep of the operator's "the
+  // links don't work"): backlog.js used to turn `file_path` into a real
+  // `file://` anchor, which a browser loading this page over http silently
+  // refuses to navigate — PROVEN dead live at :7733 (the ONE file:// anchor
+  // in the whole rendered DOM was this pane's "open backlog.md"). Same cure
+  // as inbox.js/roadmap.js: resolve the SAME absolute path against the SAME
+  // project map (deriveLib.projectDocRefFor) so the client drills through
+  // the EXISTING /api/doc viewer instead. null when the file lies outside
+  // every configured/discovered project root — the client then degrades to
+  // plain text + copy, never a fabricated link.
   return {
     ok: true,
     generated_at: new Date().toISOString(),
     file_path: filePathAbs,
+    file_doc_ref: filePathAbs ? deriveLib.projectDocRefFor(filePathAbs) : null,
     compact_cap: BACKLOG_COMPACT_CAP,
     counts: counts,
     compact: compact,
@@ -863,13 +874,24 @@ function buildWaitingItems(events) {
     if (block && hasGenuineContext(block.body)) {
       out.push({
         needs_you_id: e.needs_you_id, defect: false, title: block.title, body: block.body,
-        links: block.links, session_id: e.session_id || block.session || '', added: block.added,
+        links: block.links,
+        // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: parallel to `links` — entry i
+        // is {project, path} when links[i] is an absolute path under a known
+        // project root (so the client opens it in the EXISTING /api/doc
+        // viewer), else null (plain text + copy). Never a `file://` href.
+        link_refs: (block.links || []).map((l) => (
+          payloadSchema.isAbsoluteHref(l) && !/^https?:\/\//i.test(l) ? deriveLib.projectDocRefFor(l) : null
+        )),
+        session_id: e.session_id || block.session || '', added: block.added,
       });
     } else {
       out.push({
         needs_you_id: e.needs_you_id, defect: true,
         message: 'context missing — session violated §3',
-        raw_link: needsYouMdPath(), session_id: e.session_id || '',
+        raw_link: needsYouMdPath(),
+        // Same cure inbox.js's pointer rows already use for this EXACT path.
+        doc_ref: deriveLib.projectDocRefFor(needsYouMdPath()),
+        session_id: e.session_id || '',
       });
     }
   });
@@ -990,7 +1012,14 @@ function buildAskDetailPayload(askId) {
   reg.ask_id = askId;
   const events = deriveLib.readAskEvents(askId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
   const planRows = deriveLib.computePlanRows(reg, events, auditor.getBadgesForAsk);
-  const narrative = events.map((e) => ({ ts: e.ts || '', summary: narrativeSummary(e), evidence_link: e.evidence_link || '' }));
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: every absolute-path link the ask
+  // detail carries gets a doc_ref alongside it, so asks.js can route it
+  // through the EXISTING /api/doc viewer instead of a dead `file://` anchor.
+  const narrative = events.map((e) => ({
+    ts: e.ts || '', summary: narrativeSummary(e), evidence_link: e.evidence_link || '',
+    evidence_doc_ref: e.evidence_link && !/^https?:\/\//i.test(e.evidence_link)
+      ? deriveLib.projectDocRefFor(e.evidence_link) : null,
+  }));
   const waitingItems = buildWaitingItems(events);
   const artifacts = buildArtifacts(events);
   const markers = deriveLib.readDispatchProvenanceMarkers();
@@ -1004,6 +1033,14 @@ function buildAskDetailPayload(askId) {
     repo: reg.repo || '',
     status: reg.status || 'active',
     verbatim_ref: reg.verbatim_ref || '',
+    // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: a capture reference is
+    // `<abs transcript path>#<prompt offset>`; the `#…` fragment is stripped
+    // before resolution (it addresses an offset WITHIN the file, not a
+    // different file). In practice these live under ~/.claude/projects and
+    // resolve to null — the client then renders plain text + copy, which is
+    // the honest fallback, never a dead `file://` anchor.
+    verbatim_doc_ref: reg.verbatim_ref && !/^https?:\/\//i.test(reg.verbatim_ref)
+      ? deriveLib.projectDocRefFor(String(reg.verbatim_ref).replace(/#.*$/, '')) : null,
     plan_slugs: reg.plan_slugs || [],
     narrative: narrative,
     plan_rows: planRows,
@@ -1085,12 +1122,30 @@ const server = http.createServer((req, res) => {
   const q = parsedUrl.query || {};
 
   if (url === '/' || url === '/index.html') return serveStatic(res, 'index.html');
+  // Round 16 deliverable 2: the shared markdown renderer both the Docs
+  // panel (app.js) and the plan-doc modal (roadmap.js) call.
+  if (url === '/md-render.js') return serveStatic(res, 'md-render.js');
+  // Round 17 deliverable 2: the shared fenced-command renderer (inbox.js +
+  // app.js's Q2 "what needs me" cards both call it).
+  if (url === '/command-render.js') return serveStatic(res, 'command-render.js');
   if (url === '/app.js') return serveStatic(res, 'app.js');
   if (url === '/app.css') return serveStatic(res, 'app.css');
   if (url === '/asks.js') return serveStatic(res, 'asks.js');
   if (url === '/todo.js') return serveStatic(res, 'todo.js');
   if (url === '/backlog.js') return serveStatic(res, 'backlog.js');
-  if (url === '/favicon.ico') { res.writeHead(204); res.end(); return; }
+  // R17 deliverable 1 (audit F7): the tab used to carry NO icon at all (a
+  // deliberate 204) — an inline SVG (an emoji glyph, no external asset,
+  // no build step) is the simplest fix; browsers happily render an SVG
+  // response at /favicon.ico regardless of the URL's own extension, keyed
+  // off the Content-Type below, not the path.
+  if (url === '/favicon.ico') {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">' +
+      '<text x="32" y="46" font-size="44" text-anchor="middle">🛩️</text></svg>';
+    const h = {}; h[CT] = 'image/svg+xml'; h['Cache-Control'] = 'public, max-age=86400';
+    res.writeHead(200, h);
+    res.end(svg);
+    return;
+  }
 
   // ---- /api/asks — ask-rooted-workstreams-p1 Task 11 landing payload
   // (project groups + a collapsed `completed` group; `?status=` filter,
@@ -1176,6 +1231,16 @@ const server = http.createServer((req, res) => {
 
     const operatorItemsOut = parsed.operatorItems.map((it) => ({ index: it.index, text: it.text, checked: it.checked }));
     const rawLinkAbs = payloadSchema.isAbsoluteHref(needsYouMdPath()) ? needsYouMdPath() : '';
+    // R17 deliverable 2a (operator, live: "the links on the Inbox tab don't
+    // work"): PROVEN root cause — the client rendered raw_link as a real
+    // `file://` href, which a browser loading this page over http silently
+    // blocks (the same class row 70 already fixed for roadmap plan links,
+    // via the in-page doc modal + /api/doc instead of a file:// anchor).
+    // doc_ref resolves the SAME rawLinkAbs against the SAME project map
+    // plan_doc already uses (deriveLib.projectDocRefFor) — null when the
+    // path lies outside every configured/discovered project root, so the
+    // client can degrade to an honest no-op rather than a fabricated link.
+    const rawLinkDocRef = rawLinkAbs ? deriveLib.projectDocRefFor(rawLinkAbs) : null;
     const pointerItemsOut = parsed.pointerItems.map((p) => {
       const dec = byId[p.needsYouId];
       return {
@@ -1188,6 +1253,7 @@ const server = http.createServer((req, res) => {
         operator_override: p.operatorOverride,
         body: (dec && dec.body) || '',
         raw_link: rawLinkAbs,
+        doc_ref: rawLinkDocRef,
       };
     });
 

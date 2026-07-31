@@ -72,6 +72,11 @@ agents_dir() { printf '%s/agents' "$(hb_state_dir)"; }
 
 _now() { date -u +%s 2>/dev/null || echo 0; }
 
+# _mtime_epoch <file> — file mtime in epoch seconds, GNU first then BSD.
+# `stat -c` is GNU/MSYS; `stat -f` is BSD/macOS. Emitting 0 when neither works
+# is deliberate: absence must read as maximally STALE, never as fresh.
+_mtime_epoch() { stat -c %Y "$1" 2>/dev/null || stat -f %m "$1" 2>/dev/null || echo 0; }
+
 # --- json field pluck (string or number), tolerant of our own flat writer ----
 _pluck() { # <file> <key>
   sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$1" 2>/dev/null | head -1
@@ -80,7 +85,12 @@ _pluck_num() { # <file> <key>
   sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\([0-9][0-9]*\).*/\1/p' "$1" 2>/dev/null | head -1
 }
 _pluck_bool() { # <file> <key>
-  sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p' "$1" 2>/dev/null | head -1
+  # `-E` (ERE), not BRE `\(true\|false\)`: `\|` alternation is a GNU sed
+  # extension. BSD sed matched nothing, so `long` always read EMPTY on macOS
+  # and the `--long` 3x grace silently never applied — the file's own
+  # "long-step agent within 3x grace not surfaced" scenario failed for that
+  # reason (PORTABILITY-TOUCH-D-SWEEP-01, adjacent GNU-ism).
+  sed -nE 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*(true|false).*/\1/p' "$1" 2>/dev/null | head -1
 }
 
 # --- minimal JSON string escape (backslash, quote, strip control chars) ------
@@ -132,10 +142,17 @@ cmd_watch() {
     local id step note ts long thr age
     id="$(_pluck "$f" agent_id)"; step="$(_pluck "$f" step)"; note="$(_pluck "$f" note)"
     ts="$(_pluck_num "$f" ts)"; long="$(_pluck_bool "$f" long)"
-    # ts fallback → file mtime (stat is the most portable on MSYS/Git Bash), so a
-    # corrupt ts still ages out; 0 if even that fails, which reads as maximally stale
-    # (absence must never read as fresh — the lesson's core point).
-    [[ -z "$ts" ]] && ts="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+    # ts fallback → file mtime, so a corrupt ts still ages out; 0 if even that
+    # fails, which reads as maximally stale (absence must never read as fresh —
+    # the lesson's core point).
+    #
+    # `stat -c` is GNU-only; BSD/macOS spells it `stat -f %m`. With only the
+    # GNU spelling this ALWAYS fell through to `echo 0` on macOS, i.e. every
+    # corrupt-ts heartbeat read as 1970 and was reported stalled without the
+    # mtime ever being consulted. That silently cancelled the un-aged fixture
+    # in scenario 6 below: two portability bugs, one green assertion
+    # (PORTABILITY-TOUCH-D-SWEEP-01).
+    [[ -z "$ts" ]] && ts="$(_mtime_epoch "$f")"
     thr=$(( stale_min * 60 ))
     [[ "$long" == "true" ]] && thr=$(( thr * 3 ))
     age=$(( now - ts ))
@@ -181,7 +198,7 @@ cmd_reap() {
   local now f ts; now="$(_now)"
   for f in "$dir"/*.json; do
     [[ -e "$f" ]] || continue
-    ts="$(_pluck_num "$f" ts)"; [[ -z "$ts" ]] && ts="$(stat -c %Y "$f" 2>/dev/null || echo 0)"
+    ts="$(_pluck_num "$f" ts)"; [[ -z "$ts" ]] && ts="$(_mtime_epoch "$f")"
     if [[ $(( (now - ts) / 60 )) -gt "$max_min" ]]; then
       rm -f "$f" "${f%.json}.ack" 2>/dev/null
     fi
@@ -194,6 +211,11 @@ run_self_test() {
   export HEARTBEAT_STATE_DIR="$tmp/hb"
   local pass=0 fail=0
   _ok() { if eval "$2"; then echo "  ok   $1"; pass=$((pass+1)); else echo "  FAIL $1"; fail=$((fail+1)); fi; }
+
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=../hooks/lib/portable-time.sh
+  . "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source hooks/lib/portable-time.sh" >&2; return 1; }
 
   # 1. emit writes into the agents/ namespace (NOT the session board root)
   cmd_emit --agent "agent-alpha" --step "started" --note "boot"
@@ -225,8 +247,22 @@ run_self_test() {
 
   # 6. corrupt ts falls back to file mtime (still ages out, never silently fresh)
   printf '{"schema":"agent-heartbeat/v1","agent_id":"agent-badts","step":"x","note":"","ts":,"pid":1,"long":false}\n' > "$tmp/hb/agents/agent-badts.json"
-  touch -d "@$old" "$tmp/hb/agents/agent-badts.json" 2>/dev/null   # $old = 40 min ago (epoch)
+  # The mtime IS the thing under test here (the ts field is deliberately
+  # corrupt), so an un-aged fixture makes this scenario assert the opposite of
+  # its name. Pre-sweep: bare GNU-only `touch -d "@$old"`, which failed
+  # silently on macOS and left the file fresh (PORTABILITY-TOUCH-D-SWEEP-01).
+  nl_touch_age "$tmp/hb/agents/agent-badts.json" $((40*60)) \
+    || { echo "  FAIL could not age agent-badts.json — mtime-fallback scenario cannot be trusted"; fail=$((fail+1)); }
   _ok "corrupt-ts agent ages out via mtime fallback"          '[[ "$(cmd_watch)" == *agent-badts* ]]'
+
+  # 6a. NEGATIVE control for the same fallback: a corrupt ts whose FILE is
+  # fresh must NOT be surfaced. Without this the previous assertion is
+  # satisfied by any implementation that treats an unparseable ts as 1970 —
+  # which is exactly what `stat -c %Y || echo 0` did on macOS, so the mtime
+  # was never actually read and the scenario's name was false.
+  printf '{"schema":"agent-heartbeat/v1","agent_id":"agent-badts-fresh","step":"x","note":"","ts":,"pid":1,"long":false}\n' > "$tmp/hb/agents/agent-badts-fresh.json"
+  _ok "corrupt-ts agent with a FRESH mtime is NOT surfaced (mtime really is read)" '[[ "$(cmd_watch)" != *agent-badts-fresh* ]]'
+  rm -f "$tmp/hb/agents/agent-badts-fresh.json"
 
   # 6b. conclude removes a stale agent's heartbeat → never surfaced (completion signal)
   printf '{"schema":"agent-heartbeat/v1","agent_id":"agent-done","step":"finished","note":"","ts":%s,"pid":1,"long":false}\n' "$old" > "$tmp/hb/agents/agent-done.json"

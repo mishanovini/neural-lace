@@ -256,10 +256,24 @@
 set -u
 
 _NY_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+_NY_SELF_PATH="$_NY_SELF_DIR/needs-you.sh"
 _NY_NLPATHS="$_NY_SELF_DIR/../hooks/lib/nl-paths.sh"
 if [[ -f "$_NY_NLPATHS" ]]; then
   # shellcheck disable=SC1090
   source "$_NY_NLPATHS"
+fi
+
+# state-json-init.sh: shared VALIDITY-guarded JSON state-file initializer
+# (2026-07-29 incident fix — see that file's header for the full incident +
+# contract). A hard dependency, same rung as jq: this script's whole safety
+# story for _ny_ensure_state depends on it.
+_NY_STATE_JSON_INIT="$_NY_SELF_DIR/lib/state-json-init.sh"
+if [[ -f "$_NY_STATE_JSON_INIT" ]]; then
+  # shellcheck disable=SC1090
+  source "$_NY_STATE_JSON_INIT"
+else
+  echo "needs-you.sh: required library missing: $_NY_STATE_JSON_INIT" >&2
+  exit 1
 fi
 
 err() { echo "needs-you.sh: $*" >&2; }
@@ -429,11 +443,23 @@ _ny_operator_todo_append_pointer() {
 
 _ny_ledger_file() { printf '%s/ledger.json' "$(_ny_state_dir)"; }
 
+#
+# 2026-07-27 INCIDENT FIX: this used to be an EXISTENCE-only guard
+# (`[[ -f "$f" ]] || echo '{...}' > "$f"`) — a file that existed but was
+# empty/truncated/malformed never got re-initialized, and every subsequent
+# `jq` read on it failed for the life of the file (this is exactly what
+# happened to the live ledger.json: a 1-byte "\n" file sat unreadable for
+# ~2 days). Delegates to the shared nl_state_json_ensure (scripts/lib/
+# state-json-init.sh), which re-initializes on ABSENT *or* INVALID content,
+# salvaging any pre-existing bytes to a `.corrupt-<date>.bak` file first
+# (constitution §9 "salvage before reset") rather than silently discarding
+# them.
 _ny_ensure_state() {
   local dir; dir="$(_ny_state_dir)"
   mkdir -p "$dir" 2>/dev/null || die "cannot create state dir: $dir"
   local f; f="$(_ny_ledger_file)"
-  [[ -f "$f" ]] || echo '{"schema_version":1,"items":[]}' > "$f"
+  nl_state_json_ensure "$f" '{"schema_version":1,"items":[]}' \
+    || die "cannot initialize ledger (see state-json-init error above): $f"
 }
 
 _ny_now() { date -u +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || echo "unknown"; }
@@ -462,9 +488,32 @@ _ny_gen_id() {
 }
 
 # Atomic write: content -> tmpfile -> mv.
+#
+# WRITE SAFETY (2026-07-27 incident, second independent layer): refuses to
+# ever commit empty or non-JSON content over the real ledger. This is a
+# backstop, not the primary fix (the primary fix is the bash-3.2 array-
+# expansion bug at cmd_add's jq call site, see its own comment) — but ANY
+# future bug that causes a caller's jq pipeline to silently produce empty
+# output (a jq crash, an unhandled edge case, an environment hiccup) would
+# otherwise still sail through here and truncate the real ledger to
+# whatever `printf '%s\n' "$content"` produces for empty content: a lone
+# newline byte — exactly the incident's observed corruption. Returns 1
+# (caller decides fatal-vs-best-effort) instead of ever writing; the
+# on-disk ledger is left completely untouched on rejection.
 _ny_write_ledger() {
   local content="$1"
   local f; f="$(_ny_ledger_file)"
+  # NOTE: deliberately `jq -e 'type'`, NOT `jq empty` — `jq empty` treats
+  # whitespace-only/empty input as a vacuous success (zero JSON documents to
+  # iterate over is not an "error" to the `empty` filter), which would have
+  # let this exact guard wave through the incident's own corrupt shape.
+  # `-e 'type'` requires an actual JSON value to be produced. See
+  # scripts/lib/state-json-init.sh's matching comment for the full
+  # jq-exit-code reasoning (including why `type` and not bare `-e '.'`).
+  if [[ -z "$content" ]] || ! printf '%s' "$content" | jq -e 'type' >/dev/null 2>&1; then
+    err "REFUSING to write ledger: computed content is empty or not valid JSON — this would have silently wiped $f (the exact 2026-07-27 incident shape). Ledger left untouched; the caller's change was NOT recorded."
+    return 1
+  fi
   local tmp; tmp=$(mktemp "${f}.XXXXXX") || die "mktemp failed"
   printf '%s\n' "$content" > "$tmp" || { rm -f "$tmp"; die "write to tmpfile failed"; }
   mv "$tmp" "$f" || { rm -f "$tmp"; die "atomic rename failed"; }
@@ -732,8 +781,33 @@ cmd_add() {
         lint_warnings: $lint_warnings
       }]
     ' \
-    --args -- "${links[@]}")
-  _ny_write_ledger "$new"
+    --args -- "${links[@]+"${links[@]}"}")
+  # BASH 3.2 ROOT-CAUSE NOTE (2026-07-27 incident): this used to be plain
+  # "${links[@]}". Under `set -u` (line ~256), bash <4.4 — including macOS's
+  # shipped /bin/bash 3.2.57, this repo's portability floor — treats
+  # expanding an array that has ZERO elements as an unbound-variable
+  # reference and aborts. Since `add` is called with no --link flags far
+  # more often than with any, this fired on nearly every real invocation run
+  # under plain `/bin/bash`: the command substitution above died mid-jq-call,
+  # $new came back empty, and the unconditional _ny_write_ledger("$new")
+  # below then wrote a 1-byte "\n" over the real ledger — a byte-for-byte
+  # reproduction of the incident's corrupt ledger.json (see T34 self-test
+  # scenario, and _ny_write_ledger's own content-validity guard below, which
+  # is the second, independent layer that now refuses to ever commit that
+  # empty content in the first place). The `${arr[@]+"${arr[@]}"}` form is
+  # the portable idiom: it distinguishes "array is unset" from "array is set
+  # but has zero elements" and expands to nothing (not an error) in the
+  # latter case, on both bash 3.2 and modern bash.
+  #
+  # CONVERGENT FIX NOTE (2026-07-29): the operator-spawned bootstrap-migrate
+  # session (7cd2074) found the SAME root cause independently, plus its
+  # downstream recursion: cmd_bootstrap_migrate's own cmd_add emptied the
+  # ledger, so _ny_ledger_has_legacy_migration_marker could never see the
+  # marker it had just written, and add -> render -> bootstrap-migrate
+  # recursed until killed. Its explicit emptiness guard is kept below as a
+  # third, cheapest layer in front of the write.
+  [[ -n "$new" ]] || die "add: failed to build the updated ledger (jq produced no output); refusing to write an empty ledger.json"
+  _ny_write_ledger "$new" || die "cmd_add: refusing to continue — ledger write was rejected (see previous error); nothing was corrupted, but this entry was NOT recorded"
 
   cmd_render >/dev/null
 
@@ -841,7 +915,7 @@ cmd_resolve() {
     err "resolve: not found: $id"
     return 1
   fi
-  _ny_write_ledger "$new"
+  _ny_write_ledger "$new" || { err "resolve: aborting — ledger write was rejected (see previous error); $id was NOT marked resolved"; return 1; }
   cmd_render >/dev/null
 }
 
@@ -879,7 +953,13 @@ cmd_expire() {
         else . end
       )
     ')
-  _ny_write_ledger "$new"
+  # Best-effort per this function's own contract ("Exit 0 always — a
+  # maintenance sweep, not a query"): if the write is rejected (empty/
+  # invalid $new — see _ny_write_ledger's WRITE SAFETY guard), leave the
+  # existing ledger untouched and just skip this pass rather than failing
+  # the render pipeline that called us.
+  _ny_write_ledger "$new" || err "expire: skipped this pass — ledger write was rejected (see previous error); existing ledger left untouched"
+  return 0
 }
 
 # ----------------------------------------------------------------------
@@ -1156,8 +1236,24 @@ cmd_bootstrap_migrate() {
   # pipeline's `head -1` of --text) is the real first content line — e.g.
   # "## [2026-07-05] Activate auto-resume daemon (E.7) ..." — rather than
   # this boilerplate banner line collapsing to "(untitled decision)".
-  local stripped
-  stripped="$(printf '%s\n' "$body" | sed -E '1{/^# NEEDS-YOU/d}' | sed -E '/./,$!d')"
+  #
+  # PORTABILITY (fixed 2026-07-29): the address-block form MUST be written
+  # `1{...;}` with the trailing semicolon. BSD/macOS sed rejects `1{/re/d}`
+  # with "extra characters at the end of d command" and emits NOTHING, which
+  # silently collapsed `stripped` to empty and made this function return
+  # early — losing every legacy operator item on macOS while passing on GNU
+  # sed (self-test T18b/T18c/T19). `d;}` is the POSIX-portable spelling and
+  # is accepted by both BSD sed and GNU sed. Each strip step is therefore
+  # also FAILURE-CHECKED below rather than piped blind: if a strip step ever
+  # errors again, we fall back to the un-stripped text, because migrating a
+  # slightly-uglier title is strictly better than discarding operator content.
+  local stripped="$body" _ny_trimmed
+  if _ny_trimmed="$(printf '%s\n' "$body" | sed -E '1{/^# NEEDS-YOU/d;}')"; then
+    stripped="$_ny_trimmed"
+  fi
+  if _ny_trimmed="$(printf '%s\n' "$stripped" | sed -E '/./,$!d')"; then
+    stripped="$_ny_trimmed"
+  fi
   if [[ -z "$(printf '%s\n' "$stripped" | grep -vE '^[[:space:]]*$')" ]]; then
     return 0
   fi
@@ -1907,7 +2003,7 @@ cmd_selftest() {
   fi
 
   # ----------------------------------------------------------------------
-  # T32-T34: nl-issues 2026-07-29 "needs-you.sh render corrupts paths" — one
+  # T36-T38: nl-issues 2026-07-29 "needs-you.sh render corrupts paths" — one
   # scenario per defect class fixed in this task. Fresh sandbox: T30
   # rm -rf'd sandbox7, so a new one is needed for any cmd_add/cmd_render call.
   # ----------------------------------------------------------------------
@@ -1917,22 +2013,22 @@ cmd_selftest() {
   export PROGRESS_LOG_STATE_DIR="$sandbox10/progress-logs"
   export OPERATOR_TODO_PATH="$sandbox10/operator-todo.md"
 
-  echo "Scenario T32: escape-safe rendering — a backslash-n Windows path renders intact byte-for-byte (the reported operator incident: 'Pocket Technician\\neural-lace' rendered split across two lines with the 'n' silently eaten)"
+  echo "Scenario T36: escape-safe rendering — a backslash-n Windows path renders intact byte-for-byte (the reported operator incident: 'Pocket Technician\\neural-lace' rendered split across two lines with the 'n' silently eaten)"
   local t32_text='Reference path: C:\Users\misha\dev\Pocket Technician\neural-lace\docs\backlog.md (path check fixture)'
   cmd_add --section inflight --text "$t32_text" --session "sess-t32" >/dev/null
   cmd_render >/dev/null
   if grep -qF 'Pocket Technician\neural-lace\docs\backlog.md' "$NEEDS_YOU_MD_PATH"; then
-    ok "T32 backslash-n path rendered intact, byte-for-byte (no mid-word split, no eaten 'n')"
+    ok "T36 backslash-n path rendered intact, byte-for-byte (no mid-word split, no eaten 'n')"
   else
-    fail_ "T32 backslash-n path was corrupted in the rendered file (expected literal 'Pocket Technician\\neural-lace\\docs\\backlog.md' on one line)"
+    fail_ "T36 backslash-n path was corrupted in the rendered file (expected literal 'Pocket Technician\\neural-lace\\docs\\backlog.md' on one line)"
   fi
   if grep -qE '^Reference path: C:\\Users\\misha\\dev\\Pocket Technician\\$' "$NEEDS_YOU_MD_PATH"; then
-    fail_ "T32b the corrupted split form (path cut off after 'Technician\\') is present — regression"
+    fail_ "T36b the corrupted split form (path cut off after 'Technician\\') is present — regression"
   else
-    ok "T32b no corrupted split-line form present"
+    ok "T36b no corrupted split-line form present"
   fi
 
-  echo "Scenario T33: dedup collapse — 3 identical-text inflight rows (different sessions, same gap) collapse to ONE rendered bullet naming the repeat count"
+  echo "Scenario T37: dedup collapse — 3 identical-text inflight rows (different sessions, same gap) collapse to ONE rendered bullet naming the repeat count"
   local t33_text="Unresolved Stop-gate gap (dedup fixture): identical gap reported by 3 different sessions"
   cmd_add --section inflight --text "$t33_text" --session "sess-t33-a" >/dev/null
   cmd_add --section inflight --text "$t33_text" --session "sess-t33-b" >/dev/null
@@ -1941,25 +2037,25 @@ cmd_selftest() {
   local t33_line_count
   t33_line_count=$(grep -cF "$t33_text" "$NEEDS_YOU_MD_PATH")
   if [[ "$t33_line_count" == "1" ]]; then
-    ok "T33 3 identical-text inflight rows collapsed to exactly 1 rendered bullet"
+    ok "T37 3 identical-text inflight rows collapsed to exactly 1 rendered bullet"
   else
-    fail_ "T33 expected exactly 1 rendered bullet for identical-text rows, found $t33_line_count"
+    fail_ "T37 expected exactly 1 rendered bullet for identical-text rows, found $t33_line_count"
   fi
   if grep -qE -- '- Unresolved Stop-gate gap \(dedup fixture\).*x3 since' "$NEEDS_YOU_MD_PATH"; then
-    ok "T33b collapsed bullet names the repeat count (x3 since <first-seen-date>)"
+    ok "T37b collapsed bullet names the repeat count (x3 since <first-seen-date>)"
   else
-    fail_ "T33b expected an 'x3 since <date>' annotation on the collapsed bullet"
+    fail_ "T37b expected an 'x3 since <date>' annotation on the collapsed bullet"
   fi
 
-  echo "Scenario T34: dead-path annotation — an entry referencing a local path that does not exist gets a '[path no longer exists]' note, WITHOUT the original entry text being altered or dropped"
+  echo "Scenario T38: dead-path annotation — an entry referencing a local path that does not exist gets a '[path no longer exists]' note, WITHOUT the original entry text being altered or dropped"
   local t34_dead_path="$sandbox10/definitely-not-a-real-file-xyz123.sh"
   local t34_text="Run the drill: bash \"$t34_dead_path\" from the main checkout (dead-path fixture)."
   cmd_add --section inflight --text "$t34_text" --session "sess-t34" >/dev/null
   cmd_render >/dev/null
   if grep -qF "$t34_text" "$NEEDS_YOU_MD_PATH"; then
-    ok "T34 original entry text preserved verbatim (never deleted/altered by the liveness check)"
+    ok "T38 original entry text preserved verbatim (never deleted/altered by the liveness check)"
   else
-    fail_ "T34 original entry text missing/altered in the rendered file"
+    fail_ "T38 original entry text missing/altered in the rendered file"
   fi
   # Co-located check (not just "somewhere in the file"): the annotation must
   # appear on the line immediately after THIS entry's own bullet, naming
@@ -1970,9 +2066,9 @@ cmd_selftest() {
   t34_block=$(grep -A1 -F "$t34_text" "$NEEDS_YOU_MD_PATH" || true)
   if printf '%s' "$t34_block" | grep -qF "path no longer exists" \
      && printf '%s' "$t34_block" | grep -qF "$t34_dead_path"; then
-    ok "T34b dead-path annotation present immediately after the entry, naming the specific missing path"
+    ok "T38b dead-path annotation present immediately after the entry, naming the specific missing path"
   else
-    fail_ "T34b expected a '[path no longer exists]' annotation naming $t34_dead_path right after the entry; got: $t34_block"
+    fail_ "T38b expected a '[path no longer exists]' annotation naming $t34_dead_path right after the entry; got: $t34_block"
   fi
   # Negative case: a link/path that DOES exist gets no dead-path annotation.
   local t34b_text="See adapters/claude-code/scripts/needs-you.sh for the implementation (live-path fixture)."
@@ -1981,12 +2077,162 @@ cmd_selftest() {
   local t34c_block
   t34c_block=$(grep -A1 -F "$t34b_text" "$NEEDS_YOU_MD_PATH" || true)
   if printf '%s' "$t34c_block" | grep -qF "path no longer exists"; then
-    fail_ "T34c a live (existing) path was incorrectly flagged as dead — false positive"
+    fail_ "T38c a live (existing) path was incorrectly flagged as dead — false positive"
   else
-    ok "T34c a live path gets no dead-path annotation (no false positive)"
+    ok "T38c a live path gets no dead-path annotation (no false positive)"
   fi
 
   rm -rf "$sandbox10"
+  # T32-T35: 2026-07-27 LEDGER-CORRUPTION INCIDENT — golden-scenario recovery
+  # + regression coverage. The golden fixture is the EXACT observed
+  # corruption: a 1-byte ledger.json containing a single newline (this is
+  # what `~/.claude/state/needs-you/ledger.json` looked like for ~2 days:
+  # `[[ -f "$f" ]] ||` sees it as present, so the old guard never fired
+  # again and every jq read failed forever).
+  # ----------------------------------------------------------------------
+  echo "Scenario T32-T35: ledger-corruption incident (2026-07-27) — recovery + regressions"
+
+  # T32: golden fixture — a 1-byte "\n" ledger.json recovers on next render.
+  local sandbox5; sandbox5=$(mktemp -d)
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox5/state"
+    export NEEDS_YOU_MD_PATH="$sandbox5/NEEDS-YOU.md"
+    mkdir -p "$NEEDS_YOU_STATE_DIR"
+    printf '\n' > "$NEEDS_YOU_STATE_DIR/ledger.json"   # the EXACT incident byte sequence
+    cmd_render >/dev/null 2>"$sandbox5/render-stderr.log"
+  )
+  local t32_ledger="$sandbox5/state/ledger.json"
+  if jq -e 'type' "$t32_ledger" >/dev/null 2>&1; then
+    ok "T32a corrupt (1-byte newline) ledger.json is valid JSON after the next render"
+  else
+    fail_ "T32a ledger.json is STILL invalid after render — corruption recovery did not fire"
+  fi
+  # T32b: NEEDS-YOU.md itself still comes out well-formed (downstream reader
+  # recovers too, not just the ledger file in isolation).
+  local t32_headers_ok=1
+  for h in "${NY_CANONICAL_HEADERS[@]}"; do
+    grep -qF "$h" "$sandbox5/NEEDS-YOU.md" 2>/dev/null || t32_headers_ok=0
+  done
+  [[ "$t32_headers_ok" == "1" ]] && ok "T32b NEEDS-YOU.md still renders all 4 canonical headers after recovering from a corrupt ledger" \
+    || fail_ "T32b NEEDS-YOU.md missing headers after ledger-corruption recovery"
+
+  # T32c: NEVER DESTROY EVIDENCE (constitution §9) — the ORIGINAL corrupt
+  # bytes must be preserved verbatim in a .corrupt-<date>.bak sibling, not
+  # just discarded. Asserted on the ACTUAL byte content of the backup file,
+  # not on a filename pattern alone.
+  local t32_bak; t32_bak=$(find "$sandbox5/state" -maxdepth 1 -name 'ledger.json.corrupt-*.bak' 2>/dev/null | head -1)
+  if [[ -n "$t32_bak" && -f "$t32_bak" ]]; then
+    local t32_bak_bytes; t32_bak_bytes=$(wc -c < "$t32_bak" 2>/dev/null | tr -d ' ')
+    local t32_bak_content; t32_bak_content=$(cat "$t32_bak")
+    if [[ "$t32_bak_bytes" == "1" && -z "$t32_bak_content" ]]; then
+      ok "T32c original corrupt bytes preserved verbatim at $(basename "$t32_bak") (1 byte, matches the incident's exact newline-only content)"
+    else
+      fail_ "T32c backup file exists but content doesn't match the original corrupt bytes (got $t32_bak_bytes bytes)"
+    fi
+  else
+    fail_ "T32c no ledger.json.corrupt-*.bak backup was created — corrupt bytes were DISCARDED, not salvaged"
+  fi
+
+  # T32d: loud logging — the recovery must have said something to stderr,
+  # not silently swapped the file.
+  if grep -qi "RECOVERED corrupt state file" "$sandbox5/render-stderr.log" 2>/dev/null; then
+    ok "T32d recovery logged loudly to stderr (not a silent re-init)"
+  else
+    fail_ "T32d no stderr notice found for the corruption recovery"
+  fi
+
+  # T32e: the recovered ledger is not just "parses as JSON" but genuinely
+  # USABLE — a subsequent add must succeed and be readable back out.
+  local t32e_id
+  t32e_id=$(
+    export NEEDS_YOU_STATE_DIR="$sandbox5/state"
+    export NEEDS_YOU_MD_PATH="$sandbox5/NEEDS-YOU.md"
+    cmd_add --section question --text "T32e: post-recovery add must actually work, not just look valid" --session "sess-t32e"
+  )
+  local t32e_count
+  t32e_count=$(jq --arg id "$t32e_id" '[.items[] | select(.id == $id)] | length' "$t32_ledger" 2>/dev/null)
+  [[ "$t32e_count" == "1" ]] && ok "T32e ledger is genuinely usable post-recovery (a real add landed and reads back)" \
+    || fail_ "T32e post-recovery add did not land (id=$t32e_id, count=$t32e_count)"
+  rm -rf "$sandbox5"
+
+  # T33: a VALID pre-existing ledger is left completely untouched (no
+  # spurious backup, no rewrite) — the recovery path must be exclusive to
+  # actually-invalid content, never firing on the healthy common case.
+  local sandbox6; sandbox6=$(mktemp -d)
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox6/state"
+    export NEEDS_YOU_MD_PATH="$sandbox6/NEEDS-YOU.md"
+    mkdir -p "$NEEDS_YOU_STATE_DIR"
+    printf '{"schema_version":1,"items":[]}\n' > "$NEEDS_YOU_STATE_DIR/ledger.json"
+  )
+  local t33_before_mtime; t33_before_mtime=$(stat -f '%m' "$sandbox6/state/ledger.json" 2>/dev/null || stat -c '%Y' "$sandbox6/state/ledger.json" 2>/dev/null)
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox6/state"
+    export NEEDS_YOU_MD_PATH="$sandbox6/NEEDS-YOU.md"
+    cmd_render >/dev/null 2>&1
+  )
+  local t33_bak_count; t33_bak_count=$(find "$sandbox6/state" -maxdepth 1 -name 'ledger.json.corrupt-*.bak' 2>/dev/null | wc -l | tr -d ' ')
+  [[ "$t33_bak_count" == "0" ]] && ok "T33 a healthy pre-existing ledger.json is never touched by the recovery path (no spurious backup)" \
+    || fail_ "T33 recovery fired on a VALID ledger — created $t33_bak_count spurious backup(s)"
+  rm -rf "$sandbox6"
+
+  # T34: BASH-3.2 REGRESSION (the actual truncating-writer mechanism this
+  # incident traced to). `add` with ZERO --link flags, run under the REAL
+  # /bin/bash on this machine (macOS's shipped 3.2.57 — this repo's
+  # portability floor), used to crash the jq command-substitution on
+  # "${links[@]}" (bash <4.4 treats expanding a zero-element array under
+  # `set -u` as an unbound-variable reference) and silently write a 1-byte
+  # "\n" over the ledger. Explicitly invokes /bin/bash regardless of which
+  # interpreter is running THIS self-test, since re-invoking via a bare
+  # `bash` would resolve to whatever is first on PATH and could silently
+  # skip the interpreter this regression is about.
+  if [[ -x /bin/bash ]]; then
+    local sandbox7; sandbox7=$(mktemp -d)
+    (
+      export NEEDS_YOU_STATE_DIR="$sandbox7/state"
+      export NEEDS_YOU_MD_PATH="$sandbox7/NEEDS-YOU.md"
+      /bin/bash "$_NY_SELF_PATH" add --section question \
+        --text "T34 regression: a zero-link add under /bin/bash 3.2 must not corrupt the ledger" \
+        --session "sess-t34-bash32" \
+        >"$sandbox7/t34-id.log" 2>"$sandbox7/t34-stderr.log"
+    )
+    local t34_ledger="$sandbox7/state/ledger.json"
+    if jq -e 'type' "$t34_ledger" >/dev/null 2>&1 \
+       && jq -e '.items | length == 1' "$t34_ledger" >/dev/null 2>&1; then
+      ok "T34 /bin/bash 3.2: 'add' with zero --link flags leaves ledger.json valid JSON with the new item (see 2026-07-27 incident)"
+    else
+      fail_ "T34 /bin/bash 3.2: 'add' with zero --link flags corrupted or lost the ledger — this is the exact incident mechanism (stderr: $(cat "$sandbox7/t34-stderr.log" 2>/dev/null | tr '\n' ' '))"
+    fi
+    rm -rf "$sandbox7"
+  else
+    echo "  T34 SKIP: /bin/bash not present on this system"
+  fi
+
+  # T35: WRITE-SAFETY backstop — _ny_write_ledger must refuse to ever commit
+  # empty/invalid content, independent of WHY the caller ended up with bad
+  # content (defense in depth beyond the T34 root-cause fix: this catches
+  # ANY future producer bug the same way).
+  local sandbox8; sandbox8=$(mktemp -d)
+  (
+    export NEEDS_YOU_STATE_DIR="$sandbox8/state"
+    export NEEDS_YOU_MD_PATH="$sandbox8/NEEDS-YOU.md"
+    mkdir -p "$NEEDS_YOU_STATE_DIR"
+    printf '{"schema_version":1,"items":[{"id":"NY-keepme"}]}\n' > "$NEEDS_YOU_STATE_DIR/ledger.json"
+    if _ny_write_ledger "" 2>"$sandbox8/t35-stderr.log"; then
+      echo "unexpected-success" > "$sandbox8/t35-rc"
+    else
+      echo "rejected" > "$sandbox8/t35-rc"
+    fi
+  )
+  local t35_rc; t35_rc=$(cat "$sandbox8/t35-rc" 2>/dev/null)
+  local t35_kept; t35_kept=$(grep -c "NY-keepme" "$sandbox8/state/ledger.json" 2>/dev/null || true)
+  t35_kept="${t35_kept:-0}"
+  if [[ "$t35_rc" == "rejected" && "$t35_kept" -ge "1" ]]; then
+    ok "T35 _ny_write_ledger refuses empty content and leaves the real ledger untouched"
+  else
+    fail_ "T35 _ny_write_ledger accepted empty content or clobbered the existing ledger (rc=$t35_rc, kept=$t35_kept)"
+  fi
+  rm -rf "$sandbox8"
 
   echo ""
   echo "RESULT: $pass passed, $fail failed"

@@ -52,7 +52,9 @@ stale-lock reclaim stays valid at the 60s cadence because the task's
 ExecutionTimeLimit (5 min) hard-bounds any live cycle (self-test Scenario 9 pins
 900s > that limit mechanically).
 
-## Registration (per machine — OPERATOR/orchestrator-applied)
+## Registration (per machine)
+
+### Windows — OPERATOR/orchestrator-applied
 
 Agent sessions must NOT run this (scheduled-task mutation = persistence); they
 verify with `-WhatIf` only.
@@ -60,6 +62,42 @@ verify with `-WhatIf` only.
 ```powershell
 powershell -File adapters\claude-code\scripts\install-coord-sync-task.ps1 `
   -RepoPath "<absolute path to the MAIN neural-lace checkout>"
+```
+
+### macOS — self-installing LaunchAgent (decision 066)
+
+`adapters/claude-code/scripts/ensure-coord-sync.sh` installs/refreshes a launchd
+LaunchAgent (`local.neurallace.coord-sync`, `StartInterval=60`, no `KeepAlive` —
+see decision 066 for why this differs from the cockpit's persistent-server
+LaunchAgent, decision 065) that runs `~/.claude/scripts/coord-sync.sh` on the
+same ~60s cadence as the Windows task. It is folded into the existing
+SessionStart digest hook (same non-array splice convention as
+`ensure-cockpit.sh`) so it self-installs/refreshes on every session — no manual
+registration step, and idempotent/safe to also run by hand:
+
+```bash
+bash ~/.claude/scripts/ensure-coord-sync.sh
+launchctl print gui/$(id -u)/local.neurallace.coord-sync | head -5   # confirm loaded
+```
+
+It also idempotently fixes a same-person-different-GitHub-account-per-machine
+credential class: if `COORD_REPO_URL` resolves to an `https://github.com/<owner>/
+<repo>` URL and this machine already has a `gh`-authenticated token for `<owner>`
+(`gh auth token -u <owner>`), it installs a URL-scoped git credential helper for
+that exact URL (never touches `gh`'s active-account state, never affects any
+other repo). See decision 066 for the full rationale and the
+`docs/decisions/066-macos-coord-sync-launchagent-and-credential-fix.md` Evidence
+section for a worked example.
+
+**First-time machine provisioning** (once `~/.claude/local/coord-repo-url.txt` is
+gated behind `/grant-local-edit` for agent sessions — the operator runs this
+directly):
+
+```bash
+mkdir -p ~/.claude/local
+echo "<the real coord repo URL>" > ~/.claude/local/coord-repo-url.txt
+bash ~/.claude/scripts/ensure-coord-sync.sh   # applies the credential fix immediately
+bash ~/.claude/scripts/coord-sync.sh --force  # one guaranteed full cycle, right now
 ```
 
 This follows the wrapper pattern from `docs/runbooks/session-resumer.md`

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-7ac7040d",
+  "created_at": "2026-07-30T16:04:10Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "unknown",
+  "plan_ref": "docs/plans/status-event-ledger.md",
+  "change_ref": {
+    "commit_sha": "0e135ef424acbe994bda5ae2c9efb3e3c7afdc45",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/signal-ledger.sh",
+      "blob_sha": "a95b789b2ae34e3e07559f3099be1939d7c2ba0f"
+    },
+    {
+      "path": "adapters/claude-code/hooks/stop-verdict-dispatcher.sh",
+      "blob_sha": "12136a1f3daf609415319402b1e7fc9d86fc912a"
+    },
+    {
+      "path": "adapters/claude-code/scripts/write-review-record.sh",
+      "blob_sha": "30ad89c357cbf1c0473262d1432e21d22aac7521"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "SE10 is a model warn-mode check (measured FP posture, real negative fixtures, named retirement, channel-separation proven), SE3 is mutation-proven at the right chokepoint with an honestly-scoped residual gap, and the signal-ledger delta's every claim checks out.",
+    "findings_summary": "Adversarial harness-reviewer (agent a08dfef6344e12bc2, 2026-07-30): stop-verdict-dispatcher.sh PASS (4 Minor: FP-header hit mischaracterization, proxy-corpus register mismatch, no quote-context stripping, one quantifier gap — Minors routed to the SE4-fix builder); write-review-record.sh PASS (SE3 mutation-proven: disabling the emit fails exactly S22 21/1); signal-ledger.sh PASS (comment-only registry delta, every consumer-map claim verified). Suite counts reviewer-reproduced both interpreters sequentially: 92/0, 22/0, 17/0."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Mishas-Mac-mini",
+    "account": "unknown",
+    "session_id": "a08dfef6344e12bc2"
+  },
+  "independence": "pathway",
+  "payload": {}
+}

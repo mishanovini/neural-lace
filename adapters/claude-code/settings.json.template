@@ -276,6 +276,15 @@
         ]
       },
       {
+        "matcher": "Bash|PowerShell",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/review-record-commit-gate.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
           {
@@ -486,6 +495,10 @@
           {
             "type": "command",
             "command": "bash ~/.claude/hooks/workstreams-read.sh"
+          },
+          {
+            "type": "command",
+            "command": "( nohup bash \"$HOME/.claude/scripts/limit-resume.sh\" arm >/dev/null 2>&1 & disown ) 2>/dev/null || true"
           }
         ]
       }

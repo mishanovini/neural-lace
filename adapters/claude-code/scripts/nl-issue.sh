@@ -27,17 +27,34 @@
 #   nl-issue.sh "<one line of text>"
 #     Append one entry to the ledger:
 #       {"ts":"...","project":"...","session":"...","text":"...","count":1,
-#        "triage_status":"untriaged","triage_ref":"","triaged_ts":""}
+#        "source":"session","triage_status":"untriaged","triage_ref":"","triaged_ts":""}
 #     - ts: UTC ISO-8601.
 #     - project: basename of `git rev-parse --show-toplevel` for the CURRENT
 #       cwd, or basename of cwd if not inside a git repo.
 #     - session: $CLAUDE_SESSION_ID if set, else "unknown".
 #     - text: the argument, verbatim (JSON-escaped on disk).
+#     - source: "session" (default) or "operator-verbatim" when
+#       NLI_SOURCE=operator-verbatim is set by the caller (workstreams-read.sh's
+#       PROBLEM-CAPTURE splice, task problems-persist part 3 — the OPERATOR's
+#       own prompt named the problem, not a session inference). Added
+#       2026-07-29 (operator directive, ledger row
+#       SURFACED-PROBLEMS-CAN-BE-DROPPED-01); additive field, every reader
+#       extracts by name so this is backward compatible with every
+#       pre-existing ledger line (those simply have no "source" field, and
+#       nli_list/nli_digest_feed treat a missing field as "session").
 #     - Dedup: if an UNTRIAGED entry with byte-identical `text` AND the same
 #       `project` exists with `ts` within the last 24h, that entry's `count`
 #       is incremented in place instead of appending a new line (rewrites the
 #       ledger; see _nli_rewrite_line). Triaged entries are never merged into
 #       (a re-report after triage is a genuinely new occurrence).
+#     - "never deduped away silently" (operator directive's own words, part 3):
+#       an operator-verbatim append (NLI_SOURCE=operator-verbatim) SKIPS the
+#       dedup scan entirely in BOTH directions — it is never folded INTO an
+#       existing row (always gets its own fresh line) and an existing
+#       operator-verbatim row is never selected as a merge TARGET by a later
+#       session-sourced append with identical text. Every operator naming
+#       gets its own fully-visible row; only source=="session" appends ever
+#       dedup with each other.
 #
 #   nl-issue.sh --list [--untriaged]
 #     Print the ledger, one line of human-readable summary per entry
@@ -168,7 +185,21 @@ _nli_json_field() {
   # more correct for pathological input, but every value we write already
   # ran through _nli_json_escape, so an unescaped " never appears inside a
   # value; this sed is exact for this file's own writer.
-  printf '%s' "$line" | sed -n "s/.*\"$field\":\"\\(\\([^\"\\\\]\\|\\\\.\\)*\\)\".*/\\1/p"
+  #
+  # PORTABILITY FIX (found 2026-07-29 while building the problems-persist
+  # mechanism, self-testing under bash 3.2.57 + this machine's default
+  # /usr/bin/sed): the previous BRE pattern used `\|` for alternation
+  # inside `\(...\)`, which is a GNU sed extension — BSD sed (the macOS
+  # default) does NOT support `\|` in basic regex mode and SILENTLY
+  # matches nothing (no error, empty result), so every string field
+  # extraction (ts/project/session/text/source) returned "" on any
+  # BSD-sed machine: dedup never matched (Scenario 2 got 3 lines instead
+  # of 1), --list rendered blank text, and --triage's rewrite blanked
+  # every preserved field. `-E` (extended regex, supported identically by
+  # BSD sed 2.6.0-FreeBSD, GNU sed, and this repo's other sed callers)
+  # supports bare `|` alternation on both, so this is the portable fix,
+  # not a workaround for one platform.
+  printf '%s' "$line" | sed -nE "s/.*\"$field\":\"(([^\"\\\\]|\\\\.)*)\".*/\\1/p"
 }
 
 # ----------------------------------------------------------------------
@@ -232,22 +263,31 @@ nli_append() {
   path="$(_nli_ledger_path)"
   mkdir -p "$(dirname "$path")" 2>/dev/null || true
 
-  local project session now_ts now_epoch
+  local project session now_ts now_epoch source
   project="$(_nli_project_name)"
   session="${CLAUDE_SESSION_ID:-unknown}"
   now_ts="$(_nli_now)"
   now_epoch="$(_nli_epoch "$now_ts")"
+  source="${NLI_SOURCE:-session}"
 
   # Dedup: scan existing UNTRIAGED lines for byte-identical text + same
   # project within the last 24h; if found, rewrite that line with count++.
-  if [[ -f "$path" ]]; then
+  # "never deduped away silently" (operator directive 2026-07-29, part 3 of
+  # SURFACED-PROBLEMS-CAN-BE-DROPPED-01): an operator-verbatim append never
+  # scans at all (always a fresh line, see the early skip below), and the
+  # scan itself skips any candidate line whose OWN source is
+  # operator-verbatim (never a merge TARGET either) — both directions
+  # guarded so an operator-named problem can never vanish into a count bump.
+  if [[ -f "$path" ]] && [[ "$source" != "operator-verbatim" ]]; then
     local line_no=0 found_no="" found_line="" found_count=1
     while IFS= read -r line; do
       line_no=$((line_no+1))
       [[ -z "$line" ]] && continue
-      local l_status l_project l_text_esc l_ts
+      local l_status l_project l_text_esc l_ts l_source
       l_status="$(_nli_json_field "$line" "triage_status")"
       [[ "$l_status" != "untriaged" ]] && continue
+      l_source="$(_nli_json_field "$line" "source")"
+      [[ "$l_source" == "operator-verbatim" ]] && continue
       l_project="$(_nli_json_field "$line" "project")"
       [[ "$l_project" != "$project" ]] && continue
       l_text_esc="$(_nli_json_field "$line" "text")"
@@ -271,7 +311,7 @@ nli_append() {
 
     if [[ -n "$found_no" ]]; then
       local new_line
-      new_line="$(printf '{"ts":"%s","project":"%s","session":"%s","text":"%s","count":%s,"triage_status":"untriaged","triage_ref":"","triaged_ts":""}' \
+      new_line="$(printf '{"ts":"%s","project":"%s","session":"%s","text":"%s","count":%s,"source":"session","triage_status":"untriaged","triage_ref":"","triaged_ts":""}' \
         "$now_ts" "$(_nli_json_escape "$project")" "$(_nli_json_escape "$session")" \
         "$(_nli_json_escape "$text")" "$found_count")"
       _nli_replace_line "$path" "$found_no" "$new_line"
@@ -281,10 +321,14 @@ nli_append() {
   fi
 
   local line
-  line="$(printf '{"ts":"%s","project":"%s","session":"%s","text":"%s","count":1,"triage_status":"untriaged","triage_ref":"","triaged_ts":""}' \
-    "$now_ts" "$(_nli_json_escape "$project")" "$(_nli_json_escape "$session")" "$(_nli_json_escape "$text")")"
+  line="$(printf '{"ts":"%s","project":"%s","session":"%s","text":"%s","count":1,"source":"%s","triage_status":"untriaged","triage_ref":"","triaged_ts":""}' \
+    "$now_ts" "$(_nli_json_escape "$project")" "$(_nli_json_escape "$session")" "$(_nli_json_escape "$text")" "$(_nli_json_escape "$source")")"
   printf '%s\n' "$line" >> "$path"
-  echo "nl-issue: recorded -> $path"
+  if [[ "$source" == "operator-verbatim" ]]; then
+    echo "nl-issue: recorded (source=operator-verbatim, never deduped) -> $path"
+  else
+    echo "nl-issue: recorded -> $path"
+  fi
   return 0
 }
 
@@ -322,7 +366,7 @@ nli_list() {
   while IFS= read -r line; do
     n=$((n+1))
     [[ -z "$line" ]] && continue
-    local status project ts text count
+    local status project ts text count source
     status="$(_nli_json_field "$line" "triage_status")"
     if [[ "$filter" == "--untriaged" && "$status" != "untriaged" ]]; then
       continue
@@ -332,7 +376,12 @@ nli_list() {
     text="$(_nli_json_unescape "$(_nli_json_field "$line" "text")")"
     count="$(_nli_json_num_field "$line" "count")"
     [[ -z "$count" ]] && count=1
-    printf '[%d] %s %s %s (x%s) %s\n' "$n" "$status" "$project" "$ts" "$count" "$text"
+    source="$(_nli_json_field "$line" "source")"
+    if [[ "$source" == "operator-verbatim" ]]; then
+      printf '[%d] %s %s %s (x%s) [src:operator-verbatim] %s\n' "$n" "$status" "$project" "$ts" "$count" "$text"
+    else
+      printf '[%d] %s %s %s (x%s) %s\n' "$n" "$status" "$project" "$ts" "$count" "$text"
+    fi
   done < "$path"
   return 0
 }
@@ -371,17 +420,22 @@ nli_triage() {
     return 1
   fi
 
-  local ts project session text count
+  local ts project session text count source
   ts="$(_nli_json_field "$target_line" "ts")"
   project="$(_nli_json_field "$target_line" "project")"
   session="$(_nli_json_field "$target_line" "session")"
   text="$(_nli_json_field "$target_line" "text")"
   count="$(_nli_json_num_field "$target_line" "count")"
   [[ -z "$count" ]] && count=1
+  # Preserve the existing entry's source through the rewrite (pre-2026-07-29
+  # lines have no "source" field at all — _nli_json_field returns empty, so
+  # default to "session" rather than writing a blank field).
+  source="$(_nli_json_field "$target_line" "source")"
+  [[ -z "$source" ]] && source="session"
 
   local new_line
-  new_line="$(printf '{"ts":"%s","project":"%s","session":"%s","text":"%s","count":%s,"triage_status":"%s","triage_ref":"%s","triaged_ts":"%s"}' \
-    "$ts" "$project" "$session" "$text" "$count" "$kind" "$(_nli_json_escape "$ref")" "$(_nli_now)")"
+  new_line="$(printf '{"ts":"%s","project":"%s","session":"%s","text":"%s","count":%s,"source":"%s","triage_status":"%s","triage_ref":"%s","triaged_ts":"%s"}' \
+    "$ts" "$project" "$session" "$text" "$count" "$source" "$kind" "$(_nli_json_escape "$ref")" "$(_nli_now)")"
   _nli_replace_line "$path" "$n" "$new_line"
   echo "nl-issue: entry $n stamped $kind ($ref)"
   return 0
@@ -778,6 +832,99 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fi
   else
     echo "  ok   Scenario 10 SKIP (date arithmetic unsupported in this environment)"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 11 (task problems-persist part 3, operator directive
+  # 2026-07-29): default source is "session" and does not show a [src:]
+  # tag in --list output (keeps ordinary output unchanged).
+  # ------------------------------------------------------------
+  echo "Scenario 11: default append has source=session, no [src:] tag in --list"
+  LEDGER11="$TMP/s11.jsonl"
+  ( export NL_ISSUES_PATH="$LEDGER11"; bash "$SELF_ABS" "ordinary session note" >/dev/null )
+  if grep -q '"source":"session"' "$LEDGER11"; then
+    pass "default append writes source:session"
+  else
+    fail "expected source:session in $(cat "$LEDGER11" 2>/dev/null)"
+  fi
+  LIST11="$( export NL_ISSUES_PATH="$LEDGER11"; bash "$SELF_ABS" --list )"
+  if printf '%s' "$LIST11" | grep -q '\[src:'; then
+    fail "ordinary session-sourced --list line should NOT show a [src:] tag: $LIST11"
+  else
+    pass "ordinary session-sourced --list line has no [src:] tag"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 12: NLI_SOURCE=operator-verbatim writes source:operator-
+  # verbatim and --list shows the [src:operator-verbatim] tag.
+  # ------------------------------------------------------------
+  echo "Scenario 12: NLI_SOURCE=operator-verbatim tags the entry and --list shows it"
+  LEDGER12="$TMP/s12.jsonl"
+  ( export NL_ISSUES_PATH="$LEDGER12" NLI_SOURCE="operator-verbatim"; bash "$SELF_ABS" "why is the checkout broken" >/dev/null )
+  if grep -q '"source":"operator-verbatim"' "$LEDGER12"; then
+    pass "NLI_SOURCE=operator-verbatim writes source:operator-verbatim"
+  else
+    fail "expected source:operator-verbatim in $(cat "$LEDGER12" 2>/dev/null)"
+  fi
+  LIST12="$( export NL_ISSUES_PATH="$LEDGER12"; bash "$SELF_ABS" --list )"
+  if printf '%s' "$LIST12" | grep -q '\[src:operator-verbatim\]'; then
+    pass "--list shows [src:operator-verbatim] tag"
+  else
+    fail "expected [src:operator-verbatim] tag in --list output: $LIST12"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 13 ("never deduped away silently", part 3): three
+  # byte-identical operator-verbatim appends produce THREE separate
+  # lines, never a count-increment dedup fold.
+  # ------------------------------------------------------------
+  echo "Scenario 13: operator-verbatim appends are NEVER folded into each other (no dedup)"
+  LEDGER13="$TMP/s13.jsonl"
+  ( export NL_ISSUES_PATH="$LEDGER13" NLI_SOURCE="operator-verbatim"; bash "$SELF_ABS" "why is checkout broken" >/dev/null )
+  ( export NL_ISSUES_PATH="$LEDGER13" NLI_SOURCE="operator-verbatim"; bash "$SELF_ABS" "why is checkout broken" >/dev/null )
+  ( export NL_ISSUES_PATH="$LEDGER13" NLI_SOURCE="operator-verbatim"; bash "$SELF_ABS" "why is checkout broken" >/dev/null )
+  n_lines13=$(wc -l < "$LEDGER13" 2>/dev/null | tr -d ' ')
+  if [[ "$n_lines13" == "3" ]]; then
+    pass "three identical operator-verbatim appends produced THREE separate lines (got $n_lines13)"
+  else
+    fail "expected 3 separate lines for identical operator-verbatim appends (never deduped), got $n_lines13"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 14: an existing operator-verbatim row is NEVER selected as a
+  # merge TARGET by a later session-sourced append with identical text —
+  # the session append gets its OWN new line instead of bumping the
+  # operator-verbatim row's count.
+  # ------------------------------------------------------------
+  echo "Scenario 14: a session-sourced append never dedups INTO an existing operator-verbatim row"
+  LEDGER14="$TMP/s14.jsonl"
+  ( export NL_ISSUES_PATH="$LEDGER14" NLI_SOURCE="operator-verbatim"; bash "$SELF_ABS" "shared text for cross-source dedup check" >/dev/null )
+  ( export NL_ISSUES_PATH="$LEDGER14"; bash "$SELF_ABS" "shared text for cross-source dedup check" >/dev/null )
+  n_lines14=$(wc -l < "$LEDGER14" 2>/dev/null | tr -d ' ')
+  if [[ "$n_lines14" == "2" ]]; then
+    pass "session-sourced append with identical text to an operator-verbatim row created a NEW line (got $n_lines14), not a merge"
+  else
+    fail "expected 2 lines (operator-verbatim row untouched + a fresh session row), got $n_lines14"
+  fi
+  if grep -q '"source":"operator-verbatim".*"count":1' "$LEDGER14" 2>/dev/null || grep -q '"count":1.*"source":"operator-verbatim"' "$LEDGER14" 2>/dev/null; then
+    pass "the operator-verbatim row's count stayed at 1 (never bumped by the session append)"
+  else
+    fail "expected the operator-verbatim row's count to remain 1: $(cat "$LEDGER14" 2>/dev/null)"
+  fi
+
+  # ------------------------------------------------------------
+  # Scenario 15: --triage preserves the source field through the rewrite
+  # (an operator-verbatim entry stays tagged operator-verbatim after
+  # triage, not silently reset to the "session" default).
+  # ------------------------------------------------------------
+  echo "Scenario 15: --triage preserves source=operator-verbatim through the rewrite"
+  LEDGER15="$TMP/s15.jsonl"
+  ( export NL_ISSUES_PATH="$LEDGER15" NLI_SOURCE="operator-verbatim"; bash "$SELF_ABS" "operator flagged problem for triage" >/dev/null )
+  ( export NL_ISSUES_PATH="$LEDGER15"; bash "$SELF_ABS" --triage 1 backlog "PROBLEMS-PERSIST-TEST-01" >/dev/null )
+  if grep -q '"source":"operator-verbatim"' "$LEDGER15" && grep -q '"triage_status":"backlog"' "$LEDGER15"; then
+    pass "triage rewrite kept source:operator-verbatim while stamping triage_status:backlog"
+  else
+    fail "expected source:operator-verbatim AND triage_status:backlog after --triage: $(cat "$LEDGER15" 2>/dev/null)"
   fi
 
   echo ""

@@ -312,6 +312,17 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
 - [ ] 9. [serial] **Acceptance**: end-user-advocate runtime pass over the shell + three views
   (scenarios below) + the operator's own cold-start walkthrough ON THE NEW SURFACE (replaces the
   retired ask-p1 walkthrough) — Verification: full
+  - **STANDING REGRESSION CHECKLIST (Round 15, the anti-repeat mechanism):**
+    `docs/reviews/cockpit-ui-requirements-ledger.md` mines every operator-verbatim requirement
+    across all 15 build rounds into one row-per-requirement table (73 rows this round, statuses
+    verified against the live app, not memory). EVERY future acceptance pass on this task —
+    end-user-advocate runtime AND the operator's own walkthrough — re-verifies EVERY row in that
+    ledger, not just the round's own newly-reported complaints; a round that fixes the latest
+    complaint while silently regressing an older row is not done until the ledger is re-run and
+    updated with the new evidence. This is the fix for the root cause Round 9 itself already
+    named (this file, Round 9 section): each hop of the pipeline translates the verbatim record
+    and the translation leaks; the ledger is the durable, cumulative oracle that stops that leak
+    from resetting every round.
 
 ## Files to Modify/Create
 - `neural-lace/workstreams-ui/web/` — shell + hash routing in app.js; all three views + their
@@ -393,6 +404,8 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   `server/auditor.js` / `server/payload-schema.js` remain unreconciled for
   whichever task next stages those two.
 - 2026-07-19: `neural-lace/workstreams-ui/web/asks.js` — task 6 badge-law renderer fix (already covered by task 3's `web/*` glob entry above; named explicitly here so task 6's commit is unambiguously attributed and doesn't depend on a different task's entry)
+- 2026-07-29: `docs/reviews/2026-07-29-cockpit-roadmap-redesign-advocate-runtime.md` — task 9 end-user-advocate runtime artifact (first-pass verdict + the Round-14 re-run section appended 2026-07-29; append-only, original kept intact per the re-run brief).
+- 2026-07-29: `docs/reviews/records/acceptance-cockpit-roadmap-redesign-2026-07-29/*` — task 9 acceptance evidence (screenshots + per-probe results JSONs for both passes; non-fakeable gate input backing the artifact's per-scenario grounds).
 - 2026-07-19: `neural-lace/workstreams-ui/web/cockpit.selftest.js` — task 6 badge-multiplicity fixture tests (T6-0..T6-5), same attribution note as the asks.js entry above
 - 2026-07-19: `neural-lace/workstreams-ui/server/requests-routes.js` — task 5 NEW route module (Requests ledger payload/title/amend-detach; task 1 owns server.js, task 2 owns ask-registry.sh — mount line + verb seams ship as fragments)
 - 2026-07-19: `neural-lace/workstreams-ui/server/requests-routes.selftest.js` — task 5 NEW sandboxed selftest (own file so task 1's server.selftest.js is never raced)
@@ -491,6 +504,119 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   extension (gate input; same parse-shape note as above).
 
 - 2026-07-28: `docs/reviews/2026-07-28-operator-requests-ledger.md` — operator-requested request→disposition index for the round-10/11 work (gate input).
+
+- 2026-07-29: ROUND 12 — LABEL-CORRELATION + ROW-COMPOSITION ROUND. Operator verbatim
+  (these outrank any inference; the sit-down record convention applies):
+  · "Including a NL tag on each item is redundant considering they're all underneath the NL
+    node. And showing the 'in progress'/'complete' status next to the progress bar is also
+    redundant."
+  · "each bundle of tasks should roll up and compact when all children tasks are complete,
+    but tasks should not disappear when they finish. I want to be able to easily see what has
+    been done and what has not for each plan/bundle. It helps me understand how far through
+    each group is instead of just telling me what's left."
+  · "everything that still has work to be done should be visible to me at a glance. I can open
+    any individual plan and see all the tasks within it (both completed and not yet
+    completed). When an entire plan completes, it rolls up into the completed section."
+  · "We need consistency in labeling between the plans themselves, how you report here, and
+    what's in the cockpit. I want you and I to always see the same thing."
+  BINDING SPEC: the ux-ia-auditor LIVE audit (headless Chrome vs :7733; all geometry/colour
+  measured from computed styles). Files: `neural-lace/workstreams-ui/web/*` (roadmap.js,
+  app.css, index.html, inbox.js, cockpit.selftest.js).
+  KEY FINDINGS carried into the build: the row is `flex-wrap` with no columns (status chip x
+  swings 292px, fraction 346px across the 16 live rows) — costs more legibility than either
+  redundancy the operator named; `--ok #34d399` is BOTH the complete-status colour and the
+  progress-fill colour, so 100% of fill pixels are one green and a 2/14 plan looks like a 6/6
+  (salience inverted — the two rows needing nothing are the loudest); and the task IDs the
+  operator cannot correlate are ALREADY on the wire (`roadmap-routes.js:689/691`,
+  `deriveTaskBatches` :841-869 even emits "Tasks T1–T14") and discarded at
+  `roadmap.js:864` — a VIEW change, zero parser work.
+  LABEL COLLISION, mechanically proven: `T#` is used by THREE live plans and bare numerics by
+  EIGHT — filtering "T3" returns 3 plans, "M4"/"P1" return 1. The operator's complaint is
+  literally true for 11 of 17 plans / 61 of 86 tasks. Convention adopted: a unique `Key:`
+  header per plan, task ids `<KEY><n>`, new plans immediately + lazy backfill, slug stem as
+  the fallback renderer so no row is ever key-less. The agent-side half is binding on ME and
+  ships with it: never a bare `T3`/`M2`, always the qualified token identical to the cockpit's
+  key column. Both halves or neither — a bright new ID column correlated against prose
+  invented fresh each session fixes nothing.
+- 2026-07-29: `~/.claude/state/needs-you/ledger.json` — SEV-4 LIVE INCIDENT, repaired this
+  session. The canonical waiting-on-operator ledger was a 1-byte file (a bare newline) from
+  2026-07-27 20:46, so `/api/inbox` returned `ok:false` for ~2 days while the landing surface
+  rendered `Inbox (—)` beside "nothing on your list" — a broken surface reading as a
+  reassuring zero. Root cause `needs-you.sh:436` (and :1344): the init guard tests EXISTENCE,
+  not VALIDITY, so a truncated file is never re-initialized. Corrupt byte preserved at
+  `ledger.json.corrupt-2026-07-29.bak`. Class fix (validity-guard sweep + write-to-tmp-then-mv
+  so a failed producer cannot truncate) covers `adapters/claude-code/scripts/needs-you.sh` and
+  `neural-lace/workstreams-ui/server/inbox-routes.js` + its selftest.
+- 2026-07-29: `docs/plans/fragments/roadmap-r12-server-fragment.md` — Round 12 coordination
+  fragment (web-only builder defers any server change here; existing cross-task convention).
+
+- 2026-07-29: ROUND 13 — OPERATOR WALKTHROUGH FEEDBACK on the Round 12 surface (verbatim; the
+  operator's reading OVERRIDES the R12 auditor palette where they conflict):
+  1. "Why is there so much wasted whitespace at the left of each of the plans?"
+  2. "It's the completed items that should be dimmed gray, not the unstarted items." —
+     DIRECT INVERSION of the shipped ladder: R12 gave not-started `--muted #9ca3af` and
+     complete `#87909e`, so the 12 upcoming plans (the majority) render dim while the page's
+     model should be: dim = done, visible = has work remaining ("everything that still has
+     work to be done should be visible to me at a glance", Round 12 verbatim).
+  3. "I still don't see how all these plans are grouped together. There's nothing making that
+     clear." — the group header exists but no visual container binds its children.
+  4. "Why doesn't it show the progress of each task? Why doesn't it show what's currently in
+     progress?" — task rows render bare text: `t.done` is on the wire and never rendered
+     (no check glyph, no dimming); the in-progress half is the KNOWN server-side
+     session-attribution gap (roadmap-routes.js:676 binds nothing — banner shows
+     "3 running, unattributed to a task").
+  5. "Child items are not visibly obvious children of the parent... There's more space between
+     child tasks and their own parent than between them and the next plan in the list." —
+     Gestalt proximity violation + missing containment (rail/tint/size ladder).
+  6. "The '1–5 done' text is telling me exactly the same thing as the progress bar sitting
+     right next to it." — drop the span's done-half; keep only the NEXT-token ("6 next" /
+     "T3 next"), which is the one fact the bar cannot carry.
+
+- 2026-07-30: ROUND 15 — six fixes (five operator complaints verbatim tonight + one
+  coordinator mid-round addition); full narrative in the Decisions Log entry below. Files:
+  `neural-lace/workstreams-ui/server/roadmap-routes.js` (running roll-up class, `plan_doc`
+  field), `neural-lace/workstreams-ui/web/roadmap.js` (running token + roll-up wiring,
+  `openPlanDocModal`, `bandPlanItems` + header reorder), `neural-lace/workstreams-ui/web/app.js`
+  (Docs-panel `renderDocsList` shape-mismatch fix), `neural-lace/workstreams-ui/web/app.css`
+  (in-progress title colour, running-chip/roll-up-badge styling, plan-link button reset),
+  `neural-lace/workstreams-ui/web/cockpit.selftest.js` (+17: R15-B*/R15-D*/R15-1..3/R15-H1 +
+  R9F-1/R9F-1b rewrite + R13-62/65/31 signature updates),
+  `neural-lace/workstreams-ui/server/roadmap-routes.selftest.js` (+4: S20/S20b/S21/S21b).
+- 2026-07-30: `docs/reviews/cockpit-ui-requirements-ledger.md` — task 9's new standing
+  regression checklist (NEW file, Round 15 deliverable 5): 73 rows mining every operator-
+  verbatim requirement across all 15 build rounds, statuses live-verified this session. Wired
+  into task 9's own line above.
+- 2026-07-30: `docs/backlog.md` — Round 15 files one follow-up:
+  `ROADMAP-MULTI-PROJECT-CONFIG-NOT-SET-01` (the Roadmap's own multi-repo scan has no
+  per-machine config on this machine; Circuit's plans never reach the Roadmap tree even though
+  the Docs browser already knows about Circuit) — found live while verifying the ledger's R9-8
+  row, not part of the round's own dispatched scope.
+- 2026-07-30: `.gitignore` — a single-file re-include (`!docs/reviews/cockpit-ui-requirements-ledger.md`)
+  for the new standing ledger above: the repo's own `docs/reviews/*` convention gitignores
+  everything except dated `YYYY-MM-DD-*.md` review snapshots, but this ledger is deliberately a
+  STABLE-named, continuously-updated living document (the whole point — future rounds edit it in
+  place rather than deciding whether to mint a new dated file), same pattern already established
+  for `docs/reviews/records/`.
+- 2026-07-30: ROUND 16 — six fixes, operator walkthrough of the Round 15 surface (verbatim
+  quotes in the Decisions Log entry below). Files: `neural-lace/workstreams-ui/web/md-render.js`
+  (NEW — the shared escaping-first markdown->HTML renderer, deliverable 2), `neural-lace/
+  workstreams-ui/web/roadmap.js` (title-edit/rank-button chrome RETIRED; new `wirePlanRowReorder`
+  drag-and-drop + Cmd/Ctrl+Arrow keyboard reorder + `computeReorderSteps` pure helper;
+  `openPlanDocModal` now renders via `MdRender.renderMarkdown`), `neural-lace/workstreams-ui/
+  web/app.js` (`openDoc` now renders via the SAME `MdRender.renderMarkdown`),
+  `neural-lace/workstreams-ui/web/app.css` (`--running` green variable + the full non-link
+  blue sweep; inter-plan spacing 30px->8px + continuous connector rail; the hover-reveal edit
+  chrome CSS retired; `.doc-body` markdown styling), `neural-lace/workstreams-ui/web/index.html`
+  (`<script src="/md-render.js">`, loaded before app.js/roadmap.js), `neural-lace/workstreams-ui/
+  server/server.js` (one static-mount line for `/md-render.js`, same convention as app.js/
+  asks.js/todo.js/backlog.js), `neural-lace/workstreams-ui/web/cockpit.selftest.js` (+32: T3-27c/
+  d/e, T3-28, T3-29/29b, T3-41/42/42b, R8-4, R13-31, R12-51, R13-65 all updated for the
+  retirements/colour sweep; R16-1..R16-15 + R16-MD0..R16-MD17 new), `docs/reviews/
+  cockpit-ui-requirements-ledger.md` (rows 74-79 new; rows 5/10/27 flipped SUPERSEDED; rows
+  46/68/69/70/71/73 evidence updated for the Round 16 changes they're affected by). Server-side
+  `neural-lace/workstreams-ui/server/roadmap-routes.js`/its selftest are UNTOUCHED — drag-and-
+  drop persists through the pre-existing `/api/roadmap/rank` endpoint unchanged, no new server
+  contract needed.
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store
@@ -623,3 +749,191 @@ Task 1 first, alone: the derived status of ONE real archived plan rendering corr
   pointer+stub for v1 (UX review "Questions for the user" §1; arch review is silent = no
   objection). DEFAULT: pointer+stub — task 4 builds it unless the operator overrides; inline
   answering is then a candidate follow-on task, not a rework.
+- (2026-07-29) **ROUND 14 — end-user-advocate runtime FAIL closure (decide-and-go, all
+  reversible).** Closing `docs/reviews/2026-07-29-cockpit-roadmap-redesign-advocate-runtime.md`
+  (5/9 PASS, 3 FAIL). Six fixes landed, all in `neural-lace/workstreams-ui/**`:
+  (a) INBOX-UNREADABLE-LEDGER-WIN-STATE-01 — `readNeedsYouLedgerItems` now partitions ENOENT
+  (true-empty) from every other errno (EACCES/EIO -> `LedgerUnavailableError`, same three-state
+  contract the 2026-07-29 hardening already established), mirroring Task 1's
+  `listRawHeartbeatsResult` ENOENT-vs-unreadable fix for the identical class.
+  (b) ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 — `scanPlanDir` now tags 3 corruption
+  signatures (unreadable file; Status: token outside the known enum
+  {ACTIVE,COMPLETED,DEFERRED,ABANDONED,SUPERSEDED}; taskless + binary-control-byte body) as
+  `scanIssue`, which `derivePlanRootNode` renders `unknown(reason)` — never a confident
+  not-started guess, never a silent vanish. A header-less non-plan stub (evidence.md files
+  etc.) is DELIBERATELY left excluded, unchanged — that's the correct, intentional behavior for
+  genuine non-plan docs, not part of this defect's scope (conflating the two risks flooding the
+  tree with every `*-evidence*.md` file in docs/plans/).
+  (c) ROADMAP-WAITING-ON-YOU-SIGNAL-01 — BUILT the producer: `plan-parse.js`'s new
+  `extractPlanTaskReferences` finds conservative (`#roadmap/<slug>/<task-id>` OR
+  `docs/plans/<slug>.md` + an explicit "task <id>" mention) candidates in the needs-you
+  ledger's own answerable items (reusing `inbox-routes.buildInboxPayload`, never re-deriving),
+  verifies each against the plan's REAL parsed tasks, and feeds
+  `stalledSignals.waitingOnYouId` into the pre-existing consumer. Also populates the
+  pre-existing, never-fed `status.unblock {label,hash}` field (client already rendered it) and
+  the reverse `blocks_roadmap_id` on the Inbox side (same conservative match, duplicated per
+  this codebase's small-duplicated-reader convention — the two routes would otherwise
+  circularly require each other).
+  (d) PEERS-SURFACE-RETIRED-01 — a NEW minimal "Machines" section in Harness Health (chosen as
+  the least-noisy home per Round 12/13's own decluttering posture) renders `payload.peers`
+  (person -> host -> freshness only, no per-plan/task breakdown — the fuller asks.js renderer
+  stays unmounted) with an honest empty state naming COORD-SYNC-NO-PEER-EXPORTS-YET-01.
+  (e) ROADMAP-SUPERSEDED-RENDERS-PENDING-01 — an authored `Status: SUPERSEDED`/`ABANDONED`
+  plan now renders `status.value:'complete'` (joins the existing Shipped-group predicate, zero
+  new enum value) with a distinct `terminal_label`, which `statusChip()`'s one exception (a
+  `complete` item WITH a `terminal_label` still gets a chip) surfaces visibly inside Shipped.
+  (f) **SCOPE ADDITION mid-round** (coordinator-directed, a live operator complaint):
+  INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 — `item.links[]` had NO client-side rendering
+  surface at all (a real, verified gap: the field existed, nothing ever read it); fixed with a
+  duplicated `absoluteLinkNode`-style resolver (http(s) -> real `<a>`; anything else -> plain
+  text + copy, never a fabricated href). Server-side: `extractAnchorsFromText`/`mergeLinks`
+  populate `links` from inline repo-path/NY-id/wf-id anchors when the producer supplied none;
+  `parseDecisionAnatomy` gained a second options grammar ("Option NAME -> outcome", not just
+  markdown tables — the exact shape the real production ledger item NY-1785357818-7d3f used,
+  which had silently lost its 3 options into unstructured context prose) and strips a
+  redundant "Decision needed:"/"Question:" label the producer sometimes repeats on line 1
+  (was rendering doubled). The `open_source_session` resume-command session-id-shape audit the
+  coordinator also asked for: the real ledger's `session` field can be an 8-char ABBREVIATED
+  session id (not the full UUID) — that shaping happens upstream of workstreams-ui (whichever
+  hook/dispatcher passes `--session` to needs-you.sh), out of this round's file scope; flagged,
+  not fixed, here.
+  All six: TDD'd (RED confirmed via temporary mutation + revert on every server-side fix),
+  verified live against a sandboxed :7799 instance (real HTTP + real browser screenshots), zero
+  regressions across inbox-routes/roadmap-routes/server/plan-parse/cockpit suites (see the T9
+  round-14 evidence for exact before/after counts).
+- (2026-07-30) **ROUND 15 — six fixes (five operator complaints + one coordinator mid-round
+  addition), closing tonight's "how many times do I have to repeat myself" round.**
+  (1) RUNNING ROLL-UP (C1 applied to the running state, not just attention states):
+  `roadmap-routes.js#absorbOneChildRollUp` now absorbs a `running` class whenever a descendant
+  task carries a REAL `live_sessions` entry (never merely `status.value==='in-progress'`, which
+  also fires on a stale-but-partial plan with nobody currently working on it — the exact
+  merely-partial-vs-actively-running conflation this fix protects, S20b in
+  `roadmap-routes.selftest.js` pins the negative case against a real fixture). Client:
+  `deriveTaskSpanLabel` now reads `item.roll_up.running` and flips the parent row's next-token
+  from "`<id> next`" to "`<id> running`"; `ROLLUP_ORDER`/`ROLLUP_BADGE_LABEL` gained a `running`
+  entry (leads the precedence order) so a COLLAPSED plan also shows a counted "N running" badge.
+  (2) COLOR + LOUDNESS: `.rm-title-in-progress` changed from `#f9fafb` (bright white) to
+  `var(--info)` (#60a5fa blue) — the operator's own repeatedly-named colour, not merely
+  brightness; `.rm-task-running` promoted from plain 600-weight text to a real bordered `chip`
+  with a blue background tint, matching the "small and not obvious" complaint. WCAG 1.4.1 held:
+  the word ("running"/token text) is always present, colour is reinforcement only.
+  (3) PLAN LINKS: ROOT CAUSE was a `file:///` href on an http-served page — a dead link,
+  live-verified (zero navigation, zero network activity on click). Server:
+  `derivePlanRootNode` now emits `plan_doc: deriveLib.projectDocRefFor(pf.absPath)` (the SAME
+  `{project,path}` resolver `computePlanRows`/asks.js already use — no new link handling, per
+  the plan's own ux-review amendment 6). Client: the plan-link row is now a `<button>` calling a
+  new `openPlanDocModal` (mirrors asks.js's own function, the established small-duplicated-
+  reader convention) that reuses app.js's EXISTING `docModal`/`docBody` — the same in-page
+  viewer the Docs button already renders through, never a second renderer. `plan_doc: null`
+  (path outside every configured project root) falls back to plain text + copy, never a
+  fabricated/dead link.
+  (4) DOCS BUTTON: ROOT CAUSE was a payload-shape mismatch — `GET /api/docs` returns
+  `{projects:{key:{root,missing,files}}}`; `web/app.js#renderDocsList` treated `docsCache[proj]`
+  as the files ARRAY ITSELF, so `.filter is not a function` threw inside the render loop,
+  aborting the whole panel silently right after it was cleared. Fixed to read `.files`; a
+  `missing` project root is skipped; a real empty-state message replaces the silent blank panel.
+  Renderer-side bug, NOT a config gap (confirmed: `/api/docs` already returns real data for both
+  configured projects on this machine).
+  (5) THE LEDGER: `docs/reviews/cockpit-ui-requirements-ledger.md` — 73 rows mined from every
+  operator-verbatim source across 15 rounds, each status verified against the live app this
+  session (not carried from memory); wired into this task's own line above as the standing
+  regression checklist for every future acceptance pass. Row-count summary: 52 MET (live/
+  structural) + 12 MET(selftest) + 4 MET(carried) + 1 PARTIAL + 3 SUPERSEDED + 1 UNBUILT + 0
+  REGRESSED. Live-verified gap found IN THE COURSE of building the ledger (not previously
+  tracked): `ROADMAP-MULTI-PROJECT-CONFIG-NOT-SET-01` — the Roadmap's own multi-repo scan has no
+  per-machine config on this machine, so Circuit's real plans never reach the Roadmap even
+  though the Docs browser already knows about Circuit; logged to backlog.
+  (6) BUILD-ORDER BANDING (coordinator mid-round, operator verbatim: "the Workstreams UI still
+  doesn't actually represent the actual order of building, at least not at the plan level"):
+  `roadmap.js#bandPlanItems` (new pure function, real-execution vm-sandbox tested) splits each
+  project group's items into two STABLE bands — any non-not-started plan (in-progress/stalled/
+  merged-unverified/unknown) before every not-started ("upcoming") one — preserving each band's
+  existing rank order internally (a filter, never a re-sort); `roadmap_rank`'s registry-insertion
+  DEFAULT (adjudication (a), still binding — recency would churn the list daily) is unchanged,
+  banding is a render-order layer on top of it, not a replacement. `projectGroupHeaderText`'s
+  four-bucket strip reordered to lead with "in progress" (previously led with "upcoming", which
+  read backwards next to a phrase claiming build order). Move up/down reorder controls verified
+  NOT regressed: live at :7733 this session, both buttons present + aria-labeled on every row.
+  All six: TDD'd where behavior-bearing (RED confirmed via source mutation + revert, transcripts
+  in the session record), verified live against a fixture-seeded sandbox at :7799 (real HTTP,
+  real browser screenshots + computed-style measurements) AND spot-checked against the real
+  production instance at :7733 (read-only checks only — no real state mutated). Suites: 397/0
+  cockpit (+17 from the 380 baseline), 110/0 roadmap-routes (+4 from the 106 baseline), 25/0
+  requests-routes, 47/0 inbox-routes, 173/0 server — zero regressions.
+- (2026-07-30) **ROUND 16 — six fixes, operator walkthrough of the Round 15 surface, verbatim:**
+  "I don't like the spaces between the plans. It looks awkward with the spacing between the
+  nesting lines. The plans are now displaying in a popup but it's still not rendering the
+  formatting. I don't like the buttons appearing below the plan doc links; they force the GUI
+  underneath to jump around awkwardly, and they're also unnecessary. I don't see any need to
+  edit the name of the plan titles and lets use drag and drop instead of buttons for
+  rearranging. Let's use green instead of blue for the running items because blue looks like
+  links."
+  (1) INTER-PLAN SPACING: `.rm-phase-step`'s Round 13 30px bottom margin (paired with a
+  DELIBERATE break in the connector rail — that round's own rationale: "these are separate
+  plans") shrinks to 8px, and the connector's `bottom` offset widens (-6px -> -26px) so the SAME
+  rail now reaches the next step's own line start exactly — live-measured via
+  `getBoundingClientRect` at 1400px: 8px gap between every consecutive top-level plan, 0px break
+  in the rail (the line's computed end position and the next step's line start position are
+  numerically identical). The parent->child proximity law survives BECAUSE removing the
+  title-edit/rank chrome (deliverable 3/4) trims that side further than Round 13 already had it,
+  not despite the inter-plan gap shrinking.
+  (2) MARKDOWN RENDERING: new `web/md-render.js`, a self-contained (no CDN — CSP blocks
+  external), escaping-first renderer shared by BOTH the plan-doc modal and the Docs panel (they
+  already write into the SAME `#docBody` element). Escaping runs on every leaf text segment
+  before any markdown substitution; block structure (headings/lists/quotes/fences/tables) is
+  parsed from RAW characters and never itself emitted raw. Security fixture proven THIS session,
+  live and in the selftest: a doc containing a literal `<script>alert(1)</script>` — in a
+  paragraph, heading, list item, and blockquote — renders as inert escaped text in every case.
+  Only http(s) links become real `<a href>`; a repo-relative reference renders as inert text
+  (no cross-doc navigation exists to wire it to); any other scheme (`javascript:` etc.) drops to
+  plain text, never an href.
+  (3+4) TITLE EDIT + ICON CHROME RETIRED: the round-6 gap 4 edit/rank icon-button chrome (and
+  Round 13's height:0 hover-reveal mechanism protecting it) is removed OUTRIGHT — source, CSS,
+  and the client's `POST /api/roadmap/title` call site are all gone. DECISION (decide-and-go,
+  reversible): the SERVER route `/api/roadmap/title` is deliberately left in place — out of this
+  UI-only scope (the operator's ask was specifically "no edit affordance on plan titles" in the
+  Roadmap view; "ask/request title editing elsewhere is NOT in scope") and `requests-routes.js`
+  documents reusing the same underlying delegation, so removing the route risks a surface this
+  round was never asked to touch.
+  (5) DRAG-AND-DROP REORDER: `wirePlanRowReorder` adds an HTML5-draggable grip handle
+  (`.rm-drag-handle`) to every plan row, computing the move via a new PURE `computeReorderSteps`
+  function (real-execution tested + a mutation-style no-op-position check) and persisting
+  through the SAME `/api/roadmap/rank` endpoint the retired buttons called — zero server-side
+  change. DECISION (decide-and-go, reversible): sibling scope for a drag mirrors the server's own
+  `computeSiblingIds` (top-level project group / bare tree, or a master's own child-plan
+  subsection) via DOM container matching, not a flat global list — keeps drag semantics aligned
+  with what the server will actually do with each single-step move. ACCESSIBILITY (WCAG 2.2
+  2.5.7, binding since R12): a non-visual Cmd/Ctrl+ArrowUp/Down keydown on the focused row fires
+  the identical `moveRank()` — documented via the row's own `title`/`aria-keyshortcuts`, not a
+  second visible control (which is exactly what this round retires). Live-proven THIS session:
+  dispatching a real `Control+ArrowDown` keydown fired `POST /api/roadmap/rank -> 200 OK` in the
+  sandbox.
+  (6) GREEN FOR RUNNING: new `--running: #4ade80` (measured 8.42:1 against `--panel`, computed
+  via the same relative-luminance formula the file's own `--done` comment already documents —
+  the selftest computes this itself, not merely asserts it). Every non-link roadmap signal is
+  swept off `--info`: the in-progress title, the leaf running chip, the plan-row running token,
+  and the roll-up running badge all move to `--running`; two purely-decorative non-running,
+  non-link signals (`rm-marker-midbuild`, `rm-filter-match-note`) move to `--accent` instead
+  (blue reserved EXCLUSIVELY for real links now); the plan-link's rare non-clickable plain-text
+  fallback also moves off blue to `--muted`, closing a latent inconsistency the operator's own
+  rule exposed (a NON-clickable fallback rendering the SAME blue as a real link is precisely the
+  "looks like a link" complaint, just for a different element). Live-swept THIS session across
+  every rendered element on the page: zero non-link elements render `--info`'s blue.
+  All six: TDD'd where behavior-bearing (RED confirmed via source mutation + revert — 4
+  discriminating mutation transcripts captured: the --running color, the 8px margin, the
+  escapeHtml no-op, and the draggable flag, each independently reverted to prove its own test
+  catches the regression). Verified live against an env-redirected sandbox at :7799 (real HTTP,
+  real browser screenshots, `getBoundingClientRect`/computed-style measurements, and one real
+  network-level write proven to land in the sandbox's own isolated state dir, never
+  `~/.claude/state/`). The real production instance at :7733 was NOT touched this session — its
+  LaunchAgent needs the orchestrator's kickstart post-cherry-pick, per this task's own dispatch
+  note; a :7733 re-verification is the orchestrator's follow-on, not this session's claim. Server
+  side (`roadmap-routes.js` + its selftest) is completely untouched — all six deliverables are
+  client-side (or the one CSS/static-mount line in server.js), reusing existing endpoints
+  unchanged. Suites: 429/0 cockpit (+32 from the 397 baseline), 110/0 roadmap-routes (UNCHANGED —
+  no server-side deliverable this round), 173/0 server, 47/0 inbox-routes, 25/0 requests-routes —
+  zero regressions. Requirements ledger: rows 74-79 added (all MET, live-verified); rows 5, 10,
+  and 27 flipped SUPERSEDED (title editing and icon-button reorder, both retired at the
+  operator's own later request); rows 46/68/69/70/71/73 evidence updated for the changes that
+  touch them. New row-count: 56 MET + 12 MET(selftest) + 3 MET(carried) + 1 PARTIAL + 6
+  SUPERSEDED + 1 UNBUILT + 0 REGRESSED = 79 rows.

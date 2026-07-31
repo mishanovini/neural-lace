@@ -476,6 +476,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
   FAILED=0
   PASSED=0
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=../hooks/lib/portable-time.sh
+  . "${SCRIPT_PATH%/*}/../hooks/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source hooks/lib/portable-time.sh" >&2; exit 2; }
+
   # Set up a synthetic git repo + plan/state structure inside TMPDIR
   cd "$TMPDIR_SELFTEST" || { echo "self-test: cd failed" >&2; exit 2; }
   git init -q . 2>/dev/null
@@ -749,7 +754,16 @@ if [[ "${1:-}" == "--self-test" ]]; then
   write_plan "scenario-u3" 1 true_ui
   STALE_WAIVER=".claude/state/acceptance-waiver-scenario-u3-1.txt"
   echo "Stale waiver for self-test scenario U3 — should be ignored by the gate" > "$STALE_WAIVER"
-  touch -d '2 hours ago' "$STALE_WAIVER" 2>/dev/null || touch -t "$(date -d '2 hours ago' +%Y%m%d%H%M 2>/dev/null || echo 202601010000)" "$STALE_WAIVER"
+  # 2h old = one hour past the waiver's 1h TTL. Pre-sweep BOTH arms were
+  # GNU-only (`touch -d` and the `date -d` inside the -t fallback), so on macOS
+  # this landed on the innermost `echo 202601010000` literal — a fixed
+  # 2026-01-01 stamp. That still blocked, so U3 passed, but it proved only "a
+  # months-old waiver expires", never the 1h boundary the gate actually
+  # implements; and once the wall clock passes 2027 the literal stops being a
+  # deliberate age at all. nl_touch_age pins the real distance from now.
+  nl_touch_age "$STALE_WAIVER" 7200 || {
+    echo "self-test (U3): could not age the stale-waiver fixture" >&2
+    FAILED=$((FAILED + 1)); }
   expect_exit "U3" 2 "exempt-refused-stale-waiver-still-blocks"
 
   # ---- (X) ACTIVE plan in a CHILD subdir is NOT discovered (over-scoping fix) ----

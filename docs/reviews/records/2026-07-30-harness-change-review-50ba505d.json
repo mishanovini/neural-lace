@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-50ba505d",
+  "created_at": "2026-07-30T05:52:56Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 review sweep — operator authorization 2026-07-29 (adversarial reviewer agents as reviewing principal)",
+  "change_ref": {
+    "commit_sha": "a41b0e10b6737cad903e779ac6cc8eef108b1b76",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/measure-claim-reviewer-rate.sh",
+      "blob_sha": "34d5c7fa407453947fecdba4678a6d429cb365a6"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — broken BSD -v fallback fixed with honest error instead of a silent 7-day substitute window; 5/5 under /bin/bash 3.2.57.",
+    "findings_summary": "date -v -7d and -36H forms verified live on BSD date; uninterpretable --since now errors instead of silently measuring a different window"
+  },
+  "written_by": "harness-reviewer subagent (group scripts-1)",
+  "payload": {}
+}

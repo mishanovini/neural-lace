@@ -18,10 +18,14 @@
 #     (a) manifest parses + validates against schemas/manifest.schema.json
 #         (node subset-validator driven by the schema file; jq structural
 #         fallback; neither available -> WARN and skip, exit 0 gracefully)
-#     (b) hooks[] <-> disk coverage BOTH ways (RED per miss). Disk scope:
-#         adapters/claude-code/hooks/*.sh — lib/ is a subdirectory (never
-#         matched by the top-level glob) and attic/ is a sibling directory
-#         (never scanned).
+#     (b) hooks[] <-> disk coverage. manifest->disk resolves EVERY hooks[]
+#         value through _hook_disk_path (basename -> hooks/, lib/<n>.sh ->
+#         hooks/lib/, scripts/<n>.sh -> scripts/) and REDs per miss.
+#         disk->manifest sweeps adapters/claude-code/hooks/*.sh ONLY — lib/
+#         is a subdirectory (never matched by the top-level glob), attic/ is
+#         a sibling (never scanned), and scripts/ has NO reverse sweep: a
+#         scripts/ file may be legitimately unclaimed by any entry, so this
+#         direction stays hooks-only on purpose.
 #     (c) every wired_template:true entry's hooks all appear (by basename)
 #         in settings.json.template (RED per miss)
 #     (d) doctrine_file existence — WARN (aggregate, naming the missing
@@ -54,7 +58,16 @@
 #                     honest_status RED; wired-true-but-not-in-template RED;
 #                     gen-index golden compare; doctrine enforcing/transition
 #                     RED/WARN; waiver-parity RED/GREEN (S9/S9b); new-gate-
-#                     evidence-bar RED/GREEN (S10/S10b). Exit 0 iff all pass.
+#                     evidence-bar RED/GREEN (S10/S10b); lib/ reference
+#                     GREEN/RED/no-leak (S11-S13); scripts/ reference
+#                     GREEN + rejection of a nonexistent file, a
+#                     wrong-but-plausible path, four traversal shapes, and
+#                     a no-leak control (S14-S18); jq-fallback parity on
+#                     the same rejections (S19). Exit 0 iff all pass.
+#                     Sub-invocations use "$BASH" — the interpreter running
+#                     the suite — never bare `bash`, which resolves to
+#                     whatever is first on PATH and made a `/bin/bash 3.2`
+#                     run silently exercise 5.3 for every scenario.
 #
 # ENV
 # ===
@@ -108,6 +121,46 @@ _warn() {
 
 have_node() { command -v node >/dev/null 2>&1; }
 have_jq() { command -v jq >/dev/null 2>&1; }
+
+# ------------------------------------------------------------
+# _hook_disk_path <hooks_dir> <adapter_dir> <hooks[]-value>
+#
+# THE resolver: maps a hooks[] value to the file on disk it names. Every
+# accepted form and its base directory, in one place, so the schema check
+# and the existence check can never drift apart:
+#
+#   <name>.sh          wired hook       -> <hooks_dir>/<name>.sh
+#   lib/<name>.sh      sourced library  -> <hooks_dir>/lib/<name>.sh
+#   scripts/<name>.sh  adapter script   -> <adapter_dir>/scripts/<name>.sh
+#
+# WHY scripts/ RESOLVES AGAINST A DIFFERENT BASE THAN lib/: lib/ IS a
+# subdirectory of hooks/, so the historic "value is hooks_dir-relative"
+# rule already resolves it correctly. scripts/ is a SIBLING of hooks/, so
+# it must be adapter-relative. This is the convention harness-doctor.sh's
+# review-surface-cross-check already resolves ("Any OTHER already-qualified
+# sub-path ... resolve it directly relative to adapters/claude-code/") and
+# review-record-gate-lib.sh's rrg_in_surface already admits (scripts/*.sh);
+# the manifest schema was the ONLY layer that could not express it, which
+# is why estate-janitor/estate-brief were forced into "../scripts/<n>.sh"
+# (RED on format) with no legal alternative ("<n>.sh" REDs on existence).
+#
+# Refuses (rc 1, empty stdout) any value carrying a ".." path component.
+# The schema pattern already makes that unreachable — no accepted form
+# admits a "/" inside a name segment — so this is a structural belt for a
+# future schema edit, NOT the control the traversal scenarios exercise;
+# those assert the FORMAT rejection, which is what actually fires today.
+# ------------------------------------------------------------
+_hook_disk_path() {
+  local hooks_dir="$1" ac="$2" h="$3"
+  case "$h" in
+    ..|../*|*/..|*/../*) return 1 ;;
+  esac
+  case "$h" in
+    scripts/*) printf '%s\n' "${ac}/${h}" ;;
+    *)         printf '%s\n' "${hooks_dir}/${h}" ;;
+  esac
+  return 0
+}
 
 # ------------------------------------------------------------
 # extract_stream <manifest> — normalized pipe-delimited stream:
@@ -199,17 +252,30 @@ for (const e of manifest.entries || []) {
   }
   if (!Array.isArray(e.hooks)) problems.push(`${id}: hooks must be an array`);
   else for (const h of e.hooks) {
-    // A plain basename is a wired hook; "lib/<name>.sh" is a SOURCED LIBRARY
-    // under hooks/lib/ — never wired directly, referenced by other hooks via
-    // `source`; "../scripts/<name>.sh" is a manual-CLI/writer script under
-    // scripts/ (estate-janitor, estate-brief, loe-backfill — inventory-for-
-    // honesty entries; the fd48741 review found the schema rejecting a form
-    // the existence join already resolves correctly via hooks/../scripts/).
-    // Accept these three forms; do not loosen anything else.
+    // Three accepted forms, each with its OWN base directory (see
+    // _hook_disk_path — the single resolver both this check and the
+    // existence check agree on):
+    //   <name>.sh          wired hook          -> hooks/<name>.sh
+    //   lib/<name>.sh      SOURCED library     -> hooks/lib/<name>.sh
+    //   scripts/<name>.sh  adapter script      -> scripts/<name>.sh
+    // MERGE NOTE 2026-07-30 (RETIRED 2026-07-30, same day): the legacy
+    // spelling "../scripts/<name>.sh" was accepted at the SCHEMA rung only,
+    // transitionally, for entries the fd48741 remediation (desktop) produced
+    // before the merge normalized them to the clean form. That acceptance
+    // drifted the three validators apart: hooks.items.pattern in the JSON
+    // schema file, and the jq fallback (which reads that pattern
+    // directly) both already rejected "../scripts/<name>.sh" — only this
+    // node branch had the extra exception, hardcoded independently of the
+    // schema it otherwise mirrors. grep-confirmed manifest.json carries ZERO
+    // "../scripts/" values (the merge already normalized every entry), so
+    // the transitional window is over: dropped here rather than carried as
+    // permanent drift risk for a shape nothing on disk still uses. NOTE the
+    // apostrophe ban: this whole program lives in a single-quoted shell
+    // string.
     const isBasename = /^[A-Za-z0-9._-]+\.sh$/.test(h);
     const isLibRef = /^lib\/[A-Za-z0-9._-]+\.sh$/.test(h);
-    const isScriptsRef = /^\.\.\/scripts\/[A-Za-z0-9._-]+\.sh$/.test(h);
-    if (typeof h !== "string" || !(isBasename || isLibRef || isScriptsRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename, lib/<name>.sh, or ../scripts/<name>.sh reference`);
+    const isScriptRef = /^scripts\/[A-Za-z0-9._-]+\.sh$/.test(h);
+    if (typeof h !== "string" || !(isBasename || isLibRef || isScriptRef)) problems.push(`${id}: hook '"'"'${h}'"'"' is not a .sh basename, lib/<name>.sh, or scripts/<name>.sh reference`);
   }
   if (!Array.isArray(e.events)) problems.push(`${id}: events must be an array`);
   else for (const ev of e.events) {
@@ -252,22 +318,54 @@ process.exit(0);
       return 1
     fi
     local bad
-    bad="$(jq -r '
-def req: ["id","kind","doctrine_file","hooks","events","wired_template","selftest","jit_triggers","blocking","budget_class"];
-def kinds: ["gate","writer","surfacer","pattern","convention"];
-def budgets: ["stop","session-start","pretool","posttool","none"];
-def evs: ["Stop","SubagentStop","SessionStart","PreToolUse","PostToolUse","UserPromptSubmit","TaskCreated","TaskCompleted","precommit","prepush","manual"];
-def allowed: req + ["honest_status"];
-[ .entries[] |
-  ( (req - keys) | map(. as $k | "missing required key \($k)") ) +
-  ( (keys - allowed) | map(. as $k | "unknown key \($k)") ) +
-  ( if (kinds | index(.kind)) then [] else ["bad kind \(.kind)"] end ) +
-  ( if (budgets | index(.budget_class)) then [] else ["bad budget_class \(.budget_class)"] end ) +
-  ( [ (.events // [])[] | select(evs | index(.) | not) | "bad event \(.)" ] ) +
-  ( if .kind == "gate" and .wired_template == false and (((.honest_status // "") | length) == 0)
+    # SCHEMA-DRIVEN, exactly like the node branch above (which reads
+    # entrySchema.properties / .required off the schema file). The required
+    # list, the allowed-key set, all three enums AND the hooks[] pattern are
+    # pulled from schemas/manifest.schema.json via --slurpfile, so this
+    # branch cannot drift from the schema the node branch enforces. It did
+    # drift: the hardcoded `allowed` was req + honest_status only, missing
+    # waiver_path / honesty_rationale / added_after / golden_scenario /
+    # fp_expectation / retirement_condition, so once the aborting bug below
+    # was fixed it RED-flagged six legitimate keys on real entries.
+    #
+    # `. as $e` FIRST, then reference $e.<field> inside every `X | index(..)`.
+    # `a | index(.f)` re-binds `.` to `a`, so the original `kinds |
+    # index(.kind)` asked the kinds ARRAY for its .kind — a hard jq error
+    # that aborted the whole program into 2>/dev/null, leaving `bad` empty
+    # and validate_schema returning 0. The jq branch of check (a) therefore
+    # passed EVERY manifest on a node-less machine. `evs | index(.)` was the
+    # silent form of the same bug: it asked evs for its own position in
+    # itself, always 0 (truthy in jq), so the events enum was never enforced.
+    local bad_rc
+    bad="$(jq -r --slurpfile S "$schema" '
+($S[0].properties.entries.items) as $ITEM |
+($ITEM.required) as $req |
+($ITEM.properties | keys) as $allowed |
+($ITEM.properties.kind.enum) as $kinds |
+($ITEM.properties.budget_class.enum) as $budgets |
+($ITEM.properties.events.items.enum) as $evs |
+($ITEM.properties.hooks.items.pattern) as $hookpat |
+[ .entries[] | . as $e |
+  ( ($req - keys) | map(. as $k | "missing required key \($k)") ) +
+  ( (keys - $allowed) | map(. as $k | "unknown key \($k)") ) +
+  ( if ($kinds | index($e.kind)) then [] else ["bad kind \($e.kind)"] end ) +
+  ( if ($budgets | index($e.budget_class)) then [] else ["bad budget_class \($e.budget_class)"] end ) +
+  ( [ ($e.events // [])[] | . as $ev | select($evs | index($ev) | not) | "bad event \($ev)" ] ) +
+  ( [ ($e.hooks // [])[] | . as $h
+      | select($h | test($hookpat) | not)
+      | "\($e.id): hook \($h|tojson) is not a .sh basename, lib/<name>.sh, or scripts/<name>.sh reference" ] ) +
+  ( if $e.kind == "gate" and $e.wired_template == false and ((($e.honest_status // "") | length) == 0)
     then ["gate with wired_template false lacks honest_status"] else [] end )
   | map("\(.)") | .[] // empty
 ] | .[0:30] | .[]' "$manifest" 2>/dev/null)"
+    bad_rc=$?
+    # A jq FAILURE is not a pass. The bug this replaced was invisible for
+    # exactly that reason: the program died, stderr went to /dev/null, and
+    # an empty `bad` read as a clean manifest.
+    if [[ "$bad_rc" -ne 0 ]]; then
+      _red "schema" "jq schema validation failed to run (exit ${bad_rc}) against ${schema} — treating as RED rather than passing on an empty result"
+      return 1
+    fi
     if [[ -n "$bad" ]]; then
       while IFS= read -r line; do
         [[ -z "$line" ]] && continue
@@ -371,6 +469,12 @@ process.exit(problems.length ? 1 : 0);
         ] | map(select(. != null)) ) as $missing |
       ( if ($missing | length) > 0 then ["new-gate-evidence-bar|\($e.id): added_after \($e.added_after) >= 2026-07 but missing \($missing | join(","))"] else [] end )
     else [] end )
+  # Flatten, as the validate_schema jq branch already did. Without this the
+  # collection held one ARRAY PER ENTRY, the trailing slice+iterate emitted
+  # those arrays, and jq -r printed a literal empty-array token for every
+  # CLEAN entry. The shell variable was therefore never empty on a node-less
+  # machine, and the caller emitted one uninterpretable RED per entry.
+  | .[] // empty
 ] | .[0:30] | .[]' "$manifest" 2>/dev/null)"
     if [[ -n "$bad" ]]; then
       while IFS='|' read -r tag detail; do
@@ -422,20 +526,23 @@ run_check() {
     return 1
   fi
 
-  # (b) hooks -> disk. A "lib/<name>.sh" entry (sourced library under
-  # hooks/lib/, never wired directly) resolves correctly through this SAME
-  # generic join — hooks_dir + "/" + "lib/<name>.sh" IS hooks/lib/<name>.sh,
-  # with no double "hooks/hooks/" prefix, precisely because the manifest
-  # value is stored relative to hooks_dir (like a plain basename) rather
-  # than relative to adapters/claude-code/ root. No special-case code is
-  # needed here; the prior bug was a bad manifest VALUE ("hooks/lib/..."
-  # duplicating the hooks_dir segment), not this join formula.
-  local manifest_hooks
+  # (b) hooks -> disk, via the ONE resolver (_hook_disk_path). A
+  # "lib/<name>.sh" value is hooks_dir-relative (lib/ IS a subdir of
+  # hooks/, so hooks_dir + "/lib/<name>.sh" is already right); a
+  # "scripts/<name>.sh" value is adapter-relative (scripts/ is a SIBLING
+  # of hooks/, so the hooks_dir join would look for the nonexistent
+  # hooks/scripts/<name>.sh). Both facts live in _hook_disk_path, never
+  # duplicated here.
+  local manifest_hooks disk_path
   manifest_hooks="$(printf '%s\n' "$stream" | awk -F'|' '$1=="H"{print $3}' | LC_ALL=C sort -u)"
   while IFS= read -r h; do
     [[ -z "$h" ]] && continue
-    if [[ ! -f "${hooks_dir}/${h}" ]]; then
-      _red "hooks-exist" "manifest references hook '${h}' but ${hooks_dir}/${h} does not exist"
+    if ! disk_path="$(_hook_disk_path "$hooks_dir" "$ac" "$h")"; then
+      _red "hooks-path" "manifest references hook '${h}', which names a '..' path component and could resolve outside ${ac} — refusing to resolve it"
+      continue
+    fi
+    if [[ ! -f "$disk_path" ]]; then
+      _red "hooks-exist" "manifest references hook '${h}' but ${disk_path} does not exist"
     fi
   done <<< "$manifest_hooks"
 
@@ -456,6 +563,13 @@ run_check() {
   # can legitimately mix a wired basename (checked normally) with a
   # lib/-prefixed reference (skipped here); this does not loosen the check
   # for any plain-basename hook.
+  # "scripts/<name>.sh" is DELIBERATELY NOT exempt: settings.json.template
+  # really does wire scripts/ files (~/.claude/scripts/session-wrap.sh,
+  # read-local-config.sh, broadcast-active-session.sh), and because the
+  # grep is a fixed-string substring match the "scripts/" prefix makes the
+  # assertion STRICTER than a bare basename would — it pins the directory
+  # too, so a hooks/foo.sh command can no longer satisfy a scripts/foo.sh
+  # claim.
   if [[ -f "$template" ]]; then
     local wired_ids id
     wired_ids="$(printf '%s\n' "$stream" | awk -F'|' '$1=="E" && $5=="1"{print $2}')"
@@ -608,6 +722,14 @@ process.stdout.write((e && e.honest_status) ? String(e.honest_status) : "");' "$
 # ============================================================
 run_self_test() {
   local SELF="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+  # Re-invoke through the interpreter ACTUALLY RUNNING this suite, not the
+  # first `bash` on PATH. With a bare `bash`, launching the suite as
+  # `/bin/bash manifest-check.sh --self-test` on a machine whose PATH leads
+  # with /opt/homebrew/bin ran every scenario under bash 5.3 and reported a
+  # green 3.2 result for an interpreter it never executed. $BASH is the
+  # running interpreter's own path; the fallback only matters if a caller
+  # unsets it.
+  local SELFBASH="${BASH:-bash}"
   local REAL_SCHEMA="$SCRIPT_DIR/../schemas/manifest.schema.json"
   if [[ ! -f "$REAL_SCHEMA" ]]; then
     echo "self-test: cannot resolve real schema at ${REAL_SCHEMA}" >&2
@@ -630,9 +752,28 @@ run_self_test() {
 
   # Fixture builder: a mini repo root with two hooks, a template wiring one
   # of them, and the real schema copied in.
+  # _manifest_hooks_set <entry-id> <json-array> : rewrite ONE entry's hooks[]
+  # on a manifest read from stdin. Structural (node/jq), never sed — the
+  # scripts/ scenarios below feed values containing "/" and "..", which a
+  # sed s|||-style patch of raw JSON mangles or silently no-ops.
+  _manifest_hooks_set() {
+    local id="$1" arr="$2"
+    if have_node; then
+      node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(0, "utf8"));
+const id = process.argv[1], arr = JSON.parse(process.argv[2]);
+for (const e of m.entries) if (e.id === id) e.hooks = arr;
+process.stdout.write(JSON.stringify(m, null, 2) + "\n");' "$id" "$arr"
+    else
+      jq --arg id "$id" --argjson arr "$arr" '(.entries[] | select(.id == $id) | .hooks) = $arr'
+    fi
+  }
+
   _fixture() {
     local dir="$1"
-    mkdir -p "$dir/adapters/claude-code/hooks" "$dir/adapters/claude-code/schemas" "$dir/adapters/claude-code/rules"
+    mkdir -p "$dir/adapters/claude-code/hooks" "$dir/adapters/claude-code/schemas" \
+             "$dir/adapters/claude-code/rules" "$dir/adapters/claude-code/scripts"
     cp "$REAL_SCHEMA" "$dir/adapters/claude-code/schemas/manifest.schema.json"
     printf '#!/bin/bash\n# --self-test stub\nexit 0\n' > "$dir/adapters/claude-code/hooks/a-gate.sh"
     printf '#!/bin/bash\nexit 0\n' > "$dir/adapters/claude-code/hooks/b-pending.sh"
@@ -697,39 +838,39 @@ EOF
   # S1 — valid manifest: GREEN (doctrine/ absent -> WARN only)
   D="$TMPROOT/s1"; _fixture "$D"
   _valid_manifest > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s1-valid-green" 0 "$RC" "GREEN" "$OUT"
 
   # S2 — manifest lists a hook that does not exist on disk: RED
   D="$TMPROOT/s2"; _fixture "$D"
   _valid_manifest | sed 's/"a-gate\.sh"/"ghost.sh"/' > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s2-missing-hook-red" 1 "$RC" "RED hooks-exist" "$OUT"
 
   # S3 — disk hook not listed in any entry: RED
   D="$TMPROOT/s3"; _fixture "$D"
   _valid_manifest > "$D/adapters/claude-code/manifest.json"
   printf '#!/bin/bash\nexit 0\n' > "$D/adapters/claude-code/hooks/stray.sh"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s3-unlisted-disk-hook-red" 1 "$RC" "RED hooks-coverage" "$OUT"
 
   # S4 — gate with wired_template false and NO honest_status: RED
   D="$TMPROOT/s4"; _fixture "$D"
   _valid_manifest | grep -v '"honest_status"' | sed 's/"blocking": true,$/"blocking": true,/' > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s4-gate-no-honest-status-red" 1 "$RC" "honest" "$OUT"
 
   # S5 — wired_template true but hook absent from the template: RED
   D="$TMPROOT/s5"; _fixture "$D"
   _valid_manifest > "$D/adapters/claude-code/manifest.json"
   printf '{"hooks":{}}\n' > "$D/adapters/claude-code/settings.json.template"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s5-wired-claim-not-in-template-red" 1 "$RC" "RED wired-template" "$OUT"
 
   # S6 — gen-index golden compare (deterministic output)
   D="$TMPROOT/s6"; _fixture "$D"
   _valid_manifest > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" --gen-index 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" --gen-index 2>&1)"; RC=$?
   local GOLDEN="$TMPROOT/golden-index.md"
   cat > "$GOLDEN" <<'EOF'
 # Doctrine INDEX — generated from manifest.json by manifest-check.sh --gen-index
@@ -756,7 +897,7 @@ EOF
   _valid_manifest > "$D/adapters/claude-code/manifest.json"
   mkdir -p "$D/adapters/claude-code/doctrine"
   printf '# generated index stub\n' > "$D/adapters/claude-code/doctrine/INDEX.md"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s7-doctrine-enforcing-red" 1 "$RC" "RED doctrine-file" "$OUT"
 
   # S8 — mid-C.4 transition: doctrine/ exists but no generated INDEX.md and
@@ -764,21 +905,21 @@ EOF
   D="$TMPROOT/s8"; _fixture "$D"
   _valid_manifest > "$D/adapters/claude-code/manifest.json"
   mkdir -p "$D/adapters/claude-code/doctrine"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s8-doctrine-transition-warn-green" 0 "$RC" "WARN doctrine-file.*doctrine/a.md" "$OUT"
 
   # S9 — waiver-parity (ADR 059 D4, check f): blocking:true entry with
   # NEITHER waiver_path NOR honesty_rationale: RED
   D="$TMPROOT/s9"; _fixture "$D"
   _valid_manifest | grep -v '"honesty_rationale"' > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s9-waiver-parity-red" 1 "$RC" "RED waiver-parity: a-gate" "$OUT"
 
   # S9b — same fixture but WITH honesty_rationale restored: GREEN (proves
   # the check is satisfied by honesty_rationale alone, no waiver_path needed).
   D="$TMPROOT/s9b"; _fixture "$D"
   _valid_manifest > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s9b-waiver-parity-green" 0 "$RC" "GREEN" "$OUT"
 
   # S10 — new-gate-evidence-bar (specs-f §F.1, check g): an added_after
@@ -787,14 +928,14 @@ EOF
   D="$TMPROOT/s10"; _fixture "$D"
   _valid_manifest | sed 's/"budget_class": "stop"/"budget_class": "stop", "added_after": "2026-07"/' \
     > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s10-new-gate-evidence-bar-red" 1 "$RC" "RED new-gate-evidence-bar: a-gate.*missing" "$OUT"
 
   # S10b — same fixture but with the full evidence bar present: GREEN.
   D="$TMPROOT/s10b"; _fixture "$D"
   _valid_manifest | sed 's/"budget_class": "stop"/"budget_class": "stop", "added_after": "2026-07", "golden_scenario": "fixture scenario", "fp_expectation": "fixture fp", "retirement_condition": "fixture retirement"/' \
     > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s10b-new-gate-evidence-bar-green" 0 "$RC" "GREEN" "$OUT"
 
   # S10c — PRE_BAR_GRANDFATHERED exempt-list (fixup, harness-governance-batch
@@ -804,7 +945,7 @@ EOF
   D="$TMPROOT/s10c"; _fixture "$D"
   _valid_manifest | sed 's/"id": "a-gate"/"id": "session-honesty"/; s/"budget_class": "stop"/"budget_class": "stop", "added_after": "2026-07"/' \
     > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s10c-new-gate-evidence-bar-grandfather-green" 0 "$RC" "GREEN" "$OUT"
 
   # S10d — the exempt-list is closed, not a date pattern: a NON-listed id at
@@ -812,7 +953,7 @@ EOF
   D="$TMPROOT/s10d"; _fixture "$D"
   _valid_manifest | sed 's/"id": "a-gate"/"id": "not-grandfathered"/; s/"budget_class": "stop"/"budget_class": "stop", "added_after": "2026-07"/' \
     > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s10d-new-gate-evidence-bar-grandfather-leak-red" 1 "$RC" "RED new-gate-evidence-bar: not-grandfathered.*missing" "$OUT"
 
   # S11 — lib/<name>.sh sourced-library reference (fixup, session-start-auto-
@@ -825,7 +966,7 @@ EOF
   printf '#!/bin/bash\n# sourced library, never wired directly\n' > "$D/adapters/claude-code/hooks/lib/mylib.sh"
   _valid_manifest | sed 's/"hooks": \["a-gate\.sh"\]/"hooks": ["a-gate.sh", "lib\/mylib.sh"]/' \
     > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s11-lib-reference-green" 0 "$RC" "GREEN" "$OUT"
 
   # S12 — a lib/<name>.sh reference to a library that does NOT exist on
@@ -834,7 +975,7 @@ EOF
   D="$TMPROOT/s12"; _fixture "$D"
   _valid_manifest | sed 's/"hooks": \["a-gate\.sh"\]/"hooks": ["a-gate.sh", "lib\/missing-lib.sh"]/' \
     > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s12-lib-reference-missing-red" 1 "$RC" "RED hooks-exist.*lib/missing-lib\.sh" "$OUT"
 
   # S13 — no loosening leak: a manifest that ALSO carries a valid lib/
@@ -849,7 +990,7 @@ EOF
   printf '#!/bin/bash\n# sourced library, never wired directly\n' > "$D/adapters/claude-code/hooks/lib/mylib.sh"
   _valid_manifest | sed 's/"hooks": \["a-gate\.sh"\]/"hooks": ["a-gate.sh", "lib\/mylib.sh"]/; s/"wired_template": false/"wired_template": true/' \
     > "$D/adapters/claude-code/manifest.json"
-  OUT="$(MANIFEST_CHECK_ROOT="$D" bash "$SELF" check 2>&1)"; RC=$?
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s13-lib-exemption-no-leak-red" 1 "$RC" "RED wired-template: entry 'b-pending'" "$OUT"
   if printf '%s' "$OUT" | grep -qE "wired-template.*lib/mylib\.sh"; then
     echo "self-test (s13-lib-exemption-no-false-red): FAIL (the exempt lib/ reference RED'd — exemption leaked)" >&2
@@ -857,6 +998,226 @@ EOF
   else
     echo "self-test (s13-lib-exemption-no-false-red): PASS" >&2
     PASSED=$((PASSED + 1))
+  fi
+
+  # ==========================================================
+  # S14-S23 — scripts/<name>.sh references (the schema extension that let
+  # estate-janitor/estate-brief be NAMED at all: before it, "../scripts/
+  # <n>.sh" REDed on format and "<n>.sh" REDed on existence, so there was
+  # no expressible correct value for a scripts/-based writer).
+  # ==========================================================
+
+  # S14 — the positive case: a scripts/<name>.sh reference whose file exists
+  # under adapters/claude-code/scripts/. Attached to b-pending (wired_template
+  # false), the real shape of both estate-* entries. GREEN.
+  D="$TMPROOT/s14"; _fixture "$D"
+  printf '#!/bin/bash\n# adapter script, not a wired hook\nexit 0\n' > "$D/adapters/claude-code/scripts/my-writer.sh"
+  _valid_manifest | _manifest_hooks_set b-pending '["b-pending.sh","scripts/my-writer.sh"]' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+  _assert "s14-scripts-reference-green" 0 "$RC" "GREEN" "$OUT"
+
+  # S15 — REJECTION (nonexistent file): a well-formed scripts/ reference to a
+  # file that is not on disk still REDs. The asserted pattern pins the
+  # RESOLVED BASE DIRECTORY (.../adapters/claude-code/scripts/...), so
+  # mis-resolving scripts/ against hooks_dir (which would print
+  # .../hooks/scripts/...) fails this scenario, not just S14.
+  D="$TMPROOT/s15"; _fixture "$D"
+  _valid_manifest | _manifest_hooks_set b-pending '["b-pending.sh","scripts/missing-writer.sh"]' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+  _assert "s15-scripts-reference-missing-red" 1 "$RC" \
+    "RED hooks-exist.*adapters/claude-code/scripts/missing-writer\.sh does not exist" "$OUT"
+
+  # S16 — REJECTION (no silent fallback to hooks/): b-pending claims
+  # "scripts/b-pending.sh" while the file exists ONLY at hooks/b-pending.sh.
+  # Must RED — a scripts/ claim is never satisfied by a same-named hooks/
+  # file. The disk->manifest coverage RED for the now-unclaimed hooks/
+  # b-pending.sh co-fires by design; the assertion targets hooks-exist.
+  D="$TMPROOT/s16"; _fixture "$D"
+  _valid_manifest | _manifest_hooks_set b-pending '["scripts/b-pending.sh"]' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+  _assert "s16-scripts-no-hooks-fallback-red" 1 "$RC" \
+    "RED hooks-exist.*adapters/claude-code/scripts/b-pending\.sh does not exist" "$OUT"
+
+  # S17 — REJECTION (escaping the adapter dir). Every traversal shape must
+  # fail BOTH live controls: the FORMAT check (no accepted form admits a
+  # "/" inside a name segment) and the RESOLVER's ".." refusal, which is
+  # reachable because validate_schema reports and returns without aborting
+  # run_check. Third assertion: the value must never reach the existence
+  # check, i.e. no `RED hooks-exist` line may name it — proof the script
+  # never stat'd a path outside the adapter dir. One counter; the failure
+  # message names the leaking shape.
+  D="$TMPROOT/s17"; _fixture "$D"
+  local shape leaked=""
+  for shape in "../scripts/my-writer.sh" "../../etc/passwd" "../../../etc/passwd.sh" \
+               "scripts/../../etc/passwd.sh" "lib/../../etc/passwd.sh" "../scripts/estate-janitor.sh"; do
+    _valid_manifest | _manifest_hooks_set b-pending "[\"b-pending.sh\",\"${shape}\"]" \
+      > "$D/adapters/claude-code/manifest.json"
+    OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+    [[ "$RC" -eq 0 ]] && leaked="${leaked}${shape}(rc0) "
+    printf '%s' "$OUT" | grep -q "RED schema" || leaked="${leaked}${shape}(no-format-red) "
+    printf '%s' "$OUT" | grep -q "RED hooks-path" || leaked="${leaked}${shape}(no-resolver-refusal) "
+    printf '%s' "$OUT" | grep -qF "RED hooks-exist: manifest references hook '${shape}'" \
+      && leaked="${leaked}${shape}(reached-existence-check) "
+  done
+  if [[ -z "$leaked" ]]; then
+    echo "self-test (s17-scripts-traversal-rejected): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s17-scripts-traversal-rejected): FAIL — leaked: ${leaked}" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # S18 — REJECTION (genuinely wrong paths that are NOT traversals): an
+  # absolute path, a "hooks/" prefix (redundant — a bare basename already
+  # means hooks/, so this form must stay illegal rather than become a second
+  # spelling), a nested subdir under scripts/, and an extensionless value.
+  # Format RED for each; the resolver refusal does NOT apply here.
+  D="$TMPROOT/s18"; _fixture "$D"
+  leaked=""
+  for shape in "/etc/passwd.sh" "hooks/my-writer.sh" "scripts/sub/nested.sh" "scripts/no-extension" \
+               "scripts/" "SCRIPTS/my-writer.sh"; do
+    _valid_manifest | _manifest_hooks_set b-pending "[\"b-pending.sh\",\"${shape}\"]" \
+      > "$D/adapters/claude-code/manifest.json"
+    OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+    [[ "$RC" -eq 0 ]] && leaked="${leaked}${shape}(rc0) "
+    printf '%s' "$OUT" | grep -q "RED schema" || leaked="${leaked}${shape}(no-format-red) "
+  done
+  if [[ -z "$leaked" ]]; then
+    echo "self-test (s18-scripts-wrong-path-rejected): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s18-scripts-wrong-path-rejected): FAIL — leaked: ${leaked}" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # S19 — scripts/ is NOT template-exempt (deliberately unlike lib/): a
+  # wired_template:true entry whose scripts/ hook is absent from
+  # settings.json.template REDs.
+  D="$TMPROOT/s19"; _fixture "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/adapters/claude-code/scripts/my-writer.sh"
+  _valid_manifest | _manifest_hooks_set a-gate '["a-gate.sh","scripts/my-writer.sh"]' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+  _assert "s19-scripts-not-template-exempt-red" 1 "$RC" \
+    "RED wired-template.*scripts/my-writer\.sh" "$OUT"
+
+  # S19b — and it is SATISFIED when the template really does wire it, the
+  # live shape of ~/.claude/scripts/session-wrap.sh et al. GREEN.
+  D="$TMPROOT/s19b"; _fixture "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/adapters/claude-code/scripts/my-writer.sh"
+  printf '{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"bash ~/.claude/hooks/a-gate.sh"},{"type":"command","command":"bash ~/.claude/scripts/my-writer.sh"}]}]}}\n' \
+    > "$D/adapters/claude-code/settings.json.template"
+  _valid_manifest | _manifest_hooks_set a-gate '["a-gate.sh","scripts/my-writer.sh"]' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+  _assert "s19b-scripts-template-wired-green" 0 "$RC" "GREEN" "$OUT"
+
+  # S20 — no loosening leak (mirror of S13 for the scripts/ form): a valid
+  # scripts/ reference on b-pending PLUS a-gate wired_template:true against
+  # an EMPTY template. Must still RED on a-gate's plain basename, and must
+  # NOT RED on the scripts/ reference.
+  D="$TMPROOT/s20"; _fixture "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/adapters/claude-code/scripts/my-writer.sh"
+  printf '{"hooks":{}}\n' > "$D/adapters/claude-code/settings.json.template"
+  _valid_manifest | _manifest_hooks_set b-pending '["b-pending.sh","scripts/my-writer.sh"]' \
+    > "$D/adapters/claude-code/manifest.json"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+  _assert "s20-scripts-exemption-no-leak-red" 1 "$RC" "RED wired-template: entry 'a-gate'" "$OUT"
+  if printf '%s' "$OUT" | grep -qE "RED (schema|hooks-exist|hooks-path).*my-writer\.sh"; then
+    echo "self-test (s20-scripts-valid-ref-no-false-red): FAIL (the valid scripts/ reference RED'd)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (s20-scripts-valid-ref-no-false-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # S21 — jq-fallback parity. Before this slice the jq branch of
+  # validate_schema checked NO hooks[] shape at all, so on a node-less
+  # machine "../../etc/passwd" passed check (a) silently. Runs the same
+  # accept + reject pair through a PATH that contains jq but provably not
+  # node. Builds an explicit shim dir rather than trimming PATH, so the
+  # scenario cannot degrade into silently re-running the node branch: if
+  # node is still visible under the shim, this FAILS rather than passing.
+  D="$TMPROOT/s21"; _fixture "$D"
+  printf '#!/bin/bash\nexit 0\n' > "$D/adapters/claude-code/scripts/my-writer.sh"
+  local SHIM="$TMPROOT/nodeless-bin" tool tool_path
+  mkdir -p "$SHIM"
+  for tool in jq awk grep sort paste sed wc tr basename dirname cat rm mkdir diff; do
+    tool_path="$(command -v "$tool" 2>/dev/null)"
+    [[ -n "$tool_path" ]] && ln -sf "$tool_path" "$SHIM/$tool"
+  done
+  if ! PATH="$SHIM" command -v jq >/dev/null 2>&1; then
+    echo "self-test (s21-jq-fallback-hook-shape): FAIL (could not build a jq-visible shim PATH — jq absent?)" >&2
+    FAILED=$((FAILED + 1))
+  elif PATH="$SHIM" command -v node >/dev/null 2>&1; then
+    echo "self-test (s21-jq-fallback-hook-shape): FAIL (node still visible under the shim — the fallback branch was never exercised)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    local jq_leaked=""
+    _valid_manifest | _manifest_hooks_set b-pending '["b-pending.sh","scripts/my-writer.sh"]' \
+      > "$D/adapters/claude-code/manifest.json"
+    OUT="$(PATH="$SHIM" MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+    [[ "$RC" -eq 0 ]] || jq_leaked="${jq_leaked}valid-scripts-ref-not-green(rc${RC}) "
+    _valid_manifest | _manifest_hooks_set b-pending '["b-pending.sh","../../etc/passwd"]' \
+      > "$D/adapters/claude-code/manifest.json"
+    OUT="$(PATH="$SHIM" MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+    [[ "$RC" -eq 0 ]] && jq_leaked="${jq_leaked}traversal-rc0 "
+    printf '%s' "$OUT" | grep -q "RED schema" || jq_leaked="${jq_leaked}traversal-no-format-red "
+    if [[ -z "$jq_leaked" ]]; then
+      echo "self-test (s21-jq-fallback-hook-shape): PASS" >&2
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (s21-jq-fallback-hook-shape): FAIL — ${jq_leaked}" >&2
+      printf '%s\n' "$OUT" >&2
+      FAILED=$((FAILED + 1))
+    fi
+  fi
+
+  # S22 — REAL-ARTIFACT scenario. Every scenario above feeds a manifest this
+  # file wrote itself; a matcher tested only against author-written fixtures
+  # is how two Critical parser defects got through this repo in the same
+  # week. This one lifts the estate-janitor and estate-brief entries VERBATIM
+  # out of the real manifest.json shipped beside this script (same
+  # SCRIPT_DIR/.. relationship as REAL_SCHEMA, and the same layout install.sh
+  # produces at ~/.claude/), drops them into a fixture whose scripts/ dir
+  # mirrors the real repo, and requires GREEN. If either entry regresses to
+  # an inexpressible form, this fails on the real bytes.
+  D="$TMPROOT/s22"
+  mkdir -p "$D/adapters/claude-code/hooks" "$D/adapters/claude-code/schemas" "$D/adapters/claude-code/scripts"
+  cp "$REAL_SCHEMA" "$D/adapters/claude-code/schemas/manifest.schema.json"
+  printf '{"hooks":{}}\n' > "$D/adapters/claude-code/settings.json.template"
+  printf '#!/bin/bash\nexit 0\n' > "$D/adapters/claude-code/scripts/estate-janitor.sh"
+  printf '#!/bin/bash\nexit 0\n' > "$D/adapters/claude-code/scripts/estate-brief.sh"
+  local REAL_MANIFEST="$SCRIPT_DIR/../manifest.json"
+  if [[ ! -f "$REAL_MANIFEST" ]]; then
+    echo "self-test (s22-real-estate-entries-green): FAIL (real manifest not found at ${REAL_MANIFEST})" >&2
+    FAILED=$((FAILED + 1))
+  else
+    if have_node; then
+      node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const want = ["estate-janitor", "estate-brief"];
+const entries = (m.entries || []).filter(e => want.includes(e.id));
+if (entries.length !== want.length) { process.stderr.write("missing real entries\n"); process.exit(1); }
+process.stdout.write(JSON.stringify({ schema_version: 1, entries }, null, 2) + "\n");' \
+        "$REAL_MANIFEST" > "$D/adapters/claude-code/manifest.json" 2>/dev/null
+      RC=$?
+    else
+      jq '{schema_version: 1, entries: [.entries[] | select(.id == "estate-janitor" or .id == "estate-brief")]}' \
+        "$REAL_MANIFEST" > "$D/adapters/claude-code/manifest.json" 2>/dev/null
+      RC=$?
+    fi
+    if [[ "$RC" -ne 0 ]]; then
+      echo "self-test (s22-real-estate-entries-green): FAIL (could not extract the real estate-* entries)" >&2
+      FAILED=$((FAILED + 1))
+    else
+      OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+      _assert "s22-real-estate-entries-green" 0 "$RC" "GREEN — 2 entries" "$OUT"
+    fi
   fi
 
   echo "" >&2

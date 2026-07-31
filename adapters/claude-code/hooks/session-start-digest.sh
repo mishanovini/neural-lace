@@ -603,6 +603,29 @@ feed_ledger_summary() {
 # ----------------------------------------------------------------------
 # Feed 10: nl-issues untriaged count (§E.8). Tolerate absent file.
 # ----------------------------------------------------------------------
+# ----------------------------------------------------------------------
+# T9 feed (accountable-estate-program-2026-07): auto-reopen sweep. Delegate
+# to plan-recheck-sweep.sh --quick (mirrors feed_nl_issues's delegation
+# pattern exactly): that script owns the actual re-check-date/recurrence-
+# check logic, the reopen mechanics, and its own sandboxed self-test. This
+# is the ONLY chokepoint that invokes it on this machine today — see
+# plan-recheck-sweep.sh's own header ("DETERMINISTIC TRIGGER") for why
+# session-start-digest.sh (not supervisor-tick.sh/health-tick.sh, neither
+# of which is actually registered here) was picked, and the honest gap
+# that leaves open (no true session-independent periodic tick yet).
+# --quick is bounded + exit-0-always (constraint 5: never blocks a
+# session start) and prints nothing when no plan needs reopening.
+# ----------------------------------------------------------------------
+feed_plan_recheck() {
+  local cwd="${1:-$PWD}"
+  local sweep="$HOOKS_DIR/../scripts/plan-recheck-sweep.sh"
+  [[ -f "$sweep" ]] || return 0
+  local out
+  out="$(cd "$cwd" 2>/dev/null && bash "$sweep" --quick 2>/dev/null || true)"
+  [[ -z "$out" ]] && return 0
+  printf '%s\n' "$out"
+}
+
 feed_nl_issues() {
   # Delegate to nl-issue.sh --digest-feed (E.8): it owns the ledger's field
   # schema ("triage_status":"untriaged", NOT "triaged":false — the inline grep
@@ -1242,6 +1265,21 @@ run_digest() {
   # Best-effort, never-blocks (session-heartbeat.sh touch always exits 0).
   # Per specs-o §O.2 fragment callsite-wiring.md item 1 (orchestrator splice).
   bash "$HOOKS_DIR/../scripts/session-heartbeat.sh" touch --event start >/dev/null 2>&1 || true
+
+  # ---- MODEL-AVAILABILITY RECONCILE (operator directive 2026-07-29) --------
+  # "Opus is a fallback, not the primary option ... I want agents to use Fable
+  # when it's available." Fable stays the declared primary in every agent's
+  # frontmatter; Opus is BORROWED only while Fable is unavailable, and the
+  # borrow must end BY ITSELF when the budget resets.
+  #
+  # reconcile is the self-healing step and is idempotent, so running it on every
+  # session start is safe: it borrows when a tier is marked exhausted, gives the
+  # borrow back the moment the marker expires, and is a silent no-op otherwise.
+  # Without this callsite the fallback would be a manual flip that a human has to
+  # remember to undo — which is how a temporary fallback silently becomes the
+  # permanent primary (it did, for ~20 minutes, before the operator caught it).
+  # Best-effort: never blocks a session start.
+  bash "$HOOKS_DIR/../scripts/model-availability.sh" reconcile --quiet >/dev/null 2>&1 || true
   # Reap splice (review fix 2026-07-09): the reaper existed and was
   # self-tested but had NO production call-site, so stale heartbeats
   # accumulated unbounded (55 deep at audit). Reap is idempotent,
@@ -1276,6 +1314,52 @@ run_digest() {
   ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/ensure-cockpit.sh" >/dev/null 2>&1 ) || true
   # ---- END COCKPIT-SESSIONSTART CALLSITE ------------------------------
 
+  # ---- COORD-SYNC-SESSIONSTART CALLSITE: ensure the macOS coordination --
+  # cadence LaunchAgent (operator, 2026-07-29: "the cockpit is also supposed
+  # to show work across multiple machines" -- coord-sync.sh had NO scheduled
+  # runner on macOS at all; Windows drives it via the NL-CoordSync scheduled
+  # task). Folded in here beside the cockpit ensure splice (NOT a new
+  # SessionStart hooks[] entry -- that array is already at its 8/8 cap),
+  # same subshelled/best-effort/never-blocks discipline: ensure-coord-sync.sh
+  # is itself kill-switchable, OS-gated (Darwin only; Windows keeps its own
+  # operator-applied installer), self-test-gated, and tolerate-absent (see
+  # that script's header for the full contract, mirroring ensure-cockpit.sh's
+  # own Darwin LaunchAgent precedent, decision 065). `cd "$cwd"` first for
+  # the same cwd-override-honoring reason as the cockpit splice above.
+  ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/ensure-coord-sync.sh" >/dev/null 2>&1 ) || true
+  # ---- END COORD-SYNC-SESSIONSTART CALLSITE ---------------------------
+
+  # ---- LIMIT-RESUME SESSIONSTART CALLSITE: ensure the watchdog LaunchAgent --
+  # + arm this session (operator, 2026-07-30: "I'm guessing you're still not
+  # retriggering yourself after the limits reset. How do we make that
+  # actually work?"). Folded in here beside the cockpit/coord-sync ensure
+  # splices (NOT a new SessionStart hooks[] entry -- that array is already
+  # at its 8/8 cap): install-limit-resume.sh ensure idempotently
+  # installs/refreshes the macOS LaunchAgent (Darwin-only, self-test-gated,
+  # kill-switchable, tolerate-absent -- see that script's own header,
+  # mirroring ensure-cockpit.sh's decision-065 precedent almost exactly),
+  # then limit-resume.sh arm records THIS session's id (from
+  # $CLAUDE_CODE_SESSION_ID) + cwd into the one tracked marker. This is
+  # ONLY half of the arming story: because Claude Code's Stop hook fires
+  # per-TURN (not once per session -- this file's own turn-trace/heartbeat
+  # bookkeeping already depends on that), a session-only arm/disarm would
+  # protect just the FIRST turn. The other half -- re-arming on every
+  # subsequent turn -- is a genuinely NEW UserPromptSubmit hooks[] entry in
+  # settings.json.template (that event carries no doctor-enforced budget
+  # today, unlike SessionStart/Stop, so a new entry there is not a budget
+  # violation). See scripts/limit-resume.sh's own header ("TURN-SCOPED
+  # ARMING") and docs/decisions/068-macos-limit-resume-turn-scoped-auto-arm.md
+  # for the full reasoning, including reconciliation with ADR-061's
+  # deliberately-still-unarmed session-resumer.sh supervisor (a different,
+  # broader, Windows-only mechanism this does NOT touch or re-arm).
+  # arm() itself no-ops from any cwd that is not the main checkout (a
+  # worktree-isolated builder session never arms the one tracked marker),
+  # so `cd "$cwd"` here matches the cockpit/coord-sync splices' own
+  # cwd-override-honoring reason.
+  ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/install-limit-resume.sh" ensure >/dev/null 2>&1 ) || true
+  ( cd "$cwd" 2>/dev/null && "$HOOKS_DIR/../scripts/limit-resume.sh" arm >/dev/null 2>&1 ) || true
+  # ---- END LIMIT-RESUME SESSIONSTART CALLSITE --------------------------
+
   # ---- ASK-CAPTURE SESSION-ATTACH CALLSITE (Task 9b) ------------------
   # Best-effort session-attach beside the heartbeat/ensure-cockpit splices
   # above (NOT a new SessionStart hooks[] entry — that array is at its 8/8
@@ -1296,6 +1380,8 @@ run_digest() {
   body="$(feed_discoveries "$seen_path" "$cwd")"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_stale_plans "$seen_path" "$cwd")"
+  [[ -n "$body" ]] && lines+=("$body")
+  body="$(feed_plan_recheck "$cwd")"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_monitor_alerts "$seen_path" "$alert_dir")"
   [[ -n "$body" ]] && lines+=("$body")
@@ -1371,6 +1457,11 @@ run_self_test() {
   mkdir -p "$tmp"
   export HARNESS_SELFTEST=1
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=lib/portable-time.sh
+  . "$HOOKS_DIR/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source lib/portable-time.sh" >&2; return 1; }
+
   _ck_contains() {
     local label="$1" haystack="$2" needle="$3"
     if [[ "$haystack" == *"$needle"* ]]; then
@@ -1439,7 +1530,12 @@ EOF
 Status: ACTIVE
 EOF
   local old_ts=$(($(date +%s) - 200000))
-  touch -d "@$old_ts" "$s1/docs/plans/old-plan.md" 2>/dev/null || true
+  # feed_stale_plans prefers the git commit timestamp and only falls back to
+  # mtime, so this backdating is the belt to the commit-date braces below —
+  # but it must still WORK, or the fallback arm is silently never exercised.
+  # (Pre-sweep: `touch -d "@$old_ts" ... || true`, a no-op on macOS.)
+  nl_touch_age "$s1/docs/plans/old-plan.md" 200000 || {
+    echo "FAIL: S1 fixture could not be aged (nl_touch_age)" >&2; fail=$((fail + 1)); }
   ( cd "$s1" && git add docs/plans/old-plan.md docs/discoveries >/dev/null 2>&1 && \
     GIT_AUTHOR_DATE="@$old_ts" GIT_COMMITTER_DATE="@$old_ts" git commit --quiet -m "old plan" >/dev/null 2>&1 ) || true
   local alert1="$tmp/s1-alerts"
@@ -2350,6 +2446,55 @@ EOF
       bash "$s20_script" </dev/null 2>&1
   )"
   _ck_contains "S20c explicit invocation (no NL_SESSIONSTART_ORIGIN) never suppressed by a held lock" "$out20c" "doctor:"
+
+  # ---- S21: feed_plan_recheck() (T9, accountable-estate-program-2026-07)
+  #          delegates to plan-recheck-sweep.sh --quick. A sandboxed fixture
+  #          repo with an archived, Closure-Outcome-bearing, PAST-re-check-
+  #          date plan must surface a "plan-recheck: ... reopened" digest
+  #          line; a repo with no such plan must be silent (empty). ----
+  local s21_clean="$tmp/s21-clean"
+  mkdir -p "$s21_clean/docs/plans/archive"
+  ( cd "$s21_clean" && git init -q && git config user.email t@t.test && git config user.name T )
+  local out21a
+  out21a="$(feed_plan_recheck "$s21_clean")"
+  if [[ -z "$out21a" ]]; then
+    echo "PASS: S21a feed_plan_recheck silent when no plan needs reopening"
+    pass=$((pass + 1))
+  else
+    echo "FAIL: S21a feed_plan_recheck expected empty output, got: $out21a" >&2
+    fail=$((fail + 1))
+  fi
+
+  local s21_dirty="$tmp/s21-dirty"
+  mkdir -p "$s21_dirty/docs/plans/archive"
+  (
+    cd "$s21_dirty" || exit 1
+    git init -q
+    git config user.email t@t.test
+    git config user.name T
+    cat > docs/plans/archive/p-digest-recheck.md <<'EOF'
+# Plan: P Digest Recheck
+Status: COMPLETED
+Backlog items absorbed: none
+
+## Goal
+test
+
+## Files to Modify/Create
+- `docs/plans/archive/p-digest-recheck.md`
+
+## Closure Outcome
+Outcome metric: test metric
+Re-check date: 2020-01-01T00:00:00Z
+Evidence pointers:
+- (none)
+EOF
+    printf '# Backlog\n\n## Open work\n' > docs/backlog.md
+    git add . && git commit -q -m init
+  )
+  local out21b
+  out21b="$(feed_plan_recheck "$s21_dirty")"
+  _ck_contains "S21b feed_plan_recheck surfaces a reopened-plan digest line" "$out21b" "plan-recheck: p-digest-recheck reopened"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""

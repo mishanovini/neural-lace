@@ -1,0 +1,50 @@
+# selftest-sweep-exclusions.txt — the ONE machine-readable ledger of scripts a
+# `--self-test` sweep must SKIP, and why.
+#
+# Owner: docs/plans/macos-portability-2026-07.md M6 (disposition of the residual
+# attic/ self-test failures). Read by the M5 sweep runner and validated by
+# scripts/selftest-sweep-exclusions.sh (`--list` / `--check` / `--verify`),
+# which harness-doctor.sh runs. An exclusion here is ENFORCED, not remembered:
+# if the named file disappears or moves to a live surface the doctor goes RED,
+# and if the named file's self-test starts PASSING the doctor WARNs that the
+# entry is stale and must be deleted.
+#
+# ---------------------------------------------------------------------------
+# FORMAT (parseable by bash 3.2 with `read -r path reason`)
+# ---------------------------------------------------------------------------
+#   <repo-relative-path><whitespace><reason, >=40 chars>
+#
+#   - `#` starts a comment; blank lines ignored.
+#   - Field 1 is the path, repo-relative, from the repo root. Path-keyed on
+#     purpose: the pre-existing prior art (.github/workflows/hooks-selftest.yml
+#     KNOWN_FAILING_HOOKS) is BASENAME-keyed, which cannot distinguish
+#     attic/decision-context-gate.sh from the live exit-0 shim of the same
+#     basename at hooks/decision-context-gate.sh. Paths can.
+#   - Everything after the first whitespace run is the reason. It must state
+#     the ROOT CAUSE, not "it fails". A reason under 40 characters is a RED.
+#   - A consumer that only wants the paths: grep -v '^[[:space:]]*#' this file,
+#     drop blank lines, take field 1. `selftest-sweep-exclusions.sh --list`
+#     does exactly that and is the stable API.
+#
+# ---------------------------------------------------------------------------
+# WHAT MAY BE EXCLUDED
+# ---------------------------------------------------------------------------
+# Retired / archived artifacts only. A path under adapters/claude-code/hooks/
+# or adapters/claude-code/scripts/ is a LIVE control: it gets FIXED or RETIRED,
+# never silenced here, and `--check` REDs if one appears. Exclusion is the last
+# resort, not the cheap one — M6 fixed attic/workstreams-state-gate.sh (29/2 ->
+# 31/0, both interpreters) rather than adding a third line below.
+#
+# ---------------------------------------------------------------------------
+# RETIREMENT CONDITION (when an entry must be deleted)
+# ---------------------------------------------------------------------------
+# Both of these files are Wave-D/Wave-O retirees awaiting the hard-delete the
+# attic README's one-release rule mandates. The commit that hard-deletes them
+# MUST delete their line here too — `--check` REDs on a path that no longer
+# exists precisely so that deletion cannot be forgotten.
+#
+# ===========================================================================
+
+adapters/claude-code/attic/decision-context-gate.sh  RETIRED Wave D.5 (manifest wave-d-retired-shims declares selftest:false; live path is a 3-line exit-0 shim). Self-test fails 20/6 identically on bash 3.2.57 and 5.3.15 — NOT a portability failure. Root cause: neural-lace/workstreams-ui/state/decision-context-schema.js requires zod, node_modules is gitignored and uninstalled, so the gate logs "Tier 1 fence — env unavailable (schema-require:Cannot find module 'zod')", takes the NOENV degrade branch, and neither blocks (ST5 wants exit 2) nor writes state (ST2/ST11/ST12/ST28). Pre-existing since 2026-06-02 as NL-FINDING-018 / HARNESS-GAP-42, already allowlisted in .github/workflows/hooks-selftest.yml. Fixing means making an npm dependency tree a precondition of the sweep, for a gate scheduled for hard-delete.
+
+adapters/claude-code/attic/workstreams-extract-pending.sh  RETIRED Wave O.4 (manifest entry workstreams-extract-pending declares selftest:false; superseded by needs-you.sh; removed from workstreams-stop-writer.sh MEMBERS). Self-test aborts identically on bash 3.2.57 and 5.3.15 before running one scenario — NOT a portability failure. Root cause: its harness resolves a SIBLING emit hook as $(dirname $0)/workstreams-emit.sh, but workstreams-emit.sh was never retired (it is live in hooks/ and wired 4x in settings.json.template), so from attic/ the sibling can never resolve and the suite exits 1 with "sibling emit hook not found". The only fix is an exec-wrapper in attic/ pointing at a live wired 172KB hook — resurrecting live behaviour under a retired path, which the attic README forbids.

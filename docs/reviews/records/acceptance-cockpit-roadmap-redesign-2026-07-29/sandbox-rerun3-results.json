@@ -1,0 +1,16 @@
+{
+  "at": "2026-07-30T06:04:32.465Z",
+  "fix_commit": "a074b08",
+  "results": [
+    {
+      "id": "R3-S7b-statusless-corrupt-surfaces",
+      "verdict": "PASS",
+      "detail": "{\"corrupt3row\":true,\"reasonRendered\":true,\"confident\":false,\"cleanStub\":false,\"rollup\":\"5\"}"
+    },
+    {
+      "id": "R3-console-clean",
+      "verdict": "PASS",
+      "detail": "0 errors"
+    }
+  ]
+}

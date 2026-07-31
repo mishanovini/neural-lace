@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Workstreams</title>
+  <title>Cockpit</title>
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -23,8 +23,8 @@
        with expansion + scroll intact; a followed link to a resolved item
        renders "resolved <when> — <outcome>", never blank (C3). -->
   <header>
-    <h1>Workstreams</h1>
-    <nav id="tabNav" class="tab-nav" role="tablist" aria-label="workstreams views">
+    <h1>Cockpit</h1>
+    <nav id="tabNav" class="tab-nav" role="tablist" aria-label="cockpit views">
       <button type="button" id="tabRoadmapBtn" class="tab-btn" role="tab"
               aria-selected="true" aria-controls="tabRoadmapPanel">Roadmap</button>
       <button type="button" id="tabRequestsBtn" class="tab-btn" role="tab"
@@ -54,7 +54,7 @@
     <div class="rm-layout">
     <section id="roadmapSection" class="pane roadmap-section" aria-label="roadmap">
       <div class="roadmap-toolbar">
-        <input id="roadmapFilter" type="text" placeholder="filter the roadmap…"
+        <input id="roadmapFilter" type="text" placeholder="filter by title or task id (M4, T3)…"
                aria-label="filter roadmap items (matches titles, requests, and ids)">
         <div id="roadmapProjectChips" class="rm-project-chips" role="group" aria-label="project filters"></div>
         <button type="button" id="roadmapChoreToggle" class="ghost small" aria-pressed="false">harness chores</button>
@@ -264,6 +264,24 @@
       </section>
     </main>
 
+    <!-- Machines — cross-machine peer state (PEERS-SURFACE-RETIRED-01,
+         2026-07-29 round 14). payload.peers (server.js's buildPeersBlock ->
+         peer-view.js) had no rendering surface since b496b4f retired the
+         interim ask tree (#askTreeSection, still `display:none` — see
+         requests.js) that used to be its only mount. The exporter half is
+         proven (server-side selftest coverage); this is the MINIMAL
+         receive-half surface: person -> machines -> freshness only (no
+         per-plan/per-task breakdown — that fuller renderer stays in
+         asks.js, unmounted, matching Round 12/13's noise-reduction posture
+         for this least-noisy tab). Loaded once when this tab first opens,
+         same convention as Diagnostics directly below. -->
+    <section id="machinesSection" class="pane machines-section" aria-label="machines">
+      <div class="pane-head">
+        <span class="pane-title">Machines — cross-machine peer state</span>
+      </div>
+      <div class="pane-body" id="machinesBody"></div>
+    </section>
+
     <!-- Diagnostics — reconciler/auditor internals ("Diagnostics
          (reconciler internals, drift detail) live here too", Task 16). NOT
          schema-validated like /api/asks (server.js's own header comment on
@@ -319,6 +337,14 @@
     <div class="doc-body" id="docBody"></div>
   </div>
 
+  <!-- md-render.js loads FIRST: app.js's Docs panel and roadmap.js's
+       plan-doc modal both call window.MdRender.renderMarkdown into the
+       shared #docBody above (Round 16 deliverable 2). -->
+  <script src="/md-render.js"></script>
+  <!-- command-render.js (Round 17 deliverable 2): the shared fenced-command
+       renderer inbox.js and app.js's Q2 "what needs me" cards both call —
+       loads before both callers, same convention as md-render.js above. -->
+  <script src="/command-render.js"></script>
   <script src="/asks.js"></script>
   <script src="/backlog.js"></script>
   <script src="/app.js"></script>

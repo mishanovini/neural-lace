@@ -136,6 +136,19 @@ _fdsg_is_drive_wide_root() {
   printf '%s' "$1" | grep -qE "$_FDSG_DRIVE_WIDE_RE"
 }
 
+# Portable lowercase (2026-07-30 bash-3.2 fix). `${var,,}` is a bash-4-only
+# case-conversion expansion — under stock macOS /bin/bash 3.2.57 it is a
+# hard parse-time-adjacent "bad substitution" error, NOT a graceful
+# no-op, and (this file has no `set -e`) execution continues past it with
+# the target variable left UNSET, corrupting the case-statement dispatch
+# that follows and fail-CLOSED on a legitimate scoped command (repro:
+# `find . -name "*.md"` blocked, rc=2, on 3.2.57 — nothing to do with any
+# drive-wide root). tr is POSIX and identical on every bash this gate runs
+# under.
+_fdsg_lc() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+}
+
 # Tokenize a command segment respecting single/double quotes. Populates
 # global array FDSG_TOKENS. (Deliberately duplicated rather than sourced
 # from scope-enforcement-gate.sh — this gate stays single-file/dependency
@@ -317,7 +330,7 @@ _fdsg_check_gci() {
   local n=${#args[@]} has_recurse=0 k argl
   local -a nonflags=()
   for ((k=1; k<n; k++)); do
-    argl="${args[$k],,}"
+    argl="$(_fdsg_lc "${args[$k]}")"
     case "$argl" in
       -recurse) has_recurse=1 ;;
       -*) : ;;
@@ -347,7 +360,7 @@ _fdsg_scan_segment() {
   _fdsg_tokenize "$seg"
   [[ ${#FDSG_TOKENS[@]} -eq 0 ]] && return 1
   local cmd0_base="${FDSG_TOKENS[0]##*/}"
-  local cmd0_lc="${cmd0_base,,}"
+  local cmd0_lc; cmd0_lc="$(_fdsg_lc "$cmd0_base")"
   case "$cmd0_lc" in
     find)
       _fdsg_check_find "${FDSG_TOKENS[@]}" && { FDSG_MATCH_CMD="$seg"; return 0; }
@@ -454,6 +467,34 @@ JSON
 # --self-test
 # ============================================================
 if [[ "${1:-}" == "--self-test" ]]; then
+  # Arm the shared libs' sandbox guard (signal-ledger.sh) for this whole run and
+  # EXPORT it so re-invocations inherit it. Without it the lib resolves its
+  # PRODUCTION path and this self-test appends to the operator's real
+  # ~/.claude/state/signal-ledger.jsonl. PROVEN behaviorally: clean-HOME probe
+  # created .claude/state/signal-ledger.jsonl without it, nothing with it.
+  export HARNESS_SELFTEST=1
+
+  # ----------------------------------------------------------------
+  # INTERPRETER FIDELITY (2026-07-30, scope-enforcement-gate.sh Scenario-38
+  # pattern). Every scenario below re-invokes this script as a child
+  # process. A bare `bash "$_FDSG_SELF"` resolves through PATH — on this
+  # machine Homebrew's bash 5.3 is first on PATH, so the suite reported
+  # 19/0 under /bin/bash 3.2.57 while never once actually executing the
+  # gate under 3.2, hiding the `${cmd0_base,,}` bad-substitution fail-closed
+  # bug (12/7 once children were forced to genuinely run under 3.2). $BASH
+  # is the absolute path of the interpreter running THIS process, so the
+  # child is now guaranteed to be the one the operator actually invoked.
+  SELF_TEST_BASH="${BASH:-bash}"
+  if [[ ! -x "$SELF_TEST_BASH" ]]; then
+    SELF_TEST_BASH="$(command -v bash 2>/dev/null)"
+  fi
+  if [[ -z "$SELF_TEST_BASH" ]] || [[ ! -x "$SELF_TEST_BASH" ]]; then
+    echo "self-test: cannot resolve the running bash interpreter" >&2
+    exit 2
+  fi
+  echo "self-test interpreter: $SELF_TEST_BASH (${BASH_VERSION:-unknown})"
+  echo "  (child hook invocations use THIS interpreter, not PATH's \`bash\`)"
+
   PASSED=0
   FAILED=0
   TMP=$(mktemp -d 2>/dev/null || mktemp -d -t fdsgst)
@@ -482,7 +523,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
     local label="$1" cmd="$2" tool="${3:-Bash}" rc out esc
     esc=$(printf '%s' "$cmd" | _fdsg_json_str)
     out=$(printf '{"tool_name":"%s","tool_input":{"command":%s}}' "$tool" "$esc" \
-          | CLAUDE_STATE_DIR="$TMP/state-unused" bash "$_FDSG_SELF" 2>"$TMP/err.txt")
+          | CLAUDE_STATE_DIR="$TMP/state-unused" "$SELF_TEST_BASH" "$_FDSG_SELF" 2>"$TMP/err.txt")
     rc=$?
     local err; err=$(cat "$TMP/err.txt" 2>/dev/null)
     if [[ "$rc" == "2" ]] && [[ "$err" == *"BLOCKED"* ]] && [[ "$out" == *'"decision": "block"'* ]]; then
@@ -499,7 +540,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
     local label="$1" cmd="$2" tool="${3:-Bash}" rc esc
     esc=$(printf '%s' "$cmd" | _fdsg_json_str)
     printf '{"tool_name":"%s","tool_input":{"command":%s}}' "$tool" "$esc" \
-          | bash "$_FDSG_SELF" >"$TMP/out.txt" 2>"$TMP/err.txt"
+          | "$SELF_TEST_BASH" "$_FDSG_SELF" >"$TMP/out.txt" 2>"$TMP/err.txt"
     rc=$?
     if [[ "$rc" == "0" ]]; then
       echo "self-test: PASS (allow) — $label" >&2
@@ -523,7 +564,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # Flat-shape payload (.command at top level, no tool_input wrapper) —
   # house convention per the jq filter '.tool_input.command // .command // ""'.
   FLAT_RC=$(printf '{"tool_name":"Bash","command":"find / -iname x"}' \
-            | bash "$_FDSG_SELF" >/dev/null 2>"$TMP/flat_err.txt"; echo $?)
+            | "$SELF_TEST_BASH" "$_FDSG_SELF" >/dev/null 2>"$TMP/flat_err.txt"; echo $?)
   FLAT_ERR=$(cat "$TMP/flat_err.txt" 2>/dev/null)
   if [[ "$FLAT_RC" == "2" ]] && [[ "$FLAT_ERR" == *"BLOCKED"* ]]; then
     echo "self-test: PASS (block) — flat-shape payload (.command, no tool_input)" >&2
@@ -547,7 +588,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _allow_test 'echo with quoted ; find / inside the string' 'echo "do not run ; find / here"'
 
   # Malformed JSON -> fail-open (allow).
-  MALFORMED_RC=$(printf '{not json at all' | bash "$_FDSG_SELF" >/dev/null 2>"$TMP/malformed_err.txt"; echo $?)
+  MALFORMED_RC=$(printf '{not json at all' | "$SELF_TEST_BASH" "$_FDSG_SELF" >/dev/null 2>"$TMP/malformed_err.txt"; echo $?)
   if [[ "$MALFORMED_RC" == "0" ]]; then
     echo "self-test: PASS (allow) — malformed JSON fails open" >&2
     PASSED=$((PASSED+1))
@@ -569,7 +610,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   WESC=$(printf '%s' "$WAIVED_CMD" | _fdsg_json_str)
   WAIVER_RC=$(printf '{"tool_name":"Bash","tool_input":{"command":%s}}' "$WESC" \
     | CLAUDE_STATE_DIR="$WAIVER_STATE" HARNESS_SELFTEST=1 SIGNAL_LEDGER_PATH="$WAIVER_LEDGER" \
-      bash "$_FDSG_SELF" >/dev/null 2>"$TMP/waiver_err.txt"; echo $?)
+      "$SELF_TEST_BASH" "$_FDSG_SELF" >/dev/null 2>"$TMP/waiver_err.txt"; echo $?)
   WAIVER_OK=1
   if [[ "$WAIVER_RC" != "0" ]]; then
     WAIVER_OK=0
@@ -588,7 +629,39 @@ if [[ "${1:-}" == "--self-test" ]]; then
   fi
   rm -f "$WAIVER_STATE/find-disk-scan-waiver-selftest.txt"
 
+  # ---- Static: bash-3.2 floor — no bash-4-only construct in this file ----
+  # REGRESSION GUARD (2026-07-30, scope-enforcement-gate.sh Scenario-37
+  # pattern). This fires on EVERY interpreter (it greps the file's own
+  # source), so a 5.3-only run still catches a reintroduction of the exact
+  # `${cmd0_base,,}` defect that made this blocking gate fail-CLOSED on
+  # legitimate scoped commands under stock macOS /bin/bash 3.2.57.
+  FDSG_BASH4_HITS=$(grep -nE '(declare|local|typeset)[[:space:]]+-[A-Za-z]*A|^[[:space:]]*mapfile[[:space:]]|^[[:space:]]*readarray[[:space:]]|\$\{[A-Za-z_][A-Za-z0-9_]*(,,|\^\^)\}' "$_FDSG_SELF" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  if [[ -z "$FDSG_BASH4_HITS" ]]; then
+    echo "self-test: PASS (static) — bash32-floor-no-bash4-constructs (no associative-array declaration, mapfile/readarray, or case-conversion expansion outside comments)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test: FAIL (static) — bash32-floor-no-bash4-constructs — bash-4-only construct(s) present:" >&2
+    printf '%s\n' "$FDSG_BASH4_HITS" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- Static: the suite re-invokes the interpreter it CLAIMS to test ----
+  # REGRESSION GUARD (2026-07-30) for the defect that hid the above: a bare
+  # `bash "$_FDSG_SELF"` resolves through PATH, so this suite reported 19/0
+  # under 3.2 while every scenario actually ran under Homebrew's 5.3.
+  FDSG_BARE_BASH=$(grep -nE '\|[[:space:]]*bash[[:space:]]+"\$_FDSG_SELF"|[[:space:]]bash[[:space:]]+"\$_FDSG_SELF"' "$_FDSG_SELF" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  if [[ -z "$FDSG_BARE_BASH" ]] && [[ "${SELF_TEST_BASH:-${BASH:-}}" == "${BASH:-}" ]]; then
+    echo "self-test: PASS (static) — selftest-interpreter-fidelity (children run ${SELF_TEST_BASH:-$BASH}, no PATH-resolved \`bash\`)" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test: FAIL (static) — selftest-interpreter-fidelity — suite would test an interpreter it was not run under:" >&2
+    [[ -n "$FDSG_BARE_BASH" ]] && printf '%s\n' "$FDSG_BARE_BASH" >&2
+    [[ "${SELF_TEST_BASH:-}" != "${BASH:-}" ]] && echo "  SELF_TEST_BASH=${SELF_TEST_BASH:-<unset>} but BASH=${BASH:-<unset>}" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
+  echo "  interpreter exercised: ${SELF_TEST_BASH:-${BASH:-unknown}} (${BASH_VERSION:-unknown})" >&2
   echo "self-test summary: $PASSED passed, $FAILED failed" >&2
   [[ "$FAILED" -eq 0 ]] && exit 0 || exit 1
 fi

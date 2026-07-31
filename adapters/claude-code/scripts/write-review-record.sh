@@ -32,6 +32,14 @@
 #           [--commit-sha <sha>] [--branch <name>] [--transcript-ref <ref>]
 #           [--findings-summary <text>] [--written-by <text>]
 #           [--payload <json>] [--repo-root <path>]
+#           [--reviewer-principal <json>] [--independence <pathway|cross-machine>]
+#     review-independence plan RI3: both optional + additive. reviewer_principal
+#     is {"hostname":..,"account":..,"session_id":..} identifying WHO actually
+#     ran the review; independence names how separate that principal was from
+#     the branch author. Populated by review-runner.sh (the reviewer's OWN
+#     process), never by the authoring session -- see docs/plans/
+#     review-independence.md. Omitted entirely by every pre-RI3 caller, which
+#     produces the exact same record shape as before (both fields null).
 #   rebuild-index [--records-dir <dir>] [--repo-root <path>] [--stdout]
 #   check --path <repo-relative-path> [--blob-sha <sha>] [--ref <ref>]
 #         [--repo-root <path>]
@@ -67,7 +75,8 @@ Usage: $SCRIPT_NAME capture --kind <k> --reviewer <agent> --verdict <v> \\
          --plan-ref <ref> --quote <text> --file <path> [--file <path> ...] \\
          [--reviewer-model <m>] [--commit-sha <sha>] [--branch <b>] \\
          [--transcript-ref <ref>] [--findings-summary <text>] \\
-         [--written-by <text>] [--payload <json>] [--repo-root <path>]
+         [--written-by <text>] [--payload <json>] [--repo-root <path>] \\
+         [--reviewer-principal <json>] [--independence pathway|cross-machine]
        $SCRIPT_NAME rebuild-index [--records-dir <dir>] [--repo-root <path>] [--stdout]
        $SCRIPT_NAME check --path <path> [--blob-sha <sha>] [--ref <ref>] [--repo-root <path>]
        $SCRIPT_NAME bootstrap-grandfather [--ref <ref>] [--repo-root <path>] [--stdout]
@@ -117,6 +126,13 @@ _rrg_rebuild_index() {
   # existing placeholder record ("none (orchestrator self-attestation...)")
   # read honestly once rebuilt, without deleting or rewriting the record
   # itself.
+  # reviewer_principal + independence (review-independence plan RI3) are
+  # carried into every index row for the SAME reason `reviewer` was (finding
+  # 2b): a derived row must never drop the honesty qualifier of WHO reviewed
+  # and how independent they were from the branch author -- the doctor's
+  # author-ne-reviewer check reads these two fields, not the records
+  # directory, on its hot path. `// null` makes every pre-RI3 record (which
+  # has neither key at all) render explicitly as null rather than absent.
   jq -s '
     [ .[] | . as $rec | ($rec.covered_files // [])[] | {
         path: .path,
@@ -125,7 +141,9 @@ _rrg_rebuild_index() {
         kind: $rec.kind,
         verdict: $rec.verdict,
         reviewer: $rec.reviewer,
-        created_at: $rec.created_at
+        created_at: $rec.created_at,
+        reviewer_principal: ($rec.reviewer_principal // null),
+        independence: ($rec.independence // null)
       } ]
     | sort_by(.path, .blob_sha, .created_at, .record_id)
     | {schema_version: 1, entries: .}
@@ -180,12 +198,51 @@ _rrg_maybe_ledger_log_consecutive_rejects() {
 }
 
 # ---------------------------------------------------------------------------
+# SE3 (status-event-ledger plan, taxonomy event #6 "review verdict INCLUDING
+# non-PASS") -- a deterministic per-verdict ledger emit.
+#
+# WHY HERE, NOT AT THE CALLER: cmd_capture is the ONE chokepoint every review
+# record funnels through, regardless of who calls it -- review-runner.sh's
+# `finalize` (the review-independence queue pathway, RI2/RI3) AND any direct
+# orchestrating-session `capture` invocation (the pre-RI manual pathway) both
+# resolve to this same function body. Emitting the status event HERE, keyed
+# only on "a capture just happened" and never gated on $verdict, is what
+# makes this a genuine deterministic trigger rather than "an agent
+# remembering to log it" -- the exact failure this plan's design law names.
+# It does NOT fix "some reviews never get captured at all" (no automatic
+# SubagentStop/TaskCompleted hook exists yet to force a capture call in the
+# first place -- see this file's own header ANTI-FABRICATION note); that
+# residual gap is honest and out of this task's scope, not implied covered.
+#
+# Never blocks (fail-open, logged) -- same contract as every other ledger
+# emitter in the harness (signal-ledger.sh's own header contract).
+# ---------------------------------------------------------------------------
+_rrg_emit_verdict_ledger_event() {
+  local record_id="$1" kind="$2" verdict="$3" reviewer="$4" plan_ref="$5"
+  local lib="$SCRIPT_DIR/../hooks/lib/signal-ledger.sh"
+  if [[ -f "$lib" ]]; then
+    # shellcheck disable=SC1090
+    if source "$lib" 2>/dev/null && command -v ledger_emit_typed >/dev/null 2>&1; then
+      ledger_emit_typed "review-record" "review-verdict" \
+        "record_id=${record_id} kind=${kind} verdict=${verdict} reviewer=${reviewer} plan_ref=${plan_ref}" 2>/dev/null || true
+    fi
+  fi
+  return 0
+}
+
+# ---------------------------------------------------------------------------
 # capture
 # ---------------------------------------------------------------------------
 cmd_capture() {
   local kind="" reviewer="" reviewer_model="" verdict="" plan_ref="" quote=""
   local commit_sha="" branch="" transcript_ref="" findings_summary="" written_by=""
   local payload_json="{}" repo_root=""
+  # review-independence plan RI3: WHO reviewed, and how independent they were
+  # from the branch's author. Both OPTIONAL + additive -- every pre-existing
+  # caller that omits them keeps writing the exact same record shape it
+  # always did (reviewer_principal: null, independence: null). Populated by
+  # review-runner.sh (never by the authoring session) once RI2 lands.
+  local reviewer_principal_json="" independence=""
   local files=()
 
   while [[ $# -gt 0 ]]; do
@@ -204,9 +261,20 @@ cmd_capture() {
       --written-by) written_by="$2"; shift 2 ;;
       --payload) payload_json="$2"; shift 2 ;;
       --repo-root) repo_root="$2"; shift 2 ;;
+      --reviewer-principal) reviewer_principal_json="$2"; shift 2 ;;
+      --independence) independence="$2"; shift 2 ;;
       *) echo "$SCRIPT_NAME: unknown arg: $1" >&2; usage >&2; return 2 ;;
     esac
   done
+
+  if [[ -n "$reviewer_principal_json" ]] && ! printf '%s' "$reviewer_principal_json" | jq empty >/dev/null 2>&1; then
+    echo "$SCRIPT_NAME: --reviewer-principal must be valid JSON (e.g. '{\"hostname\":\"h\",\"account\":\"a\",\"session_id\":\"s\"}')" >&2
+    return 2
+  fi
+  case "$independence" in
+    ""|pathway|cross-machine) ;;
+    *) echo "$SCRIPT_NAME: --independence must be pathway|cross-machine (got '$independence')" >&2; return 2 ;;
+  esac
 
   case "$kind" in
     harness-change-review|fix-root-cause|artifact-evidence) ;;
@@ -225,7 +293,18 @@ cmd_capture() {
   # reviewer string later. REFORMULATE/REJECT records are NOT refused here
   # (they never unblock anything, so there is nothing to launder).
   if [[ "$verdict" == "PASS" ]]; then
-    local reviewer_lc="${reviewer,,}"
+    # Portable lowercase (NOT ${reviewer,,} -- that is a bash 4+-only
+    # expansion and this repo's floor is bash 3.2.57, where it is a hard
+    # "bad substitution" parse-time error. Because this script's own
+    # --self-test invokes itself via its shebang (`"$SELF_PATH"`, not
+    # `bash "$SELF_PATH"`), the OS always resolves to /bin/bash regardless
+    # of which interpreter launched the outer --self-test -- so this bug
+    # fired on EVERY self-test run on this machine, not just under an
+    # explicit bash-3.2 invocation. Found and fixed while building the
+    # review-independence plan's RI3 (reviewer_principal/independence
+    # schema extension), which touches this same function.
+    local reviewer_lc
+    reviewer_lc="$(printf '%s' "$reviewer" | tr '[:upper:]' '[:lower:]')"
     if [[ -z "${reviewer_lc//[[:space:]]/}" ]] \
        || [[ "$reviewer_lc" == *"none"* ]] \
        || [[ "$reviewer_lc" == *"self-attest"* ]] \
@@ -284,6 +363,14 @@ cmd_capture() {
   created_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
   record_id="${kind_prefix}-${date_compact}-${shortid}"
 
+  # reviewer_principal is passed through as JSON (or null); independence as a
+  # string enum (or null) -- both additive, both absent from every record
+  # written before RI3 (review-independence plan).
+  local reviewer_principal_arg="null"
+  [[ -n "$reviewer_principal_json" ]] && reviewer_principal_arg="$reviewer_principal_json"
+  local independence_arg="null"
+  [[ -n "$independence" ]] && independence_arg="\"$independence\""
+
   local record_json
   record_json=$(jq -n \
     --argjson schema_version 1 \
@@ -302,6 +389,8 @@ cmd_capture() {
     --arg findings_summary "$findings_summary" \
     --arg written_by "$written_by" \
     --argjson payload "$payload_json" \
+    --argjson reviewer_principal "$reviewer_principal_arg" \
+    --argjson independence "$independence_arg" \
     '{
       schema_version: $schema_version,
       kind: $kind,
@@ -319,6 +408,8 @@ cmd_capture() {
         findings_summary: $findings_summary
       },
       written_by: $written_by,
+      reviewer_principal: $reviewer_principal,
+      independence: $independence,
       payload: $payload
     }')
 
@@ -336,6 +427,10 @@ cmd_capture() {
   # Index is ALWAYS fully rebuilt (never incrementally patched) -- it can
   # never drift from "a pure function of the records directory."
   _rrg_rebuild_index "$records_dir" > "$records_dir/index.json"
+
+  # SE3: unconditional per-verdict ledger emit -- see the function's own
+  # header comment for why this is the deterministic-trigger chokepoint.
+  _rrg_emit_verdict_ledger_event "$record_id" "$kind" "$verdict" "$reviewer" "$plan_ref"
 
   _rrg_maybe_ledger_log_consecutive_rejects "$records_dir" "$verdict" "$cov"
 
@@ -722,6 +817,111 @@ run_self_test() {
     PASSED=$((PASSED+1))
   else
     echo "self-test (S16) bootstrap-cutover-ref-is-resolved-sha: FAIL (cutover_ref='$cutover_val')" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S17: --reviewer-principal + --independence are carried into the
+  # written record verbatim (review-independence plan RI3) ----
+  out=$("$SELF_PATH" capture --kind harness-change-review --reviewer harness-reviewer \
+    --verdict PASS --plan-ref "docs/plans/review-independence.md#RI3" \
+    --quote "PASS -- principal fields present." \
+    --reviewer-principal '{"hostname":"desktop-1","account":"work-org","session_id":"sess-abc"}' \
+    --independence cross-machine \
+    --file "adapters/claude-code/hooks/alpha.sh" --repo-root "$REPO" 2>&1)
+  rec_file=$(printf '%s\n' "$out" | head -1)
+  if [[ -f "$rec_file" ]] \
+     && [[ "$(jq -r '.reviewer_principal.hostname' "$rec_file" 2>/dev/null)" == "desktop-1" ]] \
+     && [[ "$(jq -r '.independence' "$rec_file" 2>/dev/null)" == "cross-machine" ]]; then
+    echo "self-test (S17) reviewer-principal-and-independence-carried: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S17) reviewer-principal-and-independence-carried: FAIL (rec_file=$rec_file)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S18: those two fields are ALSO carried into the rebuilt index rows
+  # (same reasoning as the pre-existing `reviewer` field, finding 2b) ----
+  if jq -e '.entries[] | select(.path == "adapters/claude-code/hooks/alpha.sh" and .independence == "cross-machine" and .reviewer_principal.hostname == "desktop-1")' \
+       "$REPO/docs/reviews/records/index.json" >/dev/null 2>&1; then
+    echo "self-test (S18) index-rows-carry-principal-and-independence: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S18) index-rows-carry-principal-and-independence: FAIL" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S19: omitting --reviewer-principal/--independence (every pre-RI3
+  # caller) still writes a valid record with both explicitly null -- backward
+  # compatibility, not a silently-different shape ----
+  out=$("$SELF_PATH" capture --kind harness-change-review --reviewer harness-reviewer \
+    --verdict PASS --plan-ref x --quote "PASS -- no principal supplied." \
+    --file "adapters/claude-code/hooks/beta.sh" --repo-root "$REPO" 2>&1)
+  rec_file=$(printf '%s\n' "$out" | head -1)
+  if [[ -f "$rec_file" ]] \
+     && [[ "$(jq -r '.reviewer_principal' "$rec_file" 2>/dev/null)" == "null" ]] \
+     && [[ "$(jq -r '.independence' "$rec_file" 2>/dev/null)" == "null" ]]; then
+    echo "self-test (S19) omitted-principal-fields-render-null: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S19) omitted-principal-fields-render-null: FAIL (rec_file=$rec_file)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S20: an invalid --independence value is rejected (exit 2) ----
+  "$SELF_PATH" capture --kind harness-change-review --reviewer harness-reviewer \
+    --verdict PASS --plan-ref x --quote y --independence bogus-tier \
+    --file "adapters/claude-code/hooks/alpha.sh" --repo-root "$REPO" >/dev/null 2>&1
+  rc=$?
+  if [[ "$rc" -eq 2 ]]; then
+    echo "self-test (S20) invalid-independence-rejects: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S20) invalid-independence-rejects: FAIL (rc=$rc, expected 2)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S21 (SE3, status-event-ledger plan): a non-PASS (REJECT) record's
+  # index row carries the ACTUAL verdict value, not merely "not COVERED" --
+  # closes the "index is structurally failure-blind" gap by proving the
+  # index itself, not just the coverage predicate, records the real
+  # non-PASS verdict for a fresh file. ----
+  mkdir -p "$REPO/adapters/claude-code/hooks"
+  printf '#!/bin/bash\necho gamma\n' > "$REPO/adapters/claude-code/hooks/gamma.sh"
+  "$SELF_PATH" capture --kind harness-change-review --reviewer harness-reviewer \
+    --verdict REJECT --plan-ref "docs/plans/status-event-ledger.md#SE3" \
+    --quote "REJECT -- missing fp_expectation (S21 fixture)." \
+    --file "adapters/claude-code/hooks/gamma.sh" --repo-root "$REPO" >/dev/null 2>&1
+  idx_verdict_s21=$(jq -r '[.entries[] | select(.path == "adapters/claude-code/hooks/gamma.sh")] | last | .verdict' \
+    "$REPO/docs/reviews/records/index.json" 2>/dev/null)
+  if [[ "$idx_verdict_s21" == "REJECT" ]]; then
+    echo "self-test (S21) index-row-carries-real-non-pass-verdict: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S21) index-row-carries-real-non-pass-verdict: FAIL (got verdict='$idx_verdict_s21', expected REJECT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- S22 (SE3): cmd_capture emits ONE signal-ledger "review-verdict"
+  # event PER CAPTURE, regardless of verdict -- the deterministic trigger
+  # this task adds. Sandboxed via SIGNAL_LEDGER_PATH (signal-ledger.sh's own
+  # override convention) so this never touches a real ledger. ----
+  S22_LEDGER="$tmp/s22-ledger.jsonl"
+  rm -f "$S22_LEDGER"
+  SIGNAL_LEDGER_PATH="$S22_LEDGER" "$SELF_PATH" capture --kind harness-change-review \
+    --reviewer harness-reviewer --verdict PASS --plan-ref "docs/plans/status-event-ledger.md#SE3" \
+    --quote "PASS -- S22 fixture." \
+    --file "adapters/claude-code/hooks/alpha.sh" --repo-root "$REPO" >/dev/null 2>&1
+  SIGNAL_LEDGER_PATH="$S22_LEDGER" "$SELF_PATH" capture --kind harness-change-review \
+    --reviewer harness-reviewer --verdict REJECT --plan-ref "docs/plans/status-event-ledger.md#SE3" \
+    --quote "REJECT -- S22 fixture." \
+    --file "adapters/claude-code/hooks/gamma.sh" --repo-root "$REPO" >/dev/null 2>&1
+  if [[ -f "$S22_LEDGER" ]] \
+     && grep -q '"gate":"review-record".*"event":"review-verdict".*verdict=PASS' "$S22_LEDGER" \
+     && grep -q '"gate":"review-record".*"event":"review-verdict".*verdict=REJECT' "$S22_LEDGER"; then
+    echo "self-test (S22) ledger-emits-review-verdict-per-capture-any-verdict: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (S22) ledger-emits-review-verdict-per-capture-any-verdict: FAIL (ledger: $(cat "$S22_LEDGER" 2>/dev/null))" >&2
     FAILED=$((FAILED+1))
   fi
 

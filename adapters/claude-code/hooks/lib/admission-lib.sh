@@ -112,6 +112,11 @@
 #   ADM_ESTATE_SNAPSHOT=/dev/null  -> admit (occupancy erased)
 #   ADM_STATE_DIR=<elsewhere>      -> BYPASSES THE HALT KILL SWITCH ENTIRELY
 #   NL_PROTECTED_ORCHESTRATOR=1    -> caller-declared, unverified; any process
+#       HONEST STATUS (2026-07-29, task-verifier pass 4 D-4): NO producer sets
+#       this variable anywhere in the repo today -- all 888 live ledger rows
+#       carry protected:0, so the protected/storm discriminator is INERT until
+#       a dispatcher exports it. This header is a contract awaiting its first
+#       caller, not a description of current traffic.
 #                                     can exclude its own traffic from the
 #                                     "pathology" bucket in the calibration
 #                                     this slice exists to produce
@@ -193,6 +198,19 @@
 #     ledger/<host>.jsonl   the would-block ledger, O_APPEND, one writer
 #   ADM_ESTATE_SNAPSHOT default $HOME/.claude/state/estate/snapshot.json
 #                      T1's janitor output; source of slot occupancy.
+#   ADM_REGISTRATIONS_DIR default $(dirname ADM_ESTATE_SNAPSHOT)/registrations
+#                      T4's no-orphan registration store (hooks/lib/estate-
+#                      registration-lib.sh, written by spawn-worktree.sh at
+#                      create, removed at close). Read-only from here — this
+#                      lib counts, it never writes this directory. Deriving
+#                      the default from ADM_ESTATE_SNAPSHOT's own dirname
+#                      (rather than a second independent default) means every
+#                      self-test in this file that already sandboxes
+#                      ADM_ESTATE_SNAPSHOT sandboxes this count for free.
+#   ADM_WIP_LIMIT      default 6 (T4 -- design §6c "closure gates new work").
+#                      Ground truth 2026-07-29: this machine's doctor reported
+#                      18 registered worktrees against an operator-set budget
+#                      of 6 -- the default is that same number, not invented.
 #
 # LOOP-2 PRESSURE TICK — WHAT IS BUILT AND WHAT IS STILL PARTIAL
 # (T6-PREREQUISITES (d), 2026-07-29, replacing the prior "NOT BUILT HERE"
@@ -256,6 +274,20 @@
 # gating it behind the flag this lib's OWN self-test now sets globally --
 # see _adm_self_test's `export HARNESS_SELFTEST=1` -- closes the bypass for
 # every real dispatcher without touching test isolation at all).
+#
+# CORRECTION (2026-07-29, task-verifier; kept through the 2026-07-31
+# integration merge): an earlier header claimed the sandbox was independent
+# of callers -- the overstatement cost real data. The guard KEYS ON
+# HARNESS_SELFTEST=1, so it is only in force for a host that SETS that
+# variable. spawn-worktree.sh did not set it, so its --self-test appended 2
+# fabricated `source=worktree` rows to the operator's REAL ledger on every
+# run (32 -> 34 reproduced in isolation) for four review rounds, undetected.
+# The honest statement: the lib provides the MECHANISM and each spliced host
+# must arm it. Scenario 16b checks this BEHAVIORALLY -- it runs each host's
+# own --self-test in a throwaway HOME with the guard unset and asserts no
+# ledger appears. An earlier version of that scenario grepped for the
+# variable name and was inert (it matched comments); do not regress it to a
+# text match. A guard is only as good as its weakest caller.
 adm_state_dir() {
   if [[ -n "${ADM_STATE_DIR:-}" && "${HARNESS_SELFTEST:-0}" == "1" ]]; then
     printf '%s' "$ADM_STATE_DIR"; return 0
@@ -346,9 +378,16 @@ _adm_scrub() {
 
 # Label KEYS are a closed enum. An unknown key is dropped, not written — this is
 # what stops a future caller from quietly piping a prompt or cmdline in here.
+# role/attributed added by the attribution-pipeline task (2026-07-29):
+# workstreams-emit.sh's --on-builder-dispatch splice carries the parsed
+# NL-ATTRIBUTION header (doctrine/orchestrator-pattern.md) alongside the
+# plan/task labels this enum already had — role is the closed builder|
+# verifier|reviewer|advocate enum, attributed is "0"|"1" (both already
+# pre-validated by _extract_nl_attribution before reaching here; this
+# allowlist is the second, independent gate, not the only one).
 _adm_key_allowed() {
   case "$1" in
-    repo|agent|kind|reason_hint|plan|task|session) return 0 ;;
+    repo|agent|kind|reason_hint|plan|task|session|role|attributed) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -676,6 +715,55 @@ adm_rate_in_window() {
 }
 
 # ---------------------------------------------------------------------------
+# WIP — closure-gates-new-work (T4, design §6c), OBSERVE ONLY
+# ---------------------------------------------------------------------------
+# "Closure gates new work (the enforcement that needs no memory): the
+# admission lib refuses a session's NEXT pull/dispatch while its open-item
+# count exceeds its WIP limit. Closing work is the path to more work --
+# incentive-aligned, deterministic, no reliance on discipline or janitors."
+#
+# SCOPED TO source=worktree, DELIBERATELY (read this before widening it).
+# T4's no-orphan registration (hooks/lib/estate-registration-lib.sh, spliced
+# into spawn-worktree.sh) is the ONLY dispatch path with a real, DERIVED
+# open-item count today -- a worktree create writes a registration, a close
+# removes it, so "how many are open" is a fact on disk, not a guess. The
+# emit-feed and resumer dispatch paths have NO equivalent registration yet
+# (that is T2/T5+ obligation-store territory), so counting "open items" for
+# THEM here would mean inventing a number with nothing backing it -- exactly
+# the DERIVED-NEVER-DECLARED violation this file's own header warns against
+# for every other rung. Scoping to worktree also keeps this off the two
+# highest-volume dispatch paths (emit-feed/resumer measured 15-21/min, F1) --
+# the header's hot-path cost warning applies most sharply there, so this rung
+# adds its glob-count cost ONLY to the comparatively rare worktree-create
+# path, never to the hot one. Widen only when a broader obligation store
+# gives emit-feed/resumer their own derivable open-item count.
+#
+# _adm_wip_open_count -- builtin glob loop, no forks (same idiom as
+# adm_rate_in_window). Reads estate-registration-lib.sh's OWN directory
+# convention directly rather than sourcing that lib a second time -- this
+# lib already has a source-time cost budget (see the header's hot-path
+# note); a second `source` per dispatch would only add to it for a value
+# obtainable by one more glob over an already-resolved directory.
+_adm_registrations_dir_default() {
+  # Derived from ADM_ESTATE_SNAPSHOT's own directory so a caller that
+  # sandboxes the snapshot (every self-test in this file does) sandboxes the
+  # registrations count for free, with no separate env var to remember.
+  local snap="${ADM_ESTATE_SNAPSHOT:-$HOME/.claude/state/estate/snapshot.json}"
+  printf '%s' "$(dirname "$snap")/registrations"
+}
+
+_adm_wip_open_count() {
+  local d="${ADM_REGISTRATIONS_DIR:-$(_adm_registrations_dir_default)}"
+  [[ -d "$d" ]] || { printf '%s' 0; return 0; }
+  local n=0 f
+  for f in "$d"/*.json; do
+    [[ -e "$f" ]] || continue
+    n=$(( n + 1 ))
+  done
+  printf '%s' "$n"
+}
+
+# ---------------------------------------------------------------------------
 # The ladder — what WOULD have happened
 # ---------------------------------------------------------------------------
 # Order matters: operator gestures (HALT, DRAIN) outrank measured pressure,
@@ -709,6 +797,18 @@ _adm_session_cap() {
 _adm_decide() {
   if adm_halt_active; then printf 'would-block:halt'; return 0; fi
   if adm_drain_active; then printf 'would-block:drain'; return 0; fi
+
+  # WIP rung (T4): scoped to source=worktree only -- see the block comment
+  # above _adm_wip_open_count for why. $_ADM_SOURCE_PRECOMPUTED is set by
+  # adm_admit via a subshell-scoped env assignment, the same idiom
+  # $_ADM_RATE_PRECOMPUTED already uses below to hand this function a value
+  # computed once by the caller.
+  if [[ "${_ADM_SOURCE_PRECOMPUTED:-}" == "worktree" ]]; then
+    local open_n; open_n="$(_adm_wip_open_count)"
+    if (( open_n >= ${ADM_WIP_LIMIT:-6} )); then
+      printf 'would-block:wip-exceeded'; return 0
+    fi
+  fi
 
   # Reuse the caller's single measurement when it supplied one (adm_admit
   # does — 2026-07-30 delta re-review finding 5), so the verdict and the
@@ -816,11 +916,15 @@ adm_admit() {
   # substitution) so its _ADM_PRESSURE_REASON side-channel (finding 4,
   # below) survives into this shell — $(...) forks a subshell and the
   # global would be lost the instant it returned.
+  #
+  # _ADM_SOURCE_PRECOMPUTED (T4 WIP rung, 2026-07-31 integration merge):
+  # hands _adm_decide the dispatch source so the worktree-scoped rung
+  # fires without re-deriving it.
   local color; adm_pressure_color >/dev/null; color="$_ADM_PRESSURE_COLOR"
   local live; live="$(adm_live_sessions)"
 
   local verdict
-  verdict="$(_ADM_COLOR_PRECOMPUTED="$color" _ADM_LIVE_PRECOMPUTED="$live" _ADM_RATE_PRECOMPUTED="$rate" _adm_decide)"
+  verdict="$(_ADM_COLOR_PRECOMPUTED="$color" _ADM_LIVE_PRECOMPUTED="$live" _ADM_RATE_PRECOMPUTED="$rate" _ADM_SOURCE_PRECOMPUTED="$source" _adm_decide)"
   _ADM_LAST_VERDICT="$verdict"
 
   # --- assemble the line (labels are enum-keyed and scrubbed) ---
@@ -992,6 +1096,25 @@ _adm_self_test() {
   case "$last" in
     */*) fail "path separators survived the scrub: $last" ;;
     *) pass "path separators stripped from label values" ;;
+  esac
+
+  echo "Scenario 8b: attribution labels (attribution-pipeline task, 2026-07-29) — plan/task/role/attributed round-trip; a still-disallowed key beside them stays dropped"
+  adm_admit emit-feed plan=attribution-pipeline task=1 role=builder attributed=1 cmdline=/Users/secret/leak >/dev/null
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"plan":"attribution-pipeline"'*'"task":"1"'*'"role":"builder"'*'"attributed":"1"'*)
+      pass "plan/task/role/attributed all round-tripped into the ledger line, in order" ;;
+    *) fail "expected plan/task/role/attributed labels in: $last" ;;
+  esac
+  case "$last" in
+    *cmdline*|*leak*) fail "disallowed key 'cmdline' leaked alongside allowed attribution keys" ;;
+    *) pass "disallowed key 'cmdline' still dropped when allowed keys are also present" ;;
+  esac
+  adm_admit emit-feed role=hacker >/dev/null
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"role":"hacker"'*) pass "role value is byte-scrubbed but NOT enum-validated by this lib -- workstreams-emit.sh's _extract_nl_attribution is the ONLY role-enum gate upstream; documented division of labor, not a gap in this scenario" ;;
+    *) fail "expected role=hacker to pass this lib's byte-scrub unchanged (this lib enforces the KEY allowlist, not a VALUE enum): $last" ;;
   esac
 
   echo "Scenario 9: absurd-level backstops, against PRODUCER-SHAPED snapshots"
@@ -1245,6 +1368,72 @@ _adm_self_test() {
     fail "SANDBOX ESCAPE: real ledger changed (lines $before_n->$after_n, mtime $before_m->$after_m)"
   fi
 
+  echo "Scenario 16b: EVERY SPLICED HOST is BEHAVIORALLY sandboxed (not merely mentions the var)"
+  # v1 of this scenario grepped each host for the string HARNESS_SELFTEST=1 and
+  # was INERT: the pattern matched COMMENTS, so a host with the fix reverted but
+  # the explanatory comment intact still passed. My "RED proof" was fake — I had
+  # stashed the whole file, comment included. task-verifier falsified it three
+  # ways, including deleting every real `export` from all three hosts while
+  # leaving comments, which still reported PASS.
+  #
+  # Text presence is not behavior. This now runs each host's OWN --self-test in
+  # a throwaway HOME with HARNESS_SELFTEST and ADM_STATE_DIR explicitly UNSET,
+  # and asserts no ledger appears under that HOME. That is the true oracle: it
+  # fails if and only if the host actually writes to real operator state.
+  # task-verifier pass 4 (2026-07-29) proved v2 of this scenario VACUOUS for one
+  # host: the rc of each host's self-test was discarded (`) >/dev/null 2>&1`), so
+  # a host that CRASHED before reaching the splice (workstreams-emit.sh aborts in
+  # a sandbox HOME because its state library resolves under $HOME) read as
+  # "no ledger appeared" = PASS. Mutation proof: deleting BOTH of that host's
+  # guard arms left the suite 48/0 while the same mutation on either other host
+  # went 47/1. Two fixes, both from that verdict (D-1/D-2):
+  #   - the host's rc is CAPTURED; a host that did not RUN is a FAIL naming it —
+  #     a scenario must assert its subject actually executed, or it proves nothing;
+  #   - CONV_TREE_STATE_LIB hands workstreams-emit its state library explicitly
+  #     (its documented first-precedence resolution), so it genuinely runs under
+  #     the sandbox HOME instead of dying at its lib check;
+  #   - hosts run under "$BASH" (the interpreter THIS suite runs under), never a
+  #     PATH-resolved `bash` that silently retests Homebrew 5.3 from a 3.2 run.
+  local _hosts_root; _hosts_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+  local _repo_root; _repo_root="$(cd "$_hosts_root/../.." 2>/dev/null && pwd)"
+  local _statelib="$_repo_root/neural-lace/workstreams-ui/state/state.js"
+  local _h _hp _sbhome _leddir _badhosts="" _deadhosts="" _hrc
+  for _h in "hooks/workstreams-emit.sh" "scripts/session-resumer.sh" "scripts/spawn-worktree.sh"; do
+    _hp="$_hosts_root/$_h"
+    [[ -f "$_hp" ]] || continue
+    grep -q 'adm_admit' "$_hp" 2>/dev/null || continue
+    grep -q -- '--self-test' "$_hp" 2>/dev/null || continue
+    _sbhome="$T/hostsb/$(basename "$_h")"
+    mkdir -p "$_sbhome"
+    ( cd "$_hosts_root/.." 2>/dev/null || cd "$_hosts_root"
+      env -u HARNESS_SELFTEST -u ADM_STATE_DIR \
+        HOME="$_sbhome" CONV_TREE_STATE_LIB="$_statelib" \
+        "${BASH:-bash}" "$_hp" --self-test ) >"$_sbhome/host-run.out" 2>&1
+    _hrc=$?
+    # "Did the host actually run?" — rc alone is the WRONG test: it conflates
+    # "crashed at startup, exercised nothing" (the vacuity pass 4 caught) with
+    # "ran its whole suite, one unrelated assertion red" (workstreams-emit.sh
+    # carries a pre-existing ST11 red identical under real HOME — filed, not
+    # this scenario's business). The discriminator is the suite's own
+    # completion summary: a host that printed "N passed" / SELFTEST PASS ran
+    # to completion and exercised its splice; a host with rc!=0 AND no summary
+    # never started, and reading that as PASS is exactly the vacuity.
+    if [[ "$_hrc" -ne 0 ]] && ! grep -Eq '[0-9]+ passed|SELFTEST PASS' "$_sbhome/host-run.out" 2>/dev/null; then
+      _deadhosts="$_deadhosts $_h(rc=$_hrc,no-summary)"
+    fi
+    _leddir="$_sbhome/.claude/state/governor/ledger"
+    if [[ -d "$_leddir" ]] && [[ -n "$(ls -A "$_leddir" 2>/dev/null)" ]]; then
+      _badhosts="$_badhosts $_h"
+    fi
+  done
+  if [[ -n "$_badhosts" ]]; then
+    fail "HOST(S) WRITING TO REAL STATE:$_badhosts — their --self-test creates a governor ledger with the guard unset"
+  elif [[ -n "$_deadhosts" ]]; then
+    fail "HOST(S) NEVER RAN — oracle vacuous for:$_deadhosts (a crashed host proves nothing about its guard; fix the fixture)"
+  else
+    pass "every spliced host's --self-test RAN (rc=0) and wrote no ledger into a clean HOME (behavioral, not textual)"
+  fi
+
   echo "Scenario 17: HOST self-test pollution guard (the defect Scenario 16 caught)"
   # A host script (workstreams-emit / session-resumer / spawn-worktree) running
   # ITS own self-test must not append to the operator's real ledger via our
@@ -1443,6 +1632,70 @@ BSDSTAT
   [[ "$pc22" == "green" ]] && pass "fresh pressure file still reads its real color through a BSD-only stat (was permanently 'unknown' pre-fix)" \
     || fail "BSD-stat regression: expected green through the BSD-shaped stat shim, got '$pc22'"
   rm -f "$ADM_PRESSURE_FILE"
+  echo "Scenario 23: WIP rung (T4, design §6c 'closure gates new work') — scoped to source=worktree, OBSERVE ONLY"
+  # Fixture registrations: plain files under a sandboxed ADM_REGISTRATIONS_DIR
+  # (this scenario never touches estate-registration-lib.sh's own writer —
+  # it only needs *.json files to exist for the glob-count under test, the
+  # same "test the reader against fixture files" discipline this file's
+  # occupancy scenarios already use).
+  local wipdir="$T/registrations"
+  mkdir -p "$wipdir"
+  export ADM_REGISTRATIONS_DIR="$wipdir"
+  rm -f "$ADM_ESTATE_SNAPSHOT" 2>/dev/null   # isolate WIP from the occupancy rung
+  # Scenario 15 above leaves the pressure file at "black" and never resets it
+  # (only HALT/DRAIN/snapshot are cleaned up there) -- reset to green here so
+  # this scenario isolates the WIP rung from a stale pressure rung firing
+  # first and masking what WIP itself would have decided.
+  printf '{"color":"green"}\n' > "$ADM_PRESSURE_FILE"
+
+  local i
+  for i in 1 2 3; do : > "$wipdir/open-$i.json"; done
+  v="$(adm_admit worktree)"
+  [[ "$v" == "admit" ]] && pass "3 open registrations, default limit 6 -> admit" || fail "got '$v'"
+
+  for i in 4 5 6; do : > "$wipdir/open-$i.json"; done
+  v="$(adm_admit worktree)"
+  [[ "$v" == "would-block:wip-exceeded" ]] && pass "6 open registrations >= default limit 6 -> would-block:wip-exceeded" \
+    || fail "got '$v'"
+  rc=$?
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"verdict":"would-block:wip-exceeded"'*) pass "ledger line records the wip-exceeded verdict" ;;
+    *) fail "ledger line missing wip-exceeded verdict: $last" ;;
+  esac
+
+  echo "Scenario 23b: OBSERVE MODE — rc still 0 under the WIP rung (never blocks)"
+  v="$(adm_admit worktree)"; rc=$?
+  [[ "$rc" == "0" ]] && pass "rc 0 even at/over the WIP limit — observe mode never blocks" \
+    || fail "OBSERVE-MODE VIOLATION under WIP rung: rc=$rc"
+
+  echo "Scenario 23c: WIP rung is SCOPED to source=worktree — emit-feed/resumer are NOT gated by it"
+  # design rationale (see the block comment above _adm_wip_open_count): only
+  # the worktree dispatch path has a real DERIVED open-item count today: an
+  # emit-feed or resumer dispatch is not a registered work-item at all, so
+  # gating them on this count would be a DECLARED, not DERIVED, block.
+  v="$(adm_admit emit-feed)"
+  [[ "$v" == "admit" ]] && pass "emit-feed admits even with 6 open registrations (scoping deliberate, not an oversight)" \
+    || fail "WIP rung leaked into emit-feed: got '$v'"
+  v="$(adm_admit resumer)"
+  [[ "$v" == "admit" ]] && pass "resumer admits even with 6 open registrations (same scoping)" \
+    || fail "WIP rung leaked into resumer: got '$v'"
+
+  echo "Scenario 23d: ADM_WIP_LIMIT is honored (operator-configurable threshold)"
+  v="$(ADM_WIP_LIMIT=10 adm_admit worktree)"
+  [[ "$v" == "admit" ]] && pass "6 open registrations under a raised limit (10) -> admit" \
+    || fail "got '$v' — ADM_WIP_LIMIT override not honored"
+  v="$(ADM_WIP_LIMIT=2 adm_admit worktree)"
+  [[ "$v" == "would-block:wip-exceeded" ]] && pass "6 open registrations over a lowered limit (2) -> would-block:wip-exceeded" \
+    || fail "got '$v' — ADM_WIP_LIMIT override not honored"
+
+  rm -rf "$wipdir"
+  unset ADM_REGISTRATIONS_DIR
+
+  echo "Scenario 23e: an empty/absent registrations dir counts as 0 open (fail-open, never a false block)"
+  v="$(ADM_REGISTRATIONS_DIR="$T/no-such-dir" adm_admit worktree)"
+  [[ "$v" == "admit" ]] && pass "absent registrations dir -> 0 open -> admit" \
+    || fail "got '$v' — should fail open to admit, not manufacture a block from a missing directory"
 
   rm -rf "$T"
   echo

@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-28112fca",
+  "created_at": "2026-07-30T21:01:46Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "haiku",
+  "plan_ref": "docs/plans/requests-tab-visibility-fix-2026-07-30.md",
+  "change_ref": {
+    "commit_sha": "PENDING",
+    "branch": "worktree-agent-a465831e5b8168bdc"
+  },
+  "covered_files": [
+    {
+      "path": "neural-lace/workstreams-ui/server/requests-routes.js",
+      "blob_sha": "737c0d2e8f7a8374352c28bf8641ee09487229cd"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/requests-routes.selftest.js",
+      "blob_sha": "0e1ed1601d8cd8910f8c6d3d60f9729fabb6950d"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/requests.js",
+      "blob_sha": "07244d0c99cdaf22a56ce4131c85720cf3b3f8e3"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "a45aa72956533815f93448468303c21c033718cb"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS. All three concerns check out: fold keying by candidate_id with ts-fallback is collision-free for production; resolveCandidateText() wraps the resolver in try/catch and callers gracefully fall back to generic text on any failure; the new client-side branch fires only on type=candidate_promoted.",
+    "findings_summary": "Reviewed the requests-routes.js fold restructuring (candidate_classified now read via a candidate_id-keyed override map), resolveCandidateText's try/catch safety (S10 corrupt-registry-never-crashes still holds), and web/requests.js's new candidate_promoted client branch (scoped correctly, cannot misfire on legacy promoted-to-plan events). manifest.json's ask-registry honest_status addendum reviewed separately in the sibling ask-registry.sh/backfill review record and covered again here for this file's staged inclusion. No blocking findings."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-5bea78c1",
+  "created_at": "2026-07-30T07:26:54Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group final-3 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "3394be20c2711a7b42cc5aaf4a56014e9f857cb2",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/config/config-control-allowlist.txt",
+      "blob_sha": "3b8b92f925e9d0a4837fd154d34134b237952377"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — Pattern-class allowlist ledger for deliberately producer-less env levers (HARNESS-GAP-57 inverse-shape scan). All 6 rows independently verified against their cited read sites (session-start-auto-install.sh:219, selftest-sweep-exclusions.sh:117/239/399/449, nl-issue.sh:145, workstreams-read.sh:432, nl.sh:106+324); consumer config-control-producer-scan.sh exists and reads the file at line 90; the deleted NL_CROSS_REPO_TOUCH_OK row is documented with a PROVEN never-consumed rationale; format is bash-3.2 read -r parseable. No hallucinated infrastructure, no over-claim.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-41f542a1",
+  "created_at": "2026-07-30T06:01:14Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group scripts-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "e1fc56050726987bb140a77018750f04ee0182ad",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/decision-queue.sh",
+      "blob_sha": "7ffcd70d615fa98a5bc1dfdaca8ff1f751ba5423"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — validity-guarded queue.json init via shared state-json-init.sh, write-safety backstop, and the T17 stray set -e fix; 23/0 under /bin/bash 3.2.57 including golden corrupt-1-byte recovery and negative no-spurious-backup scenarios.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer agent (scripts-2 sweep) via write-review-record.sh",
+  "payload": {}
+}

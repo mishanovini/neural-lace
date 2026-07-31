@@ -146,6 +146,18 @@ HOOKS_DIR="$SCRIPT_DIR/../hooks"
 # shellcheck disable=SC1091
 [[ -f "$HOOKS_DIR/lib/nl-paths.sh" ]] && source "$HOOKS_DIR/lib/nl-paths.sh" 2>/dev/null || true
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "supervisor-tick: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ----------------------------------------------------------------------
 # Path resolution (mirrors health-tick.sh's _ht_alert_dir convention)
 # ----------------------------------------------------------------------
@@ -223,16 +235,20 @@ _st_log() {
 }
 
 # _st_run <timeout_secs> <cmd...> — bounded fork (timeout-wrap every fork,
-# scope item (c)). Falls back to unbounded exec when `timeout` is
-# unavailable on the platform (never a hard dependency).
+# scope item (c)).
+#
+# This used to fall back to an UNBOUNDED exec when `timeout` was unavailable.
+# `timeout` is GNU coreutils, so that fallback fired on every stock Mac — and
+# it silently voided this tick's whole wall-clock-budget design, whose
+# SWEEP_TIMEOUT anomaly depends on forks actually being killable. It also
+# contradicted the fp_expectation this tick is registered under in
+# manifest.json ("every subprocess timeout-wrapped, so a slow/hung fork WARNS
+# rather than hanging the tick"). nl_run_bounded
+# (hooks/lib/portable-timeout.sh) is bounded on every platform and returns
+# the same 124 on expiry, so the existing rc checks are unchanged.
+# Plan macos-portability-2026-07, M3.
 _st_run() {
-  local secs="$1"; shift
-  if [[ "$secs" -le 0 ]] 2>/dev/null; then secs=1; fi
-  if command -v timeout >/dev/null 2>&1; then
-    timeout "${secs}s" "$@"
-  else
-    "$@"
-  fi
+  nl_run_bounded "$@"
 }
 
 # ----------------------------------------------------------------------
@@ -629,8 +645,24 @@ EOF
   local rec_f
   rec_f="$(ls "$SUPERVISOR_STATE_DIR"/orphans/*.json 2>/dev/null | head -1)"
   if [[ -n "$rec_f" ]]; then
-    # backdate last_alerted well past the default 24h TTL
-    sed -i -E 's/"last_alerted":"[^"]*"/"last_alerted":"2020-01-01T00:00:00Z"/' "$rec_f" 2>/dev/null
+    # backdate last_alerted well past the default 24h TTL.
+    # PORTABLE IN-PLACE EDIT (macos-portability M2, 2026-07-29).
+    # This was `sed -i -E 's/.../' "$rec_f"`, which is GNU-only. BSD sed
+    # REQUIRES a backup-suffix argument after -i, so it silently consumed `-E`
+    # as the suffix: ERE was never enabled (this pattern only kept working by
+    # luck — it is BRE-compatible), and every run littered the ledger with a
+    # backup file. Observed in situ on this Mac:
+    #   sup-state/orphans/2095122814.json-E
+    # which sits inside the directory the tick greps recursively (line ~605).
+    # NOT fixed with `sed -i ''`: that is the macOS-only form and breaks GNU
+    # sed, inverting the bug onto the Windows machines. tmp+mv works on both.
+    # -E is dropped rather than reinstated because the pattern is BRE-safe.
+    local _bk_tmp="${rec_f}.tmp.$$"
+    if sed 's/"last_alerted":"[^"]*"/"last_alerted":"2020-01-01T00:00:00Z"/' "$rec_f" > "$_bk_tmp" 2>/dev/null; then
+      mv -f "$_bk_tmp" "$rec_f" 2>/dev/null || rm -f "$_bk_tmp" 2>/dev/null
+    else
+      rm -f "$_bk_tmp" 2>/dev/null
+    fi
     local out4
     out4="$(bash "$SELF" 2>&1)"
     if echo "$out4" | grep -q '1 orphan(s) found, 1 alerted'; then

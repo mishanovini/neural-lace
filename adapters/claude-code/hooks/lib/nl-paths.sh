@@ -166,7 +166,19 @@ nl_main_checkout_root() {
 # ============================================================
 # --self-test (only runs when this file is EXECUTED directly, not sourced)
 # ============================================================
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# The `--self-test` arm below is not decoration. Until it existed, this file
+# ran its suite on ANY direct execution and dispatched on NOTHING, so no
+# discovery predicate could tell it apart from a script that merely mentions
+# the flag in prose — and scripts/portability-sweep.sh must be able to make
+# exactly that distinction, because running the wrong file with an
+# unrecognized argument runs its normal path (install.sh being the sharp
+# example). Consequence before this change: nl-paths.sh was the ONE
+# self-test-capable lib the sweep could not safely include.
+# No-argument execution is preserved unchanged (that is how this suite has
+# always been run by hand); only "some other argument" now no-ops instead of
+# silently running the suite. Nothing in the repo executes this file with
+# arguments — every other reference sources it.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]] && { [[ "$#" -eq 0 ]] || [[ "${1:-}" == "--self-test" ]]; }; then
   _nlp_tmp=$(mktemp -d 2>/dev/null || echo "/tmp/nlp-$$")
   mkdir -p "$_nlp_tmp"
   _nlp_fail=0

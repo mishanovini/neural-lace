@@ -73,7 +73,7 @@
       needsMeBody, statusBody, healthBody, costsBody, shippedBody, backlogHealthBody,
       lastLookAnchor, markSeenBtn,
       whyScrim, whyDrawer, whyTitle, whyBody, whyClose,
-      diagnosticsBody;
+      diagnosticsBody, machinesBody;
 
   // ============================================================
   // Link resolver (ux-review amendment 6) — the ONE component Q2/Q3/Q6 use.
@@ -104,6 +104,21 @@
       setTimeout(function () { b.textContent = orig; }, 1200);
     });
     return b;
+  }
+
+  // R17 deliverable 2 (audit F1): renders server-authored prose that CAN
+  // carry a runnable command as fenced, copyable chips (window.CommandRender,
+  // command-render.js — loaded before this file, index.html). Degrades to
+  // plain textContent (never a throw, never raw HTML injection) if the
+  // shared module failed to load — same defensive convention as this
+  // file's own MdRender fallback (openDoc, below).
+  function renderCat(node, text) {
+    if (window.CommandRender && typeof window.CommandRender.renderCommandAwareText === 'function') {
+      node.innerHTML = window.CommandRender.renderCommandAwareText(text);
+    } else {
+      node.textContent = String(text == null ? '' : text);
+    }
+    return node;
   }
 
   // resolveLink(raw) -> DOM node. raw may be a URL, a repo-relative path, or
@@ -158,6 +173,15 @@
   // age > 2x refresh interval OR the last refresh failed.
   // ============================================================
   var REFRESH_INTERVAL_MS = 30000; // matches derive-cache.js's default; re-read from /api/health once available
+  // FORMAT-AGE-BEGIN
+  // R17 deliverable 5 (audit F8 / ledger row unresolved): this SHARED
+  // formatAge (exported as WorkstreamsShell.formatAge, below) is preferred
+  // by roadmap.js/inbox.js/requests.js over their own per-file fallbacks
+  // (which already had a day branch — this one lagged them, live-observed
+  // as "registered 377h ago"). Operator's own bucketing for this round
+  // (2026-07-30 dispatch): hours only under 48h, then days, then weeks —
+  // never raw hours past two days, never a fabricated day/week count from
+  // a bad/missing timestamp.
   function formatAge(iso) {
     if (!iso) return 'never';
     var ms = Date.now() - Date.parse(iso);
@@ -168,8 +192,13 @@
     var m = Math.round(s / 60);
     if (m < 60) return m + 'm ago';
     var h = Math.round(m / 60);
-    return h + 'h ago';
+    if (h < 48) return h + 'h ago';
+    var d = Math.round(h / 24);
+    if (d < 14) return d + 'd ago';
+    var w = Math.round(d / 7);
+    return w + 'w ago';
   }
+  // FORMAT-AGE-END
   function setAge(paneKey, iso, failed) {
     var el = document.querySelector('[data-age-for="' + paneKey + '"]');
     if (!el) return;
@@ -183,33 +212,83 @@
   // INVARIANT: rc!=0 renders a named ERROR state with plain language,
   // stderr tail, the failing command line, and a Retry wired to the
   // refresh endpoint. NEVER the empty state on failure.)
+  //
+  // R17 deliverable 3 (audit F2 — live on two panels right now): the OLD
+  // shape led with "Derivation failed (rc=1)" then "$ nl status --json"
+  // then a raw stderr <pre> whose content could end in a jq CLI usage
+  // hint — the most prominent guidance on the panel addressed a shell
+  // user mid-pipeline, not an operator reading a dashboard. Reshaped per
+  // the operator's own binding order: plain-language headline (in
+  // question terms, naming what's now unanswerable) -> scope honesty
+  // (which panel is affected — every other panel keeps working
+  // independently, since each has its own derive-cache entry) -> actions
+  // (Retry, Copy details) -> the command + stderr fold into a <details>
+  // "Technical detail" expander, never the first thing on screen.
   // ============================================================
+  // RENDER-ERROR-BEGIN
+  // PANE-ERROR-INFO-BEGIN
+  var PANE_ERROR_INFO = {
+    'status': { headline: "Can't read live session status right now", label: "What's running" },
+    'needs-me': { headline: "Can't read what needs you right now", label: 'What needs me' },
+    'shipped': { headline: "Can't read what happened since your last look", label: 'What happened' },
+    'health': { headline: "Can't read harness health right now", label: 'Harness health' },
+    'costs': { headline: "Can't read cost data right now", label: "What's it costing" },
+    'backlog': { headline: "Can't read backlog health right now", label: 'Backlog health' },
+    'why': { headline: "Can't read why this happened", label: 'the why drawer' },
+  };
+  // PANE-ERROR-INFO-END
   function renderError(container, paneResp) {
     container.innerHTML = '';
     var box = document.createElement('div');
     box.className = 'pane-error';
     box.setAttribute('role', 'alert');
+
+    var info = PANE_ERROR_INFO[paneResp.pane] || null;
     var h = document.createElement('div');
     h.className = 'pane-error-title';
-    h.textContent = 'Derivation failed (rc=' + paneResp.rc + ')';
+    h.textContent = info ? info.headline : ('Derivation failed (rc=' + paneResp.rc + ')');
     box.appendChild(h);
-    var cmd = document.createElement('div');
-    cmd.className = 'pane-error-cmd';
-    cmd.textContent = '$ ' + paneResp.command;
-    box.appendChild(cmd);
-    if (paneResp.stderr_tail) {
-      var pre = document.createElement('pre');
-      pre.className = 'pane-error-stderr';
-      pre.textContent = paneResp.stderr_tail;
-      box.appendChild(pre);
-    }
+
+    var scope = document.createElement('div');
+    scope.className = 'pane-error-scope';
+    scope.textContent = 'This affects only the "' + (info ? info.label : 'this') +
+      '" panel — every other panel keeps working (each derives independently).';
+    box.appendChild(scope);
+
+    var actions = document.createElement('div');
+    actions.className = 'pane-error-actions';
     var retry = document.createElement('button');
     retry.className = 'btn-go small';
     retry.textContent = 'Retry';
     retry.addEventListener('click', forceRefresh);
-    box.appendChild(retry);
+    actions.appendChild(retry);
+    var detailText = '$ ' + paneResp.command + (paneResp.stderr_tail ? ('\n' + paneResp.stderr_tail) : '');
+    actions.appendChild(makeCopyBtn(detailText, 'Copy details'));
+    box.appendChild(actions);
+
+    // Technical detail — folded, never the primary content (audit F2's
+    // own required fix). Still fully present (never dropped) for the
+    // fixing session: the exact failing command + the real stderr tail.
+    var details = document.createElement('details');
+    details.className = 'pane-error-details';
+    var summary = document.createElement('summary');
+    summary.textContent = 'Technical detail (for the fixing session)';
+    details.appendChild(summary);
+    var cmd = document.createElement('div');
+    cmd.className = 'pane-error-cmd';
+    cmd.textContent = '$ ' + paneResp.command;
+    details.appendChild(cmd);
+    if (paneResp.stderr_tail) {
+      var pre = document.createElement('pre');
+      pre.className = 'pane-error-stderr';
+      pre.textContent = paneResp.stderr_tail;
+      details.appendChild(pre);
+    }
+    box.appendChild(details);
+
     container.appendChild(box);
   }
+  // RENDER-ERROR-END
 
   function renderLoading(container) {
     container.innerHTML = '<div class="pane-loading" aria-busy="true">loading…</div>';
@@ -340,10 +419,25 @@
         sessSpan.textContent = 'session: ' + (it.session || 'unknown');
       }
       head.appendChild(sessSpan);
+      // R17 deliverable 7 (audit F9): this card NAMES an inbox-addressable
+      // item (it.id — the SAME NEEDS-YOU ledger id inbox.js's #inbox/<id>
+      // addressing resolves) but offered no way to reach it there; the
+      // app's own cross-view law ("every element that NAMES an
+      // addressable item links to it") applied everywhere except here.
+      if (it.id) {
+        var openInboxBtn = document.createElement('button');
+        openInboxBtn.type = 'button';
+        openInboxBtn.className = 'ghost small nm-open-inbox-btn';
+        openInboxBtn.textContent = 'open in Inbox →';
+        openInboxBtn.addEventListener('click', function () {
+          window.WorkstreamsShell.navigate('#inbox/' + encodeURIComponent(it.id));
+        });
+        head.appendChild(openInboxBtn);
+      }
       card.appendChild(head);
       var text = document.createElement('div');
       text.className = 'nm-text';
-      text.textContent = it.text;
+      renderCat(text, it.text); // R17 deliverable 2 (audit F1): fence any command it.text carries
       card.appendChild(text);
       // Cold-reader anatomy (constitution §3 amendment 53d3bee, operator
       // directive 2026-07-07): render lint_warnings HONESTLY when present —
@@ -595,9 +689,28 @@
       interruptStrip.appendChild(chip);
     });
     openNeedsMe.forEach(function (it) {
-      var chip = document.createElement('span');
+      // R17 deliverable 7 (audit F9): this chip NAMES an inbox-addressable
+      // item (it.id is the SAME NEEDS-YOU ledger id inbox.js's #inbox/<id>
+      // addressing resolves — od_needs_me and the Inbox's own /api/inbox
+      // both read the same ledger) — a real <button> navigating there,
+      // never inert text the operator must re-find by hand in another tab.
+      var chip = document.createElement('button');
+      chip.type = 'button';
       chip.className = 'chip interrupt-chip';
-      chip.textContent = '[' + it.section + '] ' + (it.text || '').split('\n')[0].slice(0, 60);
+      if (it.id) {
+        chip.addEventListener('click', function () {
+          window.WorkstreamsShell.navigate('#inbox/' + encodeURIComponent(it.id));
+        });
+      } else {
+        chip.disabled = true;
+        chip.title = 'no id on this item — cannot link to the Inbox';
+      }
+      chip.appendChild(document.createTextNode('[' + it.section + '] '));
+      // R17 deliverable 2 (audit F1): fence a command inside the (still
+      // truncated-at-60-chars) preview text.
+      var chipText = document.createElement('span');
+      renderCat(chipText, (it.text || '').split('\n')[0].slice(0, 60));
+      chip.appendChild(chipText);
       interruptStrip.appendChild(chip);
     });
   }
@@ -797,6 +910,11 @@
   // Docs browser (kept — link-resolver backend)
   // ============================================================
   var docsLoaded = false, docsCache = {};
+  // DOCS-LIST-RENDER-BEGIN (selftest real-execution extraction anchor —
+  // Round 15 regression: docsCache[proj] used to be treated as the files
+  // array itself; it is actually {root, missing, files}. Marker starts
+  // AFTER the var so a sandboxed extraction can inject its own docsCache
+  // without the re-declaration resetting it to {}.)
   function loadDocs() {
     return fetch('/api/docs').then(function (r) { return r.json(); }).then(function (j) {
       docsCache = (j && j.projects) || {};
@@ -804,12 +922,29 @@
       renderDocsList('');
     });
   }
+  // Round 15 (operator: "the Docs button in the corner doesn't show any
+  // files"): ROOT CAUSE, verified live — GET /api/docs returns
+  // { projects: { <key>: {root, missing, files:[...]} } } (server.js ->
+  // projects.js#listDocs), but this function treated docsCache[proj] as
+  // THE FILES ARRAY ITSELF. `files.filter(...)` on a plain object threw
+  // "files.filter is not a function" inside the forEach callback (confirmed
+  // live via direct eval against the real payload), which aborted the
+  // WHOLE render right after docsBody was cleared — an empty panel with no
+  // visible error. Fix reads `.files`; `missing` (project root not present
+  // on THIS machine) is skipped rather than rendering an empty/broken
+  // section for it; a real "no docs" empty state replaces the silent blank
+  // panel (four-UI-states discipline — never a bare emptiness that could
+  // be mistaken for "still loading" or a genuine zero).
   function renderDocsList(filterText) {
     docsBody.innerHTML = '';
+    var anyRendered = false;
     Object.keys(docsCache).forEach(function (proj) {
-      var files = docsCache[proj] || [];
+      var entry = docsCache[proj];
+      var files = (entry && Array.isArray(entry.files)) ? entry.files : (Array.isArray(entry) ? entry : []);
+      if (entry && entry.missing) return; // project root not on this machine -- nothing to browse
       files.filter(function (f) { return !filterText || f.toLowerCase().indexOf(filterText.toLowerCase()) !== -1; })
         .forEach(function (f) {
+          anyRendered = true;
           var row = document.createElement('button');
           row.className = 'doc-row ghost';
           row.textContent = proj + ' / ' + f;
@@ -817,7 +952,16 @@
           docsBody.appendChild(row);
         });
     });
+    if (!anyRendered) {
+      var empty = document.createElement('div');
+      empty.className = 'doc-row-empty';
+      empty.textContent = filterText ?
+        'no docs match "' + filterText + '"' :
+        'no docs found — no configured project has a readable docs/ tree on this machine';
+      docsBody.appendChild(empty);
+    }
   }
+  // DOCS-LIST-RENDER-END
   docsFilter.addEventListener('input', function () { renderDocsList(docsFilter.value); });
   docsBtn.addEventListener('click', function () {
     docScrim.hidden = false;
@@ -828,6 +972,20 @@
   docsClose.addEventListener('click', closeDocsPanel);
   docScrim.addEventListener('click', function (e) { if (e.target === docScrim) { closeDocsPanel(); closeDocModal(); } });
 
+  // Round 16 deliverable 2 (operator: "the plans are now displaying in a
+  // popup but it's still not rendering the formatting"): render real
+  // markdown -> HTML via the shared web/md-render.js (escaping-first — see
+  // that file's own header for the security contract), same renderer
+  // roadmap.js#openPlanDocModal uses for the SAME #docBody element. A
+  // missing MdRender global (script failed to load) degrades to the old
+  // plain-text render rather than throwing.
+  function renderIntoDocBody(rawContent) {
+    if (window.MdRender && typeof window.MdRender.renderMarkdown === 'function') {
+      docBody.innerHTML = window.MdRender.renderMarkdown(rawContent);
+    } else {
+      docBody.textContent = rawContent;
+    }
+  }
   function openDoc(project, docPath) {
     docTitle.textContent = project + ' / ' + docPath;
     docBody.textContent = 'loading…';
@@ -835,7 +993,8 @@
     fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
       .then(function (r) { return r.json(); })
       .then(function (j) {
-        docBody.textContent = j && j.ok ? j.content : ('error: ' + (j && j.error));
+        if (j && j.ok) renderIntoDocBody(j.content);
+        else docBody.textContent = 'error: ' + (j && j.error);
       })
       .catch(function (err) { docBody.textContent = 'error: ' + err; });
     docOpenEditor.onclick = function () {
@@ -999,6 +1158,86 @@
     diagnosticsBody.appendChild(bookkeepingRow);
   }
 
+  // ============================================================
+  // Machines — cross-machine peer state (PEERS-SURFACE-RETIRED-01, 2026-07-29
+  // round 14). See index.html's own header comment on #machinesSection for
+  // why this lives here (least-noisy home) and why it is deliberately
+  // MINIMAL (person -> machines -> freshness only — no per-plan/per-task
+  // breakdown; the fuller renderer already exists at web/asks.js's
+  // renderPeersSection, unmounted since b496b4f, and stays that way — this
+  // is a NEW, smaller surface, not a relocation of that heavier one).
+  // Reads the SAME server-computed payload.peers (server.js's
+  // buildPeersBlock -> peer-view.js) via the already-existing /api/asks
+  // endpoint — no new endpoint, no re-derivation. Fetched once, when the
+  // Harness Health tab first opens, same convention as Diagnostics above.
+  // ============================================================
+  var PEER_FRESHNESS_LABEL = { 'fresh-ish': 'fresh', 'estate-unchanged': 'idle (no change, still alive)', 'peer-unreachable': 'unreachable' };
+  function renderMachines(peers) {
+    machinesBody.innerHTML = '';
+    peers = peers || { has_data: false, entries: [], persons: [], people_map_error: '' };
+    if (!peers.has_data) {
+      // Honest empty state naming exactly what's missing (never a bare "no
+      // data") — COORD-SYNC-NO-PEER-EXPORTS-YET-01 is the tracked reason on
+      // THIS machine today: zero plan-export/*.json files from any peer.
+      var empty = document.createElement('div');
+      empty.className = 'pane-empty';
+      empty.textContent = 'no peer exports received — the Windows cadence task is not ' +
+        'registered; see COORD-SYNC-NO-PEER-EXPORTS-YET-01 (docs/backlog.md)';
+      machinesBody.appendChild(empty);
+      return;
+    }
+    if (peers.people_map_error) {
+      var mapErr = document.createElement('div');
+      mapErr.className = 'pane-error';
+      mapErr.setAttribute('role', 'alert');
+      mapErr.textContent = 'Person grouping unavailable — ' + peers.people_map_error +
+        ' (machines shown under "unassigned" meanwhile)';
+      machinesBody.appendChild(mapErr);
+    }
+    var byHost = {};
+    (peers.entries || []).forEach(function (e) { byHost[e.host] = e; });
+    var groups = (peers.persons && peers.persons.length)
+      ? peers.persons
+      : [{ person: 'unassigned', hosts: (peers.entries || []).map(function (e) { return e.host; }) }];
+    groups.forEach(function (g) {
+      var row = document.createElement('div');
+      row.className = 'diag-row machines-person-row';
+      var label = document.createElement('span');
+      label.className = 'machines-person-label';
+      label.textContent = g.person + ': ';
+      row.appendChild(label);
+      (g.hosts || []).forEach(function (h) {
+        var e = byHost[h];
+        var chip = document.createElement('span');
+        var st = (e && e.state) || 'unknown';
+        // Reuses asks.js's own peer-state-* chip classes (app.css already
+        // colors fresh-ish/estate-unchanged/peer-unreachable) — no new CSS.
+        chip.className = 'chip peer-state peer-state-' + st;
+        // text + color, never color-only (a11y baseline) — host name AND
+        // freshness word both always present in the chip's own text.
+        chip.textContent = h + ' (' + (PEER_FRESHNESS_LABEL[st] || st) +
+          (e && e.age_minutes != null ? ', ' + e.age_minutes + 'm ago' : '') + ')';
+        row.appendChild(chip);
+      });
+      machinesBody.appendChild(row);
+    });
+  }
+
+  function loadMachines() {
+    machinesBody.innerHTML = '<div class="pane-loading" aria-busy="true">loading machines…</div>';
+    fetch('/api/asks')
+      .then(function (r) { return r.json(); })
+      .then(function (payload) { renderMachines(payload && payload.peers); })
+      .catch(function (err) {
+        machinesBody.innerHTML = '';
+        var e = document.createElement('div');
+        e.className = 'pane-error';
+        e.setAttribute('role', 'alert');
+        e.textContent = 'Could not load machines: ' + String(err);
+        machinesBody.appendChild(e);
+      });
+  }
+
   function loadDiagnostics() {
     diagnosticsBody.innerHTML = '<div class="pane-loading" aria-busy="true">loading diagnostics…</div>';
     fetch('/api/diagnostics/drift')
@@ -1042,11 +1281,20 @@
     whyScrim = $('whyScrim'); whyDrawer = $('whyDrawer');
     whyTitle = $('whyTitle'); whyBody = $('whyBody'); whyClose = $('whyClose');
     diagnosticsBody = $('diagnosticsBody');
+    machinesBody = $('machinesBody');
 
     whyClose.addEventListener('click', closeWhyDrawer);
     whyScrim.addEventListener('click', closeWhyDrawer);
     markSeenBtn.addEventListener('click', onMarkSeenClick);
     refreshBtn.addEventListener('click', forceRefresh);
+
+    // R17 deliverable 2: ONE event-delegated copy-button listener per
+    // persistent container (both cloned once here, never recreated — only
+    // their children are wiped/rebuilt on each poll render).
+    if (window.CommandRender && typeof window.CommandRender.wireCommandCopyButtons === 'function') {
+      window.CommandRender.wireCommandCopyButtons(needsMeBody);
+      window.CommandRender.wireCommandCopyButtons(interruptStrip);
+    }
 
     var storedSince = getStoredLastLook();
     lastLookAnchor.dataset.since = storedSince || new Date(Date.now() - 24 * 3600 * 1000).toISOString();
@@ -1060,6 +1308,7 @@
     es.onerror = function () { /* SSE reconnects automatically; polling loop is the fallback truth source regardless */ };
 
     loadDiagnostics();
+    loadMachines();
   }
 
   // ============================================================

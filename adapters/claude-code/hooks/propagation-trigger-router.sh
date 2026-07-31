@@ -25,6 +25,23 @@ set -uo pipefail
 SCRIPT_NAME="propagation-trigger-router.sh"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# The self-test's `_self_invoke` bound (see its own WHY block below) was a
+# bare `timeout`, which is GNU coreutils and absent on stock macOS: every
+# nested self-invocation returned rc=127 and the scenario FAILed for a
+# reason that had nothing to do with the code under test. nl_run_bounded
+# keeps the bound on every platform. Defensive source + loud shim so a
+# partial install degrades visibly, never silently unbounded.
+{ source "$SCRIPT_DIR/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "$SCRIPT_NAME: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ---------------------------------------------------------------------------
 # Configurable paths (overridable via env for self-test isolation).
 # ---------------------------------------------------------------------------
@@ -493,10 +510,14 @@ run_self_test() {
   # completes in <1s every time; see repro notes, E.2 remediation). Without
   # a bound, one flaky nested invocation stalls the ENTIRE self-test (and
   # any sweep driving it) for the outer harness's full timeout budget.
-  # `timeout` bounds the blast radius to one scenario's FAIL instead.
+  # The bound limits the blast radius to one scenario's FAIL instead.
+  #
+  # nl_run_bounded, not bare `timeout`: on stock macOS `timeout` does not
+  # exist, so the bare form returned rc=127 for every nested invocation and
+  # turned this deliberate safety bound into a guaranteed self-test failure.
   # ---------------------------------------------------------------------
   _self_invoke() {
-    timeout 20 bash "$SELF_PATH" "$@"
+    nl_run_bounded 20 bash "$SELF_PATH" "$@"
   }
 
   # ----- S1: schema-validity -----

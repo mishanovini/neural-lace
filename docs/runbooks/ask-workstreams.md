@@ -100,6 +100,10 @@ as empty strings, never omitted:
 | `merged` | repo+sha | every merge is its own sha |
 | `plan_amended` | plan_slug+content-hash of the **pre→post delta + a replay token** (`--dedup-extra`) | second amendment = new hash, *even if it repeats a prior scope state* |
 | `plan_completed` | plan_slug+content-hash of the Status-line ts (`--dedup-extra`) | re-close after reopen = new Status-line ts → new hash |
+| `plan_outcome_recorded` | plan_slug+content-hash of close_ts+metric+re-check date (`--dedup-extra`) | a re-close after reopen (new close_ts, likely a revised outcome) = new hash (T9, accountable-estate-program; backfilled into this table by SE1 REFORMULATE F3 — the row existed in `progress-log-lib.sh`'s own header since T9 but was never synced here) |
+| `plan_reopened` | plan_slug+content-hash of re-check-date-that-fired+reason (`--dedup-extra`) | a different re-check date or recurrence condition on a later sweep = new hash; a sweep that finds nothing to reopen never re-emits at all (T9, `plan-recheck-sweep.sh`; backfilled here by SE1 REFORMULATE F3, same gap as the row above) |
+| `merge_completed` | plan_slug+task_id+sha | a later merge producing a new sha = new event; a byte-identical (branch-pair, sha) replay dedups (SE1, `status-event-ledger.md` row 4 — emitted by `scripts/estate-merge.sh`'s `_em_log_merge`) |
+| `merge_failed` | plan_slug+task_id+`--dedup-extra` (a per-attempt pid+ms token) | every failed attempt is its own row by construction — a naive natural key would otherwise collapse repeated failures (e.g. retrying while still dirty) into one line (SE1) |
 | `ask_registered` / `session_attached` | ask_id(+session_id) | attach per (ask, session) pair |
 | (any other/future type) | a superset hash of every field supplied | never silently un-deduped, never wrongly collapses a real recurrence |
 

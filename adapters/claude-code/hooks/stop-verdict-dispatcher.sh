@@ -175,6 +175,149 @@
 # proves high, extend the heuristic (e.g. scan the last 2 assistant
 # messages instead of 1), not remove the check.
 
+# ============================================================
+# PROBLEMS-PERSIST check (operator directive 2026-07-29, ledger row
+# SURFACED-PROBLEMS-CAN-BE-DROPPED-01; design doc docs/reviews/2026-07-29-
+# operator-five-questions.md Q2; docs/decisions/065-problems-persist-warn-
+# consolidation.md covers the WARN-vs-block and file-placement choice in
+# full). Follows FUNCTIONAL-LINK / COLD-READER-LINT's own precedent
+# immediately above: WARN-ONLY, never contributes to the block/gap
+# verdict, never participates in cycle-counting/DONE-refusal, never
+# touches stdout — a pure signal-ledger + stderr side-channel warn.
+# ============================================================
+#
+# WHY THIS EXISTS: the operator, verbatim: "It's very common for me to not
+# read everything you tell me... I need these concerns to persist until we
+# actually address them." Constitution §5 already says bugs/gaps/findings
+# get written to their durable home in the same response that surfaces
+# them, but filing was entirely discretionary — nothing mechanically
+# checked it, so the ledger reflected what a session remembered to file,
+# not what it found.
+#
+# MECHANISM: splits the final assistant message into paragraphs (blank-
+# line-delimited blocks — the unit at which a problem statement and its
+# citation are expected to co-occur). A paragraph is "problem-shaped" if
+# it contains, case-insensitively, whole-word: defect(s) | bug(s) | broken
+# | silently | "data loss" | "root cause" — deliberately narrow (this is
+# the EXACT vocabulary named in the operator directive, not an invented
+# superset; "start narrow, precision over recall"). A problem-shaped
+# paragraph is "filed" if it ALSO contains, in the SAME paragraph, an
+# inline ledger-ID-shaped token — `[A-Z]{2,}(-[A-Z0-9]+)*-[0-9]+` (matches
+# NL-042, [NL-042], NL-FINDING-027, SURFACED-PROBLEMS-CAN-BE-DROPPED-01;
+# the same ID sub-pattern _svd_text_has_artifact_anchor already uses two
+# functions above) — or a literal mention of nl-issue.sh / docs/backlog.md
+# / docs/findings.md (evidence the filing mechanism was at least named).
+# Every UNFILED problem-shaped paragraph emits ONE signal-ledger "warn"
+# (gate stop-verdict-dispatcher, check problems-persist) plus a stderr
+# notice carrying an exact, copy-pasteable `nl-issue.sh "<snippet>"`
+# command (constitution §2's bar: actionable at read time, not a label).
+#
+# GOLDEN SCENARIO (constitution §10 evidence bar): the 2026-07-29 five-
+# questions session — five distinct operator-facing concerns raised in one
+# session (verification-dispatch has no enforcement; surfaced problems can
+# be silently dropped; the multi-machine cockpit has no data on this Mac;
+# the harness twice deleted committed work; 110 files landed with zero
+# review) where the operator explicitly said chat is too noisy to rely on.
+# ANY of those five going unfiled (no ledger row, no backlog entry, no
+# NEEDS-YOU.md item) is the failure this check exists to catch at the
+# moment the turn ends, not at next week's audit.
+#
+# FP ESTIMATE (honest, per constitution §10 — measured, not asserted):
+# problem-shaped prose in ORDINARY engineering narration — "fixed a bug in
+# X", "the root cause was Y", "this silently overwrote Z" describing
+# something ALREADY resolved in the same commit — WILL fire this warn,
+# because the check does not attempt to distinguish "resolved with a SHA
+# in hand" from "raised and left hanging" (that distinction is exactly
+# what made Q1/Q5 the same blockage as Q2 in the five-questions review — a
+# clever carve-out here would reproduce the discretion this mechanism
+# exists to remove). Measured against this same repo's own commit-subject
+# vocabulary: `git log --oneline | grep -ciE '\bbugs?\b|defects?|broken|
+# silently|root cause'` returns a non-trivial hit rate against ordinary
+# "fix:" commit subjects alone (nowhere near zero) — this is WHY the check
+# is WARN, never BLOCK: a teaching signal the session can act on or
+# knowingly override, not a gate the operator has to fight.
+#
+# RETIREMENT CONDITION: if the signal ledger's warn/session ratio for
+# `gate: stop-verdict-dispatcher, check: problems-persist` stays high (per
+# E.3-style rate visibility) with a LOW true-catch rate at weekly triage
+# (i.e. most warns disposition as "already filed elsewhere" or "already
+# resolved this turn, no persistence needed" rather than "caught a genuine
+# drop"), demote by narrowing the vocabulary further or requiring a second
+# corroborating signal (e.g. an imperative verb: should/needs to/must be
+# fixed) before retiring the check outright — never silently delete it;
+# per constitution §10 removal requires the same named justification
+# creation did.
+
+# ============================================================
+# VOCABULARY-LOCK check (status-event-ledger plan SE10, 2026-07-30;
+# doctrine/claims.md "Status vocabulary lock"). Follows FUNCTIONAL-LINK /
+# COLD-READER-LINT / PROBLEMS-PERSIST's own precedent immediately above:
+# WARN-ONLY, never contributes to the block/gap verdict, never participates
+# in cycle-counting/DONE-refusal, never touches stdout.
+# ============================================================
+#
+# WHY THIS EXISTS: the operator's companion requirement to the deterministic-
+# trigger taxonomy — "the statuses that you report in this chat need to
+# clearly match what I see in the Workstreams UI. Every surface needs to
+# speak the same language." The cockpit renders exactly six status values
+# (not-started/in-progress/running/complete/stalled(reason)/unknown(reason))
+# plus `<PlanKey><TaskId>` tokens (SE3, T9). A chat report using a synonym
+# ("in flight", "wrapping up") READS as a status claim but maps to none of
+# the six values a reader (or a future session grep-ing the transcript) can
+# act on — the exact drift this check exists to catch at the moment the
+# turn ends.
+#
+# GOLDEN SCENARIO (constitution §10 evidence bar): this session's own prior
+# turn reported "2 in flight" for a pair of dispatched builders, when one of
+# the two was actually PARKED (its session had stopped, not running) — "in
+# flight" is not one of the six enum values, and its actual informal meaning
+# ("some non-zero activity, exact state unspecified") is precisely why it
+# hid the parked/running distinction that mattered.
+#
+# NARROW BY DESIGN (constitution §10 "start narrow, precision over recall" —
+# same discipline PROBLEMS-PERSIST names): an explicit denylist of hedge/
+# status phrasings that read as a status claim without being one of the six
+# enum values, NOT a broad heuristic over all informal language.
+#
+# SCOPE NOTE — bare task ids considered and DEFERRED (measured, not
+# asserted): a "task N" / "task #N" bare-numeric-reference check was
+# drafted (the task convention names `<PlanKey><TaskId>` fused tokens as the
+# ONLY reference form) but MEASURED against this repo's own commit-subject
+# corpus before shipping: `git log --oneline | grep -ciE '\btask[[:space:]]
+# +#?[0-9]+\b'` returns 163/1673 (~9.7%) — FAR above a "start narrow, high
+# precision" bar, because a large number of this repo's OWN pre-existing
+# plans (e.g. cockpit-roadmap-redesign, cockpit-v2) intentionally use plain
+# numeric task ids with no plan-key prefix at all; those are not violations,
+# they are a different (older) plan's correct convention. Shipping that
+# check as designed would WARN on ~1 in 10 ordinary completion messages
+# referencing those plans — the opposite of "precision over recall". NOT
+# SHIPPED. Retirement/promotion condition for revisiting: a corroborating
+# signal that narrows the false-positive set (e.g. only fire when the SAME
+# final message ALSO uses a fused `<Key><TaskId>` token elsewhere, proving
+# this specific report already uses the fused convention and a co-occurring
+# bare reference is a genuine same-message inconsistency, not a different
+# plan's own numbering).
+#
+# FP ESTIMATE (honest, measured, per constitution §10): the shipped
+# off-vocabulary denylist (`_SVD_OFFVOCAB_RE` below) against this same
+# corpus: `git log --oneline | grep -ciE "$_SVD_OFFVOCAB_RE"` returns 2/1673
+# (~0.12%) — both hits are "in flight" status-claim usages (re-checked
+# directly, 2026-07-30: neither hit contains "should be" at all; an earlier
+# version of this comment mischaracterized one as such). Commit subjects
+# are a PROXY corpus, not the real target text — this check scans the
+# final assistant chat message, not commit messages — chosen here only
+# because it is a large, readily-greppable sample already on hand. The
+# real false-positive rate is the live signal ledger's warn/session ratio
+# for `gate: stop-verdict-dispatcher, check: vocabulary-lock` (see
+# RETIREMENT CONDITION immediately below). This WARN-only posture means
+# even a wrongly-fired warn costs a glance, never a block.
+#
+# RETIREMENT CONDITION: same shape as PROBLEMS-PERSIST — if the ledger's
+# warn/session ratio for `gate: stop-verdict-dispatcher, check:
+# vocabulary-lock` stays high with a LOW true-catch rate at weekly triage,
+# narrow the denylist further (or require a corroborating signal) before
+# retiring outright; never silently delete it.
+
 set -u
 
 SCRIPT_NAME="stop-verdict-dispatcher.sh"
@@ -966,6 +1109,112 @@ _svd_cold_reader_lint_check() {
 }
 
 # ----------------------------------------------------------------------
+# _svd_paragraph_is_problem_shaped <paragraph-text>
+#   True (0) iff the paragraph contains, case-insensitively, whole-word:
+#   defect(s) | bug(s) | broken | silently | "data loss" | "root cause".
+#   See the PROBLEMS-PERSIST header comment above for why this exact
+#   vocabulary and not a broader one.
+# ----------------------------------------------------------------------
+_SVD_PROBLEM_VOCAB_RE='\bdefects?\b|\bbugs?\b|\bbroken\b|\bsilently\b|\bdata loss\b|\broot cause\b'
+_svd_paragraph_is_problem_shaped() {
+  local p="$1"
+  printf '%s' "$p" | grep -qiE "$_SVD_PROBLEM_VOCAB_RE"
+}
+
+# ----------------------------------------------------------------------
+# _svd_paragraph_has_ledger_id <paragraph-text>
+#   True (0) iff the paragraph carries an inline ledger-ID-shaped token
+#   (reuses _svd_text_has_artifact_anchor's own ID sub-pattern, four
+#   functions above) or names the filing mechanism directly.
+# ----------------------------------------------------------------------
+_SVD_PROBLEM_ID_RE='\[?[A-Z]{2,}(-[A-Z0-9]+)*-[0-9]+\]?|nl-issue\.sh|docs/backlog\.md|docs/findings\.md'
+_svd_paragraph_has_ledger_id() {
+  local p="$1"
+  printf '%s' "$p" | grep -qE "$_SVD_PROBLEM_ID_RE"
+}
+
+# ----------------------------------------------------------------------
+# _svd_problems_persist_check <transcript_path>
+#   WARN-only (see the PROBLEMS-PERSIST header comment above). Splits the
+#   final assistant message into paragraphs and emits ONE signal-ledger
+#   "warn" + stderr notice per problem-shaped paragraph that carries no
+#   inline ledger ID. Never writes to stdout, never returns non-zero —
+#   same fail-open contract as _svd_functional_link_check /
+#   _svd_cold_reader_lint_check.
+# ----------------------------------------------------------------------
+_svd_problems_persist_check() {
+  local transcript_path="$1"
+  local text
+  text=$(_svd_final_assistant_message "$transcript_path")
+  [[ -n "$text" ]] || return 0
+
+  local paragraphs
+  paragraphs=$(printf '%s\n' "$text" | awk 'BEGIN{RS="";ORS="\x01"} {print}')
+  [[ -n "$paragraphs" ]] || return 0
+
+  local para
+  while IFS= read -r -d $'\x01' para; do
+    [[ -z "$para" ]] && continue
+    _svd_paragraph_is_problem_shaped "$para" || continue
+    _svd_paragraph_has_ledger_id "$para" && continue
+
+    local snippet
+    snippet=$(printf '%s' "$para" | tr '\n' ' ' | cut -c1-140)
+    local detail="problems-persist: problem-shaped statement with no inline ledger ID: \"${snippet}\""
+    _svd_ledger "warn" "$detail"
+    {
+      echo ""
+      echo "---- PROBLEMS-PERSIST (WARN, non-blocking) ----"
+      echo "  [unfiled] ${snippet}"
+      echo "    -> file it now: nl-issue.sh \"${snippet}\""
+      echo "    -> or cite the ID inline if it is already filed (constitution §5 / docs/decisions/065-problems-persist-warn-consolidation.md)."
+    } >&2
+  done <<< "$paragraphs"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _svd_text_offvocab_matches <text>
+#   Echoes a comma-joined, deduped, lowercased list of denylist hits (empty
+#   if none). See the VOCABULARY-LOCK header comment above for why this
+#   exact denylist and not a broader one.
+# ----------------------------------------------------------------------
+_SVD_OFFVOCAB_RE='\bin[[:space:]]+flight\b|\bdone-ish\b|\bbasically[[:space:]]+(complete|done)\b|\bmostly[[:space:]]+done\b|\bkind[[:space:]]+of[[:space:]]+done\b|\bsort[[:space:]]+of[[:space:]]+(done|working)\b|\bwrapping[[:space:]]+up\b|\bshould[[:space:]]+be[[:space:]]+(done|working|fine)\b'
+_svd_text_offvocab_matches() {
+  local text="$1"
+  printf '%s' "$text" | grep -oiE "$_SVD_OFFVOCAB_RE" 2>/dev/null | tr '[:upper:]' '[:lower:]' | sort -u | tr '\n' ',' | sed 's/,$//'
+}
+
+# ----------------------------------------------------------------------
+# _svd_vocabulary_lock_check <transcript_path>
+#   WARN-only (see the VOCABULARY-LOCK header comment above). Scans the
+#   final assistant message for off-vocabulary status phrasing and emits
+#   ONE signal-ledger "warn" + stderr notice when found. Never writes to
+#   stdout, never returns non-zero — same fail-open contract as the other
+#   three WARN-only checks in this file.
+# ----------------------------------------------------------------------
+_svd_vocabulary_lock_check() {
+  local transcript_path="$1"
+  local text
+  text=$(_svd_final_assistant_message "$transcript_path")
+  [[ -n "$text" ]] || return 0
+
+  local offvocab
+  offvocab=$(_svd_text_offvocab_matches "$text")
+  [[ -n "$offvocab" ]] || return 0
+
+  local detail="vocabulary-lock: off-vocabulary status word(s): ${offvocab}"
+  _svd_ledger "warn" "$detail"
+  {
+    echo ""
+    echo "---- VOCABULARY-LOCK (WARN, non-blocking) ----"
+    echo "  [off-vocabulary] ${offvocab}"
+    echo "    -> use the cockpit's six-value status enum (not-started/in-progress/running/complete/stalled(reason)/unknown(reason)) and the fused <PlanKey><TaskId> token (e.g. SE3, T9) -- doctrine/claims.md 'Status vocabulary lock'."
+  } >&2
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # Main (production execution) — skipped entirely under --self-test.
 # ----------------------------------------------------------------------
 _svd_main() {
@@ -1027,6 +1276,16 @@ _svd_main() {
   # same non-contributing shape as FUNCTIONAL-LINK immediately above — see
   # the header comment block for the full mechanism.
   _svd_cold_reader_lint_check "$transcript_path"
+
+  # PROBLEMS-PERSIST check (operator directive 2026-07-29): WARN-only, same
+  # non-contributing shape as FUNCTIONAL-LINK / COLD-READER-LINT immediately
+  # above — see the header comment block for the full mechanism.
+  _svd_problems_persist_check "$transcript_path"
+
+  # VOCABULARY-LOCK check (status-event-ledger plan SE10, 2026-07-30):
+  # WARN-only, same non-contributing shape as the three checks immediately
+  # above — see the header comment block for the full mechanism.
+  _svd_vocabulary_lock_check "$transcript_path"
 
   # ADR 059 D6 / specs-e §E.12: write + validate THIS session's end-manifest
   # BEFORE the member gates run, so work-integrity-gate.sh's manifest-scoping
@@ -2444,6 +2703,260 @@ STUBEOF
     failed=$((failed+1))
   fi
   unset STOP_VERDICT_REASON_MAX_CHARS
+
+  # ================================================================
+  # Scenario 27 (task problems-persist, operator directive 2026-07-29):
+  # a problem-shaped paragraph ("silently overwrote" + "bug") with NO
+  # inline ledger ID warns (ledger + stderr), never blocks (exit 0, no
+  # real gap in this fixture) — the golden-scenario shape from the
+  # five-questions session (a concern raised, never filed).
+  # ================================================================
+  _setup_scenario s27
+  HOOKS=$(_build_dispatcher_repo s27)
+  REPO="$tmproot/s27/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T27=$(_write_transcript "$tmproot/s27" $'The sync script silently overwrote 27 committed files with an older copy — this is a real bug and needs a fix.\n\nDONE: nothing else to report')
+  RC27=$(_run_dispatcher "$HOOKS" "$REPO" "$T27" "sess-s27")
+  _expect "problems-persist-unfiled-warn-never-blocks" "$RC27" "0"
+  if grep -q '"gate":"stop-verdict-dispatcher".*problems-persist.*no inline ledger ID' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (problems-persist-unfiled-paragraph-warns): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (problems-persist-unfiled-paragraph-warns): FAIL (expected a problems-persist warn naming no-inline-ledger-ID)" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q 'file it now: nl-issue.sh' "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (problems-persist-stderr-carries-precanned-nl-issue-command): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (problems-persist-stderr-carries-precanned-nl-issue-command): FAIL (expected an exact nl-issue.sh command on stderr)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 28: the SAME problem-shaped vocabulary, but WITH an inline
+  # ledger ID in the same paragraph, never warns (proves the check is
+  # ID-presence-gated, not vocabulary-gated alone).
+  # ================================================================
+  _setup_scenario s28
+  HOOKS=$(_build_dispatcher_repo s28)
+  REPO="$tmproot/s28/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T28=$(_write_transcript "$tmproot/s28" $'The sync script silently overwrote 27 committed files -- filed as NL-FINDING-041, root cause confirmed.\n\nDONE: nothing else to report')
+  RC28=$(_run_dispatcher "$HOOKS" "$REPO" "$T28" "sess-s28")
+  _expect "problems-persist-filed-paragraph-never-blocks" "$RC28" "0"
+  if ! grep -q '"gate":"stop-verdict-dispatcher".*problems-persist' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (problems-persist-filed-paragraph-no-warn): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (problems-persist-filed-paragraph-no-warn): FAIL (a paragraph carrying an inline NL-FINDING-### ID was incorrectly warned on)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 29: ordinary prose with NONE of the problem vocabulary never
+  # warns (proves the check only fires on the named vocabulary, not on
+  # every completion message).
+  # ================================================================
+  _setup_scenario s29
+  HOOKS=$(_build_dispatcher_repo s29)
+  REPO="$tmproot/s29/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T29=$(_write_transcript "$tmproot/s29" $'Shipped the new dashboard widget and verified it renders correctly.\n\nDONE: shipped abc1234')
+  RC29=$(_run_dispatcher "$HOOKS" "$REPO" "$T29" "sess-s29")
+  _expect "problems-persist-ordinary-prose-never-blocks" "$RC29" "0"
+  if ! grep -q '"gate":"stop-verdict-dispatcher".*problems-persist' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (problems-persist-ordinary-prose-not-scanned): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (problems-persist-ordinary-prose-not-scanned): FAIL (ordinary prose with none of the named vocabulary was incorrectly warned on)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 30: a WARN never appears in the combined BLOCK message and
+  # never contributes to gap_count — a real blocking gap (no marker) PLUS
+  # an unfiled problem-shaped paragraph in the same final message still
+  # blocks on the real gap only, and the problems-persist warn stays out
+  # of the block JSON (same channel-separation contract as scenario 23).
+  # Also proves MULTIPLE unfiled paragraphs each emit their own warn.
+  # ================================================================
+  _setup_scenario s30
+  HOOKS=$(_build_dispatcher_repo s30)
+  REPO="$tmproot/s30/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T30=$(_write_transcript "$tmproot/s30" $'There is a broken migration path nobody has filed.\n\nSeparately, the retry logic is silently swallowing errors and nobody has looked at the root cause yet.\n\ntrailing off with no marker at all')
+  RC30=$(_run_dispatcher "$HOOKS" "$REPO" "$T30" "sess-s30")
+  _expect "problems-persist-warn-plus-real-gap-still-blocks-on-the-real-gap" "$RC30" "2"
+  if grep -q "marker-format" "$tmproot/last-stdout.txt" 2>/dev/null \
+     && ! grep -q "problems-persist" "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (problems-persist-warn-channel-separate-from-block-json): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (problems-persist-warn-channel-separate-from-block-json): FAIL (expected the problems-persist WARN to stay out of the block-JSON reason string on stdout)" >&2
+    failed=$((failed+1))
+  fi
+  n_warns=$(grep -c '"gate":"stop-verdict-dispatcher".*problems-persist' "$SIGNAL_LEDGER_PATH" 2>/dev/null || echo 0)
+  if [[ "$n_warns" -ge 2 ]]; then
+    echo "self-test (problems-persist-multiple-unfiled-paragraphs-each-warn): PASS (got $n_warns warns)" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (problems-persist-multiple-unfiled-paragraphs-each-warn): FAIL (expected >=2 problems-persist warns for 2 distinct unfiled paragraphs, got $n_warns)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 31 (task vocabulary-lock, status-event-ledger plan SE10): the
+  # golden scenario verbatim — "2 in flight" is off-vocabulary (not one of
+  # the six enum values) and warns (ledger + stderr), never blocks (exit 0,
+  # no real gap in this fixture).
+  # ================================================================
+  _setup_scenario s31
+  HOOKS=$(_build_dispatcher_repo s31)
+  REPO="$tmproot/s31/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T31=$(_write_transcript "$tmproot/s31" $'2 agents are in flight right now, one building SE3 and one building SE4.\n\nDONE: nothing else to report')
+  RC31=$(_run_dispatcher "$HOOKS" "$REPO" "$T31" "sess-s31")
+  _expect "vocabulary-lock-offvocab-warn-never-blocks" "$RC31" "0"
+  if grep -q '"gate":"stop-verdict-dispatcher".*vocabulary-lock.*in flight' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-offvocab-phrase-warns): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-offvocab-phrase-warns): FAIL (expected a vocabulary-lock warn naming 'in flight')" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q "six-value status enum" "$tmproot/last-stderr.txt" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-stderr-names-the-enum): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-stderr-names-the-enum): FAIL (expected the six-value-enum teaching line on stderr)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 32: the SAME status, reported in-vocabulary ("in-progress" /
+  # "complete" + fused <PlanKey><TaskId> tokens), never warns — proves the
+  # check is vocabulary-gated, not topic-gated (a status report about
+  # multiple agents is fine; the WORD CHOICE is what matters).
+  # ================================================================
+  _setup_scenario s32
+  HOOKS=$(_build_dispatcher_repo s32)
+  REPO="$tmproot/s32/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T32=$(_write_transcript "$tmproot/s32" $'SE3 is in-progress; SE4 is complete.\n\nDONE: SE4 shipped at abc1234')
+  RC32=$(_run_dispatcher "$HOOKS" "$REPO" "$T32" "sess-s32")
+  _expect "vocabulary-lock-in-vocab-status-never-blocks" "$RC32" "0"
+  if ! grep -q '"gate":"stop-verdict-dispatcher".*vocabulary-lock' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-in-vocab-status-no-warn): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-in-vocab-status-no-warn): FAIL (a message using the six-value enum + fused tokens was incorrectly warned on)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 33: ordinary prose with NONE of the denylist phrasing never
+  # warns (proves the check only fires on the named vocabulary, not on
+  # every completion message — same discipline as PROBLEMS-PERSIST's own
+  # scenario 29 immediately above this block).
+  # ================================================================
+  _setup_scenario s33
+  HOOKS=$(_build_dispatcher_repo s33)
+  REPO="$tmproot/s33/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T33=$(_write_transcript "$tmproot/s33" $'Shipped the new dashboard widget and verified it renders correctly.\n\nDONE: shipped abc1234')
+  RC33=$(_run_dispatcher "$HOOKS" "$REPO" "$T33" "sess-s33")
+  _expect "vocabulary-lock-ordinary-prose-never-blocks" "$RC33" "0"
+  if ! grep -q '"gate":"stop-verdict-dispatcher".*vocabulary-lock' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-ordinary-prose-not-scanned): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-ordinary-prose-not-scanned): FAIL (ordinary prose with none of the named vocabulary was incorrectly warned on)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 34: a WARN never appears in the combined BLOCK message and
+  # never contributes to gap_count — a real blocking gap (no marker) PLUS
+  # an off-vocabulary status phrase in the same final message still blocks
+  # on the real gap only, and the vocabulary-lock warn stays out of the
+  # block JSON (same channel-separation contract as scenarios 23/30).
+  # ================================================================
+  _setup_scenario s34
+  HOOKS=$(_build_dispatcher_repo s34)
+  REPO="$tmproot/s34/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T34=$(_write_transcript "$tmproot/s34" $'SE3 and SE4 are basically done, wrapping up now.\n\ntrailing off with no marker at all')
+  RC34=$(_run_dispatcher "$HOOKS" "$REPO" "$T34" "sess-s34")
+  _expect "vocabulary-lock-warn-plus-real-gap-still-blocks-on-the-real-gap" "$RC34" "2"
+  if grep -q "marker-format" "$tmproot/last-stdout.txt" 2>/dev/null \
+     && ! grep -q "vocabulary-lock" "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-warn-channel-separate-from-block-json): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-warn-channel-separate-from-block-json): FAIL (expected the vocabulary-lock WARN to stay out of the block-JSON reason string on stdout)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 35 (harness-change-review REFORMULATE finding 3(b)): the
+  # "sort of done"/"sort of working" alternative in `_SVD_OFFVOCAB_RE` had
+  # a `[[:space:]]` (exactly one whitespace char) between "of" and
+  # "(done|working)"; the re-review's class sweep then found the SAME bare
+  # quantifier in the "should be (done|working|fine)" alternative — both now
+  # use `[[:space:]]+` (one-or-more), so multi-space/wrapped prose
+  # wrapping/copy-paste produces) never matched. Proves the `+` fix: the
+  # SAME multi-space phrasing that a naive single-space regex would miss
+  # now fires the warn.
+  # ================================================================
+  _setup_scenario s35
+  HOOKS=$(_build_dispatcher_repo s35)
+  REPO="$tmproot/s35/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T35=$(_write_transcript "$tmproot/s35" $'SE3 is sort of  done, just polishing the edges. The rest should be  fine.\n\nDONE: nothing else to report')
+  RC35=$(_run_dispatcher "$HOOKS" "$REPO" "$T35" "sess-s35")
+  _expect "vocabulary-lock-sort-of-multispace-never-blocks" "$RC35" "0"
+  if grep -q '"gate":"stop-verdict-dispatcher".*vocabulary-lock.*sort of' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-sort-of-done-multispace-warns): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-sort-of-done-multispace-warns): FAIL (expected a vocabulary-lock warn naming 'sort of done' even with 2 spaces before 'done')" >&2
+    failed=$((failed+1))
+  fi
+  if grep -q '"gate":"stop-verdict-dispatcher".*vocabulary-lock.*should be' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test (vocabulary-lock-should-be-multispace-warns): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (vocabulary-lock-should-be-multispace-warns): FAIL (expected a vocabulary-lock warn naming 'should be fine' even with 2 spaces before 'fine' — the re-review's class-sweep sibling)" >&2
+    failed=$((failed+1))
+  fi
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2

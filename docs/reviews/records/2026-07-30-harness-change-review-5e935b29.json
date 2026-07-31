@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-5e935b29",
+  "created_at": "2026-07-30T16:06:03Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "unknown",
+  "plan_ref": "docs/plans/review-independence.md",
+  "change_ref": {
+    "commit_sha": "0debef731feb6eef36295acb254bf74d3a3a3b3c",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "b6967aa2acde2f4d600d0cf0e1ecff6e67420447"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/observability-derive.sh",
+      "blob_sha": "6678c2e30dc9e96f58aa16209f7900c8e0b57fcd"
+    },
+    {
+      "path": "adapters/claude-code/scripts/review-runner.sh",
+      "blob_sha": "2cfd6a858059bcb1645087374963908f07c91c39"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "All four files PASS. The suite claims are reproduced exactly, the observability 9 are proven byte-identical pre-existing via a parent-blob worktree run, the identity stamp honestly closes the degenerate-discriminator without overclaiming, and no remedy chain deadlocks.",
+    "findings_summary": "Adversarial harness-reviewer (agent a1bed5264b506cf2a, 2026-07-30, infra-cluster review): harness-doctor.sh PASS clean (RI fixtures verified alive: BRE cannot self-match, MODE normalization traced, complementary RED coverage proven; cutover lexicographic comparison sound). review-runner.sh PASS, 1 Minor (post-writer refusal should revert writer output — backlog RUNNER-POST-WRITER-REFUSAL-REVERT-01); identity stamp S10-pinned, spoofability residual DOCUMENTED (plan Assumptions 631-635 + doctrine HONEST RESIDUAL). observability-derive.sh PASS, 1 Minor (comment drift 670-673 — backlog OBS-COMMENT-DRIFT-670-01); the 9 self-test failures PROVEN byte-identical pre-existing via detached parent-blob run; delta is a strict 16-to-9 repair on /bin/bash with the arithmetic-eval class eliminated; nl status 1.52s live. Reviewer-reproduced counts both interpreters sequential: doctor 146/3 + 148/1 (pre-existing only), runner 12/0, obs 40/9, manifest-check GREEN 148."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Mishas-Mac-mini",
+    "account": "unknown",
+    "session_id": "a1bed5264b506cf2a"
+  },
+  "independence": "pathway",
+  "payload": {}
+}

@@ -1,0 +1,45 @@
+{
+  "at": "2026-07-29T23:12:25.420Z",
+  "results": [
+    {
+      "id": "X2r-merged-unverified-row",
+      "verdict": "PASS",
+      "detail": "row: \"▸fx-deploy-donenewall done3/3⏳merged — deploy unverified, 11m ago\""
+    },
+    {
+      "id": "X2r-override-affordance",
+      "verdict": "PASS",
+      "detail": "buttons=[\"✎\",\"↑\",\"↓\",\"Mark complete anyway (override)\"] override-labeled=true"
+    },
+    {
+      "id": "X4r-anatomy",
+      "verdict": "FAIL",
+      "detail": "count=(0) anatomy={\"decision\":true,\"context\":false,\"options\":false,\"pick\":false,\"reply\":false,\"stub\":false} how-to-answer=false"
+    },
+    {
+      "id": "X4r-quarantine-affordances",
+      "verdict": "FAIL",
+      "detail": "quarantine={\"section\":true,\"defectFiled\":false,\"openSource\":true,\"dismiss\":true}"
+    },
+    {
+      "id": "X6r-title-operator-survives",
+      "verdict": "PASS",
+      "detail": "POST /api/roadmap/title -> 200 {\"ok\":true,\"id\":\"fx-active\",\"title\":\"Writers-first migration (operator title)\",\"title_source\":\"operator\"}; after newer auto record: title=\"Writers-first migration (operator title)\" source=operator domOperator=true domAuto=false"
+    },
+    {
+      "id": "X12-ledger-corrupt-content",
+      "verdict": "PASS",
+      "detail": "tab=(!) (expect (!)), pane-error=true, Retry=true, win-state=false (\"Could not read what is waiting on you | ledger.json is not valid JSON: Expected property name or '}' in JSON at position 2 (line 1 column 3) | Retry | My items (0 open) | Add | No to-do items yet — ad\")"
+    },
+    {
+      "id": "X12b-retry-recovers",
+      "verdict": "PASS",
+      "detail": "retry=true, tab=(1), error-cleared=true"
+    },
+    {
+      "id": "X13-console-clean",
+      "verdict": "PASS",
+      "detail": "[]"
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "base": "http://127.0.0.1:7733",
+  "at": "2026-07-29T22:50:11.245Z",
+  "results": [
+    {
+      "id": "P0-boot",
+      "verdict": "PASS",
+      "detail": "tabs present, 136 roadmap detail rows, inbox count (1)"
+    },
+    {
+      "id": "P1-shipped-complete",
+      "verdict": "FAIL",
+      "detail": "shipped group found=true head=\"Shipped (4) — latest: context-watermark: Opus 5 window entry (recurrence hotfix)\" (expect Shipped (6)), collapsedByDefault=true, cockpit-v2 inside=true, duplicated outside=false"
+    },
+    {
+      "id": "P1b-done-never-active",
+      "verdict": "PASS",
+      "detail": "no fully-done item renders outside complete"
+    },
+    {
+      "id": "P2-taskid-next-token",
+      "verdict": "FAIL",
+      "detail": "\"T<k> next\" tokens on plan rows: [\"T1 next\",\"T1 next\",\"T5 next\"]; cockpit-roadmap-redesign progress 8/9 expects \"T9 next\""
+    },
+    {
+      "id": "P3-inbox-count",
+      "verdict": "PASS",
+      "detail": "tab shows \"(1)\", /api/inbox answerable=1"
+    },
+    {
+      "id": "P4-filter-taskid",
+      "verdict": "PASS",
+      "detail": "filter \"T9\": match-note=true (\"matches: task T9 — task T9: — Outcome-gated closure semantics for harness plans (metric + re-check + auto-reopen), appli\"), task line revealed=true, open rows=4"
+    },
+    {
+      "id": "P4b-filter-empty-state",
+      "verdict": "PASS",
+      "detail": "garbage filter shows named filtered-empty=true (\"live sessions not yet attributed to a task (3) | 3 running, unattributed to a task | no items match \"zzz-not-a-thing-xq\" clear filters | 2 items hidde\"), clear restores 136 rows"
+    },
+    {
+      "id": "P5-filter-M4",
+      "verdict": "PASS",
+      "detail": "filter \"M4\": rows=9 note=true honest-state=true (\"live sessions not yet attributed to a task (3) | 3 running, unattributed to a task | neural-lace — 1 plan, in build order (1 upcoming) | ▸ |\")"
+    },
+    {
+      "id": "P6-dim-only-complete",
+      "verdict": "PASS",
+      "detail": "42 dim titles, non-done dim offenders=[], dim-next-chips=0"
+    },
+    {
+      "id": "P7-group-rail",
+      "verdict": "PASS",
+      "detail": "group=rm-project-group borderLeft=2px solid rgb(75, 85, 99) bg=rgba(255, 255, 255, 0.02) innerRailEl=rm-node rm-kind-plan"
+    },
+    {
+      "id": "P8-task-check-next",
+      "verdict": "FAIL",
+      "detail": "cockpit-roadmap-redesign expanded: ✓=8 (expect >=8), next-chips=1 (expect 1) on \"▸✓task 1: Derived top-level status foundationsummary:Per-item status computed, never declared.Fixes the done-renders-ACT\", range-done-text=false"
+    },
+    {
+      "id": "P9-no-range-done-text",
+      "verdict": "PASS",
+      "detail": "no \"N–M done\" duplication found"
+    },
+    {
+      "id": "P10-spacing-hierarchy",
+      "verdict": "SKIP",
+      "detail": "no open plan w/ visible next plan found"
+    },
+    {
+      "id": "P11-hash-inbox-back",
+      "verdict": "PASS",
+      "detail": "#inbox/NY-1785357818-7d3f: panel=true highlight=true focusIn=true (\"🗳decisionDecision needed: which review-independence model unblocks master for b\"); Back: roadmap=true scroll 0→0 open 9→9"
+    },
+    {
+      "id": "P12-tab-doubleclick-reload",
+      "verdict": "PASS",
+      "detail": "double-click Requests: visible=true others=[]; after reload hash=#requests requests still active=true"
+    },
+    {
+      "id": "P13-four-buckets-proxy",
+      "verdict": "PASS",
+      "detail": "answerable in 1575ms: waiting-on-me=(1); in-motion/upcoming/complete from group header \"neural-lace — 21 plans, in build order (13 upcoming, 4 in progress, 4 complete)\"; shipped=\"Shipped (4)\"; next tokens=[\"T1 next\",\"T1 next\",\"T5 next\"]"
+    },
+    {
+      "id": "P14-narrow-viewport",
+      "verdict": "PASS",
+      "detail": "at 800px: roadmap section height=1184px, 136/136 rows visibly rendered"
+    },
+    {
+      "id": "P15-console-network",
+      "verdict": "PASS",
+      "detail": "console errors=0 []; non-2xx=0 []"
+    }
+  ]
+}

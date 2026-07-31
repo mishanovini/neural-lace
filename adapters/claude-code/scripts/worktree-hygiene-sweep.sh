@@ -433,10 +433,17 @@ _live_owner() {
   fi
 
   if [ -d "$COG_CLAIMS_DIR" ]; then
-    local repo_id cutoff f wt rid
+    local repo_id fresh_min f wt rid
     repo_id="$(_whs_repo_identity "$repo")"
-    cutoff="$(date -d "-${COG_CLAIM_FRESH_SECONDS} seconds" '+%Y-%m-%d %H:%M:%S' 2>/dev/null || true)"
-    if [ -n "$cutoff" ]; then
+    # `find -mmin`, not a `date -d`-built cutoff (macos-portability M4).
+    # GNU-only `date -d` left $cutoff empty on stock macOS, so this
+    # claim scan was skipped and a worktree owned by a LIVE session
+    # could be classified as unowned — the input to a --prune decision.
+    # See concurrent-ownership-gate.sh:_load_fresh_claims for the full
+    # note. `-mmin` works on both GNU and BSD find with no date fork.
+    fresh_min=$(( (COG_CLAIM_FRESH_SECONDS + 59) / 60 ))
+    [ "$fresh_min" -gt 0 ] || fresh_min=1
+    if [ -n "$fresh_min" ]; then
       while IFS= read -r f; do
         [ -f "$f" ] || continue
         wt="$(sed -nE 's/.*"worktree"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' "$f" | head -1)"
@@ -447,7 +454,7 @@ _live_owner() {
         [ "$(_norm_path "$wt")" = "$wt_norm" ] || continue
         LIVE_OWNER_VERDICT="claim"
         return 0
-      done < <(find "$COG_CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -newermt "$cutoff" 2>/dev/null)
+      done < <(find "$COG_CLAIMS_DIR" -maxdepth 1 -type f -name '*.json' -mmin "-${fresh_min}" 2>/dev/null)
     fi
   fi
 
@@ -802,6 +809,18 @@ discover_repos() {
 
 self_test() {
   local T pass=0 fail=0 out rc past repo
+  # Every scenario below re-invokes this script. Doing that as bare `"$0"`
+  # required the file to be executable — and it is checked in mode 100644, so
+  # ALL 25 re-invocations died with "Permission denied" (rc=126) and 27 of the
+  # 43 assertions failed for that one reason, masking whatever they actually
+  # tested. `"$_WHS_BASH" "$0"` also pins the SAME interpreter running this
+  # suite, so a /bin/bash 3.2 run can never report bash 5.x results
+  # (PORTABILITY-TOUCH-D-SWEEP-01).
+  local _WHS_BASH="${BASH:-bash}"
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  # shellcheck source=../hooks/lib/portable-time.sh
+  . "$(cd "$(dirname "$0")" 2>/dev/null && pwd)/../hooks/lib/portable-time.sh" 2>/dev/null || {
+    echo "self-test: cannot source hooks/lib/portable-time.sh" >&2; return 1; }
   T="$(mktemp -d)"
   past=$(( $(date +%s) - 30 * 86400 ))
   repo="$T/repo"
@@ -848,7 +867,7 @@ self_test() {
   }
 
   echo "[self-test] scenario 1-3 + 6: report classification"
-  out="$("$0" "$repo" 2>&1)"; rc=$?
+  out="$("$_WHS_BASH" "$0" "$repo" 2>&1)"; rc=$?
   assert "report exits 0" "$rc"
   echo "$out" | grep 'wt-safe' | grep -q 'SAFE-PRUNE'
   assert "safe-prune worktree detected (wt-safe -> SAFE-PRUNE)" "$?"
@@ -861,14 +880,14 @@ self_test() {
   assert "primary worktree never listed as a classification row" "$?"
 
   echo "[self-test] scenario 4: --prune without WORKTREE_SWEEP_APPROVE=1 refuses"
-  out="$(env -u WORKTREE_SWEEP_APPROVE "$0" --prune "$repo" 2>&1)"; rc=$?
+  out="$(env -u WORKTREE_SWEEP_APPROVE "$_WHS_BASH" "$0" --prune "$repo" 2>&1)"; rc=$?
   [ "$rc" = "3" ]
   assert "--prune without approval exits 3" "$?"
   [ -d "$T/wt-safe" ]
   assert "nothing removed without approval (wt-safe still present)" "$?"
 
   echo "[self-test] scenario 5: --prune with approval removes ONLY the safe one"
-  out="$(WORKTREE_SWEEP_APPROVE=1 WORKTREE_SWEEP_LOG="$T/sweep.log" "$0" --prune "$repo" 2>&1)"; rc=$?
+  out="$(WORKTREE_SWEEP_APPROVE=1 WORKTREE_SWEEP_LOG="$T/sweep.log" "$_WHS_BASH" "$0" --prune "$repo" 2>&1)"; rc=$?
   assert "approved prune exits 0" "$rc"
   [ ! -d "$T/wt-safe" ]
   assert "SAFE-PRUNE worktree removed (wt-safe gone)" "$?"
@@ -884,7 +903,7 @@ self_test() {
   assert "removal logged to sweep log" "$?"
 
   echo "[self-test] bonus: --session-summary silent at <=5 worktrees"
-  out="$("$0" --session-summary "$repo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --session-summary "$repo" 2>&1)"
   [ -z "$out" ]
   assert "--session-summary prints nothing for repo with <=5 worktrees" "$?"
 
@@ -933,7 +952,7 @@ EOF
   }
 
   echo "[self-test] S-a/S-b: --stranded fires on unowned dirty + unowned unintegrated"
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   echo "$out" | grep -q '\[stranded-work\]'
   assert "S-a/b: --stranded FIRES with no live owner" "$?"
   echo "$out" | grep -q 'sw-dirty'
@@ -941,7 +960,7 @@ EOF
   echo "$out" | grep -q 'sw-unique'
   assert "S-b: clean-but-unintegrated worktree with no owner -> ORPHANED (committed-but-never-cherry-picked strand caught by git cherry)" "$?"
 
-  out="$("$0" --stranded --porcelain "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded --porcelain "$srepo" 2>&1)"
   [ "$(echo "$out" | grep -c '^ORPHANED-HOLDS-CONTENT')" = "2" ]
   assert "porcelain: 2 ORPHANED rows (sw-dirty + sw-unique), no header/table" "$?"
   ! echo "$out" | grep -q 'sw-safe'
@@ -960,10 +979,10 @@ EOF
     git -C "$srepo2" -c commit.gpgsign=false commit -qm "init (30d ago)"
   git -C "$srepo2" worktree add -q "$T/sw-onlysafe" -b sw-onlysafe >/dev/null 2>&1
 
-  out="$("$0" --stranded "$srepo2" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo2" 2>&1)"
   [ -z "$out" ]
   assert "S-d: repo whose only secondary is clean/old (SAFE-PRUNE) -> --stranded SILENT" "$?"
-  out="$("$0" --stranded --porcelain "$srepo2" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded --porcelain "$srepo2" 2>&1)"
   [ -z "$out" ]
   assert "S-f: --stranded --porcelain on all-clean repo -> zero rows (doctor stays quiet)" "$?"
 
@@ -972,7 +991,7 @@ EOF
   ( : ) & dead_pid=$!
   wait "$dead_pid" 2>/dev/null
   _write_hb "sess-crashed" "$T/sw-dirty" "2020-01-01T00:00:00Z" "$dead_pid"
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   echo "$out" | grep -q 'sw-dirty'
   assert "S-c: crashed heartbeat (dead pid) owning sw-dirty -> STILL ORPHANED (a dead heartbeat is not liveness)" "$?"
   echo "$out" | grep -q 'heartbeat=crashed'
@@ -981,7 +1000,7 @@ EOF
 
   echo "[self-test] S-g: live heartbeat -> NOT flagged"
   _write_hb "sess-live" "$T/sw-dirty" "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" "$$"
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'sw-dirty'
   assert "S-g: live heartbeat (fresh ts, alive pid) owning sw-dirty -> NOT flagged" "$?"
   rm -f "$HEARTBEAT_STATE_DIR/sess-live.json"
@@ -989,7 +1008,7 @@ EOF
   echo "[self-test] S-h: mid-turn stale-heartbeat-but-fresh-transcript -> NOT flagged"
   _write_hb "sess-midturn" "$T/sw-dirty" "2020-01-01T00:00:00Z" "$$"
   printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-midturn.jsonl"
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'sw-dirty'
   assert "S-h: heartbeat old but transcript fresh (mid-turn) -> live, NOT flagged (tool-heavy-turn false-positive fix)" "$?"
   rm -f "$HEARTBEAT_STATE_DIR/sess-midturn.json" "$OBS_TRANSCRIPTS_ROOT/sess-midturn.jsonl"
@@ -997,7 +1016,7 @@ EOF
   echo "[self-test] S-i: throttled owner (alive pid + API-error transcript tail) -> NOT flagged"
   _write_hb "sess-throttled" "$T/sw-dirty" "2020-01-01T00:00:00Z" "$$"
   printf '{"type":"system","subtype":"api_error","retryAttempt":1,"maxRetries":5,"retryInMs":1000}\n' > "$OBS_TRANSCRIPTS_ROOT/sess-throttled.jsonl"
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'sw-dirty'
   assert "S-i: throttled owner (alive pid, API-error transcript tail) -> NOT flagged" "$?"
   rm -f "$HEARTBEAT_STATE_DIR/sess-throttled.json" "$OBS_TRANSCRIPTS_ROOT/sess-throttled.jsonl"
@@ -1008,13 +1027,13 @@ EOF
   wait "$dead_pid2" 2>/dev/null
   in_grace_ts="$(_iso_minutes_ago 45)"
   _write_hb "sess-continuing" "$T/sw-dirty" "$in_grace_ts" "$dead_pid2" "CONTINUING"
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'sw-dirty'
   assert "S-j: CONTINUING marker within grace (dead pid, 45m old, grace=90m) -> standing-by, NOT flagged" "$?"
 
   past_grace_ts="$(_iso_minutes_ago 120)"
   _write_hb "sess-continuing" "$T/sw-dirty" "$past_grace_ts" "$dead_pid2" "CONTINUING"
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   echo "$out" | grep -q 'sw-dirty'
   assert "S-j: CONTINUING marker aged PAST grace (120m) -> flagged (wake deadline lapsed)" "$?"
   rm -f "$HEARTBEAT_STATE_DIR/sess-continuing.json"
@@ -1025,7 +1044,7 @@ EOF
   cat > "$COG_CLAIMS_DIR/claim-same-repo.json" <<EOF
 {"branch":"sw-dirty","worktree":"$T/sw-dirty","repo":"$repo_id","hostname":"selftest","iso_timestamp":"$(date -u '+%Y-%m-%dT%H:%M:%SZ')"}
 EOF
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'sw-dirty'
   assert "S-k: fresh same-repo claim covering sw-dirty -> NOT flagged" "$?"
   rm -f "$COG_CLAIMS_DIR/claim-same-repo.json"
@@ -1033,13 +1052,13 @@ EOF
   cat > "$COG_CLAIMS_DIR/claim-foreign-repo.json" <<EOF
 {"branch":"sw-dirty","worktree":"$T/sw-dirty","repo":"/somewhere/else/entirely/.git","hostname":"selftest","iso_timestamp":"$(date -u '+%Y-%m-%dT%H:%M:%SZ')"}
 EOF
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   echo "$out" | grep -q 'sw-dirty'
   assert "S-k: foreign-repo claim (repo id mismatch) -> still flagged (repo-scoping)" "$?"
   rm -f "$COG_CLAIMS_DIR/claim-foreign-repo.json"
 
   echo "[self-test] S-l: SELF + primary skip"
-  out="$(cd "$T/sw-dirty" && "$0" --stranded "$srepo" 2>&1)"
+  out="$(cd "$T/sw-dirty" && "$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'sw-dirty'
   assert "S-l: invoking --stranded FROM inside sw-dirty (SELF) -> sw-dirty excluded" "$?"
   ! echo "$out" | grep -qF "$srepo"$'\t'
@@ -1054,7 +1073,7 @@ EOF
   # (which also checks local "master") can exclude it correctly.
   git -C "$srepo" update-ref refs/remotes/origin/master refs/heads/master
   ( cd "$srepo" && git merge --no-edit -q sw-unique ) >/dev/null 2>&1
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'sw-unique'
   assert "S-e: origin/master lags a LOCAL merge -> is-ancestor(master) fallback excludes sw-unique (git cherry alone against the stale base would false-flag it)" "$?"
 
@@ -1075,25 +1094,30 @@ EOF
   echo scratch > "$T/agent-selftest-stale/untracked.txt"
 
   _write_agent_tx() { # $1=agent_id $2=age_minutes_ago ("" = now/fresh)
-    local aid="$1" age="$2" dir="$OBS_TRANSCRIPTS_ROOT/proj-x/sess-x/subagents" ts
+    local aid="$1" age="$2" dir="$OBS_TRANSCRIPTS_ROOT/proj-x/sess-x/subagents"
     mkdir -p "$dir"
     printf '{"type":"assistant","message":{"usage":{"input_tokens":1,"output_tokens":1}}}\n' > "$dir/${aid}.jsonl"
     if [ -n "$age" ]; then
-      ts=$(( $(date -u +%s) - age * 60 ))
-      touch -d "@${ts}" "$dir/${aid}.jsonl" 2>/dev/null || \
-        touch -t "$(date -u -r "$ts" '+%Y%m%d%H%M.%S' 2>/dev/null)" "$dir/${aid}.jsonl" 2>/dev/null || true
+      # The transcript mtime IS the liveness signal under test. Pre-sweep this
+      # was `touch -d "@epoch" || touch -t "$(date -u -r ...)" || true`: arm 1
+      # is GNU-only, and arm 2 rendered UTC into a LOCAL-time `touch -t`, so on
+      # a UTC-7 box a "45 minutes old" fixture landed 7h in the FUTURE — the
+      # freshest possible file — and scenario (b) asserted staleness of it.
+      nl_touch_age "$dir/${aid}.jsonl" $(( age * 60 )) || {
+        echo "  FAIL could not age $dir/${aid}.jsonl by ${age}m — agent-transcript liveness scenarios cannot be trusted"
+        fail=$((fail+1)); }
     fi
   }
 
   echo "[self-test] (a) agent-<id> worktree + FRESH transcript mtime -> NOT stranded"
   _write_agent_tx "agent-selftest-live" ""
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'agent-selftest-live'
   assert "(a) dirty agent-<id> worktree with a FRESH own-transcript mtime -> LIVE-OWNED, not stranded" "$?"
 
   echo "[self-test] (b) agent-<id> worktree + STALE transcript mtime (past AGENT_TX_FRESH_MIN) -> stranded"
   _write_agent_tx "agent-selftest-stale" 45
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   echo "$out" | grep -q 'agent-selftest-stale'
   assert "(b) dirty agent-<id> worktree whose own-transcript mtime is 45m old (default AGENT_TX_FRESH_MIN=30) -> ORPHANED, stranded" "$?"
   echo "$out" | grep -q 'liveness=agent-transcript-stale'
@@ -1102,7 +1126,7 @@ EOF
   echo "[self-test] (c) a NON-agent worktree still uses the heartbeat path unchanged, even with unrelated agent-*.jsonl fixtures present in the cache"
   _write_agent_tx "agent-unrelated-other-builder" ""
   _write_hb "sess-crashed-c" "$T/sw-dirty" "2020-01-01T00:00:00Z" "$dead_pid"
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   echo "$out" | grep -q 'sw-dirty'
   assert "(c) non-agent-named worktree (sw-dirty) with a crashed heartbeat -> STILL flagged via the heartbeat path, unaffected by unrelated agent-transcript cache entries" "$?"
   ! echo "$out" | grep -q 'agent-unrelated-other-builder'
@@ -1131,7 +1155,7 @@ EOF
   echo scratch > "$T/agent-selftest-locked-stale/untracked.txt"
   _write_agent_tx "agent-selftest-locked-stale" 45
   git -C "$srepo" worktree lock "$T/agent-selftest-locked-stale" --reason "self-test: simulated crashed dispatch" >/dev/null 2>&1
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   echo "$out" | grep -q 'agent-selftest-locked-stale'
   assert "(d) LOCKED agent-<id> worktree + stale own-transcript + content -> ORPHANED, stranded (locked no longer structural-skips an agent worktree)" "$?"
   echo "$out" | grep -q 'liveness=agent-crashed-locked'
@@ -1144,7 +1168,7 @@ EOF
   echo scratch > "$T/agent-selftest-locked-fresh/untracked.txt"
   _write_agent_tx "agent-selftest-locked-fresh" ""
   git -C "$srepo" worktree lock "$T/agent-selftest-locked-fresh" --reason "self-test: simulated live dispatch" >/dev/null 2>&1
-  out="$("$0" --stranded "$srepo" 2>&1)"
+  out="$("$_WHS_BASH" "$0" --stranded "$srepo" 2>&1)"
   ! echo "$out" | grep -q 'agent-selftest-locked-fresh'
   assert "(e) LOCKED agent-<id> worktree + FRESH own-transcript -> LIVE-OWNED, not stranded (a live dispatch is ALSO locked — lock alone must never cause a false ORPHANED)" "$?"
 

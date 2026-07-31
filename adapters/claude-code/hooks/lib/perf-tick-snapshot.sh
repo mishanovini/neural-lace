@@ -148,14 +148,26 @@ _pts_json_escape() {
 }
 
 # _pts_wmi_date_to_epoch <wmidatetime> — "20260723000320.118071-420" ->
-# epoch seconds (via `date -d`, a fork — acceptable, not hot-path). Prints
+# epoch seconds (one `date` fork — acceptable, not hot-path). Prints
 # empty on any parse failure (caller treats empty as "unknown age").
+#
+# PORTABILITY (macos-portability-2026-07 M4): the GNU-only `date -d`
+# spelling is tried first, then the BSD `date -j -f` equivalent — the
+# same two-spelling shape this repo's `_hb_epoch` (session-heartbeat-lib)
+# and `_od_epoch` (observability-derive) already use. Kept inline rather
+# than sourcing hooks/lib/portable-time.sh because this lib is sourced by
+# hooks on a metered path and, like its siblings, is deliberately
+# self-contained so it works when shipped alone into a fixture tree.
+# Local time on both branches, matching the previous behavior (the WMI
+# string's trailing UTC-offset field was ignored before and still is).
 _pts_wmi_date_to_epoch() {
   local w="$1"
   [[ "$w" =~ ^([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2}) ]] || { printf ''; return 0; }
   local y="${BASH_REMATCH[1]}" mo="${BASH_REMATCH[2]}" d="${BASH_REMATCH[3]}"
   local h="${BASH_REMATCH[4]}" mi="${BASH_REMATCH[5]}" s="${BASH_REMATCH[6]}"
-  date -d "${y}-${mo}-${d} ${h}:${mi}:${s}" +%s 2>/dev/null
+  date -d "${y}-${mo}-${d} ${h}:${mi}:${s}" +%s 2>/dev/null && return 0
+  date -j -f '%Y-%m-%d %H:%M:%S' "${y}-${mo}-${d} ${h}:${mi}:${s}" +%s 2>/dev/null && return 0
+  printf ''
 }
 
 # ---- process snapshot ----------------------------------------------------
@@ -304,11 +316,33 @@ pts_reap_orphans() {
 
   # Build the live-PID set from THIS SAME snapshot (one point-in-time
   # view — no race between "list processes" and "check parent exists").
-  local -A live_pids=()
+  #
+  # STRUCTURE (bash 3.2 floor, 2026-07-29): a PIPE-DELIMITED STRING probed
+  # with `case`, not `local -A`. Chosen for this site because (a) it is a
+  # pure membership set — there is no value to carry, only "is this ppid in
+  # the snapshot"; (b) the keys are PIDs, i.e. digits only, so a `|`
+  # delimiter can never collide with or be embedded in a key, and the
+  # sentinel `|` on both ends makes `*"|$ppid|"*` an exact-token match (pid
+  # 20 does not match pid 200 — verified); (c) the lookup runs once per row
+  # over a ~300-row snapshot, and `case` on one string is a single C-level
+  # substring search, which is faster than a bash-level linear scan over a
+  # 300-element parallel array — the alternative structure would have made
+  # this the one genuinely O(n^2) site in the file.
+  #
+  # Under bash 3.2 the old `local -A` form was a hard error, after which
+  # `live_pids["$pid"]=1` assigned into index 0 of a plain array via
+  # ARITHMETIC evaluation of the pid, so `${live_pids[$ppid]:-}` was empty
+  # for every ppid — every tracked process looked orphaned. The self-test
+  # did not catch it (see scenario "bash32-floor" added below).
+  local live_pids="|"
   local row pid ppid name created
   for row in "${PTS_PROC_ROWS[@]}"; do
     IFS='|' read -r pid ppid name created <<< "$row"
-    live_pids["$pid"]=1
+    [[ -z "$pid" ]] && continue
+    case "$live_pids" in
+      *"|$pid|"*) : ;;                     # already recorded — keep it compact
+      *) live_pids="${live_pids}${pid}|" ;;
+    esac
   done
 
   local hb_pids
@@ -324,7 +358,8 @@ pts_reap_orphans() {
       *) continue ;;
     esac
     [[ "$pid" == "$self_pid" ]] && continue
-    [[ -n "${live_pids[$ppid]:-}" ]] && continue   # parent alive -> not orphaned
+    # parent alive -> not orphaned (exact-token match on the pipe-delimited set)
+    case "$live_pids" in *"|$ppid|"*) continue ;; esac
 
     local created_epoch age_min
     created_epoch="$(_pts_wmi_date_to_epoch "$created")"
@@ -528,8 +563,17 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" && "${1:-}" == "--self-test" ]]; then
 
   # Timestamps relative to "now" so the fixture is deterministic regardless
   # of when the self-test runs (avoids hardcoding a date that ages out).
-  _pts_old_ts="$(date -d '-30 minutes' +%Y%m%d%H%M%S 2>/dev/null)"
-  _pts_young_ts="$(date -d '-2 minutes' +%Y%m%d%H%M%S 2>/dev/null)"
+  # Portable relative timestamps (macos-portability M4). GNU-only
+  # `date -d '-30 minutes'` produced EMPTY strings on macOS, which then
+  # flowed into the WMI-datetime fixtures below as unparseable garbage.
+  _pts_old_ts="$(date -d '-30 minutes' +%Y%m%d%H%M%S 2>/dev/null \
+                 || date -v-30M +%Y%m%d%H%M%S 2>/dev/null)"
+  _pts_young_ts="$(date -d '-2 minutes' +%Y%m%d%H%M%S 2>/dev/null \
+                 || date -v-2M +%Y%m%d%H%M%S 2>/dev/null)"
+  if [[ -z "$_pts_old_ts" || -z "$_pts_young_ts" ]]; then
+    echo "  FAIL: could not build relative fixture timestamps on this platform" >&2
+    return 1
+  fi
 
   echo "Scenario 0: CRLF-doubling regression — caught live at build time against REAL wmic output"
   # PROVEN bug (build-time, via `xxd`): captured `wmic ... /format:csv`
@@ -824,11 +868,38 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" && "${1:-}" == "--self-test" ]]; then
     || _pts_fail "pressure.json not (re)written on a fresh call"
   unset PERF_TICK_PRESSURE_FILE
 
+  echo "Scenario 12: bash-3.2 floor — no bash-4-only construct, and a CLEAN stderr under the running interpreter"
+  # REGRESSION GUARD (2026-07-29). `pts_reap_orphans` used `local -A
+  # live_pids`. Under macOS's stock /bin/bash 3.2.57 that is a hard error
+  # ("declare: -A: invalid option") on EVERY tick. The behavioral damage
+  # here happened to be nil — PIDs are integers, so bash 3.2 quietly turned
+  # `live_pids["$pid"]=1` into an INDEXED-array assignment at numeric index
+  # $pid and the lookups still resolved — but it wrote two error lines to
+  # stderr per tick, and the moment a key stopped being a plain integer the
+  # set would have silently collapsed to index 0. NOTHING in this suite
+  # noticed, because none of it asserted on stderr. These two checks do.
+  _pts_b4=$(grep -nE '(declare|local|typeset)[[:space:]]+-[A-Za-z]*A|^[[:space:]]*mapfile[[:space:]]|^[[:space:]]*readarray[[:space:]]' "${BASH_SOURCE[0]}" | grep -vE '^[0-9]+:[[:space:]]*#' || true)
+  if [[ -z "$_pts_b4" ]]; then
+    _pts_pass "no bash-4-only construct outside comments (bash 3.2 floor holds)"
+  else
+    _pts_fail "bash-4-only construct(s) present: $_pts_b4"
+  fi
+
+  _pts_stderr_probe="$_PTS_T/reap_stderr.txt"
+  PTS_PROC_ROWS=("700|1|bash.exe|${_pts_old_ts}.000000+000" "950|1|bash.exe|${_pts_old_ts}.000000+000" "902|950|bash.exe|${_pts_old_ts}.000000+000")
+  pts_reap_orphans 2>"$_pts_stderr_probe"
+  if [[ ! -s "$_pts_stderr_probe" ]]; then
+    _pts_pass "pts_reap_orphans writes NOTHING to stderr under ${BASH_VERSION} (no interpreter-level errors)"
+  else
+    _pts_fail "pts_reap_orphans polluted stderr under ${BASH_VERSION}: $(head -3 "$_pts_stderr_probe" | tr '\n' ' ')"
+  fi
+
   rm -rf "$_PTS_T" 2>/dev/null || true
   unset PERF_TICK_LEDGER_DIR PERF_TICK_PROCESS_LIST_CMD PERF_TICK_DEFENDER_CMD PERF_TICK_SKIP_CMDLINE_LOOKUP
   unset PERF_TICK_SELF_PID_OVERRIDE PERF_TICK_KILL_CMD_TMPL PERF_TICK_WORKTREE_COUNT_OVERRIDE
 
   echo ""
+  echo "self-test interpreter: ${BASH:-unknown} (${BASH_VERSION:-unknown})"
   echo "self-test summary: ${_PTS_PASSED} passed, ${_PTS_FAILED} failed"
   if [[ "$_PTS_FAILED" -eq 0 ]]; then
     exit 0

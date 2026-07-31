@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-21991201",
+  "created_at": "2026-07-30T00:30:31Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 operator-authorized adversarial review sweep (group hooks-2)",
+  "change_ref": {
+    "commit_sha": "2d48b712967998f7bd3434868342413d23aa1120",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit.sh",
+      "blob_sha": "31df5d20ce11279c9d74924379bd4d8dceb22263"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Branch-side change is mode-only; the apparent removal of the 'none' ask-id sentinel in the two-dot diff is master-side skew (master commit 0758232, PASS-recorded at e5ce1bc) that a three-way merge preserves automatically — PASS, with the advisory that installing from this branch BEFORE merging master would temporarily deploy the pre-0758232 emitter.",
+    "findings_summary": "git diff master...HEAD (three-dot) shows zero content lines for this file; the branch never touched the _resolve_ask_id_for_plan_slug hunk. Merge-base b4f9916; master-only commits add the none-sentinel. Advisory: rebase/merge master before any install from this branch."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "payload": {}
+}

@@ -181,6 +181,126 @@ emit_plan_completed_progress_log_event() {
   return 0
 }
 
+# extract_closure_outcome_field_cp <plan_file> <field-name> -- print the
+# value of a `## Closure Outcome` section field (e.g. "Outcome metric",
+# "Re-check date"), or empty if the section/field is absent. Shared by the
+# gate check, the writer, and the emitter below so all three read the
+# SAME field, never three drifting parsers of one convention.
+#
+# MULTI-LINE FIX (2026-07-30, found live during this task's own
+# context-watermark-opus5-window acceptance-demonstration close): the
+# original implementation piped through `head -1`, so an author-written
+# metric/re-check value spanning more than one physical line (ordinary
+# prose wrapping — exactly what this task's own demonstration plan wrote)
+# was SILENTLY TRUNCATED to its first line in the archived plan. Fixed to
+# capture every continuation line up to the next recognized field-
+# declaration line (or the section's end) — a real multi-paragraph value
+# now survives the round-trip intact. Field matching is case-SENSITIVE
+# (the section is machine-written by generate_closure_outcome_section with
+# this exact casing; an author matches the convention the same way every
+# other `Field:` convention in this script already requires, e.g. Closure
+# Contract's "Commands that run"/"Done when").
+extract_closure_outcome_field_cp() {
+  local plan_file="$1" field="$2"
+  awk -v field="$field" '
+    /^## Closure Outcome[[:space:]]*$/ { in_sec = 1; next }
+    in_sec && /^## / { in_sec = 0 }
+    in_sec {
+      is_field_line = ($0 ~ /^(Outcome metric|Re-check date|Recurrence check|Evidence pointers):/)
+      if (is_field_line) {
+        prefix = field ":"
+        if (index($0, prefix) == 1) {
+          collecting = 1
+          rest = substr($0, length(prefix) + 1)
+          sub(/^[ \t]+/, "", rest)
+          print rest
+        } else {
+          collecting = 0
+        }
+        next
+      }
+      if (collecting) { print }
+    }
+  ' "$plan_file" 2>/dev/null
+  # NOTE: no trailing-blank-line trim needed here — every caller captures
+  # this via `$(...)` command substitution, which already strips ALL
+  # trailing newlines (portable, no GNU/BSD sed divergence to manage). An
+  # earlier version piped through `sed -e '$ { ... }'` to trim a trailing
+  # blank line explicitly; BSD sed on macOS rejects that GNU-style
+  # multi-command `{ }` block syntax outright ("extra characters at the
+  # end of d command") — found live via this task's OWN acceptance
+  # demonstration self-test (S24) failing on this exact interpreter.
+  # Removed rather than reformulated: command substitution already does
+  # the job with zero portability surface.
+}
+
+# extract_closure_outcome_field_first_line_cp <plan_file> <field-name> --
+# same as extract_closure_outcome_field_cp but returns ONLY the first
+# line, for callers that need a terse single-line value (a progress-log
+# --summary must never itself embed newlines).
+extract_closure_outcome_field_first_line_cp() {
+  extract_closure_outcome_field_cp "$1" "$2" 2>/dev/null | head -1
+}
+
+# emit_plan_outcome_recorded_progress_log_event <plan_file> <slug> <close_ts>
+#   Emits ONE plan_outcome_recorded event (T9, outcome-gated closure) from
+# the SAME successful-close path as plan_completed, immediately after it
+# (see cmd_close's single call site). Natural key: plan_slug + content-hash
+# of (close_ts + the recorded metric + the recorded re-check date) -- a
+# re-close after reopen (new close_ts, and very likely a revised metric/
+# re-check-date) hashes to a NEW key exactly like plan_completed's own
+# recurrence rule; a byte-identical replay of the same close hashes to the
+# SAME key and dedupes. Best-effort, never blocks the caller (constraint
+# 5): every failure path is swallowed and never affects close-plan.sh's
+# own exit code.
+emit_plan_outcome_recorded_progress_log_event() {
+  local plan_file="$1" slug="$2" close_ts="$3"
+
+  local progress_log_cli
+  progress_log_cli="$SCRIPT_DIR/progress-log.sh"
+  [[ -f "$progress_log_cli" ]] || return 0
+
+  local ask_id
+  ask_id="$(extract_ask_id_cp "$plan_file" 2>/dev/null || true)"
+
+  # First-line-only variants: a progress-log --summary must itself stay a
+  # single line (the JSONL writer emits one event per physical line; an
+  # embedded raw newline from a multi-line author-declared metric/re-check
+  # value would split one event into two malformed lines). The dedup hash
+  # below still incorporates the FULL multi-line value (via
+  # write_closure_outcome_section's own already-committed content, read
+  # fresh here) so a change anywhere in either field still produces a new
+  # key, not just a change to its first line.
+  local metric recheck metric_full recheck_full
+  metric="$(extract_closure_outcome_field_first_line_cp "$plan_file" "Outcome metric" 2>/dev/null || true)"
+  recheck="$(extract_closure_outcome_field_first_line_cp "$plan_file" "Re-check date" 2>/dev/null || true)"
+  metric_full="$(extract_closure_outcome_field_cp "$plan_file" "Outcome metric" 2>/dev/null || true)"
+  recheck_full="$(extract_closure_outcome_field_cp "$plan_file" "Re-check date" 2>/dev/null || true)"
+
+  local hash
+  hash="$(cp_compute_content_hash "${close_ts}|${metric_full}|${recheck_full}")"
+
+  local repo_root_abs evidence_link
+  repo_root_abs=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  if [[ "$plan_file" = /* ]]; then
+    evidence_link="$plan_file"
+  else
+    evidence_link="$repo_root_abs/$plan_file"
+  fi
+
+  bash "$progress_log_cli" emit \
+    --type plan_outcome_recorded \
+    --ask "$ask_id" \
+    --plan-slug "$slug" \
+    --summary "plan $slug outcome recorded: re-check $recheck" \
+    --evidence-link "$evidence_link" \
+    --emitter close-plan \
+    --dedup-extra "$hash" \
+    >/dev/null 2>&1 || true
+
+  return 0
+}
+
 # ---------------------------------------------------------------------------
 # Plan-file locator. Active first, then archive.
 # ---------------------------------------------------------------------------
@@ -259,11 +379,25 @@ extract_verification_level() {
 
 # Extract every task-id from the plan's `## Tasks` section. Task IDs are the
 # first whitespace-delimited token after `- [ ] ` or `- [x] `.
+#
+# HEADING VARIANT FIX (2026-07-30, T9 acceptance demonstration): the
+# original match required the EXACT, bare heading `## Tasks` (end of line,
+# nothing else). `docs/plans/context-watermark-opus5-window.md` (one of
+# this task's own real-plan closure demonstrations) and 4 other active
+# plans use `## Scope / Tasks` instead — a real, common heading variant
+# (175 files use bare `## Tasks`; 5 use `## Scope / Tasks`), not a typo.
+# Under the old exact match, `close-plan.sh close <slug>` failed with "no
+# tasks found in plan" for every one of those 5 plans — a real closure
+# blocker, discovered by attempting the real demonstration this task was
+# asked to perform, not invented from nothing. Broadened to accept an
+# optional `Scope / ` prefix before `Tasks`; still requires the literal
+# plural token `Tasks` immediately after (never matches `## Task
+# Sequencing` or similar singular/differently-worded headings).
 extract_task_ids() {
   local plan_file="$1"
   awk '
-    /^## Tasks[[:space:]]*$/ { in_tasks = 1; next }
-    in_tasks && /^## / && !/^## Tasks/ { exit }
+    /^## (Scope \/ )?Tasks([[:space:]]|$)/ { in_tasks = 1; next }
+    in_tasks && /^## / && !/^## (Scope \/ )?Tasks/ { exit }
     in_tasks && /^- \[[x ]\] / {
       line = $0
       sub(/^- \[[x ]\] /, "", line)
@@ -335,17 +469,27 @@ verify_task_mechanical() {
   fi
 
   # Path (b) — prose evidence with commit-SHA citation
+  # NOTE (2026-07-30, T9 parser-bug fix — see verify_task_full's header
+  # comment for the full defect writeup): the id-match anchor is
+  # `Task ID:` specifically, not the old bare `Task[[:space:]]+(ID:...)?`
+  # form, which matched ANY "Task <word>" occurrence (prose like "Task
+  # description:" or a sentence beginning "Task 9 makes..." both matched).
+  # This grep is whole-file (not block-scoped, a separate known limitation
+  # left as-is — see docs/backlog.md's CLOSE-PLAN-MECHANICAL-EVIDENCE-
+  # WHOLE-FILE-SCAN-01 entry, filed 2026-07-30 closing this exact promise),
+  # so the tighter anchor only narrows false positives, never narrows a
+  # previously-passing real evidence file.
   local evidence_file
   evidence_file=$(locate_evidence_file "$plan_file") || true
   if [[ -n "${evidence_file:-}" ]] && [[ -f "$evidence_file" ]]; then
-    if grep -qE "Task[[:space:]]+(ID:[[:space:]]*)?${task_id}\b" "$evidence_file" \
+    if grep -qE "Task ID:[[:space:]]*${task_id}([^A-Za-z0-9._-]|\$)" "$evidence_file" \
        && grep -qE 'commit[[:space:]:]+[0-9a-f]{7,}' "$evidence_file"; then
       return 0
     fi
   fi
 
   # Also accept evidence in the plan's own ## Evidence Log section.
-  if grep -qE "Task[[:space:]]+(ID:[[:space:]]*)?${task_id}\b" "$plan_file" \
+  if grep -qE "Task ID:[[:space:]]*${task_id}([^A-Za-z0-9._-]|\$)" "$plan_file" \
      && awk '/^## Evidence Log/{flag=1; next} /^## /{flag=0} flag' "$plan_file" \
         | grep -qE 'commit[[:space:]:]+[0-9a-f]{7,}'; then
     return 0
@@ -403,7 +547,63 @@ verify_task_contract() {
   return $?
 }
 
-# Verification: full. PASS if a prose evidence-block exists with `Verdict: PASS`.
+# Verification: full. PASS if a prose evidence-block exists with `Verdict: PASS`
+# (or the task-verifier agent's own terse "PASS conf N" convention — see below).
+#
+# ============================================================
+# KNOWN-BUG FIX (2026-07-30, T9 outcome-gated-closure task, program rule 3
+# retirement): the fragile "Task+word" block-boundary parser
+# ============================================================
+#
+# The prior block-boundary regex was `Task[[:space:]]+(ID:[[:space:]]*)?
+# [A-Za-z0-9.-]+` — intended to detect "the start of a new task's evidence
+# block" so found_id/found_pass could be reset per-task. In practice it
+# matched ANY line of the form "Task <word>", including ordinary evidence
+# prose: "Task description: ..." (the literal next line after "Task ID: T1"
+# in this repo's own EVIDENCE BLOCK convention — see e.g.
+# docs/plans/accountable-estate-program-2026-07-evidence.md) and even a
+# plain sentence beginning "Task 9 makes ask-capture..." (found verbatim in
+# docs/plans/archive/ask-rooted-workstreams-p1-evidence.md:551). Either
+# line, appearing between a real "Task ID: <id>" line and its "Verdict:
+# PASS" line, RESETS found_id/found_pass back to 0 before the real Verdict
+# line is ever reached — the verdict is "orphaned": found_id is 0 by the
+# time Verdict: PASS appears, so found_pass never gets set, and the whole
+# task silently fails verification even though a human/task-verifier
+# already passed it. Confirmed BY REPRODUCTION: self-test fixtures (S2 and
+# friends) never exercised this because their synthetic evidence blocks
+# are two bare lines ("Task ID: N" / "Verdict: PASS" — see
+# setup_synthetic_repo callers below) with no intervening prose line, so
+# the false-reset path was untested. Fixed by anchoring the block boundary
+# (and the id-match) to the literal `Task ID:` field declaration only —
+# the ACTUAL, sole convention used by every real evidence file surveyed
+# (grepped across docs/plans/**/*evidence*.md) — never a bare "Task <word>"
+# match. New Scenario S22 (prose-mention-does-not-orphan-verdict) locks in
+# the regression; it fails against the pre-fix parser and passes here.
+#
+# SEPARATE, COMPANION FIX same commit: found_pass previously required the
+# literal string "Verdict: PASS". Real task-verifier evidence blocks in
+# this repo also commonly write the terser "Verifier: task-verifier —
+# PASS conf 9" form (no separate "Verdict:" line at all — see
+# docs/plans/context-watermark-opus5-window-evidence.md and
+# docs/plans/macos-portability-2026-07-evidence.md, both real, already-
+# verified plans this task's own acceptance demonstration closes). Without
+# this, those two real, already-task-verifier-PASSed plans would still be
+# BLOCKED by close-plan's "write-evidence ceremony" even after the
+# block-boundary fix above — exactly the friction this task was asked to
+# retire. found_pass now also accepts `PASS conf(idence)? <digits>`.
+#
+# ANCHOR FIX (2026-07-30, harness-reviewer Major — unanchored verdict
+# token false-accept): the terse-form alternative above, standing alone,
+# matched `PASS[[:space:]]+conf(idence)?[[:space:]]*[0-9]+` as a bare
+# SUBSTRING anywhere inside the found_id block — including ordinary prose
+# recounting history ("round 1 was PASS conf 9, but a regression was found
+# ...") inside a block whose REAL verdict is FAIL. Anchored so the terse
+# form only counts when the line also carries the documented "Verifier:"
+# convention it is actually shorthand for (see the real evidence files
+# named above — both spell it "Verifier: task-verifier — PASS conf N"),
+# and the literal "Verdict: PASS" form is anchored to line-start (optional
+# leading whitespace). New Scenario S28 (prose-pass-mention-in-fail-block-
+# does-not-false-accept) locks in the regression.
 verify_task_full() {
   local plan_file="$1"
   local task_id="$2"
@@ -416,18 +616,20 @@ verify_task_full() {
 
   local f
   for f in "${search_files[@]}"; do
-    # Find a block that has BOTH "Task ID: <id>" (or "Task <id>") and "Verdict: PASS"
-    # within the same block. Block boundaries: blank line or "Task ID:".
+    # Find a block that has BOTH a "Task ID: <id>" declaration line and a
+    # PASS verdict (either "Verdict: PASS" or "PASS conf N") within the
+    # same block. Block boundaries: ONLY a literal "Task ID:" field line —
+    # never a bare "Task <word>" occurrence (see header comment above).
     if awk -v tid="$task_id" '
       BEGIN { found_id=0; found_pass=0 }
-      /Task[[:space:]]+(ID:[[:space:]]*)?[A-Za-z0-9.-]+/ {
+      /^[[:space:]]*Task ID:[[:space:]]*/ {
         if (found_id && found_pass) exit 0
         found_id=0; found_pass=0
-        if (match($0, "Task[[:space:]]+(ID:[[:space:]]*)?" tid "([^A-Za-z0-9.-]|$)")) {
+        if (match($0, "^[[:space:]]*Task ID:[[:space:]]*" tid "([^A-Za-z0-9._-]|$)")) {
           found_id=1
         }
       }
-      found_id && /Verdict:[[:space:]]*PASS/ { found_pass=1 }
+      found_id && /^[[:space:]]*Verdict:[[:space:]]*PASS|[Vv]erifier.*PASS[[:space:]]+conf(idence)?[[:space:]]*[0-9]+/ { found_pass=1 }
       END { exit (found_id && found_pass) ? 0 : 1 }
     ' "$f" 2>/dev/null; then
       return 0
@@ -937,6 +1139,43 @@ verify_completion_criteria() {
   return 1
 }
 
+# _cp_is_placeholder_text <text> -- true (rc 0) if <text> is a template
+# placeholder / never-filled-in marker, false (rc 1) otherwise. <text> may
+# be a single field value OR a multi-line, multi-field blob (e.g. Closure
+# Contract's four `- **Label:** value` lines) -- two distinct match
+# strategies, on purpose (reviewer Minor, 2026-07-30, "word-bound 'tbd' +
+# scope placeholder checks to exact-value matches"):
+#   - Bracketed forms (`[populate me ...]`, `[todo]`) are checked as
+#     SUBSTRING matches over the WHOLE text -- a literal bracketed
+#     template marker appearing anywhere is unambiguous, wherever it sits.
+#   - Bare words (`todo`, `tbd`) are checked PER PHYSICAL LINE, as an
+#     EXACT-VALUE match only (an optional leading "- **Label:**" or
+#     "Label:" prefix is stripped first, so a labeled field whose value is
+#     bare "TBD" is still caught): the remaining value, trimmed of
+#     surrounding whitespace and case-folded, must BE the whole word. A
+#     substring/word-boundary match on these bare forms previously false-
+#     blocked real content that merely CONTAINS the word ("zero remaining
+#     todo items", a metric literally about a tbd-prefixed ticket id,
+#     etc.); per-line exact-value scoping keeps catching the actual
+#     placeholder shape (a field left as literally "todo"/"TBD") while
+#     dropping the over-fire surface.
+_cp_is_placeholder_text() {
+  local text="$1"
+  if printf '%s' "$text" | grep -qiE '\[populate me[^]]*\]|\[todo\]'; then
+    return 0
+  fi
+  local line val trimmed
+  while IFS= read -r line; do
+    val="$(printf '%s' "$line" \
+      | sed -E 's/^[-*[:space:]]*\*\*[^*]+\*\*:?[[:space:]]*//; s/^[A-Za-z][A-Za-z0-9 _-]*:[[:space:]]*//')"
+    trimmed="$(printf '%s' "$val" | tr '[:upper:]' '[:lower:]' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+    case "$trimmed" in
+      todo|tbd) return 0 ;;
+    esac
+  done <<< "$text"
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # PR-merge boundary check: Closure-Contract commands recorded (D.4 item 1's
 # second half). Distinct from check_closure_contract_artifact() above (which
@@ -976,12 +1215,9 @@ verify_closure_contract_recorded() {
     return 1
   fi
 
-  local pat
-  for pat in '\[populate me[^]]*\]' '\[populate me\]' '\[todo\]' '\btodo\b' 'tbd'; do
-    if printf '%s' "$cc_text" | grep -qiE "$pat" 2>/dev/null; then
-      return 1
-    fi
-  done
+  if _cp_is_placeholder_text "$cc_text"; then
+    return 1
+  fi
 
   # Must name at least a commands-that-run line and a done-when line with
   # actual content beyond the label itself (mirrors plan-reviewer's field
@@ -994,6 +1230,256 @@ verify_closure_contract_recorded() {
   fi
 
   return 0
+}
+
+# ---------------------------------------------------------------------------
+# T9 — Outcome-gated closure semantics (accountable-estate-program-2026-07,
+# program rule 2: "every slice closes with a demonstrated outcome metric +
+# re-check date; recurrence auto-reopens").
+# ---------------------------------------------------------------------------
+#
+# ROLLOUT DISCIPLINE (program rule 4, "observe-first before every
+# enforcement flip"): this is a BRAND NEW gate, and close-plan.sh already
+# closes ~163 archived plans' worth of pre-existing history plus every
+# OTHER in-flight plan across the whole estate (this program is WIP-1 --
+# only ONE program slice in flight, but many unrelated plans across the
+# repo/estate are mid-build right now). Retroactively requiring a
+# `## Closure Outcome` section on EVERY plan this script can close would
+# be an unannounced enforcement flip with estate-wide blast radius -- the
+# exact failure the review's pre-mortem named. So the BLOCKING half is
+# strictly OPT-IN (`outcome-gated: true` in the plan header); the WRITING
+# half (write_closure_outcome_section, below) is unconditional and
+# observe-only -- every plan this script closes, opted in or not, gets a
+# `## Closure Outcome` section written into its archived copy (a real
+# metric+re-check pair if the plan declared one, an honest default
+# otherwise) -- pure observability, never a new way to fail a close.
+
+# _cp_header_region <plan_file> -- print every line BEFORE the first `## `
+# heading (the plan's frontmatter-like header block: Status/ask-id/
+# outcome-gated/lifecycle-schema/etc.). Reviewer Major, 2026-07-30: a bare
+# whole-file grep for `^outcome-gated: true` could false-accept the SAME
+# literal line appearing later in the file (an Evidence Log entry or
+# decision-log note quoting another plan's header as an example, a nested
+# code block, etc.) -- bounding the search to the header region only
+# closes that surface.
+_cp_header_region() {
+  awk '/^## / { exit } { print }' "$1" 2>/dev/null
+}
+
+# verify_closure_outcome_declared <plan_file>
+# Gate (BLOCKING, opt-in only): a plan is exempt (returns 0, no-op) unless
+# it declares `outcome-gated: true` in its header. For an opted-in plan,
+# requires a `## Closure Outcome` section with non-empty, non-placeholder
+# `Outcome metric:` and `Re-check date:` fields.
+verify_closure_outcome_declared() {
+  local plan_file="$1"
+
+  if ! _cp_header_region "$plan_file" | grep -qiE '^outcome-gated:[[:space:]]*true'; then
+    return 0
+  fi
+
+  if ! grep -qE '^## Closure Outcome[[:space:]]*$' "$plan_file" 2>/dev/null; then
+    return 1
+  fi
+
+  local metric recheck
+  metric="$(extract_closure_outcome_field_cp "$plan_file" "Outcome metric" 2>/dev/null || true)"
+  recheck="$(extract_closure_outcome_field_cp "$plan_file" "Re-check date" 2>/dev/null || true)"
+
+  [[ -n "$metric" ]] || return 1
+  [[ -n "$recheck" ]] || return 1
+
+  if _cp_is_placeholder_text "$metric" || _cp_is_placeholder_text "$recheck"; then
+    return 1
+  fi
+  if printf '%s' "$metric" | grep -qiE 'no outcome metric declared' 2>/dev/null; then
+    return 1
+  fi
+
+  return 0
+}
+
+# _cp_default_recheck_date <close_ts> -- close_ts + 14 days, ISO-8601 UTC.
+# Composes portable-time.sh's shared primitives (nl_iso_to_epoch +
+# nl_epoch_fmt) rather than hand-rolling a new GNU/BSD `date` dual-branch
+# (the M4 lesson this repo already paid for -- see that lib's own header).
+# Prints the raw close_ts with an honest disclaimer if the platform's
+# `date` cannot parse it (never fabricates a plausible-looking date).
+_cp_default_recheck_date() {
+  local close_ts="$1"
+  local pt_lib="$SCRIPT_DIR/../hooks/lib/portable-time.sh"
+  if [[ -f "$pt_lib" ]]; then
+    # shellcheck disable=SC1090
+    source "$pt_lib" 2>/dev/null || true
+  fi
+  if command -v nl_iso_to_epoch >/dev/null 2>&1; then
+    local epoch
+    epoch="$(nl_iso_to_epoch "$close_ts" 2>/dev/null || true)"
+    if [[ -n "$epoch" ]]; then
+      local target
+      target=$((epoch + 14 * 86400))
+      local formatted
+      formatted="$(nl_epoch_fmt "$target" '%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)"
+      if [[ -n "$formatted" ]]; then
+        printf '%s\n' "$formatted"
+        return 0
+      fi
+    fi
+  fi
+  printf '%s (14-day-from-close default unresolved on this platform)\n' "$close_ts"
+}
+
+# _cp_is_default_recheck <recheck_field_value> -- true (rc 0) if the value
+# carries this script's OWN "(default)" marker (see generate_closure_
+# outcome_section's C1 header comment below for why the marker exists).
+_cp_is_default_recheck() {
+  printf '%s' "$1" | grep -qiE '\(default\)[[:space:]]*$' 2>/dev/null
+}
+
+# _cp_recheck_is_stale <bare_recheck_iso> <close_ts> -- true (rc 0) if
+# <bare_recheck_iso> (the recheck value with any "(default)" marker
+# already stripped) parses and is <= close_ts (i.e. this default has
+# already gone stale as of THIS close). False (rc 1) on ANY parse failure
+# -- never silently "stale" on an unparseable date, mirroring portable-
+# time.sh's own design rule 3 (a failed parse is an explicit unknown, not
+# a specific answer either way).
+_cp_recheck_is_stale() {
+  local bare="$1" close_ts="$2"
+  local pt_lib="$SCRIPT_DIR/../hooks/lib/portable-time.sh"
+  if [[ -f "$pt_lib" ]]; then
+    # shellcheck disable=SC1090
+    source "$pt_lib" 2>/dev/null || true
+  fi
+  command -v nl_iso_to_epoch >/dev/null 2>&1 || return 1
+  local recheck_epoch close_epoch
+  recheck_epoch="$(nl_iso_to_epoch "$bare" 2>/dev/null || true)"
+  close_epoch="$(nl_iso_to_epoch "$close_ts" 2>/dev/null || true)"
+  [[ -n "$recheck_epoch" ]] || return 1
+  [[ -n "$close_epoch" ]] || return 1
+  [[ "$close_epoch" -gt "$recheck_epoch" ]]
+}
+
+# generate_closure_outcome_section <plan_file> <slug> <close_ts>
+# Prints a fresh "## Closure Outcome" section (heading included) to
+# stdout. Author-populated Outcome metric / Re-check date fields are
+# PRESERVED verbatim; Evidence pointers are always (re)computed from the
+# SAME Files-to-Modify -> git-log derivation generate_completion_report
+# already uses (one traversal implementation, not two drifting ones). A
+# plan with no section at all gets an honest default (never a fabricated
+# metric) -- this is the write-only, unconditional, observe-first half
+# (see the block header comment above).
+#
+# ============================================================
+# C1 FIX (2026-07-30, harness-reviewer CRITICAL — "default-date x sweep
+# storm + infinite loop")
+# ============================================================
+# BUG: a mechanically-defaulted Re-check date (this function, when the
+# plan declared none) used to be printed as a bare, parseable ISO date --
+# byte-for-byte indistinguishable from an author's own declared date.
+# plan-recheck-sweep.sh's read side therefore could not tell "nobody asked
+# for this" apart from "the author committed to a real check-in", so
+# EVERY plan this script ever closes (opted into outcome-gating or not)
+# got auto-reopened ~14 days later, and a re-close (which used to PRESERVE
+# the now-stale default verbatim) fed the exact same stale date right back
+# in -- a self-sustaining reopen storm, and the reopen message's own
+# remedy ("re-close") re-armed it every time.
+#
+# FIX, two parts, both here (the third part -- plan-recheck-sweep.sh
+# skipping "(default)"-marked dates entirely -- lives in that script):
+#   (a) a date THIS function defaults is suffixed "(default)" so a later
+#       reader can tell it apart from an author's own declared value.
+#   (b) at ANY generate call (a fresh close OR a re-close after reopen),
+#       an EXISTING recheck value that still carries the "(default)"
+#       marker AND has gone stale (relative to THIS close_ts) is silently
+#       refreshed forward to a fresh close_ts+14d default. An
+#       author-declared value (no marker -- whether originally authored
+#       or the author's own edit of a formerly-default field) is ALWAYS
+#       preserved verbatim, even if past -- that is the author's stated
+#       intent, not this script's to silently rewrite. plan-recheck-
+#       sweep.sh's reopen message is the honest place to tell the operator
+#       to update or remove a stale AUTHOR-declared date themselves.
+generate_closure_outcome_section() {
+  local plan_file="$1" slug="$2" close_ts="$3"
+
+  local metric recheck recurrence
+  metric="$(extract_closure_outcome_field_cp "$plan_file" "Outcome metric" 2>/dev/null || true)"
+  recheck="$(extract_closure_outcome_field_cp "$plan_file" "Re-check date" 2>/dev/null || true)"
+  # Recurrence check: OPTIONAL, author-declared shell command whose nonzero
+  # exit means "the bad condition recurred" (e.g. the T4 example named in
+  # this task's own spec: estate-attribution-check.sh finding an
+  # unattributable worktree). Preserved verbatim if present; never
+  # required (verify_closure_outcome_declared does not gate on it — a
+  # re-check DATE alone already satisfies program rule 2). Read by
+  # plan-recheck-sweep.sh at reopen time, never executed here.
+  recurrence="$(extract_closure_outcome_field_cp "$plan_file" "Recurrence check" 2>/dev/null || true)"
+
+  if [[ -z "$metric" ]]; then
+    metric="no outcome metric declared by the plan at close time"
+  fi
+  if [[ -z "$recheck" ]]; then
+    recheck="$(_cp_default_recheck_date "$close_ts") (default)"
+  elif _cp_is_default_recheck "$recheck"; then
+    local bare_recheck
+    bare_recheck="$(printf '%s' "$recheck" | sed -E 's/[[:space:]]*\(default\)[[:space:]]*$//')"
+    if _cp_recheck_is_stale "$bare_recheck" "$close_ts"; then
+      recheck="$(_cp_default_recheck_date "$close_ts") (default)"
+    fi
+  fi
+
+  local files_section files_list commits
+  files_section=$(awk '
+    /^## Files to Modify\/Create/ { flag=1; next }
+    flag && /^## / { flag=0 }
+    flag { print }
+  ' "$plan_file")
+  files_list=$(printf '%s\n' "$files_section" \
+    | grep -oE '^- [`]?[a-zA-Z0-9._/~-]+' \
+    | sed -e 's/^- //' -e 's/^`//' -e 's/`$//' \
+    | sort -u)
+  commits=""
+  if command -v git >/dev/null 2>&1 && [[ -n "$files_list" ]]; then
+    commits=$(printf '%s\n' "$files_list" \
+      | xargs -I{} sh -c 'git log --oneline --no-merges -- "{}" 2>/dev/null' 2>/dev/null \
+      | sort -u | head -10)
+  fi
+  [[ -z "$commits" ]] && commits="(no commits derived from the plan's Files to Modify/Create section)"
+
+  cat <<EOF
+## Closure Outcome
+
+_Written by close-plan.sh at closure (${close_ts})._
+
+Outcome metric: ${metric}
+Re-check date: ${recheck}
+$([[ -n "$recurrence" ]] && printf 'Recurrence check: %s\n' "$recurrence")
+Evidence pointers:
+$(printf '%s\n' "$commits" | sed -e 's/^/- /')
+EOF
+}
+
+# write_closure_outcome_section <plan_file> <slug> <close_ts>
+# Replace-or-append the "## Closure Outcome" section in the plan file,
+# mirroring write_completion_report's own strip-then-append idiom exactly
+# (one file-rewrite convention in this script, not two).
+write_closure_outcome_section() {
+  local plan_file="$1" slug="$2" close_ts="$3"
+
+  local section_text
+  section_text="$(generate_closure_outcome_section "$plan_file" "$slug" "$close_ts")"
+
+  local tmp
+  tmp=$(mktemp)
+  awk '
+    /^## Closure Outcome[[:space:]]*$/ { skipping = 1; next }
+    skipping && /^## / && !/^## Closure Outcome/ { skipping = 0 }
+    !skipping { print }
+  ' "$plan_file" > "$tmp"
+
+  local body
+  body=$(cat "$tmp")
+  printf '%s\n\n%s\n' "$body" "$section_text" > "$plan_file"
+
+  rm -f "$tmp"
 }
 
 # ---------------------------------------------------------------------------
@@ -1130,6 +1616,16 @@ cmd_close() {
     printf '[close-plan]   closure-contract-recorded: PASS (or grandfathered)\n' >&2
   fi
 
+  # 2e. T9 outcome-gate (opt-in only via `outcome-gated: true` — program
+  # rule 4, observe-first; see verify_closure_outcome_declared's own header
+  # comment for the full rollout-discipline rationale).
+  if ! verify_closure_outcome_declared "$plan_file"; then
+    printf '[close-plan]   closure-outcome-declared: FAIL\n' >&2
+    failed_tasks+=("closure-outcome-declared")
+  else
+    printf '[close-plan]   closure-outcome-declared: PASS (or not opted in)\n' >&2
+  fi
+
   # Block if any failure. The ONLY remediation path is to satisfy the check by
   # generating the missing structured evidence via write-evidence.sh. There is
   # no script-level escape hatch — neither --force (removed 2026-05-06) nor an
@@ -1164,6 +1660,13 @@ cmd_close() {
       printf '    fields (Commands that run / Expected outputs / On-disk artifact location /\n' >&2
       printf '    Done when) with plan-specific content — no "[populate me]" placeholders left.\n' >&2
     fi
+    if printf '%s\n' "${failed_tasks[@]}" | grep -q '^closure-outcome-declared$'; then
+      printf '\n  For closure-outcome-declared failure (this plan opted in via `outcome-gated:\n' >&2
+      printf '    true`): add a "## Closure Outcome" section with non-placeholder\n' >&2
+      printf '    "Outcome metric:" and "Re-check date:" fields — the demonstrated outcome +\n' >&2
+      printf '    recurrence-check window program rule 2 requires. Evidence pointers are\n' >&2
+      printf '    computed automatically at close; you only author the metric + date.\n' >&2
+    fi
     printf '\n[close-plan] No script-level override exists. If genuinely necessary,\n' >&2
     printf '  perform the close manually via git: edit Status, git mv to archive,\n' >&2
     printf '  git rm stale state, git commit. Visible in history. Appropriately rare.\n' >&2
@@ -1191,11 +1694,28 @@ cmd_close() {
     esac
   fi
 
+  # close_ts is computed ONCE here (moved up from the old step 5) so the
+  # T9 outcome-section write below (step 3b) stamps the SAME timestamp
+  # that ends up on the Status: ACTIVE -> COMPLETED flip a few steps later
+  # — one closure instant, not two independently-read clocks that could
+  # tick a second apart.
+  local close_ts
+  close_ts="$(iso_timestamp)"
+
   # 3. Generate completion report.
   printf '[close-plan] generating completion report...\n' >&2
   local report
   report=$(generate_completion_report "$plan_file")
   write_completion_report "$plan_file" "$report"
+
+  # 3b. T9: write/refresh the "## Closure Outcome" section (metric +
+  # re-check date + derived evidence pointers) BEFORE archival, so it
+  # travels with the file into docs/plans/archive/ and lands in the same
+  # closure commit (step 7) — see write_closure_outcome_section's header
+  # for why this always runs (observe-only for non-opted-in plans; the
+  # opt-in gate above already REQUIRED real content for opted-in ones).
+  printf '[close-plan] writing Closure Outcome section...\n' >&2
+  write_closure_outcome_section "$plan_file" "$slug" "$close_ts"
 
   # 4. Update SCRATCHPAD.
   printf '[close-plan] updating SCRATCHPAD...\n' >&2
@@ -1209,8 +1729,7 @@ cmd_close() {
   # inline fallback in EVERY close-plan flow; plan-lifecycle.sh archives only
   # manual Edit-tool Status flips made outside this script.
   printf '[close-plan] flipping Status: ACTIVE → COMPLETED...\n' >&2
-  local tmp_plan close_ts
-  close_ts="$(iso_timestamp)"
+  local tmp_plan
   tmp_plan=$(mktemp)
   sed -e 's/^Status:[[:space:]]*ACTIVE[[:space:]]*$/Status: COMPLETED/' "$plan_file" > "$tmp_plan"
   cp "$tmp_plan" "$plan_file"
@@ -1285,12 +1804,35 @@ cmd_close() {
     fi
   fi
 
+  # T7 (accountable-estate-program) append-at-close splice. Spec: this is
+  # the documented seam named in loe-backfill.sh's own header ("THE
+  # CLOSE-SIDE SEAM") -- verbatim command, `|| true`-guarded per the T3
+  # admission-lib splice convention (workstreams-emit.sh/session-resumer.sh
+  # /spawn-worktree.sh already use this exact pattern) so a broken/absent
+  # miner can never block or fail a plan closure. loe-backfill.sh's default
+  # mode is a full, idempotent, deterministic re-mine of the whole archive
+  # (no incremental state to drift), so a bare re-invocation here keeps
+  # docs/loe/loe-calibration.json/.md current the moment a new plan
+  # (this one, now archived) joins the corpus -- "actuals append at close",
+  # T7's own outcome-metric second half. (docs/loe/, NOT docs/plans/ -- the
+  # fd48741 review proved the plan gate rejects the rendered table as a
+  # malformed plan; this comment previously said docs/plans/ in error.)
+  bash "$SCRIPT_DIR/loe-backfill.sh" >/dev/null 2>&1 || true
+
   # Progress-log emission: plan_completed (Task 6b -- sixth lane / the ask
   # lifecycle's mechanical exit). Fires ONLY on this successful-close path --
   # every early return above (blocked verification, auto-mode HOLD, usage
   # errors) never reaches here -- so both the auto-closure PostToolUse lane
   # and a manual close each emit exactly once, from this one call site.
   emit_plan_completed_progress_log_event "$plan_file" "$slug" "$close_ts"
+
+  # T9 (outcome-gated closure semantics): plan_outcome_recorded fires from
+  # the SAME successful-close path, immediately after plan_completed, so
+  # every closure carries both the mechanical-exit event AND the outcome
+  # record (metric + re-check date + evidence pointers) written into the
+  # archived plan by write_closure_outcome_section() above (step 3b).
+  # Best-effort/never-blocks, same as plan_completed's own emission.
+  emit_plan_outcome_recorded_progress_log_event "$plan_file" "$slug" "$close_ts"
 
   printf '[close-plan] DONE: plan %s closed.\n' "$slug" >&2
 
@@ -1365,9 +1907,16 @@ run_self_test() {
   mkdir -p "$PROGRESS_LOG_STATE_DIR"
 
   local PASSED=0 FAILED=0
+  # Single source of truth for the scenario count (reviewer Minor,
+  # 2026-07-30: the intro banner below used to hardcode "21 scenarios"
+  # independently of the closing summary's own hardcoded count, and the
+  # two drifted apart as scenarios were added over time). Both prints
+  # below read this ONE variable, so they can no longer say two different
+  # numbers — bump this once, in one place, whenever a scenario is added.
+  local TOTAL_SCENARIOS=30
   local saved_pwd="$PWD"
 
-  printf 'close-plan.sh self-test (21 scenarios)\n\n' >&2
+  printf 'close-plan.sh self-test (%d scenarios)\n\n' "$TOTAL_SCENARIOS" >&2
 
   # ----- S1: all-mechanical-tasks-closure -----
   local D1; D1=$(setup_synthetic_repo "S1" "p-mech")
@@ -2344,14 +2893,473 @@ EOF
   fi
   rm -rf "$D21"
 
-  # ----- S22 (ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01, site-local none-
+  # ----- S22 (T9 parser-bug fix): a prose "Task description:" line between
+  # a real "Task ID: T1" line and its "Verdict: PASS" line must NOT orphan
+  # the verdict (see verify_task_full's header comment for the full
+  # writeup). This reproduces this repo's OWN real evidence-block
+  # convention verbatim (Task ID: / Task description: / ... / Verdict:
+  # PASS) — the shape every prior self-test fixture (S1-S21) never
+  # exercised because their synthetic blocks were two bare lines. -----
+  local D22; D22=$(setup_synthetic_repo "S22" "p-prose")
+  (
+    cd "$D22" || exit 1
+    cat > docs/plans/p-prose.md <<'EOF'
+# Plan: P Prose
+Status: ACTIVE
+Backlog items absorbed: none
+
+## Goal
+test that evidence prose does not orphan a verdict
+
+## Scope
+- IN: nothing
+- OUT: everything
+
+## Tasks
+- [x] 1. First task. Verification: full
+- [x] 2. Second task. Verification: full
+
+## Files to Modify/Create
+- `docs/plans/p-prose.md`
+EOF
+    cat > docs/plans/p-prose-evidence.md <<'EOF'
+Task ID: 1
+Task description: this line, appearing right after the Task ID declaration,
+used to reset the parser's found_id/found_pass state before Verdict: PASS
+was ever reached (the KNOWN BUG this scenario regression-tests).
+Verified at: 2026-07-30T00:00:00Z
+Verifier: task-verifier agent
+Checks run:
+1. Task-text match: plan text matches. Result: PASS
+Verdict: PASS
+commit abcdef1
+
+Task ID: 2
+Task description: second task's prose, must not inherit task 1's verdict.
+Verified at: 2026-07-30T00:00:00Z
+Verifier: task-verifier — PASS conf 9
+commit abcdef2
+EOF
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-prose --no-push >/dev/null 2>&1
+  )
+  if [[ -f "$D22/docs/plans/archive/p-prose.md" ]] \
+     && grep -q '^Status: COMPLETED' "$D22/docs/plans/archive/p-prose.md"; then
+    printf 'self-test (S22) prose-mention-does-not-orphan-verdict: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S22) prose-mention-does-not-orphan-verdict: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D22"
+
+  # ----- S23 (T9): an `outcome-gated: true` plan with NO "## Closure
+  # Outcome" section is BLOCKED at close, named specifically as
+  # closure-outcome-declared (not silently swept into a generic failure). -----
+  local D23; D23=$(setup_synthetic_repo "S23" "p-outcome-missing")
+  (
+    cd "$D23" || exit 1
+    cat > docs/plans/p-outcome-missing.md <<'EOF'
+# Plan: P Outcome Missing
+Status: ACTIVE
+Backlog items absorbed: none
+outcome-gated: true
+
+## Goal
+test the T9 outcome-gate blocks when the section is absent
+
+## Scope
+- IN: nothing
+- OUT: everything
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-outcome-missing.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-outcome-missing-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-outcome-missing-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+  )
+  local s23_out s23_rc
+  s23_out=$(cd "$D23" && bash "$SELF_PATH" close p-outcome-missing --no-push 2>&1)
+  s23_rc=$?
+  if [[ "$s23_rc" -eq 2 ]] \
+     && printf '%s' "$s23_out" | grep -q 'closure-outcome-declared' \
+     && [[ ! -f "$D23/docs/plans/archive/p-outcome-missing.md" ]]; then
+    printf 'self-test (S23) outcome-gated-plan-missing-section-blocks: PASS (blocked)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S23) outcome-gated-plan-missing-section-blocks: FAIL (rc=%s)\n' "$s23_rc" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D23"
+
+  # ----- S24 (T9): an `outcome-gated: true` plan WITH a well-formed
+  # "## Closure Outcome" section closes cleanly, and the metric/re-check
+  # date the AUTHOR wrote is PRESERVED verbatim (not overwritten by the
+  # default-filler path) in the archived copy. Also proves, in the SAME
+  # closure, the two other T9 wiring points fire for real: the T7
+  # append-at-close splice (docs/loe/loe-calibration.json is produced by
+  # this close, inside this sandboxed fixture repo only) and the
+  # plan_outcome_recorded progress-log event. -----
+  local D24; D24=$(setup_synthetic_repo "S24" "p-outcome-present")
+  (
+    cd "$D24" || exit 1
+    cat > docs/plans/p-outcome-present.md <<'EOF'
+# Plan: P Outcome Present
+Status: ACTIVE
+ask-id: ask-selftest-outcome-present
+Backlog items absorbed: none
+outcome-gated: true
+
+## Goal
+test the T9 outcome-gate closes cleanly when the section is well-formed
+
+## Scope
+- IN: nothing
+- OUT: everything
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-outcome-present.md`
+
+## Closure Outcome
+Outcome metric: author-declared metric text, must survive verbatim
+Re-check date: 2026-09-01T00:00:00Z
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-outcome-present-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-outcome-present-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+  )
+  local S24_LOG
+  S24_LOG="$PROGRESS_LOG_STATE_DIR/ask-selftest-outcome-present.jsonl"
+  rm -f "$S24_LOG"
+  ( cd "$D24" && bash "$SELF_PATH" close p-outcome-present --no-push >/dev/null 2>&1 )
+  local s24_archived="$D24/docs/plans/archive/p-outcome-present.md"
+  if [[ -f "$s24_archived" ]] \
+     && grep -q '^Status: COMPLETED' "$s24_archived" \
+     && grep -q 'Outcome metric: author-declared metric text, must survive verbatim' "$s24_archived" \
+     && grep -q 'Re-check date: 2026-09-01T00:00:00Z' "$s24_archived" \
+     && [[ -f "$D24/docs/loe/loe-calibration.json" ]] \
+     && grep -q '"type":"plan_outcome_recorded"' "$S24_LOG" 2>/dev/null; then
+    printf 'self-test (S24) outcome-gated-plan-closes-preserves-metric-plus-t7-splice-plus-event: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S24) outcome-gated-plan-closes-preserves-metric-plus-t7-splice-plus-event: FAIL (archived=%s loe-json=%s log=%s)\n' \
+      "$([[ -f "$s24_archived" ]] && echo yes || echo no)" \
+      "$([[ -f "$D24/docs/loe/loe-calibration.json" ]] && echo yes || echo no)" \
+      "$(cat "$S24_LOG" 2>/dev/null)" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D24"
+
+  # ----- S25 (T9): a plan that never opted in (no `outcome-gated:` field
+  # at all) is NEVER blocked by the new gate, but STILL gets a "## Closure
+  # Outcome" section written into its archived copy with an honest default
+  # (observe-only half — see write_closure_outcome_section's header). ----
+  local D25; D25=$(setup_synthetic_repo "S25" "p-outcome-default")
+  (
+    cd "$D25" || exit 1
+    cat > docs/plans/p-outcome-default.md <<'EOF'
+# Plan: P Outcome Default
+Status: ACTIVE
+Backlog items absorbed: none
+
+## Goal
+test the non-opted-in default write path
+
+## Scope
+- IN: nothing
+- OUT: everything
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-outcome-default.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-outcome-default-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-outcome-default-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-outcome-default --no-push >/dev/null 2>&1
+  )
+  local s25_archived="$D25/docs/plans/archive/p-outcome-default.md"
+  if [[ -f "$s25_archived" ]] \
+     && grep -q '^Status: COMPLETED' "$s25_archived" \
+     && grep -q '^## Closure Outcome' "$s25_archived" \
+     && grep -q 'no outcome metric declared by the plan at close time' "$s25_archived" \
+     && grep -qE 'Re-check date: [0-9]{4}-[0-9]{2}-[0-9]{2}T' "$s25_archived"; then
+    printf 'self-test (S25) non-opted-in-plan-still-gets-default-outcome-section: PASS (observe-only, never blocked)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S25) non-opted-in-plan-still-gets-default-outcome-section: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D25"
+
+  # ----- S26 (T9 acceptance demonstration finding): a plan using the
+  # `## Scope / Tasks` heading variant (5 real active plans, incl. this
+  # task's own context-watermark-opus5-window.md closure demonstration —
+  # discovered when that real close attempt failed "no tasks found in
+  # plan" against the pre-fix parser) closes exactly like a bare `##
+  # Tasks` plan. -----
+  local D26; D26=$(setup_synthetic_repo "S26" "p-scope-tasks")
+  (
+    cd "$D26" || exit 1
+    cat > docs/plans/p-scope-tasks.md <<'EOF'
+# Plan: P Scope Tasks
+Status: ACTIVE
+Backlog items absorbed: none
+
+## Goal
+test the "## Scope / Tasks" heading variant
+
+## Scope / Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-scope-tasks.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-scope-tasks-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-scope-tasks-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-scope-tasks --no-push >/dev/null 2>&1
+  )
+  if [[ -f "$D26/docs/plans/archive/p-scope-tasks.md" ]] \
+     && grep -q '^Status: COMPLETED' "$D26/docs/plans/archive/p-scope-tasks.md"; then
+    printf 'self-test (S26) scope-slash-tasks-heading-variant-closes: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S26) scope-slash-tasks-heading-variant-closes: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D26"
+
+  # ----- S27 (T9, found live during this task's own real-plan closure
+  # demonstration): a multi-LINE author-declared Outcome metric (ordinary
+  # wrapped prose, exactly what a real plan author writes — NOT a
+  # single-line synthetic fixture) must survive VERBATIM into the archived
+  # plan, never truncated to its first physical line; AND the emitted
+  # plan_outcome_recorded event's JSONL row must still be exactly ONE
+  # line (a raw embedded newline in --summary would split the ndjson
+  # record and corrupt the log). -----
+  local D27; D27=$(setup_synthetic_repo "S27" "p-multiline-outcome")
+  (
+    cd "$D27" || exit 1
+    cat > docs/plans/p-multiline-outcome.md <<'EOF'
+# Plan: P Multiline Outcome
+Status: ACTIVE
+ask-id: ask-selftest-multiline-outcome
+Backlog items absorbed: none
+outcome-gated: true
+
+## Goal
+test multi-line outcome metric survival
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-multiline-outcome.md`
+
+## Closure Outcome
+Outcome metric: this is line one of a wrapped, multi-paragraph metric
+this is line two, which a naive first-line-only extractor would drop
+and this is line three, also part of the same metric
+Re-check date: 2026-10-01T00:00:00Z
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-multiline-outcome-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-multiline-outcome-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+  )
+  local S27_LOG
+  S27_LOG="$PROGRESS_LOG_STATE_DIR/ask-selftest-multiline-outcome.jsonl"
+  rm -f "$S27_LOG"
+  ( cd "$D27" && bash "$SELF_PATH" close p-multiline-outcome --no-push >/dev/null 2>&1 )
+  local s27_archived="$D27/docs/plans/archive/p-multiline-outcome.md"
+  local s27_event_lines
+  s27_event_lines=$(grep -c '"type":"plan_outcome_recorded"' "$S27_LOG" 2>/dev/null || echo 0)
+  if [[ -f "$s27_archived" ]] \
+     && grep -q 'this is line one of a wrapped, multi-paragraph metric' "$s27_archived" \
+     && grep -q 'this is line two, which a naive first-line-only extractor would drop' "$s27_archived" \
+     && grep -q 'and this is line three, also part of the same metric' "$s27_archived" \
+     && [[ "$s27_event_lines" == "1" ]] \
+     && [[ "$(wc -l < "$S27_LOG" 2>/dev/null | tr -d ' ')" == "2" ]]; then
+    printf 'self-test (S27) multiline-outcome-metric-survives-verbatim-event-stays-one-line: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S27) multiline-outcome-metric-survives-verbatim-event-stays-one-line: FAIL (event_lines=%s log_wc=%s)\n' "$s27_event_lines" "$(wc -l < "$S27_LOG" 2>/dev/null | tr -d ' ')" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D27"
+
+  # ----- S28 (M1 regression, harness-reviewer Major, 2026-07-30): a task's
+  # REAL verdict is FAIL, but the evidence prose mentions a PRIOR attempt
+  # that was "PASS conf 9" -- the exact false-accept shape the reviewer
+  # reproduced in sandbox ("round 1 was PASS conf 9" as ordinary prose
+  # inside a block whose real Verdict line is FAIL). Before the found_pass
+  # anchor fix, the unanchored `PASS[[:space:]]+conf(idence)?[[:space:]]*
+  # [0-9]+` alternative matched this prose line as a substring anywhere in
+  # the found_id block, wrongly setting found_pass=1 and letting the plan
+  # close despite task 1 never actually passing. -----
+  local D28; D28=$(setup_synthetic_repo "S28" "p-prose-pass-mention")
+  (
+    cd "$D28" || exit 1
+    cat > docs/plans/p-prose-pass-mention.md <<'EOF'
+# Plan: P Prose Pass Mention
+Status: ACTIVE
+Backlog items absorbed: none
+
+## Goal
+test that a FAIL block whose prose mentions a prior "PASS conf N" is not
+false-accepted as passing (M1 regression -- unanchored found_pass regex)
+
+## Scope
+- IN: nothing
+- OUT: everything
+
+## Tasks
+- [x] 1. First task. Verification: full
+
+## Files to Modify/Create
+- `docs/plans/p-prose-pass-mention.md`
+EOF
+    cat > docs/plans/p-prose-pass-mention-evidence.md <<'EOF'
+Task ID: 1
+Task description: round 1 was PASS conf 9, but a regression was found on
+re-check and the fix has not yet landed.
+Verifier: task-verifier
+Verdict: FAIL
+commit abcdef1
+EOF
+    git add . && git commit -q -m "init"
+  )
+  local s28_out s28_rc
+  s28_out=$(cd "$D28" && bash "$SELF_PATH" close p-prose-pass-mention --no-push 2>&1)
+  s28_rc=$?
+  if [[ "$s28_rc" -ne 0 ]] \
+     && [[ ! -f "$D28/docs/plans/archive/p-prose-pass-mention.md" ]] \
+     && grep -q '^Status: ACTIVE' "$D28/docs/plans/p-prose-pass-mention.md" 2>/dev/null; then
+    printf 'self-test (S28) prose-pass-mention-in-fail-block-does-not-false-accept: PASS (blocked)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S28) prose-pass-mention-in-fail-block-does-not-false-accept: FAIL (rc=%s)\n' "$s28_rc" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D28"
+
+  # ----- S29 (C1 CRITICAL regression, harness-reviewer, 2026-07-30):
+  # "default-date x sweep = scheduled auto-reopen storm + infinite loop".
+  # Exercises the REAL production code of BOTH scripts across a genuine
+  # sweep -> reopen -> re-close -> sweep cycle, mutation-proven:
+  #   1. Close a plan with NO explicit Re-check date (real default-write
+  #      path) via THIS script, then hand-edit the archived copy's
+  #      Re-check date to a stale-but-still-"(default)"-marked value
+  #      (simulating "14+ days have since passed" without faking the
+  #      system clock).
+  #   2. RED demonstration: sweep it with plan-recheck-sweep.sh's
+  #      default-marker skip DELETED (a self-test-only mutation escape
+  #      hatch, _PRS_SELFTEST_DISABLE_DEFAULT_SKIP) -- proves the stale
+  #      default WOULD have caused a reopen pre-fix (the bug is real, this
+  #      fixture is not vacuous).
+  #   3. Re-close the (now reopened) plan with the mutation OFF -- real
+  #      close-plan.sh code refreshes the stale default forward (layer b).
+  #   4. GREEN demonstration: sweep again with the mutation OFF (normal,
+  #      fixed behavior) -- the plan must NOT reopen a second time. -----
+  local D29; D29=$(setup_synthetic_repo "S29" "p-storm")
+  local prs="$SCRIPT_DIR/plan-recheck-sweep.sh"
+  (
+    cd "$D29" || exit 1
+    cat > docs/plans/p-storm.md <<'EOF'
+# Plan: P Storm
+Status: ACTIVE
+Backlog items absorbed: none
+
+## Goal
+test the C1 default-date x sweep storm regression end to end
+
+## Scope
+- IN: nothing
+- OUT: everything
+
+## Tasks
+- [x] 1. First task. Verification: mechanical
+
+## Files to Modify/Create
+- `docs/plans/p-storm.md`
+
+## Evidence Log
+EOF
+    mkdir -p docs/plans/p-storm-evidence
+    printf '{"task_id":"1","verdict":"PASS"}\n' > docs/plans/p-storm-evidence/1.evidence.json
+    git add . && git commit -q -m "init"
+    bash "$SELF_PATH" close p-storm --no-push >/dev/null 2>&1
+  )
+  local s29_step1_ok=0
+  local s29_archived="$D29/docs/plans/archive/p-storm.md"
+  if [[ -f "$s29_archived" ]] && grep -qE 'Re-check date: .*\(default\)' "$s29_archived"; then
+    s29_step1_ok=1
+    # Backdate the default-marked Re-check date so it reads as stale.
+    local s29_tmp; s29_tmp=$(mktemp)
+    sed -E 's/^Re-check date:.*\(default\)[[:space:]]*$/Re-check date: 2020-01-01T00:00:00Z (default)/' \
+      "$s29_archived" > "$s29_tmp"
+    cp "$s29_tmp" "$s29_archived"
+    rm -f "$s29_tmp"
+    ( cd "$D29" && git add -A && git commit -q -m "backdate for S29 fixture" )
+  fi
+  # Step 2: RED -- mutation ON, default-skip disabled -- must reopen.
+  _PRS_SELFTEST_DISABLE_DEFAULT_SKIP=1 bash "$prs" sweep --repo "$D29" >/dev/null 2>&1
+  local s29_red_reopened=0
+  [[ -f "$D29/docs/plans/p-storm.md" ]] && grep -q '^Status: ACTIVE' "$D29/docs/plans/p-storm.md" 2>/dev/null \
+    && s29_red_reopened=1
+  # Step 3: re-close (mutation OFF, real refresh-at-close code).
+  ( cd "$D29" && bash "$SELF_PATH" close p-storm --no-push >/dev/null 2>&1 )
+  local s29_reclosed_ok=0
+  local s29_reclosed_recheck=""
+  if [[ -f "$s29_archived" ]] && grep -q '^Status: COMPLETED' "$s29_archived"; then
+    s29_reclosed_recheck="$(grep -E '^Re-check date:' "$s29_archived" | head -1)"
+    if ! printf '%s' "$s29_reclosed_recheck" | grep -q '2020-01-01'; then
+      s29_reclosed_ok=1
+    fi
+  fi
+  # Step 4: GREEN -- mutation OFF, normal fixed behavior -- must NOT reopen.
+  bash "$prs" sweep --repo "$D29" >/dev/null 2>&1
+  local s29_green_still_archived=0
+  [[ -f "$s29_archived" ]] && grep -q '^Status: COMPLETED' "$s29_archived" 2>/dev/null \
+    && [[ ! -f "$D29/docs/plans/p-storm.md" ]] \
+    && s29_green_still_archived=1
+  if [[ "$s29_step1_ok" -eq 1 ]] && [[ "$s29_red_reopened" -eq 1 ]] \
+     && [[ "$s29_reclosed_ok" -eq 1 ]] && [[ "$s29_green_still_archived" -eq 1 ]]; then
+    printf 'self-test (S29) storm-regression-sweep-reopen-reclose-sweep-does-not-loop: PASS (mutation-proven)\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S29) storm-regression-sweep-reopen-reclose-sweep-does-not-loop: FAIL (step1=%s red_reopened=%s reclosed_ok=%s green=%s recheck=%s)\n' \
+      "$s29_step1_ok" "$s29_red_reopened" "$s29_reclosed_ok" "$s29_green_still_archived" "$s29_reclosed_recheck" >&2
+    FAILED=$((FAILED+1))
+  fi
+  rm -rf "$D29"
+  # ----- S30 (ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01, site-local none-
   # sentinel regression): a plan header carrying the SPELLED-OUT no-ask
   # value (`ask-id: none — no linked ask`, the template's documented
   # substitution) must resolve extract_ask_id_cp to EMPTY, routing the
   # plan_completed event to the unlinked orphan lane -- never a literal
   # none.jsonl. Real-id preservation through this SAME extractor is already
   # covered by S20/S21 above; this closes the missing sentinel-guard half. -----
-  local D22; D22=$(setup_synthetic_repo "S22" "p-none-sentinel")
+  local D22; D22=$(setup_synthetic_repo "S30" "p-none-sentinel")
   (
     cd "$D22" || exit 1
     cat > docs/plans/p-none-sentinel.md <<'EOF'
@@ -2361,25 +3369,25 @@ ask-id: none — no linked ask
 EOF
     git add . && git commit -q -m "init"
   )
-  local S22_UNLINKED
-  S22_UNLINKED="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
-  rm -f "$S22_UNLINKED" "$PROGRESS_LOG_STATE_DIR/none.jsonl"
+  local S30_UNLINKED
+  S30_UNLINKED="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+  rm -f "$S30_UNLINKED" "$PROGRESS_LOG_STATE_DIR/none.jsonl"
   (
     cd "$D22" || exit 1
     emit_plan_completed_progress_log_event "docs/plans/p-none-sentinel.md" "p-none-sentinel" "2026-03-03T00:00:00Z"
   )
-  if [[ -f "$S22_UNLINKED" ]] && grep -q '"plan_slug":"p-none-sentinel"' "$S22_UNLINKED" && grep -q '"type":"plan_completed"' "$S22_UNLINKED"; then
-    printf 'self-test (S22) none-sentinel-header-resolves-to-unlinked-lane: PASS\n' >&2
+  if [[ -f "$S30_UNLINKED" ]] && grep -q '"plan_slug":"p-none-sentinel"' "$S30_UNLINKED" && grep -q '"type":"plan_completed"' "$S30_UNLINKED"; then
+    printf 'self-test (S30) none-sentinel-header-resolves-to-unlinked-lane: PASS\n' >&2
     PASSED=$((PASSED+1))
   else
-    printf 'self-test (S22) none-sentinel-header-resolves-to-unlinked-lane: FAIL\n' >&2
+    printf 'self-test (S30) none-sentinel-header-resolves-to-unlinked-lane: FAIL\n' >&2
     FAILED=$((FAILED+1))
   fi
   if [[ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]]; then
-    printf 'self-test (S22) no-none-jsonl-created: FAIL (extract_ask_id_cp handed the literal none sentinel to pl_emit unresolved)\n' >&2
+    printf 'self-test (S30) no-none-jsonl-created: FAIL (extract_ask_id_cp handed the literal none sentinel to pl_emit unresolved)\n' >&2
     FAILED=$((FAILED+1))
   else
-    printf 'self-test (S22) no-none-jsonl-created: PASS\n' >&2
+    printf 'self-test (S30) no-none-jsonl-created: PASS\n' >&2
     PASSED=$((PASSED+1))
   fi
   rm -rf "$D22"
@@ -2387,7 +3395,7 @@ EOF
   cd "$saved_pwd"
   rm -rf "$CP_ST_PL_DIR" 2>/dev/null || true
 
-  printf '\nself-test summary: %d passed, %d failed (of 22 scenarios)\n' "$PASSED" "$FAILED" >&2
+  printf '\nself-test summary: %d passed, %d failed (of %d scenarios)\n' "$PASSED" "$FAILED" "$TOTAL_SCENARIOS" >&2
   if [[ $FAILED -eq 0 ]]; then
     return 0
   fi

@@ -11,7 +11,13 @@
 #      .claude/pre-push-test-gate.enabled marker file)
 #   3. Runs the divergence check (blocks pushes to master/main when the
 #      remote target ref has advanced since the local fetch)
-#   4. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
+#   4. Runs the review-record push gate (blocks pushes to master/main that
+#      would land unreviewed harness content on the remote — the
+#      AUTHORITATIVE carrier of review-before-deploy; see hooks/
+#      review-record-push-gate.sh's own header for the full rationale.
+#      review-record-commit-gate.sh, the PreToolUse commit-time carrier, is
+#      advisory-only — this is the layer that actually enforces)
+#   5. If the repo has a local hook at .git/hooks/pre-push.local, runs that too
 #
 # To bypass everything: git push --no-verify
 # To bypass test-gate only: PT_PUSH_NO_TEST_GATE=1 git push
@@ -66,7 +72,83 @@ if [ -n "$DIV_CHECK" ] && [ -f "$DIV_CHECK" ]; then
   echo "$REF_INPUT" | bash "$DIV_CHECK" "$@"
 fi
 
-# 4. Run any local repo-specific pre-push hook
+# 4. Run the review-record push gate (AUTHORITATIVE — blocks unreviewed
+#    harness content from reaching master/main; deterministic-process.md)
+REVIEW_GATE="$HOOK_DIR/../hooks/review-record-push-gate.sh"
+if [ ! -f "$REVIEW_GATE" ]; then
+  if [ -f "$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/review-record-push-gate.sh" ]; then
+    REVIEW_GATE="$HOME/claude-projects/neural-lace/adapters/claude-code/hooks/review-record-push-gate.sh"
+  else
+    REVIEW_GATE=""
+  fi
+fi
+if [ -n "$REVIEW_GATE" ] && [ -f "$REVIEW_GATE" ]; then
+  echo "$REF_INPUT" | bash "$REVIEW_GATE" "$@"
+else
+  # THE ENFORCING BYTES ARE MUTABLE (harness-reviewer M8, 2026-07-30).
+  #
+  # core.hooksPath points at this repo's WORKING TREE, so a `git checkout` to
+  # any commit predating the gate, a `git stash`, or a one-line edit removes
+  # the gate globally. Previously that produced only a WARNING and the push
+  # proceeded — the harness repo could silently un-gate itself, which is the
+  # bypass path with the lowest cost of every one enumerated.
+  #
+  # A repo carrying adapters/claude-code/manifest.json IS the harness repo:
+  # there, a missing gate is a DEFECT and the push is refused. Everywhere else
+  # (an ordinary project repo that merely shares this global hooksPath) it
+  # stays a warning, because those repos have no review-record gate to run and
+  # blocking them would be a pure false positive.
+  #
+  # IDENTITY IS ANCHORED OUTSIDE THE PUSHER'S WRITE SET (harness-reviewer
+  # CRITICAL 1, 2026-07-30). This test used to read ONLY the working-tree file,
+  # which the same push can delete: `git rm -f adapters/claude-code/
+  # manifest.json` alongside `git rm` of the gate demoted this hard block back
+  # to the bare WARNING + rc=0 it replaced -- PROVEN against a real bare remote.
+  # Consult the committed tree and the remote-tracking refs FIRST; the working
+  # tree stays last so behaviour is unchanged for a genuinely foreign repo.
+  REPO_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
+  IS_HARNESS_REPO=0
+  if [ -n "$REPO_TOPLEVEL" ]; then
+    MP="adapters/claude-code/manifest.json"
+    if git cat-file -e "HEAD:$MP" 2>/dev/null; then
+      IS_HARNESS_REPO=1
+    else
+      for _r in $(git remote 2>/dev/null); do
+        for _b in master main; do
+          if git cat-file -e "refs/remotes/$_r/$_b:$MP" 2>/dev/null; then
+            IS_HARNESS_REPO=1
+            break 2
+          fi
+        done
+      done
+    fi
+    if [ "$IS_HARNESS_REPO" -eq 0 ] && [ -f "$REPO_TOPLEVEL/$MP" ]; then
+      IS_HARNESS_REPO=1
+    fi
+  fi
+  if [ "$IS_HARNESS_REPO" -eq 1 ]; then
+    echo "================================================================" >&2
+    echo "PUSH BLOCKED — the authoritative review gate is MISSING" >&2
+    echo "================================================================" >&2
+    echo "review-record-push-gate.sh was not found, but this repo IS the" >&2
+    echo "harness repo (adapters/claude-code/manifest.json is present)." >&2
+    echo >&2
+    echo "The harness repo must not be able to silently disarm its own gate:" >&2
+    echo "a checkout to a pre-gate commit, a stash, or an edit that removes" >&2
+    echo "the file would otherwise let unreviewed harness content reach the" >&2
+    echo "remote with nothing but a warning." >&2
+    echo >&2
+    echo "Expected at: $REVIEW_GATE" >&2
+    echo >&2
+    echo "Restore it (e.g. 'git checkout master -- adapters/claude-code/" >&2
+    echo "hooks/review-record-push-gate.sh') and push again." >&2
+    echo "================================================================" >&2
+    exit 1
+  fi
+  echo "WARNING: review-record-push-gate.sh not found — the AUTHORITATIVE review-record gate did NOT run for this push" >&2
+fi
+
+# 5. Run any local repo-specific pre-push hook
 LOCAL_HOOK="$(git rev-parse --show-toplevel 2>/dev/null)/.git/hooks/pre-push.local"
 if [ -f "$LOCAL_HOOK" ] && [ -x "$LOCAL_HOOK" ]; then
   echo "$REF_INPUT" | "$LOCAL_HOOK" "$@"

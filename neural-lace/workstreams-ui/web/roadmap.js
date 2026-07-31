@@ -92,13 +92,26 @@
   };
 
   // Roll-up precedence (C1 + adjudication (b)): governs display ORDER only —
-  // one badge PER class present, never a masked class (delta R4).
-  var ROLLUP_ORDER = ['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown'];
+  // one badge PER class present, never a masked class (delta R4). Round 15
+  // (operator, repeated): "running" joins the SAME machinery the
+  // stalled/unknown attention badges already use (C1's roll-up law applied
+  // to the running state, not just attention states) — leads the order
+  // since "someone is actively working on this right now" is the loudest,
+  // most wanted-visible fact, ahead of the genuine problem states.
+  // 'idle-dispatch' (2026-07-30) mirrors derive-lib.js's ATTENTION_PRECEDENCE
+  // exactly — it must sit between 'limit-parked' and 'unknown' here or the
+  // client's badge order silently disagrees with the server's roll-up law.
+  // It is DISTINCT from 'crashed' on purpose: a plan rolling up
+  // "1 stalled — crashed" for a task whose session is demonstrably alive
+  // sent the operator hunting a dead process that never existed.
+  var ROLLUP_ORDER = ['running', 'waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'idle-dispatch', 'unknown'];
   var ROLLUP_BADGE_LABEL = {
+    'running': 'running',
     'waiting-on-you': 'stalled — waiting on you',
     'crashed': 'stalled — crashed',
     'blocked-on': 'stalled — blocked on a predecessor',
     'limit-parked': 'stalled — limit-parked',
+    'idle-dispatch': 'stalled — no recent dispatch',
     'unknown': 'status unknown',
   };
 
@@ -138,18 +151,75 @@
   var lastFetchFailed = false;
   var lastDerivedAt = null;
   var landingId = null;   // the currently-highlighted landed item (survives re-render)
-  var pendingEdit = null; // {itemId, value, selStart, selEnd} — uncommitted title edit
   var whenLoadedQueue = [];
+  var currentMatchNotes = {}; // item id -> matched descendant (Round 12 item 8), refreshed each renderAll()
 
   // ============================================================
   // small builders
   // ============================================================
+  // EL-HELPER-BEGIN
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
     if (text !== undefined && text !== null) n.textContent = text;
     return n;
   }
+  // EL-HELPER-END
+
+  // RUNNING-CLAIM-BEGIN
+  // ============================================================
+  // THE RUNNING-CLAIM PREDICATE (2026-07-30 — operator-reported defect:
+  // "the green items are supposed to indicate something is actively
+  // running. I see several green plans that aren't running.")
+  //
+  // CLASS: non-empty-collection-as-truth-claim. `live_sessions` is the list
+  // of sessions ATTACHED to an item — it is NOT a list of running ones.
+  // Each member carries its OWN derived `status.value`, one of
+  // 'running' | 'stalled' | 'unknown' (server: deriveLiveAgentLeaves). A
+  // merely NON-EMPTY array therefore proves only "a session once touched
+  // this task", never "work is happening here now": the attached session is
+  // the DISPATCHING orchestrator, which routinely stays alive for hours
+  // across dozens of unrelated dispatches. Testing `.length` was the exact
+  // bug the server-side rollup gate already fixed (roadmap-routes.js's
+  // absorbOneChildRollUp) — the client kept painting the green chip from
+  // the identical bad predicate, so the operator's symptom survived the
+  // server fix untouched.
+  //
+  // EVERY client site that turns `live_sessions` into a RUNNING claim must
+  // go through these helpers, never `.length`.
+  //
+  // SCOPE — deliberately NOT applied to `unbound_sessions.live_sessions`
+  // (see renderAll). That collection is a DIFFERENT contract: the server
+  // (deriveUnboundSessionsNode) has already filtered it to running sessions
+  // and returns null when none are running, and its members are stamped
+  // status.value 'in-progress', not 'running'. Applying this predicate
+  // there would match nothing and silently hide genuinely-running work —
+  // the opposite failure (R9-7: "running work is NEVER invisible").
+  function isRunningSession(s) {
+    return !!(s && s.status && s.status.value === 'running');
+  }
+  function runningSessionsOf(node) {
+    return ((node && node.live_sessions) || []).filter(isRunningSession);
+  }
+  function hasRunningSession(node) {
+    return runningSessionsOf(node).length > 0;
+  }
+  // attachedSessionsLabel(item) — the drill-down header above the per-
+  // session list. Pure (string in, string out) so it is really executed by
+  // the self-test rather than eyeballed in a regex. It used to read
+  // "currently running (N)" with N = the FULL attached count, which claimed
+  // a stalled session was running even though the leaf beneath it said
+  // otherwise. The running count and the total are now reported separately,
+  // and the running wording is dropped entirely when nothing is running.
+  function attachedSessionsLabel(item) {
+    var total = ((item && item.live_sessions) || []).length;
+    var running = runningSessionsOf(item).length;
+    if (!total) return '';
+    return running
+      ? 'currently running (' + running + '):'
+      : 'attached sessions, none running (' + total + '):';
+  }
+  // RUNNING-CLAIM-END
   function btn(cls, text, onClick) {
     var b = document.createElement('button');
     b.type = 'button';
@@ -203,21 +273,31 @@
     return false;
   }
 
-  // applyFilters(items) -> {visible, hiddenChores, filtered}
+  // applyFilters(items) -> {visible, hiddenChores, filtered, matchNoteById}
   function applyFilters(items) {
     var q = filterText();
     var hiddenChores = 0;
     var visible = [];
+    var matchNoteById = {}; // Round 12 item 8: which descendant matched a task-id/title query
     (items || []).forEach(function (it) {
       if (!showChores && it.provenance === 'machine') { hiddenChores++; return; }
       if (selectedProjects.length && selectedProjects.indexOf(it.project || '') === -1) return;
       if (!itemMatchesText(it, q)) return;
       visible.push(it);
+      if (q) {
+        var ownMatch = (String(it.title || '')).toLowerCase().indexOf(q) !== -1 ||
+          (String(it.id || '')).toLowerCase().indexOf(q) !== -1;
+        if (!ownMatch) {
+          var m = findMatchingDescendant(it, q);
+          if (m) matchNoteById[it.id] = m;
+        }
+      }
     });
     return {
       visible: visible,
       hiddenChores: hiddenChores,
       filtered: !!(q || selectedProjects.length),
+      matchNoteById: matchNoteById,
     };
   }
 
@@ -278,12 +358,15 @@
   // plain flat list indistinguishable from an intent's other child kinds.
   //
   // R11 I5 (terminology sweep — "phases" labeling retired, docs/reviews/
-  // 2026-07-28-roadmap-hierarchy-ux-review.md): the user-facing chip is now
-  // "#k of n" (the Tree anatomy's own literal spec — "▸ #3 of 9 · <title>"),
-  // never "Phase 3 of 9". Internal identifiers (isPhaseSeries, rm-phase-*
-  // CSS classes) are left as-is (I5: internal identifiers rename OR
-  // annotate — annotated here; a pure rename buys nothing user-facing and
-  // widens this diff for no behavioral change).
+  // 2026-07-28-roadmap-hierarchy-ux-review.md) rendered this as a "#k of n"
+  // chip ("▸ #3 of 9 · <title>"). ROUND 12 (ux-ia-auditor live audit, item
+  // 3) RETIRED the chip entirely: live-measured PROOF it is a render-
+  // position artifact, not an identity — filtering to "T3" renumbered
+  // Accountable Estate from "#12 OF 16" to "#2 OF 3" on the same screen.
+  // isPhaseSeries/buildOrderLabel remain as pure, tested utilities (the
+  // connected-sequence CONNECTOR LINE they still drive via rm-phase-series/
+  // rm-phase-step is unaffected — only the unstable NUMBER TEXT is gone);
+  // renderNode/renderTree/renderChildList no longer call buildOrderLabel.
   function isPhaseSeries(children) {
     return !!(children && children.length && children[0] && children[0].kind === 'plan');
   }
@@ -291,6 +374,110 @@
     return '#' + (index + 1) + ' of ' + total;
   }
   // PHASE-SERIES-END
+
+  // TASK-SPAN-BEGIN
+  // Round 12 item 2 (the operator's #1 complaint, ux-ia-auditor live
+  // audit): the task ids that make up a plan's own progress fraction
+  // ALREADY reach the browser (server: roadmap-routes.js's deriveTaskNode
+  // emits `id: slug + '/' + t.id`) but were discarded at render — the
+  // fraction ("5/6") never said WHICH tasks. deriveTaskSpanLabel reads
+  // item.children (already on the wire, no server change needed) and
+  // derives a POSITIONAL span label.
+  //
+  // ROUND 13 fix 6 (operator, live walkthrough of the Round 12 surface:
+  // "The '1–5 done' text is telling me exactly the same thing as the
+  // progress bar sitting right next to it"): the done-half is DROPPED
+  // entirely — the fraction + bar (fractionCellForRow, column 4) already
+  // carry "how much done"; this column now names ONLY the one fact the bar
+  // cannot carry — WHICH task is next. When every task is done there is no
+  // "next" to name; the literal is "all done", never a done-range/count
+  // (the old "1–8 done" wording this function used to emit for that case is
+  // gone). In practice this branch is only ever reached by a plan whose
+  // OWN status is already 'complete' (item.status is 'complete' only once
+  // every child has shipped), and Round 12 item 6 already routes such
+  // plans to the top-level Shipped group — so "all done" is, as a
+  // structural consequence rather than a special case, only ever seen
+  // there. The contiguity/doneCount bookkeeping the old implementation
+  // needed to safely render a done-RANGE is gone with the range itself;
+  // firstOpenChildId below just finds the first non-complete child,
+  // full stop — still never fooled by a later complete task after an open
+  // one (T13-old-R12-11's non-contiguous case), just no longer needing to
+  // say so out loud.
+  //
+  //  - Never say "running" — this function never reads live_sessions and
+  //    never emits any word but "next"/"all done", regardless of the first
+  //    open task's own status value or live sessions. ROUND 13 fix 4 adds
+  //    an HONEST "running" claim, but that lives in taskSpanCell (the DOM
+  //    layer, below) which checks item.live_sessions directly on the ROW
+  //    being rendered — a live task genuinely carrying a session renders
+  //    "running" instead of "next"/checking this function at all; a task
+  //    that merely SITS NEXT with no live session gets "next", never
+  //    upgraded to a claim this pure function cannot verify.
+  function shortTaskId(id) {
+    var s = String(id == null ? '' : id);
+    var i = s.lastIndexOf('/');
+    return i === -1 ? s : s.slice(i + 1);
+  }
+  // firstOpenChildId(children) -> id | null. Shared by deriveTaskSpanLabel
+  // (the parent's OWN "<id> next" token) and, at the call sites in
+  // renderChildList/renderTaskBatches below, per-CHILD "is this the row the
+  // parent just called 'next'?" — same function, same answer, by
+  // construction (Round 13 fix 4: the child flagged "next" is always
+  // IDENTICAL to the id named in the parent's own task-span text).
+  function firstOpenChildId(children) {
+    var kids = children || [];
+    for (var i = 0; i < kids.length; i++) {
+      var isDone = !!(kids[i] && kids[i].status && kids[i].status.value === 'complete');
+      if (!isDone) return kids[i].id;
+    }
+    return null;
+  }
+  // deriveTaskSpanLabel(item) — Round 15 (operator, repeated): "if I expand
+  // a plan I can see the tasks that are in progress, but the plan itself
+  // doesn't show there's anything in progress." When item.roll_up.running
+  // is populated (server's absorbOneChildRollUp: a REAL descendant
+  // live_sessions entry, the SAME signal taskSpanCell already renders as
+  // "running" on the leaf task row — never merely "in-progress status",
+  // which also fires on stale done>0-but-idle plans), the token becomes
+  // "<id> running" instead of "<id> next" — same id slot, one word swapped,
+  // never a fabricated claim this function cannot verify (the server
+  // already verified it via the roll-up law, C1 applied to running).
+  function deriveTaskSpanLabel(item) {
+    var kids = (item && item.children) || [];
+    if (!kids.length) return '';
+    var openId = firstOpenChildId(kids);
+    var runningEntry = item && item.roll_up && item.roll_up.running;
+    var isRunning = !!(runningEntry && runningEntry.count);
+    if (openId === null) return isRunning ? 'running' : 'all done';
+    return shortTaskId(openId) + (isRunning ? ' running' : ' next');
+  }
+  // TASK-SPAN-END
+
+  // FILTER-MATCH-BEGIN
+  // Round 12 item 8: filtering by a task id (e.g. "T3") already returns the
+  // OWNING plan rows (itemMatchesText recurses into children/child_plans),
+  // but gave no hint WHICH descendant matched — the operator had to open
+  // every returned plan and hand-scan its full task list. findMatchingDescendant
+  // walks children/child_plans (never the item's OWN title/id — the caller
+  // only needs this when the item's own fields did NOT match) and returns
+  // the first id/title hit, or null. Pure (no DOM) — vm-sandbox tested like
+  // visibleFromRequests/isPhaseSeries above.
+  function findMatchingDescendant(item, q) {
+    if (!q) return null;
+    var lists = [(item && item.children) || [], (item && item.child_plans) || []];
+    for (var li = 0; li < lists.length; li++) {
+      var arr = lists[li];
+      for (var i = 0; i < arr.length; i++) {
+        var c = arr[i];
+        if ((String(c.id || '')).toLowerCase().indexOf(q) !== -1 ||
+            (String(c.title || '')).toLowerCase().indexOf(q) !== -1) return c;
+        var nested = findMatchingDescendant(c, q);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
+  // FILTER-MATCH-END
 
   // PROJECT-GROUPING-BEGIN
   // Round 9 gap 2 (R9-2, operator audit): 8A re-rooted the tree on plans,
@@ -337,10 +524,17 @@
       var v = (it.status && it.status.value) || 'unknown';
       counts[v] = (counts[v] || 0) + 1;
     });
+    // Round 15 (coordinator, operator verbatim: "the Workstreams UI still
+    // doesn't actually represent the actual order of building"): "in
+    // progress" leads the strip (immediately after "in build order") —
+    // matching the new render order (bandPlanItems, below) that now puts
+    // in-progress-ish plans before upcoming ones — instead of leading with
+    // "upcoming", which read as backwards next to a phrase claiming build
+    // order.
     var buckets = [
-      ['upcoming', (counts['not-started'] || 0)],
       ['in progress', (counts['in-progress'] || 0) + (counts['stalled'] || 0)],
       ['partially done', (counts['merged-unverified'] || 0)],
+      ['upcoming', (counts['not-started'] || 0)],
       ['complete', (counts['complete'] || 0)],
     ];
     var parts = buckets.filter(function (b) { return b[1]; }).map(function (b) {
@@ -357,13 +551,73 @@
   }
   // PROJECT-GROUPING-END
 
+  // PLAN-BANDING-BEGIN
+  // bandPlanItems(items) — Round 15 (coordinator, operator verbatim: "the
+  // Workstreams UI still doesn't actually represent the actual order of
+  // building, at least not at the plan level"). roadmap_rank's DEFAULT is
+  // registry-insertion order (R11 adjudication (a), deliberately NOT
+  // recency — recency churn would reorder the list under the operator
+  // daily, so that reasoning still stands and is UNCHANGED here); but
+  // insertion order alone lets a not-started plan sit ABOVE one that is
+  // actively in-progress, which reads as "wrong order" even though rank
+  // itself never lied. THREE STABLE BANDS fix it: any plan that is NOT
+  // not-started (in-progress/stalled/merged-unverified/unknown — "any
+  // running or partially-done plan") renders before every not-started
+  // ("upcoming") plan; each band keeps its OWN existing rank order
+  // internally (a plain filter, never a re-sort) so membership is purely
+  // STATE-DERIVED and changes ONLY when a plan's own status changes, never
+  // a recency-driven reshuffle. Shipped (complete) is already its own
+  // separate band, unchanged (Round 12 item 6) — this only reorders what
+  // was previously the single flat "live" list. Pure, standalone-
+  // executable (same vm-sandbox test technique as groupItemsByProject/
+  // projectGroupHeaderText above — no outer-scope access).
+  function bandPlanItems(items) {
+    var arr = items || [];
+    var inProgress = arr.filter(function (it) { return it.status && it.status.value !== 'not-started'; });
+    var upcoming = arr.filter(function (it) { return !it.status || it.status.value === 'not-started'; });
+    return inProgress.concat(upcoming);
+  }
+  // PLAN-BANDING-END
+
   // ============================================================
   // status chip + roll-up badges + markers (shared by tree AND kanban)
   // ============================================================
+  // Round 12 item 4 (operator: the status chip is redundant with the
+  // fraction/progress bar for the states the fraction CAN derive). The
+  // fraction derives not-started (0/N), complete (N/N), and in-progress
+  // (anything in between) by construction — it CANNOT derive stalled,
+  // merged-unverified, or unknown, which is exactly why those three stay
+  // loud. DERIVABLE_STATES gates statusChip() below; EXCEPTION_GLYPH
+  // supplies the small column-6 glyph for the other three.
+  var DERIVABLE_STATES = { 'not-started': true, 'in-progress': true, 'complete': true };
+  var EXCEPTION_GLYPH = { stalled: '⚠', 'merged-unverified': '⏳', unknown: '?' };
+  var TITLE_STATE_CLASS = {
+    'not-started': 'rm-title-not-started',
+    'in-progress': 'rm-title-in-progress',
+    'complete': 'rm-title-complete',
+    'stalled': 'rm-title-stalled',
+    'merged-unverified': 'rm-title-merged-unverified',
+    'unknown': 'rm-title-unknown',
+  };
+  function titleStateClass(item) {
+    var v = (item.status && item.status.value) || '';
+    return TITLE_STATE_CLASS[v] || '';
+  }
+
   function statusChip(item) {
     var st = item.status || {};
     var value = st.value || 'unknown';
-    var label = st.label || STATUS_LABEL[value] || value;
+    // Round 12 item 4: no chip at all for the three DERIVABLE states — the
+    // fraction + task-span text already say it; a same-info chip here was
+    // the operator's named redundancy ("showing the 'in progress'/
+    // 'complete' status next to the progress bar is also redundant").
+    // ROADMAP-SUPERSEDED-RENDERS-PENDING-01: a `complete` item carrying a
+    // `terminal_label` (superseded/abandoned) is the ONE exception — an
+    // authored terminal status must render its own distinct chip inside
+    // Shipped, never fold silently into the same no-chip "ordinary
+    // complete" bucket (server: roadmap-routes.js derivePlanRootNode).
+    if (DERIVABLE_STATES[value] && !st.terminal_label) return null;
+    var label = st.terminal_label || st.label || STATUS_LABEL[value] || value;
     var ageTs = value === 'complete' ? (item.completed_at || st.since) : st.since;
     var text = label + (ageTs ? ', ' + formatAge(ageTs) : '');
     var chip;
@@ -378,7 +632,8 @@
       });
       chip.title = st.reason || 'open for the derived reason';
     } else {
-      chip = el('span', 'chip rm-status rm-status-' + value, text);
+      var chipClass = 'chip rm-status rm-status-' + (st.terminal_label ? 'terminal-' + st.terminal_label : value);
+      chip = el('span', chipClass, text);
     }
     return chip;
   }
@@ -388,11 +643,14 @@
     // bar ALWAYS carries the "n/m" text (never bar-only).
     if (!item.progress || !item.progress.total) return null;
     var p = item.progress;
+    var statusVal = (item.status && item.status.value) || 'not-started';
     var wrap = el('span', 'rm-progress');
     var barOuter = el('span', 'rm-progress-bar');
     barOuter.setAttribute('role', 'img');
     barOuter.setAttribute('aria-label', p.done + ' of ' + p.total + ' tasks done');
-    var fill = el('span', 'rm-progress-fill');
+    // Round 12 item 5: the fill is STATUS-COLORED (rm-fill-<value>), not one
+    // static green for every fraction — retires --ok from the roadmap.
+    var fill = el('span', 'rm-progress-fill rm-fill-' + statusVal);
     fill.style.width = Math.round(100 * p.done / p.total) + '%';
     barOuter.appendChild(fill);
     wrap.appendChild(barOuter);
@@ -469,6 +727,120 @@
     return frag;
   }
 
+  // ============================================================
+  // Round 12 (ux-ia-auditor live audit) — the row's GRID CELLS. Each
+  // function ALWAYS returns a real element (possibly empty) so every row
+  // appends exactly one child per column, in the same order, every time —
+  // the fix for the flex-wrap misalignment (item 1): a conditionally-
+  // skipped child used to shift every LATER column into the wrong slot.
+  //
+  // ROUND 13 fix 1 (operator walkthrough, live-measured): the dedicated
+  // 56px marker column (new/added-mid-build chips) was EMPTY on 105/112
+  // real rows (93.75%) — a fixed-width dead zone between the chevron and
+  // the title on nearly every row, live-measured pushing the title text
+  // ~66px (56px column + its own 10px grid gap) further right than
+  // necessary. markerCell/its column are RETIRED; markerChips(item) now
+  // renders INSIDE titleCell (column now 2, was 3) — the same place
+  // referenceLifecycleBadges already lived, appended right after the
+  // title text. The grid goes from 7 columns to 6; every row still
+  // appends exactly one cell per remaining column, always (the R12-6
+  // discipline this fix does not relax).
+  // ============================================================
+  function titleCell(item) { // column 2 (1fr)
+    var cell = el('span', 'rm-cell rm-cell-title');
+    // Round 13 fix 4 (per-task done-state, operator: "why doesn't it show
+    // the progress of each task?"): a leaf task that's actually complete
+    // gets a leading check glyph. Text (not color-only, WCAG 1.4.1) and
+    // NOT aria-hidden — a task-kind row carries no other done/not-done
+    // text signal of its own (the exception chip is suppressed for the
+    // three derivable states, same as everywhere else in this file), so
+    // this glyph is the one place a screen-reader user hears "done" on an
+    // individual task row.
+    if (item.kind === 'task' && item.status && item.status.value === 'complete') {
+      cell.appendChild(el('span', 'rm-task-check', '✓'));
+    }
+    var titleSpan = el('span', 'rm-title ' + titleStateClass(item), item.title);
+    // Round 12 item 1: ellipsis truncates the title (CSS); the FULL text
+    // lives in title= — R9-1's slug-as-tooltip is folded in after it so
+    // hovering still surfaces the plan slug, not just the title repeated.
+    titleSpan.title = item.title + (item.kind === 'plan' ? ' — ' + item.id : '');
+    cell.appendChild(titleSpan);
+    cell.appendChild(markerChips(item)); // Round 13 fix 1: folded in from the retired marker column
+    cell.appendChild(referenceLifecycleBadges(item)); // rare (dangling-parent/cycle); wraps inside this cell
+    return cell;
+  }
+
+  // taskSpanCell(item, isNextTask) — column 3 (190px). Round 13 fix 4: for a
+  // TASK-kind row (a leaf has no children of its own, so
+  // deriveTaskSpanLabel(item.children) is always '') this column is
+  // otherwise dead space — repurposed to carry the one per-task claim the
+  // rest of the row cannot: "running" when the task genuinely carries a
+  // live session (checked directly on THIS item — never fabricated,
+  // never borrowed from a sibling), else "next" when the caller
+  // (renderChildList/renderTaskBatches) determined this is the first
+  // not-done task in its parent's list — the SAME id the parent's own
+  // task-span text just named "next" (both call firstOpenChildId). A task
+  // that is neither running nor next renders nothing here — no fake
+  // granularity on every row.
+  // TASK-SPAN-CELL-BEGIN
+  function taskSpanCell(item, isNextTask) {
+    var cell = el('span', 'rm-cell rm-cell-taskspan');
+    if (item.kind === 'task') {
+      // 2026-07-30: was `item.live_sessions && item.live_sessions.length` —
+      // membership, not a running claim. That is what painted a green
+      // "running" chip on a task whose only attached session was itself
+      // 'stalled'. PLAN rows never had this bug (deriveTaskSpanLabel reads
+      // the server's verified item.roll_up.running); TASK rows are the
+      // operator's headline example. See the RUNNING-CLAIM block header.
+      if (hasRunningSession(item)) {
+        // Round 15 (operator: "the running indicator is small and not
+        // obvious"): the `chip` base class gives it the same loud
+        // bordered-pill treatment every other status signal in this view
+        // uses, instead of plain inline text.
+        cell.appendChild(el('span', 'chip rm-task-running', 'running'));
+      } else if (isNextTask) {
+        cell.appendChild(el('span', 'rm-task-next', 'next'));
+      }
+      return cell;
+    }
+    // Round 15: the "<id> running" token (deriveTaskSpanLabel) earns the
+    // SAME loud --info blue + weight 600 the leaf task's own "running" chip
+    // and the bright in-progress title use — text + colour together (WCAG
+    // 1.4.1: the word "running" is the non-colour carrier, the blue is the
+    // reinforcement, never the only signal). "next"/"all done" stay the
+    // existing neutral (positional claim only).
+    var label = deriveTaskSpanLabel(item);
+    if (label) {
+      var isRunningLabel = label === 'running' || / running$/.test(label);
+      cell.appendChild(el('span', isRunningLabel ? 'rm-taskspan-running' : '', label));
+    }
+    return cell;
+  }
+  // TASK-SPAN-CELL-END
+
+  function fractionCellForRow(item) { // column 4 (76px)
+    var cell = el('span', 'rm-cell rm-cell-fraction');
+    var prog = progressNode(item);
+    if (prog) cell.appendChild(prog);
+    return cell;
+  }
+
+  function exceptionGlyphCell(item) { // column 5 (46px)
+    var v = item.status && item.status.value;
+    var g = EXCEPTION_GLYPH[v];
+    var cell = el('span', 'rm-cell rm-cell-exglyph' + (g ? ' rm-exglyph-' + v : ''), g || '');
+    if (g) cell.setAttribute('aria-hidden', 'true'); // decorative — the adjacent label chip (column 6) carries the real text (WCAG 1.4.1)
+    return cell;
+  }
+
+  function exceptionLabelCell(item) { // column 6 (132px): the loud exception chip + descendant roll-up badges
+    var cell = el('span', 'rm-cell rm-cell-exception');
+    var chip = statusChip(item); // null for the three derivable states — an empty column 6 means "healthy"
+    if (chip) cell.appendChild(chip);
+    cell.appendChild(rollupBadges(item)); // descendant attention (C1) — independent of this item's OWN state
+    return cell;
+  }
+
   // taskStructureBlock(item) — round-6 gap 1 + round-7 7A/7B/7B-i: renders
   // the task's own lead sentences, its "- **Label:**" sub-bullets (visible
   // hierarchy — 7B), and any currently-attached live agent sessions
@@ -508,10 +880,14 @@
       frag.appendChild(subWrap);
     }
 
+    // ATTACHED-SESSIONS-LABEL-BEGIN
     var liveSessions = item.live_sessions || [];
     if (liveSessions.length) {
       var agentWrap = el('div', 'rm-agents-wrap');
-      agentWrap.appendChild(el('span', 'rm-drill-label', 'currently running (' + liveSessions.length + '):'));
+      // The LIST stays complete regardless of the header: a stalled/unknown
+      // attached session is real, useful context and is never hidden — it
+      // just no longer gets described as running. See attachedSessionsLabel.
+      agentWrap.appendChild(el('span', 'rm-drill-label', attachedSessionsLabel(item)));
       var agentList = el('ul', 'rm-agents');
       liveSessions.forEach(function (a) {
         var li = document.createElement('li');
@@ -528,6 +904,7 @@
       agentWrap.appendChild(agentList);
       frag.appendChild(agentWrap);
     }
+    // ATTACHED-SESSIONS-LABEL-END
 
     return frag;
   }
@@ -567,24 +944,98 @@
     return det;
   }
 
+  // openPlanDocModal(project, docPath) — reuses the EXISTING docModal DOM
+  // app.js already wires (Esc, docClose, docScrim all close it regardless
+  // of who opened it), the SAME small-duplicated-reader pattern asks.js's
+  // own openPlanDocModal already established (ux-review amendment 6: "no
+  // pane grows its own link handling"). Best-effort no-op if the shared
+  // modal elements are absent from this page for any reason.
+  function openPlanDocModal(project, docPath) {
+    var docModal = $('docModal'), docTitle = $('docTitle'), docBody = $('docBody'), docOpenEditor = $('docOpenEditor');
+    if (!docModal || !docTitle || !docBody) return;
+    docTitle.textContent = project + ' / ' + docPath;
+    docBody.textContent = 'loading…';
+    docModal.hidden = false;
+    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        // Round 16 deliverable 2: same shared markdown renderer app.js's
+        // Docs panel uses for this SAME #docBody element (see
+        // web/md-render.js's header for the escaping-first security
+        // contract) — no second implementation. Missing global (script
+        // failed to load) degrades to plain text, never a throw.
+        if (j && j.ok) {
+          if (window.MdRender && typeof window.MdRender.renderMarkdown === 'function') {
+            docBody.innerHTML = window.MdRender.renderMarkdown(j.content);
+          } else {
+            docBody.textContent = j.content;
+          }
+        } else {
+          docBody.textContent = 'error: ' + (j && j.error);
+        }
+      })
+      .catch(function (err) { docBody.textContent = 'error: ' + err; });
+    if (docOpenEditor) {
+      docOpenEditor.onclick = function () {
+        fetch('/api/doc/open', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: project, path: docPath }),
+        }).catch(function () {});
+      };
+    }
+  }
+  function makeCopyBtn(text, label) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'ghost small copy-btn';
+    b.textContent = label || 'copy';
+    b.title = 'copy "' + text + '" to clipboard';
+    b.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).catch(function () {});
+      var orig = b.textContent;
+      b.textContent = 'copied';
+      setTimeout(function () { b.textContent = orig; }, 1200);
+    });
+    return b;
+  }
+
   // ============================================================
-  // drill-down body (C6 + C5 reasons + title edit + rank reorder)
+  // drill-down body (C6 + C5 reasons + merged-unverified override).
+  // ROUND 16: title edit + rank reorder used to live here — both retired
+  // (deliverables 3/4/5); reorder now wires onto the SUMMARY row itself,
+  // see wirePlanRowReorder/renderNode, not this drill-down body.
   // ============================================================
-  function drilldown(item, topLevelIndex, topLevelCount) {
+  function drilldown(item) {
     var box = el('div', 'rm-drill');
 
     // R9 follow-up (operator 2026-07-24: "is there a plan this is tied to?
-    // why don't I see a link?"): every phase IS a plan file — link it,
-    // absolute path (operator directive: links are always absolute).
+    // why don't I see a link?"): every phase IS a plan file — link it.
+    // ROUND 15 (operator, verified live): the OLD `file:///` href was a
+    // DEAD link from this http-served page (confirmed live at :7733 — no
+    // navigation, no network activity on click). Plan links now open the
+    // SAME in-page docs viewer the Docs button already renders markdown
+    // through (/api/doc {project,path}, reusing docModal) — never a
+    // second renderer (ux-review amendment 6). `plan_doc` is null only
+    // when the plan lives outside every configured/discovered project
+    // root; that (rare, should not occur for this repo's own plans) case
+    // falls back to plain text + copy, never a fabricated/dead link.
     if (item.kind === 'plan' && item.plan_path) {
       var planRow = el('div', 'rm-plan-link-row');
       planRow.appendChild(el('span', 'rm-drill-label', 'plan: '));
-      var a = document.createElement('a');
-      a.className = 'rm-plan-link';
-      a.textContent = item.plan_path.replace(/^.*[\\/](docs[\\/])/, '$1').replace(/\\/g, '/');
-      a.title = item.plan_path;
-      a.href = 'file:///' + String(item.plan_path).replace(/\\/g, '/').replace(/^\/+/, '');
-      planRow.appendChild(a);
+      var displayPath = item.plan_path.replace(/^.*[\\/](docs[\\/])/, '$1').replace(/\\/g, '/');
+      if (item.plan_doc && item.plan_doc.project && item.plan_doc.path) {
+        var planLinkBtn = btn('rm-plan-link rm-plan-link-btn', displayPath, function () {
+          openPlanDocModal(item.plan_doc.project, item.plan_doc.path);
+        });
+        planLinkBtn.title = item.plan_path + ' — open the rendered file in-page';
+        planRow.appendChild(planLinkBtn);
+      } else {
+        var planTextSpan = el('span', 'rm-plan-link', displayPath);
+        planTextSpan.title = item.plan_path;
+        planRow.appendChild(planTextSpan);
+        planRow.appendChild(makeCopyBtn(item.plan_path, 'copy path'));
+      }
       box.appendChild(planRow);
     }
 
@@ -648,35 +1099,20 @@
         feedback.className = 'rm-edit-feedback' + (isErr ? ' rm-feedback-err' : ' rm-feedback-ok');
       }
 
-      // Compact item chrome (round-6 gap 4): ONE row of small ICON buttons
-      // (never two permanent rows), hidden until hover OR focus-within
-      // (CSS-only — keyboard reachable, WCAG 2.2 2.5.7 stands: never
-      // hover-only). The todo.js edit pattern (explicit Edit button, never
-      // click-on-text-only, Escape cancels, focus returns — C9/A3) and the
-      // keyboard-operable move up/down (A7 + delta R2) are UNCHANGED
-      // behaviorally — only the chrome's visual weight + grouping changed.
-      var titleRow = el('div', 'rm-title-edit');
-      var chromeRow = el('div', 'rm-item-chrome');
-      var editBtn = btn('ghost small rm-edit-btn rm-icon-btn', '✎', null);
-      editBtn.setAttribute('aria-label', 'edit the title of "' + item.title + '"');
-      editBtn.dataset.focusKey = 'edit:' + item.id;
-      editBtn.addEventListener('click', function () { openTitleEditor(titleRow, item, editBtn, say, null); });
-      chromeRow.appendChild(editBtn);
-
-      // build-order reorder — keyboard-operable REAL buttons, never
-      // drag-only (A7 + WCAG 2.2 2.5.7, delta R2).
-      var upBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↑', function () { moveRank(item, 'up', say); });
-      upBtn.setAttribute('aria-label', 'Move up in build order: ' + item.title);
-      upBtn.dataset.focusKey = 'rank-up:' + item.id;
-      upBtn.disabled = topLevelIndex === 0;
-      var downBtn = btn('ghost small rm-rank-btn rm-icon-btn', '↓', function () { moveRank(item, 'down', say); });
-      downBtn.setAttribute('aria-label', 'Move down in build order: ' + item.title);
-      downBtn.dataset.focusKey = 'rank-down:' + item.id;
-      downBtn.disabled = topLevelIndex === topLevelCount - 1;
-      chromeRow.appendChild(upBtn);
-      chromeRow.appendChild(downBtn);
-      box.appendChild(titleRow);
-      box.appendChild(chromeRow);
+      // ROUND 16 deliverables 3/4 (operator, live walkthrough, verbatim):
+      // "I don't like the buttons appearing below the plan doc links;
+      // they force the GUI underneath to jump around awkwardly, and
+      // they're also unnecessary. I don't see any need to edit the name
+      // of the plan titles." The edit-button + Move up/down chrome row
+      // that used to render here (round-6 gap 4, then Round 13 fix 5's
+      // height:0 hover-reveal hack) is REMOVED outright, not merely
+      // hidden — plan titles come from the H1, no edit affordance
+      // anywhere in this view. Reordering is now drag-and-drop on the
+      // row's own grip handle (wirePlanRowReorder, called from renderNode
+      // once the row's DOM exists) — same moveRank()/`/api/roadmap/rank`
+      // delegation as the retired buttons; a NON-VISUAL Cmd/Ctrl+ArrowUp/Down keyboard
+      // path on the focused row satisfies WCAG 2.2 2.5.7 (drag must not
+      // be the ONLY operable path) without resurrecting a visible control.
 
       // merged-unverified: the LABELED per-item operator override to
       // complete (A4's binding rule) — delegates to the existing lifecycle
@@ -708,48 +1144,223 @@
     return box;
   }
 
-  function openTitleEditor(titleRow, item, editBtn, say, restore) {
-    if (titleRow.querySelector('.rm-title-input')) return; // already open
-    var input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'rm-title-input';
-    input.value = restore ? restore.value : item.title;
-    input.setAttribute('aria-label', 'edit title');
-    input.dataset.editFor = item.id;
-    var saveBtn = btn('btn-go small', 'Save', null);
-    var cancelBtn = btn('ghost small', 'Cancel', null);
-    editBtn.hidden = true;
-    // gap 4: keep the (otherwise hover/focus-only) chrome row visible for
-    // the WHOLE edit, so a stray mouseout mid-edit never hides the open
-    // input/Save/Cancel controls.
-    titleRow.classList.add('rm-editing');
-    titleRow.appendChild(input);
-    titleRow.appendChild(saveBtn);
-    titleRow.appendChild(cancelBtn);
-    input.focus();
-    if (restore && restore.selStart !== undefined) {
-      try { input.setSelectionRange(restore.selStart, restore.selEnd); } catch (_) {}
-    } else { input.select(); }
-    function close() {
-      input.remove(); saveBtn.remove(); cancelBtn.remove();
-      editBtn.hidden = false;
-      titleRow.classList.remove('rm-editing');
-      editBtn.focus(); // focus-return (todo.js pattern)
-      if (pendingEdit && pendingEdit.itemId === item.id) pendingEdit = null;
+  // openTitleEditor / the plan-title edit affordance is RETIRED (Round 16
+  // deliverable 4, operator verbatim: "I don't see any need to edit the
+  // name of the plan titles"). Plan titles come from the H1 — no edit
+  // input, no Save/Cancel, anywhere in this view. NOTE: `POST
+  // /api/roadmap/title` still exists server-side (roadmap-routes.js) —
+  // deliberately left in place, out of THIS scope: the operator's ask was
+  // "no edit affordance on plan TITLES" in the Roadmap view specifically
+  // ("ask/request title editing elsewhere is NOT in scope"), and
+  // requests-routes.js's own title-write path shares the same underlying
+  // delegation (see that file's own comment referencing this endpoint) —
+  // removing the route would risk that shared surface for a UI-only ask.
+
+  // ============================================================
+  // ROUND 16 deliverable 5 — drag-and-drop build-order reordering
+  // (replaces the retired Move up / Move down buttons). Persists via the
+  // SAME /api/roadmap/rank one-step-at-a-time delegation moveRank() below
+  // always used; a drag of N visual positions issues N sequential calls.
+  // WCAG 2.2 2.5.7 (drag must never be the ONLY operable path): every
+  // plan row's <summary> also carries a Cmd/Ctrl+ArrowUp/Down keydown
+  // handler that calls moveRank() directly — a real, documented (row
+  // title/aria-keyshortcuts), non-visual alternative, not a second visible
+  // control (which is exactly what the operator asked to have removed).
+  // ============================================================
+  var dragState = null; // { itemId } — the plan currently being dragged
+
+  // planRowContainer(rowEl) -> the nearest wrapper that groups a plan row
+  // with its TRUE reorder siblings, mirroring the server's own
+  // computeSiblingIds scoping (roadmap-routes.js): top-level plans share
+  // one project group (or the bare tree, ungrouped fallback); a master's
+  // resolved child plans share their own .rm-master-plans subsection's
+  // .rm-children wrapper (rendered with rm-phase-series exactly like the
+  // top level — renderChildList applies the identical wrapping either way).
+  function planRowContainer(rowEl) {
+    return rowEl.closest('.rm-project-group, .rm-children.rm-phase-series, .rm-tree');
+  }
+  // movableRowEl(el, container) -> the element that is the DIRECT CHILD of
+  // `container` on `el`'s ancestor chain — i.e. the unit the optimistic
+  // reorder must move. NOT planRowContainer(): that returns the GROUP
+  // (.rm-project-group / .rm-tree), so using it for both dragged and
+  // target resolved BOTH to the same element and the optimistic move
+  // silently no-op'd (caught live at :7733, 2026-07-30 — the drop's rank
+  // POST fired while the DOM never changed). Depending on layout the unit
+  // is either the .rm-phase-step wrapper or the bare .rm-node.rm-kind-plan,
+  // exactly matching siblingPlanRows' own two selectors below.
+  function movableRowEl(el, container) {
+    if (!el || !container) return null;
+    var cur = el;
+    while (cur && cur.parentNode && cur.parentNode !== container) {
+      cur = cur.parentNode;
+      if (cur === document.body) return null;
     }
-    cancelBtn.addEventListener('click', close);
-    input.addEventListener('keydown', function (e) { if (e.key === 'Escape') close(); });
-    saveBtn.addEventListener('click', function () {
-      var t = input.value.trim();
-      if (!t) { say('Title cannot be empty.', true); return; }
-      saveBtn.disabled = true;
-      fetch('/api/roadmap/title', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: item.id, title: t }),
-      }).then(function (r) { return r.json(); }).then(function (j) {
-        if (j && j.ok) { say('Title saved.', false); close(); load(); }
-        else { saveBtn.disabled = false; say((j && j.error) || 'Could not save the title.', true); }
-      }).catch(function (e) { saveBtn.disabled = false; say('Could not save the title: ' + e, true); });
+    return (cur && cur.parentNode === container) ? cur : null;
+  }
+  function siblingPlanRows(container) {
+    if (!container) return [];
+    return Array.prototype.slice.call(
+      container.querySelectorAll(':scope > .rm-phase-step > .rm-node.rm-kind-plan, :scope > .rm-node.rm-kind-plan')
+    );
+  }
+  function clearDropIndicators() {
+    var marked = document.querySelectorAll('.rm-drop-before, .rm-drop-after');
+    for (var i = 0; i < marked.length; i++) marked[i].classList.remove('rm-drop-before', 'rm-drop-after');
+  }
+  // reorderFeedback(det) -> a say(text, isErr) callback writing into THIS
+  // row's own .rm-edit-feedback element (the same one the merged-
+  // unverified override button already renders into) — one feedback
+  // surface per plan row, never a second implementation.
+  function reorderFeedback(det) {
+    return function (text, isErr) {
+      if (!det) return;
+      var fb = det.querySelector(':scope > .rm-drill > .rm-edit-feedback');
+      if (!fb) return;
+      fb.hidden = false;
+      fb.textContent = text;
+      fb.className = 'rm-edit-feedback' + (isErr ? ' rm-feedback-err' : ' rm-feedback-ok');
+    };
+  }
+  // sequentialMove(item, direction, remaining, say) — issues `remaining`
+  // single-step /api/roadmap/rank calls (the exact endpoint the retired
+  // buttons called), silently for every step but the last; the LAST step
+  // delegates to moveRank() itself so the user sees the SAME human message
+  // ("Moved ... now #N of M in ...'s build order") a single button click
+  // always produced — one message implementation, not a duplicate.
+  function sequentialMove(item, direction, remaining, say) {
+    if (remaining <= 1) { moveRank(item, direction, say); return; }
+    fetch('/api/roadmap/rank', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: item.id, direction: direction }),
+    }).then(function (r) { return r.json(); }).then(function (j) {
+      if (!j || !j.ok) { if (say) say('Could not reorder: ' + ((j && j.error) || 'unknown error'), true); load(); return; }
+      if (j.unchanged) {
+        if (say) say('Could not move further — already at the ' + (direction === 'up' ? 'top' : 'bottom') + '.', false);
+        load();
+        return;
+      }
+      sequentialMove(item, direction, remaining - 1, say);
+    }).catch(function (e) { if (say) say('Could not reorder: ' + e, true); load(); });
+  }
+  // REORDER-STEPS-BEGIN
+  // computeReorderSteps(ids, draggedId, targetId, before) -> {direction,
+  // count} | null — PURE (no DOM), so the selftest can real-execute it
+  // directly in a `vm` sandbox rather than trusting a source-regex. `ids`
+  // is the CURRENT sibling order (same list /api/roadmap/rank's
+  // computeSiblingIds would compute server-side); the result is the
+  // direction + step count of single-position /api/roadmap/rank moves
+  // needed to land `draggedId` immediately before/after `targetId`.
+  function computeReorderSteps(ids, draggedId, targetId, before) {
+    var fromIdx = ids.indexOf(draggedId);
+    var targetIdx = ids.indexOf(targetId);
+    if (fromIdx === -1 || targetIdx === -1 || fromIdx === targetIdx) return null;
+    var destIdx = before ? targetIdx : targetIdx + 1;
+    if (fromIdx < destIdx) destIdx -= 1; // removing the dragged row shifts everything after it left by one
+    var steps = destIdx - fromIdx;
+    if (steps === 0) return null;
+    return { direction: steps > 0 ? 'down' : 'up', count: Math.abs(steps) };
+  }
+  // REORDER-STEPS-END
+  function performDrop(draggedId, targetId, before, say) {
+    var targetEl = document.querySelector('[data-item-id="' + cssEscape(targetId) + '"]');
+    var container = targetEl && planRowContainer(targetEl);
+    var rows = siblingPlanRows(container);
+    var ids = rows.map(function (r) { return r.dataset.itemId; });
+    var move = computeReorderSteps(ids, draggedId, targetId, before);
+    if (!move) return;
+    var draggedItem = findItemData(draggedId) || { id: draggedId };
+    // OPTIMISTIC MOVE (operator, 2026-07-30: "it actually takes several
+    // seconds for the GUI to actually update after dropping the item").
+    // ROOT CAUSE: a drop of N positions fires N SEQUENTIAL round-trips
+    // (sequentialMove recurses one /api/roadmap/rank POST per position,
+    // each awaiting the last) and only then re-renders — so the row sat
+    // visibly un-moved for seconds and the drag read as broken.
+    // The DOM now moves IMMEDIATELY, before any network call; the
+    // persistence still runs (and still reconciles/repairs via load() on
+    // failure), so a successful drop looks instant and a failed one is
+    // corrected rather than silently wrong.
+    var draggedEl = document.querySelector('[data-item-id="' + cssEscape(draggedId) + '"]');
+    var draggedRow = movableRowEl(draggedEl, container);
+    var targetRow = movableRowEl(targetEl, container);
+    if (draggedRow && targetRow && draggedRow !== targetRow &&
+        draggedRow.parentNode && draggedRow.parentNode === targetRow.parentNode) {
+      if (before) targetRow.parentNode.insertBefore(draggedRow, targetRow);
+      else targetRow.parentNode.insertBefore(draggedRow, targetRow.nextSibling);
+    }
+    sequentialMove(draggedItem, move.direction, move.count, say);
+  }
+  // wirePlanRowReorder(det, sum, item) — called from renderNode for every
+  // kind:"plan" row. Adds a small grip handle (draggable) into the title
+  // cell and dragover/drop/keydown listeners onto the row itself.
+  function wirePlanRowReorder(det, sum, item) {
+    var titleCellEl = sum.querySelector('.rm-cell-title');
+    if (titleCellEl) {
+      var handle = el('span', 'rm-drag-handle', '⠿');
+      handle.setAttribute('aria-hidden', 'true');
+      handle.draggable = true;
+      handle.title = 'drag to reorder';
+      titleCellEl.insertBefore(handle, titleCellEl.firstChild);
+    }
+    // REVERTED (operator, 2026-07-30): the whole-row drag surface was my
+    // own inference, not an ask — "I didn't ask you to make the whole row
+    // the drag surface. Please undo that." The grip is the ONLY drag
+    // handle, as Round 16 shipped it. The real defect the operator then
+    // identified was latency, not hit-area: the drop fired N sequential
+    // /api/roadmap/rank round-trips followed by a full roadmap re-render,
+    // so the row visibly snapped back and only reordered seconds later.
+    // That is fixed in performDrop (optimistic DOM move), not here.
+    if (titleCellEl) {
+      var gripEl = titleCellEl.querySelector('.rm-drag-handle');
+      if (gripEl) {
+        gripEl.addEventListener('dragstart', function (e) {
+          dragState = { itemId: item.id };
+          det.classList.add('rm-dragging');
+          if (e.dataTransfer) {
+            e.dataTransfer.effectAllowed = 'move';
+            try { e.dataTransfer.setData('text/plain', item.id); } catch (_) {}
+          }
+        });
+        gripEl.addEventListener('dragend', function () {
+          det.classList.remove('rm-dragging');
+          clearDropIndicators();
+          dragState = null;
+        });
+      }
+    }
+
+    sum.addEventListener('dragover', function (e) {
+      if (!dragState || dragState.itemId === item.id) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      var r = sum.getBoundingClientRect();
+      var before = (e.clientY - r.top) < r.height / 2;
+      clearDropIndicators();
+      sum.classList.add(before ? 'rm-drop-before' : 'rm-drop-after');
+    });
+    sum.addEventListener('dragleave', function () {
+      sum.classList.remove('rm-drop-before', 'rm-drop-after');
+    });
+    sum.addEventListener('drop', function (e) {
+      e.preventDefault();
+      var before = sum.classList.contains('rm-drop-before');
+      clearDropIndicators();
+      var dragged = dragState;
+      dragState = null;
+      if (!dragged || dragged.itemId === item.id) return;
+      performDrop(dragged.itemId, item.id, before, reorderFeedback(det));
+    });
+
+    // WCAG 2.2 2.5.7 — a non-drag path MUST exist. Cmd/Ctrl+ArrowUp/Down
+    // on the focused row (a real <summary>, already natively focusable)
+    // fires the SAME moveRank() the retired buttons called. Documented on
+    // the row itself (title + aria-keyshortcuts), never a silent shortcut.
+    sum.setAttribute('aria-keyshortcuts', 'Control+ArrowUp Control+ArrowDown Meta+ArrowUp Meta+ArrowDown');
+    var existingTitle = sum.getAttribute('title');
+    sum.setAttribute('title', (existingTitle ? existingTitle + ' — ' : '') + 'Cmd/Ctrl+↑/↓ to move in the build order');
+    sum.addEventListener('keydown', function (e) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key === 'ArrowUp') { e.preventDefault(); moveRank(item, 'up', reorderFeedback(det)); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); moveRank(item, 'down', reorderFeedback(det)); }
     });
   }
 
@@ -794,13 +1405,24 @@
   // sibling stays one line. The operator's explicit choices always win:
   // toggle stores true AND false (an explicit close survives re-renders;
   // the old delete-on-close made the default re-open it every tick).
+  // NODE-IS-ACTIVE-BEGIN
   function nodeIsActive(n) {
     if (!n) return false;
-    if (n.live_sessions && n.live_sessions.length) return true;
+    // 2026-07-30: was `n.live_sessions && n.live_sessions.length` —
+    // membership again (see the RUNNING-CLAIM block header). A task whose
+    // only attached session was 'stalled' counted as "active" and
+    // force-expanded its whole ancestor chain, spending the operator's
+    // scarce default-open budget on exactly the dead rows this round is
+    // trying to stop over-claiming. No false negative is introduced: a
+    // genuinely-running task also satisfies the 'in-progress' test below
+    // (the server derives in-progress and a 'running' leaf from the same
+    // heartbeat record), so it still auto-expands.
+    if (hasRunningSession(n)) return true;
     if (!n.status) return false;
     if (n.status.value === 'in-progress') return true;
     return n.status.value === 'stalled' && n.status.reason_class === 'waiting-on-you';
   }
+  // NODE-IS-ACTIVE-END
   function subtreeHasActive(n) {
     var lists = [n.children, n.child_plans];
     for (var li = 0; li < lists.length; li++) {
@@ -818,12 +1440,17 @@
     return subtreeHasActive(item);
   }
 
-  function renderNode(item, topLevelIndex, topLevelCount, phaseText) {
+  function renderNode(item, topLevelIndex, topLevelCount, isNextTask) {
     var det = document.createElement('details');
     det.className = 'rm-node rm-kind-' + item.kind;
     det.dataset.itemId = item.id;
     det.tabIndex = -1; // landing target: programmatically focusable (C2)
-    if (defaultOpen(item)) det.open = true;
+    // Round 12 item 8: a filter match living on a DESCENDANT forces this
+    // ancestor open so the match note (appended below) is reachable —
+    // folded into the SAME initial-open decision defaultOpen() makes so the
+    // toggle listener's deviation-tracking baseline stays correct.
+    var filterMatch = currentMatchNotes[item.id];
+    if (defaultOpen(item) || filterMatch) det.open = true;
     // Record only DEVIATIONS from the rendered state: the programmatic
     // default-open above also fires 'toggle', and persisting the default as
     // an explicit choice would freeze the active-path recomputation.
@@ -834,48 +1461,50 @@
       openSet[item.id] = det.open;
     });
 
+    // Round 12 (ux-ia-auditor live audit, item 1): a CSS GRID row — fixed
+    // columns, one cell appended per column, ALWAYS, even when empty (see
+    // the cell builders above). Replaces the flex-wrap layout that let
+    // conditionally-absent content shift every later column (measured live:
+    // a 292px/346px swing in where the status chip/fraction started).
+    // ROUND 13 fix 1: the dedicated marker column is RETIRED (live-measured
+    // 93.75% empty — see the cell-builders comment above); markerChips now
+    // renders inside titleCell, so the grid is 6 columns, not 7.
     var sum = document.createElement('summary');
     sum.className = 'rm-row';
-    // R10-2: explicit disclosure chevron (CSS rotates it on open) — the
-    // native marker was suppressed, leaving expandability invisible.
-    sum.appendChild(el('span', 'rm-chevron', '▸'));
-    // R10-1: the phase label lives ON the title row (the separate label
-    // line above each node made the title read as a child item).
-    if (phaseText) sum.appendChild(el('span', 'rm-phase-inline', phaseText));
-    var titleSpan = el('span', 'rm-title', item.title);
-    // R9-1: the slug becomes a tooltip/secondary once the H1 title takes
-    // the primary spot (item.id IS the slug for a plan-kind node — see
-    // roadmap-routes.js's `id: pf.slug`, no separate field needed).
-    if (item.kind === 'plan') titleSpan.title = item.id;
-    sum.appendChild(titleSpan);
-    // R9-3: a subtle per-phase PROJECT chip (text, never color-only) so
-    // every phase row names which project it belongs to, not just the
-    // filter-chip toolbar.
-    if (item.kind === 'plan' && item.project) {
-      sum.appendChild(el('span', 'chip rm-project-tag', item.project));
-    }
-    sum.appendChild(statusChip(item));
+    sum.appendChild(el('span', 'rm-chevron', '▸'));       // column 1 (16px)
+    sum.appendChild(titleCell(item));                       // column 2 (1fr)
     // R11 Critical 5: a master shows its TWO labeled fractions instead of
-    // the plain progress bar (never a blended single number); every other
-    // node keeps the existing bar+"n/m" text (C5's pre-existing law).
+    // the plain progress bar (never a blended single number) — spans
+    // columns 3+4 (rm-cell-mastersummary, app.css); every other node keeps
+    // the task-span text (column 3, item 2) + the fraction (column 4).
     if (item.master_summary) {
-      sum.appendChild(masterSummaryNode(item));
+      var msCell = el('span', 'rm-cell rm-cell-mastersummary');
+      msCell.appendChild(masterSummaryNode(item));
+      sum.appendChild(msCell);
     } else {
-      var prog = progressNode(item);
-      if (prog) sum.appendChild(prog);
+      sum.appendChild(taskSpanCell(item, isNextTask));      // column 3 (190px)
+      sum.appendChild(fractionCellForRow(item));            // column 4 (76px)
     }
-    sum.appendChild(markerChips(item));
-    sum.appendChild(referenceLifecycleBadges(item)); // R11 Critical 4(2)/(4)
-    // a fully-collapsed complete subtree keeps its recency in the headline
-    if ((item.status && item.status.value === 'complete' && item.completed_at) ||
-        (item.status && item.status.value === 'merged-unverified' && item.completed_at)) {
-      sum.appendChild(el('span', 'rm-completed-when',
-        (item.status.value === 'complete' ? 'completed ' : 'merged ') + formatAge(item.completed_at)));
-    }
-    sum.appendChild(rollupBadges(item)); // hidden while open via CSS — never masked while collapsed (C1)
+    sum.appendChild(exceptionGlyphCell(item));              // column 5 (46px)
+    sum.appendChild(exceptionLabelCell(item));              // column 6 (132px)
     det.appendChild(sum);
 
-    det.appendChild(drilldown(item, topLevelIndex, topLevelCount));
+    // Round 16 deliverable 5: drag-and-drop + Cmd/Ctrl+ArrowUp/Down
+    // build-order reorder — plan rows only (matches the retired buttons'
+    // own kind==='plan' gate).
+    if (item.kind === 'plan') wirePlanRowReorder(det, sum, item);
+
+    // Round 12 item 8: the note is a SIBLING of summary, not inside
+    // .rm-drill — it must stay visible even while the row is collapsed
+    // (rm-filter-match-note is not gated by [open], unlike .rm-drill).
+    if (filterMatch) {
+      var matchText = 'matches: ' + (filterMatch.kind === 'task'
+        ? 'task ' + shortTaskId(filterMatch.id)
+        : (filterMatch.kind || 'item')) + ' — ' + (filterMatch.title || filterMatch.id);
+      det.appendChild(el('div', 'rm-filter-match-note', matchText));
+    }
+
+    det.appendChild(drilldown(item));
 
     var kids = item.children || [];
     var childPlans = item.child_plans || [];
@@ -912,20 +1541,23 @@
     return wrap;
   }
 
-  // renderTaskBatches(liveChildren) — R11 anatomy L3: groups a plan's task
-  // children into CONTIGUOUS runs sharing the same (server-derived) `.batch`
-  // label, file order preserved (never re-sorted); a task with `batch: ''`
-  // renders directly, un-wrapped, exactly as before batching existed.
-  function renderTaskBatches(liveChildren) {
+  // renderTaskBatches(liveChildren, nextId) — R11 anatomy L3: groups a
+  // plan's task children into CONTIGUOUS runs sharing the same
+  // (server-derived) `.batch` label, file order preserved (never
+  // re-sorted); a task with `batch: ''` renders directly, un-wrapped,
+  // exactly as before batching existed. nextId (Round 13 fix 4) threads
+  // through so the "next" task keeps its affordance even when it happens
+  // to fall inside a batch run.
+  function renderTaskBatches(liveChildren, nextId) {
     var frag = document.createDocumentFragment();
     var i = 0;
     while (i < liveChildren.length) {
       var c = liveChildren[i];
       var label = c.batch || '';
-      if (!label) { frag.appendChild(renderNode(c, -1, -1)); i++; continue; }
+      if (!label) { frag.appendChild(renderNode(c, -1, -1, c.id === nextId)); i++; continue; }
       var runEnd = i;
       while (runEnd < liveChildren.length && (liveChildren[runEnd].batch || '') === label) runEnd++;
-      frag.appendChild(renderBatchRow(label, liveChildren.slice(i, runEnd)));
+      frag.appendChild(renderBatchRow(label, liveChildren.slice(i, runEnd), nextId));
       i = runEnd;
     }
     return frag;
@@ -937,7 +1569,7 @@
   // roll-up law already surfaces attention on the tasks inside); an explicit
   // operator close is remembered for this session (own key namespace, does
   // not collide with the item-id-keyed openSet entries elsewhere).
-  function renderBatchRow(label, tasks) {
+  function renderBatchRow(label, tasks, nextId) {
     var key = 'batch:' + (tasks[0] && tasks[0].id || label);
     var det = document.createElement('details');
     det.className = 'rm-batch';
@@ -953,7 +1585,7 @@
     sum.appendChild(el('span', 'chip rm-batch-fraction', done + '/' + tasks.length));
     det.appendChild(sum);
     var body = el('div', 'rm-children');
-    tasks.forEach(function (t) { body.appendChild(renderNode(t, -1, -1)); });
+    tasks.forEach(function (t) { body.appendChild(renderNode(t, -1, -1, t.id === nextId)); });
     det.appendChild(body);
     return det;
   }
@@ -971,19 +1603,28 @@
     var part = partitionChildren(children, !!parentFullyComplete, agedOut);
     var live = part.live, aged = part.aged;
     var phaseSeries = isPhaseSeries(children);
-    var totalCount = children.length;
     if (phaseSeries) wrap.classList.add('rm-phase-series');
+    // Round 13 fix 4: the "next" affordance applies to TASK children only
+    // (a phase-series list is child PLANS, which get their own "n next"
+    // via the parent's task-span text one level up, not this per-child
+    // marker) — computed from the SAME firstOpenChildId the parent's own
+    // taskSpanCell(item) already calls via deriveTaskSpanLabel(item.children),
+    // over the full unpartitioned list so the flagged child is always the
+    // identical id the parent's own text names "next".
+    var nextId = phaseSeries ? null : firstOpenChildId(children);
     // R11 Critical 1/2 (anatomy L3): task children carrying a `.batch` label
     // render as grouped batch rows — "batch rows only when the file carries
     // them" (a plan with no batch structure renders its tasks directly,
     // unchanged). Batches never apply to child-PLAN nesting (phaseSeries).
     var hasBatches = !phaseSeries && live.some(function (c) { return c.batch; });
     if (hasBatches) {
-      wrap.appendChild(renderTaskBatches(live));
+      wrap.appendChild(renderTaskBatches(live, nextId));
     } else {
       live.forEach(function (c) {
-        var node = renderNode(c, -1, -1,
-          phaseSeries ? buildOrderLabel(children.indexOf(c), totalCount) : null);
+        // Round 12 item 3: buildOrderLabel is no longer rendered (retired
+        // "#N OF 16" ordinal — proven unstable); the connector line
+        // (rm-phase-step, below) still marks the sibling sequence visually.
+        var node = renderNode(c, -1, -1, c.id === nextId);
         if (phaseSeries) {
           var step = el('div', 'rm-phase-step');
           step.appendChild(node);
@@ -1015,12 +1656,105 @@
     return wrap;
   }
 
+  // TOP-GROUP-BEGIN
+  // R17 Round 17 deliverable 4 (operator 2026-07-30, decision A —
+  // multi-project grouping). ABOVE the existing per-project grouping
+  // (groupItemsByProject/projectGroupHeaderText, unchanged below), plans
+  // now render under up to three canonical top-level DISPLAY groups, in
+  // this fixed order: "Neural Lace" (this repo, always present), "Pocket
+  // Technician" (Circuit's plans, when configured), "Personal" (always
+  // rendered too, even with zero plans — an honest "no projects
+  // configured" line rather than the group silently vanishing). Any
+  // OTHER group name the server's data actually produces (e.g. the
+  // '(ungrouped)' catch-all a flat-string, no-`group` config entry lands
+  // in) is appended after the canonical three, in first-appearance order.
+  // The mapping itself (which project belongs to which group) is
+  // server-computed (`item.project_group`, from config/projects.json) —
+  // this is purely a client-side DISPLAY partition over data the server
+  // already grouped, never a client-side guess at project membership.
+  var CANONICAL_TOP_GROUPS = ['Neural Lace', 'Pocket Technician', 'Personal'];
+  function groupItemsByTopGroup(items) {
+    var byGroup = {};
+    var order = [];
+    CANONICAL_TOP_GROUPS.forEach(function (g) { byGroup[g] = []; order.push(g); }); // always present, even empty
+    (items || []).forEach(function (it) {
+      var g = it.project_group || '(ungrouped)';
+      if (!byGroup[g]) { byGroup[g] = []; order.push(g); }
+      byGroup[g].push(it);
+    });
+    return order.map(function (g) { return { group: g, items: byGroup[g] }; });
+  }
+  // topGroupHasInProgress(items) — "in progress" here means the same
+  // "not not-started and not complete" band bandPlanItems already uses
+  // for its first band (in-progress/stalled/merged-unverified/unknown);
+  // drives the group's collapsed-by-default state (renderTopGroup below).
+  function topGroupHasInProgress(items) {
+    return (items || []).some(function (it) {
+      return it.status && it.status.value !== 'not-started' && it.status.value !== 'complete';
+    });
+  }
+  function topGroupHeaderText(groupName, items) {
+    var count = (items || []).length;
+    if (!count) return groupName + ' — no projects configured';
+    return groupName + ' — ' + count + (count === 1 ? ' plan' : ' plans');
+  }
+  function renderTopGroup(groupName, items) {
+    var det = document.createElement('details');
+    det.className = 'rm-top-group';
+    det.dataset.topGroup = groupName;
+    var openKey = 'topgroup:' + groupName;
+    var defaultOpen = topGroupHasInProgress(items);
+    det.open = Object.prototype.hasOwnProperty.call(openSet, openKey) ? !!openSet[openKey] : defaultOpen;
+    det.addEventListener('toggle', function () { openSet[openKey] = det.open; });
+    var sum = document.createElement('summary');
+    sum.className = 'rm-top-group-head';
+    sum.textContent = topGroupHeaderText(groupName, items);
+    det.appendChild(sum);
+    var bodyEl = el('div', 'rm-top-group-body');
+    if (!items.length) {
+      bodyEl.appendChild(el('div', 'rm-empty-note', 'no projects configured'));
+    } else {
+      bodyEl.appendChild(renderProjectGroups(items));
+    }
+    det.appendChild(bodyEl);
+    return det;
+  }
   function renderTree(visibleItems) {
+    var outer = el('div', 'rm-tree');
+    groupItemsByTopGroup(visibleItems).forEach(function (tg) {
+      outer.appendChild(renderTopGroup(tg.group, tg.items));
+    });
+    return outer;
+  }
+  // TOP-GROUP-END
+
+  // renderProjectGroups(visibleItems) — the PRE-R17 renderTree body,
+  // unchanged: per-project grouping (R9-2), in-progress/upcoming banding
+  // (Round 15), and the Shipped roll-up — now scoped to ONE top-level
+  // group's items at a time (renderTree above calls this once per group,
+  // so "Keep in-progress→upcoming→shipped banding WITHIN each group"
+  // holds by construction: nothing below this line changed, only WHO
+  // calls it and with WHAT SUBSET of items).
+  function renderProjectGroups(visibleItems) {
     var tree = el('div', 'rm-tree');
-    var live = [], aged = [];
+    var live = [], shipped = [];
+    // Round 12 item 6 (operator: "each bundle of tasks should roll up and
+    // compact when all children tasks are complete... When an entire plan
+    // completes, it rolls up into the completed section"): a fully-complete
+    // PLAN leaves the main list on STATUS ALONE, never gated on the 7-day
+    // aging clock — that clock is fed by completed_at, which falls back to
+    // the plan FILE's mtime when no task_done event exists
+    // (roadmap-routes.js:1001), and this machine's continuous
+    // session-start-auto-install sync keeps touching that mtime, resetting
+    // the 7-day countdown indefinitely (ROADMAP-COMPLETED-AGING-MTIME-
+    // RESET-01 — server-side, out of this task's scope; this fix makes
+    // "Shipped" independent of that clock entirely). Opening a shipped
+    // plan still renders ALL its own tasks via the SAME renderNode/
+    // renderChildList path (unchanged) — only the top-level list membership
+    // changed, never what's visible once you open one.
     visibleItems.forEach(function (it) {
       var isComplete = it.status && it.status.value === 'complete';
-      if (isComplete && agedOut(it.completed_at)) aged.push(it); else live.push(it);
+      if (isComplete) shipped.push(it); else live.push(it);
     });
     // Round 8 (8A): the tree roots on PLANS — the top level is the
     // operator's "series of phases". Round 9 (R9-2): grouped by PROJECT —
@@ -1031,37 +1765,41 @@
     // group-local one).
     var phaseSeries = isPhaseSeries(live);
     if (phaseSeries) tree.classList.add('rm-phase-series');
+    // Round 12 item 6: the per-project header still reports the project's
+    // TRUE overall progress (incl. shipped plans) — "how far through" the
+    // operator asked for — even though shipped rows themselves now live in
+    // the separate Shipped group below, not in this list.
+    var projectTotals = {};
+    groupItemsByProject(visibleItems).forEach(function (g) { projectTotals[g.project] = g.items; });
     var groups = phaseSeries ? groupItemsByProject(live) : [{ project: '', items: live }];
     groups.forEach(function (g) {
       var container = tree;
       if (phaseSeries) {
+        var allForProject = projectTotals[g.project] || g.items;
         var groupEl = el('section', 'rm-project-group');
         groupEl.setAttribute('aria-label', 'project ' + (g.project || '(no project)'));
         var head = el('div', 'rm-project-group-head');
-        head.appendChild(el('span', 'rm-group-head-text', projectGroupHeaderText(g.project, g.items)));
-        // R10-3: the series IS the project's master sequence — an aggregate
-        // bar makes it read as one plan-of-plans ("N of M complete"), with
-        // the "M/N" text always beside the bar (never bar-only).
-        var done = g.items.filter(function (x) { return x.status && x.status.value === 'complete'; }).length;
-        var barWrap = el('span', 'rm-group-progress');
-        var bar = el('span', 'rm-group-progress-bar');
-        bar.setAttribute('role', 'img');
-        bar.setAttribute('aria-label', done + ' of ' + g.items.length + ' plans complete');
-        var fill = el('span', 'rm-group-progress-fill');
-        fill.style.width = (g.items.length ? Math.round((done / g.items.length) * 100) : 0) + '%';
-        bar.appendChild(fill);
-        barWrap.appendChild(bar);
-        barWrap.appendChild(el('span', 'rm-group-progress-text', done + '/' + g.items.length + ' complete'));
-        head.appendChild(barWrap);
+        // Round 12 item 3: R10-3's aggregate bar + "N/M complete" text is
+        // RETIRED — it restated the header's OWN "... complete" bucket
+        // count a third time on the same screen (live-verified:
+        // "neural-lace — 16 plans... (2 complete)" immediately followed by
+        // a separate "2/16 complete" line). projectGroupHeaderText already
+        // carries the complete count; nothing else said it a second way.
+        head.appendChild(el('span', 'rm-group-head-text', projectGroupHeaderText(g.project, allForProject)));
         groupEl.appendChild(head);
         tree.appendChild(groupEl);
         container = groupEl;
       }
-      g.items.forEach(function (it, gi) {
-        // R10-1: phase label rides the title row (renderNode 4th arg) — the
+      // Round 15: in-progress-ish plans render before upcoming ones WITHIN
+      // this project's own list (bandPlanItems) — rank order is preserved
+      // inside each band; `live.indexOf(it)`/`live.length` below still
+      // reference the ORIGINAL flat list, so reorder buttons keep operating
+      // on the true global build-order position exactly as before (R9-2d).
+      bandPlanItems(g.items).forEach(function (it) {
+        // Round 12 item 3: no ordinal label passed (buildOrderLabel is
+        // retired from rendering — see the PHASE-SERIES-BEGIN note); the
         // rm-phase-step wrapper stays for the series connector line only.
-        var node = renderNode(it, live.indexOf(it), live.length,
-          phaseSeries ? buildOrderLabel(gi, g.items.length) : null);
+        var node = renderNode(it, live.indexOf(it), live.length);
         if (phaseSeries) {
           var step = el('div', 'rm-phase-step');
           step.appendChild(node);
@@ -1071,10 +1809,10 @@
         }
       });
     });
-    if (aged.length) {
-      aged.sort(function (a, b) { return String(b.completed_at).localeCompare(String(a.completed_at)); });
+    if (shipped.length) {
+      shipped.sort(function (a, b) { return String(b.completed_at).localeCompare(String(a.completed_at)); });
       var roll = document.createElement('details');
-      roll.className = 'rm-completed-rollup';
+      roll.className = 'rm-completed-rollup rm-shipped-group';
       roll.dataset.rollupFor = '(top)';
       if (openSet['rollup:(top)']) roll.open = true;
       roll.addEventListener('toggle', function () {
@@ -1082,10 +1820,14 @@
       });
       var rsum = document.createElement('summary');
       rsum.className = 'rm-completed-rollup-summary';
-      rsum.textContent = aged.length + ' completed ▸ — latest: ' + (aged[0].title || aged[0].id);
+      // Round 12 item 6: "Shipped (n)" — the operator's own heading, not a
+      // restatement of the header counts (which now describe the WHOLE
+      // project, shipped included) or the nested per-parent "N completed"
+      // wording (task 3's unchanged, still-aging-gated mechanism).
+      rsum.textContent = 'Shipped (' + shipped.length + ') — latest: ' + (shipped[0].title || shipped[0].id);
       roll.appendChild(rsum);
       var rbody = el('div', 'rm-children');
-      aged.forEach(function (c) { rbody.appendChild(renderNode(c, -1, -1)); });
+      shipped.forEach(function (c) { rbody.appendChild(renderNode(c, -1, -1)); });
       roll.appendChild(rbody);
       tree.appendChild(roll);
     }
@@ -1127,7 +1869,16 @@
         var chipRow = el('div', 'rm-card-chips');
         if (entry.masterTitle) chipRow.appendChild(el('span', 'chip rm-master-tag', entry.masterTitle)); // I4
         if (it.project) chipRow.appendChild(el('span', 'chip rm-project-tag', it.project)); // R9-3
-        chipRow.appendChild(statusChip(it)); // same chips as the tree (I3)
+        // Round 12 item 4 fix: statusChip(it) returns null for the three
+        // DERIVABLE states now (not-started/in-progress/complete) — the
+        // column header itself already names the status ("In progress
+        // (4)"), so this was ALSO redundant there, same as the tree row;
+        // appendChild(null) threw and silently aborted the whole board
+        // render before this guard (regression caught live, fixed same
+        // commit). Exception-state cards (stalled/merged-unverified/
+        // unknown) still show the loud chip — same chips as the tree (I3).
+        var kanbanChip = statusChip(it);
+        if (kanbanChip) chipRow.appendChild(kanbanChip);
         var prog = progressNode(it);
         if (prog) chipRow.appendChild(prog);
         chipRow.appendChild(rollupBadges(it));
@@ -1267,27 +2018,19 @@
   }
 
   // captureUiState/restoreUiState — the C7 law: any auto-refreshing surface
-  // preserves expansion + scroll + focus + uncommitted edits. openSet is
-  // maintained live by the toggle listeners; here we capture the rest.
+  // preserves expansion + scroll + focus. openSet is maintained live by the
+  // toggle listeners; here we capture the rest. ROUND 16: the uncommitted-
+  // title-edit capture that used to live here (T3-fix1, comprehension gate
+  // FAIL conf 6) is retired ALONG WITH the edit feature itself (deliverable
+  // 4) — there is no more `.rm-title-input` for it to ever find, so this is
+  // a genuine removal, not a stale no-op left behind.
   // CAPTURE-UI-STATE-BEGIN
   function captureUiState() {
-    var st = { scrollY: window.scrollY, bodyScrollTop: body.scrollTop, focusKey: null, edit: null };
+    var st = { scrollY: window.scrollY, bodyScrollTop: body.scrollTop, focusKey: null };
     var ae = document.activeElement;
     if (ae && body.contains(ae)) {
       if (ae.dataset && ae.dataset.focusKey) st.focusKey = ae.dataset.focusKey;
       else if (ae.dataset && ae.dataset.itemId) st.focusKey = 'item:' + ae.dataset.itemId;
-    }
-    // T3-fix1 (comprehension gate FAIL conf 6): capture any OPEN title editor's
-    // uncommitted value by PRESENCE, not focus — an open-but-unfocused editor
-    // (focus on Save/Cancel, or moved outside the pane entirely) is otherwise
-    // silently destroyed by the 30s tick's renderAll() DOM wipe.
-    var openInput = document.querySelector('.rm-title-input');
-    if (openInput) {
-      st.edit = {
-        itemId: openInput.dataset.editFor,
-        value: openInput.value,
-        selStart: openInput.selectionStart, selEnd: openInput.selectionEnd,
-      };
     }
     return st;
   }
@@ -1297,20 +2040,6 @@
     if (!st) return;
     window.scrollTo(0, st.scrollY);
     body.scrollTop = st.bodyScrollTop;
-    if (st.edit && st.edit.itemId) {
-      pendingEdit = st.edit;
-      var det = findItemEl(st.edit.itemId);
-      if (det) {
-        det.open = true;
-        var row = det.querySelector('.rm-title-edit');
-        var editBtn = row && row.querySelector('.rm-edit-btn');
-        var itemData = findItemData(st.edit.itemId);
-        if (row && editBtn && itemData) {
-          openTitleEditor(row, itemData, editBtn, function () {}, st.edit);
-          return;
-        }
-      }
-    }
     if (st.focusKey) {
       var sel = st.focusKey.indexOf('item:') === 0
         ? '[data-item-id="' + cssEscape(st.focusKey.slice(5)) + '"]'
@@ -1332,8 +2061,19 @@
     if (!lastPayload) return;
     var st = captureUiState();
     var f = applyFilters(lastPayload.items || []);
+    currentMatchNotes = f.matchNoteById || {}; // Round 12 item 8
     body.innerHTML = '';
     var ub = lastPayload.unbound_sessions;
+    // AUDITED 2026-07-30 (running-claim sweep) — `.length` is CORRECT here
+    // and must NOT be converted to hasRunningSession(). Different contract:
+    // deriveUnboundSessionsNode has ALREADY filtered this collection to
+    // non-crashed sessions server-side and returns null (honest absence)
+    // when none qualify, and it stamps its members status.value
+    // 'in-progress' — not 'running'. hasRunningSession() would therefore
+    // match zero members and hide genuinely-running unattributed work,
+    // violating R9-7 ("running work is NEVER invisible"). The membership
+    // test is a running claim the SERVER already verified, which is exactly
+    // the condition the other three sites failed to meet.
     if (ub && ub.live_sessions && ub.live_sessions.length) {
       body.appendChild(renderUnboundSessions(ub));
     }
@@ -1341,13 +2081,16 @@
       body.appendChild(renderEmptyStates(f));
     } else {
       body.appendChild(viewMode === 'kanban' ? renderKanban(f.visible) : renderTree(f.visible));
-      if (f.hiddenChores > 0 && !showChores) {
-        var note = el('div', 'rm-chore-note', f.hiddenChores + ' items hidden (harness chores) ');
-        note.appendChild(btn('ghost small', 'show', function () {
-          showChores = true; lsSet(LS_SHOW_CHORES, '1'); syncToolbar(); renderAll();
-        }));
-        body.appendChild(note);
-      }
+      // Round 12 item 3: the footer "N items hidden (harness chores) show"
+      // note RETIRED here — it duplicated the toolbar's OWN chore toggle
+      // (roadmapChoreToggle, syncToolbar()), ~700px above this footer on a
+      // populated list, and its copy carried a grammar defect ("1 items
+      // hidden") the toolbar's own text never had. The toolbar control is
+      // ALWAYS visible (static DOM, outside #roadmapBody) so nothing is
+      // lost by removing this duplicate. The FILTERED/TRUE-empty state's
+      // OWN hidden-chores line (renderEmptyStates) is UNCHANGED — that one
+      // explains an otherwise-confusing "0 items" moment, a different
+      // purpose than restating an already-visible toolbar control.
     }
     // Ghost-bounding aggregate (2026-07-21): ask-linked plans whose file
     // could not be found AND whose newest link is older than the aging
@@ -1541,13 +2284,29 @@
       if (!j || j.ok === false) {
         bodyEl.innerHTML = '';
         bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+        if (countEl) countEl.textContent = '(!)';
         return;
       }
-      var answerable = (inbox && inbox.ok !== false && inbox.answerable) || [];
+      // Round 12 item 9 (inbox count honesty): pre-fix, an /api/inbox
+      // failure was silently treated as answerable=[] — an UNREADABLE
+      // ledger and a GENUINELY EMPTY one rendered the identical confident
+      // "nothing on your list" line. An unreadable ledger is UNKNOWN, never
+      // a silent zero — this is the landing surface (the Roadmap tab), so
+      // the error must surface HERE, not only inside the Inbox tab itself.
+      var inboxFailed = !inbox || inbox.ok === false;
+      var answerable = inboxFailed ? [] : (inbox.answerable || []);
       var ops = j.operator_items || [];
       var ptrs = (j.pointer_items || []).filter(function (p) { return !p.checked; });
-      if (countEl) countEl.textContent = '(' + (answerable.length + ops.filter(function (o) { return !o.checked; }).length + ptrs.length) + ' open)';
+      var openOpsCount = ops.filter(function (o) { return !o.checked; }).length;
+      if (countEl) {
+        countEl.textContent = inboxFailed
+          ? '(!)'
+          : '(' + (answerable.length + openOpsCount + ptrs.length) + ' open)';
+      }
       bodyEl.innerHTML = '';
+      if (inboxFailed) {
+        bodyEl.appendChild(el('div', 'rm-side-error', 'Inbox: could not load — retry on next tick'));
+      }
       if (answerable.length) {
         var wlist = el('ul', 'rm-side-list');
         answerable.slice(0, SIDE_LIST_CAP).forEach(function (item) {
@@ -1564,10 +2323,14 @@
         bodyEl.appendChild(el('div', 'rm-side-tiers', answerable.length + ' waiting on you (Inbox):'));
         bodyEl.appendChild(wlist);
       }
-      if (!answerable.length && !ops.length && !ptrs.length) {
+      // The confident "nothing on your list" win-line renders ONLY when
+      // every source actually reported zero — never when the Inbox source
+      // is unknown (inboxFailed).
+      if (!inboxFailed && !answerable.length && !ops.length && !ptrs.length) {
         bodyEl.appendChild(el('div', 'rm-side-empty', 'nothing on your list'));
         return;
       }
+      if (inboxFailed && !ops.length && !ptrs.length) return; // the error note above already said so
       if (!ops.length && !ptrs.length) return;
       var list = el('ul', 'rm-side-list');
       ops.forEach(function (item) {
@@ -1606,6 +2369,7 @@
     }).catch(function () {
       bodyEl.innerHTML = '';
       bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+      if (countEl) countEl.textContent = '(!)'; // Round 12 item 9
     });
   }
 
@@ -1617,6 +2381,7 @@
       if (!j || j.ok === false) {
         bodyEl.innerHTML = '';
         bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+        if (countEl) countEl.textContent = '(!)'; // Round 12 item 9
         return;
       }
       var counts = j.counts || {};
@@ -1648,6 +2413,7 @@
     }).catch(function () {
       bodyEl.innerHTML = '';
       bodyEl.appendChild(el('div', 'rm-side-error', 'could not load — retry on next tick'));
+      if (countEl) countEl.textContent = '(!)'; // Round 12 item 9
     });
   }
 

@@ -1659,7 +1659,11 @@ CHECK13_HI4
   # missing-field nudge is v2-vintage-gated per the fd48741 review, so the
   # WARN fixtures must be v2; pass "" to model a grandfathered legacy plan).
   write_loe_plan() {
-    local out="$1" loe_class_line="${2:-}" status="${3:-ACTIVE}" schema_line="${4:-lifecycle-schema: v2}"
+    local out="$1" loe_class_line="${2:-}" status="${3:-ACTIVE}"
+    # ${4-...} not ${4:-...}: dd6 passes an EXPLICIT empty 4th arg to model a
+    # legacy plan; colon-form substituted the v2 default on it, so the "legacy"
+    # fixture was v2 and dd6 could never pass anywhere (T7 verifier, 2026-07-30).
+    local schema_line="${4-lifecycle-schema: v2}"
     {
       echo "# Plan: Self-test Check 18 LOE fixture"
       echo "Status: $status"
@@ -1815,6 +1819,161 @@ CALIB_JSON
   else
     echo "self-test (dd6) check18-legacy-schema-missing-field-silent: FAIL (nudge fired on a pre-v2 plan)" >&2
     printf '%s\n' "$DD6_OUT" >&2
+    FAILED=1
+  fi
+
+  # ============================================================
+  # Check 19 (intended-functionality) — scoping-predicate scenarios
+  # ============================================================
+  # The scoping predicate IS the false-positive control for this check, and it was
+  # shipped untested in the first draft while every sibling check carried per-branch
+  # scenarios (harness-reviewer M1). One scenario per branch: block / warn / the
+  # DRAFT->ACTIVE composition bypass / skip-outside-repo / undecidable-warns.
+  # These need a REAL git repo, because the predicate reads HEAD.
+
+  write_c19_plan() {  # $1=path  $2=Status  $3=outcome-line ("" = omit whole section)
+    mkdir -p "$(dirname "$1")"
+    {
+      echo "# Plan: c19 fixture"
+      echo "Status: $2"
+      echo "Mode: code"
+      echo "tier: 1"
+      echo "rung: 1"
+      echo "architecture: coding-harness"
+      echo "frozen: true"
+      echo "prd-ref: n/a — harness-development"
+      echo ""
+      if [[ -n "$3" ]]; then
+        echo "## Intended Functionality"
+        echo ""
+        echo "**Outcome (operator's terms):** $3"
+        echo "**Observation:** The session resumes on its own and the transcript shows"
+        echo "activity timestamped after the reset, visible without reading any code."
+        echo "**Deterministic pass/fail:** Resumption happened within 5 minutes of the"
+        echo "reset with zero human actions recorded in between."
+        echo "**Explicitly NOT included:** Does not promise resumption after a crash,"
+        echo "only after a usage-limit reset of the kind described above."
+        echo "**Human dependencies:**"
+        echo "- None required at runtime — INTENDED"
+        echo ""
+      fi
+      echo "## Goal"
+      echo "A fixture plan used only by the plan-reviewer self-test."
+      echo ""
+      echo "## Scope"
+      echo "Only this fixture file; nothing else is touched by this scenario."
+      echo ""
+      echo "## Tasks"
+      echo "- [ ] 1.1 fixture task. Verification: mechanical"
+      echo ""
+      echo "## Files to Modify/Create"
+      echo "- \`fixture.md\` — the fixture itself, created by the self-test"
+      echo ""
+      echo "## Assumptions"
+      echo "The self-test temp repository behaves like any other git checkout here."
+      echo ""
+      echo "## Edge Cases"
+      echo "Covers the scoping branches of Check 19 and nothing else at all."
+      echo ""
+      echo "## Testing Strategy"
+      echo "Executed by plan-reviewer.sh --self-test against a real temporary repo."
+      echo ""
+      echo "## Definition of Done"
+      echo "The scenario's expected exit code matches the observed exit code."
+      echo ""
+      echo "## Walking skeleton"
+      echo "Not applicable to a self-test fixture; recorded for section completeness."
+    } > "$1"
+  }
+
+  C19_GOOD="After a usage limit resets, my work continues without me touching anything."
+  C19_BAD="The watchdog script exists and runs on a schedule."
+
+  C19_REPO="$TMPDIR_SELFTEST/c19repo"
+  mkdir -p "$C19_REPO/docs/plans"
+  ( cd "$C19_REPO" && git init -q . && git config user.email t@t && git config user.name t ) >/dev/null 2>&1
+
+  # Seed HEAD with (a) an ACTIVE plan lacking the section and (b) a DRAFT plan.
+  write_c19_plan "$C19_REPO/docs/plans/legacy-active.md" "ACTIVE" ""
+  write_c19_plan "$C19_REPO/docs/plans/was-draft.md" "DRAFT" ""
+  ( cd "$C19_REPO" && git add -A && git commit -qm seed ) >/dev/null 2>&1
+
+  # (ee1) NEW plan + restatement outcome -> BLOCK
+  write_c19_plan "$C19_REPO/docs/plans/new-bad.md" "ACTIVE" "$C19_BAD"
+  if bash "$SCRIPT" "$C19_REPO/docs/plans/new-bad.md" >/dev/null 2>&1; then
+    echo "self-test (ee1) check19-new-plan-restatement-blocks: FAIL (expected block)" >&2
+    FAILED=1
+  else
+    echo "self-test (ee1) check19-new-plan-restatement-blocks: PASS (expected)" >&2
+  fi
+
+  # (ee2) NEW plan + good outcome -> no Check 19 finding
+  write_c19_plan "$C19_REPO/docs/plans/new-good.md" "ACTIVE" "$C19_GOOD"
+  EE2_OUT=$(bash "$SCRIPT" "$C19_REPO/docs/plans/new-good.md" 2>&1 >/dev/null)
+  if printf '%s' "$EE2_OUT" | grep -q "Check 19 (intended-functionality, REJECT)"; then
+    echo "self-test (ee2) check19-new-plan-good-statement-silent: FAIL (rejected a good statement)" >&2
+    printf '%s\n' "$EE2_OUT" >&2
+    FAILED=1
+  else
+    echo "self-test (ee2) check19-new-plan-good-statement-silent: PASS (expected)" >&2
+  fi
+
+  # (ee3) PRE-EXISTING ACTIVE plan with no section -> WARN, never a finding
+  EE3_OUT=$(bash "$SCRIPT" "$C19_REPO/docs/plans/legacy-active.md" 2>&1 >/dev/null)
+  if printf '%s' "$EE3_OUT" | grep -q "Check 19 (intended-functionality, REJECT)"; then
+    echo "self-test (ee3) check19-pre-existing-warns-not-blocks: FAIL (blocked a legacy plan)" >&2
+    FAILED=1
+  elif printf '%s' "$EE3_OUT" | grep -q "WARN Check 19"; then
+    echo "self-test (ee3) check19-pre-existing-warns-not-blocks: PASS (expected)" >&2
+  else
+    echo "self-test (ee3) check19-pre-existing-warns-not-blocks: FAIL (no WARN emitted)" >&2
+    FAILED=1
+  fi
+
+  # (ee4) THE COMPOSITION BYPASS: HEAD version was DRAFT, staged version is ACTIVE
+  # with no section. Path IS in HEAD, so a path-presence grandfather would wave it
+  # through forever. Must BLOCK.
+  write_c19_plan "$C19_REPO/docs/plans/was-draft.md" "ACTIVE" ""
+  EE4_OUT=$(bash "$SCRIPT" "$C19_REPO/docs/plans/was-draft.md" 2>&1 >/dev/null)
+  if printf '%s' "$EE4_OUT" | grep -q "Check 19 (intended-functionality, REJECT)"; then
+    echo "self-test (ee4) check19-draft-to-active-flip-blocks: PASS (expected)" >&2
+  else
+    echo "self-test (ee4) check19-draft-to-active-flip-blocks: FAIL (permanent-grandfather bypass is open)" >&2
+    FAILED=1
+  fi
+
+  # (ee5) Status: DRAFT -> Check 19 never runs
+  write_c19_plan "$C19_REPO/docs/plans/still-draft.md" "DRAFT" ""
+  EE5_OUT=$(bash "$SCRIPT" "$C19_REPO/docs/plans/still-draft.md" 2>&1 >/dev/null)
+  if printf '%s' "$EE5_OUT" | grep -q "Check 19"; then
+    echo "self-test (ee5) check19-draft-status-exempt: FAIL (fired on a DRAFT plan)" >&2
+    FAILED=1
+  else
+    echo "self-test (ee5) check19-draft-status-exempt: PASS (expected)" >&2
+  fi
+
+  # (ee6) Outside any git repository -> SKIP entirely (classification undecidable)
+  write_c19_plan "$TMPDIR_SELFTEST/outside-repo-c19.md" "ACTIVE" ""
+  EE6_OUT=$(bash "$SCRIPT" "$TMPDIR_SELFTEST/outside-repo-c19.md" 2>&1 >/dev/null)
+  if printf '%s' "$EE6_OUT" | grep -q "Check 19"; then
+    echo "self-test (ee6) check19-outside-repo-skips: FAIL (fired outside a repo)" >&2
+    FAILED=1
+  else
+    echo "self-test (ee6) check19-outside-repo-skips: PASS (expected)" >&2
+  fi
+
+  # (ee7) UNDECIDABLE must WARN, never block (the C3 warn-mode cycle)
+  write_c19_plan "$C19_REPO/docs/plans/new-undecidable.md" "ACTIVE" \
+    "Latency improves across the estate over the coming weeks."
+  EE7_OUT=$(bash "$SCRIPT" "$C19_REPO/docs/plans/new-undecidable.md" 2>&1 >/dev/null)
+  if printf '%s' "$EE7_OUT" | grep -q "Check 19 (intended-functionality, REJECT)"; then
+    echo "self-test (ee7) check19-undecidable-warns-not-blocks: FAIL (UNDECIDABLE blocked)" >&2
+    FAILED=1
+  elif printf '%s' "$EE7_OUT" | grep -q "UNDECIDABLE — surfaced, not blocking"; then
+    echo "self-test (ee7) check19-undecidable-warns-not-blocks: PASS (expected)" >&2
+  else
+    echo "self-test (ee7) check19-undecidable-warns-not-blocks: FAIL (no UNDECIDABLE warn emitted)" >&2
+    printf '%s\n' "$EE7_OUT" >&2
     FAILED=1
   fi
 
@@ -3314,6 +3473,150 @@ if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
         echo "[plan-reviewer] INFO Check 18 (LOE class+band, accountable-estate T7): ${LOE_BAND_LINE}" >&2
       fi
     fi
+  fi
+fi
+
+# ============================================================
+# Check 19 (2026-07-30): Intended-Functionality statement required
+# ============================================================
+#
+# Stage 0 of docs/designs/end-to-end-process.md. The operator's diagnosis:
+# "'the watchdog script exists and runs' is not a functionality." Every
+# downstream reviewer validates against the plan's stated intent, so a
+# component-level intent makes every later gate pass component-level work.
+# Garbage in, garbage out — the failure recurses one level up.
+#
+# Gated on STATUS_AWK == ACTIVE (or unset — a plan authored straight to
+# ACTIVE), the same convention as Checks 10/14/15/17. A plan that is not
+# ACTIVE is still being drafted and is not yet claiming to govern a build.
+#
+# The decision itself is delegated to scripts/if-statement-check.sh, which
+# returns three verdicts, not two:
+#   0 ACCEPT      — proceed.
+#   1 REJECT      — a restatement signal fired, or a required field is
+#                   missing, or a human dependency is marked DEFECT.
+#   2 UNDECIDABLE — the checker cannot decide. This is NOT a pass and NOT a
+#                   "write it better" instruction: per the stage-0 escalation
+#                   rule the orchestrator must ASK THE OPERATOR rather than
+#                   invent a statement. The block message says exactly that.
+#
+# Deliberately NOT a keyword-triggered check (unlike Check 17): the IF
+# statement is required of EVERY plan, so there is no qualifying trigger to
+# calibrate. Legacy plans are affected only when newly edited while ACTIVE.
+
+
+# BLAST-RADIUS SCOPING (measured, not assumed). Requiring the section of every
+# ACTIVE plan retroactively would block all 53 pre-existing ACTIVE plans in
+# docs/plans/ on their next edit — a gate whose first act is 53 false blocks is
+# how a Mechanism loses its credibility and starts getting overridden. Check 17
+# faced the same problem and solved it with a tight keyword trigger; that option
+# is unavailable here because the IF statement is required of EVERY plan, so
+# there is no qualifying trigger to calibrate.
+#
+# The scoping used instead is deterministic and unforgeable from the plan text:
+# a plan already present in HEAD is PRE-EXISTING (WARN — the requirement is
+# surfaced but does not block); a plan not in HEAD is NEW (BLOCK). New work
+# carries an IF statement from birth, which is the operator's actual intent,
+# and no legacy plan is retroactively broken.
+#
+# If the plan is not inside a git repository at all the check SKIPS: it cannot
+# classify the file, and a self-test fixture in a temp dir lands here.
+# THE GRANDFATHER IS A CONTENT TEST, NOT A PATH TEST. Testing mere presence in HEAD
+# composed with the established `check17-draft-status-exempt` convention into a
+# permanent, flag-free bypass: commit a new plan as `Status: DRAFT` (this check never
+# runs), then flip it to ACTIVE in any later commit — the path is now in HEAD, so the
+# plan is grandfathered FOREVER while ACTIVE with no IF statement. Unlike Check 17,
+# which re-evaluates on every ACTIVE edit, a path-presence grandfather is one-way.
+# (harness-reviewer C2, 2026-07-30.) A plan counts as pre-existing only if its HEAD
+# version was ALREADY ACTIVE or ALREADY carried the section; a DRAFT->ACTIVE flip is a
+# NEW ACTIVE plan and must comply.
+IF_SCOPE="skip"
+if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
+  _if_dir=$(dirname "$PLAN_FILE")
+  _if_root=$(cd "$_if_dir" 2>/dev/null && git rev-parse --show-toplevel 2>/dev/null || echo "")
+  if [[ -n "$_if_root" ]] && [[ -d "$_if_root" ]]; then
+    # `pwd -P` (physical), not `pwd` (logical): `git rev-parse --show-toplevel` always
+    # reports the resolved path, so on macOS a plan under /tmp yields root
+    # /private/tmp/... vs pwd /tmp/... and the prefix strip silently fails. Caught by
+    # the new ee3/ee4 scenarios, whose fixtures live under mktemp.
+    _if_abs=$(cd "$_if_dir" 2>/dev/null && pwd -P)/$(basename "$PLAN_FILE")
+    # Quote the pattern operand: in ${var#pattern} the pattern is glob-interpreted, so
+    # an unquoted root containing [ * ? would not strip literally, leaving _if_rel
+    # absolute and silently misclassifying a legacy plan as new (fail-toward-BLOCK).
+    _if_rel="${_if_abs#"$_if_root"/}"
+    if [[ "$_if_rel" == /* ]]; then
+      IF_SCOPE="skip"    # strip failed; classification undecidable -> never block
+    else
+      _if_head=$(cd "$_if_root" && git show "HEAD:$_if_rel" 2>/dev/null || echo "")
+      if [[ -z "$_if_head" ]]; then
+        IF_SCOPE="block"   # not in HEAD at all — a new plan, must comply
+      elif printf '%s\n' "$_if_head" | grep -qE '^##[[:space:]]+Intended[[:space:]]+Functionality[[:space:]]*$'; then
+        IF_SCOPE="warn"    # already carried the section — genuinely pre-existing
+      elif printf '%s\n' "$_if_head" | grep -qE '^Status:[[:space:]]*ACTIVE[[:space:]]*$'; then
+        IF_SCOPE="warn"    # already ACTIVE in HEAD — genuinely pre-existing
+      else
+        IF_SCOPE="block"   # HEAD version was NOT ACTIVE -> this is a new ACTIVE plan
+      fi
+    fi
+  fi
+fi
+
+if [[ "$IF_SCOPE" != "skip" ]]; then
+  IF_CHECKER=""
+  for _cand in "$HOME/.claude/scripts/if-statement-check.sh" \
+               "$(dirname "$0")/../scripts/if-statement-check.sh"; do
+    [[ -f "$_cand" ]] && { IF_CHECKER="$_cand"; break; }
+  done
+
+  if [[ -z "$IF_CHECKER" ]]; then
+    # Fail OPEN with a loud note rather than blocking every plan edit on a
+    # missing dependency: a checker that cannot be found is a harness defect,
+    # not a plan defect, and blocking here would be unsatisfiable from the
+    # layer that hit it (deterministic-process rule 2's spirit).
+    echo "[plan-reviewer] WARN Check 19: if-statement-check.sh not found; Intended-Functionality NOT validated for $PLAN_FILE" >&2
+  else
+    IF_OUT=$(bash "$IF_CHECKER" "$PLAN_FILE" 2>/dev/null); IF_RC=$?
+
+    # On a grandfathered plan the verdict is surfaced, never blocking.
+    if [[ "$IF_SCOPE" == "warn" ]]; then
+      if [[ "$IF_RC" != "0" ]]; then
+        echo "[plan-reviewer] WARN Check 19 (intended-functionality, pre-existing plan — not blocking): $IF_OUT" >&2
+        echo "[plan-reviewer]      Add a '## Intended Functionality' section next time this plan is substantively revised. See ~/.claude/doctrine/intended-functionality.md" >&2
+      fi
+      IF_RC=0
+    fi
+
+    case "$IF_RC" in
+      0) : ;;  # ACCEPT
+      2)
+        # UNDECIDABLE ships in WARN MODE for one review cycle, deliberately.
+        # It is a BLOCK whose own prescribed remedy cannot clear it: the message
+        # forbids rewording ("ASK THE OPERATOR"), needs-you.sh files a ledger entry
+        # but does not change the verdict, and plan-reviewer.sh has no waiver path —
+        # so the only exits were --no-verify (needs operator consent, constitution §7)
+        # or Status: DRAFT. On an estate with 78 logged gate overrides, and at the 54%
+        # UNDECIDABLE rate this checker's own corpus baseline measured, blocking here
+        # is the trust-erosion shape — and it already meets this unit's declared
+        # retirement condition. Surfaced now, promoted to blocking only once the rate
+        # on real (post-cutover) IF statements is known. (harness-reviewer C3.)
+        echo "[plan-reviewer] WARN Check 19 (intended-functionality, UNDECIDABLE — surfaced, not blocking): $IF_OUT" >&2
+        echo "[plan-reviewer]      The statement could not be mechanically judged. This is NOT a request to reword it." >&2
+        echo "[plan-reviewer]      Per stage 0 of docs/designs/end-to-end-process.md, ASK THE OPERATOR what outcome they" >&2
+        echo "[plan-reviewer]      actually want and write it in THEIR terms — do not invent one to clear this check." >&2
+        echo "[plan-reviewer]      Surface it: bash ~/.claude/scripts/needs-you.sh decision --title '<slug>: what outcome should this deliver?'" >&2
+        echo "[plan-reviewer]      The test: could this sentence be true while the operator's situation is unchanged?" >&2
+        ;;
+      1)
+        add_finding "Check 19 (intended-functionality, REJECT): $IF_OUT. A plan cannot be ACTIVE without an '## Intended Functionality' section whose Outcome names an observable surface AND a state change in the operator's terms — not an artifact that exists, is wired, renders, or runs. The operator's own counter-example: 'the watchdog script exists and runs' is a component description, because it can be true while nothing changed for them. Required fields: Outcome (operator's terms) / Observation (how anyone tells, without reading code) / Deterministic pass/fail (a rule with no judgement call) / Explicitly NOT included / Human dependencies (each marked INTENDED or DEFECT; any DEFECT fails stage 0). Template: ~/.claude/templates/plan-template.md. Worked examples from five real 2026-07-30 defects: ~/.claude/doctrine/intended-functionality.md. Check one statement with: bash ~/.claude/scripts/if-statement-check.sh --outcome '<sentence>'"
+        ;;
+      *)
+        # Any other exit — the checker's documented usage error (3), or an awk/
+        # interpreter crash — means THE CHECK failed, not that the PLAN failed. The
+        # same reasoning as the missing-checker path above: a harness defect must not
+        # be reported to a builder as a defect in their plan. Fail OPEN, loudly.
+        echo "[plan-reviewer] WARN Check 19: if-statement-check.sh exited $IF_RC (expected 0/1/2) — this is a HARNESS defect, not a plan defect. Intended-Functionality NOT validated for $PLAN_FILE. Output: $IF_OUT" >&2
+        ;;
+    esac
   fi
 fi
 

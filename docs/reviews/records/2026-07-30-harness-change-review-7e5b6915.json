@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-7e5b6915",
+  "created_at": "2026-07-30T07:03:19Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group delta-2 (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "3404bd1e92a1c4836d32fe8cee6dbef2d1e88f98",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/close-worktree.sh",
+      "blob_sha": "2cd1560ca5c5733313f5e8b2c7374c3225805918"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — deterministic worktree closer with refusal-first sequence (verify, then integrate or explicit preserve-with-reason, then teardown), no silent third verify path, only safe branch deletion (never the force variant), thin delegation to estate-merge.sh and the spawn-worktree teardown verb; 26/0 verified first-hand under /bin/bash 3.2.57 including the T5 graduation scenario and the genuine-conflict refusal; all dependencies verified present on-branch.",
+    "findings_summary": ""
+  },
+  "written_by": "harness-reviewer via write-review-record.sh (delta-2 sweep)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

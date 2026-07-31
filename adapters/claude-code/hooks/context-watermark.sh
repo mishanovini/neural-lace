@@ -26,7 +26,12 @@
 #   is deliberately excluded to avoid double-counting across turns; the first
 #   turn after a big write may under-count slightly by that turn's own
 #   creation amount, a documented, harmless one-turn lag since the watermark
-#   re-evaluates every single tool call).
+#   re-evaluates every single tool call). VERIFIED AGAIN 2026-07-29 against
+#   the live transcript of this machine's own session: `message.usage` carries
+#   exactly {input_tokens, cache_creation_input_tokens,
+#   cache_read_input_tokens, output_tokens, cache_creation, server_tool_use,
+#   service_tier, inference_geo, iterations, speed} — a numerator, never a
+#   denominator. See THE CLASS FIX below.
 #
 #   THE SAME assistant event also carries `message.model` — parsed in the
 #   SAME jq pass (see `_measure_context_tokens`) and fed to `_resolve_window`
@@ -54,9 +59,10 @@
 #   pattern); override via CONTEXT_WATERMARK_BYTES_PER_TOKEN for a
 #   differently-calibrated machine/local config. NOTE: the bytes-fallback path
 #   never has a `model` to key off (no assistant-usage line was found at
-#   all), so a fallback-measured call ALWAYS resolves the conservative
-#   200,000 default window, and the emitted message says so ("ASSUMED") —
-#   see WINDOW RESOLUTION below.
+#   all), so a fallback-measured call ALWAYS resolves to UNKNOWN and emits
+#   the maintenance notice instead of a percentage — which is the right answer
+#   twice over, since that path's numerator is itself 6x-uncertain. See
+#   WINDOW RESOLUTION below.
 #
 # WINDOW RESOLUTION (the denominator) — added 2026-07-20 after a PROVEN
 # incident: a hardcoded 200,000 denominator on a claude-opus-4-8 session (a
@@ -75,7 +81,9 @@
 #
 #   Precedence: CONTEXT_WATERMARK_WINDOW env override (unset or non-numeric
 #   -> skip, never trusted blindly) > model->window lookup (`_model_window`,
-#   below) > conservative 200000 default.
+#   below) > UNKNOWN. There is NO conservative-default denominator any more —
+#   see THE CLASS FIX below for why that default was the bug, not the safety
+#   net it looked like.
 #
 #   MODEL -> WINDOW TABLE (`_model_window`) — verified LIVE against
 #   platform.claude.com/docs/en/about-claude/models/overview on 2026-07-20
@@ -114,12 +122,92 @@
 #       not for "we checked and it's 200k".
 #     Anything else (empty/unparseable model, a model not yet in this table
 #     — e.g. legacy claude-3-*, which were NOT re-verified for this change)
-#     falls through to the conservative 200000 default AND the emitted
-#     message says so explicitly ("ASSUMED") — never silently presented as
-#     measured fact. Prefix-matched (trailing `*`) so a dated snapshot ID
-#     like `claude-haiku-4-5-20251001` matches its family entry. Keep this
-#     table current when new models ship; when a model's window cannot be
-#     confidently verified, do NOT guess — let it fall through to assumed.
+#     resolves to UNKNOWN: the hook emits NO percentage and NO watermark for
+#     that session, and instead emits a one-shot maintenance notice naming
+#     the model and this function. Prefix-matched (delimiter-anchored) so a
+#     dated snapshot ID like `claude-haiku-4-5-20251001` matches its family
+#     entry. Keep this table current when new models ship; when a model's
+#     window cannot be confidently verified, do NOT guess — let it fall
+#     through to UNKNOWN.
+#
+# ============================================================================
+# THE CLASS FIX (2026-07-29) — why there is no default denominator any more
+# ============================================================================
+# The 2026-07-20 and 2026-07-28 incidents were the SAME defect twice: a model
+# missing from the table above fell through to a hardcoded 200,000
+# denominator and the hook printed a confident percentage against it
+# ("~74% of 200000" on a session that was 16% full). The 2026-07-20 fix added
+# an "ASSUMED" label, which made the wrongness HONEST but not RARE — the
+# table goes stale by construction on every model launch, silently, and the
+# only detector was "an operator eventually notices the percentage is
+# absurd". Backlog row CONTEXT-WATERMARK-WINDOW-TABLE-STALENESS-01 named
+# three candidate fixes; all three were evaluated against the real runtime
+# before choosing.
+#
+#   (b) READ THE WINDOW AT RUNTIME — investigated first, because if the real
+#       window were obtainable the table would stop being load-bearing at all
+#       and the class would be RETIRED rather than mitigated. RULED OUT, with
+#       evidence (client 2.1.219, this machine, 2026-07-29):
+#         - The PostToolUse hook payload does not carry it. The client's own
+#           payload schema is {session_id, transcript_path, cwd, prompt_id?,
+#           permission_mode?, agent_id?, agent_type?, effort?} plus
+#           {hook_event_name, tool_name, tool_input, tool_response,
+#           tool_use_id, duration_ms?}. No model, no window.
+#         - The transcript JSONL does not carry it. `message.usage` keys are
+#           exactly {input_tokens, cache_creation_input_tokens,
+#           cache_read_input_tokens, output_tokens, cache_creation,
+#           server_tool_use, service_tier, inference_geo, iterations, speed}.
+#           A grep for context_window/contextWindow/max_input_tokens/
+#           window_size/context_limit across all 67 real transcripts on this
+#           machine returned ZERO hits.
+#         - No env var exposes it. CLAUDE_CODE_MAX_CONTEXT_TOKENS exists but
+#           is an operator-set INPUT the client itself only honors when
+#           DISABLE_COMPACT is set, or for non-`claude-` model ids — trusting
+#           it as the denominator would re-create confidently-wrong.
+#         - No client-written file exposes it. ~/.claude.json has an
+#           `autoCompactWindowsCache` key, but the client consults it for
+#           `claude-sonnet-4-6` only (one experiment knob) and it is null here.
+#           The client's ~/.claude/debug/*.txt logs do print
+#           "autocompact: ... effectiveWindow=N", but those files are not
+#           correlatable to the session_id a hook receives (no debug file on
+#           this machine references the live session id) and depend on debug
+#           logging being on.
+#         - The ONE channel that does expose it is the StatusLine command
+#           input (`context_window.context_window_size`). That is a different,
+#           operator-owned UI surface that this harness does not configure;
+#           wiring it would mean claiming a mechanism that has never been
+#           observed to fire here, which constitution §10 forbids. Recorded
+#           in the backlog row as the future path if a status line is ever
+#           adopted.
+#
+#   (c) DOCTOR CHECK that REDs when the running session's model is missing —
+#       viable (the running model IS readable from the newest transcript) but
+#       strictly weaker: the wrong percentage still gets emitted, and it is
+#       only caught whenever someone next runs the doctor. It shortens
+#       detection latency; it does not remove the harm.
+#
+#   (a) CHOSEN — invert the default. An unknown model now yields NO
+#       denominator, so no percentage can be printed at all. The failure mode
+#       changes from "confidently wrong number" (which provably aborted an
+#       autonomous program) to "no watermark this session", which the
+#       PreCompact backstop (pre-compact-continuity.sh) already covers, and
+#       which this hook's own message has always said is never a stop reason.
+#       Suppression alone would have destroyed the ONLY existing detector (the
+#       absurd percentage), so the detector is rebuilt IN BAND: on an unknown
+#       model the hook emits a one-shot, non-numeric maintenance notice that
+#       names the model, names this file and `_model_window`, gives the two
+#       candidate readings as an explicit either/or (never a point estimate),
+#       and names the env escape hatch. That reaches the agent that can fix it,
+#       in the session where it matters, on the first call that could possibly
+#       have mattered — strictly louder than the doctor check of option (c),
+#       and without ever asserting a number the hook cannot defend.
+#
+#   NOTICE FLOOR: the unknown-model notice is withheld until the measured
+#   token count reaches 70% of the SMALLEST window any known model has
+#   (200,000 -> 140,000 tokens). Below that, no model in the table could be
+#   at its 70% watermark, so there is provably nothing to say and the notice
+#   would be pure noise. The marker is written only when the notice actually
+#   fires, so a session that starts small still gets the notice later.
 #
 #   THRESHOLDS RECONSIDERED (kept unchanged): 70%/85% are proportions, not
 #   absolute token counts, so they scale with whatever window was resolved
@@ -163,12 +251,18 @@
 # both the primary usage-parse path and the bytes-fallback path, and (added
 # 2026-07-20) window resolution: a large-context model detected correctly, a
 # 200k model detected correctly (not just defaulted), the env override still
-# winning over model-detection, an unknown/absent model falling back to the
-# conservative default WHILE being labeled "ASSUMED" in the message, and (a
-# harness-reviewer finding, same day) that the model-prefix matching is
-# delimiter-anchored — a future numeric sibling of a listed model (e.g.
-# "claude-opus-4-10" against the listed "claude-opus-4-1") is NOT swallowed
-# by a bare-prefix glob and mislabeled "detected".
+# winning over model-detection, and (a harness-reviewer finding, same day)
+# that the model-prefix matching is delimiter-anchored — a future numeric
+# sibling of a listed model (e.g. "claude-opus-4-10" against the listed
+# "claude-opus-4-1") is NOT swallowed by a bare-prefix glob and mislabeled
+# "detected". Added 2026-07-29 (the class fix, T20-T24): an unknown model
+# emits the maintenance notice and NEVER a point percentage, writes NO
+# watermark markers and triggers NO snapshot; the notice dedups per session;
+# it is withheld below the notice floor but still fires later in the same
+# session once the floor is crossed; the env override rescues an unknown
+# model; and the suite never re-invokes itself via bare `bash` (which would
+# silently test whichever interpreter is first on PATH rather than the one
+# running the suite).
 
 set -u
 
@@ -191,6 +285,21 @@ fi
 # ~/.claude/local/context-watermark-bytes-per-token file is also honored so a
 # machine can persist its own calibration without an env var in every shell).
 DEFAULT_BYTES_PER_TOKEN="6.4192"
+
+# ============================================================
+# Known-window bounds — used ONLY to describe an UNKNOWN window as an explicit
+# either/or, never as a point estimate. Both values are read off
+# `_model_window`'s own table below (smallest / largest window it knows).
+# Keep them in sync if the table ever gains a smaller or larger bucket.
+# ============================================================
+MIN_KNOWN_WINDOW=200000
+MAX_KNOWN_WINDOW=1000000
+
+# The unknown-model notice is withheld below 70% of the SMALLEST window any
+# known model has. Below that point no model in the table could be at its 70%
+# watermark, so there is provably nothing worth saying and the notice would be
+# pure noise on every short session. 200000 * 70 / 100 = 140000.
+UNKNOWN_NOTICE_FLOOR=$(( MIN_KNOWN_WINDOW * 70 / 100 ))
 
 _bytes_per_token() {
   if [ -n "${CONTEXT_WATERMARK_BYTES_PER_TOKEN:-}" ]; then
@@ -261,13 +370,14 @@ _model_window() {
 # Precedence: explicit CONTEXT_WATERMARK_WINDOW env override (the escape
 # hatch — kept; ignored if unset or not a positive integer, so a garbage env
 # var can't silently zero out the math) > model-detected window
-# (_model_window) > conservative 200000 default.
+# (_model_window) > UNKNOWN.
 #
 # Echoes "<window> <source>" where source is "override", "detected", or
-# "assumed" — "assumed" is the ONLY case where the window was not actually
-# established, and the caller's emitted message must say so explicitly (this
-# is the direct fix for the proven incident: a session must never read an
-# unlabeled percentage as authoritative capacity).
+# "unknown". For "unknown" the window is literally 0 — NOT a fallback value,
+# and deliberately not a usable denominator: there is no default any more, so
+# no caller can accidentally divide by an invented number. The caller must
+# branch on the source and emit the maintenance notice instead of a
+# percentage (2026-07-29 class fix; see THE CLASS FIX in the header).
 _resolve_window() {
   local model="${1:-}"
 
@@ -290,7 +400,7 @@ _resolve_window() {
     fi
   fi
 
-  printf '200000 assumed'
+  printf '0 unknown'
   return 0
 }
 
@@ -387,6 +497,44 @@ _compute_watermark() {
     ''|*[!0-9]*) return 0 ;;
   esac
 
+  local marker_70="$state_dir/${session_id}--watermark-70"
+  local marker_85="$state_dir/${session_id}--watermark-85"
+  local marker_unknown="$state_dir/${session_id}--window-unknown"
+  local never_stop="Context pressure is NEVER a reason to stop or pause autonomous work — compaction handles overflow automatically; checkpoint state and keep going."
+
+  # ==========================================================
+  # UNKNOWN WINDOW -> no denominator, therefore no percentage, ever.
+  # ==========================================================
+  # This is the 2026-07-29 class fix. Before it, an unrecognized model fell
+  # through to a hardcoded 200000 and the hook printed a confident (and twice
+  # proven wrong by 5x) percentage against it. There is no denominator to
+  # print now, so instead the hook emits ONE maintenance notice per session
+  # naming the model, this file, and the fix — the in-band replacement for
+  # the detector that suppression would otherwise have removed.
+  #
+  # Deliberately does NOT write the 70/85 watermark markers and does NOT run
+  # the proactive snapshot: neither watermark was established, so claiming
+  # either would be the same confident-and-wrong move in a different costume.
+  if [ "$win_source" = "unknown" ]; then
+    [ -f "$marker_unknown" ] && return 0
+    # Below the floor, nothing can be said — and no marker is written, so the
+    # notice still fires later in the same session once the floor is crossed.
+    [ "$tokens" -lt "$UNKNOWN_NOTICE_FLOOR" ] && return 0
+
+    mkdir -p "$state_dir" 2>/dev/null || true
+    : > "$marker_unknown" 2>/dev/null || true
+
+    local pct_min pct_max
+    pct_max="$(awk -v t="$tokens" -v w="$MIN_KNOWN_WINDOW" 'BEGIN { if (w<=0) {print 0} else {printf "%d", (t/w)*100} }' 2>/dev/null)"
+    pct_min="$(awk -v t="$tokens" -v w="$MAX_KNOWN_WINDOW" 'BEGIN { if (w<=0) {print 0} else {printf "%d", (t/w)*100} }' 2>/dev/null)"
+    [ -z "$pct_max" ] && return 0
+    [ -z "$pct_min" ] && return 0
+
+    jq -n --arg ctx "[context-watermark] context window UNKNOWN — model ${model:-not present in transcript} is not in this hook's known-window table (_model_window in adapters/claude-code/hooks/context-watermark.sh), so NO percentage is emitted and NO watermark will fire this session. Measured ${tokens} tokens via ${source}: that is ${pct_max}% of a ${MIN_KNOWN_WINDOW}-token window OR ${pct_min}% of a ${MAX_KNOWN_WINDOW}-token one, and this hook will not pick one for you — printing a confident number against an ASSUMED denominator is exactly what overstated usage 5x on 2026-07-20 and again on 2026-07-28 and pushed a session into premature checkpointing. Overflow is still covered: the PreCompact backstop (pre-compact-continuity.sh) fires on compaction regardless of this hook. TO RESTORE THE WATERMARK: verify this model's real context window and add it to _model_window (docs/backlog.md CONTEXT-WATERMARK-WINDOW-TABLE-STALENESS-01), or export CONTEXT_WATERMARK_WINDOW=<real window> for this session. ${never_stop}" \
+      '{hookSpecificOutput:{hookEventName:"PostToolUse", additionalContext:$ctx}}'
+    return 0
+  fi
+
   case "$win_source" in
     detected)
       window_clause="model ${model}, window auto-detected"
@@ -395,16 +543,16 @@ _compute_watermark() {
       window_clause="window from CONTEXT_WATERMARK_WINDOW override"
       ;;
     *)
-      window_clause="window ASSUMED (model ${model:-not present in transcript} not in the known-window table; defaulting to the conservative ${window} — if this session's real window is larger, this percentage OVERESTIMATES usage)"
+      # A source this function does not recognize means the window was not
+      # established by any path we can describe. Same rule as UNKNOWN: say
+      # nothing rather than print a number we cannot defend. (Also keeps
+      # window_clause from being read unset under `set -u`.)
+      return 0
       ;;
   esac
 
   pct="$(awk -v t="$tokens" -v w="$window" 'BEGIN { if (w<=0) {print 0} else {printf "%d", (t/w)*100} }' 2>/dev/null)"
   [ -z "$pct" ] && return 0
-
-  local marker_70="$state_dir/${session_id}--watermark-70"
-  local marker_85="$state_dir/${session_id}--watermark-85"
-  local never_stop="Context pressure is NEVER a reason to stop or pause autonomous work — compaction handles overflow automatically; checkpoint state and keep going."
 
   if [ "$pct" -ge 85 ]; then
     if [ -f "$marker_85" ]; then
@@ -496,7 +644,10 @@ _self_test() {
 
   # Helper: build a fixture transcript whose last assistant event carries a
   # given usage total (input_tokens + cache_read_input_tokens split 2/rest).
-  # No `model` field -> exercises the "model absent -> assumed default" path.
+  # No `model` field -> exercises the "model absent -> UNKNOWN window" path
+  # (since 2026-07-29 that path emits the maintenance notice, never a
+  # percentage — so watermark scenarios T2/T4/T6/T7 use _mk_transcript_model
+  # with a real, table-listed model instead).
   _mk_transcript() {
     local path="$1" total="$2"
     printf '{"type":"user","session_id":"sid","message":{"role":"user","content":"hi"}}\n' > "$path"
@@ -513,7 +664,7 @@ _self_test() {
 
   # T1 — below 70% -> 0 injections.
   local t1="$tmp/below70.jsonl"
-  _mk_transcript "$t1" 100000   # 50%
+  _mk_transcript_model "$t1" 100000 "claude-haiku-4-5"   # 50% of 200000
   local got
   got="$(_compute_watermark "$t1" "sess-below70" "$state_dir" "")"
   if [ -z "$got" ] && [ ! -f "$state_dir/sess-below70--watermark-70" ]; then
@@ -524,7 +675,7 @@ _self_test() {
 
   # T2 — at/above 70% (but below 85%) -> 1 injection, correct message, marker written.
   local t2="$tmp/at70.jsonl"
-  _mk_transcript "$t2" 150000   # 75%
+  _mk_transcript_model "$t2" 150000 "claude-haiku-4-5"   # 75% of 200000
   got="$(_compute_watermark "$t2" "sess-at70" "$state_dir" "")"
   if [ -n "$got" ] \
      && printf '%s' "$got" | jq -e . >/dev/null 2>&1 \
@@ -548,7 +699,7 @@ _self_test() {
   # marker AND 85 marker both get written even if 70 never fired standalone
   # first), stronger message, snapshot invoked.
   local t4="$tmp/at85.jsonl"
-  _mk_transcript "$t4" 180000   # 90%
+  _mk_transcript_model "$t4" 180000 "claude-haiku-4-5"   # 90% of 200000
   local snap_marker="$tmp/snapshot-ran.marker"
   cat > "$tmp/fake-snapshot.sh" <<EOF
 #!/bin/bash
@@ -582,7 +733,7 @@ EOF
   # the watermark's lifetime is bounded at 2 (one 70, one 85), never that a
   # single call can emit two blobs.
   local t6="$tmp/direct85.jsonl"
-  _mk_transcript "$t6" 190000
+  _mk_transcript_model "$t6" 190000 "claude-haiku-4-5"   # 95% of 200000
   got="$(_compute_watermark "$t6" "sess-direct85" "$state_dir" "")"
   local blob_count
   blob_count="$(printf '%s' "$got" | grep -c 'hookSpecificOutput' || true)"
@@ -595,7 +746,7 @@ EOF
   # T7 — primary usage-parse path exercised (T1-T6 already used it); confirm
   # explicitly the "source" tag says usage.
   local t7="$tmp/primarycheck.jsonl"
-  _mk_transcript "$t7" 145000
+  _mk_transcript_model "$t7" 145000 "claude-haiku-4-5"   # 72% of 200000
   got="$(_compute_watermark "$t7" "sess-primarycheck" "$state_dir" "")"
   if printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'via usage'; then
     echo "  T7 primary usage-parse path exercised (source=usage): PASS"; pass=$((pass+1))
@@ -605,7 +756,11 @@ EOF
 
   # T8 — bytes-fallback path exercised: a transcript with NO usage object at
   # all (jq present but no assistant-usage line) must fall back to
-  # bytes x calibration and still watermark correctly.
+  # bytes x calibration and still emit. Since the 2026-07-29 class fix that
+  # emission is the UNKNOWN-window notice rather than a percentage (the
+  # fallback path never has a model, so there is no denominator) — which is
+  # doubly right, given this path's numerator is itself 6x-uncertain. The
+  # assertion below is unchanged: the message must still name its source.
   local t8="$tmp/nofallback.jsonl"
   printf '{"type":"user","session_id":"sid","message":{"role":"user","content":"hi, no usage here"}}\n' > "$t8"
   # Pad the file to a known size so we can compute an expected pct.
@@ -624,7 +779,12 @@ EOF
 
   # T9 — malformed / missing stdin at the live-entry layer -> exit 0, no output.
   local rc out
-  out="$(printf 'not json at all' | HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR="$HARNESS_SELFTEST_DIR" bash "$0" 2>&1)"
+  # NOTE the interpreter: "${BASH:-/bin/bash}", never bare `bash`. A bare
+  # `bash` re-invocation runs whichever bash is FIRST ON PATH (here
+  # /opt/homebrew/bin/bash 5.3.15), so a suite launched with /bin/bash 3.2.57
+  # would silently test 5.3 for this scenario and still report a clean count
+  # for 3.2 — a portability blind spot this repo has been bitten by.
+  out="$(printf 'not json at all' | HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR="$HARNESS_SELFTEST_DIR" "${BASH:-/bin/bash}" "$0" 2>&1)"
   rc=$?
   if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
     echo "  T9 malformed stdin -> exit 0 silent: PASS"; pass=$((pass+1))
@@ -647,7 +807,8 @@ EOF
   : > "$state_dir/sess-bothset--watermark-85"
   local payload
   payload=$(jq -n --arg t "$t2" --arg s "sess-bothset" '{transcript_path:$t, session_id:$s}')
-  out="$(printf '%s' "$payload" | HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR="$HARNESS_SELFTEST_DIR" bash "$0" 2>&1)"
+  # Same interpreter discipline as T9 — see the note there.
+  out="$(printf '%s' "$payload" | HARNESS_SELFTEST=1 HARNESS_SELFTEST_DIR="$HARNESS_SELFTEST_DIR" "${BASH:-/bin/bash}" "$0" 2>&1)"
   rc=$?
   if [ "$rc" -eq 0 ] && [ -z "$out" ]; then
     echo "  T11 fast early-exit when both watermarks already fired: PASS"; pass=$((pass+1))
@@ -659,21 +820,25 @@ EOF
   # T12-T19 — window resolution (added 2026-07-20, the incident fix).
   # ==========================================================
 
-  # T12 — model absent (T1-T11's fixtures never set `message.model`) ->
-  # falls back to the conservative default AND the message says so
-  # explicitly. This is the direct regression test for the proven incident:
-  # an unlabeled percentage against a wrong denominator must never happen
-  # again — "assumed" must always be spelled out when the window wasn't
-  # actually established.
+  # T12 — model absent -> UNKNOWN window. REWRITTEN 2026-07-29 (the class
+  # fix): this scenario used to assert the message read "~75% of 200000",
+  # i.e. it PINNED the invented denominator that caused both incidents. It
+  # now asserts the opposite guarantee — with no model there is no
+  # denominator, so the message must carry NO point percentage at all, must
+  # say the window is UNKNOWN, and must still refuse to present anything as
+  # established (the word ASSUMED survives, in its honest sense: this hook
+  # will not print a number against an assumed denominator).
   local t12="$tmp/modelabsent.jsonl"
-  _mk_transcript "$t12" 150000   # 75% of the assumed 200000 default
+  _mk_transcript "$t12" 150000
   got="$(_compute_watermark "$t12" "sess-modelabsent" "$state_dir" "")"
   if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'context window UNKNOWN' \
      && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'ASSUMED' \
-     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q '~75% of 200000'; then
-    echo "  T12 model absent -> conservative default, message says ASSUMED: PASS"; pass=$((pass+1))
+     && ! printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q '~75% of 200000' \
+     && ! printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -qE '~[0-9]+% of'; then
+    echo "  T12 model absent -> UNKNOWN window, no point percentage, nothing presented as established: PASS"; pass=$((pass+1))
   else
-    echo "  T12 model absent -> conservative default, message says ASSUMED: FAIL (got: $got)"; fail=$((fail+1))
+    echo "  T12 model absent -> UNKNOWN window, no point percentage, nothing presented as established: FAIL (got: $got)"; fail=$((fail+1))
   fi
 
   # T13 — large-context model (claude-opus-4-8, the model in the real
@@ -735,17 +900,23 @@ EOF
     echo "  T15 CONTEXT_WATERMARK_WINDOW override wins over model-detected window: FAIL (got: $got)"; fail=$((fail+1))
   fi
 
-  # T16 — an unrecognized model string (not empty, just not in the table)
-  # also falls back to conservative + ASSUMED, same as absent.
+  # T16 — an unrecognized model string (not empty, just not in the table) is
+  # never presented as an established window, and the message names the
+  # offending model so it can be fixed. ASSERTIONS DELIBERATELY UNCHANGED by
+  # the 2026-07-29 class fix (byte-identical, so "not weakened" is
+  # mechanically checkable); only the wording of this comment moved, because
+  # the behavior behind them got strictly stronger — the fallback is no
+  # longer "conservative 200000 + ASSUMED label", it is "no denominator at
+  # all", which satisfies the same guarantee without printing a number.
   local t16="$tmp/unknownmodel.jsonl"
   _mk_transcript_model "$t16" 150000 "claude-hypothetical-9"
   got="$(_compute_watermark "$t16" "sess-unknownmodel" "$state_dir" "")"
   if [ -n "$got" ] \
      && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'ASSUMED' \
      && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'claude-hypothetical-9'; then
-    echo "  T16 unrecognized (but non-empty) model -> conservative default, ASSUMED, names the model: PASS"; pass=$((pass+1))
+    echo "  T16 unrecognized (but non-empty) model -> never presented as established, ASSUMED, names the model: PASS"; pass=$((pass+1))
   else
-    echo "  T16 unrecognized (but non-empty) model -> conservative default, ASSUMED, names the model: FAIL (got: $got)"; fail=$((fail+1))
+    echo "  T16 unrecognized (but non-empty) model -> never presented as established, ASSUMED, names the model: FAIL (got: $got)"; fail=$((fail+1))
   fi
 
   # T17 — direct unit check of _model_window's table for a representative
@@ -808,6 +979,150 @@ EOF
     echo "  T18 fired message carries the never-a-stop-reason / compaction clause: PASS"; pass=$((pass+1))
   else
     echo "  T18 fired message carries the never-a-stop-reason / compaction clause: FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # ==========================================================
+  # T20-T24 — the 2026-07-29 CLASS fix: an unknown model yields no
+  # denominator, therefore no percentage, therefore no watermark; the
+  # detector that suppression would have destroyed is rebuilt in band.
+  # ==========================================================
+
+  # T20 — THE class regression, replaying the 2026-07-28 incident's exact
+  # shape against a model the table does NOT know. 740,000 tokens is what
+  # produced the infamous "~74% of 200000" (a 5x overstatement of a session
+  # that was really 74% of 1,000,000). With the class fix there is no 200000
+  # to divide by: the hook must emit the UNKNOWN notice, must NOT contain
+  # that percentage claim or any other point percentage, must name the model
+  # AND the function to fix, must NOT write either watermark marker, and must
+  # NOT fire the proactive snapshot (no watermark was established).
+  # RED before the fix: this emitted "~370% of 200000" with both markers set
+  # and the snapshot invoked.
+  local t20="$tmp/classfix.jsonl"
+  _mk_transcript_model "$t20" 740000 "claude-nextgen-9"
+  local snap20="$tmp/snapshot-t20.marker"
+  cat > "$tmp/fake-snapshot-t20.sh" <<EOF
+#!/bin/bash
+touch "$snap20"
+EOF
+  chmod +x "$tmp/fake-snapshot-t20.sh"
+  got="$(_compute_watermark "$t20" "sess-classfix" "$state_dir" "$tmp/fake-snapshot-t20.sh")"
+  local ctx20
+  ctx20="$(printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' 2>/dev/null)"
+  if [ -n "$got" ] \
+     && printf '%s' "$ctx20" | grep -q 'context window UNKNOWN' \
+     && printf '%s' "$ctx20" | grep -q 'claude-nextgen-9' \
+     && printf '%s' "$ctx20" | grep -q '_model_window' \
+     && printf '%s' "$ctx20" | grep -q 'CONTEXT_WATERMARK_WINDOW' \
+     && ! printf '%s' "$ctx20" | grep -q '74% of 200000' \
+     && ! printf '%s' "$ctx20" | grep -qE '~[0-9]+% of' \
+     && [ ! -f "$state_dir/sess-classfix--watermark-70" ] \
+     && [ ! -f "$state_dir/sess-classfix--watermark-85" ] \
+     && [ ! -f "$snap20" ]; then
+    echo "  T20 unknown model -> UNKNOWN notice, zero point percentages, no watermark markers, no snapshot: PASS"; pass=$((pass+1))
+  else
+    echo "  T20 unknown model -> UNKNOWN notice, zero point percentages, no watermark markers, no snapshot: FAIL (got: $got, snap: $([ -f "$snap20" ] && echo yes || echo no))"; fail=$((fail+1))
+  fi
+
+  # T20b — the notice states BOTH candidate readings explicitly rather than
+  # picking one: 740,000 tokens is 370% of a 200,000 window or 74% of a
+  # 1,000,000 one. This is the honest replacement for the point estimate —
+  # it is the same information the incident lacked, in a form that cannot be
+  # misread as authoritative capacity.
+  if printf '%s' "$ctx20" | grep -q '370% of a 200000-token window' \
+     && printf '%s' "$ctx20" | grep -q '74% of a 1000000-token one'; then
+    echo "  T20b UNKNOWN notice gives both candidate readings (370%/200k OR 74%/1M), never one: PASS"; pass=$((pass+1))
+  else
+    echo "  T20b UNKNOWN notice gives both candidate readings (370%/200k OR 74%/1M), never one: FAIL (ctx: $ctx20)"; fail=$((fail+1))
+  fi
+
+  # T21 — the notice is one-shot per session: a second call on the same
+  # session is silent, exactly like the 70/85 watermarks' dedup. Without
+  # this the notice would fire on EVERY tool call for the rest of the
+  # session, which is how a useful signal becomes ignored noise.
+  got="$(_compute_watermark "$t20" "sess-classfix" "$state_dir" "$tmp/fake-snapshot-t20.sh")"
+  if [ -z "$got" ] && [ -f "$state_dir/sess-classfix--window-unknown" ]; then
+    echo "  T21 UNKNOWN notice dedups per session (marker written, re-run silent): PASS"; pass=$((pass+1))
+  else
+    echo "  T21 UNKNOWN notice dedups per session (marker written, re-run silent): FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T22 — the notice floor, and that it does not burn the one shot early. A
+  # session on an unknown model that is only 139,999 tokens in cannot be at
+  # 70% of ANY window in the table, so the hook stays silent AND writes no
+  # marker; when the same session later crosses the floor, the notice still
+  # fires. (Writing the marker on the below-floor call would have silently
+  # disabled the notice for the entire session — the exact "silent by
+  # default" failure mode this change exists to end.)
+  local t22lo="$tmp/floorlo.jsonl" t22hi="$tmp/floorhi.jsonl"
+  _mk_transcript_model "$t22lo" 139999 "claude-nextgen-9"
+  _mk_transcript_model "$t22hi" 140000 "claude-nextgen-9"
+  local got_lo got_hi
+  got_lo="$(_compute_watermark "$t22lo" "sess-floor" "$state_dir" "")"
+  local marker_after_lo="no"
+  [ -f "$state_dir/sess-floor--window-unknown" ] && marker_after_lo="yes"
+  got_hi="$(_compute_watermark "$t22hi" "sess-floor" "$state_dir" "")"
+  if [ -z "$got_lo" ] && [ "$marker_after_lo" = "no" ] \
+     && [ -n "$got_hi" ] \
+     && printf '%s' "$got_hi" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'context window UNKNOWN'; then
+    echo "  T22 notice floor: silent+unmarked below 140000, still fires later in the same session at the floor: PASS"; pass=$((pass+1))
+  else
+    echo "  T22 notice floor: silent+unmarked below 140000, still fires later in the same session at the floor: FAIL (lo='$got_lo' marker_after_lo=$marker_after_lo hi='$got_hi')"; fail=$((fail+1))
+  fi
+
+  # T23 — the escape hatch must rescue an UNKNOWN model, not just outrank a
+  # detected one (T15 covers override-vs-detected). An operator who knows
+  # the real window can always get the watermark back without editing code:
+  # override wins, a normal percentage is emitted, and the UNKNOWN notice is
+  # NOT emitted. This is what makes suppression a safe default rather than a
+  # dead end.
+  local t23="$tmp/overrideunknown.jsonl"
+  _mk_transcript_model "$t23" 750000 "claude-nextgen-9"
+  export CONTEXT_WATERMARK_WINDOW=1000000
+  got="$(_compute_watermark "$t23" "sess-overrideunknown" "$state_dir" "")"
+  unset CONTEXT_WATERMARK_WINDOW
+  if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q '~75% of 1000000' \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'override' \
+     && ! printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'context window UNKNOWN' \
+     && [ -f "$state_dir/sess-overrideunknown--watermark-70" ]; then
+    echo "  T23 CONTEXT_WATERMARK_WINDOW override rescues an UNKNOWN model (percentage restored, no notice): PASS"; pass=$((pass+1))
+  else
+    echo "  T23 CONTEXT_WATERMARK_WINDOW override rescues an UNKNOWN model (percentage restored, no notice): FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T23b — end-to-end proof that the class fix did not cost the instance fix:
+  # claude-opus-5 at 740,000 tokens is IN the table, so it must still take
+  # the normal path and read ~74% of 1000000 (auto-detected) — NOT the
+  # UNKNOWN notice, and above all not the "~74% of 200000" of the incident.
+  # T17b unit-checks the table entry; this checks the whole pipeline.
+  local t23b="$tmp/opus5e2e.jsonl"
+  _mk_transcript_model "$t23b" 740000 "claude-opus-5"
+  got="$(_compute_watermark "$t23b" "sess-opus5e2e" "$state_dir" "")"
+  if [ -n "$got" ] \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q '~74% of 1000000' \
+     && printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'auto-detected' \
+     && ! printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q 'context window UNKNOWN' \
+     && ! printf '%s' "$got" | jq -r '.hookSpecificOutput.additionalContext' | grep -q '200000'; then
+    echo "  T23b known model end-to-end (opus-5 @740k -> ~74% of 1000000, detected, not the notice): PASS"; pass=$((pass+1))
+  else
+    echo "  T23b known model end-to-end (opus-5 @740k -> ~74% of 1000000, detected, not the notice): FAIL (got: $got)"; fail=$((fail+1))
+  fi
+
+  # T24 — interpreter integrity of this suite itself. Any scenario that
+  # re-invokes the script must use "$BASH" (the interpreter actually running
+  # the suite), never bare `bash`, which resolves via PATH — on this machine
+  # /opt/homebrew/bin/bash 5.3.15 even when the suite was launched with
+  # /bin/bash 3.2.57. A suite with that defect reports a clean count for an
+  # interpreter it never ran. Source-level guard, because the failure is
+  # invisible from the outside. The pattern is written with an escaped `$`
+  # so this very line cannot match itself.
+  local bare_bash_hits
+  bare_bash_hits="$(grep -cE '(^|[^A-Za-z0-9_/"-])bash "\$0"' "$0" 2>/dev/null || true)"
+  [ -z "$bare_bash_hits" ] && bare_bash_hits=0
+  if [ "$bare_bash_hits" -eq 0 ]; then
+    echo "  T24 self-test never re-invokes via bare \`bash\` (uses \$BASH, so 3.2 runs really are 3.2): PASS"; pass=$((pass+1))
+  else
+    echo "  T24 self-test never re-invokes via bare \`bash\` (uses \$BASH, so 3.2 runs really are 3.2): FAIL ($bare_bash_hits occurrence(s))"; fail=$((fail+1))
   fi
 
   rm -rf "$tmp" 2>/dev/null

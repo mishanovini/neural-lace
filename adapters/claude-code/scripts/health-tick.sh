@@ -106,6 +106,22 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_DIR="$SCRIPT_DIR/../hooks"
 
+# --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
+# nl_run_bounded returns 124 on expiry exactly as GNU `timeout` does, so
+# _ht_run_step's existing rc handling (and the "timeout 124" reasoning in
+# the comment further down) is unchanged. It does NOT assign to SECONDS,
+# which this script uses for its own wall-clock budget.
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/portable-timeout.sh" 2>/dev/null; } || true
+if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  nl_run_bounded() {
+    local s="${1:-0}"; shift 2>/dev/null || true
+    echo "health-tick: WARN hooks/lib/portable-timeout.sh missing — running UNBOUNDED (wanted ${s}s): ${1:-<none>}" >&2
+    [ "$#" -gt 0 ] || return 2
+    "$@"
+  }
+fi
+
 # ----------------------------------------------------------------------
 # Path resolution (mirrors signal-ledger.sh / session-heartbeat-lib.sh
 # sandboxing: explicit override wins, then HARNESS_SELFTEST tmp, then real)
@@ -160,13 +176,12 @@ _ht_run_step() {
   fi
   local t0 t1
   t0=$(date +%s%3N 2>/dev/null); [[ "$t0" =~ ^[0-9]+$ ]] || t0=$(( $(date +%s) * 1000 ))
-  if command -v timeout >/dev/null 2>&1; then
-    _HT_STEP_OUT="$(timeout "${remaining}s" bash -c "$cmdline" 2>&1)"
-    _HT_STEP_RC=$?
-  else
-    _HT_STEP_OUT="$(bash -c "$cmdline" 2>&1)"
-    _HT_STEP_RC=$?
-  fi
+  # Bounded on EVERY platform. The previous `command -v timeout || <run it
+  # anyway>` guard ran unbounded on stock macOS, which silently voided this
+  # function's entire reason for existing: the remaining-budget arithmetic
+  # above is meaningless if the step it guards cannot actually be killed.
+  _HT_STEP_OUT="$(nl_run_bounded "${remaining}s" bash -c "$cmdline" 2>&1)"
+  _HT_STEP_RC=$?
   t1=$(date +%s%3N 2>/dev/null); [[ "$t1" =~ ^[0-9]+$ ]] || t1=$(( $(date +%s) * 1000 ))
   _HT_STEP_MS=$(( t1 - t0 ))
   [[ "$_HT_STEP_MS" -lt 0 ]] && _HT_STEP_MS=0

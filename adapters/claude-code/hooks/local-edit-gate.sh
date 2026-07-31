@@ -223,6 +223,13 @@ cmd_self_test() {
 
   local PASSED=0 FAILED=0
 
+  # Portable fixture aging (PORTABILITY-TOUCH-D-SWEEP-01); self-test only.
+  local _leg_pt
+  _leg_pt="$(cd "$(dirname "$SELF_PATH")" 2>/dev/null && pwd)/lib/portable-time.sh"
+  # shellcheck source=lib/portable-time.sh
+  . "$_leg_pt" 2>/dev/null || {
+    echo "self-test: cannot source lib/portable-time.sh ($_leg_pt)" >&2; return 1; }
+
   # Use a synthetic state dir to avoid polluting the user's real ~/.claude/state/
   export LOCAL_EDIT_STATE_DIR_OVERRIDE="$TMPROOT/state"
   mkdir -p "$LOCAL_EDIT_STATE_DIR_OVERRIDE"
@@ -286,16 +293,40 @@ cmd_self_test() {
   fi
 
   # ---- S5: target inside, stale marker (>30 min) -> block
+  # The fixture is aged to exactly 31 min — one minute PAST FRESHNESS_SECONDS
+  # (1800). Pre-sweep the GNU-only `touch -d "31 minutes ago"` failed on macOS
+  # and the fallback stamped the year 2000, so the scenario proved only "a
+  # 26-year-old marker is rejected" — true of almost any implementation, and
+  # blind to a wrong TTL constant. Aging exactly across the boundary (with S5b
+  # exactly inside it) is what makes the 30-minute contract discriminating.
   rm -f "$LOCAL_EDIT_STATE_DIR_OVERRIDE"/local-edit-*.txt
   echo "stale" > "$LOCAL_EDIT_STATE_DIR_OVERRIDE/local-edit-claude-md-stale.txt"
-  touch -d "31 minutes ago" "$LOCAL_EDIT_STATE_DIR_OVERRIDE/local-edit-claude-md-stale.txt" 2>/dev/null \
-    || touch -t "200001010000" "$LOCAL_EDIT_STATE_DIR_OVERRIDE/local-edit-claude-md-stale.txt"
+  nl_touch_age "$LOCAL_EDIT_STATE_DIR_OVERRIDE/local-edit-claude-md-stale.txt" 1860 || {
+    echo "self-test (S5) stale-marker-block: FAIL (could not age the fixture)"
+    FAILED=$((FAILED + 1)); }
   rc=$(run_with "$(build_input "Edit" "$HOME/.claude/local/CLAUDE.md")")
   if [ "$rc" = "2" ]; then
     echo "self-test (S5) stale-marker-block: PASS"
     PASSED=$((PASSED + 1))
   else
     echo "self-test (S5) stale-marker-block: FAIL (rc=$rc, expected 2)"
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- S5b: boundary negative control — 29 min old (INSIDE the 30-min TTL)
+  # -> allow. Without this, S5 alone is satisfied by a gate that rejects every
+  # marker whose mtime is not "now"; the pair pins the TTL to ~1800s.
+  rm -f "$LOCAL_EDIT_STATE_DIR_OVERRIDE"/local-edit-*.txt
+  echo "Filename: CLAUDE.md" > "$LOCAL_EDIT_STATE_DIR_OVERRIDE/local-edit-claude-md-nearfresh.txt"
+  nl_touch_age "$LOCAL_EDIT_STATE_DIR_OVERRIDE/local-edit-claude-md-nearfresh.txt" 1740 || {
+    echo "self-test (S5b) inside-ttl-marker-allow: FAIL (could not age the fixture)"
+    FAILED=$((FAILED + 1)); }
+  rc=$(run_with "$(build_input "Edit" "$HOME/.claude/local/CLAUDE.md")")
+  if [ "$rc" = "0" ]; then
+    echo "self-test (S5b) inside-ttl-marker-allow: PASS"
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (S5b) inside-ttl-marker-allow: FAIL (rc=$rc, expected 0)"
     FAILED=$((FAILED + 1))
   fi
 

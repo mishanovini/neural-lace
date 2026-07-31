@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-275016f3",
+  "created_at": "2026-07-30T07:06:06Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "operator-authorized adversarial review sweep 2026-07-29, group delta-1 (review-before-deploy backlog)",
+  "change_ref": {
+    "commit_sha": "3404bd1e92a1c4836d32fe8cee6dbef2d1e88f98",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/write-review-record.sh",
+      "blob_sha": "9fe3e330274daa5074cb90bb859b8687ebcff185"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — additive reviewer_principal/independence schema extension with enum + JSON validation, index rows carry both fields, bash-3.2 ${reviewer,,} fix; 20/20 self-test under /bin/bash 3.2 including omitted-fields-null and invalid-enum negative cases.",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

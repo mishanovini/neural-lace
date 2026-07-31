@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-61d86cfc",
+  "created_at": "2026-07-30T06:00:59Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "wip/harness-hardening-2026-07-29 unreviewed-backlog sweep, group agents-manifest-config (operator-authorized adversarial-agent review 2026-07-29)",
+  "change_ref": {
+    "commit_sha": "e1fc56050726987bb140a77018750f04ee0182ad",
+    "branch": "wip/harness-hardening-2026-07-29"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "7b970646a7d1f934c87b33fbb3a633023eef0e47"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — semantic JSON diff proves the 491-line diff is 9 new + 7 changed entries plus pure unicode re-escaping; manifest-check GREEN (145 entries, 119 hooks, 0 warn) under /bin/bash 3.2.57; no duplicate ids; self-test counts REPRODUCED on bash 3.2: review-record-commit-gate 61/0, git-command-parse 115/0, ensure-coord-sync 34/34, ask-registry 97/5-as-documented; splice claims (problems-persist, problem-capture, wip-exceeded) grep-confirmed in host hooks. Two findings ride the record: MAJOR cross-file — ensure-coord-sync entry's only auto call-site (session-start-digest.sh:1306 direct exec) cannot run because scripts/ensure-coord-sync.sh is mode 100644 (exec rc=126 proven); chmod must land on this branch or the entry is theatre. MINOR — loe-backfill entry's jit_triggers/fp_expectation cite docs/plans/loe-calibration.* while the script (lines 805-806) and repo use docs/loe/.",
+    "findings_summary": "MAJOR (cross-file, fix in scripts/ensure-coord-sync.sh): exec bit missing on the splice-invoked script — sole auto-invocation inert, rc=126 proven; chmod +x (blob unchanged) required on this branch. MINOR: loe-backfill entry self-contradicts on output path (docs/plans vs docs/loe); stale jit paths never fire."
+  },
+  "written_by": "harness-reviewer via write-review-record.sh",
+  "payload": {}
+}

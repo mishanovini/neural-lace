@@ -1,0 +1,5 @@
+# Fixture allowlist covering NL_FIXTURE_FLAGGED — self-test scenario 4
+# (allowlisted): same fixture file as scenario 3 (flagged), only the
+# allowlist changes, proving the allowlist path independently rescues a
+# var with zero producer and zero marker.
+NL_FIXTURE_FLAGGED  self-test fixture only: simulates a deliberate operator-shell override with no in-repo producer expected by design.
