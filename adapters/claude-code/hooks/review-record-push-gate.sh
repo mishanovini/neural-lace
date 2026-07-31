@@ -262,8 +262,26 @@ _rrpg_range() {
 }
 
 _rrpg_block_message() {
-  local repo_root="$1" remote_ref="$2" sha="$3" degraded="$4"; shift 4
-  local -a files=("$@")
+  # CLASS: decorated-list-element-reused-as-machine-argument (harness-reviewer
+  # MAJOR 1, round 3). The human bullet list and the machine-readable
+  # `--file ... --blob-sha ...` remedy are two DIFFERENT RENDERINGS of one set,
+  # so they must not share a single decorated array. Annotating an element for
+  # the bullet list ("foo.sh (DELETED by this push -- ...)") spliced the entire
+  # decorated string into the remedy, emitting
+  #   --file foo.sh (DELETED by this push -- ...) --blob-sha <blob-sha-of-...>
+  # which is not a runnable command -- PROVEN by `bash -n` on the emitted
+  # block: "syntax error near unexpected token '('". A gate that blocks while
+  # printing an unrunnable way out is a gate with no way out.
+  #
+  # Parallel arrays are the fix: paths[] is ALWAYS bare (machine consumers),
+  # disp[] carries the annotation (human consumers). Both are passed flattened
+  # with an explicit count n because bash 3.2 cannot pass two arrays directly.
+  # Self-test Scenario 22 `bash -n`s the emitted remedy so this cannot regress.
+  local repo_root="$1" remote_ref="$2" sha="$3" degraded="$4" n="$5"; shift 5
+  local -a paths=() disp=()
+  local _i
+  for (( _i=0; _i<n; _i++ )); do paths+=("$1"); shift; done
+  for (( _i=0; _i<n; _i++ )); do disp+=("$1"); shift; done
   {
     echo "================================================================"
     echo "REVIEW-RECORD PUSH GATE — PUSH BLOCKED (authoritative gate)"
@@ -279,7 +297,8 @@ _rrpg_block_message() {
     echo "Pushing $remote_ref at $sha would land UNREVIEWED harness content on"
     echo "the remote:"
     local f
-    for f in "${files[@]}"; do echo "  • $f"; done
+    # HUMAN rendering -- annotations belong here and ONLY here.
+    for f in "${disp[@]}"; do echo "  • $f"; done
     echo
     echo "This is the AUTHORITATIVE review-record gate (adapters/claude-code/"
     echo "doctrine/deterministic-process.md). review-record-commit-gate.sh is"
@@ -311,7 +330,9 @@ _rrpg_block_message() {
     echo "     time this content is committed; or file one by hand:"
     echo "       bash adapters/claude-code/scripts/review-queue.sh enqueue \\"
     echo "         --branch <branch> \\"
-    for f in "${files[@]}"; do echo "         --file $f --blob-sha <blob-sha-of-$f-at-$sha> \\"; done
+    # MACHINE rendering -- bare paths only. Splicing disp[] here is the MAJOR 1
+    # defect this function's header describes; `bash -n` in Scenario 22 guards it.
+    for f in "${paths[@]}"; do echo "         --file $f --blob-sha <blob-sha-of-$f-at-$sha> \\"; done
     echo "         --repo-root ."
     echo
     echo "  2. Genuine operator-authorized emergency override — requires a"
@@ -568,14 +589,56 @@ _rrpg_main() {
 
     local range files deleted diff_rc range_degraded=0
     range="$(_rrpg_range "$local_sha" "$remote_sha")"
-    files="$(git -C "$repo_root" diff --name-only --diff-filter=ACMR "$range" 2>/dev/null)"
+    # ------------------------------------------------------------
+    # ENUMERATE BY THE CODES THROUGH WHICH THE SUBJECT CAN CHANGE **OR LEAVE**
+    # THE SURFACE -- not by a hand-picked filter list. (harness-reviewer
+    # CRITICAL 1, round 3.)
+    #
+    # THE CLASS, stated so it generalizes past this gate: "the enforcing file
+    # is gone from its enforcing path" is ONE OUTCOME reachable by FOUR VERBS,
+    # and `git diff` scores each differently:
+    #
+    #   verb          name-status            ACMR sees      D sees
+    #   ----          -----------            ---------      ------
+    #   edit          M <path>               <path>         --
+    #   git rm        D <path>               --             <path>
+    #   git mv        R100 <old> <new>       <new> ONLY     NOTHING
+    #   typechange    T <path>               --             --
+    #
+    # So the previous ACMR + D pair closed edit and rm while leaving BOTH mv
+    # and typechange wide open: a rename reports only the DESTINATION (which,
+    # moved out of surface, rrg_in_surface correctly rejects -- and the source
+    # silently vanishes), and a regular-file->symlink typechange is excluded by
+    # BOTH filters. PROVEN end-to-end against a bare remote: `git mv
+    # hooks/victim-gate.sh docs/victim-gate.sh` pushed rc=0 with ZERO gate
+    # bytes emitted, and the path was gone from the remote.
+    #
+    # THE FIX IS TWO TOKENS, each measured before adoption:
+    #   * ACMR -> ACMRT   catches the typechange. FP cost: 0 commits, 0 files
+    #                     over all 1763 master commits -- free.
+    #   * --no-renames    makes `git rm`-shaped output of a rename: the source
+    #                     is reported as a plain D instead of being folded into
+    #                     an R pair, so the vanished path is enumerated. FP
+    #                     cost: 38 files across 7 of 1763 commits (0.40%),
+    #                     which is CHEAPER than the 0.45% deletion arm already
+    #                     accepted below.
+    #
+    # RULE FOR THE NEXT GATE: every gate deriving a subject set from `git diff`
+    # must enumerate by the codes through which its subject can change or LEAVE
+    # the surface; and every self-test carries a `git mv` case and a typechange
+    # case BESIDE its `git rm` case, because one outcome with four verbs needs
+    # four probes. Scenarios 17/17b/17c are that matrix.
+    # ------------------------------------------------------------
+    files="$(git -C "$repo_root" diff --name-only --diff-filter=ACMRT "$range" 2>/dev/null)"
     diff_rc=$?
     # DELETIONS ARE PART OF THE SUBJECT SET (harness-reviewer CRITICAL 3).
     # --diff-filter=ACMR excludes D, so `git rm hooks/victim-gate.sh` was a
     # rc=0 no-op: deleting a gate was invisible to the gate. Enumerated
     # separately because a deleted path has no blob at local_sha, so it can
-    # never take the ordinary coverage path.
-    deleted="$(git -C "$repo_root" diff --name-only --diff-filter=D "$range" 2>/dev/null)"
+    # never take the ordinary coverage path. --no-renames additionally forces a
+    # rename's SOURCE into this set (see the table above); without it, `git mv`
+    # out of the surface is a silent rc=0.
+    deleted="$(git -C "$repo_root" diff --name-only --diff-filter=D --no-renames "$range" 2>/dev/null)"
     if [[ "$diff_rc" -ne 0 ]]; then
       range_degraded=1
       # BAILOUT RESOLVES TOWARD BLOCK (this file's own stated principle,
@@ -590,7 +653,10 @@ _rrpg_main() {
       # (empty-tree..local_sha, the SAME fallback _rrpg_range already uses for
       # a genuine first push) so a transient/unresolvable remote_sha degrades
       # to "scan everything in the pushed tree" rather than "scan nothing".
-      files="$(git -C "$repo_root" diff --name-only --diff-filter=ACMR "${EMPTY_TREE}..${local_sha}" 2>/dev/null)"
+      # Same filter set as the primary enumeration above (ACMRT) -- a fallback
+      # that scans with a WEAKER filter than the path it replaces would reopen
+      # the typechange hole precisely when the gate is least sure of itself.
+      files="$(git -C "$repo_root" diff --name-only --diff-filter=ACMRT "${EMPTY_TREE}..${local_sha}" 2>/dev/null)"
       diff_rc=$?
       if [[ "$diff_rc" -ne 0 ]]; then
         # Even the empty-tree diff failed (should not happen against a real
@@ -610,7 +676,11 @@ _rrpg_main() {
     fi
     [[ -n "$files" ]] || [[ -n "$deleted" ]] || continue
 
-    local -a uncovered=()
+    # PARALLEL ARRAYS, kept in lockstep (see _rrpg_block_message's header):
+    # uncovered_paths[] is the BARE path for machine consumers, uncovered[] is
+    # the human rendering which may carry an annotation. Every push site below
+    # appends to BOTH, in the same order.
+    local -a uncovered=() uncovered_paths=()
     local f sha
     while IFS= read -r f; do
       [[ -n "$f" ]] || continue
@@ -620,22 +690,40 @@ _rrpg_main() {
         # Bailouts resolve toward block (review-record-commit-gate.sh's own
         # hard-won principle): an unresolvable blob for a path the diff says
         # changed is "cannot verify", not "assume fine".
+        uncovered_paths+=("$f")
         uncovered+=("$f (blob unresolvable at $local_sha)")
         continue
       fi
-      rrg_is_covered "$repo_root" "$local_sha" "$f" "$sha" || uncovered+=("$f")
+      if ! rrg_is_covered "$repo_root" "$local_sha" "$f" "$sha"; then
+        uncovered_paths+=("$f")
+        uncovered+=("$f")
+      fi
     done <<< "$files"
 
-    # In-surface DELETIONS. A removed path has no blob at local_sha, so
-    # rrg_is_covered can never return true for it -- a deletion is UNCOVERED by
-    # construction and the operator override is its only route. MEASURED cost
-    # before choosing this (git log --diff-filter=D over master, 2026-07-30):
-    # 8 of 1763 commits (0.45%) delete an in-surface file, 104 files all time,
-    # concentrated in a few deliberate sweeps. That is the real false-positive
-    # bill for making "delete the gate" as hard as "edit the gate".
+    # In-surface DELETIONS **AND RENAME SOURCES** (--no-renames, above). A path
+    # that left its location has no blob at local_sha, so rrg_is_covered can
+    # never return true for it -- it is UNCOVERED by construction and the
+    # operator override is its only route.
+    #
+    # MEASURED cost before choosing this, re-derived 2026-07-30 rather than
+    # inherited (see docs/plans/review-gate-identity-anchor-2026-07-30.md):
+    #   * plain deletions   : 8 of 1763 master commits (0.45%), 104 files.
+    #   * rename sources    : +7 commits (0.40%), +38 files, of which 37 are
+    #                         renames OUT of the surface and 1 is a rename
+    #                         WITHIN it (rules/conversation-tree-state.md ->
+    #                         rules/workstreams-state.md, e272c3e).
+    # The within-surface case is deliberately NOT suppressed: special-casing
+    # "source vanished but destination is in-surface" would add an exemption
+    # branch to the very control that exists to make vanishing hard, to save
+    # one commit in 1763. The override exists for exactly this.
+    # The historical hits are routine, not contrived -- scripts/
+    # sync-pt-to-personal.sh -> attic/ and the ADR-058 rules/*.md ->
+    # doctrine/*-full.md migration moved governance files off a reviewed
+    # surface with zero coverage, which is the hole, not the noise.
     while IFS= read -r f; do
       [[ -n "$f" ]] || continue
       rrg_in_surface "$f" || continue
+      uncovered_paths+=("$f")
       uncovered+=("$f (DELETED by this push — removing an in-surface file needs the same authorization as changing it)")
     done <<< "$deleted"
 
@@ -649,7 +737,11 @@ _rrpg_main() {
     fi
 
     saw_block=1
-    _rrpg_block_message "$repo_root" "$remote_ref" "$local_sha" "$range_degraded" "${uncovered[@]}"
+    # Count first, then BOTH arrays flattened (bash 3.2 cannot pass two arrays).
+    # Safe to expand unguarded: this line is unreachable when uncovered is empty
+    # (the `-eq 0 && continue` above), which matters under `set -u` on bash 3.2.
+    _rrpg_block_message "$repo_root" "$remote_ref" "$local_sha" "$range_degraded" \
+      "${#uncovered_paths[@]}" "${uncovered_paths[@]}" "${uncovered[@]}"
   done <<< "$stdin_buf"
 
   [[ "$saw_block" -eq 1 ]] && return 1
@@ -1033,6 +1125,79 @@ _rrpg_self_test() {
   local msg17; msg17="$(run_capture origin "refs/heads/master $S17_SHA refs/heads/master $V_BASE")"
   case "$msg17" in *victim-gate.sh*) pass "message names the deleted file" ;; \
     *) fail "message omits the deleted file"; esac
+
+  # ==========================================================================
+  # Scenarios 17b/17c: THE OTHER TWO VERBS. (harness-reviewer CRITICAL 1,
+  # round 3.) Scenario 17 closed `git rm`; these close `git mv` and the
+  # regular-file->symlink typechange, which reach the SAME outcome -- the
+  # enforcing file is gone from its enforcing path on the remote -- through
+  # diff codes that ACMR+D never emitted. Both were PROVEN rc=0 with ZERO gate
+  # bytes against a bare remote before the fix.
+  # RULE: every new self-test carries a `git mv` case and a typechange case
+  # beside its `git rm` case. One outcome, four verbs, four probes.
+  # ==========================================================================
+  echo "Scenario 17b: CRITICAL 1 — RENAMING an in-surface gate OUT of the surface BLOCKS (git mv: R100 emits only the destination)"
+  ( cd "$R" && git reset -q --hard "$V_BASE" ) >/dev/null 2>&1
+  ( cd "$R" && mkdir -p docs \
+      && git mv adapters/claude-code/hooks/victim-gate.sh docs/victim-gate.sh \
+      && git commit -qm "chore: move the gate out of the surface" ) >/dev/null 2>&1
+  local S17MV_SHA; S17MV_SHA="$(cd "$R" && git rev-parse HEAD)"
+  rc="$(run origin "refs/heads/master $S17MV_SHA refs/heads/master $V_BASE")"
+  [[ "$rc" == "1" ]] && pass "git mv of an in-surface gate out of the surface BLOCKED (rc=1)" \
+    || fail "git mv out of the surface was invisible to the gate (rc=$rc) — the rename hole is open (needs --no-renames)"
+  local msg17mv; msg17mv="$(run_capture origin "refs/heads/master $S17MV_SHA refs/heads/master $V_BASE")"
+  case "$msg17mv" in *adapters/claude-code/hooks/victim-gate.sh*) \
+    pass "message names the VANISHED SOURCE path, not just the destination" ;; \
+    *) fail "message never names the source path that left the surface"; esac
+
+  echo "Scenario 17c: CRITICAL 1 — a regular-file->symlink TYPECHANGE of an in-surface gate BLOCKS (T is excluded by BOTH ACMR and D)"
+  ( cd "$R" && git reset -q --hard "$V_BASE" ) >/dev/null 2>&1
+  ( cd "$R" && rm -f adapters/claude-code/hooks/victim-gate.sh \
+      && ln -s /dev/null adapters/claude-code/hooks/victim-gate.sh \
+      && git add -A && git commit -qm "chore: swap the gate for a symlink" ) >/dev/null 2>&1
+  local S17TC_SHA; S17TC_SHA="$(cd "$R" && git rev-parse HEAD)"
+  # Guard: the fixture must really be a typechange (mode 120000), or this
+  # scenario would be asserting against an ordinary modification and prove
+  # nothing about the T code.
+  local tcmode; tcmode="$(cd "$R" && git ls-tree "$S17TC_SHA" adapters/claude-code/hooks/victim-gate.sh | awk '{print $1}')"
+  [[ "$tcmode" == "120000" ]] && pass "fixture really is a typechange (mode 120000 at the pushed commit)" \
+    || fail "fixture bug: expected mode 120000, got '$tcmode' — Scenario 17c proves nothing"
+  rc="$(run origin "refs/heads/master $S17TC_SHA refs/heads/master $V_BASE")"
+  [[ "$rc" == "1" ]] && pass "typechange of an in-surface gate BLOCKED (rc=1)" \
+    || fail "regular-file->symlink typechange was invisible to the gate (rc=$rc) — the T hole is open (needs ACMRT)"
+  local msg17tc; msg17tc="$(run_capture origin "refs/heads/master $S17TC_SHA refs/heads/master $V_BASE")"
+  case "$msg17tc" in *victim-gate.sh*) pass "message names the typechanged file" ;; \
+    *) fail "message omits the typechanged file"; esac
+
+  # ==========================================================================
+  # Scenario 22: THE REMEDY MUST BE RUNNABLE. (harness-reviewer MAJOR 1.)
+  # CLASS: decorated-list-element-reused-as-machine-argument. The human bullet
+  # annotation ("foo.sh (DELETED by this push -- ...)") was spliced verbatim
+  # into the machine-readable `--file`/`--blob-sha` remedy, so the command the
+  # gate told the operator to run did not parse. A gate that blocks while
+  # printing an unrunnable way out has no way out. `bash -n` is the oracle.
+  # ==========================================================================
+  echo "Scenario 22: MAJOR 1 — the remedy emitted on a DELETION block must actually parse as shell"
+  local remedy
+  remedy="$(printf '%s\n' "$msg17" | sed -n '/review-queue.sh enqueue/,/--repo-root \./p' | sed 's/^ *//')"
+  if [[ -z "$remedy" ]]; then
+    fail "could not extract the enqueue remedy from the block message — Scenario 22 proves nothing"
+  elif printf '%s\n' "$remedy" | bash -n 2>/dev/null; then
+    pass "emitted remedy parses under \`bash -n\` (annotation is not spliced into --file/--blob-sha)"
+  else
+    fail "emitted remedy is NOT runnable: $(printf '%s\n' "$remedy" | bash -n 2>&1 | head -1)"
+  fi
+  # The annotation must still reach the HUMAN list -- the fix must not have
+  # been "drop the annotation everywhere", which would lose the explanation of
+  # WHY a deletion is uncovered.
+  case "$msg17" in *"DELETED by this push"*) \
+    pass "the human bullet list still carries the DELETED annotation (fix split the renderings, did not drop the text)" ;; \
+    *) fail "the DELETED annotation was lost from the human list — the remedy fix over-corrected"; esac
+  # And the machine line must carry the BARE path with no parenthetical.
+  case "$remedy" in *"--file adapters/claude-code/hooks/victim-gate.sh --blob-sha"*) \
+    pass "--file carries the bare path immediately followed by --blob-sha" ;; \
+    *) fail "--file argument is still decorated: $(printf '%s' "$remedy" | grep -- '--file' | head -1)"; esac
+
   ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
 
   echo "Scenario 18: the gate's own LIBRARY is repo content — deleting it BLOCKS in the harness repo, stays silent elsewhere"
@@ -1178,6 +1343,53 @@ _rrpg_self_test() {
     fi
   else
     fail "could not construct the deletion mutant (sed anchor not found — script drifted)"
+  fi
+
+  # ==========================================================================
+  # Scenario 21b: MUTATION-PROOF #4 — the --no-renames token, isolated.
+  # Scenario 17b asserts a `git mv` out of the surface blocks; this proves that
+  # assertion is carried by --no-renames specifically and not by some other arm
+  # incidentally catching the same commit. Remove ONE token; the mv attack must
+  # succeed again.
+  # ==========================================================================
+  echo "Scenario 21b: MUTATION-PROOF — dropping --no-renames must re-open the git-mv hole"
+  local MUT5DIR="$T/mutant-norenames"; mkdir -p "$MUT5DIR/lib"
+  cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT5DIR/lib/" 2>/dev/null
+  local MUTANT5="$MUT5DIR/gate.sh"
+  sed 's#\(^    deleted="\$(git -C .*--diff-filter=D\) --no-renames#\1#' "$SELF" > "$MUTANT5"
+  if grep -q '^    deleted=.*--diff-filter=D "\$range"' "$MUTANT5"; then
+    rc="$(printf '%s\n' "refs/heads/master $S17MV_SHA refs/heads/master $V_BASE" \
+          | ( cd "$R" && bash "$MUTANT5" origin ) >/dev/null 2>&1; echo $?)"
+    if [[ "$rc" == "0" ]]; then
+      pass "mutant (no --no-renames) WRONGLY allows the git-mv push (rc=0) — proves the token is load-bearing"
+    else
+      fail "mutant still blocked (rc=$rc) — the --no-renames mutation did not land, this scenario proves nothing"
+    fi
+  else
+    fail "could not construct the --no-renames mutant (sed anchor not found — script drifted)"
+  fi
+
+  # ==========================================================================
+  # Scenario 21c: MUTATION-PROOF #5 — the T in ACMRT, isolated. Scenario 17c
+  # asserts a typechange blocks; this proves that assertion is carried by the T
+  # code being enumerated. Remove ONE character; the typechange attack must
+  # succeed again.
+  # ==========================================================================
+  echo "Scenario 21c: MUTATION-PROOF — reverting ACMRT to ACMR must re-open the typechange hole"
+  local MUT6DIR="$T/mutant-acmrt"; mkdir -p "$MUT6DIR/lib"
+  cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT6DIR/lib/" 2>/dev/null
+  local MUTANT6="$MUT6DIR/gate.sh"
+  sed 's#\(^    files="\$(git -C .*--diff-filter=ACMR\)T#\1#' "$SELF" > "$MUTANT6"
+  if grep -q '^    files=.*--diff-filter=ACMR "\$range"' "$MUTANT6"; then
+    rc="$(printf '%s\n' "refs/heads/master $S17TC_SHA refs/heads/master $V_BASE" \
+          | ( cd "$R" && bash "$MUTANT6" origin ) >/dev/null 2>&1; echo $?)"
+    if [[ "$rc" == "0" ]]; then
+      pass "mutant (ACMR, no T) WRONGLY allows the typechange push (rc=0) — proves the T is load-bearing"
+    else
+      fail "mutant still blocked (rc=$rc) — the ACMRT mutation did not land, this scenario proves nothing"
+    fi
+  else
+    fail "could not construct the ACMRT mutant (sed anchor not found — script drifted)"
   fi
 
   rm -rf "$T"

@@ -2637,6 +2637,40 @@ requested alongside the roadmap rollup fix).
   members" rule was measured and REJECTED: all 13 tracked non-`.sh` files under
   `hooks/`+`scripts/` are mode 100644, so a mode-bit rule would have matched ZERO
   files and shipped as theatre; the landed rule is extension-based.
+  **FULLY RESOLVED 2026-07-30 (round 3)** — harness-reviewer returned a second
+  REJECT showing the round-2 closure was partial in two independent ways, both
+  now closed and both regression- and mutation-tested:
+  (1) **The outcome had four verbs, and only two were closed.** "The enforcing
+  file is gone from its enforcing path" is reachable by edit (`M`), `git rm`
+  (`D`), `git mv` (`R100 <old> <new>` — `--diff-filter=ACMR` emits ONLY the
+  destination, `--diff-filter=D` emits NOTHING) and typechange (`T` — excluded by
+  BOTH). PROVEN against a real bare remote with the live gate as the pre-push
+  hook: `git mv adapters/claude-code/git-hooks/pre-push docs/pre-push` pushed
+  **rc=0 with ZERO gate bytes and the path GONE from the remote**, and a
+  regular-file→symlink typechange pushed rc=0 leaving the remote carrying mode
+  120000. Closed by `--diff-filter=ACMRT` + a `--diff-filter=D --no-renames`
+  pass. Re-measured FP bill independently over all 1763 master commits: rename
+  sources **+38 files / +7 commits (0.40%)** — note this is HIGHER than the
+  0.34% the review cited, which counted only renames *out of* the surface and
+  omitted one rename *within* it (`rules/conversation-tree-state.md` →
+  `rules/workstreams-state.md`, `e272c3e`); typechanges 0/0, free. Still cheaper
+  than the 0.45% deletion arm already accepted.
+  (2) **The extension-based rule was itself the hand-written list the header
+  disclaimed.** `hooks/`, `scripts/` and `schemas/` were extension allowlists
+  while the lib header claimed the surface was "derived from the gate's CARRIER
+  CHAIN, not from a hand-written path list". Today's tree was fully covered, so
+  there was no present-day hole — the defect was the absence of the very
+  drift-resistance the claim advertised (`hooks/lib/evil.mjs`, `.cjs`,
+  `hooks/evil.rb`, `.pl`, `.lua`, `schemas/x.yaml` each probed NOT-COVERED). All
+  four carrier trees are now UNFILTERED minus an exact-path exemption list of
+  three known non-code members; MEASURED identical 311-file surface either way,
+  so zero present-day FP cost. The earlier "the landed rule is extension-based"
+  sentence above is therefore SUPERSEDED — the executable-bit rejection stands,
+  its replacement did not.
+  CLASS LESSON (extended): every gate deriving a subject set from `git diff` must
+  enumerate by the **codes through which its subject can change or LEAVE the
+  surface**, never by a hand-listed set of verbs; and every new self-test carries
+  a `git mv` case and a typechange case beside its `git rm` case.
   **STILL DEFERRED — `adapters/claude-code/doctrine/**`**, with its cost now
   measured rather than asserted: **89 tracked files** (`git ls-files
   'adapters/claude-code/doctrine/*' | wc -l`), a +31% surface expansion on its own

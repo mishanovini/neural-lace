@@ -240,6 +240,53 @@ First task: 1.
   motivated the finding. A mode-bit rule would have matched zero files and
   shipped as theatre, so the landed rule matches `.js|.ts|.py|.ps1` and excludes
   `.md`/`.example`. Tier 1 (one-line revert).
+  **SUPERSEDED 2026-07-30 (round 3, MAJOR 2)** — the *rejection* of the
+  executable-bit rule stands and was correct (it would have matched zero files),
+  but the *replacement* was wrong: an extension allowlist is a hand-written path
+  list, which is exactly what the lib header claimed the surface was NOT. See
+  the round-3 entry below for what shipped instead.
+
+### Round 3 — harness-reviewer REJECT on `34e69fc` (3 Critical, 2 Major, 1 Minor)
+- 2026-07-30: **Enumerate the subject set by DIFF CODE, never by verb.**
+  (Critical 1.) `git rm` was closed; `git mv` and typechange were not, and both
+  reach the identical outcome. Verified the reviewer's own git-level claims from
+  scratch before building on them: `--diff-filter=D` returns EMPTY on a rename
+  while `--diff-filter=D --no-renames` returns the vanished source, and `ACMRT`
+  reports a typechange that `ACMR` does not. Fix is two tokens. Tier 1.
+- 2026-07-30: **Report the FP bill I measured, not the one I was handed.**
+  The review cited 37 files / 6 commits (0.34%) for the rename arm. Independent
+  re-measurement over all 1763 master commits gives **38 files / 7 commits
+  (0.40%)**: the reviewer's figure counted only renames *out of* the surface and
+  omitted one rename *within* it (`rules/conversation-tree-state.md ->
+  rules/workstreams-state.md`, `e272c3e`), which `--no-renames` also flags. The
+  conclusion survives (0.40% is still cheaper than the accepted 0.45% deletion
+  arm), but the number shipped is the measured one. Typechange arm: 0/0, free.
+- 2026-07-30: **Do NOT suppress the within-surface rename FP.** Considered
+  exempting "source vanished but destination is in-surface". Rejected: it puts
+  an escape branch inside the control that exists to make vanishing hard, to
+  save one commit in 1763. The operator override is the intended route. Tier 1.
+- 2026-07-30: **Unfiltered carrier trees + exact-path exemptions, not an
+  extension allowlist.** (Major 2.) Chose the reviewer's first option over
+  merely restating the header, because the header's claim is the one worth
+  keeping true. Measured before adopting: the in-surface set is **identical
+  either way on today's tree — 311 files, zero added, zero dropped** — so this
+  is drift-resistance at zero present-day cost. Extended to `schemas/` as well,
+  which had the same latent defect and the same zero cost; fixing only the two
+  arms the review named would have repeated the Minor's own mistake. Tier 1.
+- 2026-07-30: **Exemptions are exact paths, never patterns.** A `scripts/*.md`
+  pattern would exempt a class forever; three named files must each be
+  re-justified when touched, and a new sibling defaults IN-surface. Pinned by
+  two self-test assertions that go red if an exemption is widened. Tier 1.
+- 2026-07-30: **Separate the human and machine renderings of the same list.**
+  (Major 1, class *decorated-list-element-reused-as-machine-argument*.) Parallel
+  arrays rather than stripping at the splice point, so neither consumer can
+  silently inherit the other's formatting. `bash -n` on the emitted remedy is
+  now a self-test assertion. Tier 1.
+- 2026-07-30: **A count is either present-tense with a re-derivation command,
+  or explicitly date-tagged historical.** (Minor.) Swept across all five counts
+  in the entry rather than the one reported. Applying it immediately surfaced a
+  stale figure: `scope-enforcement-gate` was recorded as 38/0 of 36 scenarios
+  but actually runs **40/0 of 38** — corrected in the same commit. Tier 1.
 - 2026-07-30: **In-surface deletions are UNCOVERED by construction.** A deleted
   path has no blob at `local_sha`, so `rrg_is_covered` can never return true for
   it; the operator override is the only route. Considered keying coverage on the

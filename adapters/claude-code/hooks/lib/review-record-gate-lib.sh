@@ -17,8 +17,9 @@
 # TRIGGER SURFACE (Amendment A — path-glob match, manifest is a CROSS-CHECK not
 # the source): a file is in-surface iff its path relative to
 # adapters/claude-code/ matches:
-#   hooks/**/*.{sh,js,ts,py,ps1} | scripts/**/*.{sh,js,ts,py,ps1}
-#   | git-hooks/** | schemas/*.json | install.sh | sync.sh
+#   hooks/** | scripts/** | git-hooks/**   (all three UNFILTERED, minus three
+#       exact-path non-code exemptions -- see rrg_in_surface)
+#   | schemas/*.json | install.sh | sync.sh
 #   | agents/*.md (top-level only) | config/**
 #   | manifest.json | settings.json.template | rules/**
 #
@@ -38,8 +39,19 @@
 # git-hooks/* = 5, schemas/*.json = 11, install.sh + sync.sh = 2, non-.sh code
 # under hooks/ + scripts/ = 10 -- 283 -> 311 in-surface files (+9.9%).
 #
-# NON-.sh MEMBERS ARE MATCHED BY EXTENSION, NOT BY THE EXECUTABLE BIT. The
-# reviewer's suggested "cover executable non-.sh members" rule was MEASURED
+# THE THREE CARRIER TREES ARE UNFILTERED (hooks/, scripts/, git-hooks/), minus
+# an exact-path exemption list of three non-code files. Amendment H originally
+# shipped an EXTENSION ALLOWLIST for hooks/ and scripts/ while this header
+# claimed carrier-chain derivation -- the two disagreed, and the header was the
+# one that was wrong (harness-reviewer MAJOR 2, round 3). It is now literally
+# true: membership is decided by the tree a file lives in, not by a list of
+# extensions someone remembered to write down. MEASURED at the time of the
+# change: identical 311-file in-surface set either way, so the correction cost
+# nothing today and buys drift-resistance tomorrow. See rrg_in_surface's own
+# comment for the exemption list and how to re-derive it.
+#
+# NON-.sh MEMBERS ARE NOT MATCHED BY THE EXECUTABLE BIT. The reviewer's
+# suggested "cover executable non-.sh members" rule was MEASURED
 # against the real tree first and rejected: all 13 tracked non-.sh files under
 # hooks/ and scripts/ are mode 100644, including the live
 # hooks/lib/workstreams-task-bridge.js that motivated the finding
@@ -129,19 +141,60 @@ rrg_in_surface() {
   esac
   rel="${full#adapters/claude-code/}"
   case "$rel" in
-    hooks/*.sh) return 0 ;;
-    scripts/*.sh) return 0 ;;
-    # Amendment H: non-.sh CODE members of the same two trees. Matched by
-    # extension because the executable bit is 644 on every one of them in the
-    # real tree (see the header) -- a mode-bit rule would match nothing.
-    hooks/*.js|hooks/*.ts|hooks/*.py|hooks/*.ps1) return 0 ;;
-    scripts/*.js|scripts/*.ts|scripts/*.py|scripts/*.ps1) return 0 ;;
-    # Amendment H: the rest of the carrier chain. git-hooks/* is unfiltered
-    # because its load-bearing members are EXTENSIONLESS (pre-push, pre-commit,
-    # post-commit, pre-merge-commit) -- an extension filter would miss the
-    # dispatcher that decides whether this gate runs at all.
+    # ------------------------------------------------------------
+    # CARRIER-CHAIN ARMS: UNFILTERED, WITH AN EXACT-PATH EXEMPTION LIST.
+    # (harness-reviewer MAJOR 2, round 3.)
+    #
+    # All three trees are matched WHOLESALE. The previous revision filtered
+    # hooks/ and scripts/ by extension (.sh/.js/.ts/.py/.ps1) while leaving
+    # git-hooks/ unfiltered, and the header above called the result "derived
+    # from the gate's CARRIER CHAIN, not from a hand-written path list" -- a
+    # claim that was FALSE for two of the three arms. An extension allowlist IS
+    # a hand-written list. It covered the tree of the day by coincidence and
+    # silently omitted anything else: hooks/lib/evil.mjs, hooks/lib/evil.cjs,
+    # hooks/evil.rb, hooks/evil.pl, hooks/evil.lua were each PROBED and
+    # confirmed NOT-COVERED under the old arms. Today's tree happened to be
+    # fully covered, so the defect was never a present-day hole -- it was the
+    # absence of the very drift-resistance the header advertised.
+    #
+    # Unfiltered + exemptions inverts the drift risk in the SAFE direction: a
+    # new file of any kind under these trees is IN surface by default, and
+    # falling OUT requires an explicit edit to the list below -- an edit which
+    # is itself in-surface, since this lib is a carrier-chain link. The old
+    # shape failed the other way: a new extension fell out silently, with no
+    # edit and no reviewer ever seeing it.
+    #
+    # git-hooks/ additionally CANNOT be extension-filtered at all: its
+    # load-bearing members are EXTENSIONLESS (pre-push, pre-commit, post-commit,
+    # pre-merge-commit) -- including the dispatcher that decides whether this
+    # gate runs at all.
+    #
+    # EXEMPTIONS ARE EXACT PATHS, NEVER PATTERNS. `scripts/*.md` would exempt a
+    # class forever; three named files must each be re-justified when touched.
+    # Re-derive the list (it should print exactly these three):
+    #   git ls-files 'adapters/claude-code/hooks/*' 'adapters/claude-code/scripts/*' \
+    #     | grep -vE '\.(sh|js|ts|py|ps1)$'
+    # MEASURED, not assumed: on today's tree this predicate selects exactly the
+    # SAME 311 files as the extension-filtered version -- zero newly covered,
+    # zero newly dropped. A pure drift-resistance change at zero present-day
+    # false-positive cost. Self-test scenarios h1-h6 pin both halves.
+    # ------------------------------------------------------------
+    hooks/sensitive-patterns.local.example) return 1 ;;
+    scripts/schedule-weekly-eval.md) return 1 ;;
+    scripts/spawn-worktree-selftest-evidence.md) return 1 ;;
+    hooks/*) return 0 ;;
+    scripts/*) return 0 ;;
     git-hooks/*) return 0 ;;
-    schemas/*.json) return 0 ;;
+    # schemas/ is the fourth carrier-chain tree and gets the SAME treatment for
+    # the SAME reason (consistency was the point of MAJOR 2, so fixing only the
+    # two arms that were reported would repeat the Minor finding's mistake of
+    # applying a rule to the reported instance alone). `schemas/*.json` was an
+    # extension allowlist too: a `schemas/x.yaml` was PROBED and confirmed
+    # NOT-COVERED. MEASURED: schemas/ holds 11 tracked files, all .json, so
+    # unfiltering it is again a zero-delta, drift-resistance-only change
+    # (`git ls-files 'adapters/claude-code/schemas/*' | grep -v '\.json$'`
+    # prints nothing).
+    schemas/*) return 0 ;;
     install.sh) return 0 ;;
     sync.sh) return 0 ;;
     agents/*.md)
@@ -697,7 +750,9 @@ _rrg_self_test() {
   done
 
   # ---- Amendment H: NON-code neighbours of those same trees stay OUT, so the
-  # expansion is the measured +28 files and not an accidental sweep of docs. ----
+  # expansion is the measured +28 files and not an accidental sweep of docs.
+  # These three are the EXACT-PATH exemption list in rrg_in_surface; this loop
+  # is what keeps the list honest when someone unfilters another tree. ----
   for p in \
     "adapters/claude-code/scripts/schedule-weekly-eval.md" \
     "adapters/claude-code/scripts/spawn-worktree-selftest-evidence.md" \
@@ -708,6 +763,45 @@ _rrg_self_test() {
       echo "FAIL: in-surface($p) expected FALSE (surface expansion overshot)"; fail=$((fail+1))
     else
       echo "PASS: NOT in-surface($p)"; pass=$((pass+1))
+    fi
+  done
+
+  # ---- MAJOR 2 (round 3): DRIFT-RESISTANCE. The header claims the surface is
+  # derived from the CARRIER CHAIN rather than a hand-written path list. That
+  # claim is only true if a file the list's author never thought of is covered
+  # anyway. Each path below was PROBED against the previous extension-allowlist
+  # arms and came back NOT-COVERED; every one of them can execute or configure
+  # a carrier-chain link, so each was a silent future hole. This loop is the
+  # difference between "covered today" and "stays covered as the tree drifts".
+  # NOTE these are HYPOTHETICAL paths -- they deliberately do not exist in the
+  # tree, because the property under test is about files not yet written. ----
+  for p in \
+    "adapters/claude-code/hooks/lib/evil.mjs" \
+    "adapters/claude-code/hooks/lib/evil.cjs" \
+    "adapters/claude-code/hooks/evil.rb" \
+    "adapters/claude-code/scripts/evil.pl" \
+    "adapters/claude-code/scripts/evil.lua" \
+    "adapters/claude-code/schemas/x.yaml" \
+  ; do
+    if rrg_in_surface "$p"; then
+      echo "PASS: drift-resistant in-surface($p) — a new extension is covered by default"; pass=$((pass+1))
+    else
+      echo "FAIL: in-surface($p) expected TRUE — the surface is still an extension allowlist, not carrier-chain-derived"; fail=$((fail+1))
+    fi
+  done
+
+  # ---- ...and the exemption mechanism must be EXACT-PATH, not a pattern: a
+  # sibling .md under scripts/ that is NOT on the list stays IN surface. If this
+  # goes red, someone widened an exemption into a class and reopened the hole
+  # the exact-path rule exists to prevent. ----
+  for p in \
+    "adapters/claude-code/scripts/some-new-doc.md" \
+    "adapters/claude-code/hooks/another.local.example" \
+  ; do
+    if rrg_in_surface "$p"; then
+      echo "PASS: non-exempted sibling stays in-surface($p) — exemptions are exact paths, not patterns"; pass=$((pass+1))
+    else
+      echo "FAIL: in-surface($p) expected TRUE — an exemption was widened into a pattern"; fail=$((fail+1))
     fi
   done
 

@@ -23,10 +23,11 @@
 **The gap this closes.** No mechanism required a `harness-reviewer` PASS
 before a change reached live `~/.claude/`.
 
-**Trigger surface (Amendments A+G):** in-surface iff path relative to
-`adapters/claude-code/` matches `hooks/**/*.sh | scripts/**/*.sh |
-agents/*.md | config/** | manifest.json | settings.json.template |
-rules/**` (config/** residual: never deployed by either carrier), OR
+**Trigger surface (Amendments A+G+H):** in-surface iff path relative to
+`adapters/claude-code/` matches `hooks/** | scripts/** | git-hooks/** |
+schemas/** | install.sh | sync.sh | agents/*.md | config/** |
+manifest.json | settings.json.template | rules/**` (config/** residual:
+never deployed by either carrier), OR
 repo-root path matches `neural-lace/workstreams-ui/{server,web}/**/*.js`
 (Amendment G, cockpit surface incl. `*.selftest.js`; no INSTALL-time deploy
 step exists for the cockpit, so `review-record-push-gate.sh` — not
@@ -35,6 +36,26 @@ enforcement for this surface too, since it reads the SAME `rrg_in_surface`;
 residual `scripts/|state/|config/|web/*.{html,css}`, -full.md). Manifest
 is a CROSS-CHECK only — every `hooks[]` entry must resolve in-surface
 (doctor `review-surface-cross-check`), else RED.
+
+**Amendment H surface shape (2026-07-30):** the four CARRIER-CHAIN trees
+(`hooks/`, `scripts/`, `git-hooks/`, `schemas/`) are matched WHOLESALE —
+not by extension — minus an exact-path exemption list of three non-code
+members. Extension allowlists were retired because they are hand-written
+lists that drift silently: a new `.mjs`/`.rb`/`.yaml` fell OUT of surface
+with no edit and no reviewer. Exemptions are exact paths, never patterns,
+so a new sibling defaults IN. Re-derive the exemption list with
+`git ls-files 'adapters/claude-code/hooks/*' 'adapters/claude-code/scripts/*'
+| grep -vE '\.(sh|js|ts|py|ps1)$'`.
+
+**Subject-set enumeration (Amendment H):** `review-record-push-gate.sh`
+enumerates the pushed range with `--diff-filter=ACMRT` **plus** a separate
+`--diff-filter=D --no-renames` pass. "The enforcing file is gone from its
+path" is ONE outcome with FOUR verbs — edit `M`, `git rm` `D`, `git mv`
+`R100 <old> <new>` (ACMR emits only the DESTINATION, D emits nothing), and
+typechange `T` (excluded by BOTH). Any gate deriving a subject set from
+`git diff` must enumerate by the codes through which its subject can change
+**or leave** the surface, and every self-test carries a `git mv` case and a
+typechange case beside its `git rm` case.
 
 **Coverage (Amendments D+E):** covered iff `{path, blob_sha}` is in
 `grandfather-manifest.json` (pre-cutover, exempt) OR in `index.json` with
