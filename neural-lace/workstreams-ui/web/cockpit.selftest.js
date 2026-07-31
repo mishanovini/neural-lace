@@ -930,8 +930,12 @@ ok('T3-13 progress bars ALWAYS carry the "n/m" text and are OMITTED for zero-tra
 ok('T3-14 the tree is nested native <details>/<summary> disclosure (C9 keyboard baseline)',
   /createElement\('details'\)/.test(roadmapJs) && /createElement\('summary'\)/.test(roadmapJs));
 ok('T3-15 roll-up badges render ONE PER attention class present (R4: precedence orders, never selects) in the pinned precedence order. Round 15: "running" joins the SAME machinery (C1 applied to the running state), leading the order',
+  // 2026-07-30: 'idle-dispatch' joins the order between limit-parked and
+  // unknown, mirroring derive-lib's ATTENTION_PRECEDENCE exactly (a client
+  // order that disagrees with the server's roll-up law is a real defect —
+  // see R20-13, which pins the relationship rather than the literal list).
   /ROLLUP_ORDER/.test(roadmapJs) &&
-  /'running',\s*'waiting-on-you',\s*'crashed',\s*'blocked-on',\s*'limit-parked',\s*'unknown'/.test(roadmapJs.replace(/\n\s*/g, ' ')));
+  /'running',\s*'waiting-on-you',\s*'crashed',\s*'blocked-on',\s*'limit-parked',\s*'idle-dispatch',\s*'unknown'/.test(roadmapJs.replace(/\n\s*/g, ' ')));
 ok('T3-16 roll-up badges are counted + labeled real buttons whose click expands the path to the item',
   /rm-rollup-badge/.test(roadmapJs) && /expandPathTo/.test(roadmapJs));
 ok('T3-17 CSS shows roll-up badges on COLLAPSED ancestors (hidden when the branch is open — the attention state is never masked while collapsed)',
@@ -2401,15 +2405,14 @@ ok('R13-52 mutation control: the group container survives FILTERING structurally
 // ---- fix 4: per-task done-state -----------------------------------------
 ok('R13-60 titleCell prepends a leading "✓" (rm-task-check) on a TASK row that is actually complete — text, not colour-only, and gated on BOTH item.kind===\'task\' AND status.value===\'complete\' (never shown on a complete PLAN row, which already has its own dim title + Shipped grouping)',
   /function titleCell\(item\) \{[\s\S]{0,300}item\.kind === 'task' && item\.status && item\.status\.value === 'complete'[\s\S]{0,200}rm-task-check/.test(roadmapJsNoComments));
-ok('R13-61 taskSpanCell renders "running" for a TASK row that genuinely carries item.live_sessions, and this check comes BEFORE the isNextTask branch — so a task that is BOTH next AND running truthfully says "running" (the stronger, evidenced claim), never "next" (the weaker positional guess)',
-  (function () {
-    var m = roadmapJsNoComments.match(/function taskSpanCell\(item, isNextTask\) \{([\s\S]*?)\n  \}/);
-    var body = m ? m[1] : ''; // capture group 1 excludes the signature line itself, so 'isNextTask' in the param list can't shadow the real branch check
-    if (!body) return false;
-    var liveIdx = body.indexOf('live_sessions');
-    var nextIdx = body.indexOf('isNextTask');
-    return liveIdx !== -1 && nextIdx !== -1 && liveIdx < nextIdx && /rm-task-running/.test(body) && /rm-task-next/.test(body);
-  })());
+// R13-61 MOVED (2026-07-30) to the R20 running-claim section at the end of
+// this file, and converted from a source-order regex to real execution.
+// The old form required the literal 'live_sessions' to appear inside
+// taskSpanCell before 'isNextTask'; that broke the moment the running test
+// moved behind the shared hasRunningSession() predicate, even though the
+// BEHAVIOUR it cared about was unchanged — a regex pinning how the check
+// is spelled, not what it does. It lives beside the payload fixtures it
+// needs (RUNNING_TASK_PAYLOAD), which are declared in that section.
 ok('R13-62 taskSpanCell NEVER falls through to deriveTaskSpanLabel for a task-kind item (a leaf task has no children of its own — that branch is PLAN-only) — the function returns early inside the item.kind===\'task\' branch. Round 15: deriveTaskSpanLabel now takes the whole item (not just item.children) so it can also read item.roll_up.running for the "running" token',
   /function taskSpanCell\(item, isNextTask\) \{[\s\S]*?if \(item\.kind === 'task'\) \{[\s\S]*?return cell;[\s\S]*?\}[\s\S]*?deriveTaskSpanLabel\(item\)/.test(roadmapJsNoComments));
 ok('R13-63 renderChildList computes nextId via firstOpenChildId over the FULL unpartitioned children list, but ONLY for a task list — a phase-series (child-PLAN) list gets nextId=null, since "next" is a per-TASK affordance, not a per-plan one (plans get their own "n next" one level up, via the parent\'s own task-span text)',
@@ -2733,6 +2736,153 @@ ok('R17-C14 app.js applies it to the Q2 "what needs me" card text (.nm-text) AND
 ok('R17-C15 both renderCat wrappers (inbox.js and app.js) degrade to plain textContent when window.CommandRender failed to load — never a throw, never raw HTML injection from an absent global',
   (inboxJs.match(/node\.textContent = String\(text == null \? '' : text\)/g) || []).length >= 1 &&
   (js.match(/node\.textContent = String\(text == null \? '' : text\)/g) || []).length >= 1);
+
+// ============================================================
+// R20 (2026-07-30) — THE RUNNING-CLAIM SWEEP. Operator-reported, twice:
+// "The green items are supposed to indicate something is actively running.
+// I see several green plans that aren't running."
+//
+// A first fix corrected the SERVER's roll-up gate but left the CLIENT
+// painting the green chip from the identical bad predicate
+// (`live_sessions.length` — mere membership), so the operator's symptom
+// survived untouched. These tests REALLY EXECUTE the extracted client
+// functions (the vm-sandbox technique used throughout this file) against
+// the EXACT payload the fixture server returns for stale-dispatch-plan/1 —
+// captured verbatim from a live `node server/roadmap-routes.selftest.js
+// --serve` run, GET /api/roadmap. No source regex: delete the fix and the
+// assertions below fail on the rendered output, not on a missing string.
+// ============================================================
+const elSrc = extractMarkedBlock(roadmapJs, '// EL-HELPER-BEGIN', '// EL-HELPER-END');
+const runningClaimSrc = extractMarkedBlock(roadmapJs, '// RUNNING-CLAIM-BEGIN', '// RUNNING-CLAIM-END');
+const taskSpanCellSrc = extractMarkedBlock(roadmapJs, '// TASK-SPAN-CELL-BEGIN', '// TASK-SPAN-CELL-END');
+const nodeIsActiveSrc = extractMarkedBlock(roadmapJs, '// NODE-IS-ACTIVE-BEGIN', '// NODE-IS-ACTIVE-END');
+ok('R20-0 selftest can locate the EL-HELPER/RUNNING-CLAIM/TASK-SPAN-CELL/NODE-IS-ACTIVE extraction anchors (source-execution harness precondition)',
+  !!elSrc && !!runningClaimSrc && !!taskSpanCellSrc && !!nodeIsActiveSrc);
+
+// The VERBATIM live payload for stale-dispatch-plan/1: status.value
+// 'stalled', and ONE attached session whose OWN status.value is 'stalled'
+// — the session heartbeat is genuinely fresh (that is the whole point),
+// but the task has not been re-dispatched. `live_sessions` is non-empty,
+// so every `.length` predicate evaluates TRUE against it.
+const STALE_TASK_PAYLOAD = {
+  id: 'stale-dispatch-plan/1',
+  kind: 'task',
+  title: 'a task dispatched once, hours ago, never revisited',
+  status: { value: 'stalled', reason: 'idle-dispatch', reason_class: 'idle-dispatch', label: 'stalled — no recent dispatch (the session that touched it is still alive)' },
+  roll_up: {},
+  live_sessions: [{
+    id: 'stale-dispatch-plan/1/agent/sess-op-1',
+    kind: 'agent',
+    title: 'session sess-op-1 (fixture)',
+    status: { value: 'stalled', label: 'stalled — this task has not been (re-)dispatched in a while, even though the session that touched it is still alive', reason: '', since: '2026-07-31T00:41:47.815Z' },
+  }],
+};
+// The control: identical shape, but the attached session is genuinely
+// running. Every assertion below is paired against this so the tests pin
+// "reads status.value" and not merely "always returns false".
+const RUNNING_TASK_PAYLOAD = {
+  id: 'rich-plan/1', kind: 'task', title: 'a genuinely active task',
+  status: { value: 'in-progress', reason: '', reason_class: '', label: 'in progress' },
+  roll_up: {},
+  live_sessions: [{
+    id: 'rich-plan/1/agent/sess-op-1', kind: 'agent', title: 'session sess-op-1 (fixture)',
+    status: { value: 'running', label: 'running', reason: '', since: '2026-07-31T00:41:47.815Z' },
+  }],
+};
+
+// runCell(payload, isNext) — REALLY builds the column-3 cell through the
+// real taskSpanCell in a fake DOM, and returns the rendered chip text +
+// classes. Asserting the RENDERED OUTPUT (what the operator sees), never an
+// intermediate predicate value.
+function runCell(payload, isNext) {
+  const sandbox = { document: makeFakeDom() };
+  vmMod.createContext(sandbox);
+  const code = elSrc + '\n' + runningClaimSrc + '\n' + taskSpanSrc + '\n' + taskSpanCellSrc +
+    '\nvar __cell = taskSpanCell(' + JSON.stringify(payload) + ', ' + (isNext ? 'true' : 'false') + ');' +
+    '\nvar __out = __cell.children.map(function (c) { return { cls: c.className, text: c.textContent }; });';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return sandbox.__out;
+}
+
+const staleCell = runCell(STALE_TASK_PAYLOAD, false);
+ok('R20-1 THE OPERATOR\'S DEFECT: taskSpanCell renders NO "running" chip for a task whose only attached session is itself stalled — the green chip is gone from the rendered cell, not merely from a predicate (executed against the verbatim live stale-dispatch-plan/1 payload)',
+  !staleCell.__error && staleCell.every((c) => c.text !== 'running' && !/rm-task-running/.test(c.cls)),
+  JSON.stringify(staleCell));
+const runningCell = runCell(RUNNING_TASK_PAYLOAD, false);
+ok('R20-2 ...while a task with a GENUINELY running session still renders the loud green chip — the fix reads each session\'s status.value, it does not just switch the chip off (no false negative)',
+  !runningCell.__error && runningCell.length === 1 &&
+  runningCell[0].text === 'running' && /chip rm-task-running/.test(runningCell[0].cls),
+  JSON.stringify(runningCell));
+// R13-61 relocated here (see its old site above) and converted to real
+// execution: the evidenced "running" claim outranks the positional "next"
+// guess. R20-3 below is its mirror for the STALE case, where "next" wins.
+ok('R13-61 taskSpanCell: a task that is BOTH the next open task AND genuinely running renders "running" — the evidenced claim outranks the weaker positional guess (proven by executing the real cell, not by source order)',
+  (function () {
+    const c = runCell(RUNNING_TASK_PAYLOAD, true);
+    return !c.__error && c.length === 1 && c[0].text === 'running' && /rm-task-running/.test(c[0].cls);
+  })());
+ok('R20-3 a stale-session task that IS the next open task falls through to the neutral "next" token — the row still says something true, it does not go silently blank',
+  (function () {
+    const c = runCell(STALE_TASK_PAYLOAD, true);
+    return !c.__error && c.length === 1 && c[0].text === 'next' && /rm-task-next/.test(c[0].cls);
+  })());
+ok('R20-4 an EMPTY live_sessions array still renders nothing (the pre-existing honest-absence behavior is unchanged by the predicate swap)',
+  (function () {
+    const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'not-started' }, roll_up: {}, live_sessions: [] }, false);
+    return !c.__error && c.length === 0;
+  })());
+ok('R20-5 a session leaf with a MISSING/partial status object never counts as running (defensive: the predicate reads status.value, so a malformed leaf is not a running claim)',
+  (function () {
+    const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'stalled' }, roll_up: {}, live_sessions: [{ id: 'a', title: 'x' }, { id: 'b', title: 'y', status: {} }] }, false);
+    return !c.__error && c.every((x) => x.text !== 'running');
+  })());
+
+// runPredicate(src, expr) — the two other swept sites are pure, so they run
+// without a DOM.
+function runClaim(expr) { return runPure(elSrc + '\n' + runningClaimSrc + '\n' + nodeIsActiveSrc, expr); }
+ok('R20-6 SITE 813 (the drill-down header): attachedSessionsLabel does NOT say "currently running" for a stale attached session — it names the attached count without the running claim (the old header counted stalled leaves as running)',
+  (function () {
+    const r = runClaim('attachedSessionsLabel(' + JSON.stringify(STALE_TASK_PAYLOAD) + ')');
+    return typeof r === 'string' && !/currently running/.test(r) && /none running \(1\)/.test(r);
+  })(), JSON.stringify(runClaim('attachedSessionsLabel(' + JSON.stringify(STALE_TASK_PAYLOAD) + ')')));
+ok('R20-7 ...and it DOES say "currently running (1)" for a genuinely running session — the header counts running members, not array length',
+  runClaim('attachedSessionsLabel(' + JSON.stringify(RUNNING_TASK_PAYLOAD) + ')') === 'currently running (1):');
+ok('R20-8 ...and with a MIXED list (1 running + 2 stalled) the header counts ONLY the running one, never the array length',
+  (function () {
+    const mixed = { live_sessions: [
+      { status: { value: 'stalled' } }, { status: { value: 'running' } }, { status: { value: 'unknown' } },
+    ] };
+    return runClaim('attachedSessionsLabel(' + JSON.stringify(mixed) + ')') === 'currently running (1):';
+  })());
+ok('R20-9 SITE 1333 (auto-expand): nodeIsActive is FALSE for the stale task — a dead row no longer force-expands its whole ancestor chain and spends the operator\'s default-open budget',
+  runClaim('nodeIsActive(' + JSON.stringify(STALE_TASK_PAYLOAD) + ')') === false);
+ok('R20-10 ...and TRUE for the genuinely running task, AND still true for an in-progress node with no sessions attached at all (no false negative in the auto-expand policy)',
+  runClaim('nodeIsActive(' + JSON.stringify(RUNNING_TASK_PAYLOAD) + ')') === true &&
+  runClaim('nodeIsActive({status:{value:"in-progress"}})') === true &&
+  runClaim('nodeIsActive({status:{value:"stalled",reason_class:"waiting-on-you"}})') === true);
+ok('R20-11 SITE 1979 (unbound sessions) is deliberately NOT converted: renderAll still gates on .length, because deriveUnboundSessionsNode already filtered that collection server-side and stamps its members "in-progress" — hasRunningSession() there would hide genuinely-running unattributed work (R9-7). The audit note must stay with the code so the next sweep does not "fix" it.',
+  /AUDITED 2026-07-30 \(running-claim sweep\)/.test(roadmapJs) &&
+  /if \(ub && ub\.live_sessions && ub\.live_sessions\.length\)/.test(roadmapJsNoComments));
+ok('R20-12 no client site reads live_sessions.length as a RUNNING claim any more — the three converted sites go through the shared predicate, and the only surviving .length test is the audited unbound one',
+  (function () {
+    // Count `.length` membership tests on live_sessions in EXECUTABLE
+    // source (comments stripped). Exactly one may remain: renderAll's
+    // unbound gate. attachedSessionsLabel's own `total` is a COUNT for
+    // display, not a truth test, and reads .length on a local var.
+    const hits = roadmapJsNoComments.match(/\.live_sessions\s*&&\s*[A-Za-z_.]*\.live_sessions\.length/g) || [];
+    return hits.length === 1;
+  })(), JSON.stringify(roadmapJsNoComments.match(/\.live_sessions\s*&&\s*[A-Za-z_.]*\.live_sessions\.length/g) || []));
+ok('R20-13 the client roll-up vocabulary matches the server\'s: "idle-dispatch" is a first-class badge class ranked between limit-parked and unknown, with its own label and CSS — a plan whose task went idle must not roll up a "crashed" badge',
+  /'idle-dispatch'/.test(roadmapJs) &&
+  (function () {
+    const m = roadmapJsNoComments.match(/var ROLLUP_ORDER = \[([^\]]+)\]/);
+    if (!m) return false;
+    const order = m[1].split(',').map((s) => s.trim().replace(/'/g, ''));
+    return order.indexOf('idle-dispatch') === order.indexOf('limit-parked') + 1 &&
+      order.indexOf('unknown') === order.indexOf('idle-dispatch') + 1;
+  })() &&
+  /'idle-dispatch': 'stalled — no recent dispatch'/.test(roadmapJs) &&
+  /\.chip\.rm-rollup-idle-dispatch/.test(C));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

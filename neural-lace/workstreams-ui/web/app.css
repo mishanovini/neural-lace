@@ -1470,6 +1470,11 @@ details[open] > summary .rm-rollups { display: none; }
 .chip.rm-rollup-running { color: var(--running); border-color: var(--running); font-weight: 600; }
 .chip.rm-rollup-waiting-on-you, .chip.rm-rollup-crashed { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; }
 .chip.rm-rollup-blocked-on, .chip.rm-rollup-limit-parked { color: var(--warn); border-color: var(--warn); }
+/* 2026-07-30: 'idle-dispatch' is deliberately --warn, NOT the --interrupt
+   that 'crashed' uses. It is the softer claim ("this task went quiet; its
+   session is still alive"), and colouring it like a crash would re-create
+   in CSS exactly the false-urgency the reason-code split removed. */
+.chip.rm-rollup-idle-dispatch { color: var(--warn); border-color: var(--warn); }
 .chip.rm-rollup-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; }
 
 /* ---- markers (I1/I2): text markers, never color-only ---- */

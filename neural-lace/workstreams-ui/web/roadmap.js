@@ -98,13 +98,20 @@
   // to the running state, not just attention states) — leads the order
   // since "someone is actively working on this right now" is the loudest,
   // most wanted-visible fact, ahead of the genuine problem states.
-  var ROLLUP_ORDER = ['running', 'waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown'];
+  // 'idle-dispatch' (2026-07-30) mirrors derive-lib.js's ATTENTION_PRECEDENCE
+  // exactly — it must sit between 'limit-parked' and 'unknown' here or the
+  // client's badge order silently disagrees with the server's roll-up law.
+  // It is DISTINCT from 'crashed' on purpose: a plan rolling up
+  // "1 stalled — crashed" for a task whose session is demonstrably alive
+  // sent the operator hunting a dead process that never existed.
+  var ROLLUP_ORDER = ['running', 'waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'idle-dispatch', 'unknown'];
   var ROLLUP_BADGE_LABEL = {
     'running': 'running',
     'waiting-on-you': 'stalled — waiting on you',
     'crashed': 'stalled — crashed',
     'blocked-on': 'stalled — blocked on a predecessor',
     'limit-parked': 'stalled — limit-parked',
+    'idle-dispatch': 'stalled — no recent dispatch',
     'unknown': 'status unknown',
   };
 
@@ -150,12 +157,69 @@
   // ============================================================
   // small builders
   // ============================================================
+  // EL-HELPER-BEGIN
   function el(tag, cls, text) {
     var n = document.createElement(tag);
     if (cls) n.className = cls;
     if (text !== undefined && text !== null) n.textContent = text;
     return n;
   }
+  // EL-HELPER-END
+
+  // RUNNING-CLAIM-BEGIN
+  // ============================================================
+  // THE RUNNING-CLAIM PREDICATE (2026-07-30 — operator-reported defect:
+  // "the green items are supposed to indicate something is actively
+  // running. I see several green plans that aren't running.")
+  //
+  // CLASS: non-empty-collection-as-truth-claim. `live_sessions` is the list
+  // of sessions ATTACHED to an item — it is NOT a list of running ones.
+  // Each member carries its OWN derived `status.value`, one of
+  // 'running' | 'stalled' | 'unknown' (server: deriveLiveAgentLeaves). A
+  // merely NON-EMPTY array therefore proves only "a session once touched
+  // this task", never "work is happening here now": the attached session is
+  // the DISPATCHING orchestrator, which routinely stays alive for hours
+  // across dozens of unrelated dispatches. Testing `.length` was the exact
+  // bug the server-side rollup gate already fixed (roadmap-routes.js's
+  // absorbOneChildRollUp) — the client kept painting the green chip from
+  // the identical bad predicate, so the operator's symptom survived the
+  // server fix untouched.
+  //
+  // EVERY client site that turns `live_sessions` into a RUNNING claim must
+  // go through these helpers, never `.length`.
+  //
+  // SCOPE — deliberately NOT applied to `unbound_sessions.live_sessions`
+  // (see renderAll). That collection is a DIFFERENT contract: the server
+  // (deriveUnboundSessionsNode) has already filtered it to running sessions
+  // and returns null when none are running, and its members are stamped
+  // status.value 'in-progress', not 'running'. Applying this predicate
+  // there would match nothing and silently hide genuinely-running work —
+  // the opposite failure (R9-7: "running work is NEVER invisible").
+  function isRunningSession(s) {
+    return !!(s && s.status && s.status.value === 'running');
+  }
+  function runningSessionsOf(node) {
+    return ((node && node.live_sessions) || []).filter(isRunningSession);
+  }
+  function hasRunningSession(node) {
+    return runningSessionsOf(node).length > 0;
+  }
+  // attachedSessionsLabel(item) — the drill-down header above the per-
+  // session list. Pure (string in, string out) so it is really executed by
+  // the self-test rather than eyeballed in a regex. It used to read
+  // "currently running (N)" with N = the FULL attached count, which claimed
+  // a stalled session was running even though the leaf beneath it said
+  // otherwise. The running count and the total are now reported separately,
+  // and the running wording is dropped entirely when nothing is running.
+  function attachedSessionsLabel(item) {
+    var total = ((item && item.live_sessions) || []).length;
+    var running = runningSessionsOf(item).length;
+    if (!total) return '';
+    return running
+      ? 'currently running (' + running + '):'
+      : 'attached sessions, none running (' + total + '):';
+  }
+  // RUNNING-CLAIM-END
   function btn(cls, text, onClick) {
     var b = document.createElement('button');
     b.type = 'button';
@@ -718,10 +782,17 @@
   // task-span text just named "next" (both call firstOpenChildId). A task
   // that is neither running nor next renders nothing here — no fake
   // granularity on every row.
+  // TASK-SPAN-CELL-BEGIN
   function taskSpanCell(item, isNextTask) {
     var cell = el('span', 'rm-cell rm-cell-taskspan');
     if (item.kind === 'task') {
-      if (item.live_sessions && item.live_sessions.length) {
+      // 2026-07-30: was `item.live_sessions && item.live_sessions.length` —
+      // membership, not a running claim. That is what painted a green
+      // "running" chip on a task whose only attached session was itself
+      // 'stalled'. PLAN rows never had this bug (deriveTaskSpanLabel reads
+      // the server's verified item.roll_up.running); TASK rows are the
+      // operator's headline example. See the RUNNING-CLAIM block header.
+      if (hasRunningSession(item)) {
         // Round 15 (operator: "the running indicator is small and not
         // obvious"): the `chip` base class gives it the same loud
         // bordered-pill treatment every other status signal in this view
@@ -745,6 +816,7 @@
     }
     return cell;
   }
+  // TASK-SPAN-CELL-END
 
   function fractionCellForRow(item) { // column 4 (76px)
     var cell = el('span', 'rm-cell rm-cell-fraction');
@@ -808,10 +880,14 @@
       frag.appendChild(subWrap);
     }
 
+    // ATTACHED-SESSIONS-LABEL-BEGIN
     var liveSessions = item.live_sessions || [];
     if (liveSessions.length) {
       var agentWrap = el('div', 'rm-agents-wrap');
-      agentWrap.appendChild(el('span', 'rm-drill-label', 'currently running (' + liveSessions.length + '):'));
+      // The LIST stays complete regardless of the header: a stalled/unknown
+      // attached session is real, useful context and is never hidden — it
+      // just no longer gets described as running. See attachedSessionsLabel.
+      agentWrap.appendChild(el('span', 'rm-drill-label', attachedSessionsLabel(item)));
       var agentList = el('ul', 'rm-agents');
       liveSessions.forEach(function (a) {
         var li = document.createElement('li');
@@ -828,6 +904,7 @@
       agentWrap.appendChild(agentList);
       frag.appendChild(agentWrap);
     }
+    // ATTACHED-SESSIONS-LABEL-END
 
     return frag;
   }
@@ -1328,13 +1405,24 @@
   // sibling stays one line. The operator's explicit choices always win:
   // toggle stores true AND false (an explicit close survives re-renders;
   // the old delete-on-close made the default re-open it every tick).
+  // NODE-IS-ACTIVE-BEGIN
   function nodeIsActive(n) {
     if (!n) return false;
-    if (n.live_sessions && n.live_sessions.length) return true;
+    // 2026-07-30: was `n.live_sessions && n.live_sessions.length` —
+    // membership again (see the RUNNING-CLAIM block header). A task whose
+    // only attached session was 'stalled' counted as "active" and
+    // force-expanded its whole ancestor chain, spending the operator's
+    // scarce default-open budget on exactly the dead rows this round is
+    // trying to stop over-claiming. No false negative is introduced: a
+    // genuinely-running task also satisfies the 'in-progress' test below
+    // (the server derives in-progress and a 'running' leaf from the same
+    // heartbeat record), so it still auto-expands.
+    if (hasRunningSession(n)) return true;
     if (!n.status) return false;
     if (n.status.value === 'in-progress') return true;
     return n.status.value === 'stalled' && n.status.reason_class === 'waiting-on-you';
   }
+  // NODE-IS-ACTIVE-END
   function subtreeHasActive(n) {
     var lists = [n.children, n.child_plans];
     for (var li = 0; li < lists.length; li++) {
@@ -1976,6 +2064,16 @@
     currentMatchNotes = f.matchNoteById || {}; // Round 12 item 8
     body.innerHTML = '';
     var ub = lastPayload.unbound_sessions;
+    // AUDITED 2026-07-30 (running-claim sweep) — `.length` is CORRECT here
+    // and must NOT be converted to hasRunningSession(). Different contract:
+    // deriveUnboundSessionsNode has ALREADY filtered this collection to
+    // non-crashed sessions server-side and returns null (honest absence)
+    // when none qualify, and it stamps its members status.value
+    // 'in-progress' — not 'running'. hasRunningSession() would therefore
+    // match zero members and hide genuinely-running unattributed work,
+    // violating R9-7 ("running work is NEVER invisible"). The membership
+    // test is a running claim the SERVER already verified, which is exactly
+    // the condition the other three sites failed to meet.
     if (ub && ub.live_sessions && ub.live_sessions.length) {
       body.appendChild(renderUnboundSessions(ub));
     }

@@ -618,17 +618,42 @@ const STATUS_VALUES = Object.freeze([
   'not-started', 'in-progress', 'merged-deploy-unverified', 'complete', 'stalled', 'unknown',
 ]);
 
-// STALLED_REASONS — the four named stalled sub-reasons.
-const STALLED_REASONS = Object.freeze(['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked']);
+// STALLED_REASONS — the five named stalled sub-reasons.
+//
+// 'idle-dispatch' (reason-code-reuse-misattribution fix, 2026-07-30) is
+// DISTINCT from 'crashed' and was split out of it. The false-eternal-running
+// fix originally folded its new `startedIdleExpired` signal into 'crashed',
+// which made the UI assert something provably untrue: the task badge read
+// "stalled — crashed" and the owning plan rolled up a `crashed` badge while
+// the task's only session had a heartbeat written seconds earlier. The two
+// signals answer DIFFERENT questions and must never share a code:
+//   'crashed'       — the SESSION is gone (its heartbeat is absent or older
+//                     than the activity window). Investigate a dead process.
+//   'idle-dispatch' — the session is demonstrably ALIVE; it is THIS TASK
+//                     that has not been (re-)dispatched inside the idle
+//                     window. Nothing crashed; the orchestrator moved on.
+// Pointing an operator at a dead-session investigation that does not exist
+// is a false claim (constitution §1), which is why this code exists rather
+// than a shared one with a hedged label.
+const STALLED_REASONS = Object.freeze(['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'idle-dispatch']);
 
 // ATTENTION_PRECEDENCE — roll-up badge DISPLAY ORDER (C1 + delta
 // adjudication (b)): waiting-on-you > crashed > blocked-on > limit-parked >
-// unknown. Precedence governs which badge sorts FIRST when an ancestor's
-// subtree carries more than one attention class — it never governs which
-// one is SHOWN: rollUpAttentionBadges (below) emits one counted badge per
-// class actually present, always (delta R4's multiplicity law — a higher
-// class never masks a lower one).
-const ATTENTION_PRECEDENCE = Object.freeze(['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown']);
+// idle-dispatch > unknown. Precedence governs which badge sorts FIRST when
+// an ancestor's subtree carries more than one attention class — it never
+// governs which one is SHOWN: rollUpAttentionBadges (below) emits one
+// counted badge per class actually present, always (delta R4's multiplicity
+// law — a higher class never masks a lower one).
+//
+// 'idle-dispatch' ranks LAST among the stalled reasons deliberately: it is
+// the WEAKEST, least explanatory of them ("nothing has happened here
+// lately"), so any more specific KNOWN cause must outrank it. A task
+// blocked on a predecessor, or parked on a usage limit, is idle BY DESIGN —
+// reporting such a task as merely idle-dispatched would discard the real
+// explanation the caller already supplied. Ranking it above 'unknown' is
+// equally deliberate: "quiet for a while" is still a derived fact, whereas
+// 'unknown' means the derivation itself failed.
+const ATTENTION_PRECEDENCE = Object.freeze(['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'idle-dispatch', 'unknown']);
 
 // envMinutes(varName, defaultMinutes) — Task 1 comprehension-review fix:
 // `Number(process.env.X || default)` (the prior form) only falls back to
@@ -671,18 +696,49 @@ function envMinutes(varName, defaultMinutes) {
 // THIS task is what it is doing right now (the exact defect: three roadmap
 // tasks rendered "running" for hours because the SAME long-lived
 // orchestrator session had touched each of them at some point and was
-// still alive, not because any of them had active work). Default (60min)
-// picked from REAL evidence in this machine's own progress-log
-// (`~/.claude/state/progress-logs/*.jsonl`, 2026-07-30): a genuinely-
-// iterated-on task's own re-dispatch cadence never exceeded a ~12min gap
-// between consecutive `task_started` events for the same task_id across a
-// 50-minute active stretch, while the operator's actually-reported false-
-// positive (progress-log-placeholder-ask-id-fix/4) sat IDLE for 2h43m
-// (16:57Z to 19:40Z) between dispatches with its dispatching session's
-// heartbeat live the entire time. 60min sits with ample margin above the
-// observed real-iteration cadence and well below the observed abandonment
-// gap, so it separates the two regimes without being tuned to either
-// boundary exactly.
+// still alive, not because any of them had active work).
+//
+// THE 60-MINUTE DEFAULT IS PROVISIONAL. Read the two paragraphs below
+// before trusting, tuning, or citing it.
+//
+// (1) MEASURED DISTRIBUTION — retraction of this header's own first draft.
+// The original text argued 60min from "a ~12min maximum gap across a
+// 50-minute active stretch … ample margin". That was a CHERRY-PICKED
+// window and the claim is RETRACTED (the same retraction is recorded in
+// docs/backlog.md). A full scan of this machine's progress-log corpus
+// (`~/.claude/state/progress-logs/*.jsonl`, re-measured 2026-07-30: 151
+// files, 1617 `task_started` events, 1596 same-task consecutive gaps) shows
+// the real distribution is far wider than the cherry-picked window implied:
+//     p50 4.4min · p90 17.4min · p95 41.1min
+//     largest gap still UNDER the threshold: 49.1min
+//     49 gaps (3.07%) EXCEED 60min · another 48 sit in the 30-60min band
+// So the true margin over routine iteration is ~1.46x (60 / 41.1min p95),
+// NOT the ~5x the retracted "~12min" figure implied, and ~3% of genuine
+// same-task gaps already cross the line. The threshold is a defensible
+// starting point, not a well-separated one: it sits INSIDE the tail of
+// normal behaviour, so a real false-positive rate near 3% is expected and
+// accepted for now (still a large improvement on the prior state, where the
+// rate was unbounded — a task stayed green forever).
+//
+// (2) CALIBRATED ON TELEMETRY THAT IS ITSELF KNOWN-BROKEN (HYPOTHESIZED,
+// and the reason (1) must not be treated as settled). The corpus above is
+// the PRE-FIX per-mention emission: 18 distinct task keys were observed
+// starting within a SINGLE minute, a fan-out signature, and
+// docs/backlog.md:2066-2071 documents one dispatch producing 20 events
+// across 15 plan/task pairs. The gaps above therefore measure MENTION
+// cadence, not DISPATCH cadence — very likely SHORTER than the real thing,
+// which would mean this 60min default is tuned too tight. Once the upstream
+// `--on-builder-dispatch` fix lands (one event per real dispatch, in review
+// at time of writing), any task genuinely worked for >60min on a SINGLE
+// dispatch will emit no second `task_started` and will render 'stalled' —
+// a FALSE NEGATIVE this threshold would then be causing. THIS DEFAULT MUST
+// BE RE-DERIVED against post-fix telemetry before it can be called
+// calibrated; the re-derivation is filed as an explicit follow-up in
+// docs/backlog.md. REFUTED IF: a post-fix scan shows the >60min share of
+// same-task gaps materially unchanged (~3%), which would mean per-mention
+// fan-out was not inflating the cadence after all.
+//
+// Env override: COCKPIT_TASK_STARTED_IDLE_MIN (see envMinutes above).
 function activityThresholdsMs() {
   return {
     activeMs: envMinutes('COCKPIT_SESSION_ACTIVE_MIN', 30) * 60 * 1000,
@@ -772,12 +828,19 @@ function sessionActivityForIds(sessionIds, heartbeats, nowMs, th) {
 // point (Chesterton's-Fence-respecting: this function does not invent a
 // mechanism for them) so tasks 2-4 wire real signals in once their own
 // data lands, rather than this task re-deriving them speculatively.
+// `idleDispatch` (2026-07-30) is the fifth signal and ranks LAST — see
+// ATTENTION_PRECEDENCE's header for why the weakest explanation must lose
+// to every specific one. It is NOT interchangeable with `crashed`: callers
+// must set exactly one of the two (deriveItemStatus, below, makes them
+// mutually exclusive by construction) so a live-but-idle task is never
+// reported as a dead process.
 function deriveStalledReason(signals) {
   signals = signals || {};
   if (signals.waitingOnYouId) return 'waiting-on-you';
   if (signals.crashed) return 'crashed';
   if (signals.blockedOnTaskId) return 'blocked-on';
   if (signals.limitParkedUntil) return 'limit-parked';
+  if (signals.idleDispatch) return 'idle-dispatch';
   return null;
 }
 
@@ -862,13 +925,21 @@ function deriveItemStatus(input) {
   // bucket (C5). Checked FIRST — every other branch below assumes its own
   // inputs are at least readable/present.
   if (input.planLoad && input.planLoad.ok === false) {
-    return { status: 'unknown', reason: 'plan parse failed (' + input.planLoad.reason + ')' };
+    return { status: 'unknown', reason: 'plan parse failed (' + input.planLoad.reason + ')', startedIdleExpired: false };
   }
   if (typeof input.done !== 'boolean') {
-    return { status: 'unknown', reason: 'missing required input: done' };
+    return { status: 'unknown', reason: 'missing required input: done', startedIdleExpired: false };
   }
 
-  const th = input.thresholds || activityThresholdsMs();
+  // `thresholds` MERGES over the complete defaults rather than replacing
+  // them (2026-07-30 fix). A caller supplying a PARTIAL override (e.g. only
+  // `{activeMs}`) previously left every unsupplied key `undefined`, and
+  // every comparison against `undefined` is NaN-false — which silently
+  // DISABLED the gate the missing key controls instead of failing loudly.
+  // That is the same NaN-poisoning class envMinutes() was hardened against
+  // above; merging makes a partial override mean "change this one knob",
+  // which is what every call site already assumed it meant.
+  const th = Object.assign(activityThresholdsMs(), input.thresholds || {});
   const nowMs = typeof input.nowMs === 'number' ? input.nowMs : Date.now();
 
   // ---- done/merged: the completion-oracle decides complete vs the
@@ -886,12 +957,13 @@ function deriveItemStatus(input) {
       reason: null,
       oracle_class: oracleClass,
       overridden: evald.overridden,
+      startedIdleExpired: false,
     };
   }
 
   // ---- not-started: no start signal at all.
   if (!input.startedEvent) {
-    return { status: 'not-started', reason: null };
+    return { status: 'not-started', reason: null, startedIdleExpired: false };
   }
 
   // ---- in-flight: classify by session activity (A6 — pure-JS age, no
@@ -900,8 +972,32 @@ function deriveItemStatus(input) {
   // HERE, not at the top — it only matters once we actually need heartbeat
   // evidence; a done/not-started item never reaches this branch.
   if (input.heartbeatsStoreOk === false) {
-    return { status: 'unknown', reason: 'unreadable heartbeat (heartbeat store could not be read)' };
+    return { status: 'unknown', reason: 'unreadable heartbeat (heartbeat store could not be read)', startedIdleExpired: false };
   }
+
+  // ---- task_started PRESENT-but-unparseable (fail-open fix, 2026-07-30).
+  // MALFORMED EVIDENCE IS NOT ABSENT EVIDENCE. This branch is the exact
+  // mirror of the heartbeat side's 'invalid' outcome below (a matched
+  // heartbeat record whose own last_activity_ts fails to parse -> unknown),
+  // and it exists because the two were previously ASYMMETRIC: a present-
+  // but-unparseable `task_started.ts` collapsed to null, which made
+  // `startedIdleExpired` false, which silently restored the whole pre-fix
+  // permissive behaviour — a green "running" claim on a 20-hour-quiet
+  // heartbeat, from evidence we could not actually read. Failing OPEN on
+  // corrupt input is exactly how a fix stops holding without anyone
+  // noticing, so a supplied-but-unusable timestamp is a genuine
+  // derivation-input failure (C5) and renders 'unknown', never a guessed
+  // bucket. ABSENT (null/undefined — no task_started ts available at all)
+  // stays honestly permissive: that is a caller saying "I have no such
+  // evidence", not a caller handing over evidence that turned out corrupt.
+  let startedAtMs = null;
+  if (input.startedAtMs !== null && input.startedAtMs !== undefined) {
+    if (typeof input.startedAtMs !== 'number' || !isFinite(input.startedAtMs)) {
+      return { status: 'unknown', reason: 'unreadable task_started (present but unparseable timestamp)', startedIdleExpired: false };
+    }
+    startedAtMs = input.startedAtMs;
+  }
+
   const activity = sessionActivityForIds(input.sessionIds, input.heartbeats || [], nowMs, th);
 
   // ---- task_started idle-expiry (false-eternal-running fix, 2026-07-30):
@@ -910,7 +1006,6 @@ function deriveItemStatus(input) {
   // the full rationale (a live/quiet SESSION heartbeat proves the
   // DISPATCHING session is alive, never that THIS task is what it is
   // doing right now).
-  const startedAtMs = typeof input.startedAtMs === 'number' && !isNaN(input.startedAtMs) ? input.startedAtMs : null;
   const startedIdleExpired = startedAtMs !== null && (nowMs - startedAtMs > th.taskStartedIdleMs);
 
   if ((activity === 'live' || activity === 'quiet') && !startedIdleExpired) {
@@ -923,18 +1018,37 @@ function deriveItemStatus(input) {
     return { status: 'unknown', reason: 'unreadable heartbeat (present but schema-invalid last_activity_ts)', startedIdleExpired: startedIdleExpired };
   }
 
-  // ---- stalled: derive the reason. `crashed` is real here (heartbeat-
-  // backed, OR the task_started idle-expiry above); the other three ride
-  // whatever the caller supplied (see deriveStalledReason) and fall back
-  // to 'crashed' — the one reason this task can always prove — when
-  // nothing more specific is known.
+  // ---- stalled: derive the reason.
+  //
+  // `crashed` and `idleDispatch` are MUTUALLY EXCLUSIVE by construction
+  // here (2026-07-30 reason-code split). Folding the idle-expiry signal
+  // INTO `crashed` — the original form of this line — made the UI assert
+  // something provably false: the operator saw "stalled — crashed" and a
+  // `crashed` roll-up badge on a task whose only session had a heartbeat
+  // written seconds earlier, and was pointed at a dead-process
+  // investigation that did not exist. `heartbeatGone` is the genuine
+  // dead-session signal (no heartbeat at all, or one older than the entire
+  // activity window); `idleDispatch` fires ONLY in the complementary case —
+  // the session is demonstrably alive and it is this TASK that went quiet.
+  // The other three signals ride whatever the caller supplied (see
+  // deriveStalledReason).
+  //
   // NOTE: activity is 'crashed'/'no-heartbeat' OR (a live/quiet session
   // whose task_started is idle-expired) at this point — 'invalid' already
-  // returned above, so it can never reach this fold.
+  // returned above, so it can never reach this fold. That makes
+  // `heartbeatGone || startedIdleExpired` an EXHAUSTIVE disjunction, so the
+  // fallback below always names a reason this task can actually prove
+  // rather than guessing one (test 7u pins that exhaustiveness).
+  const heartbeatGone = activity === 'crashed' || activity === 'no-heartbeat';
   const reason = deriveStalledReason(Object.assign({}, input.stalledSignals, {
-    crashed: activity === 'crashed' || activity === 'no-heartbeat' || startedIdleExpired,
+    crashed: heartbeatGone,
+    idleDispatch: startedIdleExpired && !heartbeatGone,
   }));
-  return { status: 'stalled', reason: reason || 'crashed', startedIdleExpired: startedIdleExpired };
+  return {
+    status: 'stalled',
+    reason: reason || (heartbeatGone ? 'crashed' : 'idle-dispatch'),
+    startedIdleExpired: startedIdleExpired,
+  };
 }
 
 // attentionClassOf(item) -> a member of ATTENTION_PRECEDENCE | null
@@ -1153,16 +1267,26 @@ async function selfTest() {
     done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
     startedAtMs: now - 65 * 60 * 1000, // task_started 65min ago — past the 60min window
   });
-  ok('7j. deriveItemStatus: a LIVE session heartbeat does NOT override a STALE task_started (65min ago, past the 60min idle window) -> stalled:crashed, never in-progress (the real defect this fixes: the orchestrator session is genuinely alive, but THIS task has not been touched in over an hour)',
-    stStaleStartLiveHb.status === 'stalled' && stStaleStartLiveHb.reason === 'crashed' && stStaleStartLiveHb.startedIdleExpired === true,
+  ok('7j. deriveItemStatus: a LIVE session heartbeat does NOT override a STALE task_started (65min ago, past the 60min idle window) -> stalled, never in-progress (the real defect this fixes: the orchestrator session is genuinely alive, but THIS task has not been touched in over an hour)',
+    stStaleStartLiveHb.status === 'stalled' && stStaleStartLiveHb.startedIdleExpired === true,
+    JSON.stringify(stStaleStartLiveHb));
+  // 7j-reason (2026-07-30 reason-code split): the SAME case must NOT be
+  // called 'crashed'. This session's heartbeat is fresh by construction
+  // (hbFresh), so 'crashed' was a false claim that sent the operator
+  // hunting a dead process. Asserting the NEGATIVE too — a test that only
+  // checked === 'idle-dispatch' would pass just as well if 'crashed' were
+  // still emitted alongside it in some other field.
+  ok('7j-reason. deriveItemStatus: that stale-but-LIVE case reports reason "idle-dispatch", NEVER "crashed" — the session is demonstrably alive, so a crash claim would be false',
+    stStaleStartLiveHb.reason === 'idle-dispatch' && stStaleStartLiveHb.reason !== 'crashed',
     JSON.stringify(stStaleStartLiveHb));
   const stStaleStartQuietHb = deriveItemStatus({
     done: false, startedEvent: true, sessionIds: ['sess-quiet'], nowMs: now, thresholds: TH,
     heartbeats: [{ session_id: 'sess-quiet', last_activity_ts: new Date(now - 2 * 60 * 60 * 1000).toISOString() }],
     startedAtMs: now - 65 * 60 * 1000,
   });
-  ok('7k. deriveItemStatus: same idle-expiry applies on the QUIET branch (not just live) — a stale task_started still wins -> stalled:crashed',
-    stStaleStartQuietHb.status === 'stalled' && stStaleStartQuietHb.reason === 'crashed');
+  ok('7k. deriveItemStatus: same idle-expiry applies on the QUIET branch (not just live) — a stale task_started still wins -> stalled:idle-dispatch (a merely-quiet heartbeat is still PRESENT evidence the session lives, so this is not a crash either)',
+    stStaleStartQuietHb.status === 'stalled' && stStaleStartQuietHb.reason === 'idle-dispatch',
+    JSON.stringify(stStaleStartQuietHb));
   const ipBoundaryStart = deriveItemStatus({
     done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
     startedAtMs: now - TH.taskStartedIdleMs, // exactly AT the boundary
@@ -1178,8 +1302,117 @@ async function selfTest() {
     done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
     startedAtMs: now - 65 * 60 * 1000, stalledSignals: { waitingOnYouId: 'ny-99' },
   });
-  ok('7n. deriveItemStatus: a caller-supplied waiting-on-you signal still outranks the idle-expiry-derived crashed reason (precedence unchanged)',
+  ok('7n. deriveItemStatus: a caller-supplied waiting-on-you signal still outranks the idle-expiry-derived reason (precedence unchanged)',
     stWaitingBeatsIdleExpiry.status === 'stalled' && stWaitingBeatsIdleExpiry.reason === 'waiting-on-you');
+
+  // ---- 7o-7u: the 2026-07-30 reason-code split ('crashed' vs
+  // 'idle-dispatch') and the fail-open/threshold-merge hardening that
+  // landed with it. See deriveItemStatus's own stalled-branch comment.
+
+  // 7o pins the OTHER side of the split: when the heartbeat really IS gone
+  // AND the task is idle-expired, 'crashed' must still win. Without this,
+  // "emit idle-dispatch when idle-expired" could be implemented as an
+  // unconditional override and silently downgrade real crashes.
+  const stCrashedAndIdle = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-b'], heartbeats: [hbOld], nowMs: now, thresholds: TH,
+    startedAtMs: now - 65 * 60 * 1000, // ALSO idle-expired
+  });
+  ok('7o. deriveItemStatus: heartbeat genuinely gone (48h old) AND idle-expired -> "crashed" still wins — the split never downgrades a real crash to the softer reason',
+    stCrashedAndIdle.status === 'stalled' && stCrashedAndIdle.reason === 'crashed' && stCrashedAndIdle.startedIdleExpired === true,
+    JSON.stringify(stCrashedAndIdle));
+  const stNoHbAndIdle = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-nope'], heartbeats: [], nowMs: now, thresholds: TH,
+    startedAtMs: now - 65 * 60 * 1000,
+  });
+  ok('7p. deriveItemStatus: zero heartbeat evidence AND idle-expired -> "crashed", not "idle-dispatch" (absent evidence is the crash case; idle-dispatch requires a session PROVEN alive)',
+    stNoHbAndIdle.reason === 'crashed', JSON.stringify(stNoHbAndIdle));
+
+  // 7q/7r: idle-dispatch is the WEAKEST reason — any specific known cause
+  // outranks it, so the operator never loses the real explanation.
+  ok('7q. deriveStalledReason: blocked-on outranks idle-dispatch (a task blocked on a predecessor is idle BY DESIGN — reporting it as merely idle would discard the real cause)',
+    deriveStalledReason({ blockedOnTaskId: '2', idleDispatch: true }) === 'blocked-on');
+  ok('7r. deriveStalledReason: limit-parked outranks idle-dispatch (same reasoning — a parked task is idle by design)',
+    deriveStalledReason({ limitParkedUntil: 'x', idleDispatch: true }) === 'limit-parked');
+  ok('7s. deriveStalledReason: idle-dispatch alone is honored, and crashed outranks it when both are somehow set',
+    deriveStalledReason({ idleDispatch: true }) === 'idle-dispatch' &&
+    deriveStalledReason({ crashed: true, idleDispatch: true }) === 'crashed');
+  ok('7t. idle-dispatch is a REGISTERED member of both public reason vocabularies, ranked last among the stalled reasons and ahead of unknown (client ROLLUP_ORDER mirrors this exact order)',
+    STALLED_REASONS.indexOf('idle-dispatch') !== -1 &&
+    ATTENTION_PRECEDENCE.indexOf('idle-dispatch') === ATTENTION_PRECEDENCE.indexOf('limit-parked') + 1 &&
+    ATTENTION_PRECEDENCE.indexOf('unknown') === ATTENTION_PRECEDENCE.indexOf('idle-dispatch') + 1,
+    ATTENTION_PRECEDENCE.join('>'));
+
+  // 7u: EXHAUSTIVENESS of the stalled fallback. Every route into the
+  // stalled branch must carry at least one of heartbeat-gone / idle-expired
+  // (the branch comment asserts this); if a future edit lets a third route
+  // reach it, the fallback would be guessing. Enumerate the reachable
+  // activity classes and prove each names a provable reason.
+  ok('7u. deriveItemStatus: EVERY route into the stalled branch names a reason it can actually prove — crashed hb, absent hb, and live/quiet-but-idle all resolve, none falls through to a guess',
+    (function () {
+      const routes = [
+        deriveItemStatus({ done: false, startedEvent: true, sessionIds: ['sess-b'], heartbeats: [hbOld], nowMs: now, thresholds: TH }),
+        deriveItemStatus({ done: false, startedEvent: true, sessionIds: ['sess-nope'], heartbeats: [], nowMs: now, thresholds: TH }),
+        stStaleStartLiveHb,
+        stStaleStartQuietHb,
+      ];
+      return routes.every((r) => r.status === 'stalled' && (r.reason === 'crashed' || r.reason === 'idle-dispatch'));
+    })());
+
+  // ---- 7v/7w: MALFORMED IS NOT ABSENT (fail-open fix). A present-but-
+  // unparseable task_started timestamp previously collapsed to null, which
+  // made startedIdleExpired false and silently restored the pre-fix
+  // green-forever behaviour on the least trustworthy input there is.
+  const stStartedAtNaN = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
+    startedAtMs: NaN, // Date.parse() of a corrupt/truncated ts
+  });
+  ok('7v. deriveItemStatus: a PRESENT-but-unparseable task_started timestamp (NaN) -> unknown, NEVER a green in-progress — malformed evidence is not absent evidence (mirrors 7c\'s heartbeat-side branch, whose asymmetry this closes)',
+    stStartedAtNaN.status === 'unknown' && /unparseable timestamp/.test(stStartedAtNaN.reason),
+    JSON.stringify(stStartedAtNaN));
+  const stStartedAtString = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
+    startedAtMs: '2026-07-30T00:00:00Z', // a caller passing the raw string by mistake
+  });
+  ok('7w. deriveItemStatus: a non-numeric startedAtMs (raw string handed over by mistake) is ALSO unknown, not silently ignored — the guard is type-shaped, not just NaN-shaped',
+    stStartedAtString.status === 'unknown' && /unparseable timestamp/.test(stStartedAtString.reason),
+    JSON.stringify(stStartedAtString));
+  ok('7x. deriveItemStatus: explicit null startedAtMs stays PERMISSIVE (in-progress) — genuine absence of evidence is honestly different from corrupt evidence, and 7m\'s omitted-entirely case must keep working',
+    deriveItemStatus({
+      done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH,
+      startedAtMs: null,
+    }).status === 'in-progress');
+
+  // ---- 7y: PARTIAL thresholds override MERGES over complete defaults.
+  // Previously `input.thresholds || activityThresholdsMs()` replaced the
+  // whole object, so a caller overriding one knob left the others
+  // undefined — and every comparison against undefined is NaN-false, which
+  // silently DISABLED the gate rather than failing loudly.
+  const partialTh = deriveItemStatus({
+    done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now,
+    thresholds: { activeMs: 30 * 60 * 1000 }, // taskStartedIdleMs deliberately absent
+    startedAtMs: now - 65 * 60 * 1000, // past the DEFAULT 60min idle window
+  });
+  ok('7y. deriveItemStatus: a PARTIAL thresholds override merges over the complete defaults — the unsupplied taskStartedIdleMs keeps its 60min default and still expires this task, instead of NaN-comparing to false and disabling the gate',
+    partialTh.status === 'stalled' && partialTh.reason === 'idle-dispatch',
+    JSON.stringify(partialTh));
+
+  // ---- 7z: startedIdleExpired is present on EVERY return path. The
+  // consumer (roadmap-routes.js deriveTaskNode) reads
+  // `!!derived.startedIdleExpired` and feeds it to deriveLiveAgentLeaves;
+  // omitting the field on some paths made that correctness depend on an
+  // unasserted non-local invariant in a DIFFERENT function.
+  ok('7z. deriveItemStatus: every return path carries an explicit boolean startedIdleExpired — no consumer has to rely on a non-local invariant to read it safely',
+    [
+      deriveItemStatus({ planLoad: { ok: false, reason: 'damaged' }, done: false }),
+      deriveItemStatus({ startedEvent: false }),
+      deriveItemStatus({ done: true, projectKey: 'neural-lace' }),
+      deriveItemStatus({ done: false, startedEvent: false }),
+      deriveItemStatus({ done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [], heartbeatsStoreOk: false, nowMs: now, thresholds: TH }),
+      deriveItemStatus({ done: false, startedEvent: true, sessionIds: ['sess-a'], heartbeats: [hbFresh], nowMs: now, thresholds: TH }),
+      deriveItemStatus({ done: false, startedEvent: true, sessionIds: ['sess-c'], heartbeats: [hbCorrupt], nowMs: now, thresholds: TH }),
+      stStaleStartLiveHb,
+      stStartedAtNaN,
+    ].every((r) => typeof r.startedIdleExpired === 'boolean'));
 
   // ---- deriveItemStatus: missing/non-boolean `done` (comprehension-review
   // fix — a required-input guard in the function whose header bans

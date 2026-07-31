@@ -149,10 +149,21 @@ const planParse = require('./plan-parse.js');
 const WEB_DIR = path.join(__dirname, '..', 'web');
 const COMPLETED_AGE_DAYS = Number(process.env.ROADMAP_COMPLETED_AGE_DAYS) || 7;
 
-// The five roll-up attention classes, in the pinned precedence order
+// The roll-up attention classes, in the pinned precedence order
 // (adjudication (b) + delta R4: precedence governs display ORDER only —
 // one badge per class present, a higher class never masks a lower one).
-const ROLLUP_CLASSES = ['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown'];
+//
+// DERIVED from derive-lib's ATTENTION_PRECEDENCE (2026-07-30), never
+// re-typed. This used to be a hand-maintained duplicate of that list, and
+// the duplication was actively harmful rather than merely redundant:
+// absorbOneChildRollUp (below) falls back to 'blocked-on' for any
+// reason_class it does not recognise, so the moment derive-lib gained a
+// new reason the copy here did not know about, every affected task
+// silently rolled up as "stalled — blocked on a predecessor" — a
+// fabricated dependency claim. Caught by S20e-reason when 'idle-dispatch'
+// was added. One source of truth means a new reason can never again be
+// silently re-attributed to an unrelated class.
+const ROLLUP_CLASSES = deriveLib.ATTENTION_PRECEDENCE.slice();
 
 function sendJson(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -652,6 +663,18 @@ function mapDerivedValue(value) {
   return value === 'merged-deploy-unverified' ? 'merged-unverified' : value;
 }
 
+// STALLED_REASON_PHRASE — human text for reason codes whose bare machine
+// name would MISLEAD in the badge. Only codes listed here are rewritten;
+// every other code keeps its existing verbatim rendering (the label is
+// 'stalled — ' + code), so this map adds meaning without disturbing any
+// pre-existing label string. 'idle-dispatch' needs it precisely because the
+// operator's complaint was being pointed at the wrong investigation: the
+// badge must say the session is ALIVE and the task merely went quiet, not
+// leave a terse code that reads like a synonym for 'crashed'.
+const STALLED_REASON_PHRASE = {
+  'idle-dispatch': 'no recent dispatch (the session that touched it is still alive)',
+};
+
 function statusObj(value, opts) {
   const o = opts || {};
   let label;
@@ -662,7 +685,7 @@ function statusObj(value, opts) {
   if (o.terminal_label) label = o.terminal_label;
   else if (value === 'unknown') label = 'status unknown — ' + (o.reason || 'derivation failed');
   else if (value === 'merged-unverified') label = 'merged — deploy unverified';
-  else if (value === 'stalled') label = 'stalled — ' + (o.reason || 'reason unavailable');
+  else if (value === 'stalled') label = 'stalled — ' + (STALLED_REASON_PHRASE[o.reason] || o.reason || 'reason unavailable');
   else if (value === 'complete') label = 'complete' + (o.override ? ' (operator override)' : '');
   else if (value === 'in-progress') label = 'in progress';
   else label = 'not started';
@@ -699,9 +722,20 @@ function statusFromDerived(derived, opts) {
 // status (deriveTaskNode, above) has already downgraded to 'stalled' for
 // the identical reason — an inconsistency between the task's own badge and
 // its child leaf that this parameter closes.
-function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdleExpired) {
+function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdleExpired, taskStatusValue) {
   const th = deriveLib.activityThresholdsMs();
   const ids = (sessionIds || []).filter(Boolean);
+  // A leaf may claim 'running' ONLY when the task's own derived status is
+  // 'in-progress' (2026-07-30). Found by S20g/S20h: a task whose own
+  // task_started evidence was unreadable derived 'unknown', yet its leaves
+  // still rendered 'running' off the session heartbeat alone — and the
+  // owning plan then rolled up a green "1 running" badge for a task the
+  // server had just admitted it could not classify. The leaf, the task
+  // badge and the plan roll-up must never contradict each other; the task
+  // status is the authority, and a leaf can only ever narrow it.
+  // `undefined` keeps the pre-existing behaviour for any caller that has
+  // not been updated (it is passed explicitly by deriveTaskNode).
+  const taskProvenRunning = taskStatusValue === undefined || taskStatusValue === 'in-progress';
   return ids.map((sid) => {
     const hb = (heartbeats || []).find((h) => h && h.session_id === sid);
     if (!hb) {
@@ -714,10 +748,25 @@ function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdl
     }
     const ageMs = nowMs - Date.parse(hb.last_activity_ts);
     const ageCls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
-    const value = (ageCls === 'crashed' || startedIdleExpired) ? 'stalled' : 'running';
+    // The task's own status could not be established at all — say so on the
+    // leaf rather than upgrading a live heartbeat into a running claim the
+    // task badge itself does not make.
+    if (!taskProvenRunning && taskStatusValue === 'unknown') {
+      return {
+        id: taskId + '/agent/' + sid,
+        kind: 'agent',
+        title: 'session ' + sid + (hb.branch ? ' (' + hb.branch + ')' : ''),
+        status: {
+          value: 'unknown',
+          label: 'status unknown — this session is alive, but this task\'s own start evidence could not be read',
+          reason: '', since: hb.last_activity_ts || '',
+        },
+      };
+    }
+    const value = (ageCls === 'crashed' || startedIdleExpired || !taskProvenRunning) ? 'stalled' : 'running';
     const label = value === 'running'
       ? 'running'
-      : (startedIdleExpired && ageCls !== 'crashed'
+      : (ageCls !== 'crashed'
         ? 'stalled — this task has not been (re-)dispatched in a while, even though the session that touched it is still alive'
         : 'stalled — no recent heartbeat');
     return {
@@ -872,11 +921,20 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     // heartbeats below) can never prove this SPECIFIC task has current
     // activity (that session is the DISPATCHING session, not a per-task
     // worker, and stays alive across many unrelated dispatches).
-    const startedAtMsRaw = startedTs[t.id] ? Date.parse(startedTs[t.id]) : NaN;
+    // MALFORMED IS NOT ABSENT (fail-open fix, 2026-07-30): this used to
+    // collapse an unparseable ts to `null` — indistinguishable from "no
+    // task_started at all" — which silently disabled the idle gate and
+    // restored the pre-fix green-forever behaviour on exactly the corrupt
+    // input we least want to trust. NaN is now passed THROUGH so
+    // deriveItemStatus can tell the two apart and render 'unknown' for
+    // present-but-unreadable evidence (its own branch documents why),
+    // mirroring how the heartbeat side already treats an unparseable
+    // last_activity_ts. `null` remains reserved for genuine absence.
+    const startedAtMs = startedTs[t.id] ? Date.parse(startedTs[t.id]) : null;
     const derived = deriveLib.deriveItemStatus({
       done: false,
       startedEvent: !!startedTs[t.id],
-      startedAtMs: isNaN(startedAtMsRaw) ? null : startedAtMsRaw,
+      startedAtMs: startedAtMs,
       sessionIds: taskSessionIds,
       heartbeats: hbCtx.heartbeats,
       heartbeatsStoreOk: hbCtx.heartbeatsStoreOk,
@@ -909,7 +967,7 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     body_points: deriveLib.splitIntoSentences(s.body),
   }));
   const liveSessions = (!t.done && taskSessionIds.length)
-    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs, startedIdleExpired)
+    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs, startedIdleExpired, status.value)
     : [];
   // R9-7b bookkeeping: a session id ATTACHED to a not-done task is
   // "attributed" regardless of whether a matching heartbeat file exists —
@@ -1322,7 +1380,13 @@ function absorbIntoRollUp(agg, cls, count, exemplar) {
 function absorbOneChildRollUp(agg, child) {
   const st = child.status || {};
   if (st.value === 'stalled') {
-    const cls = ROLLUP_CLASSES.indexOf(st.reason_class) !== -1 ? st.reason_class : 'blocked-on';
+    // Unrecognised reason -> 'unknown', NOT 'blocked-on' (2026-07-30).
+    // The old fallback invented a specific, wrong, actionable claim ("this
+    // is blocked on a predecessor") out of what is really an absence of
+    // classification, and it fired silently for every reason code this
+    // file had not been taught. 'unknown' is the honest bucket for "we
+    // could not classify this" and already exists for exactly that.
+    const cls = ROLLUP_CLASSES.indexOf(st.reason_class) !== -1 ? st.reason_class : 'unknown';
     absorbIntoRollUp(agg, cls, 1, child.id);
   }
   if (st.value === 'unknown') absorbIntoRollUp(agg, 'unknown', 1, child.id);

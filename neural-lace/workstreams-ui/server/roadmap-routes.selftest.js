@@ -231,6 +231,17 @@ async function main() {
     '- [ ] 1. a task dispatched once, hours ago, never revisited',
     '',
   ].join('\n'));
+  // corrupt-ts-plan (MALFORMED-IS-NOT-ABSENT fix, 2026-07-30): ONE task
+  // whose task_started event is PRESENT but carries an unparseable `ts`
+  // (a truncated/corrupt write). Attached to sess-op-1, the same
+  // genuinely-live heartbeat session — so before the fix the unparseable
+  // timestamp collapsed to null, the idle gate silently switched OFF, and
+  // the task rendered a green in-progress from evidence nobody could read.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'corrupt-ts-plan.md'), [
+    '# Plan: Corrupt Timestamp', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task whose task_started timestamp cannot be parsed',
+    '',
+  ].join('\n'));
   // waiting-plan (ROADMAP-WAITING-ON-YOU-SIGNAL-01, round 14): ONE task,
   // started (task_started event below, unlinked lane) by a session with NO
   // heartbeat file at all -- reaches deriveItemStatus's stalled branch via
@@ -467,6 +478,12 @@ async function main() {
     // The "alive dispatcher, abandoned task" shape the real deployed
     // roadmap showed for hours (operator report, 2026-07-30).
     JSON.stringify({ type: 'task_started', ts: STALE_TASK_STARTED_TS, plan_slug: 'stale-dispatch-plan', task_id: '1', session_id: 'sess-op-1' }),
+    // corrupt-ts-plan/1 (MALFORMED-IS-NOT-ABSENT fix): the event EXISTS and
+    // names a real live session, but its ts is unparseable — Date.parse ->
+    // NaN. The pre-fix code mapped that NaN to null (== "no evidence"),
+    // which disabled the idle gate and rendered green. It must render
+    // 'unknown' instead: we cannot read this task's own start evidence.
+    JSON.stringify({ type: 'task_started', ts: 'not-a-timestamp', plan_slug: 'corrupt-ts-plan', task_id: '1', session_id: 'sess-op-1' }),
   ].join('\n') + '\n');
 
   // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (round 14): the needs-you ledger
@@ -549,8 +566,8 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 23 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture] + stale-dispatch-plan [false-eternal-running fix, 2026-07-30]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
-      items.length === 23, topIds.join(','));
+    ok('S1e exactly 24 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture] + stale-dispatch-plan [false-eternal-running fix, 2026-07-30] + corrupt-ts-plan [malformed-is-not-absent fix, 2026-07-30]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
+      items.length === 24, topIds.join(','));
     ok('R11 child-a-fixture no longer appears in the TOP-LEVEL list (it renders once, nested under its master)',
       topIds.indexOf('child-a-fixture') === -1, topIds.join(','));
 
@@ -891,7 +908,19 @@ async function main() {
     // "sess-op-1 is somehow different." ----
     const staleTask = findItem(items, 'stale-dispatch-plan/1');
     ok('S20c a task whose ONLY attached session has a LIVE heartbeat, but whose own task_started is 2h stale (past the 60min default idle window), renders status.value=stalled — NOT in-progress (the exact operator-reported defect: dispatching session alive, task itself abandoned)',
-      staleTask && staleTask.status && staleTask.status.value === 'stalled' && staleTask.status.reason_class === 'crashed',
+      staleTask && staleTask.status && staleTask.status.value === 'stalled' && staleTask.status.reason_class === 'idle-dispatch',
+      staleTask && JSON.stringify(staleTask.status));
+    // S20c-reason (2026-07-30 reason-code split): the badge must not claim
+    // a crash. sess-op-1's heartbeat is written FRESH at suite start (this
+    // fixture's own premise, shared with S18/S20), so "stalled — crashed"
+    // was a demonstrably false statement that pointed the operator at a
+    // dead-session investigation which does not exist. Asserting the
+    // negative explicitly: the previous code produced exactly 'crashed'
+    // here, so this line is what fails if the fold ever returns.
+    ok('S20c-reason the stale task\'s reason_class is "idle-dispatch" and NEVER "crashed" — its session heartbeat is fresh by construction, so a crash claim would be false (constitution §1)',
+      staleTask && staleTask.status.reason_class !== 'crashed' &&
+      staleTask.status.reason_class === 'idle-dispatch' &&
+      /still alive/.test(staleTask.status.label),
       staleTask && JSON.stringify(staleTask.status));
     ok('S20d that same task\'s live_sessions leaf for sess-op-1 ALSO renders stalled (not "running") despite the session\'s heartbeat genuinely being live — the leaf and the task-level badge must agree',
       staleTask && Array.isArray(staleTask.live_sessions) && staleTask.live_sessions.length === 1 &&
@@ -901,6 +930,32 @@ async function main() {
     ok('S20e the OWNING PLAN carries NO running roll-up entry for the stale-dispatched task (this is the actual rollup-gate fix: a merely non-empty live_sessions array no longer counts as "running" by itself — line 1314\'s original bug)',
       staleDispatchPlan && (!staleDispatchPlan.roll_up || !staleDispatchPlan.roll_up.running),
       staleDispatchPlan && JSON.stringify(staleDispatchPlan.roll_up));
+    // S20e-reason: the roll-up badge the operator actually SEES on the plan
+    // row must carry the honest class too. The leaf, the task badge and the
+    // plan roll-up previously DISAGREED — the leaf said "still alive", the
+    // task badge and this roll-up both said "crashed".
+    ok('S20e-reason the owning plan rolls up an "idle-dispatch" attention badge, NOT a "crashed" one — the plan row, the task badge and the session leaf now tell the operator the same story',
+      staleDispatchPlan && staleDispatchPlan.roll_up &&
+      staleDispatchPlan.roll_up['idle-dispatch'] && staleDispatchPlan.roll_up['idle-dispatch'].count === 1 &&
+      !staleDispatchPlan.roll_up.crashed,
+      staleDispatchPlan && JSON.stringify(staleDispatchPlan.roll_up));
+
+    // ---- S20g: MALFORMED IS NOT ABSENT, proven end-to-end through the
+    // real route (not just the derive unit). corrupt-ts-plan/1's
+    // task_started exists and names the LIVE sess-op-1, but its ts cannot
+    // be parsed — pre-fix this rendered a green in-progress.
+    const corruptTask = findItem(items, 'corrupt-ts-plan/1');
+    ok('S20g a task whose task_started event is PRESENT but carries an unparseable ts renders status.value=unknown through the real /api/roadmap route — never the pre-fix green in-progress derived from evidence that could not be read',
+      corruptTask && corruptTask.status && corruptTask.status.value === 'unknown' &&
+      corruptTask.status.value !== 'in-progress' &&
+      /unparseable/.test(corruptTask.status.label),
+      corruptTask && JSON.stringify(corruptTask.status));
+    ok('S20h that same task contributes an "unknown" attention badge to its owning plan (an unreadable input surfaces to the operator instead of vanishing into a confident green)',
+      (function () {
+        const p = findItem(items, 'corrupt-ts-plan');
+        return p && p.roll_up && p.roll_up.unknown && p.roll_up.unknown.count === 1 && !p.roll_up.running;
+      })(),
+      JSON.stringify((findItem(items, 'corrupt-ts-plan') || {}).roll_up));
 
     ok('S20b a merely-partial plan (redesign-plan: 1/2 done, task 2 never started, no live session anywhere) carries NO running roll-up entry — status.value can be "in-progress" from done>0 alone, which must NOT be confused with a REAL live session',
       redesign && redesign.status && redesign.status.value === 'in-progress' &&

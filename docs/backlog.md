@@ -2088,6 +2088,71 @@ is actively running. I see several green plans that aren't running.").
 - Threshold evidence understated: the 60-min bound was justified from a cherry-picked 50-min
   stretch (max gap 12 min); over the full active window real gaps reach 41.1 min, so the true
   margin is 1.46x, not 5x.
+
+**FOLLOW-ON 2026-07-30 (harness-reviewer REJECT on `ebc9a12`, all findings closed — see the
+commit that adds this block):** the reviewer's verdict was that the server-side work was sound
+but *did not close the operator's reported symptom*. Five defects closed:
+1. **The green chip was still painted (CRITICAL).** `web/roadmap.js`'s `taskSpanCell` used the
+   IDENTICAL `live_sessions.length` membership predicate that had been fixed server-side, so
+   every TASK row (including `cockpit-roadmap-redesign/9`, the operator's headline example)
+   kept its green chip. PLAN rows were never affected (they read the server's verified
+   `roll_up.running`). Swept all four client sites the reviewer named: 724 chip (FIXED),
+   813 "currently running (N)" header (FIXED — it counted stalled leaves), 1333 `nodeIsActive`
+   auto-expand (FIXED), 1979 unbound-sessions gate (AUDITED, deliberately unchanged — that
+   collection is server-filtered and stamps members `in-progress`, so applying the predicate
+   would hide genuinely-running work; the audit note lives with the code and is pinned by a
+   test). Class: **non-empty-collection-as-truth-claim**.
+2. **The fix introduced a NEW false claim (MAJOR).** `startedIdleExpired` was folded into the
+   `crashed` reason, so a task whose session had a heartbeat written seconds earlier rendered
+   "stalled — crashed" and rolled a `crashed` badge up to its plan — pointing the operator at
+   a dead-process investigation that did not exist (constitution §1). Split out a distinct
+   `idle-dispatch` reason with its own precedence slot (ranked LAST among stalled reasons:
+   any specific known cause must outrank the weakest "nothing happened lately" one) and its
+   own label/CSS. Class: **reason-code-reuse-misattribution**.
+3. **The retraction above had landed in this ledger but NOT in the source (MAJOR).**
+   `derive-lib.js`'s threshold header still argued the discredited "~12min gap / 50-minute
+   stretch / ample margin" case. Rewritten to the re-measured distribution and labelled
+   PROVISIONAL. Class: **correction-landed-in-one-artifact-only** — when retracting a claim,
+   sweep every artifact carrying it, not just the ledger.
+4. **The threshold is calibrated on the corrupted telemetry it exists to compensate for
+   (MAJOR, HYPOTHESIZED).** Now stated in the header itself. **OPEN FOLLOW-UP: re-derive
+   `taskStartedIdleMs` once `--on-builder-dispatch` emits one event per real dispatch.** Until
+   then the default is provisional and may be too tight — a task genuinely worked >60 min on a
+   single dispatch will render 'stalled' (a false NEGATIVE the upstream fix will introduce).
+   REFUTED IF a post-fix scan shows the >60min share of same-task gaps materially unchanged
+   (~3%). Class: **threshold-calibrated-on-corrupted-telemetry**.
+5. **Malformed evidence conflated with absent evidence (MAJOR, fail-open).** A PRESENT-but-
+   unparseable `task_started.ts` collapsed to `null`, silently disabling the idle gate and
+   restoring green-forever on exactly the least trustworthy input. The heartbeat side already
+   handled its own unparseable timestamp correctly; the asymmetry is closed — both now render
+   `unknown`. Class: **fail-open-on-unreadable-input**.
+Plus two MINORs (partial `thresholds` override now MERGES over complete defaults instead of
+NaN-disabling the gate; `startedIdleExpired` is present on every `deriveItemStatus` return
+instead of relying on a non-local invariant in another function).
+
+**Re-measured gap distribution (2026-07-30, `~/.claude/state/progress-logs/*.jsonl`):** 151
+files, 1617 `task_started`, 1596 same-task gaps. p50 4.4min / p90 17.4min / p95 41.1min;
+largest sub-threshold gap 49.1min; **49 gaps (3.07%) exceed 60min**, another 48 in 30-60min.
+Busiest single minute: 18 distinct task keys (the fan-out signature). This independently
+reproduces the reviewer's scan and is what the source header now cites.
+
+**Two defects found BY the new tests while closing the above (both fixed in the same commit):**
+- `roadmap-routes.js` kept a hand-maintained duplicate of `ATTENTION_PRECEDENCE`
+  (`ROLLUP_CLASSES`) AND fell back to `'blocked-on'` for any reason class it did not
+  recognise — so the new `idle-dispatch` code silently rolled up as "stalled — blocked on a
+  predecessor", a fabricated dependency claim. `ROLLUP_CLASSES` is now DERIVED from
+  derive-lib, and the fallback is `'unknown'` (honest) rather than a specific wrong claim.
+  Class: **duplicated-vocabulary-with-misattributing-fallback**.
+- A task deriving `unknown` still emitted `running` session leaves off the heartbeat alone,
+  and its plan then rolled up a green "1 running" badge for a task the server had just
+  admitted it could not classify. `deriveLiveAgentLeaves` now takes the task's own derived
+  status and can only ever narrow it. Class: **leaf-contradicts-its-own-parent-status**.
+
+**Minor, NOT fixed (deliberate scope hold):** the drill-down reason row renders the raw code
+("stalled: idle-dispatch"), consistent with how every other reason code renders there. The
+full human phrasing is already carried by the adjacent badge label and the session leaf, so
+this is terse rather than misleading. Worth a consistent reason-phrase pass across all five
+codes if the vocabulary grows again.
 **Root cause, PROVEN against real deployed data (2026-07-30):** `roadmap-routes.js`'s
 `absorbOneChildRollUp` rolled a task up as `running` whenever `child.live_sessions.length` was
 merely non-empty — independent of whether the attached session's heartbeat was actually fresh.
