@@ -2624,6 +2624,28 @@ requested alongside the roadmap rollup fix).
   CLASS LESSON: the trigger surface of a review gate must include every file that
   can change whether that gate runs — enumerate the gate's own carrier chain, not
   just the code it inspects.
+  **RESOLVED (mostly) 2026-07-30** — harness-reviewer CRITICAL 3 confirmed this
+  finding and rejected the deferral rationale as unmeasured, so the cost was
+  measured and four of the five arms landed as Amendment H in `rrg_in_surface`:
+  `git-hooks/*` (5 files), `schemas/*.json` (11), `install.sh` + `sync.sh` (2), and
+  non-`.sh` code members of `hooks/`+`scripts/` (10). Surface 283 → 311 tracked
+  files (+28, +9.9%), measured identically on `/bin/bash` 3.2.57 and
+  `/opt/homebrew/bin/bash` 5.3.15. Pure DELETION of an in-surface file also blocks
+  now (`--diff-filter=ACMR` excluded `D`, so `git rm` of a gate was a rc=0 no-op);
+  measured FP cost of that arm: 8 of 1763 commits on master (0.45%) delete an
+  in-surface file. NOTE the reviewer's suggested "cover executable non-`.sh`
+  members" rule was measured and REJECTED: all 13 tracked non-`.sh` files under
+  `hooks/`+`scripts/` are mode 100644, so a mode-bit rule would have matched ZERO
+  files and shipped as theatre; the landed rule is extension-based.
+  **STILL DEFERRED — `adapters/claude-code/doctrine/**`**, with its cost now
+  measured rather than asserted: **89 tracked files** (`git ls-files
+  'adapters/claude-code/doctrine/*' | wc -l`), a +31% surface expansion on its own
+  and larger than all four landed arms combined. Doctrine is prose that changes far
+  more often than the code enforcing it, so the merge-friction bill is real and
+  recurring — this is the one arm where deferral survives measurement. TO CLOSE:
+  decide whether doctrine changes warrant a review record at all (they are
+  authority, not enforcement bytes — a doctrine edit cannot by itself disarm a
+  gate), and if so re-bootstrap the grandfather manifest over all 89 first.
 - **DOCTOR-BUDGET-BLOCKING-GATES-RED-15-OF-14-01** (MEDIUM, PROVEN pre-existing
   2026-07-30): `harness-doctor.sh --quick` REDs `budget-blocking-gates: blocking
   session-event units: 15/14`. Reproduced identically against HEAD's manifest with the

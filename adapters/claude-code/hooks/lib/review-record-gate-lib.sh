@@ -17,8 +17,43 @@
 # TRIGGER SURFACE (Amendment A — path-glob match, manifest is a CROSS-CHECK not
 # the source): a file is in-surface iff its path relative to
 # adapters/claude-code/ matches:
-#   hooks/**/*.sh | scripts/**/*.sh | agents/*.md (top-level only) | config/**
+#   hooks/**/*.{sh,js,ts,py,ps1} | scripts/**/*.{sh,js,ts,py,ps1}
+#   | git-hooks/** | schemas/*.json | install.sh | sync.sh
+#   | agents/*.md (top-level only) | config/**
 #   | manifest.json | settings.json.template | rules/**
+#
+# TRIGGER SURFACE, CARRIER-CHAIN CLOSURE (Amendment H, 2026-07-30 —
+# harness-reviewer CRITICAL 3). A review gate's trigger surface is derived from
+# the gate's CARRIER CHAIN, not from a hand-written path list: every link that
+# can decide whether the gate runs, or change what it decides, must itself be
+# reviewed. The chain is
+#   dispatcher (git-hooks/pre-push)
+#     -> gate      (hooks/review-record-push-gate.sh)
+#     -> lib       (hooks/lib/review-record-gate-lib.sh)
+#     -> schema    (schemas/manifest.schema.json)
+#     -> installer (install.sh, sync.sh)
+# Before this amendment `rrg_in_surface` returned NOT-COVERED for FOUR of those
+# five links, so the file that decides whether the review gate runs at all was
+# itself unreviewable. MEASURED cost of closing it (tracked files, 2026-07-30):
+# git-hooks/* = 5, schemas/*.json = 11, install.sh + sync.sh = 2, non-.sh code
+# under hooks/ + scripts/ = 10 -- 283 -> 311 in-surface files (+9.9%).
+#
+# NON-.sh MEMBERS ARE MATCHED BY EXTENSION, NOT BY THE EXECUTABLE BIT. The
+# reviewer's suggested "cover executable non-.sh members" rule was MEASURED
+# against the real tree first and rejected: all 13 tracked non-.sh files under
+# hooks/ and scripts/ are mode 100644, including the live
+# hooks/lib/workstreams-task-bridge.js that motivated the finding
+# (`git ls-files -s 'adapters/claude-code/hooks/*' 'adapters/claude-code/scripts/*'
+# | grep -v '\.sh$'`). A mode-bit rule would have matched ZERO files and shipped
+# as enforcement theatre. The extension list matches the 10 real code members
+# and deliberately excludes the 3 non-code ones (*.md docs, *.example template).
+#
+# DEFERRED, with its cost measured rather than asserted: doctrine/** is 89
+# tracked files (`git ls-files 'adapters/claude-code/doctrine/*' | wc -l`), a
+# +31% expansion of the surface on its own, and doctrine is prose that changes
+# far more often than the code that enforces it. It is the one arm where the
+# merge-friction cost is genuinely large, so it stays OUT this pass and is
+# tracked in docs/backlog.md rather than silently dropped.
 #
 # TRIGGER SURFACE, product side (Amendment G, 2026-07-30 — the cockpit was
 # never reviewed: 0 of 255 review records ever covered it, measured via
@@ -96,6 +131,19 @@ rrg_in_surface() {
   case "$rel" in
     hooks/*.sh) return 0 ;;
     scripts/*.sh) return 0 ;;
+    # Amendment H: non-.sh CODE members of the same two trees. Matched by
+    # extension because the executable bit is 644 on every one of them in the
+    # real tree (see the header) -- a mode-bit rule would match nothing.
+    hooks/*.js|hooks/*.ts|hooks/*.py|hooks/*.ps1) return 0 ;;
+    scripts/*.js|scripts/*.ts|scripts/*.py|scripts/*.ps1) return 0 ;;
+    # Amendment H: the rest of the carrier chain. git-hooks/* is unfiltered
+    # because its load-bearing members are EXTENSIONLESS (pre-push, pre-commit,
+    # post-commit, pre-merge-commit) -- an extension filter would miss the
+    # dispatcher that decides whether this gate runs at all.
+    git-hooks/*) return 0 ;;
+    schemas/*.json) return 0 ;;
+    install.sh) return 0 ;;
+    sync.sh) return 0 ;;
     agents/*.md)
       # top-level only (agents/*.md, not agents/**/*.md) -- no further slash
       # after the agents/ prefix.
@@ -148,20 +196,113 @@ _rrg_read_json() {
 
 RRG_RECORDS_RELDIR="docs/reviews/records"
 
-# _rrg_is_harness_repo <repo_root> <ref-or-empty> -- rc 0 iff this checkout/ref
-# contains adapters/claude-code/manifest.json, i.e. it is the harness repo
-# itself (the repo whose OWN gate this is). Used to scope the bootstrap
-# fail-open below: "the harness repo has no coverage database" is a DEFECT,
-# while "some unrelated fixture/product repo has none" is the ordinary case
-# the fail-open exists to serve.
+RRG_MANIFEST_RELPATH="adapters/claude-code/manifest.json"
+ZERO_SHA_RRG="0000000000000000000000000000000000000000"
+
+# ------------------------------------------------------------
+# Harness-repo identity — anchored OUTSIDE the actor's write set
+# ------------------------------------------------------------
+#
+# GATE IDENTITY MUST NOT BE ANCHORED ON PUSHER-MUTABLE STATE (harness-reviewer
+# CRITICAL 1, 2026-07-30). PROVEN end-to-end against a real bare remote through
+# the real dispatcher: THREE separate controls all decided "is this the harness
+# repo?" by reading the ONE working-tree file adapters/claude-code/manifest.json
+#   - review-record-push-gate.sh's scope test
+#   - _rrg_is_harness_repo (which scopes the C2-B bootstrap fail-open)
+#   - git-hooks/pre-push's M8 missing-gate block arm
+# so `git rm -f adapters/claude-code/manifest.json`, in the SAME push that added
+# an unreviewed hook, took the push from rc=1 + "PUSH BLOCKED" to rc=0 with ZERO
+# gate output, and landed the unreviewed file on the remote. One command
+# disarmed all three at once, and the deletion was itself never reviewed because
+# the file enumeration used --diff-filter=ACMR, which excludes D.
+#
+# CLASS: gate-identity-anchored-on-pusher-mutable-state -- a control that
+# decides whether it applies by reading a file the gated actor can delete in the
+# same operation. GENERALIZATION: every scope/applicability test in every gate
+# must anchor on state outside the actor's write set FOR THAT OPERATION.
+#
+# The anchors below are ordered strongest-first. The check is a monotone OR: an
+# anchor can only ever make identity MORE certain, never less, so a genuinely
+# foreign repo (no manifest at any anchor) still matches nothing and stays
+# un-gated -- the false-positive budget that Scenario 11 pins is preserved.
+#   1. remote_sha        -- what the REMOTE actually has right now. The pushing
+#                           actor cannot rewrite it with this push; git itself
+#                           supplies it from the ref negotiation.
+#   2. remote-tracking   -- refs/remotes/<remote>/<branch>, the last observed
+#                           remote state. Not written by the push being gated.
+#   3. HEAD              -- the committed tree. Survives a working-tree `rm`,
+#                           though not a `git rm` + commit.
+#   4. working tree      -- the original, weakest test. Kept LAST so behaviour
+#                           is unchanged for every caller that has no ref to
+#                           offer (install.sh), but it can no longer be the
+#                           ONLY thing consulted.
+#
+# rrg_harness_identity <repo_root> [ref ...] -- rc 0 iff any anchor carries the
+# manifest. Echoes the anchor that matched (for the caller's message).
+rrg_harness_identity() {
+  local repo_root="$1"; shift
+  local ref
+  if command -v git >/dev/null 2>&1 \
+     && git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
+    # Caller-supplied anchors first (remote_sha, remote-tracking refs, ...).
+    for ref in "$@"; do
+      [[ -n "$ref" ]] || continue
+      [[ "$ref" == "$ZERO_SHA_RRG" ]] && continue
+      if git -C "$repo_root" cat-file -e "${ref}:${RRG_MANIFEST_RELPATH}" 2>/dev/null; then
+        printf '%s' "$ref"; return 0
+      fi
+    done
+    if git -C "$repo_root" cat-file -e "HEAD:${RRG_MANIFEST_RELPATH}" 2>/dev/null; then
+      printf 'HEAD'; return 0
+    fi
+    # The origin-tracked ref, for callers that have no push refline to offer
+    # (install.sh, session-start-auto-install.sh, rrg_is_covered). This is what
+    # keeps the C2-B bootstrap fail-open scoped even when the manifest has
+    # already been deleted from both HEAD and the working tree.
+    local _r _b
+    for _r in $(git -C "$repo_root" remote 2>/dev/null); do
+      for _b in master main; do
+        if git -C "$repo_root" cat-file -e "refs/remotes/${_r}/${_b}:${RRG_MANIFEST_RELPATH}" 2>/dev/null; then
+          printf 'refs/remotes/%s/%s' "$_r" "$_b"; return 0
+        fi
+      done
+    done
+  fi
+  if [[ -f "$repo_root/$RRG_MANIFEST_RELPATH" ]]; then
+    printf 'working-tree'; return 0
+  fi
+  return 1
+}
+
+# rrg_remote_tracking_refs <repo_root> <remote_ref> -- echo the remote-tracking
+# refs that correspond to <remote_ref> (e.g. refs/heads/master ->
+# refs/remotes/origin/master for every configured remote), one per line. These
+# are identity anchors the push being gated does not write.
+rrg_remote_tracking_refs() {
+  local repo_root="$1" remote_ref="$2" branch r
+  command -v git >/dev/null 2>&1 || return 1
+  branch="${remote_ref#refs/heads/}"
+  [[ -n "$branch" ]] || return 1
+  while IFS= read -r r; do
+    [[ -n "$r" ]] || continue
+    printf 'refs/remotes/%s/%s\n' "$r" "$branch"
+  done < <(git -C "$repo_root" remote 2>/dev/null)
+}
+
+# _rrg_is_harness_repo <repo_root> <ref-or-empty> -- rc 0 iff this repo is the
+# harness repo itself (the repo whose OWN gate this is). Used to scope the
+# bootstrap fail-open below: "the harness repo has no coverage database" is a
+# DEFECT, while "some unrelated fixture/product repo has none" is the ordinary
+# case the fail-open exists to serve.
+#
+# ANCHORED VIA rrg_harness_identity (CRITICAL 1). Previously this read ONLY
+# <ref> (at push time, the pusher's own local_sha) or only the working tree --
+# both inside the actor's write set, so deleting manifest.json re-opened the
+# C2-B fail-open this function exists to close. The caller's ref is now just the
+# FIRST anchor tried, not the only one.
 _rrg_is_harness_repo() {
   local repo_root="$1" ref="$2"
-  if [[ -n "$ref" ]]; then
-    command -v git >/dev/null 2>&1 || return 1
-    git -C "$repo_root" cat-file -e "${ref}:adapters/claude-code/manifest.json" 2>/dev/null
-    return $?
-  fi
-  [[ -f "$repo_root/adapters/claude-code/manifest.json" ]]
+  rrg_harness_identity "$repo_root" "$ref" >/dev/null 2>&1
 }
 
 # rrg_is_covered <repo_root> <ref-or-empty> <full_relpath> <blob_sha>
@@ -510,6 +651,123 @@ _rrg_self_test() {
     echo "FAIL: an empty reason should be rejected"; fail=$((fail+1))
   else
     echo "PASS: an empty reason is rejected"; pass=$((pass+1))
+  fi
+
+  # ---- Amendment H: THE CARRIER CHAIN IS COVERED (harness-reviewer CRITICAL
+  # 3). Asserted as a CHAIN, not as individual paths, because the finding was
+  # not "one path was missed" -- it was "the surface was a hand-written list
+  # that had drifted from the set of files that can decide whether the gate
+  # runs". Every link below can disarm or alter the gate; if any one of them
+  # is out-of-surface, it can be changed with no review record. ----
+  local link
+  for link in \
+    "adapters/claude-code/git-hooks/pre-push" \
+    "adapters/claude-code/hooks/review-record-push-gate.sh" \
+    "adapters/claude-code/hooks/lib/review-record-gate-lib.sh" \
+    "adapters/claude-code/schemas/manifest.schema.json" \
+    "adapters/claude-code/manifest.json" \
+    "adapters/claude-code/install.sh" \
+    "adapters/claude-code/sync.sh" \
+  ; do
+    if rrg_in_surface "$link"; then
+      echo "PASS: carrier-chain link in-surface($link)"; pass=$((pass+1))
+    else
+      echo "FAIL: carrier-chain link NOT in-surface($link) — it can be changed unreviewed"; fail=$((fail+1))
+    fi
+  done
+
+  # ---- Amendment H: non-.sh CODE members of hooks/ and scripts/. These are
+  # mode 100644 in the real tree, so an executable-bit rule would miss every
+  # one of them (that is why the rule is extension-based). ----
+  for p in \
+    "adapters/claude-code/hooks/lib/workstreams-task-bridge.js" \
+    "adapters/claude-code/scripts/blocking-budget-check.js" \
+    "adapters/claude-code/scripts/audit-consistency.ts" \
+    "adapters/claude-code/scripts/validate-links.ts" \
+    "adapters/claude-code/scripts/install-limit-resume-task.ps1" \
+    "adapters/claude-code/git-hooks/pre-commit" \
+    "adapters/claude-code/git-hooks/post-commit" \
+    "adapters/claude-code/schemas/evidence.schema.json" \
+  ; do
+    if rrg_in_surface "$p"; then
+      echo "PASS: in-surface($p)"; pass=$((pass+1))
+    else
+      echo "FAIL: in-surface($p) expected TRUE"; fail=$((fail+1))
+    fi
+  done
+
+  # ---- Amendment H: NON-code neighbours of those same trees stay OUT, so the
+  # expansion is the measured +28 files and not an accidental sweep of docs. ----
+  for p in \
+    "adapters/claude-code/scripts/schedule-weekly-eval.md" \
+    "adapters/claude-code/scripts/spawn-worktree-selftest-evidence.md" \
+    "adapters/claude-code/hooks/sensitive-patterns.local.example" \
+    "adapters/claude-code/doctrine/deterministic-process.md" \
+  ; do
+    if rrg_in_surface "$p"; then
+      echo "FAIL: in-surface($p) expected FALSE (surface expansion overshot)"; fail=$((fail+1))
+    else
+      echo "PASS: NOT in-surface($p)"; pass=$((pass+1))
+    fi
+  done
+
+  # ---- CRITICAL 1: harness identity resolves from anchors OUTSIDE the actor's
+  # write set. The fixture models the exact PROVEN attack: a commit that
+  # carries the manifest, then a commit that `git rm`s it. At the second
+  # commit the working tree, the index AND HEAD have all lost the file -- the
+  # only surviving evidence is the earlier commit, which stands in here for
+  # the remote_sha the push cannot rewrite. ----
+  local IDR="$tmp/repo-identity"
+  mkdir -p "$IDR/adapters/claude-code/hooks"
+  printf '{"schema_version":1,"entries":[]}\n' > "$IDR/adapters/claude-code/manifest.json"
+  printf '#!/bin/bash\n' > "$IDR/adapters/claude-code/hooks/keep.sh"
+  ( cd "$IDR" && git init -q . && git config user.email t@example.com && git config user.name T \
+      && git add -A && git commit -q -m "with manifest" ) >/dev/null 2>&1
+  local ID_WITH; ID_WITH=$(cd "$IDR" && git rev-parse HEAD 2>/dev/null)
+  ( cd "$IDR" && git rm -q -f adapters/claude-code/manifest.json \
+      && git commit -q -m "drop manifest" ) >/dev/null 2>&1
+
+  if [[ ! -f "$IDR/adapters/claude-code/manifest.json" ]]; then
+    echo "PASS: identity fixture really deleted the manifest (worktree + HEAD)"; pass=$((pass+1))
+  else
+    echo "FAIL: identity fixture did not delete the manifest — the scenario proves nothing"; fail=$((fail+1))
+  fi
+
+  local anchor
+  anchor="$(rrg_harness_identity "$IDR" "$ID_WITH" 2>/dev/null)"
+  if [[ "$anchor" == "$ID_WITH" ]]; then
+    echo "PASS: identity survives manifest deletion via a pre-deletion anchor"; pass=$((pass+1))
+  else
+    echo "FAIL: manifest deletion defeated harness identity (anchor='$anchor')"; fail=$((fail+1))
+  fi
+
+  if rrg_harness_identity "$IDR" "" >/dev/null 2>&1; then
+    echo "FAIL: identity claimed with NO surviving anchor at all"; fail=$((fail+1))
+  else
+    echo "PASS: no anchor anywhere -> not the harness repo (foreign-repo FP budget)"; pass=$((pass+1))
+  fi
+
+  # A genuinely foreign repo must stay un-identified, or every gate that scopes
+  # on this function starts false-positiving on unrelated repos.
+  local FGN="$tmp/repo-foreign"
+  mkdir -p "$FGN/src"
+  printf 'x\n' > "$FGN/src/app.js"
+  ( cd "$FGN" && git init -q . && git config user.email t@example.com && git config user.name T \
+      && git add -A && git commit -q -m base ) >/dev/null 2>&1
+  if rrg_harness_identity "$FGN" "" >/dev/null 2>&1; then
+    echo "FAIL: a foreign repo was identified as the harness repo"; fail=$((fail+1))
+  else
+    echo "PASS: foreign repo is not the harness repo"; pass=$((pass+1))
+  fi
+
+  # ---- C2-B stays closed at the LIB layer too: _rrg_is_harness_repo consulted
+  # with the post-deletion ref must still say "harness repo" when an earlier
+  # anchor survives, otherwise the bootstrap fail-open re-opens exactly as the
+  # reviewer proved. ----
+  if _rrg_is_harness_repo "$IDR" "$ID_WITH"; then
+    echo "PASS: _rrg_is_harness_repo honours a surviving pre-deletion anchor"; pass=$((pass+1))
+  else
+    echo "FAIL: _rrg_is_harness_repo lost identity — C2-B re-opens on manifest deletion"; fail=$((fail+1))
   fi
 
   echo ""

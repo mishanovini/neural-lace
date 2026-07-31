@@ -331,6 +331,82 @@ _rrpg_block_message() {
 }
 
 # ------------------------------------------------------------
+# Identity + disarm messages (harness-reviewer CRITICAL 1 / MAJOR 3)
+# ------------------------------------------------------------
+
+# _rrpg_is_harness_repo_inline <repo_root> -- the SAME anchor order as
+# rrg_harness_identity, reimplemented inline so it still works when the lib
+# itself is missing or truncated. Deliberate duplication: the whole point is to
+# survive deletion of the file that would otherwise answer this question.
+_rrpg_is_harness_repo_inline() {
+  local repo_root="$1" mp="adapters/claude-code/manifest.json" r b
+  if command -v git >/dev/null 2>&1 \
+     && git -C "$repo_root" rev-parse --git-dir >/dev/null 2>&1; then
+    git -C "$repo_root" cat-file -e "HEAD:${mp}" 2>/dev/null && return 0
+    for r in $(git -C "$repo_root" remote 2>/dev/null); do
+      for b in master main; do
+        git -C "$repo_root" cat-file -e "refs/remotes/${r}/${b}:${mp}" 2>/dev/null && return 0
+      done
+    done
+  fi
+  [[ -f "$repo_root/$mp" ]]
+}
+
+# _rrpg_missing_lib_block <repo_root> <lib_path> [detail]
+_rrpg_missing_lib_block() {
+  local repo_root="$1" lib="$2" detail="${3:-could not be sourced}"
+  {
+    echo "================================================================"
+    echo "REVIEW-RECORD PUSH GATE — PUSH BLOCKED (gate library missing)"
+    echo "================================================================"
+    echo "This repo IS the harness repo, but the gate's own coverage library"
+    echo "$detail:"
+    echo "  $lib"
+    echo
+    echo "The library is REPO CONTENT, not a system binary. A missing jq is a"
+    echo "machine problem and fails open (loudly); a missing library is the"
+    echo "harness repo disarming its own gate, which is the cheapest bypass"
+    echo "there is. Refusing the push instead."
+    echo
+    echo "Restore it and push again:"
+    echo "  git checkout master -- adapters/claude-code/hooks/lib/review-record-gate-lib.sh"
+    echo "================================================================"
+  } >&2
+}
+
+# _rrpg_identity_removal_block <repo_root> <remote_ref> <local_sha> <anchor>
+# The manifest exists at the remote-side anchor but NOT in the pushed commit:
+# this push REMOVES the file that three separate controls use to decide whether
+# they apply. Loud by construction (harness-reviewer MAJOR 3 — the scope test
+# was the one silent, pusher-reachable fail-open C3's loudness sweep missed).
+_rrpg_identity_removal_block() {
+  local repo_root="$1" remote_ref="$2" sha="$3" anchor="$4"
+  {
+    echo "================================================================"
+    echo "REVIEW-RECORD PUSH GATE — PUSH BLOCKED (gate identity removal)"
+    echo "================================================================"
+    echo "Pushing $remote_ref at $sha would DELETE"
+    echo "  adapters/claude-code/manifest.json"
+    echo "which is present at the remote-side anchor ($anchor)."
+    echo
+    echo "That single deletion disarms THREE controls at once:"
+    echo "  1. this gate's scope test (it would exit silently, rc=0)"
+    echo "  2. the bootstrap fail-open's harness-repo scoping (C2-B re-opens)"
+    echo "  3. git-hooks/pre-push's missing-gate block (demoted to a WARNING)"
+    echo
+    echo "Identity is therefore resolved from the state already ON THE REMOTE,"
+    echo "not from the working tree the push can rewrite, and removing the"
+    echo "anchor is treated as UNCOVERED rather than out-of-scope."
+    echo
+    echo "If this deletion is genuinely intended, it needs the same operator"
+    echo "authorization as any other unreviewed harness change:"
+    echo "  bash adapters/claude-code/scripts/authorize-review-record-push-override.sh \\"
+    echo "    \"why the harness manifest is being removed\" --sha $sha"
+    echo "================================================================"
+  } >&2
+}
+
+# ------------------------------------------------------------
 # Main
 # ------------------------------------------------------------
 
@@ -373,25 +449,83 @@ _rrpg_main() {
     return 0
   fi
 
+  # ------------------------------------------------------------
+  # SCOPE TEST — the gate's FIRST decision, and formerly its most silent
+  # fail-open (harness-reviewer CRITICAL 1 + MAJOR 3, 2026-07-30).
+  #
+  # This was `[[ -f "$repo_root/adapters/claude-code/manifest.json" ]] ||
+  # return 0`: a single working-tree read, inside the pusher's write set, that
+  # ran BEFORE the three loud infra arms. PROVEN against a real bare remote:
+  # harness repo + `git rm -f adapters/claude-code/manifest.json` in the same
+  # push as an unreviewed hook => rc=0, ZERO bytes of stderr, unreviewed file
+  # on the remote. So C3's stated invariant ("a defeated gate is never
+  # indistinguishable from a passing one") did not hold for the gate's very
+  # first decision, and the escape cost one command.
+  #
+  # The scope test is now anchored on state the push CANNOT rewrite (see
+  # rrg_harness_identity in lib/: remote_sha, then the remote-tracking ref,
+  # then HEAD, then -- last -- the working tree). Sourcing the lib therefore
+  # has to happen BEFORE the scope test rather than after it, which reorders
+  # the jq/lib arms relative to the scope test. That reordering is safe for the
+  # trust-erosion budget C3 was protecting: BOTH arms below stay silent unless
+  # this repo is the harness repo, so an unrelated repo on a jq-less machine
+  # still gets silence, exactly as before.
+  # ------------------------------------------------------------
+  local _rrpg_lib="$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh"
+  # shellcheck source=/dev/null
+  if ! source "$_rrpg_lib" 2>/dev/null; then
+    # The lib is REPO CONTENT, not a system binary -- deleting it is the same
+    # "the enforcing bytes are mutable" class as M8, not the "this machine is
+    # missing jq" class. PROVEN: `git rm` of the lib alone took this gate to
+    # rc=0 and landed the deletion on the remote. Decide scope WITHOUT the lib
+    # (inline, same anchor order) so a harness repo cannot disarm the gate by
+    # deleting the gate's own library.
+    if _rrpg_is_harness_repo_inline "$repo_root"; then
+      _rrpg_missing_lib_block "$repo_root" "$_rrpg_lib"
+      return 1
+    fi
+    return 0
+  fi
+  local _fn
+  for _fn in rrg_harness_identity rrg_remote_tracking_refs; do
+    if ! command -v "$_fn" >/dev/null 2>&1; then
+      if _rrpg_is_harness_repo_inline "$repo_root"; then
+        _rrpg_missing_lib_block "$repo_root" "$_rrpg_lib"
+        return 1
+      fi
+      return 0
+    fi
+  done
+
+  # Collect every anchor this push offers, from the stdin ref lines, BEFORE
+  # deciding scope: remote_sha for each pushed ref, plus the remote-tracking
+  # refs for the same branches.
+  local -a _anchors=()
+  local _lr _ls _rr _rs _t
+  while IFS=' ' read -r _lr _ls _rr _rs; do
+    [[ -n "$_rr" ]] || continue
+    [[ -n "$_rs" ]] && _anchors+=("$_rs")
+    while IFS= read -r _t; do
+      [[ -n "$_t" ]] && _anchors+=("$_t")
+    done < <(rrg_remote_tracking_refs "$repo_root" "$_rr" 2>/dev/null)
+  done <<< "$stdin_buf"
+
   # Scope limit, NOT a fail-open: this gate only governs the harness repo.
-  # Silence here is correct and must stay silent.
-  [[ -f "$repo_root/adapters/claude-code/manifest.json" ]] || return 0
+  # Silence here is correct for a genuinely foreign repo and must stay silent.
+  rrg_harness_identity "$repo_root" "${_anchors[@]+"${_anchors[@]}"}" >/dev/null 2>&1 || return 0
 
   if ! command -v jq >/dev/null 2>&1; then
     _rrpg_infra_warn "jq is not on PATH, so review coverage cannot be read"
     return 0
   fi
-
-  # shellcheck source=/dev/null
-  if ! source "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" 2>/dev/null; then
-    _rrpg_infra_warn "lib/review-record-gate-lib.sh could not be sourced from $_RRPG_SELF_DIR"
-    return 0
-  fi
-  local _fn
+  # Past the scope test, this IS the harness repo, so a lib that sourced but is
+  # missing a function it must define is a TRUNCATED/EDITED lib -- repo content
+  # again, not a missing binary. Block rather than warn-and-allow, for the same
+  # reason as the source failure above.
   for _fn in rrg_in_surface rrg_is_covered rrg_blob_sha_of_ref rrg_validate_waiver_reason; do
     if ! command -v "$_fn" >/dev/null 2>&1; then
-      _rrpg_infra_warn "lib/review-record-gate-lib.sh sourced but does not define ${_fn}()"
-      return 0
+      _rrpg_missing_lib_block "$repo_root" "$_rrpg_lib" "sourced but does not define ${_fn}()"
+      return 1
     fi
   done
 
@@ -415,10 +549,33 @@ _rrpg_main() {
     printf '%s' "$remote_ref" | grep -qE "$STABLE_BRANCHES_REGEX" || continue
     [[ "$local_sha" == "$ZERO_SHA" ]] && continue   # delete-push, nothing to review
 
-    local range files diff_rc range_degraded=0
+    # ------------------------------------------------------------
+    # IDENTITY REMOVAL (harness-reviewer CRITICAL 1). Checked per-ref and
+    # BEFORE the range diff, so it fires even when the manifest was removed in
+    # some earlier commit that this range does not span. "Present at the
+    # remote-side anchor but absent in the pushed commit" is UNCOVERED-and-
+    # BLOCK, never out-of-scope.
+    # ------------------------------------------------------------
+    local _id_anchor
+    if _id_anchor="$(rrg_harness_identity "$repo_root" "$remote_sha" \
+                       $(rrg_remote_tracking_refs "$repo_root" "$remote_ref" 2>/dev/null) 2>/dev/null)" \
+       && [[ -n "$_id_anchor" && "$_id_anchor" != "working-tree" ]] \
+       && ! git -C "$repo_root" cat-file -e "${local_sha}:${RRG_MANIFEST_RELPATH}" 2>/dev/null; then
+      saw_block=1
+      _rrpg_identity_removal_block "$repo_root" "$remote_ref" "$local_sha" "$_id_anchor"
+      continue
+    fi
+
+    local range files deleted diff_rc range_degraded=0
     range="$(_rrpg_range "$local_sha" "$remote_sha")"
     files="$(git -C "$repo_root" diff --name-only --diff-filter=ACMR "$range" 2>/dev/null)"
     diff_rc=$?
+    # DELETIONS ARE PART OF THE SUBJECT SET (harness-reviewer CRITICAL 3).
+    # --diff-filter=ACMR excludes D, so `git rm hooks/victim-gate.sh` was a
+    # rc=0 no-op: deleting a gate was invisible to the gate. Enumerated
+    # separately because a deleted path has no blob at local_sha, so it can
+    # never take the ordinary coverage path.
+    deleted="$(git -C "$repo_root" diff --name-only --diff-filter=D "$range" 2>/dev/null)"
     if [[ "$diff_rc" -ne 0 ]]; then
       range_degraded=1
       # BAILOUT RESOLVES TOWARD BLOCK (this file's own stated principle,
@@ -451,7 +608,7 @@ _rrpg_main() {
         continue
       fi
     fi
-    [[ -n "$files" ]] || continue
+    [[ -n "$files" ]] || [[ -n "$deleted" ]] || continue
 
     local -a uncovered=()
     local f sha
@@ -468,6 +625,19 @@ _rrpg_main() {
       fi
       rrg_is_covered "$repo_root" "$local_sha" "$f" "$sha" || uncovered+=("$f")
     done <<< "$files"
+
+    # In-surface DELETIONS. A removed path has no blob at local_sha, so
+    # rrg_is_covered can never return true for it -- a deletion is UNCOVERED by
+    # construction and the operator override is its only route. MEASURED cost
+    # before choosing this (git log --diff-filter=D over master, 2026-07-30):
+    # 8 of 1763 commits (0.45%) delete an in-surface file, 104 files all time,
+    # concentrated in a few deliberate sweeps. That is the real false-positive
+    # bill for making "delete the gate" as hard as "edit the gate".
+    while IFS= read -r f; do
+      [[ -n "$f" ]] || continue
+      rrg_in_surface "$f" || continue
+      uncovered+=("$f (DELETED by this push — removing an in-surface file needs the same authorization as changing it)")
+    done <<< "$deleted"
 
     [[ "${#uncovered[@]}" -eq 0 ]] && continue
 
@@ -797,7 +967,14 @@ _rrpg_self_test() {
   # the real enforcement code), not a coincidence of the fixture.
   # ==========================================================================
   echo "Scenario 15: MUTATION-PROOF — a neutered gate must fail the golden-case block"
-  local MUTANT="$T/mutant-gate.sh"
+  # The mutant lives in a SANDBOX THAT CARRIES ITS OWN lib/ copy. Without it,
+  # _RRPG_SELF_DIR points at a directory with no lib/review-record-gate-lib.sh
+  # and the gate's missing-library block (CRITICAL 1 follow-on) fires first --
+  # the mutant would "block" for a reason that has nothing to do with the
+  # mutation, and the scenario would prove nothing while looking green.
+  local MUTDIR="$T/mutant"; mkdir -p "$MUTDIR/lib"
+  cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUTDIR/lib/" 2>/dev/null
+  local MUTANT="$MUTDIR/mutant-gate.sh"
   # The decisive branch is `[[ "$saw_block" -eq 1 ]] && return 1`. Force it to
   # never block, leaving every OTHER line (detection, logging, messaging)
   # intact — this targets the ENFORCEMENT decision specifically, not the
@@ -813,6 +990,194 @@ _rrpg_self_test() {
     fi
   else
     fail "could not construct the mutant (sed anchor not found — script drifted from what this scenario targets)"
+  fi
+
+  # ==========================================================================
+  # CRITICAL 1 / MAJOR 3 (harness-reviewer, 2026-07-30). The PROVEN one-command
+  # disarm: `git rm -f adapters/claude-code/manifest.json` in the same push as
+  # unreviewed content. Before the identity anchor, this returned rc=0 with
+  # ZERO bytes of stderr and landed the unreviewed file on a real bare remote.
+  # ==========================================================================
+  echo "Scenario 16: CRITICAL 1 — deleting the identity anchor BLOCKS, and says so"
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+  echo '# unreviewed harness change' > "$R/adapters/claude-code/hooks/lib/evil.sh"
+  ( cd "$R" && git add -A && git rm -q -f adapters/claude-code/manifest.json \
+      && git commit -qm "feat: evil + drop the identity anchor" ) >/dev/null 2>&1
+  local S16_SHA; S16_SHA="$(cd "$R" && git rev-parse HEAD)"
+  rc="$(run origin "refs/heads/master $S16_SHA refs/heads/master $BASE_SHA")"
+  [[ "$rc" == "1" ]] && pass "manifest-deletion push BLOCKED (rc=1)" \
+    || fail "deleting manifest.json disarmed the gate (rc=$rc) — CRITICAL 1 is open"
+  local msg16; msg16="$(run_capture origin "refs/heads/master $S16_SHA refs/heads/master $BASE_SHA")"
+  # MAJOR 3: the scope test was the gate's FIRST decision and its ONE silent,
+  # pusher-reachable fail-open. Loudness is asserted in BYTES, not just in
+  # wording, because "0 bytes" was the actual observed failure.
+  if [[ -n "$msg16" ]]; then
+    pass "the disarm attempt is LOUD ($(printf '%s' "$msg16" | wc -c | tr -d ' ') bytes, was 0)"
+  else
+    fail "the disarm attempt produced ZERO bytes — a defeated gate is indistinguishable from a passing one"
+  fi
+  case "$msg16" in *manifest.json*) pass "message names the removed identity anchor" ;; \
+    *) fail "message never names manifest.json"; esac
+
+  echo "Scenario 17: CRITICAL 3 — a PURE deletion of an in-surface gate BLOCKS (--diff-filter=ACMR excluded D)"
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+  echo '# a gate that exists at the baseline' > "$R/adapters/claude-code/hooks/victim-gate.sh"
+  ( cd "$R" && git add -A && git commit -qm "add victim gate" ) >/dev/null 2>&1
+  local V_BASE; V_BASE="$(cd "$R" && git rev-parse HEAD)"
+  ( cd "$R" && git rm -q -f adapters/claude-code/hooks/victim-gate.sh \
+      && git commit -qm "chore: delete the gate" ) >/dev/null 2>&1
+  local S17_SHA; S17_SHA="$(cd "$R" && git rev-parse HEAD)"
+  rc="$(run origin "refs/heads/master $S17_SHA refs/heads/master $V_BASE")"
+  [[ "$rc" == "1" ]] && pass "pure deletion of an in-surface gate BLOCKED (rc=1)" \
+    || fail "git rm of an in-surface gate was invisible to the gate (rc=$rc) — the D-filter hole is open"
+  local msg17; msg17="$(run_capture origin "refs/heads/master $S17_SHA refs/heads/master $V_BASE")"
+  case "$msg17" in *victim-gate.sh*) pass "message names the deleted file" ;; \
+    *) fail "message omits the deleted file"; esac
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+
+  echo "Scenario 18: the gate's own LIBRARY is repo content — deleting it BLOCKS in the harness repo, stays silent elsewhere"
+  # PROVEN against the bare-remote fixture: `git rm` of lib/review-record-gate-
+  # lib.sh alone took the gate to rc=0 (it could not source its own coverage
+  # logic) and the deletion landed. A missing jq is a machine problem and fails
+  # open loudly; a missing library is the harness repo disarming itself.
+  local NOLIB="$T/nolib"; mkdir -p "$NOLIB"
+  cp "$SELF" "$NOLIB/review-record-push-gate.sh"
+  rc="$(printf '%s\n' "refs/heads/master $S1_SHA refs/heads/master $ORIG_BASE_SHA" \
+        | ( cd "$R" && bash "$NOLIB/review-record-push-gate.sh" origin ) >/dev/null 2>&1; echo $?)"
+  [[ "$rc" == "1" ]] && pass "missing library in the harness repo BLOCKS (rc=1)" \
+    || fail "deleting the gate's own library disarmed it (rc=$rc)"
+  local nolib_foreign_err rc_f
+  nolib_foreign_err="$(printf '%s\n' "refs/heads/master $FHEAD refs/heads/master $FBASE" \
+        | ( cd "$FR" && bash "$NOLIB/review-record-push-gate.sh" origin ) 2>&1 >/dev/null)"
+  rc_f="$(printf '%s\n' "refs/heads/master $FHEAD refs/heads/master $FBASE" \
+        | ( cd "$FR" && bash "$NOLIB/review-record-push-gate.sh" origin ) >/dev/null 2>&1; echo $?)"
+  if [[ "$rc_f" == "0" && -z "$nolib_foreign_err" ]]; then
+    pass "a foreign repo with no library is silently ignored (rc=0, 0 bytes) — FP budget intact"
+  else
+    fail "the missing-library block leaked into a foreign repo (rc=$rc_f, stderr='$nolib_foreign_err')"
+  fi
+
+  echo "Scenario 19: CRITICAL 3 — the newly-covered carrier-chain arms are actually gated"
+  # Each of these was NOT-COVERED before Amendment H, so the file that decides
+  # whether the review gate runs could be changed with no review record.
+  local arm armpath armlabel DISPATCHER_SHA=""
+  for arm in "git-hooks/pre-push:the dispatcher" \
+             "schemas/manifest.schema.json:the manifest schema" \
+             "install.sh:the installer"; do
+    armpath="${arm%%:*}"; armlabel="${arm#*:}"
+    ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+    mkdir -p "$R/adapters/claude-code/$(dirname "$armpath")"
+    echo '# unreviewed change to a carrier-chain link' > "$R/adapters/claude-code/$armpath"
+    ( cd "$R" && git add -A && git commit -qm "touch $armpath" ) >/dev/null 2>&1
+    local ARM_SHA; ARM_SHA="$(cd "$R" && git rev-parse HEAD)"
+    [[ "$armpath" == "git-hooks/pre-push" ]] && DISPATCHER_SHA="$ARM_SHA"
+    rc="$(run origin "refs/heads/master $ARM_SHA refs/heads/master $BASE_SHA")"
+    [[ "$rc" == "1" ]] && pass "unreviewed $armlabel ($armpath) BLOCKS" \
+      || fail "$armlabel ($armpath) is still unreviewable (rc=$rc)"
+  done
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+
+  # ==========================================================================
+  # Scenario 19b: MUTATION-PROOF — the SURFACE ARM itself, isolated. Scenario
+  # 19 asserts the dispatcher is gated; this proves that assertion is carried
+  # by Amendment H's `git-hooks/*` case arm and would go red if the arm were
+  # dropped. Without it, Scenario 19 could be passing for an unrelated reason
+  # and the arm could be deleted with the suite still green -- which is
+  # precisely how the surface drifted out of sync with the carrier chain in
+  # the first place.
+  # ==========================================================================
+  echo "Scenario 19b: MUTATION-PROOF — deleting the git-hooks/* surface arm must re-open the unreviewed-dispatcher hole"
+  local MUT4DIR="$T/mutant-surface"; mkdir -p "$MUT4DIR/lib"
+  sed '/git-hooks\/\*) return 0 ;;/d' "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" \
+    > "$MUT4DIR/lib/review-record-gate-lib.sh"
+  cp "$SELF" "$MUT4DIR/gate.sh"
+  if grep -q 'git-hooks/\*) return 0' "$MUT4DIR/lib/review-record-gate-lib.sh"; then
+    fail "could not construct the surface mutant (the git-hooks arm survived the sed)"
+  elif [[ -z "$DISPATCHER_SHA" ]]; then
+    fail "Scenario 19 did not record a dispatcher-change commit — nothing to mutate against"
+  else
+    rc="$(printf '%s\n' "refs/heads/master $DISPATCHER_SHA refs/heads/master $BASE_SHA" \
+          | ( cd "$R" && bash "$MUT4DIR/gate.sh" origin ) >/dev/null 2>&1; echo $?)"
+    if [[ "$rc" == "0" ]]; then
+      pass "mutant (no git-hooks/* arm) WRONGLY allows the unreviewed dispatcher push (rc=0) — proves the surface arm is load-bearing"
+    else
+      fail "mutant still blocked (rc=$rc) — the surface mutation did not land, this scenario proves nothing"
+    fi
+  fi
+
+  # ==========================================================================
+  # Scenario 20: MUTATION-PROOF #2 — revert ONLY the identity anchor to the
+  # pre-fix working-tree read and confirm the CRITICAL 1 attack succeeds again.
+  # Scenario 15 proves the block DECISION is load-bearing; this proves the
+  # ANCHOR is. Without it, Scenario 16 could be passing because of the D-filter
+  # arm alone, and the anchor could rot untested.
+  # ==========================================================================
+  echo "Scenario 20: MUTATION-PROOF — reverting the identity anchor must re-open CRITICAL 1"
+  # THE WORKING TREE MUST ACTUALLY LACK THE MANIFEST for this mutation to be
+  # meaningful. The attacker's checkout is the post-`git rm` state, so that is
+  # the state both gates must be judged against. Checking the mutant against a
+  # tree that still HAS the manifest would let the pre-fix scope test pass, the
+  # run would reach the (independent) deletion arm, and the mutant would
+  # "block" for a reason the mutation never touched — a green scenario proving
+  # nothing. The anchor and the deletion arm are deliberately redundant against
+  # this attack; this scenario isolates the anchor by removing the deletion
+  # arm's opportunity to fire.
+  ( cd "$R" && git reset -q --hard "$S16_SHA" ) >/dev/null 2>&1
+  if [[ -f "$R/adapters/claude-code/manifest.json" ]]; then
+    fail "fixture bug: the working tree still carries manifest.json — Scenario 20 proves nothing"
+  else
+    pass "attacker's working tree genuinely lacks manifest.json (the pre-fix scope test's blind spot)"
+  fi
+  # The REAL gate must still block from this exact state — that is the whole
+  # point of anchoring on the remote rather than the working tree.
+  rc="$(run origin "refs/heads/master $S16_SHA refs/heads/master $BASE_SHA")"
+  [[ "$rc" == "1" ]] && pass "real gate BLOCKS from a manifest-less working tree (rc=1)" \
+    || fail "real gate failed open from a manifest-less working tree (rc=$rc)"
+  local MUT2DIR="$T/mutant-anchor"; mkdir -p "$MUT2DIR/lib"
+  cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT2DIR/lib/" 2>/dev/null
+  local MUTANT2="$MUT2DIR/gate.sh"
+  # Delimiter is '#': the replacement text contains BOTH '/' (the path) and
+  # '||' (the shell operator), so '/' and '|' are both unusable here. BSD sed
+  # reports "bad flag in substitute command" rather than failing loudly at the
+  # right place, which is exactly the kind of silently-wrong mutant this
+  # scenario's own guard below is there to catch.
+  sed 's#^  rrg_harness_identity "\$repo_root" .*#  [[ -f "$repo_root/adapters/claude-code/manifest.json" ]] || return 0#' \
+    "$SELF" > "$MUTANT2"
+  if grep -q '^  \[\[ -f "\$repo_root/adapters/claude-code/manifest.json" \]\] || return 0' "$MUTANT2"; then
+    rc="$(printf '%s\n' "refs/heads/master $S16_SHA refs/heads/master $BASE_SHA" \
+          | ( cd "$R" && bash "$MUTANT2" origin ) >/dev/null 2>&1; echo $?)"
+    if [[ "$rc" == "0" ]]; then
+      pass "mutant (working-tree-anchored scope test) WRONGLY allows the manifest-deletion push (rc=0) — proves the anchor is load-bearing"
+    else
+      fail "mutant still blocked (rc=$rc) — the anchor mutation did not land, this scenario proves nothing"
+    fi
+  else
+    fail "could not construct the anchor mutant (sed anchor not found — script drifted)"
+  fi
+  ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
+
+  # ==========================================================================
+  # Scenario 21: MUTATION-PROOF #3 — the D-filter arm, isolated. Scenario 17
+  # asserts a pure deletion blocks; this proves that assertion is carried by
+  # the deletion enumeration and not by some incidental property of the
+  # fixture. Targets a NON-manifest file so the identity anchor (which is
+  # deliberately redundant for manifest.json) cannot mask the mutation.
+  # ==========================================================================
+  echo "Scenario 21: MUTATION-PROOF — dropping the deletion enumeration must re-open the git-rm hole"
+  local MUT3DIR="$T/mutant-del"; mkdir -p "$MUT3DIR/lib"
+  cp "$_RRPG_SELF_DIR/lib/review-record-gate-lib.sh" "$MUT3DIR/lib/" 2>/dev/null
+  local MUTANT3="$MUT3DIR/gate.sh"
+  sed 's#^    deleted="\$(git -C .*#    deleted=""#' "$SELF" > "$MUTANT3"
+  if grep -q '^    deleted=""$' "$MUTANT3"; then
+    rc="$(printf '%s\n' "refs/heads/master $S17_SHA refs/heads/master $V_BASE" \
+          | ( cd "$R" && bash "$MUTANT3" origin ) >/dev/null 2>&1; echo $?)"
+    if [[ "$rc" == "0" ]]; then
+      pass "mutant (no deletion enumeration) WRONGLY allows the git-rm push (rc=0) — proves the D arm is load-bearing"
+    else
+      fail "mutant still blocked (rc=$rc) — the deletion mutation did not land, this scenario proves nothing"
+    fi
+  else
+    fail "could not construct the deletion mutant (sed anchor not found — script drifted)"
   fi
 
   rm -rf "$T"

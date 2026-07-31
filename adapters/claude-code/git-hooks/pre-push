@@ -98,8 +98,35 @@ else
   # (an ordinary project repo that merely shares this global hooksPath) it
   # stays a warning, because those repos have no review-record gate to run and
   # blocking them would be a pure false positive.
+  #
+  # IDENTITY IS ANCHORED OUTSIDE THE PUSHER'S WRITE SET (harness-reviewer
+  # CRITICAL 1, 2026-07-30). This test used to read ONLY the working-tree file,
+  # which the same push can delete: `git rm -f adapters/claude-code/
+  # manifest.json` alongside `git rm` of the gate demoted this hard block back
+  # to the bare WARNING + rc=0 it replaced -- PROVEN against a real bare remote.
+  # Consult the committed tree and the remote-tracking refs FIRST; the working
+  # tree stays last so behaviour is unchanged for a genuinely foreign repo.
   REPO_TOPLEVEL="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
-  if [ -n "$REPO_TOPLEVEL" ] && [ -f "$REPO_TOPLEVEL/adapters/claude-code/manifest.json" ]; then
+  IS_HARNESS_REPO=0
+  if [ -n "$REPO_TOPLEVEL" ]; then
+    MP="adapters/claude-code/manifest.json"
+    if git cat-file -e "HEAD:$MP" 2>/dev/null; then
+      IS_HARNESS_REPO=1
+    else
+      for _r in $(git remote 2>/dev/null); do
+        for _b in master main; do
+          if git cat-file -e "refs/remotes/$_r/$_b:$MP" 2>/dev/null; then
+            IS_HARNESS_REPO=1
+            break 2
+          fi
+        done
+      done
+    fi
+    if [ "$IS_HARNESS_REPO" -eq 0 ] && [ -f "$REPO_TOPLEVEL/$MP" ]; then
+      IS_HARNESS_REPO=1
+    fi
+  fi
+  if [ "$IS_HARNESS_REPO" -eq 1 ]; then
     echo "================================================================" >&2
     echo "PUSH BLOCKED — the authoritative review gate is MISSING" >&2
     echo "================================================================" >&2

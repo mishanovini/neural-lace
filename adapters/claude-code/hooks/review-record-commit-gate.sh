@@ -627,8 +627,18 @@ _rrcg_self_test() {
   # prints to stderr for uncovered content. A resurrected early-return
   # suppresses it entirely. So the real invariant is a DIFFERENTIAL: with and
   # without the variable, stderr must be BYTE-IDENTICAL. Measured against the
-  # mutant: 1923 bytes unset vs 0 bytes set — the assertion below fails, and
-  # the mutant dies. Against the real gate: 1923 vs 1923.
+  # mutant: 1937 bytes unset vs 0 bytes set — the assertion below fails, and
+  # the mutant dies. Against the real gate: 1937 vs 1937.
+  #
+  # RE-DERIVE THE CONSTANT (do not hand-edit it — a quoted count with no
+  # re-derivation command is exactly the drift class harness-reviewer M2 and
+  # the MINOR of 2026-07-30 both caught; the previous value, 1923, was stale
+  # and nothing re-checked it):
+  #   bash adapters/claude-code/hooks/review-record-commit-gate.sh --self-test \
+  #     | grep -oE '\([0-9]+ bytes\)'
+  # Verified 1937 on BOTH /bin/bash 3.2.57 and /opt/homebrew/bin/bash 5.3.15
+  # (2026-07-30). The number is illustrative of the differential's magnitude,
+  # not an assertion — the test compares the two runs to each other.
   rm -f "$T/ovr.log" 2>/dev/null
 
   # Stage UNCOVERED in-surface content so the advisory banner has a reason to

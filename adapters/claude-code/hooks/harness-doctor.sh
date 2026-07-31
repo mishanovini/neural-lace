@@ -3761,6 +3761,22 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # to have produced SOMETHING -- without it, two silently-broken branches
   # would agree on emptiness and the parity assertion would pass vacuously,
   # which is exactly the failure being regression-tested.
+  #
+  # THE TWO FAILURE MODES ARE DISTINCT, AND THE ORDER BELOW DECIDES WHICH ONE
+  # YOU SEE (recorded 2026-07-30 because a commit message got this wrong and
+  # nothing in the tree contradicted it -- harness-reviewer MINOR):
+  #   "branches DIVERGE"  -- the two branches BOTH reported, but differently.
+  #                          This is what a reverted grandfather cutover_ref
+  #                          binding produces: the check still emits a verdict,
+  #                          just the wrong one.
+  #   "produced NOTHING"  -- the jq branch emitted no line at all. This needs
+  #                          the check to go SILENT, which for the fail-open
+  #                          arms means reverting the loud-WARN too, not only
+  #                          the binding.
+  # The DIVERGE test runs first and want_nonempty only OVERWRITES `why` when
+  # jq_out is genuinely empty, so a non-empty-but-different jq branch can never
+  # report "produced NOTHING". Do not quote one failure mode as evidence for a
+  # mutation that actually triggers the other.
   _assert_node_jq_parity() {
     local label="$1" dir="$2" check_id="$3" want_nonempty="${4:-0}"
     local node_out jq_out
