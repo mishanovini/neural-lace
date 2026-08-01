@@ -2087,8 +2087,15 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
 > **WRITTEN, staged in a builder worktree, NOT merged and NOT installed.**
 >
 > **SUPERSEDED 2026-07-31 — the "NOT INSTALLED" half of the heading above was itself stale.**
-> The shasum below (`87743bca…`) was true when written and is no longer. The fix WAS
-> hand-installed on this machine at 2026-07-30 20:05 PDT, ~30 minutes AFTER commit `f018623`.
+> The shasum this entry used to carry at this point — `shasum ~/.claude/hooks/workstreams-emit.sh`
+> == `git show HEAD:adapters/claude-code/hooks/workstreams-emit.sh | shasum` ==
+> `87743bca9d440964b0a4f7ca01216eef232dd349`, cited as proof the live hook was the OLD one —
+> was true when written and is no longer. The fix WAS hand-installed on the authoring machine
+> at 2026-07-30 20:05 PDT, ~30 minutes AFTER commit `f018623`.
+> *(Wording repaired 2026-08-01 during transport: this sentence read "the shasum **below**"
+> while `ab8055b` had DELETED that shasum block in the same hunk, so the pointer resolved to
+> nothing. The deleted value is restored inline above rather than left as a dangling
+> reference — a retraction that cites evidence the reader cannot find is not a retraction.)*
 >
 > **PROVEN now:** `shasum -a 256 ~/.claude/hooks/workstreams-emit.sh` ==
 > `git show f018623:adapters/claude-code/hooks/workstreams-emit.sh | shasum -a 256` ==
