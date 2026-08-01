@@ -2918,3 +2918,10 @@ live item NY-1785425479-0d4d:
 field must earn its place by changing what the operator would DO. The producer's lint
 currently checks that fields are PRESENT and cold-readable; it does not check that they
 are DECISION-RELEVANT, which is why a structurally-perfect card can still be unusable.
+
+## NL-ISSUES-TRIAGE-20260801 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 111 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 23d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
