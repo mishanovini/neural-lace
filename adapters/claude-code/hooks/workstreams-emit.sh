@@ -2475,7 +2475,11 @@ PLANEOF
   # PL4d above (that fixture's header starts with `<`, hitting only the
   # first arm). Real-id preservation through this SAME extractor is already
   # covered by PL1 (`ask-id: ask-pl-fixture-1` resolves to its own per-ask
-  # log, not unlinked) -- no separate fixture needed for that half.
+  # log, not unlinked) -- no separate fixture needed for that half. The
+  # dispatch prompt MUST carry the NL-ATTRIBUTION header even though the
+  # prose names the plan: headerless dispatches emit nothing (PL1/NLA2),
+  # so without it this scenario silently tests the no-op path, not the
+  # extractor arm.
   local plfixnone="$tmp/planfix-none"
   mkdir -p "$plfixnone/docs/plans"
   cat >"$plfixnone/docs/plans/pl-fixture-none.md" <<'PLANEOF'
@@ -2491,7 +2495,7 @@ PLANEOF
   local plog4e="$tmp/pl-progresslog-4e"
   ( cd "$plfixnone" && PROGRESS_LOG_STATE_DIR="$plog4e" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dispatch-provenance-4e" \
       CONV_TREE_STATE_PATH="$tmp/pl-4e.json" CLAUDE_SESSION_ID="sess-pl-4e" \
-      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-none.md","prompt":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-none.md in your worktree."},"session_id":"sess-pl-4e"}' >/dev/null 2>&1 )
+      bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 2 of the FROZEN plan docs/plans/pl-fixture-none.md","prompt":"NL-ATTRIBUTION: plan=pl-fixture-none task=2 role=builder\nBuild Task 2 of the FROZEN plan docs/plans/pl-fixture-none.md in your worktree."},"session_id":"sess-pl-4e"}' >/dev/null 2>&1 )
   if [[ -f "$plog4e/unlinked.jsonl" ]] && grep -q '"plan_slug":"pl-fixture-none"' "$plog4e/unlinked.jsonl"; then
     echo "PASS: PL4e a plan header carrying the spelled-out none-sentinel resolves to the unlinked log, same as no ask-id header at all"; pass=$((pass+1))
   else
