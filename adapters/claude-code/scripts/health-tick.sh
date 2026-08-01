@@ -313,15 +313,27 @@ run_tick() {
     # _ht_alert_dir implements — an explicit override wins, otherwise a
     # self-test never reaches the real sweep at all.
     local wt_cmd
+    # Sweep root resolution (2026-08-01, doctor legacy-paths RED): the target
+    # repo was hardcoded to the RETIRED legacy path, so this leg has been
+    # sweeping a nonexistent directory since the repo moved. Resolution order
+    # mirrors estate-janitor.sh: env override, then the first repo in
+    # ~/.claude/config/estate-repos.txt, then no sweep at all — a missing
+    # config yields an honest skip, never a guessed path.
+    local sweep_root="${HEALTH_TICK_SWEEP_ROOT:-}"
+    if [[ -z "$sweep_root" && -f "$HOME/.claude/config/estate-repos.txt" ]]; then
+      sweep_root="$(grep -vE '^[[:space:]]*(#|$)' "$HOME/.claude/config/estate-repos.txt" | head -1)"
+    fi
     if [[ -n "${HEALTH_TICK_WORKTREE_PRUNE_CMD:-}" ]]; then
       wt_cmd="$HEALTH_TICK_WORKTREE_PRUNE_CMD"
     elif [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
       wt_cmd="echo 'sandboxed: worktree prune skipped under HARNESS_SELFTEST'"
+    elif [[ -z "$sweep_root" || ! -d "$sweep_root" ]]; then
+      wt_cmd="echo 'worktree prune skipped: no sweep root (set ~/.claude/config/estate-repos.txt or HEALTH_TICK_SWEEP_ROOT)'"
     elif [[ -f "$arm_marker" ]]; then
-      wt_cmd="WORKTREE_SWEEP_APPROVE=1 bash \"$whs\" --prune \"\$HOME/claude-projects/neural-lace\""
+      wt_cmd="WORKTREE_SWEEP_APPROVE=1 bash \"$whs\" --prune \"$sweep_root\""
     else
       # Observe-first default: classify and report, delete NOTHING.
-      wt_cmd="bash \"$whs\" \"\$HOME/claude-projects/neural-lace\""
+      wt_cmd="bash \"$whs\" \"$sweep_root\""
     fi
     _ht_run_step "worktree-prune" "$wt_cmd"
     if [[ "$_HT_STEP_RC" -eq 0 ]]; then
