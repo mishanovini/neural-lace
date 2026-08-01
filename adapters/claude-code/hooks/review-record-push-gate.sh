@@ -1041,9 +1041,21 @@ _rrpg_main() {
 # Self-test
 # ===========================================================================
 _rrpg_self_test() {
-  local PASS=0 FAIL=0
+  local PASS=0 FAIL=0 SKIP=0
+  SKIP_REASONS=""
   pass() { PASS=$((PASS+1)); echo "  PASS: $*"; }
   fail() { FAIL=$((FAIL+1)); echo "  FAIL: $*"; }
+  # skip <what> — for an assertion this PLATFORM cannot host at all (not one
+  # that merely fails here). A skip is NOT a pass: it is counted separately and
+  # re-announced LOUDLY in the summary, because a suite that quietly degrades
+  # on one OS is how "66 passed" comes to mean less than a reader assumes.
+  # Use ONLY where the fixture is structurally impossible to construct, and
+  # say which platform capability is missing.
+  skip() {
+    SKIP=$((SKIP+1))
+    echo "  SKIP: $*"
+    SKIP_REASONS="${SKIP_REASONS}      - $*"$'\n'
+  }
 
   local T; T="$(mktemp -d)" || { echo "cannot mktemp"; return 1; }
   local SELF="$_RRPG_SELF_DIR/$(basename "${BASH_SOURCE[0]}")"
@@ -1269,8 +1281,19 @@ _rrpg_self_test() {
   # here is that it can no longer do so INVISIBLY.
   local SHIM="$T/nojq"; mkdir -p "$SHIM"
   local _t _p
+  # The shim entries are exec WRAPPER SCRIPTS, not symlinks. `ln -sf` is not
+  # portable here: on Windows/MSYS (core.symlinks=false, no developer mode)
+  # the link is created but is NOT RUNNABLE, so `PATH=$SHIM` lost git/sed/awk
+  # as well as jq and the gate died on a different path than the one this
+  # scenario means to exercise — it then asserted against the wrong stderr.
+  # Measured here: `ln -sf $(command -v git) shim/git; PATH=shim git --version`
+  # fails. A two-line `exec` wrapper is equivalent for PATH-shadowing purposes
+  # and works on every platform.
   for _t in git grep sed awk bash sh find sort head tail cat wc tr date mkdir rm cp mv ls dirname basename stat env mktemp cut; do
-    _p="$(command -v "$_t" 2>/dev/null)"; [[ -n "$_p" ]] && ln -sf "$_p" "$SHIM/$_t"
+    _p="$(command -v "$_t" 2>/dev/null)" || continue
+    [[ -n "$_p" ]] || continue
+    printf '#!/bin/sh\nexec "%s" "$@"\n' "$_p" > "$SHIM/$_t"
+    chmod +x "$SHIM/$_t"
   done
   if PATH="$SHIM" command -v jq >/dev/null 2>&1; then
     fail "self-test bug: the no-jq shim still exposes jq, so this scenario proves nothing"
@@ -1550,9 +1573,18 @@ _rrpg_self_test() {
 
   echo "Scenario 17c: CRITICAL 1 — a regular-file->symlink TYPECHANGE of an in-surface gate BLOCKS (T is excluded by BOTH ACMR and D)"
   ( cd "$R" && git reset -q --hard "$V_BASE" ) >/dev/null 2>&1
-  ( cd "$R" && rm -f adapters/claude-code/hooks/victim-gate.sh \
-      && ln -s /dev/null adapters/claude-code/hooks/victim-gate.sh \
-      && git add -A && git commit -qm "chore: swap the gate for a symlink" ) >/dev/null 2>&1
+  # The symlink is written straight into the INDEX (mode 120000) rather than
+  # created on disk with `ln -s`. Reason: this estate includes Windows/MSYS,
+  # where core.symlinks=false — `ln -s` silently yields an ORDINARY FILE, so
+  # `git add -A` staged mode 100644 and the scenario asserted against a plain
+  # modification while believing it had built a typechange. Measured on this
+  # machine: ln -s + git add -A => 100644, not 120000. `update-index
+  # --cacheinfo` is plumbing and states the mode outright, so the fixture is
+  # the same object graph on every platform regardless of core.symlinks.
+  ( cd "$R" \
+      && _tc_blob="$(printf '/dev/null' | git hash-object -w --stdin)" \
+      && git update-index --add --cacheinfo "120000,$_tc_blob,adapters/claude-code/hooks/victim-gate.sh" \
+      && git commit -qm "chore: swap the gate for a symlink" ) >/dev/null 2>&1
   local S17TC_SHA; S17TC_SHA="$(cd "$R" && git rev-parse HEAD)"
   # Guard: the fixture must really be a typechange (mode 120000), or this
   # scenario would be asserting against an ordinary modification and prove
@@ -1598,12 +1630,22 @@ _rrpg_self_test() {
 
   echo "Scenario 17f: CRITICAL 2 — a BACKSLASH path is gated (core.quotePath=false alone does NOT fix this one), and a SPACE path is the control"
   ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
-  printf '#!/bin/bash\n# unreviewed\n' > "$R/adapters/claude-code/hooks/back\\slash.sh"
-  ( cd "$R" && git add -A && git commit -qm "feat: backslash gate" ) >/dev/null 2>&1
-  local S17BS_SHA; S17BS_SHA="$(cd "$R" && git rev-parse HEAD)"
-  rc="$(run origin "refs/heads/master $S17BS_SHA refs/heads/master $BASE_SHA")"
-  [[ "$rc" == "1" ]] && pass "backslash in-surface path BLOCKS (rc=1)" \
-    || fail "a backslash path was classified OUT of surface (rc=$rc) — the -z framing is missing"
+  # A backslash is the PATH SEPARATOR on Windows, so `back\slash.sh` is not a
+  # filename NTFS can hold — the create fails with ENOENT ("No such file or
+  # directory", because it is read as a `back\` directory). This is not a bug
+  # in the gate and not a fixture that can be repaired here: the operating
+  # system has no such name to gate. Detected rather than assumed, so a real
+  # POSIX box still RUNS the assertion instead of inheriting a Windows skip.
+  if printf '#!/bin/bash\n# unreviewed\n' > "$R/adapters/claude-code/hooks/back\\slash.sh" 2>/dev/null \
+     && [[ -f "$R/adapters/claude-code/hooks/back\\slash.sh" ]]; then
+    ( cd "$R" && git add -A && git commit -qm "feat: backslash gate" ) >/dev/null 2>&1
+    local S17BS_SHA; S17BS_SHA="$(cd "$R" && git rev-parse HEAD)"
+    rc="$(run origin "refs/heads/master $S17BS_SHA refs/heads/master $BASE_SHA")"
+    [[ "$rc" == "1" ]] && pass "backslash in-surface path BLOCKS (rc=1)" \
+      || fail "a backslash path was classified OUT of surface (rc=$rc) — the -z framing is missing"
+  else
+    skip "17f backslash-path gating — this filesystem cannot hold a file whose NAME contains a backslash (Windows/NTFS reserves it as the path separator). The -z framing it pins is therefore UNPROVEN on this machine; run the suite on macOS/Linux to exercise it."
+  fi
   ( cd "$R" && git reset -q --hard "$BASE_SHA" ) >/dev/null 2>&1
   printf '#!/bin/bash\n# unreviewed\n' > "$R/adapters/claude-code/hooks/two words.sh"
   ( cd "$R" && git add -A && git commit -qm "feat: spaced gate" ) >/dev/null 2>&1
@@ -1629,7 +1671,17 @@ _rrpg_self_test() {
   local disp_blob; disp_blob="$(cd "$R" && git hash-object adapters/claude-code/git-hooks/pre-push)"
   printf '{"entries":[{"path":"adapters/claude-code/git-hooks/pre-push","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}]}\n' "$disp_blob" \
     > "$R/docs/reviews/records/index.json"
-  ( cd "$R" && git add -A && git commit -qm "add a COVERED, executable dispatcher" ) >/dev/null 2>&1
+  # `chmod +x` above is not enough to make the BASE commit 100755: on
+  # Windows/MSYS git sets core.filemode=false and ignores the on-disk exec
+  # bit, so `git add -A` staged 100644 and the later `--chmod=-x` was a
+  # 100644 -> 100644 no-op — the mode transition this scenario exists to test
+  # never happened, and its four assertions all reported against a fixture
+  # that had not been built. Stating the mode through the index makes the
+  # 100755 base real on every platform. (Measured here: chmod 755 + git add
+  # => 100644.)
+  ( cd "$R" && git add -A \
+      && git update-index --chmod=+x adapters/claude-code/git-hooks/pre-push \
+      && git commit -qm "add a COVERED, executable dispatcher" ) >/dev/null 2>&1
   local MODE_BASE; MODE_BASE="$(cd "$R" && git rev-parse HEAD)"
   # Sanity: pushing the covered dispatcher must be ALLOWED, or the block below
   # could be firing on non-coverage rather than on the mode.
@@ -2020,8 +2072,19 @@ _rrpg_self_test() {
   rm -rf "$T"
   unset HARNESS_SELFTEST_DIR
   echo
-  echo "self-test summary: $PASS passed, $FAIL failed"
-  [[ "$FAIL" == "0" ]] && { echo "self-test: OK"; return 0; }
+  echo "self-test summary: $PASS passed, $FAIL failed, $SKIP skipped"
+  # A skip is announced LOUDLY and itemised. Silent degradation is the whole
+  # failure mode this block exists to prevent: without it a Windows run reads
+  # "N passed, 0 failed" and a reader concludes the surface is proven here,
+  # when in fact an assertion was never executed on this machine at all.
+  if [[ "$SKIP" != "0" ]]; then
+    echo
+    echo "  !! $SKIP assertion(s) were NOT EXECUTED on this platform."
+    echo "  !! They are not passes. This suite is fully proven only on a"
+    echo "  !! platform that can host them (POSIX filesystem + git symlinks)."
+    printf '%s' "$SKIP_REASONS"
+  fi
+  [[ "$FAIL" == "0" ]] && { echo "self-test: OK ($SKIP skipped)"; return 0; }
   return 1
 }
 
