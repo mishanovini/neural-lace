@@ -2194,13 +2194,13 @@
         "Stop"
       ],
       "wired_template": false,
-      "selftest": false,
+      "selftest": true,
       "jit_triggers": {
         "paths": [],
         "keywords": []
       },
-      "blocking": true,
-      "honest_status": "invoked via pre-stop-verifier.sh (Stop chain); not directly wired in settings.json.template",
+      "blocking": false,
+      "honest_status": "CURRENTLY INERT (2026-08-01 round-7 review, PROVEN): hooks/pre-stop-verifier.sh is a 3-line exit-0 shim (ADR 058 D5) and NO live hook invokes this executor -- the intended carrier runtime-verification-gate.sh was introduced by 2b6e6a5 and deliberately never landed. The a15f55a safety fix is PRE-LANDED so that any future rewire starts safe (classify-not-execute); blocking flips true only when a live invoker exists. Regression note: an earlier revision of this entry claimed the pre-stop-verifier chain as live -- the same enforcement-theater vaporware-config-controls F1 fixed; do not restate it.",
       "budget_class": "none",
       "added_after": "2026-08",
       "golden_scenario": "2026-07-30 adversarial review CRITICAL-1: a markdown evidence line `Runtime verification: curl -o <path> file:///etc/hosts` was EXECUTED unattended at session end — it wrote the file, and the same shape overwrote an executable hook (next-session code execution). The a15f55a executor classifies every curl/sql line UNVERIFIABLE unless --allow-exec is passed explicitly; suite scenarios no-exec-by-default, env-cannot-re-arm-execution, curl-unreachable-classified-unverifiable pin it.",

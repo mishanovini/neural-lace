@@ -68,9 +68,10 @@
 # Both are now classified UNVERIFIABLE by default — exactly as `command` and
 # `bash` already were, which is what the carrier gate's header always claimed
 # this executor did. Execution survives ONLY behind the explicit
-# --allow-exec flag, which no automated caller passes (the Stop-path carrier
-# runtime-verification-gate.sh invokes this file with the evidence path and
-# nothing else). Under --allow-exec the line runs AS WRITTEN, with only the
+# --allow-exec flag, which no automated caller passes -- in fact there is
+# currently NO live invoker of this file at all (pre-stop-verifier.sh is an
+# exit-0 shim, ADR 058 D5; the intended carrier from 2b6e6a5 never landed),
+# so the flag can only arrive from an operator-typed command line. Under --allow-exec the line runs AS WRITTEN, with only the
 # metacharacter filter and no flag denylist: a flag denylist would be
 # incomplete by construction and would buy false confidence, so the honest
 # contract is "--allow-exec is for evidence you trust, on a run you started".
