@@ -3752,6 +3752,10 @@ _run_on_builder_dispatch() {
   # values are dropped by adm_admit itself, so an absent header contributes
   # only attributed=0 (honest, never guessed).
   (
+    # SUBSHELL, not brace group (round-3 review M1: 4th sibling of the same
+    # containment sweep — a set -u abort inside the lib escapes
+    # `{...} || true` and would kill this hook before the correlation-ledger
+    # write below).
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/admission-lib.sh" 2>/dev/null \
       && declare -F adm_admit >/dev/null 2>&1 \
       && adm_admit emit-feed kind="$([[ "${bg:-0}" == "1" ]] && printf bg || printf fg)" \

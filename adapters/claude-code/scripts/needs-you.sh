@@ -1043,7 +1043,7 @@ _ny_path_is_dead() {
   # endings (same quirk cmd_resolve already works around below), so a path
   # read line-by-line from `jq -r '.links[]?'` via a `while read` loop picks
   # up a trailing carriage return that makes `[[ -e ... ]]` spuriously fail
-  # on a file that DOES exist -- caught by self-test T34c (false positive on
+  # on a file that DOES exist -- caught by self-test T38c (T34c pre-renumber; false positive on
   # a live path) before this guard was added.
   p="${p%$'\r'}"
   [[ -n "$p" ]] || return 1

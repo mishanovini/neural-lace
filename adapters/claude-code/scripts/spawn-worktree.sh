@@ -270,13 +270,17 @@ remove_worktree() {
   # failure. reg_close is itself a no-op (rc 0) for a slug that was never
   # registered — the honest "pre-existing, unattributed worktree" case this
   # slice's outcome metric names, not a bug.
-  {
-    local _sw_hooks_dir
+  (
+    # SUBSHELL, not brace group — same set -u containment as the admission
+    # and registration splices (2026-07-31 post-merge review F2: the round-3
+    # M1 sibling sweep missed this third splice; a set -u abort inside the
+    # sourced lib escapes `{...} || true` and would report a COMPLETED
+    # removal as failed, exactly what the fail-open contract above forbids).
     _sw_hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks"
     source "$_sw_hooks_dir/lib/estate-registration-lib.sh" 2>/dev/null \
       && declare -F reg_close >/dev/null 2>&1 \
       && reg_close "$slug" "${REMOVE_DISPOSITION:-$branch_disposition}" >/dev/null 2>&1
-  } || true
+  ) || true
   return 0
 }
 
