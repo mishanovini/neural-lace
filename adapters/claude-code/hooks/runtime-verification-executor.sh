@@ -265,6 +265,34 @@ FIX
     esac
   }
 
+  # _st_file_url <abs-path> — builds a `file://` URL curl can actually open on
+  # THIS platform. Under MSYS/Cygwin (Git Bash on Windows) the shell's
+  # `/tmp/tmp.XXXX/f` is a POSIX *emulation* path that the native mingw64
+  # curl.exe cannot resolve: it returns rc=37 (COULDNT_READ_FILE) for a file
+  # that demonstrably exists. `cygpath -m` converts it to the native
+  # `C:/Users/.../f` form curl does understand. On macOS/Linux cygpath is
+  # absent and the path passes through unchanged.
+  #
+  # The `${p#/}` strip is load-bearing, not cosmetic. The URL is assembled as
+  # `file:///` + PATH, so a POSIX path that still carries its leading slash
+  # would yield `file:////tmp/...` — FOUR slashes, an empty authority plus a
+  # `//`-rooted path. That form is not the classic three-slash local-file URL
+  # and is measurably rejected (rc=37) by curl 8.18.0 here. Stripping the
+  # leading slash makes BOTH branches emit exactly `file:///<path>`:
+  #   Windows : C:/Users/.../f  -> file:///C:/Users/.../f
+  #   POSIX   : /tmp/tmp.X/f    -> file:///tmp/tmp.X/f
+  #
+  # Only paths under $tmp go through here. Absolute system paths are left
+  # alone on purpose — `cygpath -m /etc/hosts` resolves to
+  # `C:/Program Files/Git/etc/hosts`, whose SPACE makes curl return rc=3
+  # (URL_MALFORMAT), so translating those would trade one platform artifact
+  # for another.
+  _st_file_url() {
+    local p="$1"
+    if command -v cygpath >/dev/null 2>&1; then p="$(cygpath -m "$p")"; fi
+    printf 'file:///%s' "${p#/}"
+  }
+
   # _expect_absent <label> <path> — asserts a file was NOT created. This is
   # the side-effect assertion the exit code cannot make.
   _expect_absent() {
@@ -328,16 +356,31 @@ FIX
   #     i.e. next-session code execution. Three assertions, because exit 0 is
   #     the SAME code the vulnerable version returned: the classification
   #     must be UNVERIFIABLE, and the file must not exist.
+  #
+  #     The SOURCE url is a portable fixture URL, not the historical
+  #     `file:///etc/hosts`. _expect_absent is only evidence if the write
+  #     WOULD have happened had the executor regressed: measured on Windows,
+  #     `curl -o OUT file:///etc/hosts` returns rc=37 and creates nothing, so
+  #     with that URL this assertion passed no matter what the executor did.
+  #     Pointing it at a file curl can really read restores the red twin on
+  #     every platform. (`/etc/hosts` cannot simply be cygpath'd: it maps to
+  #     `C:/Program Files/Git/etc/hosts`, whose space yields curl rc=3.)
+  printf 'HOSTS-LIKE-FIXTURE\n' > "$tmp/sysfile.txt"
   _c "curl-write-primitive-not-executed" 0 \
-    "Runtime verification: curl -o $tmp/PWNED.txt file:///etc/hosts"
+    "Runtime verification: curl -o $tmp/PWNED.txt $(_st_file_url "$tmp/sysfile.txt")"
   _expect_out "curl-write-primitive-classified-unverifiable" "UNVERIFIABLE"
   _expect_absent "curl-write-primitive-wrote-nothing" "$tmp/PWNED.txt"
 
   # 14. The read/exfiltrate half of the same primitive: `curl -T` uploads any
-  #     readable file. Same three assertions.
+  #     readable file. Same three assertions, and the same reason for the
+  #     portable destination URL: with the MSYS-style form `curl -T` returned
+  #     rc=23 and wrote no EXFIL.txt on Windows, so the side-effect assertion
+  #     could not have caught a re-armed executor. Through _st_file_url the
+  #     upload genuinely lands (measured: 14 bytes), so "absent" now means
+  #     "the executor did not run it" rather than "curl could not have".
   printf 'SECRET-CANARY\n' > "$tmp/secret.txt"
   _c "curl-upload-primitive-not-executed" 0 \
-    "Runtime verification: curl -T $tmp/secret.txt file://$tmp/EXFIL.txt"
+    "Runtime verification: curl -T $tmp/secret.txt $(_st_file_url "$tmp/EXFIL.txt")"
   _expect_out "curl-upload-primitive-classified-unverifiable" "UNVERIFIABLE"
   _expect_absent "curl-upload-primitive-copied-nothing" "$tmp/EXFIL.txt"
 
@@ -363,13 +406,28 @@ FIX
   #     The "1 verification(s) passed" assertion is load-bearing: exit 0 is
   #     ALSO what a not-executed UNVERIFIABLE line returns, so the exit code
   #     alone cannot tell a working opt-in from a dead one.
+  #
+  #     The URL goes through _st_file_url for a reason that is itself the
+  #     point of scenarios 17-19: hand-writing `file://$tmp/...` made all
+  #     THREE fail on Windows (rc=37) while 18 kept "passing" — see below.
   _ST_FLAGS="--allow-exec"
   _c "allow-exec-runs-curl" 0 \
-    "Runtime verification: curl -s file://$tmp/subject.sh"
+    "Runtime verification: curl -s $(_st_file_url "$tmp/subject.sh")"
   _expect_out "allow-exec-curl-actually-executed" "1 verification(s) passed"
   # 18. ...and still reports a genuine failure under the flag.
+  #
+  #     THE RED TWIN MUST FAIL FOR ITS OWN REASON. This scenario is only
+  #     evidence if its twin (17) PASSES: "curl failed" discriminates
+  #     nothing when curl fails on everything. That was literally the state
+  #     on Windows before _st_file_url — the MSYS-style URL returned rc=37
+  #     for the existing fixture AND rc=37 for this missing one, so 18
+  #     reported PASS while proving nothing. Same platform, same curl:
+  #       file:///C:/.../subject.sh            -> rc=0   (17, twin passes)
+  #       file:///C:/.../definitely-not-here   -> rc=37  (18, fails on merit)
+  #     Now the only difference between the two URLs is whether the file
+  #     exists, which is what the scenario claims to test.
   _c "allow-exec-curl-failure-still-fails" 1 \
-    "Runtime verification: curl -s file://$tmp/definitely-not-here.txt"
+    "Runtime verification: curl -s $(_st_file_url "$tmp/definitely-not-here.txt")"
 
   # 19. CRITICAL-3 REGRESSION at the shared parse point. The repo's own
   #     convention appends a " (annotation)" to the command. Because the
@@ -378,7 +436,7 @@ FIX
   #     metacharacter filter and the line was rejected INVALID — 14 of 23
   #     real curl lines in docs/ failed for exactly this, on TRUE evidence.
   _c "annotation-stripped-before-curl-branch" 0 \
-    "Runtime verification: curl -s file://$tmp/subject.sh (returns the fixture, HTTP 200)"
+    "Runtime verification: curl -s $(_st_file_url "$tmp/subject.sh") (returns the fixture, HTTP 200)"
   _expect_out "annotation-stripped-line-actually-passed" "1 verification(s) passed"
   _ST_FLAGS=""
 
@@ -552,7 +610,7 @@ while IFS= read -r line; do
       fi
       test_file="$test_path"
       # Check (b): the cited test itself is written as .skip(...)
-      if grep -qE "(test|it)\.skip\s*\(\s*['\"]${test_name}['\"]" "$test_file" 2>/dev/null; then
+      if grep -qE -- "(test|it)\.skip\s*\(\s*['\"]${test_name}['\"]" "$test_file" 2>/dev/null; then
         FAILURES+="  FAIL: '$line' — cited test is written as .skip() in $test_file. A skipped test cannot serve as runtime verification. Remove the .skip or pick a different test."$'\n'
         FAIL_COUNT=$((FAIL_COUNT + 1))
         continue
@@ -561,7 +619,7 @@ while IFS= read -r line; do
       # no-op the whole suite (e.g. test.skip(!ENV_VAR, 'reason') or
       # test.skip(process.env.X == null, ...)). Allowed only if the line
       # carries a `// harness-allow-skip:` annotation.
-      conditional_skips=$(grep -nE "(test|describe|it)\.skip\s*\(\s*(!|process\.env|typeof\s+process)" "$test_file" 2>/dev/null || true)
+      conditional_skips=$(grep -nE -- "(test|describe|it)\.skip\s*\(\s*(!|process\.env|typeof\s+process)" "$test_file" 2>/dev/null || true)
       if [[ -n "$conditional_skips" ]]; then
         # Check each flagged line for an allow annotation on the same line
         unannotated=""
