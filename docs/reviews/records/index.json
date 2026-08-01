@@ -939,6 +939,17 @@
     },
     {
       "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "4693ec3b3c94b0aeb8a78f49e3291f3df560e880",
+      "record_id": "hcr-20260801-5c7e16aa",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(round-6)+suite-evidence",
+      "created_at": "2026-08-01T10:35:23Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
       "blob_sha": "97ca2ebb7ece2ab9caf46adef93aad445ad9f881",
       "record_id": "hcr-20260730-18003980",
       "kind": "harness-change-review",
@@ -1492,6 +1503,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T23:57:29Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-push-gate.sh",
+      "blob_sha": "b59e2718598a28ca732c37d09f4a0057ea8ffbdb",
+      "record_id": "hcr-20260801-5c7e16aa",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(round-6)+suite-evidence",
+      "created_at": "2026-08-01T10:35:23Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2180,6 +2202,17 @@
     },
     {
       "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "3de2eb6c239616e8b232cb248ce4434f91b4cd91",
+      "record_id": "hcr-20260801-5c7e16aa",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(round-6)+suite-evidence",
+      "created_at": "2026-08-01T10:35:23Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
       "blob_sha": "43377d847aa2be0fea53820ee0c73348286fe80f",
       "record_id": "hcr-20260730-672b255a",
       "kind": "harness-change-review",
@@ -2627,6 +2660,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T06:01:14Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/health-tick.sh",
+      "blob_sha": "046aa811e2b872feba7e8e74a7399835dcaebaf7",
+      "record_id": "hcr-20260801-5c7e16aa",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(round-6)+suite-evidence",
+      "created_at": "2026-08-01T10:35:23Z",
       "reviewer_principal": null,
       "independence": null
     },
