@@ -681,16 +681,26 @@ _run_on_spawn() {
   local ledger="$LEDGER_DIR/opened-${sid}.jsonl"
   local id_ledger="$LEDGER_DIR/spawn-${sid}.jsonl"
   local spawn_is_new=1
+  # Same fail-open-must-be-visible rule as the builder surface (see the long
+  # note at the builder ledger write): if the identity append fails, replay
+  # suppression is DEAD here too, so WARN and report replay=? rather than a
+  # confident 0 that reads as a healthy first spawn.
+  local id_write_ok=1
   if [[ -f "$id_ledger" ]] && awk -F'\t' -v c="$child_id" -v t="$title" \
        '$1==c && $2==t { found=1; exit } END { exit !found }' "$id_ledger" 2>/dev/null; then
     spawn_is_new=0
   else
-    printf '%s\t%s\t%s\n' "$child_id" "$title" \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$id_ledger" 2>/dev/null || true
+    if ! printf '%s\t%s\t%s\n' "$child_id" "$title" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$id_ledger" 2>/dev/null; then
+      id_write_ok=0
+      _log "WARN spawn replay suppression DISABLED for this fire: could not append identity child=$child_id to \"$id_ledger\" (ledger unwritable). Every replay of this spawn will be re-counted as NEW until the write succeeds; the replay= field below is ? because it cannot be trusted."
+    fi
   fi
+  local spawn_replay_field="?"
+  [[ "$id_write_ok" == "1" ]] && spawn_replay_field=$((1 - spawn_is_new))
   local base_sha; base_sha=$(git rev-parse HEAD 2>/dev/null || echo "")
   printf '%s\t%s\t%s\t%s\t%s\n' "$child_id" "$title" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" "$serves_item_id" "$base_sha" >>"$ledger" 2>/dev/null || true
-  _log "branch-opened child=$child_id title=\"$title\" root=$root_id session=$sid serves=${serves_item_id:-none} replay=$((1 - spawn_is_new))"
+  _log "branch-opened child=$child_id title=\"$title\" root=$root_id session=$sid serves=${serves_item_id:-none} replay=$spawn_replay_field"
 
   # v1.1.4 item 41 — observability for the GUI detail-pane content quality.
   # Non-blocking warning when a substantive Dispatch prompt ships without
@@ -2430,6 +2440,122 @@ PLANEOF
   fi
   _ck "RPL8b exactly 2 task_started across the substring-title pair (no suppression, no duplication)" "$(_ts_count_dir "$plog_rpl8")" "2"
 
+  # ------------------------------------------------------------------------
+  # RPL9 (harness-reviewer REFORMULATE defect 4, the FIFTH closure — 2026-08-01).
+  #
+  # WHAT WAS MISSING. The replay gate's OWN state write used to be
+  # `>>"$ledger" 2>/dev/null || true`. When that append failed (unwritable
+  # LEDGER_DIR, read-only $HOME, full disk) the identity was never recorded,
+  # every later fire re-decided dispatch_is_new=1 — the eternal-green defect
+  # in full — and the hook still logged a confident `replay=0`, so the one
+  # line an operator would read to check the gate's health reported the dead
+  # gate as a healthy first dispatch. The status is now captured (see the
+  # `ledger_write_ok` block in _run_on_builder_dispatch, and the mirrored
+  # `id_write_ok` block in _run_on_spawn). That fix shipped PROVEN ONLY BY AN
+  # OUT-OF-SUITE PROBE, which is a claim with no keeper: the probe script is
+  # gone and nothing in this suite would redden if the `|| true` came back.
+  # This block is that keeper.
+  #
+  # HOW THE LEDGER IS MADE UNWRITABLE. `chmod 500` on the state dir is NOT
+  # portable — on this repo's Windows/Git-Bash target MSYS chmod does not
+  # produce a write-denying ACL and the append succeeds anyway, so a
+  # permissions-based probe would pass VACUOUSLY here. Instead the ledger
+  # PATH is pre-created as a DIRECTORY: `>>` to a directory fails on every
+  # POSIX shell and on Git-Bash (`Is a directory`, rc=1), and `[[ -f ]]` is
+  # false for it so the code takes exactly the same else-branch a missing
+  # file takes. Verified as a primitive before this scenario was written.
+  #
+  # WHICH DIRECTION DOES IT ACTUALLY FAIL? Stated honestly, because it is NOT
+  # the comfortable one: with the ledger dead the gate FAILS OPEN — RPL9c
+  # below pins that the replay RE-EMITS a duplicate task_started (2, not 1).
+  # That is the eternal-green defect itself, live. Nothing here fixes that;
+  # what the fix bought is that the failure is now LOUD (a WARN naming
+  # ROADMAP-FALSE-ETERNAL-RUNNING-01) and UNMISTAKABLE IN THE MEASUREMENT
+  # (`replay=?`, never a confident 0) instead of silent. Choosing the other
+  # direction — suppress on a failed write — would trade a visible duplicate
+  # for an invisible missing green, and this hook is a WRITER that never
+  # blocks, so it must not start swallowing real dispatches because a disk
+  # is full. RPL9c therefore pins the fail-open as the DELIBERATE behaviour;
+  # if a future change makes an unwritable ledger suppress instead, this
+  # assertion is where that decision has to be re-argued.
+  #
+  # Sandboxing: each case gets its OWN HARNESS_SELFTEST_DIR, so its ledger
+  # and its log are private to the case (no cross-talk with RPL3b's WARN
+  # grep over the shared $LOG_FILE, and no reuse of the shared LEDGER_DIR
+  # that RPL6c deletes out of). Nothing outside "$tmp" is touched.
+  local rpl9_sb="$tmp/rpl9-dead-ledger"
+  local rpl9_log="$rpl9_sb/logs/conversation-tree-emit.log"
+  local plog_rpl9="$tmp/pl-rpl9"
+  mkdir -p "$rpl9_sb/logs" "$rpl9_sb/state/conversation-tree-emit/builder-sess-rpl-9.jsonl"
+  local rpl9_dispatch='{"tool_name":"Task","tool_input":{"description":"Dead ledger probe","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=91 role=builder\nbody"},"session_id":"sess-rpl-9"}'
+  ( cd "$plfix" && HARNESS_SELFTEST_DIR="$rpl9_sb" \
+      PROGRESS_LOG_STATE_DIR="$plog_rpl9" DISPATCH_PROVENANCE_STATE_DIR="$rpl9_sb/dp" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-9.json" CLAUDE_SESSION_ID="sess-rpl-9" \
+      bash "$SELF" --on-builder-dispatch <<<"$rpl9_dispatch" >/dev/null 2>&1 )
+  sleep 3
+  ( cd "$plfix" && HARNESS_SELFTEST_DIR="$rpl9_sb" \
+      PROGRESS_LOG_STATE_DIR="$plog_rpl9" DISPATCH_PROVENANCE_STATE_DIR="$rpl9_sb/dp" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-9.json" CLAUDE_SESSION_ID="sess-rpl-9" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-builder-dispatch <<<"$rpl9_dispatch" >/dev/null 2>&1 )
+  # RPL9: DETECTED, not silent. One WARN per fire — the gate never fails
+  # quietly, and it names the defect id so the log is self-explaining.
+  _ck "RPL9 a replay-gate state write that FAILS is WARN-logged on every fire (2 fires -> 2 'replay suppression DISABLED' lines), never silent" \
+    "$(grep -c 'WARN replay suppression DISABLED' "$rpl9_log" 2>/dev/null | tr -d ' \n')" "2"
+  _ck "RPL9a the WARN names ROADMAP-FALSE-ETERNAL-RUNNING-01, so the log says WHICH defect is live rather than only that a write failed" \
+    "$(grep -c 'ROADMAP-FALSE-ETERNAL-RUNNING-01' "$rpl9_log" 2>/dev/null | tr -d ' \n')" "2"
+  # RPL9b: THE MEASUREMENT CANNOT LIE. Every builder-dispatch line for this
+  # session must report replay=? — a confident replay=0 here is exactly the
+  # defect (a dead gate reading as a healthy first dispatch), so the
+  # assertion is over the SET of values, which catches a single leaked 0.
+  _ck "RPL9b every builder-dispatch line for a dead-ledger session reports replay=? and NEVER a confident replay=0" \
+    "$(grep 'builder-dispatch item=' "$rpl9_log" 2>/dev/null | grep -o 'replay=[^ ]*' | sort -u | tr '\n' ',')" "replay=?,"
+  # RPL9c: THE DIRECTION, pinned deliberately (see the block comment).
+  _ck "RPL9c with the ledger dead the gate FAILS OPEN: the replay re-emits a duplicate task_started (2, not 1) -- loud and visible, never a silent suppression" \
+    "$(_ts_count_dir "$plog_rpl9")" "2"
+
+  # RPL9d/RPL9e — THE CONTROL. Identical isolated-sandbox shape, identical
+  # double fire, only the ledger path is a normal (absent) file. Without
+  # this pair RPL9c's "2" could be an artifact of the private sandbox or of
+  # the debounce override rather than of the dead ledger.
+  local rpl9c_sb="$tmp/rpl9-live-ledger"
+  local rpl9c_log="$rpl9c_sb/logs/conversation-tree-emit.log"
+  local plog_rpl9c="$tmp/pl-rpl9c"
+  mkdir -p "$rpl9c_sb/logs" "$rpl9c_sb/state/conversation-tree-emit"
+  local rpl9c_dispatch='{"tool_name":"Task","tool_input":{"description":"Live ledger control","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=92 role=builder\nbody"},"session_id":"sess-rpl-9c"}'
+  ( cd "$plfix" && HARNESS_SELFTEST_DIR="$rpl9c_sb" \
+      PROGRESS_LOG_STATE_DIR="$plog_rpl9c" DISPATCH_PROVENANCE_STATE_DIR="$rpl9c_sb/dp" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-9c.json" CLAUDE_SESSION_ID="sess-rpl-9c" \
+      bash "$SELF" --on-builder-dispatch <<<"$rpl9c_dispatch" >/dev/null 2>&1 )
+  sleep 3
+  ( cd "$plfix" && HARNESS_SELFTEST_DIR="$rpl9c_sb" \
+      PROGRESS_LOG_STATE_DIR="$plog_rpl9c" DISPATCH_PROVENANCE_STATE_DIR="$rpl9c_sb/dp" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-9c.json" CLAUDE_SESSION_ID="sess-rpl-9c" \
+      DISPATCH_REPLAY_DEBOUNCE_SECONDS=1 \
+      bash "$SELF" --on-builder-dispatch <<<"$rpl9c_dispatch" >/dev/null 2>&1 )
+  _ck "RPL9d CONTROL: the same double fire with a WRITABLE ledger emits exactly 1 task_started and logs NO 'suppression DISABLED' WARN -- so RPL9's warnings are caused by the dead ledger, not by the sandbox" \
+    "$(_ts_count_dir "$plog_rpl9c"):$(grep -c 'suppression DISABLED' "$rpl9c_log" 2>/dev/null | tr -d ' \n')" "1:0"
+  _ck "RPL9e CONTROL: a live ledger reports the CONFIDENT pair replay=0 then replay=1 -- the '?' in RPL9b is the failure signal, not the normal one" \
+    "$(grep 'builder-dispatch item=' "$rpl9c_log" 2>/dev/null | grep -o 'replay=[^ ]*' | tr '\n' ',')" "replay=0,replay=1,"
+
+  # RPL9f/RPL9g — THE SPAWN MIRROR. _run_on_spawn carries the same fix
+  # (`id_write_ok`) against its own `spawn-<sid>.jsonl` identity ledger, and
+  # that half had NO assertion at all. RPL6/RPL6b/RPL6c already prove the
+  # spawn gate's happy path and its turn-boundary survival; this pins the
+  # failure path. One fire is enough: the WARN and the replay= field are both
+  # decided on the first failed append.
+  local rpl9s_sb="$tmp/rpl9-dead-spawn-ledger"
+  local rpl9s_log="$rpl9s_sb/logs/conversation-tree-emit.log"
+  mkdir -p "$rpl9s_sb/logs" "$rpl9s_sb/state/conversation-tree-emit/spawn-sess-rpl-9s.jsonl"
+  ( cd "$plfix" && HARNESS_SELFTEST_DIR="$rpl9s_sb" \
+      PROGRESS_LOG_STATE_DIR="$tmp/pl-rpl9s" DISPATCH_PROVENANCE_STATE_DIR="$rpl9s_sb/dp" \
+      CONV_TREE_STATE_PATH="$tmp/rpl-9s.json" CLAUDE_SESSION_ID="sess-rpl-9s" \
+      bash "$SELF" --on-spawn <<<'{"tool_name":"mcp__ccd_session__spawn_task","tool_input":{"title":"Spawn RPL9 dead ledger","prompt":"NL-ATTRIBUTION: plan=pl-fixture-plan task=93 role=builder\nbody"},"session_id":"sess-rpl-9s"}' >/dev/null 2>&1 )
+  _ck "RPL9f the SPAWN surface's identity write gets the same treatment: a failed append WARNs ('spawn replay suppression DISABLED'), it is not silenced by '|| true'" \
+    "$(grep -c 'WARN spawn replay suppression DISABLED' "$rpl9s_log" 2>/dev/null | tr -d ' \n')" "1"
+  _ck "RPL9g the branch-opened line reports replay=? when the spawn identity ledger is unwritable (never a confident 0)" \
+    "$(grep 'branch-opened child=' "$rpl9s_log" 2>/dev/null | grep -o 'replay=[^ ]*' | sort -u | tr '\n' ',')" "replay=?,"
+
   # PL4d (REGRESSION, proven 2026-07-27 bug): a fixture plan whose header
   # still carries the LITERAL un-substituted template placeholder
   # (`ask-id: <id | none — no linked ask>` — real example still on disk:
@@ -3800,17 +3926,63 @@ _run_on_builder_dispatch() {
   # one, and it errs toward a MISSING green rather than a FALSE one, which
   # is the operator's stated bar. A re-dispatch with any distinct title
   # (the real-world shape: "(retry)", "Re-verify", "Round 2") is unaffected
-  # -- see scenario RPL3. Empirical support: all 105 dispatch identities in
-  # the operator's real 43-hour ledger are distinct titles.
+  # -- see scenario RPL3.
+  #
+  # HOW OFTEN DOES THIS COST ACTUALLY BITE? Measured 2026-07-31 across the
+  # 183 session transcripts on this machine -- the artifact where the
+  # negative case IS observable.
+  #
+  # A PRIOR REVISION CITED THE LEDGER ITSELF ("all 105 dispatch identities in
+  # the operator's real 43-hour ledger are distinct titles"). That was
+  # VACUOUS and is retracted: this ledger appends ONLY when the identity is
+  # absent, so a repeated (sid,tool,title) is unrepresentable in it BY
+  # CONSTRUCTION. The sentence restated the write rule and called it evidence.
+  # A transcript tool_use block, by contrast, is a genuine dispatch that
+  # happened exactly once and is never re-written by a hook replay, so a
+  # repeat there is a real re-dispatch. Replicating _builder_title and
+  # item_id=sha1(sid|tool|title) over those transcripts:
+  #
+  #   143 genuine dispatches / 116 distinct identities across 2 sessions
+  #   (a) NON-EMPTY titles -- the cost THIS block describes: 126 dispatches,
+  #       11 identities dispatched twice => 11 suppressed = 8.7% of
+  #       non-empty-title dispatches. The accepted cost is REAL and NOT zero.
+  #   (b) EMPTY titles -- a DIFFERENT defect, not this trade: 17 `Workflow`
+  #       calls carrying only script/scriptPath have no description AND no
+  #       prompt, so _builder_title returns "" for every one and all 17
+  #       collapse to ONE item_id per session => 16 suppressed. That is a
+  #       title-DERIVATION gap; it is tracked separately in docs/backlog.md
+  #       so it is never laundered into the accepted trade above.
+  #
+  # Both figures are per-machine and dominated by one heavy orchestrator
+  # session; they bound the cost's order of magnitude, not a universal rate.
   mkdir -p "$LEDGER_DIR" 2>/dev/null || true
   local ledger="$LEDGER_DIR/builder-${sid}.jsonl"
   local dispatch_is_new=1
+  # THE FAIL-OPEN MUST BE VISIBLE IN THE SAME LOG THE MEASUREMENT IS READ
+  # FROM. The append below is the replay gate's OWN state write. If it fails
+  # (unwritable LEDGER_DIR, full disk, permissions, read-only $HOME) the
+  # identity is never recorded, EVERY later fire re-decides
+  # dispatch_is_new=1, and the eternal-green defect returns in full. A bare
+  # `|| true` swallowed that and still logged replay=0 -- indistinguishable
+  # from a healthy first dispatch, so the one signal that would reveal the
+  # gate is dead read as proof it was alive. Capture the status, WARN, and
+  # log replay=? rather than a confident 0. This also covers a failed
+  # `mkdir -p` above: a missing LEDGER_DIR makes the append fail and lands
+  # here, so the directory create needs no separate check.
+  local ledger_write_ok=1
   if [[ -f "$ledger" ]] && grep -q "^${item_id}	" "$ledger" 2>/dev/null; then
     dispatch_is_new=0
   else
-    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$item_id" "$child_id" "$tool" "$bg" "$title" \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null || true
+    if ! printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$item_id" "$child_id" "$tool" "$bg" "$title" \
+        "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo now)" >>"$ledger" 2>/dev/null; then
+      ledger_write_ok=0
+      _log "WARN replay suppression DISABLED for this fire: could not append identity item=$item_id to \"$ledger\" (ledger unwritable). Until this write succeeds, every replay of this dispatch is re-counted as NEW and re-emits task_started — the eternal-green defect (ROADMAP-FALSE-ETERNAL-RUNNING-01) is live for this session. The replay= field on the next line is reported as ? because it cannot be trusted."
+    fi
   fi
+  # replay= is '?' -- never a confident 0 -- whenever the identity write
+  # failed, so a dead gate can never be read off this log as a healthy one.
+  local replay_field="?"
+  [[ "$ledger_write_ok" == "1" ]] && replay_field=$((1 - dispatch_is_new))
 
   # WARN counter (constitution §10 requires the golden scenario/FP-rate/
   # retirement condition named at the callsite, not just here — see
@@ -3820,14 +3992,25 @@ _run_on_builder_dispatch() {
   # separate racy read-modify-write counter file needed) so the value is
   # exact under sequential dispatches and merely best-effort (never wrong in
   # a blocking sense) under true concurrency.
+  #
+  # SCOPE, STATED EXACTLY (the message used to say "logged this session",
+  # which was FALSE): the grep below has NO session predicate. It counts
+  # every matching line in LOG_FILE, which is machine-wide and shared by
+  # every session -- 13 distinct session= values were contributing to one
+  # series when this was caught, and the highest N printed equalled the
+  # whole-file total. It is therefore a WHOLE-FILE running total, monotonic
+  # only within one log file's lifetime: truncate, rotate or delete the log
+  # and it restarts at 1. Nothing in the harness rotates this file today, but
+  # that is an absence of machinery, not a durability guarantee -- so this
+  # counter is NOT a rotation-proof metric and must not be described as one.
   local warn_count=""
   if [[ "$h_attributed" == "0" ]]; then
     local prior_warns; prior_warns=$(grep -c 'WARN unattributed builder dispatch' "$LOG_FILE" 2>/dev/null | tr -d ' \n')
     [[ -n "$prior_warns" ]] || prior_warns=0
     warn_count=$((prior_warns + 1))
-    _log "WARN unattributed builder dispatch (no NL-ATTRIBUTION header) item=$item_id title=\"$title\" session=$sid — unattributed dispatch #$warn_count logged this session (doctrine/orchestrator-pattern.md names the header MANDATORY; this WARN never blocks the dispatch)"
+    _log "WARN unattributed builder dispatch (no NL-ATTRIBUTION header) item=$item_id title=\"$title\" session=$sid — unattributed dispatch #$warn_count in this log file (running total across ALL sessions, not this one; restarts if the log is rotated or truncated) (doctrine/orchestrator-pattern.md names the header MANDATORY; this WARN never blocks the dispatch)"
   fi
-  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid plan=$h_plan task=$h_task role=$h_role attributed=$h_attributed replay=$((1 - dispatch_is_new))${warn_count:+ warn_count=$warn_count}"
+  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid plan=$h_plan task=$h_task role=$h_role attributed=$h_attributed replay=$replay_field${warn_count:+ warn_count=$warn_count}"
 
   # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
   # emission + dispatch-provenance marker (see the TWO SINKS block above

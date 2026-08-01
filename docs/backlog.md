@@ -34,7 +34,8 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 ## Open work — substantive deferrals
 
-- **POST-MERGE-REVIEW-ADVISORIES-20260731-01 — six Minor advisories from the consolidated post-merge review of integration merge 301e35f, deferred not dropped** (added 2026-07-31; label: `harness-hygiene`, `priority:low`; fold-in: next hygiene sweep, or the takeover lane whose file each touches). Source: the 9-agent consolidated review (verdict FAIL on two Majors, both fixed in the remediation commit that added this row; these six are the non-blocking residue). (1) Merge 301e35f committed four runtime session-state files from the wip side — `adapters/claude-code/.claude/state/stop-hook-retries-*.txt`, `unresolved-stop-hooks.log`, one more under workstreams-ui — remove from tracking + gitignore the state dirs. (2) `hooks/workstreams-emit.sh` is mode 100644 while every sibling hook is 100755 (^2 had 755; inert today — all call sites use `bash <file>` — likely core.filemode=false artifact; align when convenient). (3) `scripts/close-plan.sh` S30 reuses variable name `D22` from an earlier scenario — legal and non-contaminating, but a future splice hazard; rename to D30 on next touch. (4) `hooks/lib/admission-lib.sh:1660` dead `rc=$?` (inherited byte-for-byte from ^2, not merge damage). (5) Suite-baseline correction: the pre-merge briefing numbers (admission-lib "67 scenarios", needs-you "53") match no tree state; the merged-tree oracle numbers are admission-lib 31 scenarios/80 assertions, needs-you 61/0, perf-tick 28/0, emit 123/123, close-plan 30 scenarios, janitor 22/22, brief 34/34 — use THESE as baselines, never re-propagate 67/53. (6) Four `{ source lib; } || true` guards at emit :84/:90/:92/:142 share the brace-group set-u hazard in BOTH parents but cannot be subshelled (source must mutate the shell) — inherent residual, recorded so nobody re-finds it; a fix would need a different guard idiom (e.g. pre-flight `bash -n` + existence check).
+- **POST-MERGE-REVIEW-ADVISORIES-20260731-01 — six Minor advisories from the consolidated post-merge review of integration merge 301e35f, deferred not dropped** (added 2026-07-31; label: `harness-hygiene`, `priority:low`; fold-in: next hygiene sweep, or the takeover lane whose file each touches). Source: the 9-agent consolidated review (verdict FAIL on two Majors, both fixed in the remediation commit that added this row; these six are the non-blocking residue). (1) Merge 301e35f committed four runtime session-state files from the wip side — `adapters/claude-code/.claude/state/stop-hook-retries-*.txt`, `unresolved-stop-hooks.log`, one more under workstreams-ui — remove from tracking + gitignore the state dirs. (2) `hooks/workstreams-emit.sh` is mode 100644 while every sibling hook is 100755 (^2 had 755; inert today — all call sites use `bash <file>` — likely core.filemode=false artifact; align when convenient). (3) `scripts/close-plan.sh` S30 reuses variable name `D22` from an earlier scenario — legal and non-contaminating, but a future splice hazard; rename to D30 on next touch. (4) `hooks/lib/admission-lib.sh:1660` dead `rc=$?` (inherited byte-for-byte from ^2, not merge damage). (5) Suite-baseline correction: the pre-merge briefing numbers (admission-lib "67 scenarios", needs-you "53") match no tree state; the merged-tree oracle numbers are admission-lib 31 scenarios/80 assertions, needs-you 61/0, perf-tick 28/0, emit 123/123, close-plan 30 scenarios, janitor 22/22, brief 34/34 — use THESE as baselines, never re-propagate 67/53. **emit SUPERSEDED 2026-08-01: `131/131`** (re-derive: `HARNESS_SELFTEST=1 bash adapters/claude-code/hooks/workstreams-emit.sh --self-test | tail -2`). The commit that transported `f018623`+`ab8055b` added the 8 defect-4 regression assertions RPL9-RPL9g, so 123 is now a HISTORICAL SNAPSHOT (2026-07-31 merged-tree oracle) and 131 is the present-tense baseline; every other figure in this list is untouched by that commit. (6) Four `{ source lib; } || true` guards at emit :84/:90/:92/:142 share the brace-group set-u hazard in BOTH parents but cannot be subshelled (source must mutate the shell) — inherent residual, recorded so nobody re-finds it; a fix would need a different guard idiom (e.g. pre-flight `bash -n` + existence check).
+- **TAKEOVER-BRIEF-EMITTER-RESUME-POINT-STALE-01 — `docs/TAKEOVER-2026-07-31.md` §2b still tells the next machine to do work that is now DONE, and prescribes a probe that cannot work here** (added 2026-08-01; label: `harness-hygiene`, `priority:medium`; fold-in: the next touch of the takeover brief, or whichever plan adopts that file — **no active plan declares `docs/TAKEOVER-2026-07-31.md` in scope**, which is why the correction is recorded here instead of applied there: `scope-enforcement-gate.sh` correctly blocked staging it alongside the emitter transport, and stretching an unrelated plan's scope to cover a handoff doc would be exactly the silent scope expansion that gate exists to stop). **The stale text**, §2b "Resume points, per lane": *"Emitter (`ab8055b`) — only remaining step is an in-suite regression pin for defect 4 (scenario `RPL9`: `chmod 500` the ledger dir → assert WARN + `replay=?`). A working probe is at `scratchpad/prove-d4-red.sh`; no re-derivation needed. Suite 120p/1f."* **Three corrections, all PROVEN 2026-08-01 on the Windows machine:** (1) **DONE** — the transport commit for `f018623`+`ab8055b` added `RPL9`-`RPL9g` (8 executing assertions) and the suite is **131/0**, not 120p/1f; that lane has no remaining step. (2) **`scratchpad/prove-d4-red.sh` DOES NOT EXIST here** — it was Mac-local and did not come across, so "no re-derivation needed" is false and the probe *was* re-derived from the code; anyone following the brief literally will hunt for a missing file. (3) **`chmod 500` IS THE WRONG TRIGGER ON THIS TARGET** — MSYS/Git-Bash `chmod` does not produce a write-denying ACL, so the append SUCCEEDS and a permissions-based probe passes **vacuously** (a false GREEN, the worst outcome for a regression pin). The portable trigger, which is what `RPL9` actually uses, is to pre-create the ledger PATH as a **directory**: `>>` to a directory fails on every POSIX shell and on Git-Bash (`Is a directory`, rc=1) and `[[ -f ]]` is false for it, so the code takes exactly the branch a missing file takes. Also worth folding in when that file is next touched: §4's live-hook hash claim is Mac-scoped (see `ROADMAP-FALSE-ETERNAL-RUNNING-01`'s 2026-08-01 correction — the live hook on THIS machine is byte-identical to master, i.e. unfixed).
 - **PATH-EQUIVALENCE-CLASS-01 — harness path predicates decide membership case-SENSITIVELY while the delivery filesystem is case-INSENSITIVE; `rrg_in_surface` is fixed, `local-edit-gate.sh` is the named live sibling** (added 2026-07-30 closing harness-reviewer CRITICAL round 5 on `review-record-push-gate.sh`; label: `harness-gap`, `priority:high`). **PROVEN, end-to-end against a real bare remote with `git-hooks/pre-push` installed as the actual pre-push hook:** `git update-index --add --cacheinfo 100755,<blob>,adapters/claude-code/Hooks/injected.sh` (capital H) + commit + push returned **rc=0, gate SILENT, and the path LANDED on the remote**; `git clone` + `git checkout master` then materialised it at `adapters/claude-code/hooks/injected.sh` mode 755 — inside the real carrier directory, beside `review-record-push-gate.sh` itself. `--cacheinfo` is what makes it reachable: it writes the index entry directly, so the capital-H path never has to survive a case-insensitive working tree. **THE CLASS:** a membership predicate that decides from a path STRING must normalise on every equivalence the DELIVERY LAYER collapses; if its equivalence relation is narrower, every string in the gap is a silent hole. Same class as round 4's CRITICAL 2 (predicate asked about git's C-quoted *rendering* rather than the path) — there the gap was enumerator→predicate, here it is predicate→checkout. **MEASURED on this APFS volume** (two byte-distinct names created; did the second overwrite the first): ASCII case COLLAPSED · Unicode case COLLAPSED · U+017F long-s→s COLLAPSED · U+212A Kelvin→k COLLAPSED · NFC vs NFD COLLAPSED · trailing dot DISTINCT · trailing space DISTINCT. **FIXED in that commit — `hooks/lib/review-record-gate-lib.sh`'s `rrg_in_surface`** (fold before the surface test; exact-path exemptions stay case-SENSITIVE so an exemption cannot be widened by case). All 13 surface arms were broken identically, not just the 5 reported. The three consumers of that predicate — `hooks/review-record-push-gate.sh`, `hooks/review-record-commit-gate.sh`, `hooks/lib/review-queue-auto-enqueue-lib.sh` — call `rrg_in_surface` and carry no independent path arms, so they inherit the fix. **NOT FIXED — the one live sibling, named rather than dropped: `hooks/local-edit-gate.sh:101-114` (`is_under_claude_local`).** HYPOTHESIZED (from a read-only sweep of `hooks/`, `scripts/`, `git-hooks/`; NOT yet reproduced end-to-end — that is the next step): its `case "$normalized" in "$normalized_local"/*|"$normalized_local")` arms normalise Windows separators and double slashes but not case, so `~/.claude/Local/CLAUDE.md` would answer "not under ~/.claude/local", and the gate (`manifest.json` entry `local-edit-authorization`, `blocking: true`, PreToolUse on Edit|Write|MultiEdit) would allow the write with no `/grant-local-edit` marker while APFS materialises it at the real path. **REFUTED BY:** running the gate against a capital-L path and observing it still block. Fix shape: fold both `$normalized` and `$normalized_local` before the glob. **Audited and SAFE (no action) — 41 further callsites**, all either exemption/exclusion arms where a case-variant miss yields MORE scrutiny (`harness-hygiene-scan.sh:689-879`, `scope-enforcement-gate.sh:165-195`, `concurrent-ownership-gate.sh:1048`) or non-enforcing classification/routing (`doctrine-jit.sh:188,259`, `backlog-plan-atomicity.sh:190,210`, `vaporware-volume-gate.sh:283,290,309`, `decisions-index-gate.sh:205`, `env-local-protection.sh:219`, `work-integrity-gate.sh:998`). **Re-derive:** `rg -n 'case "\$(rel|full|path|p|f)" in' adapters/claude-code/hooks/ adapters/claude-code/scripts/ adapters/claude-code/git-hooks/ | rg -v 'casefold|nocasematch|tr .A-Z..a-z.'`. **Standing rule** (extends GIT-PATH-QUOTING-CLASS-01's): every harness consumer of git path output must disable quoting AND use NUL separation **AND normalise to the delivery filesystem's equivalence class before the predicate decides membership**. Trailing dot/space (a Windows-checkout equivalence) stays open and untestable here — no Windows checkout of this repo exists.
 
 - **DOCTOR-DEBT-SNAPSHOT-20260801-01 — post-integration full doctor: 87 red / 55 warn, decomposed; each class routed** (added 2026-08-01; label: `harness-hygiene`, `priority:medium`; fold-in: the lanes named per class). Breakdown: 81× budget-worktrees-branches (57 worktrees vs ≤6 — the purge lane; purge-verified-20260729.sh is the operator-authorized per-row-reverifying tool); budget-active-plans 23 vs ≤3 (F.3 dispositions lane — operator did 3 on 2026-07-31); obs-ask-capture-completeness 13/14 sessions unregistered (workstreams-read ask-capture splice — own lane); budget-blocking-gates **15/14 — the +1 is the merged attribution gate, so the operator's pending KEEP/VETO decision (NY-1785556662-b3bd) RESOLVES this row either way** (VETO→demote→14; KEEP→consolidate per ADR 059 D7); obs-scheduled-tasks: janitor transient (reboot window, self-healed to 267009-running), session-resumer Disabled-by-recorded-defer (false-fire class, nl-issue filed 2026-08-01); legacy-paths health-tick.sh FIXED same day (config-driven sweep root). NOT new debt — a routing snapshot so the next doctor reader does not re-triage from scratch.
@@ -2076,7 +2077,7 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
   sweep, the Inbox links, and the requests pipeline all passed in sandbox and were broken live.
   A UI round's acceptance must require evidence from the real deployed app.
 
-## ROADMAP-FALSE-ETERNAL-RUNNING-01 — emitter fix WRITTEN, NOT MERGED, NOT INSTALLED; still live in production
+## ROADMAP-FALSE-ETERNAL-RUNNING-01 — emitter fix WRITTEN + HAND-INSTALLED, still NOT MERGED (and therefore reversible at any SessionStart)
 
 > **STATUS DISCIPLINE (corrected 2026-07-30 after an adversarial refutation caught this entry
 > committing the very defect class it documents).** This entry previously headed
@@ -2085,14 +2086,48 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
 > §1: done = merged to master with a SHA. The correct status of the work described below is
 > **WRITTEN, staged in a builder worktree, NOT merged and NOT installed.**
 >
-> **PROVEN at the time of writing:** `shasum ~/.claude/hooks/workstreams-emit.sh` ==
-> `git show HEAD:adapters/claude-code/hooks/workstreams-emit.sh | shasum`
-> (`87743bca9d440964b0a4f7ca01216eef232dd349`, identical) — the live hook is the OLD one.
+> **SUPERSEDED 2026-07-31 — the "NOT INSTALLED" half of the heading above was itself stale.**
+> The shasum below (`87743bca…`) was true when written and is no longer. The fix WAS
+> hand-installed on this machine at 2026-07-30 20:05 PDT, ~30 minutes AFTER commit `f018623`.
 >
-> **THE LIVE COCKPIT CANNOT CLEAR UNTIL `install.sh` RUNS**, which happens only after this
-> lands on master. A merge alone does not stop the spurious events: the running harness
-> executes `~/.claude/hooks/`, not the repo. Until then every replay keeps emitting, so any
-> "the greens will age out" reasoning is measured from INSTALL, never from commit.
+> **PROVEN now:** `shasum -a 256 ~/.claude/hooks/workstreams-emit.sh` ==
+> `git show f018623:adapters/claude-code/hooks/workstreams-emit.sh | shasum -a 256` ==
+> `031fe941d6d7236a5a348dbb3b9426f6e0a93eaef7d2007b96a9ae8882d9e315` — byte-identical, so the
+> live hook IS the fixed one. Master's blob differs
+> (`94905d0d4faa49328ff8c919b40869b3ac2286d5b2e712666b1154eb2c3d2026`), which is exactly the
+> risk below. (The live file is a hand-installed regular file, not a symlink.)
+>
+> **BOTH HASHES ABOVE ARE NOW STALE, AND THE PREDICTION BELOW CAME TRUE — measured
+> 2026-08-01 on the TRANSPORT machine (Windows), by the commit that added this paragraph.**
+> The two shasums above were taken on the AUTHORING machine (macOS) on 2026-07-31; neither is
+> a fact about this repo today, and "this machine" in the paragraph above does not mean the
+> machine you are reading it on. Re-executed here with `sha256sum`:
+> - master's blob at `dc05aa2` = `8c75322213828e41efd223da96df01d9e29f2309483e253d463ebc4ed7790b7e`
+>   — **not** `94905d0d…`. Master's copy moved on (the NL-ATTRIBUTION attribution pipeline,
+>   scenario PL4e, the 120s debounce default), which is precisely why a bare blob hash goes
+>   stale the moment EITHER side edits.
+> - live `~/.claude/hooks/workstreams-emit.sh` on this machine = `8c753222…` — **byte-identical
+>   to MASTER**, i.e. the content WITHOUT the defect-4 fix. Whether that is a revert by
+>   `session-start-auto-install.sh` or simply a machine that never got the hand-install cannot
+>   be told apart from a hash, and no claim is made either way. What IS proven: the fixed blob
+>   (`031fe941…`) is not what executes here. The reversion risk below is observed, not predicted.
+>
+> **TRANSPORT (2026-08-01).** The commit carrying this paragraph re-applies `f018623` +
+> `ab8055b`'s claim-corrections and the defect-4 fix onto master's evolved copy, and adds the
+> in-suite regression pin both commits admitted was missing (RPL9-RPL9g, see the Proven-by
+> block below). It is a builder-branch commit: the heading's "still NOT MERGED" is true as
+> written and flips only when this lands on master.
+>
+> **THE INSTALL IS REVERSIBLE AND WILL BE REVERTED — merging is what makes it durable.**
+> `session-start-auto-install.sh` is **master-wins for `hooks/*.sh`** (its own self-test
+> scenarios L4/L6 assert precisely that), so the **next SessionStart silently copies master's
+> UNFIXED content back over the fixed live hook** and the eternal-green defect returns with no
+> warning and no diff anyone is watching. The hand-install buys quiet only until the next
+> session starts. **Nothing here is safe until this lands on master.**
+>
+> The original point still stands for the *cockpit*: the running harness executes
+> `~/.claude/hooks/`, not the repo, so "the greens will age out" is measured from INSTALL,
+> never from commit — and that clock resets every time auto-install reverts the file.
 
 **Severity:** HIGH. Emitter fix WRITTEN (see below); the entry stays OPEN both because the fix
 is not yet live AND because the honest replacement signal then depends on `NL-ATTRIBUTION`
@@ -2190,6 +2225,33 @@ M5b + M5c prove EACH HALF of the anchor is independently load-bearing. M8 is the
 direction: loosening reddens six scenarios, tightening reddens the three that assert the
 residual, so the residual cannot move silently either way. (M1-M3 predate the per-mutation
 suite-count capture and are listed by kill set only.)
+
+> **EVERY FIGURE IN THIS BLOCK IS A DATED SNAPSHOT, NOT A PRESENT-TENSE CLAIM — applying
+> this entry's own STANDING RULE (below) to itself, 2026-08-01.** The `120 passed / 1 failed`
+> baseline and the whole `suite` column above were measured on the AUTHORING machine (macOS,
+> both interpreters) at commit `ab8055b`. That suite no longer exists: master's copy diverged
+> (attribution pipeline, PL4e, the 120s debounce) and the transport commit then added 8 more
+> assertions, so **every total in the table is invalidated — including by this very commit,
+> which is exactly the failure mode the rule names.**
+>
+> **Re-executed on the TRANSPORT machine (Windows/Git-Bash, `/usr/bin/bash`), 2026-08-01:**
+> `HARNESS_SELFTEST=1 bash adapters/claude-code/hooks/workstreams-emit.sh --self-test`
+> -> **131 passed / 0 failed**, `self-test: OK`. (Note the `1 failed` above is gone: master's
+> ST11 passes here.) That is the merged-tree baseline **123/123** plus the **8** new
+> defect-4 assertions RPL9-RPL9g. **+36 executing assertions over the original baseline**
+> (PL1a, PL1d, RPL1-RPL8b, RPL9-RPL9g).
+>
+> **NOT RE-EXECUTED, AND SAID SO RATHER THAN QUIETLY RESTATED:** the per-mutation `suite`
+> column (M4 118/3, M5 114/7, M5b/M5c/M8 117/4, M6 118/3). Re-running nine mutations x a
+> full suite is hours on this fork-taxed target and was not done, so those totals are marked
+> STALE at their measurement point rather than carried forward as current. The **kill sets**
+> are NOT invalidated — no scenario in them was renamed, removed or altered by the transport,
+> and RPL9-RPL9g touch a different mechanism (the ledger WRITE's failure path) than any
+> mutation in the table (the header anchor and the gate's identity key).
+>
+> **ONE INTERPRETER ONLY.** The two-interpreter claim above does NOT extend to the 131/0
+> figure: this machine has no second bash, so `/bin/bash` 3.2.57 (the portability floor named
+> in `docs/TAKEOVER-2026-07-31.md` §7) is UNVERIFIED for the transported content.
 **STANDING RULE, learned the hard way three times in this entry (F8, then the M8 kill set,
 then this block): a numeric claim about a suite is invalidated by ANY change to that suite —
 INCLUDING one's own. Every commit that adds or renames an assertion must, in the same commit,
@@ -2199,6 +2261,21 @@ as current. Concretely, this block once read 113/1 and "M5b → RPL7b only" — 
 `d0430ca`, both false the moment RPL7e/RPL7i/RPL7j were added.
 
 **RESIDUAL — WHAT IS STILL WRONG AFTER THIS FIX (honest):**
+- **AN UNWRITABLE LEDGER STILL FAILS OPEN — the defect-4 fix made it LOUD, not SAFE**
+  (measured 2026-08-01, now pinned by RPL9c). If the replay gate's own state write fails
+  (unwritable `LEDGER_DIR`, read-only `$HOME`, full disk), the identity is never recorded,
+  every later fire re-decides `dispatch_is_new=1`, and **the duplicate `task_started` IS
+  re-emitted** — this entry's own eternal-green defect, live. Executed RED/GREEN, ledger path
+  pre-created as a directory so the append fails: master's pre-fix copy logged `replay=0`
+  twice with ZERO warnings while emitting 2 events; the fixed copy emits the same 2 events
+  but logs a WARN naming `ROADMAP-FALSE-ETERNAL-RUNNING-01` on every fire and reports
+  `replay=?` instead of a confident `0`. So what the fix bought is that the dead gate can no
+  longer be read off the log as a healthy one — **not** that the gate survives. The direction
+  is DELIBERATE: this is a WRITER hook that never blocks, so suppressing on a failed write
+  would trade a visible duplicate for an invisible missing green. RPL9c is where a future
+  change of direction has to be re-argued. **Next action if this ever bites in the wild: a
+  durable identity store outside the ledger, which is new machinery and needs its own
+  constitution §10 evidence bar first.**
 - **The cockpit now UNDER-reports, and this is the big one.** Only a LOW BAND of dispatches
   carry an `NL-ATTRIBUTION` header, and the WARN counter only climbs — see
   `NL-ATTRIBUTION-ADOPTION-12-PERCENT-01` for the measurement commands and why a single
@@ -2483,8 +2560,32 @@ grep -o 'unattributed dispatch #[0-9]*' "$L" | grep -o '[0-9]*' | sort -n | tail
 ```
 All readings agree on the only durable conclusion: **adoption sits in a low band (roughly
 10-14%) and the WARN counter (4090 → 4963 → 5146 → 5623 → 6011 across the day) only climbs.**
-The WARN series is the honest metric precisely because it IS monotonic — it survives log
-rotation, while the rate does not.
+
+**RETRACTED 2026-07-31 — "the WARN series survives log rotation, while the rate does not."**
+That claimed an asymmetry that does not exist, in the same entry that correctly says the log
+rotates. PROVEN false by reading the implementation: the counter is
+`grep -c 'WARN unattributed builder dispatch' "$LOG_FILE"` (`workstreams-emit.sh`, in the
+`--on-builder-dispatch` WARN block) — a **line count over the very file** whose line count is
+the rate's denominator. Numerator and denominator share one file, so they share its fate: if
+that file is truncated, rotated or deleted, **both** restart. The WARN series is not
+rotation-proof and is not more durable than the rate.
+
+The honest property: it is a **whole-file running total, monotonic only within one log file's
+lifetime**. Two further corrections in the same breath — (a) it has **no session predicate**,
+so it is a total across ALL sessions, not per-session (13 distinct `session=` values were
+feeding one series when this was caught; the message wrongly said "logged this session" and is
+now relabelled); (b) **nothing in this harness currently rotates
+`~/.claude/logs/conversation-tree-emit.log`** — `grep -rn 'rotate'` over `adapters/` finds
+rotation machinery only for the admission ledger, supervisor tick and coord-sync logs, never
+this one. That is an *absence of machinery*, not a durability guarantee, and it does not
+resurrect the retracted claim: a manual `rm`/truncate resets the counter just the same.
+
+**If a genuinely monotonic adoption metric is ever needed**, it requires a durable counter
+kept OUTSIDE the log (its own state file, incremented and read independently of `$LOG_FILE`).
+That is a new mechanism and, per constitution §10, would need its own golden scenario,
+expected false-positive behaviour and retirement condition before it lands. It was
+deliberately NOT built here — this pass retracts a false claim rather than shipping unproven
+machinery to justify it.
 
 **THE ADOPTION MECHANISM DOES NOT EXIST — this is the load-bearing finding, not the
 percentage.** `grep -rn 'NL-ATTRIBUTION'` over `agents/`, `templates/`, `skills/`,
