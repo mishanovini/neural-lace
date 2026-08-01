@@ -187,10 +187,14 @@
 #     ASCII string (é -> e + U+0301 is LONGER, not equal to "e"), so no
 #     normalisation variant of a pure-ASCII prefix exists. Tested anyway
 #     (self-test n1/n2) so the claim is pinned rather than argued.
-#   - Trailing dot / trailing space are a WINDOWS-checkout equivalence; this
-#     filesystem keeps them distinct (measured above) and no Windows checkout
-#     of this repo exists to test against. NOT closed here, enumerated in
-#     manifest.json bypass_paths[16](vi) rather than dropped.
+#   - Trailing dot / trailing space are a WINDOWS-checkout equivalence --
+#     MEASURED on an NTFS checkout of this repo (2026-08-01 review of the
+#     cherry-pick): core.protectNTFS (default true) makes git REJECT such
+#     paths at update-index with rc=128, two steps before any gate runs,
+#     and APFS renders both DISTINCT (measured 2026-07-30) -- so the
+#     dimension is not exploitable through git on either delivery layer in
+#     use. Enumerated in manifest.json bypass_paths[16](vi) with the same
+#     measurement rather than dropped.
 #
 # WHY ONLY THE INJECTION DIRECTION MATTERS. There are two directions: INJECT a
 # new case-variant path with no lowercase competitor, or CLOBBER an existing
@@ -652,6 +656,10 @@ rrg_uncovered_reason() {
 # ------------------------------------------------------------
 _rrg_self_test() {
   local pass=0 fail=0 tmp
+  # Portability-floor claims must be self-evidencing (2026-08-01 review
+  # Minor): print the interpreter that produced these numbers, same as
+  # review-record-push-gate.sh does.
+  echo "self-test interpreter: ${BASH:-unknown} (${BASH_VERSION:-unknown})"
   tmp=$(mktemp -d 2>/dev/null || mktemp -d -t rrgself)
   trap 'rm -rf "$tmp"' RETURN
 

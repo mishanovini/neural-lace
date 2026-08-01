@@ -1988,6 +1988,35 @@ _rrpg_self_test() {
     fail "could not construct the encoding mutant (sed anchors not found — script drifted)"
   fi
 
+  echo "Scenario 23: END-TO-END — a case-variant in-surface path (Hooks/) BLOCKS through the real gate (round-5 CRITICAL regression pin)"
+  # The attack shape from the round-5 REJECT, encoded so it re-runs forever
+  # instead of living only in a commit message (2026-08-01 review Major:
+  # when a commit's evidence is an end-to-end proof, that proof becomes a
+  # suite scenario or it is a one-time observation). `git update-index
+  # --add --cacheinfo` writes the capital-H index entry DIRECTLY, so the
+  # path never has to survive this checkout's own case-insensitive working
+  # tree — the delivery layer that matters is the victim's later clone.
+  # Predicate-level coverage lives in the lib suite; THIS scenario pins the
+  # enumerator→predicate COMPOSITION through the gate binary itself — a
+  # future unfolded pre-filter in the gate's enumeration would re-open the
+  # hole while every unit suite stays green.
+  ( cd "$R" && git reset -q --hard "$ORIG_BASE_SHA" ) >/dev/null 2>&1
+  local S23_BLOB S23_SHA
+  S23_BLOB="$(cd "$R" && printf '# injected via case variant\n' | git hash-object -w --stdin)"
+  ( cd "$R" && git update-index --add --cacheinfo "100755,$S23_BLOB,adapters/claude-code/Hooks/injected.sh" \
+      && git commit -qm "attack: case-variant carrier path" ) >/dev/null 2>&1
+  S23_SHA="$(cd "$R" && git rev-parse HEAD)"
+  if [[ "$(cd "$R" && git ls-tree --name-only "$S23_SHA" adapters/claude-code/)" == *Hooks* ]]; then
+    rc="$(run origin "refs/heads/master $S23_SHA refs/heads/master $ORIG_BASE_SHA")"
+    [[ "$rc" == "1" ]] && pass "capital-H in-surface path BLOCKED end-to-end (rc=1)" \
+      || fail "case-variant push allowed (rc=$rc) — the round-5 hole is OPEN again"
+    msg="$(run_capture origin "refs/heads/master $S23_SHA refs/heads/master $ORIG_BASE_SHA")"
+    case "$msg" in *Hooks/injected.sh*) pass "block message names the case-variant path" ;; \
+      *) fail "block message does not name Hooks/injected.sh" ;; esac
+  else
+    fail "fixture bug: the capital-H index entry did not commit — scenario proves nothing"
+  fi
+
   rm -rf "$T"
   unset HARNESS_SELFTEST_DIR
   echo
