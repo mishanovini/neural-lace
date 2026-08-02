@@ -3046,6 +3046,9 @@ ok('R21-11 running_now can NEVER out-shout an exception colour even if a future 
 ok('R21-12 the running claim is READ from the server, never RE-DERIVED client-side (same law R13-15 pins for the task-span token): a payload carrying a live running leaf but running_now:false — the exact shape the server emits when the task-level idle gate expired — is NOT painted green by the client second-guessing it',
   titleClass({ id: 'p/3', kind: 'task', status: { value: 'in-progress' }, running_now: false,
     live_sessions: [{ id: 'p/3/agent/s1', status: { value: 'running', label: 'running' } }] }) === 'rm-title-in-progress');
+ok('R21-14 DELIBERATE, PINNED: a shipped/complete master that still carries a genuinely running child plan renders GREEN, not the dim complete grey — R9-7 ("running work is NEVER invisible") outranks the tidiness of the Shipped band, and dimming it would hide live work behind a "this is finished" colour. The three ATTENTION states keep their own colours instead (asserted in R21-11); "complete" is the one non-attention state that must NOT be in RUNNING_YIELDS_TO',
+  titleClass({ id: 'm', kind: 'plan', status: { value: 'complete' }, running_now: true }) === 'rm-title-running' &&
+  titleClass({ id: 'm2', kind: 'plan', status: { value: 'complete' }, running_now: false }) === 'rm-title-complete');
 ok('R21-13 the top-of-tree unattributed-live-sessions summary renders the RUNNING chip + running title, not the in-progress ones — this node is the only place the cockpit says "N running" today, and it was hard-coded to the in-progress classes',
   /rm-title rm-title-running/.test(roadmapJsNoComments) &&
   /'chip rm-status rm-status-running'/.test(roadmapJsNoComments) &&

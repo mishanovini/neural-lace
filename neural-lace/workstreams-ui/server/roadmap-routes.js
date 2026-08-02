@@ -822,7 +822,13 @@ function deriveUnboundSessionsNode(hbCtx) {
     const ageMs = hbCtx.nowMs - Date.parse(h.last_activity_ts);
     const cls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
     const shortId = String(h.session_id).slice(0, 8);
-    const label = cls === 'active' ? 'running' : ('running (' + cls + ')');
+    // 2026-08-01 (harness-reviewer finding 4): was `cls === 'active'`, a
+    // comparison that could NEVER match — classifyHeartbeatAge's whole
+    // vocabulary is 'live' | 'quiet' | 'crashed' (derive-lib.js), so the
+    // freshest possible session was labelled "running (live)" instead of
+    // plain "running". A dead comparator on the one surface that says
+    // "running" out loud; the correct token is 'live'.
+    const label = cls === 'live' ? 'running' : ('running (' + cls + ')');
     return {
       id: 'unattributed/' + h.session_id,
       kind: 'agent',
@@ -855,6 +861,72 @@ function deriveUnboundSessionsNode(hbCtx) {
 }
 
 // ----------------------------------------------------------------------
+// deriveUnbindableDispatchLeaves(slug, tasks, startedTs, sessionsByTask,
+// hbCtx) -> [agent leaf, ...]  (2026-08-01)
+//
+// THE GAP THIS CLOSES. A dispatch's `NL-ATTRIBUTION: plan=<slug> task=<id>`
+// header makes workstreams-emit.sh write a real `task_started` event. That
+// event names a plan_slug AND a task_id. The plan side always resolves; the
+// task side often does not, because `task=` is written by hand and the
+// roadmap joins on the plan file's OWN leading id token (plan-parse.js
+// TASK_ID_TOKEN_RE — `T6`, `9`, `12.3`; a token WITHOUT digits can never be
+// one). Observed 2026-08-01: `task=cockpit-running-representation` against a
+// plan whose real ids are T1..T14.
+//
+// Before this function, such an event was silently dropped:
+// sessionsByTask[<slug-that-is-not-a-task-id>] matched no task node, and the
+// session was ALSO absent from the unattributed node (that node lists only
+// sessions no task claimed — and nothing claimed this one either, because
+// the claim failed). A genuinely running, genuinely attributed agent was
+// invisible in BOTH places. That is precisely the failure R9-7 forbids:
+// "running work is NEVER invisible."
+//
+// WHAT IT DOES NOT DO. It does not guess which task was meant, and it does
+// not repair the join — an unresolvable id stays unresolved and is printed
+// verbatim on the leaf so the operator can see what was actually sent. The
+// dispatch is surfaced at the level it COULD be attributed to (the plan),
+// never promoted to a task row it was never bound to.
+//
+// GATES ARE THE TASK-LEVEL ONES, UNCHANGED. Leaves go through
+// deriveLiveAgentLeaves, so a stale heartbeat still renders 'stalled' and an
+// absent one still renders 'unknown'. The task-started idle window
+// (th.taskStartedIdleMs) is applied to the dispatch's OWN timestamp, exactly
+// as deriveItemStatus applies it to a task's — an attributed dispatch that
+// went quiet an hour ago is NOT running, here or anywhere else.
+// ----------------------------------------------------------------------
+function deriveUnbindableDispatchLeaves(slug, tasks, startedTs, sessionsByTask, hbCtx) {
+  const realIds = {};
+  (tasks || []).forEach((t) => { if (t && t.id) realIds[t.id] = true; });
+  const th = deriveLib.activityThresholdsMs();
+  const out = [];
+  Object.keys(sessionsByTask || {}).forEach((taskId) => {
+    if (realIds[taskId]) return; // bound normally — deriveTaskNode owns it
+    const sids = sessionsByTask[taskId] || [];
+    if (!sids.length) return;
+    const startedAtMs = startedTs[taskId] ? Date.parse(startedTs[taskId]) : null;
+    // NaN (present-but-unparseable) counts as EXPIRED, not as absent — the
+    // same "malformed is not absent" direction deriveItemStatus takes; a
+    // timestamp we cannot read must never license a running claim.
+    const startedIdleExpired = startedAtMs === null || isNaN(startedAtMs) ||
+      (hbCtx.nowMs - startedAtMs > th.taskStartedIdleMs);
+    const leaves = deriveLiveAgentLeaves(slug + '/(unbindable)', sids, hbCtx.heartbeats,
+      hbCtx.nowMs, startedIdleExpired, 'in-progress');
+    leaves.forEach((leaf) => {
+      // The id the dispatch actually sent, verbatim and quoted — this is the
+      // whole diagnostic value of the leaf.
+      leaf.title += ' — dispatched for task "' + taskId + '", which is not a task id in this plan';
+      out.push(leaf);
+    });
+    // R9-7b bookkeeping, same rule deriveTaskNode applies: a session
+    // rendered SOMEWHERE in the tree is attributed, so the unattributed node
+    // must not also claim it. Without this the same agent would appear twice
+    // with two different explanations.
+    sids.forEach((sid) => { if (hbCtx.boundSessionIds) hbCtx.boundSessionIds[sid] = true; });
+  });
+  return out;
+}
+
+// ----------------------------------------------------------------------
 // stampRunningNow(node) — THE ONE DEFINITION of "someone is working on
 // this RIGHT NOW", added 2026-08-01 (operator, repeated: "the purple items
 // are not representing what they're supposed to be representing ... it's
@@ -870,13 +942,28 @@ function deriveUnboundSessionsNode(hbCtx) {
 // minute. Overloading that value would destroy the distinction the
 // operator is asking for. `running_now` is the orthogonal LIVE overlay.
 //
-// SOURCE OF TRUTH — live signals ONLY, never plan-file text:
-// a leaf `live_sessions[].status.value === 'running'`, which
-// deriveLiveAgentLeaves only ever emits when ALL of these hold:
-//   (1) a real heartbeat file exists for that session id (else 'unknown'),
-//   (2) its last_activity_ts is not crashed-stale (else 'stalled'),
-//   (3) the task's own task_started is not idle-expired (startedIdleExpired),
-//   (4) the task's derived status is itself running-capable (taskProvenRunning).
+// SOURCE OF TRUTH — live signals ONLY, never plan-file text: a leaf
+// `live_sessions[].status.value === 'running'`. TWO functions in this file
+// produce that value, and their gates DIFFER — name both, never imply one
+// (harness-reviewer finding 1, 2026-08-01):
+//
+//   deriveLiveAgentLeaves (TASK-BOUND leaves) emits 'running' only when ALL
+//   of these hold:
+//     (1) a real heartbeat file exists for that session id (else 'unknown'),
+//     (2) its last_activity_ts is not crashed-stale (else 'stalled'),
+//     (3) the task's own task_started is not idle-expired (startedIdleExpired,
+//         the 60-minute window),
+//     (4) the task's derived status is itself running-capable (taskProvenRunning).
+//
+//   deriveUnboundSessionsNode (the top-of-tree UNATTRIBUTED node) emits
+//   'running' on gate (1)+(2) ALONE — there is no task to apply (3)/(4) to,
+//   which is the entire point of that node. Its freshness bar is therefore
+//   WEAKER: any heartbeat inside activityWindowMs, i.e. up to ~24h, and
+//   members past activeMs carry the word "(quiet)" in their own label. That
+//   is a deliberate pre-existing threshold, not a widening introduced here —
+//   but it means a green claim on that node is backed by less evidence than
+//   a green claim on a task row, and any future tightening belongs THERE,
+//   not in this function.
 // An ancestor is running_now iff a descendant is — the same C1 roll-up law
 // absorbOneChildRollUp already applies to the 'running' badge class, but
 // computed here directly off the leaf values so it is independent of
@@ -1297,6 +1384,13 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     rank: null, added_ts: addedTs, added_mid_build: false,
     status: null, progress: null, completed_at: '',
     from_requests: fromRequests,
+    // Plan-level live sessions (2026-08-01): populated ONLY by
+    // deriveUnbindableDispatchLeaves — an attributed dispatch whose task=
+    // id resolves to no task in this plan. Default [] so the field's SHAPE
+    // is uniform across every node kind (a client can read live_sessions
+    // without a kind check), including the terminal-status early return
+    // above, which never reaches the events pass.
+    live_sessions: [],
     roll_up: {}, children: [],
   };
 
@@ -1377,6 +1471,7 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
   const tasks = loaded.tasks || [];
   const batchLabels = deriveTaskBatches(tasks); // R11 Critical 1/2
   node.children = tasks.map((t) => deriveTaskNode(pf.slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabels[t.id]));
+  node.live_sessions = deriveUnbindableDispatchLeaves(pf.slug, tasks, startedTs, sessionsByTask, hbCtx);
   const total = tasks.length;
   const done = tasks.filter((t) => t.done).length;
   const anyInProgress = node.children.some((c) => c.status.value === 'in-progress');

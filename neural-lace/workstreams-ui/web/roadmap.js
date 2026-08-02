@@ -640,10 +640,28 @@
   // ORDER MATTERS AND IS DELIBERATE: running_now is checked FIRST, but only
   // against states that are not themselves louder exceptions — a stalled or
   // unknown item keeps its own exception colour (those are attention
-  // classes the operator must not lose to a green repaint). In practice a
-  // stalled task can never be running_now (deriveLiveAgentLeaves refuses a
-  // 'running' leaf for one — S20d), so this is belt-and-braces, not a
-  // conflict resolution.
+  // classes the operator must not lose to a green repaint).
+  //
+  // WHERE THIS ACTUALLY FIRES (harness-reviewer finding 2, 2026-08-01 —
+  // this note previously claimed the whole rule was unreachable):
+  //   - At TASK level it is genuinely belt-and-braces: a stalled or unknown
+  //     task can never be running_now, because deriveLiveAgentLeaves
+  //     refuses to emit a 'running' leaf for one (server S20d).
+  //   - At MASTER/plan level it is a REAL conflict and this rule resolves
+  //     it: a master's own status derives from its OWN tasks, while its
+  //     nested child plans roll up independently — so a merged-unverified
+  //     master CAN carry a running child plan. The attention colour wins on
+  //     the master row, and the live work is still visible (R9-7: never
+  //     invisible) via the master's "N running" roll-up badge and the child
+  //     plan's own green title one level down.
+  //
+  // 'complete' IS DELIBERATELY ABSENT from this set. A shipped master with
+  // a genuinely running child plan renders GREEN, not dim grey. It looks
+  // odd inside the Shipped band, and that oddness is the honest signal: R9-7
+  // ("running work is NEVER invisible") outranks the tidiness of the band.
+  // Dimming it would hide live work behind a "this is finished" colour,
+  // which is the exact failure class this whole change exists to remove.
+  // Pinned by R21-14 so the next sweep cannot "tidy" it away silently.
   var RUNNING_YIELDS_TO = { stalled: true, unknown: true, 'merged-unverified': true };
   function titleStateClass(item) {
     var v = (item.status && item.status.value) || '';

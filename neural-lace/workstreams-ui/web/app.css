@@ -1282,7 +1282,13 @@ button, a, [role="button"] { min-height: 24px; }
    that stays the ONE dim state (var(--done), unchanged from Round 12,
    4.55:1). in-progress/stalled/merged-unverified/unknown are the loud
    exceptions and are UNCHANGED by this fix. ---- */
-/* Round 15 (operator, TWICE now — Round 12 asked for this exact thing and
+/* SUPERSEDED 2026-08-01 — history only; the live rules are in the block
+   directly below. Rounds 15/16 kept trying to make IN-PROGRESS the loud
+   state; the 2026-08-01 walkthrough established that in-progress is not a
+   liveness claim at all, so it gets no hue and the loud state moved to the
+   new .rm-title-running. Kept verbatim because it records WHY a "just make
+   in-progress bright again" change would be a regression, not a fix.
+   Round 15 (operator, TWICE now — Round 12 asked for this exact thing and
    it did not land): in-progress titles get one loud colour, not merely
    brighter white — the same hue every other "active right now" signal in
    this view uses (leaf running chip, taskspan token, roll-up badge), so a
@@ -1310,11 +1316,16 @@ button, a, [role="button"] { min-height: 24px; }
    .rm-title-in-progress = A DERIVED-FROM-ARTIFACTS state. Started and not
                           finished — commits/partial work exist; NOBODY is
                           necessarily on it. It fires on done>0 alone. It
-                          therefore gets NO hue at all: weight + the body's
-                          own reading colour, per this file's own stated
-                          discipline above ("LUMINANCE for the two common/
-                          normal-traffic states ... HUE reserved for the
-                          exceptions"). It was --accent violet until now,
+                          therefore gets NO hue at all — it separates from
+                          not-started by WEIGHT (600 vs 400) on the SAME
+                          --text colour, which is the strictest reading of
+                          this file's own stated discipline above ("...for
+                          the two common/normal-traffic states ... HUE
+                          reserved for the exceptions"). Note it is weight,
+                          not luminance: both states measure 11.86:1, and
+                          the n/m progress fraction is the non-colour, non-
+                          weight carrier that tells them apart outright.
+                          It was --accent violet until now,
                           and violet-vs-white was still read as "this one is
                           active" — operator, 2026-08-01: "All the plan
                           items in here that are purple are not
