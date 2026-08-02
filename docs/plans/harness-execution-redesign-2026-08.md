@@ -163,9 +163,10 @@ tasks in an emergency.
     4. Attempt a sanctioned escape on one gate; confirm the workaround ledger gains a row and the
        friction metric reflects it
     **Wire checks:**
-    - `adapters/claude-code/hooks/lib/gate-contract-lib.sh` `gc_block` → called by `adapters/claude-code/hooks/scope-enforcement-gate.sh`
-    - `adapters/claude-code/hooks/lib/gate-contract-lib.sh` `gc_block` → called by `adapters/claude-code/hooks/concurrent-ownership-gate.sh`
-    - gate-message lint in `adapters/claude-code/hooks/harness-doctor.sh` → scans `adapters/claude-code/hooks/pre-commit-gate.sh`
+    - `adapters/claude-code/hooks/lib/gate-contract-lib.sh` `gc_block` → called by `adapters/claude-code/hooks/scope-enforcement-gate-body.sh` (sourced by `adapters/claude-code/hooks/scope-enforcement-gate.sh`, which is now a thin dispatcher — split landed in the first-half build so the common non-`commit` pass-path never parses/sources the ~2400-line body; see that task's build report)
+    - `adapters/claude-code/hooks/lib/gate-contract-lib.sh` `gc_block` → called by `adapters/claude-code/hooks/concurrent-ownership-gate-body.sh` (sourced by `adapters/claude-code/hooks/concurrent-ownership-gate.sh`, same thin-dispatcher split)
+    - `adapters/claude-code/hooks/lib/gate-contract-lib.sh` `gc_block` → called by `adapters/claude-code/hooks/pre-commit-gate.sh` (no split for this gate — its relevance pre-filter already lives one layer up, in the `settings.json.template` PreToolUse command that spawns it only on a detected `git commit`, so this file stays monolithic)
+    - gate-message lint in `adapters/claude-code/hooks/harness-doctor.sh` → scans `adapters/claude-code/hooks/pre-commit-gate.sh` (NOT YET BUILT — deferred to the remaining Task 2 scope: `harness-hygiene-scan.sh` + `plan-edit-validator.sh` retrofit, the doctor lint itself, workaround-as-sensor ledger wiring, and JIT pre-warning hints. See that task's build report for the explicit split and this task's evidence for what shipped: structured fields + `--check` + relevance pre-filter on exactly `scope-enforcement-gate.sh`, `pre-commit-gate.sh`, `concurrent-ownership-gate.sh`.)
     **Integration points:**
     - `adapters/claude-code/hooks/plan-edit-validator.sh` and `adapters/claude-code/hooks/harness-hygiene-scan.sh` keep their existing exit-code contracts (pre-commit chain compatibility) — verify the repo `.git/hooks/pre-commit` chain still first-fails identically on a hygiene fixture
     - workaround ledger feeds the Stage 1 dashboard — schema agreed in this task's evidence file
@@ -382,6 +383,9 @@ Modify:
 - 2026-08-02: `docs/designs/harness-execution-redesign-considerations-2026-08-02.md` — appended the "Round 3 revamp (2026-08-02, operator GO)" section folding the operator's binding round-3 directives into the spec of record (this session, same commit as this plan)
 - 2026-08-02: `docs/plans/harness-execution-redesign-2026-08.md` — this plan file, created in the same commit
 - 2026-08-02: `docs/reviews/2026-08-02-harness-execution-redesign-architecture-review.md` — derived architecture-review record (Check 17): the pre-mortems + operator rounds already performed, recorded with verdict + provenance at the gate's expected location
+- 2026-08-02: `adapters/claude-code/hooks/scope-enforcement-gate-body.sh` — new file, task 2 first-half build: the retrofit's relevance-pre-filter restructuring split `scope-enforcement-gate.sh` into a thin dispatcher (still the declared Modify target) + this sourced body carrying the full mechanism, so the common non-`commit` pass-path never parses/sources it
+- 2026-08-02: `adapters/claude-code/hooks/concurrent-ownership-gate-body.sh` — new file, task 2 first-half build: same thin-dispatcher split as above, off `concurrent-ownership-gate.sh`
+- 2026-08-02: `docs/harness-guide.md` — structural note for the two new hooks/lib files this task added (docs-freshness-gate.sh requires one on any A/D/R hook/lib change; see the gate's own block message for the rule)
 
 ## Assumptions
 
