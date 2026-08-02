@@ -2444,8 +2444,9 @@ PLANEOF
   # RPL9 (harness-reviewer REFORMULATE defect 4, the FIFTH closure — 2026-08-01).
   #
   # WHAT WAS MISSING. The replay gate's OWN state write used to be
-  # `>>"$ledger" 2>/dev/null || true`. When that append failed (unwritable
-  # LEDGER_DIR, read-only $HOME, full disk) the identity was never recorded,
+  # `>>"$ledger" 2>/dev/null || true`. When that append failed (LEDGER_DIR
+  # unwritable while LOG_DIR still works -- see the visibility residual at
+  # the WARN site) the identity was never recorded,
   # every later fire re-decided dispatch_is_new=1 — the eternal-green defect
   # in full — and the hook still logged a confident `replay=0`, so the one
   # line an operator would read to check the gate's health reported the dead
@@ -3960,9 +3961,17 @@ _run_on_builder_dispatch() {
   local dispatch_is_new=1
   # THE FAIL-OPEN MUST BE VISIBLE IN THE SAME LOG THE MEASUREMENT IS READ
   # FROM. The append below is the replay gate's OWN state write. If it fails
-  # (unwritable LEDGER_DIR, full disk, permissions, read-only $HOME) the
+  # (LEDGER_DIR unwritable while LOG_DIR is still writable) the
   # identity is never recorded, EVERY later fire re-decides
   # dispatch_is_new=1, and the eternal-green defect returns in full. A bare
+  # VISIBILITY RESIDUAL (2026-08-01 review F1, MEASURED): this WARN reaches
+  # the operator only when LOG_DIR is itself writable. LOG_DIR
+  # ($HOME/.claude/logs) and LEDGER_DIR ($HOME/.claude/state/...) are
+  # siblings under one root, and _log's own append is `|| true`-silenced, so
+  # a read-only $HOME or a full disk takes out BOTH sinks and this fix is
+  # silent by construction -- probed: zero WARN files written when both are
+  # dead, versus 2 when only the ledger is. The covered case is the one
+  # named above; the both-sinks case is a named residual, not a claim.
   # `|| true` swallowed that and still logged replay=0 -- indistinguishable
   # from a healthy first dispatch, so the one signal that would reveal the
   # gate is dead read as proof it was alive. Capture the status, WARN, and
