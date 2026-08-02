@@ -962,6 +962,58 @@ async function main() {
       redesign.roll_up && !redesign.roll_up.running,
       redesign && JSON.stringify({ status: redesign.status, roll_up: redesign.roll_up }));
 
+    // ---- S21: running_now — the API's own answer to "is anyone working on
+    // this RIGHT NOW", added 2026-08-01 (operator, repeated: the coloured
+    // plan titles "are supposed to represent items that are currently being
+    // worked on ... I actually do not see any items in the cockpit that
+    // state that they are actively running"). The whole point is that this
+    // field DISAGREES with status.value: every fixture below is derived
+    // 'in-progress', and they split on live evidence alone. Asserted on the
+    // real HTTP payload, so a client reading `running_now` gets exactly
+    // what these lines pin. ----
+    ok('S21 running_now is TRUE for a task with a genuinely running live session (rich-plan/1 — the SAME fixture S18 proves renders a running leaf)',
+      richTask && richTask.running_now === true,
+      richTask && JSON.stringify({ status: richTask.status.value, running_now: richTask.running_now }));
+    ok('S21b running_now propagates to the OWNING PLAN (rich-plan) — the operator scans plan titles, so an ancestor of live work must answer yes too',
+      richPlan && richPlan.running_now === true,
+      richPlan && JSON.stringify({ status: richPlan.status.value, running_now: richPlan.running_now }));
+    ok('S21c THE DISTINCTION: redesign-plan is derived status.value "in-progress" (1/2 done) with NO live session anywhere, and running_now is FALSE — derived-from-artifacts progress is not a liveness claim, which is the entire defect this field fixes',
+      redesign && redesign.status.value === 'in-progress' && redesign.running_now === false,
+      redesign && JSON.stringify({ status: redesign.status.value, running_now: redesign.running_now }));
+    ok('S21d HONEST ABSENCE: the stale-dispatch task (live_sessions NON-EMPTY, but its only member is stalled — a live dispatching session that abandoned this task) is running_now FALSE, and so is its owning plan. A non-empty array is never a running claim',
+      staleTask && staleTask.running_now === false &&
+      staleDispatchPlan && staleDispatchPlan.running_now === false,
+      JSON.stringify({ task: staleTask && staleTask.running_now, plan: staleDispatchPlan && staleDispatchPlan.running_now }));
+    ok('S21e a DONE task is never running_now (finished work has no live claim), and neither is a not-started one',
+      demoT1 && demoT1.running_now === false,
+      demoT1 && JSON.stringify({ status: demoT1.status.value, running_now: demoT1.running_now }));
+    ok('S21f EVERY node in the payload carries the field — a client can read it uniformly and never has to fall back to guessing from live_sessions.length (the predicate that caused the original false-green)',
+      (function () {
+        let missing = [];
+        const walk = (n) => {
+          if (typeof n.running_now !== 'boolean') missing.push(n.id);
+          (n.children || []).forEach(walk);
+          (n.child_plans || []).forEach(walk);
+        };
+        items.forEach(walk);
+        return missing.length === 0;
+      })());
+    ok('S21g running_now is NEVER true without a running leaf beneath it — swept across the WHOLE payload, not just the fixtures named above (a class assertion: any node claiming running must have live evidence somewhere in its subtree)',
+      (function () {
+        let liars = [];
+        const hasRunningLeaf = (n) => {
+          if ((n.live_sessions || []).some((s) => s && s.status && s.status.value === 'running')) return true;
+          return (n.children || []).some(hasRunningLeaf) || (n.child_plans || []).some(hasRunningLeaf);
+        };
+        const walk = (n) => {
+          if (n.running_now && !hasRunningLeaf(n)) liars.push(n.id);
+          (n.children || []).forEach(walk);
+          (n.child_plans || []).forEach(walk);
+        };
+        items.forEach(walk);
+        return liars.length === 0;
+      })());
+
     // ---- Round 15: plan_doc {project,path} — the plan-link fix (the old
     // client-side `file:///` href was a DEAD link, live-verified; plan_doc
     // reuses the EXISTING /api/doc resolver, same helper server.selftest.js
@@ -1051,6 +1103,21 @@ async function main() {
     ok('R9-7b-4 the CRASHED unbound heartbeat (30 days stale) never counts as "running, unattributed" — crashed is excluded, not just unbound',
       unbound && !unbound.live_sessions.some((a) => a.id.indexOf('sess-unbound-crashed') !== -1),
       unbound && JSON.stringify(unbound.live_sessions));
+    // SPLIT-BRAIN FIX (2026-08-01): these members were stamped
+    // status.value 'in-progress' while their own label said "running" — the
+    // one node in the tree that is a pure live-heartbeat truth claim was
+    // the one whose machine-readable value denied it. The client's
+    // AGENT_STATUS_GLYPH has no 'in-progress' key, so every live session
+    // rendered with the UNKNOWN glyph, and the summary chip was hard-coded
+    // to the in-progress (violet) class — literally the operator's "the
+    // purple items ... are supposed to be green".
+    ok('R9-7b-5 the unattributed node AND each of its session members carry status.value "running" — the value agrees with the label it has always printed (a client keying colour/glyph off .value now gets the running treatment, not the unknown fallback)',
+      unbound && unbound.status.value === 'running' &&
+      unbound.live_sessions.every((a) => a.status && a.status.value === 'running'),
+      unbound && JSON.stringify({ node: unbound.status, members: unbound.live_sessions.map((a) => a.status.value) }));
+    ok('R9-7b-6 the unattributed node is running_now — the tree\'s ONE live-work surface answers the same question every plan/task node now answers',
+      unbound && unbound.running_now === true,
+      unbound && JSON.stringify(unbound.running_now));
 
     // ---- R9-8: multi-repo roots -----------------------------------------
     ok('R9-8 zero-config default: with no projects config, a second repo\'s plan never appears (single-repo behavior unchanged)',

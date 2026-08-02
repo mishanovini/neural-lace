@@ -2281,8 +2281,18 @@ ok('R12-30 every one of the six states maps to a title CSS class (rm-title-<valu
 // that stayed green across this inversion would have been proving nothing;
 // R13-31 pins the NEW not-started rule specifically and R13-31b proves the
 // OLD rule is actually gone (not just an additional rule shadowing it).
-ok('R13-31 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--accent)/600 (2026-07-30 operator: "The green items are supposed to indicate something is actively running. I see several green plans that aren\'t running" — GREEN is reserved for live running signals only; Round 16 briefly made in-progress titles --running green, superseded same day), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
-  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--accent\);\s*font-weight:\s*600/.test(C) &&
+// R21 (2026-08-01) AMENDS R13-31's in-progress leg. Operator, verbatim:
+// "All the plan items in here that are purple are not representing what
+// they're supposed to be representing. First of all, the color is supposed
+// to be green, and second of all, it's supposed to represent items that are
+// currently being worked on." --accent (violet) was chosen 2026-07-30 to
+// stop in-progress LYING green; it still read as "this one is active"
+// because ANY hue on the most common state reads that way. in-progress is
+// now hue-free (--text/600, luminance-only); the roadmap's ONE live-claim
+// hue is --running, on the new .rm-title-running. Every OTHER leg of the
+// ladder below is unchanged and still pinned.
+ok('R13-31/R21 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--text)/600 (HUE-FREE — derived-from-artifacts, not a liveness claim; was --accent violet until 2026-08-01), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
+  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--text\);\s*font-weight:\s*600/.test(C) &&
   /\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--text\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-complete\s*\{\s*color:\s*var\(--done\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-stalled\s*\{\s*color:\s*var\(--interrupt\);\s*font-weight:\s*600/.test(C) &&
@@ -2292,6 +2302,23 @@ ok('R13-31b mutation control: the Round 12 not-started rule (var(--muted)) is GO
   !/\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--muted\)/.test(C));
 ok('R16-1 ROUND 16 mutation control: the Round 15 --info (blue) in-progress-title rule is GONE, not merely shadowed — a stray leftover .rm-title-in-progress{color:var(--info)} earlier in the cascade would make the ladder non-deterministic',
   !/\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--info\)/.test(C));
+ok('R21-1 mutation control: the 2026-07-30 --accent (violet) in-progress-title rule is GONE, not merely shadowed — a stray leftover .rm-title-in-progress{color:var(--accent)} anywhere in the cascade is exactly the purple the operator reported',
+  !/\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--accent\)/.test(C));
+ok('R21-2 the roadmap has a RUNNING title state and it is the --running green — the state the ladder was missing entirely (there was no green title rule at all, so genuinely-live work had no title-level signal to be seen by)',
+  /\.rm-title\.rm-title-running\s*\{\s*color:\s*var\(--running\);\s*font-weight:\s*700/.test(C));
+ok('R21-3 --running is the ONLY hue any rm-title rule spends on a liveness claim: exactly one .rm-title-* rule uses var(--running), and it is the running one (a second green title rule would re-create the "several green plans that aren\'t running" defect)',
+  (function () {
+    var rules = C.match(/\.rm-title\.rm-title-[a-z-]+\s*\{[^}]*\}/g) || [];
+    var green = rules.filter(function (r) { return /var\(--running\)/.test(r); });
+    return green.length === 1 && /rm-title-running/.test(green[0]);
+  })());
+ok('R21-4 the live-session leaf glyph speaks the SAME green as every other running signal (--running), not the retired --ok green that nothing else in the roadmap uses',
+  /\.rm-agent-running \.rm-agent-glyph\s*\{\s*color:\s*var\(--running\)/.test(C) &&
+  !/\.rm-agent-running \.rm-agent-glyph\s*\{\s*color:\s*var\(--ok\)/.test(C));
+ok('R21-5 .chip.rm-status-running exists and is green+tinted, and .chip.rm-status-in-progress no longer spends a hue — the top-of-tree "N running, unattributed to a task" chip was hard-coded to the in-progress class, so the ONE node that says "running" was painted the in-progress colour',
+  /\.chip\.rm-status-running\s*\{[^}]*color:\s*var\(--running\)/.test(C) &&
+  /\.chip\.rm-status-running\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--running\)/.test(C) &&
+  !/\.chip\.rm-status-in-progress\s*\{[^}]*var\(--accent\)/.test(C));
 ok('R16-2 --running is defined and measures >= 4.5:1 against --panel (WCAG AA body-text floor) — computed here with the SAME relative-luminance formula the file\'s own --done comment already documents, not merely asserted in prose',
   (function () {
     var m = css.match(/--running:\s*#([0-9a-fA-F]{6});/);
@@ -2947,7 +2974,7 @@ ok('R20-10 ...and TRUE for the genuinely running task, AND still true for an in-
   runClaim('nodeIsActive(' + JSON.stringify(RUNNING_TASK_PAYLOAD) + ')') === true &&
   runClaim('nodeIsActive({status:{value:"in-progress"}})') === true &&
   runClaim('nodeIsActive({status:{value:"stalled",reason_class:"waiting-on-you"}})') === true);
-ok('R20-11 SITE 1979 (unbound sessions) is deliberately NOT converted: renderAll still gates on .length, because deriveUnboundSessionsNode already filtered that collection server-side and stamps its members "in-progress" — hasRunningSession() there would hide genuinely-running unattributed work (R9-7). The audit note must stay with the code so the next sweep does not "fix" it.',
+ok('R20-11 SITE 1979 (unbound sessions) is deliberately NOT converted: renderAll still gates on .length, because deriveUnboundSessionsNode already filtered that collection server-side — the gate can only ever fail OPEN (show the node), never hide genuinely-running unattributed work (R9-7). [2026-08-01: the old justification "its members are stamped in-progress, not running" no longer holds — that stamp WAS the split-brain defect and is fixed; the fail-open reason is the one that stands.] The audit note must stay with the code so the next sweep does not "fix" it.',
   /AUDITED 2026-07-30 \(running-claim sweep\)/.test(roadmapJs) &&
   /if \(ub && ub\.live_sessions && ub\.live_sessions\.length\)/.test(roadmapJsNoComments));
 ok('R20-12 no client site reads live_sessions.length as a RUNNING claim any more — the three converted sites go through the shared predicate, and the only surviving .length test is the audited unbound one',
@@ -2970,6 +2997,59 @@ ok('R20-13 the client roll-up vocabulary matches the server\'s: "idle-dispatch" 
   })() &&
   /'idle-dispatch': 'stalled — no recent dispatch'/.test(roadmapJs) &&
   /\.chip\.rm-rollup-idle-dispatch/.test(C));
+
+// ============================================================
+// R21 (2026-08-01) — RUNNING-NOW vs IN-PROGRESS, the two states the
+// operator kept seeing conflated:
+//   "All the plan items in here that are purple are not representing what
+//    they're supposed to be representing. First of all, the color is
+//    supposed to be green, and second of all, it's supposed to represent
+//    items that are currently being worked on. At the moment, I actually do
+//    not see any items in the cockpit that state that they are actively
+//    running."
+//
+// These assertions REALLY EXECUTE titleStateClass against payload shapes
+// the live server actually emits. Deliberately NOT source regexes: a
+// scenario in this very file once passed on a source-text match while the
+// feature was broken. Delete the fix and these fail on the returned class,
+// which is the class the operator's eye reads off the screen.
+// ============================================================
+const titleStateClassSrc = extractMarkedBlock(roadmapJs, '// TITLE-STATE-CLASS-BEGIN', '// TITLE-STATE-CLASS-END');
+ok('R21-0 selftest can locate the TITLE-STATE-CLASS extraction anchor (source-execution harness precondition)',
+  !!titleStateClassSrc);
+function titleClass(item) {
+  return runPure(runningClaimSrc + '\n' + titleStateClassSrc, 'titleStateClass(' + JSON.stringify(item) + ')');
+}
+// A plan the server stamped running_now (a real heartbeat-backed session on
+// it or a descendant) — its DERIVED status is still the ordinary
+// 'in-progress', which is exactly the pair that used to collapse into one
+// violet title.
+const RUNNING_PLAN = { id: 'p', kind: 'plan', status: { value: 'in-progress' }, running_now: true, roll_up: { running: { count: 1, exemplar: 'p/2' } } };
+const IDLE_INPROGRESS_PLAN = { id: 'q', kind: 'plan', status: { value: 'in-progress' }, running_now: false, roll_up: {} };
+ok('R21-6 THE OPERATOR\'S DEFECT, half 1 (semantics): a plan with commits/partial work but NO live dispatch does NOT get the running title — it renders the derived in-progress class, so it can never be read as "someone is on this"',
+  titleClass(IDLE_INPROGRESS_PLAN) === 'rm-title-in-progress', String(titleClass(IDLE_INPROGRESS_PLAN)));
+ok('R21-7 THE OPERATOR\'S DEFECT, half 2 (colour): a plan the server verified as running_now DOES get rm-title-running (the green class) even though its derived status is the same "in-progress" — the LIVE overlay outranks the derived ladder',
+  titleClass(RUNNING_PLAN) === 'rm-title-running', String(titleClass(RUNNING_PLAN)));
+ok('R21-8 HONEST ABSENCE: no live data at all (running_now absent from the payload entirely, e.g. an older/partial response) is NEVER a running claim — the falsy default is no-claim, never a comforting badge',
+  titleClass({ id: 'r', status: { value: 'in-progress' } }) === 'rm-title-in-progress' &&
+  titleClass({ id: 'r2', status: { value: 'not-started' } }) === 'rm-title-not-started' &&
+  titleClass({ id: 'r3', status: { value: 'complete' } }) === 'rm-title-complete');
+ok('R21-9 a genuinely running TASK row (its own live_sessions leaf is running, so the server stamped running_now) turns green too — the state is not plan-only',
+  titleClass({ id: 'p/2', kind: 'task', status: { value: 'in-progress' }, running_now: true,
+    live_sessions: [{ id: 'p/2/agent/s1', status: { value: 'running', label: 'running' } }] }) === 'rm-title-running');
+ok('R21-10 the stale-dispatch task from the R20 sweep (live_sessions non-empty, but every member stalled, so the server stamps running_now false) keeps its STALLED title — a green repaint must never swallow an attention state',
+  titleClass(Object.assign({}, STALE_TASK_PAYLOAD, { running_now: false })) === 'rm-title-stalled');
+ok('R21-11 running_now can NEVER out-shout an exception colour even if a future server bug set both: stalled/unknown/merged-unverified keep their own title classes (the attention states are the ones the operator must not lose)',
+  titleClass({ id: 'x', status: { value: 'stalled' }, running_now: true }) === 'rm-title-stalled' &&
+  titleClass({ id: 'y', status: { value: 'unknown' }, running_now: true }) === 'rm-title-unknown' &&
+  titleClass({ id: 'z', status: { value: 'merged-unverified' }, running_now: true }) === 'rm-title-merged-unverified');
+ok('R21-12 the running claim is READ from the server, never RE-DERIVED client-side (same law R13-15 pins for the task-span token): a payload carrying a live running leaf but running_now:false — the exact shape the server emits when the task-level idle gate expired — is NOT painted green by the client second-guessing it',
+  titleClass({ id: 'p/3', kind: 'task', status: { value: 'in-progress' }, running_now: false,
+    live_sessions: [{ id: 'p/3/agent/s1', status: { value: 'running', label: 'running' } }] }) === 'rm-title-in-progress');
+ok('R21-13 the top-of-tree unattributed-live-sessions summary renders the RUNNING chip + running title, not the in-progress ones — this node is the only place the cockpit says "N running" today, and it was hard-coded to the in-progress classes',
+  /rm-title rm-title-running/.test(roadmapJsNoComments) &&
+  /'chip rm-status rm-status-running'/.test(roadmapJsNoComments) &&
+  !/'chip rm-status rm-status-in-progress'/.test(roadmapJsNoComments));
 
 // ============================================================
 // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — the dead-`file://`-href CLASS SWEEP.

@@ -827,7 +827,18 @@ function deriveUnboundSessionsNode(hbCtx) {
       id: 'unattributed/' + h.session_id,
       kind: 'agent',
       title: 'session ' + shortId + (h.branch ? ' (' + h.branch + ')' : ''),
-      status: { value: 'in-progress', label: label, reason: '', since: h.last_activity_ts || '' },
+      // RUNNING-VALUE SPLIT-BRAIN FIX (2026-08-01, operator: "I do not see
+      // any items in the cockpit that state that they are actively
+      // running"). These members were stamped value:'in-progress' while
+      // their own LABEL said "running" — the one node in the whole tree
+      // that is a pure live-heartbeat truth claim was the one node whose
+      // machine-readable value denied it. Consequences the operator saw:
+      // the client's AGENT_STATUS_GLYPH has no 'in-progress' key, so every
+      // genuinely-live session rendered with the UNKNOWN glyph ('○'), and
+      // .rm-agent-running's green never applied. The value now matches the
+      // label. This is NOT a widening of the running claim: the filter
+      // above (non-crashed heartbeat) is unchanged — only its name is.
+      status: { value: 'running', label: label, reason: '', since: h.last_activity_ts || '' },
     };
   });
   return {
@@ -835,12 +846,54 @@ function deriveUnboundSessionsNode(hbCtx) {
     kind: 'unbound-sessions',
     title: 'live sessions not yet attributed to a task (' + running.length + ')',
     status: {
-      value: 'in-progress',
+      value: 'running',
       label: running.length + ' running, unattributed to a task',
       reason: '', since: '',
     },
     live_sessions: children,
   };
+}
+
+// ----------------------------------------------------------------------
+// stampRunningNow(node) — THE ONE DEFINITION of "someone is working on
+// this RIGHT NOW", added 2026-08-01 (operator, repeated: "the purple items
+// are not representing what they're supposed to be representing ... it's
+// supposed to represent items that are currently being worked on. At the
+// moment, I actually do not see any items in the cockpit that state that
+// they are actively running").
+//
+// WHY A SEPARATE FIELD AND NOT A STATUS VALUE. `status.value` is DERIVED
+// FROM ARTIFACTS — plan checkboxes, task_started/task_done events, commit
+// state. 'in-progress' there means "started and not finished" (it fires on
+// done>0 alone; see derivePlanRootNode's `anyInProgress || done > 0`
+// branch), which says NOTHING about whether a session is attending it this
+// minute. Overloading that value would destroy the distinction the
+// operator is asking for. `running_now` is the orthogonal LIVE overlay.
+//
+// SOURCE OF TRUTH — live signals ONLY, never plan-file text:
+// a leaf `live_sessions[].status.value === 'running'`, which
+// deriveLiveAgentLeaves only ever emits when ALL of these hold:
+//   (1) a real heartbeat file exists for that session id (else 'unknown'),
+//   (2) its last_activity_ts is not crashed-stale (else 'stalled'),
+//   (3) the task's own task_started is not idle-expired (startedIdleExpired),
+//   (4) the task's derived status is itself running-capable (taskProvenRunning).
+// An ancestor is running_now iff a descendant is — the same C1 roll-up law
+// absorbOneChildRollUp already applies to the 'running' badge class, but
+// computed here directly off the leaf values so it is independent of
+// roll-up merge ORDER (a master's child-plan roll-ups are absorbed later,
+// in applyMasterHierarchy).
+//
+// HONEST ABSENCE (R9-7's binding rule): no live evidence -> `false`, and the
+// client renders NOTHING running. A comforting badge is worse than a blank.
+// ----------------------------------------------------------------------
+function stampRunningNow(node) {
+  if (!node) return false;
+  const own = (node.live_sessions || []).some((s) => s && s.status && s.status.value === 'running');
+  let descendant = false;
+  (node.children || []).forEach((c) => { if (stampRunningNow(c)) descendant = true; });
+  (node.child_plans || []).forEach((c) => { if (stampRunningNow(c)) descendant = true; });
+  node.running_now = own || descendant;
+  return node.running_now;
 }
 
 // buildWaitingOnYouMap(scanRoot) -> { '<slug>/<task_id>': <needs-you ledger
@@ -1659,6 +1712,13 @@ function buildRoadmapTree() {
   // R11 Critical 3/4/5: resolve parent-plan -> nest verified children under
   // their master, break+flag cycles, aggregate the two labeled counts.
   const hierarchy = applyMasterHierarchy(items);
+
+  // RUNNING-NOW pass: LAST, after nesting, so a master sees its resolved
+  // child plans' leaves too (see stampRunningNow's header). Walks the
+  // top-level roots; `items` shares the same node objects, so flatItems
+  // carries the stamp as well.
+  hierarchy.topLevel.forEach(stampRunningNow);
+  if (unboundSessionsNode) stampRunningNow(unboundSessionsNode);
 
   return {
     flatItems: items, // every node, id-addressable, incl. nested child plans

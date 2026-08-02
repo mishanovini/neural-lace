@@ -1294,11 +1294,41 @@ button, a, [role="button"] { min-height: 24px; }
    above the 4.5:1 body-text floor, let alone the 3:1 large/bold-text floor
    this is set at (600 weight). --info is now reserved EXCLUSIVELY for real
    interactive links across this view (the operator's own stated reason). */
+/* ---- THE TWO STATES THE OPERATOR KEPT SEEING CONFLATED (2026-08-01) ----
+   Read these two rules as a pair; each is defined by what the OTHER is not.
+
+   .rm-title-running    = A LIVE CLAIM. A heartbeat-backed session is
+                          attending this item (or a descendant) RIGHT NOW —
+                          server-verified `running_now` (roadmap-routes.js
+                          stampRunningNow), never plan-file text. GREEN
+                          (--running #4ade80, 8.42:1 on --panel), the same
+                          green the leaf "running" chip, the "<id> running"
+                          task-span token and the "N running" roll-up badge
+                          already speak. This is the ONLY green in the
+                          roadmap and the ONLY hue that means "someone is
+                          on it".
+   .rm-title-in-progress = A DERIVED-FROM-ARTIFACTS state. Started and not
+                          finished — commits/partial work exist; NOBODY is
+                          necessarily on it. It fires on done>0 alone. It
+                          therefore gets NO hue at all: weight + the body's
+                          own reading colour, per this file's own stated
+                          discipline above ("LUMINANCE for the two common/
+                          normal-traffic states ... HUE reserved for the
+                          exceptions"). It was --accent violet until now,
+                          and violet-vs-white was still read as "this one is
+                          active" — operator, 2026-08-01: "All the plan
+                          items in here that are purple are not
+                          representing what they're supposed to be
+                          representing ... it's supposed to represent items
+                          that are currently being worked on." Spending ANY
+                          hue on the most common state re-creates that
+                          misread; the fix is to stop spending one.
+   Colour is reinforcement only (WCAG 1.4.1): the running row always also
+   carries the WORD "running" (leaf chip / task-span token / roll-up badge).
+   ---- */
 .rm-title.rm-title-not-started { color: var(--text); font-weight: 400; }                /* 11.86:1 */
-/* Operator 2026-07-30: GREEN means ACTIVELY RUNNING, nothing else — an
-   in-progress-but-idle plan title must not read as live. Accent (violet)
-   keeps row 69's "distinct from white" requirement without lying green. */
-.rm-title.rm-title-in-progress { color: var(--accent); font-weight: 600; }
+.rm-title.rm-title-in-progress { color: var(--text); font-weight: 600; }                /* 11.86:1 — weight-only, deliberately hue-free */
+.rm-title.rm-title-running { color: var(--running); font-weight: 700; }                 /* 8.42:1 — the one live-claim hue */
 .rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note; the ONLY dim state now */
 .rm-title.rm-title-stalled { color: var(--interrupt); font-weight: 600; }               /* 5.45:1 */
 .rm-title.rm-title-merged-unverified { color: var(--warn); font-weight: 600; }          /* 8.79:1 */
@@ -1342,7 +1372,10 @@ button, a, [role="button"] { min-height: 24px; }
 .rm-subtask-body { font-size: 11px; color: var(--muted); }
 .rm-agent { display: flex; align-items: baseline; gap: 6px; list-style: none; margin-left: -18px; }
 .rm-agent-glyph { font-size: 10px; }
-.rm-agent-running .rm-agent-glyph { color: var(--ok); }
+/* 2026-08-01: was var(--ok) — the RETIRED green (see --done's note). A live
+   session's glyph must speak the same --running green as every other
+   running signal, not a second, dimmer green nothing else uses. */
+.rm-agent-running .rm-agent-glyph { color: var(--running); }
 .rm-agent-stalled .rm-agent-glyph { color: var(--interrupt); }
 .rm-agent-unknown .rm-agent-glyph { color: var(--warn); }
 .rm-agent-text { font-size: 12px; }
@@ -1438,9 +1471,19 @@ button, a, [role="button"] { min-height: 24px; }
    though this rule never renders live today. ---- */
 .chip.rm-status { white-space: nowrap; }
 .chip.rm-status-not-started { color: var(--muted); border-color: var(--border2); }
-/* Operator 2026-07-30: green = ACTIVELY RUNNING only — an idle in-progress
-   plan's status chip must not read live. Accent, matching the title ladder. */
-.chip.rm-status-in-progress { color: var(--accent); border-color: var(--accent); }
+/* Hue-free, matching the title ladder above: "in-progress" is derived from
+   artifacts and is NOT a liveness claim. (Dead in the tree today — see the
+   block comment above — but kept consistent so a future caller cannot
+   resurrect the violet-means-active misread.) */
+.chip.rm-status-in-progress { color: var(--text); border-color: var(--border2); }
+/* The LIVE claim, and the one chip that is NOT dead: renderUnboundSessions
+   paints the top-of-tree "N running, unattributed to a task" summary with
+   it. Same green + tint as .chip.rm-task-running so "running" looks
+   identical everywhere it is claimed. */
+.chip.rm-status-running {
+  color: var(--running); border-color: var(--running); font-weight: 700;
+  background: color-mix(in srgb, var(--running) 18%, transparent);
+}
 .chip.rm-status-merged-unverified { color: var(--warn); border-color: var(--warn); }
 .chip.rm-status-complete { color: var(--done); border-color: var(--done); } /* retired --ok (green) — see --done's note */
 .chip.rm-status-stalled { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; cursor: pointer; }
