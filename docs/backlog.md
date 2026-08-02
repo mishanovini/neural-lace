@@ -3055,3 +3055,105 @@ are DECISION-RELEVANT, which is why a structurally-perfect card can still be unu
 **Trigger:** 7 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 0d old (threshold >7d).
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## CI-REQUIRED-CHECK-PR-ONLY-01 — the required check IS real; the defects are red-since-07-29 checks, an admin bypass, and a push/PR trigger asymmetry
+
+**Severity:** HIGH, OPEN. **Confidence:** PROVEN by protection API + PR #106 check rollup +
+run history + local reproduction, 2026-08-02, work account `MishaPT`.
+
+**CORRECTS an unmerged row.** Commit `10b4e5a` on branch `wip/harness-hardening-2026-07-29`
+(not on master) filed `CI-REQUIRED-CHECK-NAMES-NOTHING-01`, whose headline — "no workflow
+produces a check named `validate`" — is **FALSE**. When that branch merges, its row must be
+replaced by this one. That commit was itself a retraction of an earlier false claim ("you have
+no CI"); this is the second false headline in the same investigation, and the cause of both was
+reasoning from workflow-level `name:` fields without reading the produced check names.
+
+**REFUTED — claim (a).** `.github/workflows/pr-template-check.yml` declares `jobs: validate:`
+with **no** `name:` key. GitHub derives a check-run name from the job's `name:` when present and
+falls back to the **job ID** otherwise, so the produced check name is literally `validate` —
+exactly matching `required_status_checks.contexts: ["validate"]`. Decisive evidence, not
+inference: `gh pr view 106 --json statusCheckRollup` returns
+`{"name":"validate","workflowName":"PR Template Check","conclusion":"FAILURE"}`.
+The gate is real, it reports, and it is currently RED on #106.
+
+**CONFIRMED — claim (b).** `enforce_admins.enabled: false`. Owner pushes skip protection.
+
+**CONFIRMED but understated — claim (c).** Not "three consecutive pushes": `Evals` and
+`Server-side enforcement` have failed on **12 consecutive master pushes**, last green
+2026-07-29T23:09Z. `Secret scan CI backstop` failed once more (2026-08-01T13:48Z). Both
+failures reproduce locally:
+- `Evals` → `evals/golden/rules-index-coverage.sh` exits 1: 10 doctrine compacts lack an
+  `INDEX.md` row, 6 exceed the 3000-byte cap. **This is a regression of an already-fixed
+  defect** — backlog v69 (2026-07-17) records "5 over-cap doctrine compacts trimmed, Evals CI
+  GREEN again". Fix: `bash adapters/claude-code/scripts/manifest-check.sh --gen-index`.
+- `Server-side enforcement` → `plan-edit-validator.sh --self-test` = 15 passed / 4 failed
+  (F16-F19). Root cause is a shell bug, not a policy failure: `plan-edit-validator.sh:1467`
+  and `:1535` run `stat -c %Y "$f"`, which on a non-GNU `stat` emits a multi-line `stat -f`
+  style block; that block is then fed to `age=$((now - mtime))`, producing
+  `syntax error in expression (error token is ": "/tmp/...")`. The three sibling jobs
+  (credential-scan, harness-hygiene, no-test-skip) all pass.
+
+**PARTLY REFUTED — claim (d).** The premise "all six workflows trigger on `push:[master]` +
+`pull_request`" is wrong for two of six: `pr-template-check.yml` is `pull_request` **only**,
+and `synthetic-runner.yml` is weekly `schedule` + `pull_request` (paths-filtered). The
+*conclusion* stands and is confirmed: **no workflow has a `push:` trigger for any non-master
+branch**, so branch pushes run zero checks. `gh run list --limit 100` shows exactly one
+non-master branch with runs — `claude/busy-kare-3dba65`, and those are `pull_request`-triggered
+(PR #106), not push-triggered. The "13 branches on 07-31" count is also low: the repo activity
+API shows **20+ `branch_creation` events on 2026-07-31 alone**, plus non-master pushes to
+`wip/harness-hardening-2026-07-29`, `ws-ui-server-stable`, and three `harness/active-sessions/*`.
+
+**THE COUPLING TRAP — do not flip `enforce_admins` first.** Because `validate` is produced only
+by a `pull_request`-triggered workflow, a **push** to master can never produce it. Today that is
+harmless (`enforce_admins:false`). Setting `enforce_admins: true` while `validate` remains the
+required context would make direct pushes to master permanently unmergeable — the owner's normal
+push-to-master workflow would hard-stop with "Required status check 'validate' is expected".
+HYPOTHESIZED (standard GitHub protection semantics; not executed here — refuter: flip it and a
+direct master push still succeeds). **Fix the context list BEFORE touching `enforce_admins`.**
+
+**PR #106 is blocked by neither billing nor a phantom check.** `mergeable: MERGEABLE`,
+`mergeStateStatus: BEHIND`, `rebaseable: false`. `strict: true` (require branches up to date)
+is the blocker; the branch is behind master. Its `validate` check is additionally FAILURE, so
+the branch also needs a template-compliant PR body. Actions billing is not implicated: runs
+executed normally through 2026-08-02T00:41Z and `actions/permissions` returns `enabled:true`.
+
+**GENERALIZATION (retained from `10b4e5a`, and now proven both ways).** A required step whose
+IDENTIFIER does not match the thing that PRODUCES it is indistinguishable, in every inventory
+and dashboard, from a step that works. The converse is the trap this investigation actually hit:
+an identifier that LOOKS orphaned because the producer's name is implicit — GitHub's job-ID
+fallback — is indistinguishable from a genuine orphan. **Verify against the produced name, never
+the declared name, and never the absence of a declaration.**
+
+**Sweep run 2026-08-02 (identifier vs producer), results:**
+- `required_status_checks` — 1 context (`validate`), producer found. CLEAN.
+- manifest `entries[].hooks[]` — 0 missing of 127 references. CLEAN.
+- manifest `entries[].doctrine_file` — 0 missing of 106 references. CLEAN.
+- hook scripts on disk unreferenced by manifest — 0 of 112. CLEAN.
+- `settings.json.template` → disk — 0 missing of 56 referenced scripts. CLEAN.
+- manifest `wired_template:true` → template — 1 of 48 absent
+  (`lib/sessionstart-singleflight.sh`); **not a defect**, it is `source`d by
+  `session-start-auto-install.sh:595`, not wired as its own hook.
+- manifest `selftest:true` → `--self-test` branch present — **1 of 96 fails**:
+  `adapters/claude-code/hooks/runtime-verification-reviewer.sh` has no `--self-test` handler,
+  and its only invoker is `adapters/claude-code/attic/pre-stop-verifier.sh:587` (retired to
+  attic). The manifest asserts a capability the artifact does not have, for a script nothing
+  live calls. **This is the one true in-repo instance of the class.** Fix: drop `selftest` from
+  the `runtime-verification` entry's second hook, or retire the script alongside its caller.
+- **Sweep-method caveat, filed because it is the same class:** the first three runs of this
+  sweep reported 127/127 and 106/106 "MISSING" — a total false positive. Cause: `jq` on this
+  machine writes **CRLF** when redirected to a file, so `read` produced `foo.sh\r` and every
+  `[ -e ]` test failed. Any sweep that shells `jq > file` on Windows must `tr -d '\r'`.
+  Consistent with the standing `od -c` lesson (NL-FINDING-038).
+
+**FIX, ordered (each independent; commands in the 2026-08-02 session report):**
+1. Regenerate the doctrine index + trim over-cap compacts → re-greens `Evals`.
+2. Fix the `stat -c %Y` arithmetic in `plan-edit-validator.sh:1467,1535` → re-greens
+   `Server-side enforcement`.
+3. Only then widen `required_status_checks.contexts` to include push-produced job names
+   (`Bash hooks --self-test`, `All-checks summary`, `Golden behavioral tests`,
+   `Credential + hygiene-denylist scan (defense-in-depth backstop)`).
+4. Only after (3) is green, decide `enforce_admins` — it converts push-to-master into a
+   PR-only workflow.
+5. Branch-push triggers are a COST decision, not a correctness one: adding `push:` for all
+   branches multiplies Actions minutes by the ~20-branches/day worktree churn. Recommend
+   `push: branches-ignore: [worktree-*, harness/active-sessions/*]` if adopted at all.
