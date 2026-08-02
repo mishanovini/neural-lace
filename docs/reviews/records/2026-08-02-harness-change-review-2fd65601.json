@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260802-2fd65601",
+  "created_at": "2026-08-02T13:30:15Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer(portability-round)",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/backlog.md",
+  "change_ref": {
+    "commit_sha": "65fb58f",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/runtime-verification-executor.sh",
+      "blob_sha": "8e3dfe60c329564e176055b3c001318a5957b23d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-push-gate.sh",
+      "blob_sha": "1a7b589bb550ffd1a671802b6c9dd99b997256c3"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "10eefbf90cb2aa305fcefe2ab0f5c7bed69712db"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "agent af70ede6f3d966670 (session d3059d78)",
+    "verdict_quote": "Cherry-pick f90f15d and 1a275ab — I reproduced every load-bearing number independently (25/4 -> 29/0; the 25/4 -> 28/1 scenario-18 mutation; a stronger re-arm mutation showing 13/14 went from silently-passing to catching a 19-byte and a 14-byte write; 66/11 -> 73/3/1 with the 11 decomposed assertion-by-assertion) and the repaired fixtures are strengthened rather than relaxed.",
+    "findings_summary": "PASS on both code commits. Executor: cygpath-normalized file:// fixtures take the suite 25/4 -> 29/0 AND de-vacuum three assertions (scenario 18's red twin proven real by mutation 25/4 -> 28/1; negative fixtures 13/14 proven to now catch a re-armed executor that previously slipped through). fp_expectation denominators named (16/25=64% all, 16/21=76% unique). grep -- guard completed at 2 further sites. bypass_paths clause (d) added for the read-only substring oracle. Push-gate: 11 Windows failures decomposed into 7 fixable (symlink via --cacheinfo 120000, filemode via --chmod, unrunnable MSYS shim), 1 structurally-impossible (backslash on NTFS, LOUD skip with a detected-not-hardcoded guard and its own counter), 3 GENUINE production defect (BSD-first stat leaves the push-gate operator override DEAD on GNU/Windows) reported not fixed. Reviewer verified the skip cannot mask a failure and the repaired fixtures assert their original intent."
+  },
+  "written_by": "integration session d3059d78 (Misha-Laptop takeover)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}
