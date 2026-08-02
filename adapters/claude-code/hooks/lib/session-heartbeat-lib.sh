@@ -31,8 +31,18 @@
 #   {"schema":1,"session_id":"...","pid":12345,"cwd":"C:/...",
 #    "repo_root":"C:/...","worktree_root":"C:/... or same as repo_root",
 #    "branch":"...","model":"...","last_activity_ts":"ISO-8601-UTC",
-#    "last_event":"start|turn-end|compact|resume",
+#    "last_event":"start|start-auto|prompt|tool-use|turn-end|turn-end-auto|
+#                  compact|compact-auto|resume",
 #    "marker_state":"DONE|PAUSING|BLOCKED|CONTINUING|none"}
+#
+# last_event is a FREE-STRING field by design (hb_write stores whatever it
+# is given; scripts/session-heartbeat.sh's ALLOWED_EVENTS is the writer-side
+# allow-list). The enumeration above is descriptive — every spelling this
+# repo actually emits as of 2026-08-02, including the ADR-061 D2 `-auto`
+# reentry variants and the `prompt`/`tool-use` direct-wiring events. It is
+# NOT a contract: no consumer in this repo branches on the value (verified
+# 2026-08-02), so a new event class needs no reader change — but this list
+# going stale hides which call-sites exist, so extend it when you add one.
 #
 # STALENESS IS NEVER WRITTEN — it is always computed on read (law 1):
 #   stale = (now - last_activity_ts > OBS_STALE_MIN minutes)

@@ -689,6 +689,50 @@ function envMinutes(varName, defaultMinutes) {
 // (session-heartbeat-lib.sh's own throttled/stale states) cannot flap a
 // long-running build between in-progress and "stalled: crashed" (F6).
 //
+// THE WINDOW WAS 24h UNTIL 2026-08-01 — reduced to 6h, and here is why the
+// original number was never really a choice. Until that date NOTHING
+// refreshed a heartbeat after SessionStart, so `last_activity_ts` was
+// SESSION START TIME, not activity time; a 24h window was the only thing
+// keeping a day-long session on the board at all. It was compensating for a
+// broken input, not expressing a staleness policy.
+//
+// PROVEN (observable, re-derived independently by harness-reviewer
+// 2026-08-02): the turn-end touch at the tail of workstreams-stop-writer.sh
+// — behind that hook's 30s-547s member fork loop — does not run. All 14
+// heartbeat files read "last_event":"start"; the signal ledger holds 535
+// stop-verdict-dispatcher turn-traces against 200 stop-writer ones, the
+// latter last emitted 2026-07-31T17:18:29Z; and on 2026-08-01 session
+// d3059d78 emitted 27 dispatcher turn-traces with ZERO heartbeat updates.
+// HYPOTHESIZED (mechanism): which kill ends that hook — the 60s hook
+// timeout is contradicted by 154 of those traces recording total_ms >
+// 60000 (max 571,816ms) while still reaching an emit nine lines above the
+// touch; the ~43s hb_write dying at the tail fits equally well. See
+// adapters/claude-code/scripts/session-heartbeat.sh's header for the full
+// split and its refuter. The fix holds under either mechanism.
+//
+// With the refresh now wired directly (settings.json.template
+// UserPromptSubmit + Stop -> scripts/session-heartbeat.sh touch), a live
+// session re-stamps at least twice per turn, so `activeMs` (30min) finally
+// means "working right now" and this window can do its actual job:
+// bounding how long a GONE session keeps claiming the board.
+//
+// 6h, AND THE WORST CASE IT DELIBERATELY DOES NOT COVER. The two known
+// legitimate quiet stretches each fit: an API rate-limit pause (~5h) and
+// limit-resume.sh's own LIMIT_RESUME_MAX_BACKOFF_SECONDS (7200s = 2h). But
+// they can COMPOSE — a limit pause whose resume attempt then backs off
+// maximally is ~7h of silence, which EXCEEDS this window, and such a
+// session renders 'crashed'/stalled for roughly the last hour before it
+// would have resumed. That false-negative is accepted, not overlooked: it
+// is recoverable (the session resumes and the next tick re-greens it) and
+// it is strictly preferable to the false-POSITIVE this change exists to
+// close, where a session that died last night renders "running" all of the
+// next morning. The precise state for that case already exists unused —
+// hb_classify's `throttled` (stale + pid alive + API-error-shaped
+// transcript tail) — and teaching this age-only classifier to consume it is
+// the principled fix, filed as an nl-issue follow-up rather than widened
+// into here. Still fully env-overridable
+// (COCKPIT_SESSION_ACTIVITY_WINDOW_MIN), so reverting is one flip.
+//
 // `taskStartedIdleMs` (roadmap-routes.js false-eternal-running fix,
 // 2026-07-30) — a DIFFERENT axis from the two above: those classify a
 // SESSION's own heartbeat age; this bounds how long a TASK's own
