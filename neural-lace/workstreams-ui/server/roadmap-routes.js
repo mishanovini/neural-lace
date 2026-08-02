@@ -91,10 +91,27 @@
 //   added_ts, added_mid_build,
 //   status: {
 //     value: 'not-started'|'in-progress'|'merged-unverified'|'complete'
-//            |'stalled'|'unknown',  // the six-value enum (C5)
+//            |'stalled'|'unknown',  // the six DERIVED-FROM-ARTIFACTS values
+//                                   // a plan/task node can carry (C5).
+//                                   // 'running' is NOT one of them and never
+//                                   // will be — see running_now below; it is
+//                                   // an AGENT-leaf / UnboundSessionsNode
+//                                   // value only (2026-08-01).
 //     reason, reason_class, label, since,
 //     unblock,                      // OPTIONAL {label, hash}
 //   },
+//   running_now: bool,              // 2026-08-01 — the LIVE overlay, ORTHOGONAL
+//                                   // to status.value: "a heartbeat-backed
+//                                   // session is attending this item or a
+//                                   // descendant RIGHT NOW". Derived ONLY from
+//                                   // live signals, never from plan text; see
+//                                   // stampRunningNow for the exact gates and
+//                                   // for why this is a separate field rather
+//                                   // than a seventh status value. Present on
+//                                   // EVERY node (plan, task, and the
+//                                   // UnboundSessionsNode); false is the
+//                                   // honest default — no live evidence means
+//                                   // the client claims nothing.
 //   progress: {done,total} | null,
 //   completed_at,                   // ISO ts | ''
 //   from_requests: [{id,title}],    // C6 — the ask(s), if any, that link to
@@ -102,15 +119,35 @@
 //                                   // (never fabricated, never required)
 //   roll_up: { <class>: {count, exemplar} },
 //   children: [RoadmapItem],        // task kind
+//   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
+//                                   // BOTH kinds (2026-08-01). On a TASK: the
+//                                   // sessions attached to it via task_started
+//                                   // (deriveLiveAgentLeaves). On a PLAN: only
+//                                   // attributed dispatches whose task= id
+//                                   // resolves to no task in that plan
+//                                   // (deriveUnbindableDispatchLeaves); [] on
+//                                   // every plan without one. Each member's
+//                                   // status.value is 'running'|'stalled'|
+//                                   // 'unknown' — a NON-EMPTY array is not a
+//                                   // running claim (see the client's
+//                                   // RUNNING-CLAIM block).
 //   // ---- task-kind-only fields (round-6 gap 1 + round-7 7A/7B/7B-i) ----
 //   lead_points: [string],
 //   subtasks: [{title, body_points: [string]}],
-//   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
 // }
 // UnboundSessionsNode (R9-7b, OPTIONAL — null when no such session exists,
 // honest absence, never a fake/empty node) = {
 //   id: '(unattributed)', kind: 'unbound-sessions', title,
-//   status: {value:'in-progress', label, reason:'', since:''},
+//   status: {value:'running', label, reason:'', since:''},
+//                                   // 'running', NOT 'in-progress' (fixed
+//                                   // 2026-08-01): the label always read
+//                                   // "N running" while the value denied it,
+//                                   // so the client's AGENT_STATUS_GLYPH —
+//                                   // which has no 'in-progress' key —
+//                                   // rendered live sessions with the UNKNOWN
+//                                   // glyph. Members carry 'running' too.
+//   running_now: true,              // always, by construction: the node only
+//                                   // exists when >=1 such session is live.
 //   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
 // }
 //
@@ -901,15 +938,15 @@ function deriveUnbindableDispatchLeaves(slug, tasks, startedTs, sessionsByTask, 
   const out = [];
   Object.keys(sessionsByTask || {}).forEach((taskId) => {
     if (realIds[taskId]) return; // bound normally — deriveTaskNode owns it
-    const sids = sessionsByTask[taskId] || [];
-    if (!sids.length) return;
+    const usable = (sessionsByTask[taskId] || []).filter(Boolean);
+    if (!usable.length) return;
     const startedAtMs = startedTs[taskId] ? Date.parse(startedTs[taskId]) : null;
     // NaN (present-but-unparseable) counts as EXPIRED, not as absent — the
     // same "malformed is not absent" direction deriveItemStatus takes; a
     // timestamp we cannot read must never license a running claim.
     const startedIdleExpired = startedAtMs === null || isNaN(startedAtMs) ||
       (hbCtx.nowMs - startedAtMs > th.taskStartedIdleMs);
-    const leaves = deriveLiveAgentLeaves(slug + '/(unbindable)', sids, hbCtx.heartbeats,
+    const leaves = deriveLiveAgentLeaves(slug + '/(unbindable)', usable, hbCtx.heartbeats,
       hbCtx.nowMs, startedIdleExpired, 'in-progress');
     leaves.forEach((leaf) => {
       // The id the dispatch actually sent, verbatim and quoted — this is the
@@ -917,11 +954,39 @@ function deriveUnbindableDispatchLeaves(slug, tasks, startedTs, sessionsByTask, 
       leaf.title += ' — dispatched for task "' + taskId + '", which is not a task id in this plan';
       out.push(leaf);
     });
-    // R9-7b bookkeeping, same rule deriveTaskNode applies: a session
-    // rendered SOMEWHERE in the tree is attributed, so the unattributed node
-    // must not also claim it. Without this the same agent would appear twice
-    // with two different explanations.
-    sids.forEach((sid) => { if (hbCtx.boundSessionIds) hbCtx.boundSessionIds[sid] = true; });
+    // R9-7b bookkeeping — SCOPED TO RUNNING LEAVES ONLY (2026-08-01,
+    // harness-reviewer Critical). This used to mark EVERY session id it
+    // touched as bound, including ones whose leaf renders 'stalled' or
+    // 'unknown'. Marking a session bound removes it from the unattributed
+    // node — the ONE surface in the whole cockpit that says "N running" —
+    // so a session with a heartbeat seconds old vanished from the running
+    // count merely because the dispatch it sent for THIS plan was older
+    // than the 60-minute taskStartedIdleMs window. Reviewer A/B on one
+    // fixture: with this function unscoped the node read "1 running"; with
+    // the function stubbed out it read "3 running". That is the exact
+    // R9-7 violation ("running work is NEVER invisible") this whole change
+    // exists to remove, re-introduced by the change itself.
+    //
+    // THE ASYMMETRY IS DELIBERATE. Binding is a claim that some OTHER row
+    // already accounts for this session as live. Only a 'running' leaf makes
+    // that claim; a 'stalled'/'unknown' leaf explicitly says the opposite.
+    // So a stalled leaf renders on the plan row AND its session still
+    // counts in the unattributed node. Those are not contradictory: the
+    // plan row's claim is about the DISPATCH (it went quiet), the node's is
+    // about the SESSION (it is alive). Both are true, and the leaf's own
+    // text says which is which.
+    //
+    // Note derive-lib.js's activityThresholdsMs header warns that the
+    // 60-minute taskStartedIdleMs produces false negatives for long-running
+    // single-dispatch work — precisely the agents the operator most wants
+    // to see marked running. That makes fail-open here the only safe side.
+    // deriveLiveAgentLeaves maps its (already-truthy) id list 1:1 and in
+    // order, so index i of `leaves` is the leaf for `usable[i]`.
+    leaves.forEach((leaf, i) => {
+      if (leaf.status && leaf.status.value === 'running' && hbCtx.boundSessionIds) {
+        hbCtx.boundSessionIds[usable[i]] = true;
+      }
+    });
   });
   return out;
 }
@@ -975,7 +1040,7 @@ function deriveUnbindableDispatchLeaves(slug, tasks, startedTs, sessionsByTask, 
 // ----------------------------------------------------------------------
 function stampRunningNow(node) {
   if (!node) return false;
-  const own = (node.live_sessions || []).some((s) => s && s.status && s.status.value === 'running');
+  const own = hasOwnRunningLeaf(node); // ONE definition, shared with computeRollUps
   let descendant = false;
   (node.children || []).forEach((c) => { if (stampRunningNow(c)) descendant = true; });
   (node.child_plans || []).forEach((c) => { if (stampRunningNow(c)) descendant = true; });
@@ -1566,11 +1631,33 @@ function absorbOneChildRollUp(agg, child) {
   // folds the task_started idle-expiry into that value — see its header —
   // so this one check also inherits that fix, with no separate age math
   // needed here).
-  const hasRunningLeaf = (child.live_sessions || []).some((s) => s && s.status && s.status.value === 'running');
-  if (hasRunningLeaf) absorbIntoRollUp(agg, 'running', 1, child.id);
+  //
+  // COUNTED EXACTLY ONCE (2026-08-01, harness-reviewer Major 1). Since
+  // a84f422 a PLAN can carry its own live_sessions (an attributed dispatch
+  // whose task= id resolves to no task — deriveUnbindableDispatchLeaves), so
+  // "running leaves live only on task children" is no longer true. The rule
+  // is now split by who owns the stamp, so no session is ever counted twice:
+  //   - TASK children do NOT self-stamp (a "1 running" badge on a leaf task
+  //     row would just duplicate its own column-3 "running" chip), so the
+  //     PARENT counts them here.
+  //   - PLAN nodes self-stamp in computeRollUps below, so this function must
+  //     NOT count them again — their contribution arrives via the
+  //     `child.roll_up` absorption at the bottom of this function.
+  if (!nodeSelfStampsRunning(child) && hasOwnRunningLeaf(child)) {
+    absorbIntoRollUp(agg, 'running', 1, child.id);
+  }
   Object.keys(child.roll_up || {}).forEach((cls) => {
     absorbIntoRollUp(agg, cls, child.roll_up[cls].count, child.roll_up[cls].exemplar);
   });
+}
+
+// hasOwnRunningLeaf(node) / nodeSelfStampsRunning(node) — the two halves of
+// the count-exactly-once rule documented in absorbOneChildRollUp above.
+function hasOwnRunningLeaf(node) {
+  return (node && node.live_sessions || []).some((s) => s && s.status && s.status.value === 'running');
+}
+function nodeSelfStampsRunning(node) {
+  return !!node && node.kind !== 'task';
 }
 
 function computeRollUps(node) {
@@ -1579,6 +1666,18 @@ function computeRollUps(node) {
     computeRollUps(child);
     absorbOneChildRollUp(agg, child);
   });
+  // A node's OWN live sessions roll up too (2026-08-01, harness-reviewer
+  // Major 1). Before this, computeRollUps aggregated ONLY children, so a
+  // plan whose only running evidence was its own unbindable-dispatch leaf
+  // got roll_up:{} — and the client's deriveTaskSpanLabel, which reads
+  // roll_up.running, printed "<id> next" while the title rendered GREEN.
+  // That is a colour-only running claim, which app.css's own WCAG 1.4.1
+  // note promises never happens (the word "running" is the non-colour
+  // carrier). Now the plan row gets its "N running" roll-up badge and its
+  // "<id> running" task-span token like any other running ancestor.
+  if (nodeSelfStampsRunning(node) && hasOwnRunningLeaf(node)) {
+    absorbIntoRollUp(agg, 'running', 1, node.id);
+  }
   node.roll_up = agg;
 }
 

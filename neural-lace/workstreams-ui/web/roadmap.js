@@ -89,6 +89,15 @@
     'complete': 'complete',
     'stalled': 'stalled',
     'unknown': 'status unknown',
+    // 'running' is not a plan/task status.value — it is an AGENT-leaf and
+    // UnboundSessionsNode value (server: deriveLiveAgentLeaves,
+    // deriveUnboundSessionsNode). It is mapped here anyway because this
+    // object is the client's LAST-RESORT label for any status.value that
+    // reaches a chip, and an unmapped value falls through to printing the
+    // raw enum token. Same half-swept-map class as AGENT_STATUS_GLYPH, which
+    // had no 'in-progress' key and so rendered live sessions with the
+    // UNKNOWN glyph for months (2026-08-01).
+    'running': 'running',
   };
 
   // Roll-up precedence (C1 + adjudication (b)): governs display ORDER only —
@@ -612,6 +621,13 @@
     'stalled': 'rm-title-stalled',
     'merged-unverified': 'rm-title-merged-unverified',
     'unknown': 'rm-title-unknown',
+    // Same completeness rule as STATUS_LABEL above: 'running' is not a
+    // plan/task status.value today, and titleStateClass reaches
+    // rm-title-running through running_now rather than through this map —
+    // but a node that DID arrive carrying status.value 'running' (the
+    // UnboundSessionsNode shape) must not fall through to a classless
+    // title. Half-swept client maps are the defect class here.
+    'running': 'rm-title-running',
   };
   // titleStateClass(item) — 2026-08-01, operator verbatim: "All the plan
   // items in here that are purple are not representing what they're
@@ -980,6 +996,7 @@
   // collapsible node (server: deriveUnboundSessionsNode -> payload
   // `unbound_sessions`; null when nothing is live — honest absence, no
   // fake node). Same rm-agents markup/classes as the task-level leaves.
+  // RENDER-UNBOUND-SESSIONS-BEGIN
   function renderUnboundSessions(node) {
     var det = document.createElement('details');
     det.className = 'rm-unbound-sessions';
@@ -1014,6 +1031,7 @@
     det.appendChild(list);
     return det;
   }
+  // RENDER-UNBOUND-SESSIONS-END
 
   // openPlanDocModal(project, docPath) — reuses the EXISTING docModal DOM
   // app.js already wires (Esc, docClose, docScrim all close it regardless

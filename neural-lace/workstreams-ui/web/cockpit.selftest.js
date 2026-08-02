@@ -1552,7 +1552,11 @@ ok('R9-3 the TREE row no longer carries a per-item project chip (Round 12: redun
 ok('R9-5 "from your request(s)" gates on a non-empty link list — the "(no captured request)" filler line is gone',
   !/no captured request/.test(roadmapJsNoComments));
 // R9-7: the unbound-sessions node renders at the top of the roadmap body.
-ok('R9-7 renderUnboundSessions exists, renders rm-agents rows, and renderAll mounts it from payload.unbound_sessions',
+// 2026-08-02: scoped down to what a source regex can honestly prove — that
+// renderAll is WIRED to payload.unbound_sessions. It used to also claim it
+// "renders rm-agents rows", which a regex cannot show; that half is now
+// really executed by R21-13/R21-13c against the rendered output.
+ok('R9-7 renderAll is wired to payload.unbound_sessions and mounts the rm-unbound-sessions node (WIRING only — what the node actually renders is executed in R21-13*)',
   /function renderUnboundSessions/.test(roadmapJsNoComments) &&
   /unbound_sessions/.test(roadmapJsNoComments) && /rm-unbound-sessions/.test(roadmapJsNoComments));
 // R9-6: the landing sidebar — compact My-items + Backlog mirrors of the
@@ -3046,13 +3050,95 @@ ok('R21-11 running_now can NEVER out-shout an exception colour even if a future 
 ok('R21-12 the running claim is READ from the server, never RE-DERIVED client-side (same law R13-15 pins for the task-span token): a payload carrying a live running leaf but running_now:false — the exact shape the server emits when the task-level idle gate expired — is NOT painted green by the client second-guessing it',
   titleClass({ id: 'p/3', kind: 'task', status: { value: 'in-progress' }, running_now: false,
     live_sessions: [{ id: 'p/3/agent/s1', status: { value: 'running', label: 'running' } }] }) === 'rm-title-in-progress');
+ok('R21-15 EXECUTED: a node arriving with status.value "running" (the UnboundSessionsNode shape) resolves through TITLE_STATE_CLASS to rm-title-running rather than falling through to a classless title — the half-swept-client-map defect class (AGENT_STATUS_GLYPH had no "in-progress" key and silently rendered live sessions as unknown for months)',
+  titleClass({ id: 'u', kind: 'unbound-sessions', status: { value: 'running' } }) === 'rm-title-running');
+ok('R21-16 STATUS_LABEL covers "running" too — it is the client\'s last-resort label for any status.value that reaches a chip, and an unmapped value falls through to printing the raw enum token',
+  (function () {
+    const m = roadmapJs.match(/var STATUS_LABEL = \{[\s\S]*?\};/);
+    if (!m) return false;
+    const box = {};
+    vmMod.createContext(box);
+    vmMod.runInContext(m[0] + '\nvar __v = STATUS_LABEL["running"];', box);
+    return box.__v === 'running';
+  })());
 ok('R21-14 DELIBERATE, PINNED: a shipped/complete master that still carries a genuinely running child plan renders GREEN, not the dim complete grey — R9-7 ("running work is NEVER invisible") outranks the tidiness of the Shipped band, and dimming it would hide live work behind a "this is finished" colour. The three ATTENTION states keep their own colours instead (asserted in R21-11); "complete" is the one non-attention state that must NOT be in RUNNING_YIELDS_TO',
   titleClass({ id: 'm', kind: 'plan', status: { value: 'complete' }, running_now: true }) === 'rm-title-running' &&
   titleClass({ id: 'm2', kind: 'plan', status: { value: 'complete' }, running_now: false }) === 'rm-title-complete');
-ok('R21-13 the top-of-tree unattributed-live-sessions summary renders the RUNNING chip + running title, not the in-progress ones — this node is the only place the cockpit says "N running" today, and it was hard-coded to the in-progress classes',
-  /rm-title rm-title-running/.test(roadmapJsNoComments) &&
-  /'chip rm-status rm-status-running'/.test(roadmapJsNoComments) &&
-  !/'chip rm-status rm-status-in-progress'/.test(roadmapJsNoComments));
+// R21-13 (2026-08-02): was THREE source regexes over roadmap.js. That is the
+// weakest possible evidence for the ONE node the operator will actually watch
+// change colour — and this file's own history includes a scenario that passed
+// on a source match while the feature was broken. Now it EXECUTES
+// renderUnboundSessions against the exact payload shape the server emits and
+// asserts the produced className list + glyph characters.
+const renderUnboundSrc = extractMarkedBlock(roadmapJs, '// RENDER-UNBOUND-SESSIONS-BEGIN', '// RENDER-UNBOUND-SESSIONS-END');
+const agentGlyphSrc = (roadmapJs.match(/var AGENT_STATUS_GLYPH = \{[^}]*\};/) || [''])[0];
+ok('R21-13a selftest can locate the RENDER-UNBOUND-SESSIONS anchor and the real AGENT_STATUS_GLYPH map (source-execution harness precondition)',
+  !!renderUnboundSrc && !!agentGlyphSrc);
+function runUnbound(node) {
+  // FakeNode + the three members renderUnboundSessions touches that the
+  // shared makeFakeDom does not model (dataset/open/addEventListener). Only
+  // formatAge is stubbed, and nothing below asserts on age text.
+  const base = makeFakeDom();
+  const sandbox = {
+    document: {
+      createElement: function (tag) {
+        const n = base.createElement(tag);
+        n.dataset = {};
+        n.open = false;
+        n.addEventListener = function () {};
+        n.setAttribute = function () {};
+        return n;
+      },
+    },
+  };
+  vmMod.createContext(sandbox);
+  const code = elSrc + '\n' + agentGlyphSrc +
+    '\nvar openSet = {};\nfunction formatAge() { return "2m"; }\n' + renderUnboundSrc +
+    '\nvar __d = renderUnboundSessions(' + JSON.stringify(node) + ');' +
+    '\nvar __sum = __d.children[0];' +
+    '\nvar __out = {' +
+    '  summaryClasses: __sum.children.map(function (c) { return c.className; }),' +
+    '  summaryTexts: __sum.children.map(function (c) { return c.textContent; }),' +
+    '  agentRows: __d.children[1].children.map(function (li) {' +
+    '    return { cls: li.className, glyph: li.children[0].textContent };' +
+    '  })' +
+    '};';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return sandbox.__out;
+}
+// The VERBATIM shape deriveUnboundSessionsNode emits (status.value 'running'
+// on the node AND every member, post-2026-08-01 split-brain fix).
+const UNBOUND_NODE_PAYLOAD = {
+  id: '(unattributed)', kind: 'unbound-sessions',
+  title: 'live sessions not yet attributed to a task (2)',
+  status: { value: 'running', label: '2 running, unattributed to a task', reason: '', since: '' },
+  running_now: true,
+  live_sessions: [
+    { id: 'unattributed/sess-a', kind: 'agent', title: 'session sess-a (br)', status: { value: 'running', label: 'running', since: '2026-08-01T00:00:00Z' } },
+    { id: 'unattributed/sess-b', kind: 'agent', title: 'session sess-b (br)', status: { value: 'running', label: 'running (quiet)', since: '2026-08-01T00:00:00Z' } },
+  ],
+};
+const unboundOut = runUnbound(UNBOUND_NODE_PAYLOAD);
+ok('R21-13 EXECUTED: the top-of-tree unattributed-live-sessions summary produces the RUNNING title class and the RUNNING chip class — not the in-progress ones it was hard-coded to. This node is the only place the cockpit says "N running" today, so it is the one the operator sees change colour',
+  !unboundOut.__error &&
+  unboundOut.summaryClasses.indexOf('rm-title rm-title-running') !== -1 &&
+  unboundOut.summaryClasses.indexOf('chip rm-status rm-status-running') !== -1 &&
+  !unboundOut.summaryClasses.some((c) => /rm-status-in-progress|rm-title-in-progress/.test(c)),
+  JSON.stringify(unboundOut));
+ok('R21-13b EXECUTED: the chip carries the server\'s own "N running, unattributed to a task" TEXT — colour is never the only carrier (WCAG 1.4.1)',
+  !unboundOut.__error && unboundOut.summaryTexts.indexOf('2 running, unattributed to a task') !== -1,
+  JSON.stringify(unboundOut.summaryTexts));
+ok('R21-13c EXECUTED: each live session row gets the rm-agent-running class and the FILLED glyph "●" — the defect was that members stamped "in-progress" hit no AGENT_STATUS_GLYPH key and fell through to the UNKNOWN glyph "○"',
+  !unboundOut.__error && unboundOut.agentRows.length === 2 &&
+  unboundOut.agentRows.every((r) => r.cls === 'rm-agent rm-agent-running' && r.glyph === '●'),
+  JSON.stringify(unboundOut.agentRows));
+ok('R21-13d MUTANT CONTROL: fed the OLD pre-fix payload (members stamped "in-progress"), the same renderer produces the unknown glyph — proving these assertions read the payload\'s status.value and are not just describing whatever the renderer does',
+  (function () {
+    const old = JSON.parse(JSON.stringify(UNBOUND_NODE_PAYLOAD));
+    old.live_sessions.forEach((s) => { s.status.value = 'in-progress'; });
+    const out = runUnbound(old);
+    return !out.__error && out.agentRows.every((r) => r.glyph === '○' && r.cls === 'rm-agent rm-agent-in-progress');
+  })());
 
 // ============================================================
 // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — the dead-`file://`-href CLASS SWEEP.
