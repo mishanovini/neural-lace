@@ -519,6 +519,20 @@ run_daemon() {
   local count=0
   while true; do
     run_tick
+    # HR-F1: release the per-tick single-flight guard now that this pass's
+    # work is done. single-flight-lib.sh's recursion var is a run-to-exit
+    # assumption (see its header, "THE RUN-TO-EXIT ASSUMPTION") and THIS
+    # loop is a long-lived resident process re-entering the SAME guard
+    # <name> every pass -- without an explicit release, pass 1 would set
+    # the recursion var and every later pass in this SAME process would
+    # see "recursion detected" and skip forever (the daemon ticks exactly
+    # once, then wedges on its own guard). sf_release is a safe no-op when
+    # this process never actually acquired the guard this pass (e.g. it
+    # was skipped by HALT or by a genuinely concurrent holder) -- it only
+    # ever releases a hold THIS process itself set.
+    if declare -F sf_release >/dev/null 2>&1; then
+      SF_STATE_DIR="$(_nm_state_dir)/single-flight" sf_release "nl-maintenance-tick"
+    fi
     count=$((count + 1))
     if [[ "$max_iterations" -gt 0 && "$count" -ge "$max_iterations" ]]; then
       break
@@ -533,6 +547,49 @@ run_daemon() {
 # BEFORE any real spawn, always returns 0, tolerate-absent everywhere.
 # ----------------------------------------------------------------------
 _nm_watchdog_stale_seconds() { printf '%s' "${NM_WATCHDOG_STALE_SECONDS:-300}"; }
+
+# _nm_pid_cmdline <pid> — best-effort full command line for <pid>. Tries
+# /proc/<pid>/cmdline first (present under MSYS2/Git-Bash on Windows and on
+# Linux; NUL-separated argv, translated to spaces), falling back to
+# `ps -fp <pid>` (covers macOS/BSD and any environment lacking /proc; `-f`
+# is required here — a bare `ps -p` on this repo's MSYS2 ps prints only the
+# executable path in COMMAND, e.g. "/usr/bin/bash", never the args, which
+# would make identity verification impossible). Empty output/rc 1 means
+# "could not determine" — callers MUST treat that as a non-match (fail
+# closed: never kill on unknown identity).
+_nm_pid_cmdline() {
+  local pid="$1" out
+  if [[ -r "/proc/$pid/cmdline" ]]; then
+    out="$(tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null)"
+    if [[ -n "$out" ]]; then
+      printf '%s' "$out"
+      return 0
+    fi
+  fi
+  out="$(ps -fp "$pid" 2>/dev/null | tail -n +2)"
+  if [[ -n "$out" ]]; then
+    printf '%s' "$out"
+    return 0
+  fi
+  printf ''
+  return 1
+}
+
+# _nm_pid_is_daemon <pid> — rc 0 iff <pid>'s command line names BOTH
+# nl-maintenance and --daemon. This is the identity check the watchdog
+# MUST pass before it ever kills the pid named in daemon.pid: Windows
+# reuses PIDs, so an unverified kill against a stale/reused pid is
+# unbounded harm (kills an unrelated, innocent process); an identity
+# mismatch instead falls back to log-and-skip, which is bounded harm (at
+# worst one extra resident bash process until it exits on its own, or
+# until sf_release's per-pass fix (HR-F1) lets it keep ticking correctly).
+_nm_pid_is_daemon() {
+  local pid="$1" cmd
+  [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+  cmd="$(_nm_pid_cmdline "$pid")"
+  [[ -z "$cmd" ]] && return 1
+  [[ "$cmd" == *nl-maintenance* && "$cmd" == *--daemon* ]]
+}
 
 run_watchdog() {
   local hb hb_epoch now age stale
@@ -566,6 +623,32 @@ run_watchdog() {
   fi
 
   _nm_log "\"action\":\"watchdog-relaunch\",\"reason\":\"stale heartbeat\",\"heartbeat_age_s\":\"$(_nm_json_escape "$age")\""
+
+  # HR-F1: before relaunching, try to kill the OLD daemon named in
+  # daemon.pid -- but ONLY after verifying its command line actually names
+  # nl-maintenance --daemon. daemon.pid was written but never read before
+  # this fix, so old daemons (wedged on the recursion-guard bug above)
+  # accumulated forever, each relaunch piling a new one on top. Identity
+  # mismatch (missing pid file, dead pid, or a live pid whose command line
+  # doesn't match -- e.g. Windows reused the pid for an unrelated process)
+  # is ALWAYS log-and-skip, never kill: an unverified kill is unbounded
+  # harm (an innocent process dies); leaving a genuine stale daemon alive
+  # one extra relaunch cycle is bounded harm.
+  local old_pid; old_pid="$(cat "$(_nm_pid_path)" 2>/dev/null | tr -d '[:space:]')"
+  if [[ "$old_pid" =~ ^[0-9]+$ ]]; then
+    if _nm_pid_is_daemon "$old_pid"; then
+      _nm_log "\"action\":\"watchdog-kill\",\"pid\":\"${old_pid}\",\"reason\":\"stale heartbeat, verified nl-maintenance --daemon cmdline\""
+      if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+        echo "[nl-maintenance-watchdog self-test stub] would kill verified-stale daemon pid ${old_pid} — never signaled" >&2
+      else
+        echo "[nl-maintenance-watchdog] killing verified-stale daemon pid ${old_pid}" >&2
+        kill "$old_pid" 2>/dev/null || true
+      fi
+    else
+      _nm_log "\"action\":\"watchdog-kill-skip\",\"pid\":\"${old_pid}\",\"reason\":\"cmdline identity mismatch\""
+      echo "[nl-maintenance-watchdog] daemon.pid names ${old_pid} but its command line does not confirm nl-maintenance --daemon — NOT killing (log-and-skip; PIDs are reused)" >&2
+    fi
+  fi
 
   if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
     echo "[nl-maintenance-watchdog self-test stub] would relaunch: bash $(dirname "${BASH_SOURCE[0]}")/nl-maintenance.sh --daemon (heartbeat age: ${age}s) — never spawned" >&2
@@ -785,14 +868,69 @@ EOF
   _contains "$w10b" "self-test stub" "S10b stale heartbeat under HARNESS_SELFTEST logs the stub, never spawns real bash"
   _contains "$w10b" "would relaunch" "S10b stub names the relaunch it would have performed"
 
-  echo "Scenario 11: --daemon runs a bounded number of ticks then exits (NM_DAEMON_MAX_ITERATIONS test hook)"
+  echo "Scenario 11: --daemon under the REAL sf_guard (no SF_DISABLE) writes a fresh heartbeat on EVERY pass (HR-F1 -- was: the recursion guard was never released, so only the FIRST pass ever wrote a heartbeat and every later pass silently wedged, while the watchdog piled up relaunched daemons on top of the stuck one)"
   local s11_state="$tmp/s11"
-  NL_MAINT_STATE_DIR="$s11_state" SF_DISABLE=1 timeout 10 bash "$self_abs" --daemon --interval 0 --max-iterations 3 >/dev/null 2>&1 \
-    || NL_MAINT_STATE_DIR="$s11_state" SF_DISABLE=1 bash "$self_abs" --daemon --interval 0 --max-iterations 3 >/dev/null 2>&1
-  if [[ -f "$s11_state/daemon.heartbeat.json" ]]; then
-    echo "PASS: S11 --daemon with --max-iterations wrote a heartbeat and returned (did not hang)"; pass=$((pass+1))
+  mkdir -p "$s11_state"
+  local s11_hb="$s11_state/daemon.heartbeat.json"
+  local s11_epochs="$tmp/s11-epochs.txt"
+  : > "$s11_epochs"
+  local s11_cmd=()
+  if command -v timeout >/dev/null 2>&1; then
+    s11_cmd=(timeout 20)
+  fi
+  # interval=1, not 0: _nm_now is second-resolution (`date +%s`), so a
+  # zero-interval daemon can complete several passes inside the SAME
+  # second, making "distinct heartbeat writes" unobservable by timestamp
+  # alone -- a non-zero gap is what makes the distinct-epoch assertion
+  # below reliable and non-flaky, while exercising the exact same
+  # run_daemon loop the --interval 0 live/manual demo uses.
+  s11_cmd+=(bash "$self_abs" --daemon --interval 1 --max-iterations 3)
+  # SF_DISABLE=0 is REQUIRED here, not optional: the self-test's own setup
+  # (above) does `export SF_DISABLE=1` for every OTHER scenario's
+  # isolation, and that export is inherited by this backgrounded bash
+  # subprocess same as any child process. Without this override S11 would
+  # run the daemon with sf_guard fully bypassed -- the exact masking class
+  # REQ-A1 exists to remove (the old S11 ran under SF_DISABLE=1 and could
+  # not have caught HR-F1 even in principle). SF_STATE_DIR does not need a
+  # separate override the way S6 needs one: S11 goes through run_daemon ->
+  # run_tick, and run_tick prefixes its own sf_guard call with
+  # SF_STATE_DIR="$(_nm_state_dir)/single-flight" internally (same
+  # mechanism S7 already relies on) -- it is S6's direct, bypassing
+  # `_nm_tick_body` call (which invokes sf_halt_active straight off the
+  # raw $SF_STATE_DIR env var, with no such wrapper) that needs the
+  # explicit SF_STATE_DIR prefix S6 uses.
+  NL_MAINT_STATE_DIR="$s11_state" SF_DISABLE=0 "${s11_cmd[@]}" >"$tmp/s11.out" 2>"$tmp/s11.err" &
+  local s11_bg=$!
+  local s11_i=0
+  while [[ $s11_i -lt 60 ]]; do
+    if [[ -f "$s11_hb" ]]; then
+      sed -nE 's/.*"generated_at_epoch":([0-9]+).*/\1/p' "$s11_hb" 2>/dev/null >> "$s11_epochs"
+    fi
+    kill -0 "$s11_bg" 2>/dev/null || break
+    sleep 0.25 2>/dev/null || sleep 1
+    s11_i=$((s11_i + 1))
+  done
+  wait "$s11_bg" 2>/dev/null
+  if [[ -f "$s11_hb" ]]; then
+    sed -nE 's/.*"generated_at_epoch":([0-9]+).*/\1/p' "$s11_hb" 2>/dev/null >> "$s11_epochs"
+  fi
+  local s11_distinct
+  s11_distinct="$(sort -u "$s11_epochs" 2>/dev/null | sed '/^$/d' | wc -l | tr -d '[:space:]')"
+  [[ "$s11_distinct" =~ ^[0-9]+$ ]] || s11_distinct=0
+  if [[ -f "$s11_hb" ]]; then
+    echo "PASS: S11a heartbeat file present after a bounded (max-iterations=3) daemon run under the REAL guard"; pass=$((pass+1))
   else
-    echo "FAIL: S11 expected a heartbeat file after a bounded daemon run" >&2; fail=$((fail+1))
+    echo "FAIL: S11a expected a heartbeat file after a bounded daemon run" >&2; fail=$((fail+1))
+  fi
+  if [[ "$s11_distinct" -ge 2 ]]; then
+    echo "PASS: S11b >= 2 distinct heartbeat epochs observed across 3 passes (${s11_distinct} distinct) -- proves the daemon actually ticked more than once instead of writing one heartbeat and wedging"; pass=$((pass+1))
+  else
+    echo "FAIL: S11b expected >= 2 distinct heartbeat writes under the real guard (HR-F1 recursion-wedge regression) -- observed ${s11_distinct} distinct epoch(s): $(tr '\n' ' ' < "$s11_epochs" 2>/dev/null)" >&2; fail=$((fail+1))
+  fi
+  if grep -q "recursion detected" "$tmp/s11.err" 2>/dev/null; then
+    echo "FAIL: S11c sf_guard recursion-skip fired inside run_daemon's own loop (HR-F1 regression -- sf_release is not running between passes): $(cat "$tmp/s11.err" 2>/dev/null)" >&2; fail=$((fail+1))
+  else
+    echo "PASS: S11c no sf_guard recursion-skip inside run_daemon's own loop across all 3 passes (sf_release runs between them)"; pass=$((pass+1))
   fi
 
   echo "Scenario 12: --status is human-readable and never errors even with an empty state dir"

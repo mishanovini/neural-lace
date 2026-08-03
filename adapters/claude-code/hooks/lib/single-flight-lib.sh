@@ -60,6 +60,53 @@
 #                 sessionstart-singleflight.sh, generalized to any name,
 #                 any caller, unconditionally).
 #
+#   sf_release <name>
+#     Releases a hold THIS process's own sf_guard call on <name> is still
+#     holding: clears the recursion-guard env var and removes the
+#     cross-process mkdir lock. Idempotent — a second call, or a call for
+#     a name this process never itself acquired, is a silent no-op — and
+#     ownership-safe: it only ever acts when the recursion var IT set is
+#     still 1, so it can never tear down a DIFFERENT process's active
+#     single-flight hold. See "THE RUN-TO-EXIT ASSUMPTION" below for when
+#     this is required, not optional.
+#
+# ============================================================
+# THE RUN-TO-EXIT ASSUMPTION (read before adding a new sf_guard call site
+# inside anything that loops)
+# ============================================================
+#
+# sf_guard's recursion guard is an env var, exported into THIS process
+# (and inherited by any child it spawns) the moment it acquires — and
+# nothing clears it automatically. That is fine, BY DESIGN, for the common
+# case: a script that calls `sf_guard NAME || exit 0` once near the top
+# and then runs to completion and exits — process exit is what "releases"
+# the guard, because the env var dies with the process. The mkdir-based
+# cross-process lock is untouched by process exit and simply ages out via
+# its own TTL, which is also fine for a one-shot caller.
+#
+# It is NOT fine for a caller that calls sf_guard for the SAME <name>
+# MULTIPLE TIMES from inside ONE long-lived (resident) process — e.g. a
+# `--daemon` mode looping `sf_guard tick-name; do_work; sleep N` forever in
+# a single bash process. Pass 1 acquires and exports the recursion var;
+# every later pass in that SAME process then finds the var already set and
+# hits the recursion branch — correct for "a DIFFERENT invocation of this
+# call chain is still in flight, skip", wrong here because it is the SAME
+# resident loop seeing its own leftover state, so it skips FOREVER after
+# pass 1. This is exactly HR-F1 (2026-08-03 harness review): nl-
+# maintenance.sh's `--daemon` mode ticked once, then silently wedged on
+# its own guard for the rest of its life, while the watchdog kept
+# relaunching new daemons on top of the stuck one because nothing ever
+# killed it.
+#
+# THE RULE: any sf_guard call site inside a resident loop (the SAME
+# process re-entering the SAME sf_guard <name> more than once over its
+# lifetime) MUST pair every acquire with an sf_release once that
+# iteration's guarded work is done — guard -> work -> release, every
+# pass. A call site that runs to process exit after a single guard does
+# NOT need to call sf_release (the common case above). Get this wrong and
+# the symptom is silent and easy to miss in review: the FIRST pass works,
+# every later pass quietly no-ops, forever.
+#
 #   sf_halt_active            — rc 0 iff the HALT/drain flag is set.
 #   sf_halt_set [reason]      — set the flag (the "one gesture" in
 #                                invariant 11: touch/write one file).
@@ -252,6 +299,28 @@ sf_guard() {
   return 1
 }
 
+# ----------------------------------------------------------------------
+# sf_release <name> — see header "THE RUN-TO-EXIT ASSUMPTION" for the full
+# contract. Releases THIS process's own hold on <name>: clears the
+# recursion var and removes the cross-process mkdir lock. Idempotent and
+# ownership-safe by construction — it only acts when the recursion var it
+# would clear is still 1, i.e. only when THIS process's own prior sf_guard
+# call is the reason it's set. A name never acquired by this process (or
+# already released) leaves the var at 0/unset, so this is a silent no-op;
+# it can therefore never remove a lock a DIFFERENT process currently holds.
+# ----------------------------------------------------------------------
+sf_release() {
+  local name="$1"
+  [[ -z "$name" ]] && return 0
+  local key rvar
+  key="$(_sf_sanitize "$name")"
+  rvar="_SF_ACTIVE_${key}"
+  [[ "${!rvar:-0}" != "1" ]] && return 0   # never acquired by this process, or already released
+  rm -rf "$(_sf_state_dir)/${key}.lock" 2>/dev/null || true
+  unset "$rvar" 2>/dev/null || true
+  return 0
+}
+
 # ============================================================
 # Self-test
 # ============================================================
@@ -384,6 +453,50 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   sf_guard s13 120 >/dev/null 2>&1; rc=$?
   sf_halt_clear
   _ok "$rc" 1 "S13 sf_guard still returns the correct rc with no ledger_emit defined"
+
+  # S14: sf_release (HR-F1) — clears the recursion var + lock so a
+  # resident loop can guard -> work -> release -> guard again WITHOUT ever
+  # hitting "recursion detected" on pass 2+.
+  sf_guard s14 120 >/dev/null 2>&1
+  _ok "${_SF_ACTIVE_s14:-unset}" 1 "S14a sf_guard s14 acquired (pre-release state)"
+  sf_release s14
+  _ok "${_SF_ACTIVE_s14:-unset}" "unset" "S14b sf_release clears the recursion var"
+  if [[ -d "$SF_STATE_DIR/s14.lock" ]]; then
+    _ok present absent "S14c sf_release removes the lock dir"
+  else
+    _ok absent absent "S14c sf_release removes the lock dir"
+  fi
+  out14="$(sf_guard s14 120 2>&1)"; rc=$?
+  _ok "$rc" 0 "S14d re-acquire after sf_release succeeds — THE fix for HR-F1's resident-loop wedge"
+  if [[ "$out14" == *recursion* ]]; then
+    _ok recursion-seen none "S14e no false recursion message on re-acquire after release"
+  else
+    _ok none none "S14e no false recursion message on re-acquire after release"
+  fi
+
+  # S15: sf_release idempotency — a second release, or a release for a
+  # name this process never acquired, is a silent no-op, never an error.
+  sf_release s14 2>"$_tmp/s15a.err"; rc=$?
+  _ok "$rc" 0 "S15a double-release is a no-op (rc 0)"
+  _ok "$(cat "$_tmp/s15a.err" 2>/dev/null)" "" "S15b double-release prints nothing to stderr"
+  sf_release never-acquired-name-xyz 2>"$_tmp/s15c.err"; rc=$?
+  _ok "$rc" 0 "S15c releasing a name this process never acquired is a no-op (rc 0)"
+
+  # S16: sf_release ownership safety — it must NEVER tear down a lock this
+  # process did not itself acquire (Windows PID reuse means an unverified
+  # release would be as dangerous as an unverified kill). Simulate a lock
+  # held by a DIFFERENT process: create the lockdir directly, WITHOUT ever
+  # calling sf_guard s16 in this process (so _SF_ACTIVE_s16 stays unset).
+  mkdir -p "$SF_STATE_DIR/s16.lock"
+  _sf_write_owner "$SF_STATE_DIR/s16.lock"
+  unset _SF_ACTIVE_s16 2>/dev/null
+  sf_release s16
+  if [[ -d "$SF_STATE_DIR/s16.lock" ]]; then
+    _ok present present "S16 sf_release leaves a lock this process never acquired untouched (ownership safety)"
+  else
+    _ok absent present "S16 sf_release leaves a lock this process never acquired untouched (ownership safety)"
+  fi
+  rm -rf "$SF_STATE_DIR/s16.lock" 2>/dev/null
 
   echo "" >&2
   echo "self-test summary: $PASS passed, $FAIL failed" >&2
