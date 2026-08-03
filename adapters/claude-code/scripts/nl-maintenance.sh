@@ -885,7 +885,21 @@ EOF
   # below reliable and non-flaky, while exercising the exact same
   # run_daemon loop the --interval 0 live/manual demo uses.
   s11_cmd+=(bash "$self_abs" --daemon --interval 1 --max-iterations 3)
-  NL_MAINT_STATE_DIR="$s11_state" "${s11_cmd[@]}" >"$tmp/s11.out" 2>"$tmp/s11.err" &
+  # SF_DISABLE=0 is REQUIRED here, not optional: the self-test's own setup
+  # (above) does `export SF_DISABLE=1` for every OTHER scenario's
+  # isolation, and that export is inherited by this backgrounded bash
+  # subprocess same as any child process. Without this override S11 would
+  # run the daemon with sf_guard fully bypassed -- the exact masking class
+  # REQ-A1 exists to remove (the old S11 ran under SF_DISABLE=1 and could
+  # not have caught HR-F1 even in principle). SF_STATE_DIR does not need a
+  # separate override the way S6 needs one: S11 goes through run_daemon ->
+  # run_tick, and run_tick prefixes its own sf_guard call with
+  # SF_STATE_DIR="$(_nm_state_dir)/single-flight" internally (same
+  # mechanism S7 already relies on) -- it is S6's direct, bypassing
+  # `_nm_tick_body` call (which invokes sf_halt_active straight off the
+  # raw $SF_STATE_DIR env var, with no such wrapper) that needs the
+  # explicit SF_STATE_DIR prefix S6 uses.
+  NL_MAINT_STATE_DIR="$s11_state" SF_DISABLE=0 "${s11_cmd[@]}" >"$tmp/s11.out" 2>"$tmp/s11.err" &
   local s11_bg=$!
   local s11_i=0
   while [[ $s11_i -lt 60 ]]; do
