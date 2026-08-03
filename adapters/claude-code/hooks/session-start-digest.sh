@@ -2502,7 +2502,14 @@ EOF
     DOCTOR_CACHE_PATH="$s20_cache" DIGEST_SEEN_PATH="$tmp/s20c-seen.jsonl" \
       bash "$s20_script" </dev/null 2>&1
   )"
-  _ck_contains "S20c explicit invocation (no NL_SESSIONSTART_ORIGIN) never suppressed by a held lock" "$out20c" "doctor:"
+  # HR-F10 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): renamed
+  # with the -BY-SSF suffix -- SF_DISABLE=1 above isolates the OLD, marker-
+  # gated ss_singleflight mechanism (SSF) this scenario validates; the
+  # unqualified "never suppressed" claim is false at system level once
+  # sf_guard (the new unconditional guard, S22 above) is in the mix -- it
+  # DOES single-flight explicit reruns. Mirrors harness-doctor.sh's own
+  # 9-ssf-explicit-invocation-never-suppressed-BY-SSF rename.
+  _ck_contains "S20c explicit invocation (no NL_SESSIONSTART_ORIGIN) never-suppressed-BY-SSF (old marker-gated mechanism only)" "$out20c" "doctor:"
 
   # ---- S21: feed_plan_recheck() (T9, accountable-estate-program-2026-07)
   #          delegates to plan-recheck-sweep.sh --quick. A sandboxed fixture
@@ -2617,6 +2624,13 @@ EOF
     cd "$s22d" && \
     export HOME="$s22d_home" HARNESS_SELFTEST=1
     source "$HOOKS_DIR/lib/single-flight-lib.sh" ""
+    # TTL justification (HR-F3 comment-discipline requirement, gated-
+    # pipeline T7/REQ-A5): this call's TTL value is irrelevant to what
+    # S22d actually exercises -- it only needs to claim the recursion-
+    # guard env var so the next line's real subprocess hits sf_guard's
+    # zero-I/O recursion branch, which returns BEFORE the TTL is ever
+    # consulted. Kept at 120 for continuity with the production digest
+    # guard below, not because that value matters here.
     sf_guard "digest-$(sf_repo_key "$PWD")" 120 >/dev/null 2>&1
     DOCTOR_CACHE_PATH="$s22_cache" DIGEST_SEEN_PATH="$tmp/s22d-seen.jsonl" \
       bash "$s22_script" </dev/null 2>&1
@@ -2789,6 +2803,19 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
       # unchanged, as an additional narrower layer — invariant 9: the
       # marker-gated guard is now belt, never braces). Repo-scoped exactly
       # like the block below (this hook's feeds are genuinely per-$PWD).
+      # TTL justification (HR-F3 comment-discipline requirement, gated-
+      # pipeline T7/REQ-A5, out-of-scope-for-value-change per REQ-A5's own
+      # text -- only doctor-quick's TTL was raised): this guard's workload
+      # (run_digest's handful of feed_* calls) is a much lighter cycle than
+      # harness-doctor.sh's full check_* sweep, and no dedicated cold-cycle
+      # measurement exists for it specifically -- 120s was the original
+      # debounce window for rapid repeated SessionStart digests in the same
+      # repo, not derived from a measured worst case. If a future
+      # measurement finds this window too short, `_sf_is_stale`'s owner-pid
+      # liveness check (single-flight-lib.sh, HR-F3, applies to every
+      # sf_guard call site including this one) already provides the
+      # backstop regardless of the TTL value: a genuinely live digest run's
+      # lock is never reclaimed out from under it.
       if declare -F sf_guard >/dev/null 2>&1; then
         if ! sf_guard "digest-$(sf_repo_key "$PWD")" 120; then
           exit 0

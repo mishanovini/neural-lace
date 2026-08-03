@@ -135,9 +135,32 @@
 # specifically so a human always has a one-gesture way to stop the whole
 # maintenance layer, which is the entire point of invariant 11.
 #
-# State: ${SF_STATE_DIR:-$HOME/.claude/state/single-flight}/
-#          <name>.lock/            (mkdir-based single-flight claim)
-#          HALT                    (presence = drain; content = "<epoch> <reason>")
+# State:
+#   Locks: ${SF_STATE_DIR:-$HOME/.claude/state/single-flight}/<name>.lock/
+#            (mkdir-based single-flight claim; per-caller SCOPABLE via
+#            SF_STATE_DIR -- e.g. nl-maintenance.sh scopes its own ticks
+#            under a private state dir so its lock namespace never
+#            collides with an unrelated sf_guard caller's)
+#   HALT:  ${SF_HALT_DIR:-$HOME/.claude/state/single-flight}/HALT
+#            (presence = drain; content = "<epoch> <reason>")
+#
+#   HR-F11 (2026-08-03 harness review): HALT resolves via its OWN
+#   canonical directory (SF_HALT_DIR), ALWAYS -- regardless of any
+#   SF_STATE_DIR a caller scoped its LOCKS to. Before this split, HALT
+#   shared SF_STATE_DIR's resolution, so a caller that scoped its lock dir
+#   away from the default (nl-maintenance.sh's tick/watchdog guards,
+#   SF_STATE_DIR="$(_nm_state_dir)/single-flight") also, silently, moved
+#   WHERE the operator's one-gesture HALT had to be written to reach that
+#   guard -- the runbook's documented "touch one file" gesture writes the
+#   DEFAULT path and never drained those scoped callers directly; only
+#   nl-maintenance.sh's own separate, unscoped `sf_halt_active` check
+#   inside its tick body (a second, redundant read of the default HALT
+#   path) happened to still catch it. SF_HALT_DIR and SF_STATE_DIR default
+#   to the SAME directory, so any caller that never scopes either sees NO
+#   behavior change; only a caller that scopes SF_STATE_DIR (locks moved)
+#   without also scoping SF_HALT_DIR (HALT did not move) is affected, and
+#   only for the better -- its sf_guard call now sees the canonical HALT
+#   directly, not just via a second caller-side check.
 #
 # Self-test: bash single-flight-lib.sh --self-test
 
@@ -173,7 +196,14 @@ sf_repo_key() {
 # ----------------------------------------------------------------------
 # HALT / drain (invariant 11)
 # ----------------------------------------------------------------------
-_sf_halt_flag_path() { printf '%s/HALT' "$(_sf_state_dir)"; }
+# HR-F11 (2026-08-03 harness review): HALT's own directory, resolved
+# INDEPENDENTLY of _sf_state_dir -- see the header "State" section for the
+# full rationale. Same default as _sf_state_dir so unscoped callers see no
+# change; a caller that scopes SF_STATE_DIR away from the default no
+# longer silently relocates where the operator's HALT gesture must land.
+_sf_halt_dir() { printf '%s' "${SF_HALT_DIR:-$HOME/.claude/state/single-flight}"; }
+
+_sf_halt_flag_path() { printf '%s/HALT' "$(_sf_halt_dir)"; }
 
 sf_halt_active() {
   [[ "${SF_DISABLE:-0}" == "1" ]] && return 1
@@ -182,7 +212,7 @@ sf_halt_active() {
 
 sf_halt_set() {
   local reason="${1:-operator halt}" dir
-  dir="$(_sf_state_dir)"
+  dir="$(_sf_halt_dir)"
   mkdir -p "$dir" 2>/dev/null || return 1
   printf '%s %s\n' "$(date +%s 2>/dev/null || echo 0)" "$reason" > "$(_sf_halt_flag_path)" 2>/dev/null || return 1
   return 0
@@ -227,8 +257,51 @@ _sf_stamp_age() {
   echo -1
 }
 
+# _sf_owner_pid <lockdir> — echoes the pid recorded in <lockdir>/owner
+# (field 1), or nothing if unreadable/non-numeric. Field 1 has been the
+# owner pid since _sf_write_owner's very first commit (always
+# "$$ $(date +%s)"), so no legacy-format migration is needed here.
+_sf_owner_pid() {
+  local lockdir="$1" pid
+  pid=$(awk 'NR==1{print $1}' "$lockdir/owner" 2>/dev/null)
+  [[ "$pid" =~ ^[0-9]+$ ]] && [[ "$pid" -gt 0 ]] && printf '%s' "$pid"
+  return 0
+}
+
+# _sf_owner_alive <pid> — rc 0 iff a process with this pid is currently
+# running (a plain signal-0 probe; MSYS2/git-bash maps this onto the
+# Windows process table for native pids, same as any other bash `kill -0`
+# use in this codebase, e.g. nl-maintenance.sh's watchdog identity check).
+_sf_owner_alive() {
+  local pid="$1"
+  [[ -n "$pid" ]] || return 1
+  kill -0 "$pid" 2>/dev/null
+}
+
+# HR-F3 (2026-08-03 harness review): TTL alone lapses mid-run once the
+# guarded work's real cycle exceeds the TTL (the review measured a 552s
+# cold doctor-quick cycle; a fresh re-measurement during this fix, 2026-
+# 08-03, SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1 bash harness-doctor.sh
+# --quick timed via epoch delta, got 421s and 425s on two runs -- all
+# comfortably >> the old 120s TTL), so from TTL seconds into any long run
+# every concurrent invocation reclaimed the lock and ran concurrently,
+# exactly the pathology the guard exists to prevent. Owner-pid liveness is
+# checked FIRST and is authoritative when
+# available: a lock whose recorded owner process is still alive is NEVER
+# reclaimed, no matter how old its stamp is -- this is the actual
+# guarantee sf_guard exists to provide (no two owners of the same <name>
+# at once), not a time-boxed approximation of it. TTL remains the
+# fallback for the two cases liveness can't answer: no pid was recorded
+# (a pre-fix lock, or a lockdir written by something other than
+# _sf_write_owner), or the owner process is confirmed dead -- the
+# realistic reclaim case once a caller's process actually exited without
+# releasing (crash, kill -9, power loss).
 _sf_is_stale() {
-  local lockdir="$1" ttl="$2" age ttl_min
+  local lockdir="$1" ttl="$2" age ttl_min pid
+  pid="$(_sf_owner_pid "$lockdir")"
+  if [[ -n "$pid" ]] && _sf_owner_alive "$pid"; then
+    return 1   # owner alive -> NOT stale, regardless of TTL age
+  fi
   age=$(_sf_stamp_age "$lockdir")
   if [[ "$age" -ge 0 ]] 2>/dev/null; then
     [[ "$age" -ge "$ttl" ]]; return
@@ -341,6 +414,17 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   _tmp=$(mktemp -d 2>/dev/null || mktemp -d -t sfl) || { echo "cannot mktemp" >&2; exit 1; }
   trap 'rm -rf "$_tmp"' EXIT
   export SF_STATE_DIR="$_tmp/sf"
+  # HR-F11 (2026-08-03 harness review): HALT now resolves via its OWN
+  # SF_HALT_DIR, independent of SF_STATE_DIR. Without this explicit
+  # override every existing HALT scenario below (S9, S10, S12, S13) would
+  # silently fall through to the REAL default ($HOME/.claude/state/single-
+  # flight/HALT) instead of this self-test's sandbox -- exactly the
+  # "self-tests override SF_HALT_DIR explicitly" requirement the finding's
+  # fix names. Same tmp dir as SF_STATE_DIR by default, so those existing
+  # scenarios' behavior is unchanged; the NEW split-specific scenarios
+  # below (S20/S21) override both independently to prove the split is
+  # real, not coincidental default-matching.
+  export SF_HALT_DIR="$_tmp/sf"
   _ok() { if [[ "$1" == "$2" ]]; then echo "self-test: PASS — $3" >&2; PASS=$((PASS+1)); else echo "self-test: FAIL — $3 (got '$1' want '$2')" >&2; FAIL=$((FAIL+1)); fi; }
   _contains() { if [[ "$1" == *"$2"* ]]; then echo "self-test: PASS — $3" >&2; PASS=$((PASS+1)); else echo "self-test: FAIL — $3 (output did not contain '$2': $1)" >&2; FAIL=$((FAIL+1)); fi; }
 
@@ -497,6 +581,75 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     _ok absent present "S16 sf_release leaves a lock this process never acquired untouched (ownership safety)"
   fi
   rm -rf "$SF_STATE_DIR/s16.lock" 2>/dev/null
+
+  # S17/S18/S19: HR-F3 owner-pid liveness (2026-08-03 harness review) —
+  # _sf_is_stale must NEVER reclaim a lock whose recorded owner process is
+  # still alive, no matter how stale the TTL says it is; it must still
+  # reclaim once the owner is confirmed dead (the realistic case); and it
+  # falls back to pure TTL aging when the owner file carries no valid pid.
+
+  # S17: live owner (this test process's own $$), stamp far older than a
+  # tiny ttl -> single-flight skip, NOT reclaimed, because the owner is
+  # alive (liveness wins over TTL entirely).
+  mkdir -p "$SF_STATE_DIR/s17.lock"
+  printf '%s %s\n' "$$" 1 > "$SF_STATE_DIR/s17.lock/owner"
+  out17="$(sf_guard s17 5 2>&1)"; rc=$?
+  _ok "$rc" 1 "S17a live-owner lock (age >> ttl) is NOT reclaimed -- HR-F3"
+  _contains "$out17" "single-flight" "S17b live-owner skip message names single-flight (not a fabricated recursion)"
+  if [[ -d "$SF_STATE_DIR/s17.lock" ]]; then
+    _ok present present "S17c live-owner lockdir survives (not rm -rf'd)"
+  else
+    _ok absent present "S17c live-owner lockdir survives (not rm -rf'd)"
+  fi
+  rm -rf "$SF_STATE_DIR/s17.lock"
+
+  # S18: dead owner (a real pid this shell forked and already reaped) +
+  # stamp older than ttl -> reclaimed (rc 0), same as the pre-fix
+  # TTL-only behavior for the realistic case (owner process actually gone).
+  ( : ) & _dead_pid=$!
+  wait "$_dead_pid" 2>/dev/null
+  mkdir -p "$SF_STATE_DIR/s18.lock"
+  printf '%s %s\n' "$_dead_pid" 1 > "$SF_STATE_DIR/s18.lock/owner"
+  sf_guard s18 5; rc=$?
+  _ok "$rc" 0 "S18 dead-owner lock (age >> ttl) IS reclaimed -- HR-F3"
+
+  # S19: no pid recorded (owner file carries a non-numeric field-1, e.g. a
+  # lockdir not written by _sf_write_owner) -> falls back to pure TTL
+  # aging, unaffected by liveness (there is no pid to check liveness OF).
+  mkdir -p "$SF_STATE_DIR/s19.lock"
+  printf '%s %s\n' - 1 > "$SF_STATE_DIR/s19.lock/owner"
+  sf_guard s19 5; rc=$?
+  _ok "$rc" 0 "S19 no-pid owner stamp falls back to TTL aging -> reclaimed when stale"
+
+  # S20/S21: HR-F11 HALT canonical-path split (2026-08-03 harness review).
+
+  # S20: HALT written to the canonical SF_HALT_DIR still drains sf_guard
+  # even when the CALLER scoped SF_STATE_DIR (its locks) somewhere else
+  # entirely -- the exact nl-maintenance.sh tick/watchdog shape
+  # (SF_STATE_DIR="$(_nm_state_dir)/single-flight"). HALT itself is never
+  # written into the scoped lock dir.
+  _scoped="$_tmp/s20-scoped-locks"
+  _canon="$_tmp/s20-canonical-halt"
+  mkdir -p "$_scoped" "$_canon"
+  SF_HALT_DIR="$_canon" sf_halt_set "s20-drain" >/dev/null
+  out20="$(SF_STATE_DIR="$_scoped" SF_HALT_DIR="$_canon" sf_guard s20 120 2>&1)"; rc=$?
+  _ok "$rc" 1 "S20a HALT in canonical SF_HALT_DIR drains sf_guard even though SF_STATE_DIR is scoped elsewhere -- HR-F11"
+  _contains "$out20" "HALT" "S20b drain message names HALT"
+  if [[ -f "$_scoped/HALT" ]]; then
+    _ok present absent "S20c HALT is never written into the scoped SF_STATE_DIR (locks/HALT stay split)"
+  else
+    _ok absent absent "S20c HALT is never written into the scoped SF_STATE_DIR (locks/HALT stay split)"
+  fi
+  SF_HALT_DIR="$_canon" sf_halt_clear
+
+  # S21: the split is REAL, not coincidental default-matching -- a HALT
+  # file dropped only under a scoped SF_STATE_DIR (simulating the pre-fix
+  # bug: HALT co-located with per-caller-scoped locks) must NOT drain a
+  # guard call whose SF_HALT_DIR points elsewhere.
+  printf '%s %s\n' "$(date +%s 2>/dev/null || echo 0)" "s21-scoped-only" > "$_scoped/HALT"
+  out21="$(SF_STATE_DIR="$_scoped" SF_HALT_DIR="$_tmp/s21-unused-canonical" sf_guard s21 120 2>&1)"; rc=$?
+  _ok "$rc" 0 "S21 a HALT file dropped only in a scoped SF_STATE_DIR (not SF_HALT_DIR) does not drain -- proves locks/HALT resolution paths are genuinely independent"
+  rm -f "$_scoped/HALT"
 
   echo "" >&2
   echo "self-test summary: $PASS passed, $FAIL failed" >&2

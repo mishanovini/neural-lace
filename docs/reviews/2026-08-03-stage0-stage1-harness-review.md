@@ -368,13 +368,13 @@ Stage 1 can be activated and this review's conditions closed.
 |---|---|
 | F1 (Critical, daemon wedge) | **FIXED** @ 6f5d1b22 (merged dc9f2299); re-reviewed PASS in docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md |
 | F2 (Critical, cache corruption) | **FIXED** @ d46beee5 (merged ec349c3f), single-writer form; re-reviewed PASS (same record) |
-| F3 (TTL vs cycle) | OPEN — gated-pipeline T7 (in flight) |
+| F3 (TTL vs cycle) | **FIXED** @ 7dc1b2f7 (T7c: `_sf_is_stale` gains owner-pid liveness via `kill -0`, TTL fallback only when the owner is dead/unrecorded; doctor-quick TTL raised 120s->1200s, >=2x the 421-425s re-measured cold cycle; single-flight-lib.sh self-test 43/43, closes the T3/T4 implementation review's note-2 sf_release-vs-TTL-reclaim race) |
 | F4 (zero-substrate silent) | **FIXED** @ 422257c2 (inverse check, dates-in-data; live-probed firing) |
 | F5 (fingerprint coverage) | **FIXED** @ d46beee5 (live-hooks mtime + unstaged-dirty bit; staged-edit residual named in the implementation review) |
 | F6 (friction writer/consumer) | **FIXED** @ be5e4273 (T5; one file+schema, end-to-end proven) |
-| F7 (prose-only WARN flips) | OPEN — gated-pipeline T7 |
+| F7 (prose-only WARN flips) | **FIXED** @ 7dc1b2f7 (T7a/7b: `schedule-manifest.json` gains `cadence_check.warn_since`/`.red_after` + a new `budget_check` object; `check_schedule_manifest_cadence`/`check_budget_bash_hooks` read them and RED after the date; `managed_by=nl-maintenance` entries with a live activation marker are annotated satisfied-by-construction instead of warned, closing the proven false positive; 5 new doctor fixture scenarios, live `--quick` confirmed firing) |
 | F8 (skip exit-0 aliased) | **FIXED** @ d46beee5 for the sf_guard doctor-quick site (serves-cache-or-exit-3); two non-sf_guard bare-exit-0 paths remain as a filed follow-up (accepted scoping per the implementation review note 3) |
 | F9 (Stage-1 manifest entries absent) | **FIXED** @ c3dae56c (review-chain/dispatch-chain entries) + 422257c2 (nl-maintenance-core, doctor-verdict-cache, maintenance-both-substrates-alive) |
-| F10 (test-name rename) | OPEN — gated-pipeline T7 (7d) |
-| F11 (HALT canonical path) | OPEN — gated-pipeline T7 (7c) |
+| F10 (test-name rename) | **FIXED** @ 7dc1b2f7 (T7d: `harness-doctor.sh`'s `9-ssf-explicit-invocation-never-suppressed` -> `...-never-suppressed-BY-SSF`; `session-start-digest.sh`'s S20c label likewise; session-start-digest.sh self-test 102/102) |
+| F11 (HALT canonical path) | **FIXED** @ 7dc1b2f7 (T7c: HALT resolves via a new canonical `SF_HALT_DIR`, independent of `SF_STATE_DIR`'s lock scoping; default identical to the old shared default so unscoped callers are unaffected; single-flight-lib.sh self-test 43/43 incl. 5 new split-specific scenarios; runbook gained a dedicated HALT-path section) |
 | F12 (census undercount) | OPEN — gated-pipeline T22 (counting method specified) |
