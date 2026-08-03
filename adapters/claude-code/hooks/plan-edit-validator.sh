@@ -61,6 +61,31 @@ fi
 # shellcheck disable=SC1091
 { source "$_PEV_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null; } || true
 
+# ---- Gate Philosophy Law retrofit (R3.4, harness-execution-redesign-2026-08
+# Task 2, deferred remainder) ----
+# Structured WHAT/WHY/FIX/ESCAPE fields (gate-contract-lib.sh) on this
+# gate's two genuinely WARN-only checks (check_docs_impact_warn,
+# check_backlog_absorption_warn — both documented never-block, both defined
+# below), plus a --check read-only pre-flight mode scoped to exactly those
+# two checks. Guarded source, same fail-open convention as the libs above:
+# a missing/broken lib must never brick the checkbox-flip authorization
+# path this hook exists to gate.
+#
+# SCOPE NOTE (honest, not silently narrowed): this file also contains a
+# SEPARATE, genuinely-blocking mechanism — checkbox-flip-without-evidence
+# and Status:COMPLETED-without-evidence (both `exit 1`, manifest.json
+# "blocking": true, ADR 059 D4 "deliberately unwaivable"). That mechanism
+# is NOT touched by this retrofit and --check does NOT predict its
+# decision: its own block message is already fully self-documented (see
+# "PLAN EDIT BLOCKED" / "PLAN WRITE BLOCKED" below) and it is out of this
+# task's scope to alter — see this task's build report for the explicit
+# reasoning (avoiding any risk to an unwaivable, extensively self-tested
+# authorization path for a dispatch scoped to the WARN layer).
+# shellcheck disable=SC1091
+{ source "$_PEV_SELF_DIR/lib/gate-contract-lib.sh" 2>/dev/null; } || true
+GC_MODE="$(declare -F gc_mode >/dev/null 2>&1 && gc_mode "${1:-}" 2>/dev/null || echo enforce)"
+_PEV_ANY_WARN=0
+
 # ============================================================
 # Lock helpers (plan-edit-validator concurrency protection)
 # ============================================================
@@ -311,25 +336,38 @@ check_backlog_absorption_warn() {
 
   local id_list
   id_list="$(printf '%s\n' "$match_ids" | tr '\n' ' ' | sed 's/ $//')"
-  cat >&2 <<WARNMSG
-
-----------------------------------------------------------------
-[plan-edit-validator] WARN — open backlog rows name this plan's
-surfaces (BACKLOG-LOOP-01 absorption matching)
-----------------------------------------------------------------
-Open docs/backlog.md rows match surfaces this plan declares under
-'## Files to Modify/Create', but the plan names none of them:
-
-  ${id_list}
-
-Absorb or explicitly defer each (add to the absorbed header or note
-deferral): name the ID in the plan's 'Backlog items absorbed:' header,
-or note its deferral with a reason in the plan body.
-
-This is a WARN, not a block — the edit is allowed. The session-start
-digest keeps proposing each overdue row until it reaches a terminal
-state (done / absorbed / wontfix-with-reason).
-WARNMSG
+  _PEV_ANY_WARN=1
+  {
+    echo ""
+    echo "----------------------------------------------------------------"
+    if declare -F gc_header >/dev/null 2>&1; then
+      gc_header "[plan-edit-validator] WARN — open backlog rows name this plan's surfaces (BACKLOG-LOOP-01 absorption matching)" "${GC_MODE:-enforce}"
+    else
+      echo "[plan-edit-validator] WARN — open backlog rows name this plan's surfaces (BACKLOG-LOOP-01 absorption matching)"
+    fi
+    echo "----------------------------------------------------------------"
+    echo "Open docs/backlog.md rows match surfaces this plan declares under"
+    echo "'## Files to Modify/Create', but the plan names none of them:"
+    echo ""
+    echo "  ${id_list}"
+    echo ""
+    if declare -F gc_block >/dev/null 2>&1; then
+      gc_block \
+        "open docs/backlog.md rows match this plan's declared '## Files to Modify/Create' surfaces but the plan names none of them: ${id_list}" \
+        "an unabsorbed backlog row that clearly maps to a surface this plan touches will silently duplicate or contradict the plan's own work (BACKLOG-LOOP-01)" \
+        "Absorb or explicitly defer each: name the ID in the plan's 'Backlog items absorbed:' header, or note its deferral with a reason in the plan body — ${id_list}" \
+        "none — informational nudge only, this never blocks the edit; the session-start digest keeps re-surfacing the row until it reaches a terminal state"
+      echo ""
+    else
+      echo "Absorb or explicitly defer each (add to the absorbed header or note"
+      echo "deferral): name the ID in the plan's 'Backlog items absorbed:' header,"
+      echo "or note its deferral with a reason in the plan body."
+      echo ""
+    fi
+    echo "This is a WARN, not a block — the edit is allowed. The session-start"
+    echo "digest keeps proposing each overdue row until it reaches a terminal"
+    echo "state (done / absorbed / wontfix-with-reason)."
+  } >&2
   return 0
 }
 
@@ -1284,8 +1322,128 @@ JSON
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F20-F24 (Gate Philosophy Law retrofit, R3.4, harness-execution-
+  # redesign-2026-08 Task 2, deferred remainder) — structured
+  # WHAT/WHY/FIX/ESCAPE fields + --check read-only pre-flight, scoped to
+  # the two genuinely WARN-only checks (check_docs_impact_warn,
+  # check_backlog_absorption_warn). See this file's own "Gate Philosophy
+  # Law retrofit" comment near the top for the explicit scope note (the
+  # separate checkbox-flip-authorization block mechanism is untouched and
+  # not covered by --check).
+  # ============================================================
+
+  # ---- F20: structured-fields-present-in-warn-messages (both checks).
+  # check_backlog_absorption_warn is defined ABOVE this self-test block
+  # (direct call, same convention as F13/F14); check_docs_impact_warn is
+  # defined BELOW this self-test block (same convention as F11/F12's
+  # inline replica), so its half is exercised via a real e2e subprocess
+  # (enforce mode, no --check) — proves the SAME gc_block fields appear on
+  # this gate's normal, non-flagged, everyday invocation path too. ----
+  set +e
+  F20_BL_OUT="$(BACKLOG_MD_PATH="$BL_FIXTURE" check_backlog_absorption_warn "docs/plans/fixture-f20.md" "$PLAN_F13" 2>&1)"
+  F20_DIR="$TMPDIR_SELFTEST/f20/docs/plans"
+  mkdir -p "$F20_DIR"
+  printf '# F20 Plan\n\nStatus: DRAFT\n' > "$F20_DIR/f20-plan.md"
+  F20_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f20-plan.md","old_string":"Status: DRAFT","new_string":"- [ ] G.9. New task with no docs field."}}' "$F20_DIR")"
+  F20_DOCS_OUT="$(printf '%s' "$F20_JSON" | BACKLOG_MD_PATH="$TMPDIR_SELFTEST/empty-backlog.md" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F20=$?
+  set -e
+  if [[ "$RC_F20" -eq 0 ]] \
+     && printf '%s' "$F20_DOCS_OUT" | grep -q '^\[GATE:WHAT\]' \
+     && printf '%s' "$F20_DOCS_OUT" | grep -q '^\[GATE:WHY\]' \
+     && printf '%s' "$F20_DOCS_OUT" | grep -q '^\[GATE:FIX\]' \
+     && printf '%s' "$F20_DOCS_OUT" | grep -q '^\[GATE:ESCAPE\]' \
+     && printf '%s' "$F20_BL_OUT" | grep -q '^\[GATE:WHAT\]' \
+     && printf '%s' "$F20_BL_OUT" | grep -q '^\[GATE:WHY\]' \
+     && printf '%s' "$F20_BL_OUT" | grep -q '^\[GATE:FIX\]' \
+     && printf '%s' "$F20_BL_OUT" | grep -q '^\[GATE:ESCAPE\]'; then
+    echo "self-test (F20) structured-fields-present-in-both-warn-messages: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F20) structured-fields-present-in-both-warn-messages: FAIL (rc=$RC_F20 docs_out=$F20_DOCS_OUT bl_out=$F20_BL_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F21: check-mode-would-warn-on-docs-impact-violation (real e2e
+  # subprocess, --check argv, WOULD BLOCK rc=1, structured fields present,
+  # never actually writes/blocks anything) ----
+  F21_DIR="$TMPDIR_SELFTEST/f21/docs/plans"
+  mkdir -p "$F21_DIR"
+  F21_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f21-plan.md","old_string":"Status: DRAFT","new_string":"- [ ] G.10. New task with no docs field."}}' "$F21_DIR")"
+  printf '# F21 Plan\n\nStatus: DRAFT\n' > "$F21_DIR/f21-plan.md"
+  set +e
+  F21_OUT="$(printf '%s' "$F21_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" --check 2>&1 >/dev/null)"
+  RC_F21=$?
+  set -e
+  if [[ "$RC_F21" -eq 1 ]] \
+     && printf '%s' "$F21_OUT" | grep -q 'WOULD BLOCK (--check pre-flight, not enforced)' \
+     && printf '%s' "$F21_OUT" | grep -q '^\[GATE:WHAT\]' \
+     && printf '%s' "$F21_OUT" | grep -q "G.10"; then
+    echo "self-test (F21) check-mode-would-warn-on-docs-impact-violation: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F21) check-mode-would-warn-on-docs-impact-violation: FAIL (rc=$RC_F21 out=$F21_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F22: check-mode-would-pass-clean (existing task's wording edited,
+  # no new task line, no backlog surface match -> rc=0, one-line OK) ----
+  F22_DIR="$TMPDIR_SELFTEST/f22/docs/plans"
+  mkdir -p "$F22_DIR"
+  printf '# F22 Plan\n\nStatus: DRAFT\n\n- [ ] G.11. Original wording.\n' > "$F22_DIR/f22-plan.md"
+  F22_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f22-plan.md","old_string":"- [ ] G.11. Original wording.","new_string":"- [ ] G.11. Revised wording."}}' "$F22_DIR")"
+  set +e
+  F22_OUT="$(printf '%s' "$F22_JSON" | BACKLOG_MD_PATH="$TMPDIR_SELFTEST/empty-backlog.md" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" --check 2>&1 >/dev/null)"
+  RC_F22=$?
+  set -e
+  if [[ "$RC_F22" -eq 0 ]] && printf '%s' "$F22_OUT" | grep -q '\[plan-edit-validator --check\] OK'; then
+    echo "self-test (F22) check-mode-would-pass-clean: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F22) check-mode-would-pass-clean: FAIL (rc=$RC_F22 out=$F22_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F23: check-mode-would-warn-on-backlog-absorption (real e2e
+  # subprocess, --check argv, fixture backlog row matched, rc=1) ----
+  F23_DIR="$TMPDIR_SELFTEST/f23/docs/plans"
+  mkdir -p "$F23_DIR"
+  printf '# F23 Plan\n\nStatus: DRAFT\n\n## Files to Modify/Create\n\n`adapters/claude-code/hooks/session-start-digest.sh` (extend)\n' > "$F23_DIR/f23-plan.md"
+  F23_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f23-plan.md","old_string":"Status: DRAFT","new_string":"Status: DRAFT (f23 edit)"}}' "$F23_DIR")"
+  set +e
+  F23_OUT="$(printf '%s' "$F23_JSON" | BACKLOG_MD_PATH="$BL_FIXTURE" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" --check 2>&1 >/dev/null)"
+  RC_F23=$?
+  set -e
+  if [[ "$RC_F23" -eq 1 ]] \
+     && printf '%s' "$F23_OUT" | grep -q "FIXTURE-SURFACE-01" \
+     && printf '%s' "$F23_OUT" | grep -q '^\[GATE:FIX\]'; then
+    echo "self-test (F23) check-mode-would-warn-on-backlog-absorption: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F23) check-mode-would-warn-on-backlog-absorption: FAIL (rc=$RC_F23 out=$F23_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F24: relevance-pre-filter-non-plan-file-passes-through (an Edit
+  # to a file with no "docs/plans" substring anywhere in the payload
+  # exits 0 cleanly via the pre-filter, same observable behavior as
+  # before this retrofit) ----
+  F24_JSON='{"tool_name":"Edit","tool_input":{"file_path":"/some/other/file.md","old_string":"foo","new_string":"bar"}}'
+  set +e
+  F24_OUT="$(printf '%s' "$F24_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F24=$?
+  set -e
+  if [[ "$RC_F24" -eq 0 ]] && [[ -z "$F24_OUT" ]]; then
+    echo "self-test (F24) relevance-pre-filter-non-plan-file-passes-through: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F24) relevance-pre-filter-non-plan-file-passes-through: FAIL (rc=$RC_F24 out=$F24_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 19 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 24 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1317,6 +1475,24 @@ fi
 if [[ -z "$INPUT" ]]; then
   exit 0
 fi
+
+# ---- Cheap relevance pre-filter (perf; behavior-preserving) --------------
+# Every code path below requires the literal substring "docs/plans" in the
+# raw tool-input payload (a file_path under docs/plans/*.md, per the final
+# regex check further down). This is a deliberate OVER-approximation of
+# that tighter check -- a false positive here (e.g. "docs/plans" mentioned
+# in an edited string's PROSE, not its file_path) just falls through to
+# the real checks below, which then correctly conclude "not applicable";
+# a false negative would be a silent skip, which is why this is a strict
+# superset, never a rewrite, of the existing file_path check. Pure-bash
+# substring test -- no jq/grep spawn -- so the overwhelmingly common event
+# (an Edit/Write to a file that isn't under docs/plans/ at all) never pays
+# for the jq parses below. Same pattern as concurrent-ownership-gate.sh's
+# entry-file pre-filter (Gate Philosophy Law retrofit, R3.4).
+case "$INPUT" in
+  *docs/plans*) : ;;   # possibly relevant -- keep going
+  *) exit 0 ;;          # guaranteed irrelevant -- done, zero jq spawns paid
+esac
 
 # Some hook-input formats nest under .tool_input, others put the tool
 # input at the top level. Check both and extract the key fields.
@@ -1677,26 +1853,68 @@ check_docs_impact_warn() {
     # this hook's job is the cheap same-line nudge.
     if ! echo "$line" | grep -qiE 'Docs impact:'; then
       if [[ "$warned" -eq 0 ]]; then
-        cat >&2 <<WARNMSG
-
-----------------------------------------------------------------
-[plan-edit-validator] WARN — new task missing 'Docs impact:' (§F.2b)
-----------------------------------------------------------------
-New task '${tid}' has no 'Docs impact:' annotation. Per the plan
-template, every task declares the doc/README/runbook delta it causes,
-or the literal word 'none' with a reason:
-
-  - [ ] ${tid}. <description> — Docs impact: <what doc changes> | none — <reason>
-
-This is a WARN, not a block — the edit is allowed. task-verifier
-treats a non-'none' Docs-impact claim with no accompanying doc delta
-as part of this task's Done-when (agents/task-verifier.md).
-WARNMSG
+        _PEV_ANY_WARN=1
+        {
+          echo ""
+          echo "----------------------------------------------------------------"
+          if declare -F gc_header >/dev/null 2>&1; then
+            gc_header "[plan-edit-validator] WARN — new task missing 'Docs impact:' (§F.2b)" "${GC_MODE:-enforce}"
+          else
+            echo "[plan-edit-validator] WARN — new task missing 'Docs impact:' (§F.2b)"
+          fi
+          echo "----------------------------------------------------------------"
+          if declare -F gc_block >/dev/null 2>&1; then
+            gc_block \
+              "new task '${tid}' has no 'Docs impact:' annotation" \
+              "the plan template requires every task to declare the doc/README/runbook delta it causes (or the literal word 'none' with a reason) so docs land alongside the task, not bolted on later" \
+              "add '— Docs impact: <what doc changes> | none — <reason>' to the task line: - [ ] ${tid}. <description> — Docs impact: <what doc changes> | none — <reason>" \
+              "none — informational nudge only, this never blocks the edit; task-verifier treats a non-'none' Docs-impact claim with no accompanying doc delta as part of this task's Done-when"
+            echo ""
+          else
+            echo "New task '${tid}' has no 'Docs impact:' annotation. Per the plan"
+            echo "template, every task declares the doc/README/runbook delta it causes,"
+            echo "or the literal word 'none' with a reason:"
+            echo ""
+            echo "  - [ ] ${tid}. <description> — Docs impact: <what doc changes> | none — <reason>"
+            echo ""
+          fi
+          echo "This is a WARN, not a block — the edit is allowed. task-verifier"
+          echo "treats a non-'none' Docs-impact claim with no accompanying doc delta"
+          echo "as part of this task's Done-when (agents/task-verifier.md)."
+        } >&2
         warned=1
       fi
     fi
   done <<< "$new_task_lines"
   return 0
+}
+
+# ============================================================
+# _pev_check_mode_report_and_exit — --check read-only pre-flight exit
+# (Gate Philosophy Law retrofit, R3.4, harness-execution-redesign-2026-08
+# Task 2, deferred remainder)
+# ============================================================
+#
+# Called immediately after check_docs_impact_warn + check_backlog_
+# absorption_warn have both run for THIS invocation (their shared
+# _PEV_ANY_WARN flag reflects whether either fired). A no-op in enforce
+# mode (returns 0, lets the caller's normal flow continue unchanged). In
+# --check mode, reports would-warn/would-pass and EXITS -- it never falls
+# through to the checkbox-flip-authorization / Status-COMPLETED blocking
+# logic below its call sites. That is a deliberate scope boundary, not an
+# oversight: --check answers "would this gate's WARN-only guidance layer
+# flag this edit," matching the two checks this retrofit actually covers;
+# the separate hard-block mechanism's own message is already fully
+# self-documented when it fires for real (see "PLAN EDIT BLOCKED" /
+# "PLAN WRITE BLOCKED" below), and altering or predicting it is out of
+# this task's scope (ADR 059 D4 — deliberately unwaivable).
+_pev_check_mode_report_and_exit() {
+  [[ "${GC_MODE:-enforce}" != "check" ]] && return 0
+  if [[ "${_PEV_ANY_WARN:-0}" -eq 1 ]]; then
+    exit 1
+  fi
+  echo "[plan-edit-validator --check] OK — no WARN-layer issues (docs-impact / backlog-absorption) on this edit." >&2
+  exit 0
 }
 
 # ============================================================
@@ -1894,6 +2112,11 @@ if [[ "$TOOL_NAME" == "Edit" ]]; then
   fi
   check_backlog_absorption_warn "$FILE_PATH_NORM" "$PROSPECTIVE_CONTENT"
 
+  # --check read-only pre-flight (see _pev_check_mode_report_and_exit's own
+  # header): no-op in enforce mode; in --check mode, reports would-warn/
+  # would-pass on the two checks just above and STOPS here.
+  _pev_check_mode_report_and_exit
+
   # Does the old string contain an unchecked box AND the new string contain
   # a checked box? If yes, this is a checkbox flip.
   if echo "$OLD_STR" | grep -qE '^\s*-\s*\[\s*\]'; then
@@ -2040,6 +2263,10 @@ if [[ "$TOOL_NAME" == "Write" ]]; then
     # BACKLOG-LOOP-01 — a FRESH plan is the highest-value moment for
     # absorption matching (WARN-only, never blocks).
     check_backlog_absorption_warn "$FILE_PATH_NORM" "$NEW_CONTENT"
+    # --check read-only pre-flight: no-op in enforce mode (falls through to
+    # the existing exit 0 below); in --check mode, reports would-warn/
+    # would-pass and stops here.
+    _pev_check_mode_report_and_exit
     exit 0
   fi
 
@@ -2048,6 +2275,11 @@ if [[ "$TOOL_NAME" == "Write" ]]; then
   # BACKLOG-LOOP-01 — WARN (never blocks); full Write content IS the
   # prospective plan content.
   check_backlog_absorption_warn "$FILE_PATH_NORM" "$NEW_CONTENT"
+
+  # --check read-only pre-flight (see _pev_check_mode_report_and_exit's own
+  # header): no-op in enforce mode; in --check mode, reports would-warn/
+  # would-pass on the two checks just above and STOPS here.
+  _pev_check_mode_report_and_exit
 
   OLD_CHECKED=$(grep -cE '^\s*-\s*\[\s*[xX]\s*\]' "$FILE_PATH" 2>/dev/null || echo "0")
   OLD_CHECKED=$(echo "$OLD_CHECKED" | tr -d '[:space:]')

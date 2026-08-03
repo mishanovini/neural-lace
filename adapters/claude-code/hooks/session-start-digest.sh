@@ -75,6 +75,11 @@ HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 { source "$HOOKS_DIR/lib/signal-ledger.sh" 2>/dev/null; } || true
 # shellcheck disable=SC1091
 { source "$HOOKS_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
+# harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 4): the
+# universal single-flight/recursion guard, sourced UNCONDITIONALLY here
+# (not gated on any wiring marker) — see lib/single-flight-lib.sh header.
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/single-flight-lib.sh" 2>/dev/null; } || true
 
 # ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
 # Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
@@ -2436,12 +2441,23 @@ EOF
   _ck_contains "S20b SessionStart-origin, no lock held yet -> runs normally (doctor feed present)" "$out20b" "doctor:"
 
   # S20c: explicit invocation (NO NL_SESSIONSTART_ORIGIN) against the SAME
-  # held lock from S20a -> never single-flighted away (explicit/manual runs
-  # are unaffected by this mechanism).
+  # held lock from S20a -> never single-flighted away by the OLD, marker-
+  # gated ss_singleflight mechanism this scenario exists to validate
+  # (explicit/manual runs are unaffected by THAT mechanism's contract).
+  # SF_DISABLE=1: harness-execution-redesign-2026-08 Task 1 added a SECOND,
+  # independent, UNCONDITIONAL guard (sf_guard, invariant 4) that
+  # deliberately single-flights explicit reruns too (see its own call site
+  # comment a few lines above the SESSIONSTART-SINGLEFLIGHT-01 block in the
+  # real script) -- a real, intentional, DIFFERENT behavior change from
+  # this pre-existing scenario's assertion. Disabling it here isolates
+  # what THIS scenario validates (the old mechanism, in isolation) rather
+  # than silently weakening the assertion; the new guard's own contract
+  # (including that it DOES single-flight explicit reruns) is exercised by
+  # this file's dedicated S22 scenario below.
   local out20c
   out20c="$(
     cd "$s20" && \
-    HOME="$s20_home" HARNESS_SELFTEST=1 \
+    HOME="$s20_home" HARNESS_SELFTEST=1 SF_DISABLE=1 \
     DOCTOR_CACHE_PATH="$s20_cache" DIGEST_SEEN_PATH="$tmp/s20c-seen.jsonl" \
       bash "$s20_script" </dev/null 2>&1
   )"
@@ -2495,6 +2511,76 @@ EOF
   local out21b
   out21b="$(feed_plan_recheck "$s21_dirty")"
   _ck_contains "S21b feed_plan_recheck surfaces a reopened-plan digest line" "$out21b" "plan-recheck: p-digest-recheck reopened"
+
+  # ---- S22 (harness-execution-redesign-2026-08 Task 1, invariant 4): the
+  # NEW unconditional sf_guard fires WITHOUT any NL_SESSIONSTART_ORIGIN
+  # marker (the whole point -- this is the guard that covers a resume-
+  # origin invocation the marker itself might miss), and is repo-scoped
+  # exactly like the pre-existing SESSIONSTART-SINGLEFLIGHT-01 mechanism.
+  local s22="$tmp/s22" s22b="$tmp/s22b"
+  _seed_repo "$s22"
+  _seed_repo "$s22b"
+  local s22_home="$tmp/s22-home"
+  mkdir -p "$s22_home/.claude/state"
+  local s22_cache="$tmp/s22-doctor-cache.json"
+  printf '{"ts":"%s","verdict_line":"[doctor] GREEN — 7 checks passed","exit_code":0}\n' \
+    "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" > "$s22_cache"
+  local s22_script="$HOOKS_DIR/$(basename "${BASH_SOURCE[0]}")"
+
+  # S22a: explicit invocation (NO marker), fresh HOME/repo -> runs normally
+  # AND claims the new guard's lock for this repo.
+  local out22a
+  out22a="$(
+    cd "$s22" && \
+    HOME="$s22_home" HARNESS_SELFTEST=1 \
+    DOCTOR_CACHE_PATH="$s22_cache" DIGEST_SEEN_PATH="$tmp/s22a-seen.jsonl" \
+      bash "$s22_script" </dev/null 2>&1
+  )"
+  _ck_contains "S22a explicit invocation, no lock held yet -> runs normally (doctor feed present)" "$out22a" "doctor:"
+
+  # S22b: SAME HOME, SAME repo, immediately again, still NO marker -> the
+  # NEW guard (not the old marker-gated one) skips it this time.
+  local out22b
+  out22b="$(
+    cd "$s22" && \
+    HOME="$s22_home" HARNESS_SELFTEST=1 \
+    DOCTOR_CACHE_PATH="$s22_cache" DIGEST_SEEN_PATH="$tmp/s22b-seen.jsonl" \
+      bash "$s22_script" </dev/null 2>&1
+  )"
+  _ck_contains "S22b unconditional sf_guard skips a same-repo rerun even with NO marker set" "$out22b" "sf-guard"
+  _ck_not_contains "S22b skip means run_digest never rendered a feed line" "$out22b" "doctor:"
+
+  # S22c: SAME HOME, a DIFFERENT repo -> the guard is repo-scoped, so this
+  # runs normally (not suppressed by S22a/S22b's lock on the OTHER repo).
+  local out22c
+  out22c="$(
+    cd "$s22b" && \
+    HOME="$s22_home" HARNESS_SELFTEST=1 \
+    DOCTOR_CACHE_PATH="$s22_cache" DIGEST_SEEN_PATH="$tmp/s22c-seen.jsonl" \
+      bash "$s22_script" </dev/null 2>&1
+  )"
+  _ck_contains "S22c different repo (same HOME) -> NOT suppressed by the other repo's lock (repo-scoped)" "$out22c" "doctor:"
+
+  # S22d: genuine RECURSION — a nested subprocess invocation (this SAME
+  # process tree, not a separate sibling process) short-circuits via
+  # sf_guard's zero-I/O recursion check, distinct from S22b's cross-
+  # process single-flight path. Fresh repo/home so this is unconfounded
+  # by S22a-c's locks. Mirrors harness-doctor.sh's own
+  # 9c-sfguard-recursion-nested-invocation-short-circuits scenario.
+  local s22d="$tmp/s22d"
+  _seed_repo "$s22d"
+  local s22d_home="$tmp/s22d-home"
+  mkdir -p "$s22d_home/.claude/state"
+  local out22d
+  out22d="$(
+    cd "$s22d" && \
+    export HOME="$s22d_home" HARNESS_SELFTEST=1
+    source "$HOOKS_DIR/lib/single-flight-lib.sh" ""
+    sf_guard "digest-$(sf_repo_key "$PWD")" 120 >/dev/null 2>&1
+    DOCTOR_CACHE_PATH="$s22_cache" DIGEST_SEEN_PATH="$tmp/s22d-seen.jsonl" \
+      bash "$s22_script" </dev/null 2>&1
+  )"
+  _ck_contains "S22d nested (recursive) invocation short-circuits via sf_guard's recursion check" "$out22d" "recursion"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
@@ -2590,6 +2676,18 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
         hook_reentry_note "session-start-digest" 2>/dev/null || true
         echo "[session-start-digest] reentrant/automation-spawned invocation — skipping digest (NL-FINDING-040 guard)"
         exit 0
+      fi
+      # harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 4):
+      # universal single-flight/recursion guard, called UNCONDITIONALLY —
+      # no wiring marker required. Intentionally BROADER than the
+      # SESSIONSTART-SINGLEFLIGHT-01 block immediately below (which stays,
+      # unchanged, as an additional narrower layer — invariant 9: the
+      # marker-gated guard is now belt, never braces). Repo-scoped exactly
+      # like the block below (this hook's feeds are genuinely per-$PWD).
+      if declare -F sf_guard >/dev/null 2>&1; then
+        if ! sf_guard "digest-$(sf_repo_key "$PWD")" 120; then
+          exit 0
+        fi
       fi
       # ---- SESSIONSTART-SINGLEFLIGHT-01 (T3 extension, agent-efficiency-
       # fixes-2026-07) ----------------------------------------------------

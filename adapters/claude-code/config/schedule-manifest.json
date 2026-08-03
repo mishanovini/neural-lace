@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "note": "Bootstrap artifact for harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 2: 'cadence >= 2x measured cycle time for every recurring mechanism, doctor-enforced'). This is the FIRST version of the aggregate artifact the 2026-08-02 considerations brief names as missing (process-chain blind spot 4: 'no aggregate artifact... the layer that ate 90% of the machine is the one layer that grew review-free'). Stage 1 (nl-maintenance.sh) replaces the six per-machine scheduled tasks this manifest currently describes with completion-anchored internal jobs and becomes the manifest's real-time writer; until then this file is hand-maintained and doctor-enforced WARN-only (calibration week per the task-1 spec -- flips to RED in a later task, not this one).",
+  "cadence_check": {
+    "mode": "warn",
+    "ratio_floor": 2,
+    "ratio_floor_meaning": "declared_cadence_seconds must be >= ratio_floor x measured_cycle_seconds for every entry that has a non-null measured_cycle_seconds. Entries with measured_cycle_seconds == null are calibration-pending and are skipped (not WARNed) -- absence of a measurement is not itself a violation at this stage."
+  },
+  "mechanisms": [
+    {
+      "id": "coord-sync",
+      "description": "single per-machine coordination cadence (exporter + coord-push + coord-pull)",
+      "script": "adapters/claude-code/scripts/coord-sync.sh",
+      "installer": "adapters/claude-code/scripts/install-coord-sync-task.ps1",
+      "declared_cadence_seconds": 60,
+      "measured_cycle_seconds": 110,
+      "measured_source": "coord-sync.sh:42 header comment ('bash spawns have measured 94-119s here'), PROVEN per the 2026-08-02 RCA (considerations brief SS1.1 row C2) -- 110 is the range midpoint",
+      "calibration_status": "measured",
+      "platform_cost_lines": {
+        "windows": {
+          "spawn_cost_ms": 152,
+          "spawn_cost_source": "PROVEN 2026-08-02 measurement cited in the considerations brief SS1.1 row A1 (152-190ms/spawn on Windows)",
+          "spawns_per_cycle": null,
+          "spawns_per_cycle_status": "not yet profiled -- Stage 1 (nl-maintenance.sh) instruments this"
+        }
+      }
+    },
+    {
+      "id": "supervisor-tick",
+      "description": "never-stall watchdog: stranded-worktree detector + heartbeat liveness enrichment",
+      "script": "adapters/claude-code/scripts/supervisor-tick.sh",
+      "installer": "adapters/claude-code/scripts/install-coord-sync-task.ps1",
+      "declared_cadence_seconds": 300,
+      "measured_cycle_seconds": null,
+      "measured_source": null,
+      "calibration_status": "pending",
+      "platform_cost_lines": {
+        "windows": {
+          "spawn_cost_ms": 152,
+          "spawns_per_cycle": null,
+          "spawns_per_cycle_status": "not yet profiled -- Stage 1 instruments this"
+        }
+      }
+    },
+    {
+      "id": "session-heartbeat",
+      "description": "per-session liveness surface (workstreams-heartbeat in the 2026-08-02 brief's six-mechanism inventory)",
+      "script": "adapters/claude-code/scripts/session-heartbeat.sh",
+      "installer": null,
+      "declared_cadence_seconds": 300,
+      "measured_cycle_seconds": null,
+      "measured_source": "declared cadence PROVEN via live Task Scheduler query cited in the considerations brief SS1.1 row C1 ('workstreams-heartbeat PT5M'); this checkout has no committed installer script for it (hand-registered or predates this repo revision) -- reconcile at Stage 1",
+      "calibration_status": "pending",
+      "platform_cost_lines": {
+        "windows": {
+          "spawn_cost_ms": 152,
+          "spawns_per_cycle": null,
+          "spawns_per_cycle_status": "not yet profiled -- Stage 1 instruments this"
+        }
+      }
+    },
+    {
+      "id": "session-resumer",
+      "description": "throttled resume-nudge sweep for stalled/limit-parked sessions",
+      "script": "adapters/claude-code/scripts/session-resumer.sh",
+      "installer": null,
+      "declared_cadence_seconds": 600,
+      "measured_cycle_seconds": null,
+      "measured_source": "session-resumer.sh:71 header comment ('10-minute cadence, git-bash invocation, per specs-e SSE.7')",
+      "calibration_status": "pending",
+      "platform_cost_lines": {
+        "windows": {
+          "spawn_cost_ms": 152,
+          "spawns_per_cycle": null,
+          "spawns_per_cycle_status": "not yet profiled -- Stage 1 instruments this"
+        }
+      }
+    },
+    {
+      "id": "health-tick",
+      "description": "session-independent PASSIVE hourly health tick (doctor + external-monitor alert surfacing while no session is open)",
+      "script": "adapters/claude-code/scripts/health-tick.sh",
+      "installer": null,
+      "declared_cadence_seconds": 3600,
+      "measured_cycle_seconds": null,
+      "measured_source": "health-tick.sh header ('ADR-061 D6... hourly'); the script's own HEALTH_TICK_BUDGET_SECS=300 is an internal wall-clock BUDGET, not a measured actual cycle time -- not conflated here",
+      "calibration_status": "pending",
+      "platform_cost_lines": {
+        "windows": {
+          "spawn_cost_ms": 152,
+          "spawns_per_cycle": null,
+          "spawns_per_cycle_status": "not yet profiled -- Stage 1 instruments this"
+        }
+      }
+    },
+    {
+      "id": "downstream-product-health-monitor",
+      "description": "external health monitor for a downstream product this estate operates (named generically per the harness no-product-names convention)",
+      "script": null,
+      "installer": null,
+      "declared_cadence_seconds": 1800,
+      "measured_cycle_seconds": null,
+      "measured_source": "declared cadence PROVEN via live Task Scheduler query cited in the considerations brief SS1.1 row C1 ('downstream-product-health-monitor PT30M'); no script/installer checked into this repo -- external to this checkout, reconcile at Stage 1",
+      "calibration_status": "pending",
+      "platform_cost_lines": {}
+    }
+  ]
+}

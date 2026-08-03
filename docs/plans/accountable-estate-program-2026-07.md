@@ -252,6 +252,11 @@ observe).
 - 2026-07-29: `adapters/claude-code/hooks/lib/estate-registration-lib.sh` — NEW, T4 no-orphan registration store (reg_register/reg_close/reg_is_open/reg_open_count/reg_has_any_record), same HARNESS_SELFTEST sandboxing convention as admission-lib.sh
 - 2026-07-29: `adapters/claude-code/scripts/spawn-worktree.sh` — T4 additions on top of the T3 admission splice: `--plan`/`--task`/`--who` attribution flags, a no-orphan REGISTRATION splice on `--apply` create, `--disposition` on `--remove`, and a DE-REGISTRATION splice in `remove_worktree()`
 - 2026-07-29: `adapters/claude-code/hooks/lib/admission-lib.sh` — T4 addition on top of T3: a fifth ladder rung, `would-block:wip-exceeded` (design §6c "closure gates new work"), scoped to `source=worktree` only, reading `estate-registration-lib.sh`'s open-registration count; still OBSERVE ONLY
+- 2026-08-02: `docs/reviews/2026-08-02-estate-entropy-triage.md` — read-only triage of the four
+  saturated queues this program exists to address (nl-issues, monitor alerts, stale plans,
+  stranded worktrees) into ranked, cited dispositions; direct evidence base for the T15-T18
+  backlog candidates named in `~/.claude/state/nl-issues.jsonl` (2026-07-28/29/30) and not yet
+  promoted into this plan's own task list
 - 2026-07-29: `adapters/claude-code/scripts/close-worktree.sh` — NEW, T4's generalized closer for the "worktree/builder" work-item type (close-plan.sh's pattern generalized to a second type): verify → integration-check (merge, or explicit `--keep-branch --reason`) → remove → de-registration
 - 2026-07-29: `adapters/claude-code/scripts/estate-attribution-check.sh` — NEW, T4's outcome-metric tool: derives "zero unattributable worktrees/branches older than 48h" from the registration store + `git worktree list`
 - 2026-07-29: `adapters/claude-code/manifest.json` — T4 entry (estate-registration-lib) + T4 additions to the existing admission-lib entry (golden_scenario, jit_triggers.paths)

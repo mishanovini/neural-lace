@@ -145,6 +145,11 @@ set -u
 SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck disable=SC1091
 { source "$SELF_DIR/../hooks/lib/nl-paths.sh" 2>/dev/null; } || true
+# harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 11): the
+# HALT/drain flag, sourced UNCONDITIONALLY so this tick wrapper honors an
+# operator's one-gesture stop — see hooks/lib/single-flight-lib.sh header.
+# shellcheck disable=SC1091
+{ source "$SELF_DIR/../hooks/lib/single-flight-lib.sh" 2>/dev/null; } || true
 
 # ============================================================
 # Constants / config
@@ -488,6 +493,16 @@ _run_cycle() {
 # _main <force> — one debounced fire (Task 7 decision logic; see header).
 _main() {
   local force="${1:-0}"
+  # harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 11):
+  # HALT/drain — checked FIRST, before this tick's own overlap lock, so a
+  # drain never has to wait behind (or race) a held cycle lock. See
+  # hooks/lib/single-flight-lib.sh header for the one-gesture contract
+  # (sf_halt_set/sf_halt_clear; presence of the HALT flag file is all that
+  # matters here).
+  if declare -F sf_halt_active >/dev/null 2>&1 && sf_halt_active; then
+    _log "HALT flag set ($(sf_halt_reason 2>/dev/null)) — draining: exiting without running this cycle"
+    return 0
+  fi
   if ! _acquire_lock; then
     _log "another coord-sync cycle is already running (lock held) — no-op (overlap prevention)"
     return 0
@@ -934,6 +949,38 @@ _self_test() {
   local n_alerts_11; n_alerts_11=$(ls "$s11_alerts"/*.json 2>/dev/null | wc -l | tr -d ' ')
   [ "$n_alerts_11" = "1" ]
   _ck "dead-remote streak interrupted by throttled no-signal cycles still crosses threshold 3 -> exactly ONE A2c alert fires (throttled no longer starves A2c)" $?
+
+  # ======== Scenario 12 (harness-execution-redesign-2026-08 Task 1,
+  # invariant 11): HALT/drain -- set the flag, confirm the next tick exits
+  # immediately with a drain notice and writes NO cycle-log row (never ran
+  # a cycle); clear it, confirm normal resumption. SF_STATE_DIR is a
+  # sandboxed fixture dir so this scenario never touches the real
+  # machine's HALT flag. ========
+  local s12_state="$tmproot/s12-state" s12_sf="$tmproot/s12-sf" s12_status="$tmproot/s12-status.json"
+  local s12_clone="$tmproot/s12-clone"
+  mkdir -p "$s12_state" "$s12_sf"
+  _s12_run() {
+    (
+      export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$s12_clone" COORD_BRANCH="main"
+      export STATE_DIR="$s12_state" COORD_PUSH_STATUS_FILE="$s12_status"
+      export COORD_SYNC_FLOOR_SECONDS=0
+      export COORD_SYNC_EXPORTER_CMD="true"
+      export COORD_SYNC_PUSH_CMD="true"
+      export COORD_SYNC_PULL_CMD="true"
+      export SF_STATE_DIR="$s12_sf"
+      bash "$SELF_PATH" 2>&1
+    )
+  }
+  printf '%s %s\n' "$(date +%s 2>/dev/null || echo 0)" "s12-test-halt" > "$s12_sf/HALT"
+  local out12a; out12a="$(_s12_run)"
+  printf '%s' "$out12a" | grep -qi "HALT" && _ck "Scenario 12a: HALT flag set -> tick drains with a notice naming HALT" 0 \
+    || _ck "Scenario 12a: HALT flag set -> tick drains with a notice naming HALT" 1
+  [ ! -f "$s12_state/cycles.log" ]
+  _ck "Scenario 12b: HALT drain never wrote a cycle-log row (no cycle ran)" $?
+  rm -f "$s12_sf/HALT"
+  local out12c; out12c="$(_s12_run)"
+  [ -f "$s12_state/cycles.log" ]
+  _ck "Scenario 12c: HALT cleared -> next tick runs a normal cycle (cycle-log row written)" $?
 
   rm -rf "$tmproot" 2>/dev/null || true
   echo "[self-test] coord-sync: $pass passed, $fail failed"
