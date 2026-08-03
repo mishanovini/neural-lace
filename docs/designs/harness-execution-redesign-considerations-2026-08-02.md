@@ -2,6 +2,7 @@
 
 **Date:** 2026-08-02 · **For:** operator · **Scope:** execution layer only — rules and block semantics unchanged under every posture considered here.
 **Inputs:** mechanism RCA + design-process RCA (both verified against live `settings.json`, `harness-doctor.sh`, `coord-sync.sh`, Task Scheduler, `nl-issues.jsonl` this session), three candidate designs, three adversarial pre-mortems. Evidence markers: PROVEN = cited measurement; HYPOTHESIZED = refuter named.
+**Changelog:** 2026-08-03 (`docs/plans/gated-pipeline-master-2026-08.md` Task 19, REQ-B10 no-addendum lint): the two trailing sections (`## Addendum — operator dialogue round 2` and `## Round 3 revamp`) folded into the body in place — §2 (invariant 10 extended, invariants 13-18 added), §3 (status note), §4.1, §4.2, §5 (D1/D2/D4 resolutions), §6 (restaged per the operator's Round-3 GO) all revised in place. Every contradicted statement is marked CORRECTED/SUPERSEDED/RESOLVED inline citing 2026-08-02; no content was dropped, only relocated to the section it corrects or extends.
 
 ---
 
@@ -53,9 +54,18 @@ These are posture-independent. A design that lacks one of these will re-derive t
 7. **Escape hatches are ledgered.** Every `NL_FORCE`/`--no-cache`/bypass use is logged; doctor WARNs above a rate threshold. Recorded lesson: "loud is not rare — env-var overrides are theater."
 8. **Derived, never authored.** Cache fingerprints are computed from per-check declared inputs (doctor REDs a check with no declared inputs); state = fold(event ledger) + a ground-truth reconciliation floor that wins on conflict. (From minimal pre-mortem 1 + review F4; heals the lost-push class.)
 9. **Retire-before-extend, mechanized.** A migration stage is not done until the old counterpart is deleted in the same plan, task-verifier-checked; doctor REDs "both substrates alive > 14 days." (From platform pre-mortem 1 — the stall-at-stage-2 trap.)
-10. **Platform-priced review.** Any new recurring mechanism's review includes the spawns × platform-cost × fire-rate table for the machine it will run on, at the *degraded* estate baseline, not the healthy one.
+10. **Platform-priced review.** Any new recurring mechanism's review includes the spawns × platform-cost × fire-rate table for the machine it will run on, at the *degraded* estate baseline, not the healthy one. **Extended 2026-08-02 (Round 3 operator GO, R3.2):** the table must cover EVERY machine class in the estate (2 Windows + 1 Mac), not just the one it launches on first.
 11. **One-gesture stop.** A HALT/drain flag honored by every tick wrapper and dispatch path — the emergency "disable 5 tasks by hand" becomes a supported mode.
 12. **Outcome-gated closure.** The redesign closes on a measured outcome (24 h idle soak, all tasks enabled, <15% CPU), re-checked +30 days; recurrence auto-reopens. This is the direct counter to the outcome-blind-closure lesson (07-24 "shipped" → 07-27 freeze).
+
+**Invariants 13-18 (added 2026-08-02, Round 3 operator GO, R3.4 "THE GATE PHILOSOPHY LAW" — gates never block silently):**
+
+13. **Structured block messages (R3.4.1).** Every block message is a complete instruction with structured fields — WHAT fired, WHY, the exact FIX command/path, and the sanctioned ESCAPE with its cost — and the doctor lints gate sources for the fields' presence. The scope-enforcement gate's three-options message is the retrofit standard.
+14. **`--check` pre-flight modes (R3.4.2).** Gates gain a consult-before-acting entry point so agents can ask "would this pass?" before doing the work — the gate as guide, not wall.
+15. **Workaround-as-sensor (R3.4.3).** Every bypass/workaround attempt is ledgered; a gate that generates workarounds is a DEFECTIVE gate and gets auto-filed for redesign. Extends invariant 7 from escape hatches to all workaround behavior.
+16. **Incentive-by-design (R3.4.4).** The right way is the cheapest way — the read-only zero-hook precedent, extended to batched commands and pre-declared scope.
+17. **JIT pre-warnings (R3.4.5).** Requirements surface BEFORE the blocked attempt (hints at approach time), so first contact with a rule is guidance, not a wall.
+18. **Gate-friction metric (R3.4.6).** Gate quality = blocks/day × workaround-rate, per gate, surfaced on the cost-budget dashboard. A gate trending hot is a defect to fix, not a fact of life.
 
 ---
 
@@ -77,6 +87,8 @@ All three keep rules and block semantics unchanged; they differ only in where an
 - Minimal is the only posture that leaves the incident's *substrate* (per-event Windows spawn) fully intact — its own cost analysis concedes ~60% of the outcome for ~70% of the daemon's cost.
 - Platform shift is the only posture where the riskiest assumption has a **decomposed blast radius**: the unknown (#41649) gates only builder hosting, not the CPU win.
 
+**Status note (2026-08-02, Round 3 operator GO):** the operator resolved D1 to **hybrid, WITHOUT WSL2** (R3.1, §5) and D4 to **closed, no new hardware** (R3.2, §5). The WSL2/platform-shift-specific costs in this table and in §4.4 below are retained as the ANALYSIS that led to the decision — still accurate comparative rationale — but the DECISION itself, and the staging that executes it, live in §5 (D1/D4) and §6, both revised in place.
+
 ---
 
 ## 4. Trade-off deep-dives
@@ -85,12 +97,15 @@ All three keep rules and block semantics unchanged; they differ only in where an
 
 **The tension.** Push (event on change) is cheap and fresh but fragile: a lost event is a permanent lie — PROVEN class: builders push launch-ack but never done, leaving phantom obligations. Pull (recompute from ground truth) is self-healing but expensive — and on this substrate, recompute cost is O(mess) × spawn tax, which is the exact mechanism of C3. Pure push lies; pure pull burns.
 
+**Correction (2026-08-02, operator round-2 dialogue):** the freeze this analysis is grounded in was actually caused by UNBOUNDED dispatch, not by the push-vs-pull choice itself — push+capacity-check is valid. The real axis is where CAPACITY knowledge lives: push means the dispatcher's own model of capacity, which can go stale; pull means capacity is self-assessed at pull time, so it is never stale. Rule of thumb: push-materialize when reads far outnumber changes; pull-on-demand when changes far outnumber reads. Pull is retained regardless for: work acquisition, the anti-entropy floor below, trust facts, and cold-boot state.
+
 **Resolution (all three designs converge on it, differing only in cadence):** push as fast path, pull as **anti-entropy floor** — state = fold(append-only ledger), plus a reconciliation sweep every 5–30 min that re-derives from ground truth (process table, `git worktree list`, heartbeats) and wins on conflict. Lost pushes self-heal within one floor interval; the floor's cost is bounded by invariant 2 (cadence ≥ 2× its own cycle time).
 
 **Per plane:**
 - *Within-machine:* hooks append one-line JSON to per-writer O_APPEND spools (works with the consumer down — no loss window); the consumer folds via file-watch. Obligation: spool rotation with a named consumer at birth, or telemetry becomes its own perf problem again.
 - *Cross-machine:* the coordination repo stays the hub — snapshot-only commits (review F10), push-on-change debounced, pull floor at minutes not seconds. Raised floor cadence costs ~5 min cross-machine staleness vs 1 — acceptable because push remains the fast path and the floor only covers lost events.
 - *Failure mode to price:* if two writers push the same derived snapshot (the dual-substrate trap, §3 platform pre-mortem), push-on-change becomes ping-pong. Derived state must have exactly one materializer per scope — enforced, not assumed.
+- **Lost-event prevention (added 2026-08-02, operator round-2 dialogue — corrects the cleanup-oriented framing above to a PREVENTION stack):** lease/ack required on every pushed obligation; write-ahead intent (the emitter logs before acting, not after); open/close brackets as an incremental ledger invariant (every opened obligation must close, checkable without a full replay); per-emitter sequence numbers for gap detection. This layer sits ahead of the anti-entropy floor above — the floor now catches only what still gets lost after prevention, it is no longer the primary defense.
 
 ### 4.2 Supervision of any resident process
 
@@ -100,6 +115,8 @@ If any posture keeps a resident component (daemon, or plane units), its supervis
 - **Fail-open decays silently.** Stubs falling back to static caps "with loud logging" log into the channel already carrying 1,193 unacked alerts. Every observable *improves* (sessions faster, watchdog green) while enforcement is gone. The counter is context injection (invariant 6): a degradation banner in every session, plus time-boxed fail-open → fail-closed for storm-capable categories (dispatch admission) after 24 h.
 - **Watchdog design.** Exactly one recurring scheduled task remains per machine: a deterministic (no-bash) watchdog checking freshness + `/api/health`, kill-and-relaunch on failure. Crash-only process discipline (uncaughtException → flush → exit; RSS watermark self-restart) makes restarts cheap; spool buffering + replay makes them lossless.
 - **Cohabitation risk.** Hosting the maintenance plane inside the UI server means UI deploys restart the plane, and Job-Object handle lifetime (KILL_ON_JOB_CLOSE) can turn a routine restart into session kills. If a resident component exists on Windows, it should hold *accounting* Job Objects only for survivable session types. On the Linux plane this whole class dissolves: systemd units + cgroups are the supervisor, per-unit, with none of it hand-built.
+- **Cleanup-as-sensor law (added 2026-08-02, operator round-2 dialogue).** Every cleanup logs `{what, why-it-existed, which-prevention-failed}`; a cleanup without a learning record is itself a defect. Weekly aggregation names the top producer for a proactive fix. Cleanup volume trending flat (not falling to zero) is an alarm, not a steady state to accept.
+- **Death certificates (added 2026-08-02, operator round-2 dialogue).** The supervisor waits on process handles (kernel-pushed death + exit code) and combines that with write-ahead intent so every death carries a who/what/why; the taxonomy accumulates and the top killer is fixed per cycle. Death causes ranked at synthesis time: self-DoS resource exhaustion (now relieved) > watchdog TERM-kills > operator close/reboot > API cascades > suspended-forever.
 
 ### 4.3 Single center vs per-category — where concentration is acceptable
 
@@ -145,6 +162,8 @@ Context: three designs above; they are combinable (§3 cross-cutting). "Builder-
 My pick: **hybrid** — it takes each posture's proven part and gates each unknown behind its own cheap test.
 Reply with: `hybrid` (I start §6 stage 0 immediately) · `minimal` / `daemon` / `platform` (I re-plan to that posture) · `discuss` (name the concern).
 
+**RESOLVED 2026-08-02 (Round 3 operator GO, R3.1; build plan `docs/plans/harness-execution-redesign-2026-08.md`):** hybrid, confirmed — WITH zero WSL2 dependency. Honest record: no prior no-WSL decision existed before this date (the pilot had been on-hold pending research, and the research above recommended a gated pilot) — the operator's 2026-08-02c statement decided it outright. Stage 1's maintenance offload uses Windows-native central management (a portable maintenance core with non-overlapping timers by construction, TTL-materialized snapshots, and the platform-neutral doctor verdict cache — scheduled via thin platform adapters, `schtasks` on Windows / `launchd` on darwin, per R3.2) instead of the WSL2/systemd path costed in §3/§4.4/§6; WSL2 remains at most a possible future builder-host experiment, never a harness-mechanism dependency. Full disposition in §6 (restaged).
+
 ---
 
 **D2 — Arming the orphan reaper (irreversible kills).**
@@ -158,6 +177,8 @@ Context: 98 orphan bash processes accumulated in 136 h (PROVEN); the reaper has 
 
 My pick: **arm-conservative** — the ledger audit is the safeguard the worktree incident lacked.
 Reply with: `arm` · `observe` · `never`.
+
+(Unaffected by the 2026-08-02 Round 3 directives — R3.6 in §6 reconfirms reaper arming stays gated on this decision, separate from the redesign program.)
 
 ---
 
@@ -187,6 +208,8 @@ Context: builder sessions moving into WSL2 ride on #41649 (thinking-phase delays
 My pick: **pilot-then-decide**, threshold P90 TTFT > 2× native → abort. Confirm or reset the threshold — it is the tripwire that spends your money's alternative.
 Reply with: `pilot` (optionally your threshold) · `mac` · `buy`.
 
+**CLOSED 2026-08-02 (Round 3 operator GO, R3.1/R3.2):** moot — the builder-hosting pilot this decision gated is cut from the program entirely (R3.1's third bullet: "§6's old stage 4 leaves this program"), and R3.2 takes `buy-box-now` and `skip-to-mac` off the table outright: no new hardware, and darwin support is folded into stage 1 as a portability requirement rather than a later stage or pilot. The TTFT pilot described above never runs under this program.
+
 ---
 
 **D5 — Doctor freshness contract (staleness you'll tolerate on the arbiter).**
@@ -205,88 +228,9 @@ Reply with: `30m` · `10m` · `event`.
 
 ## 6. Recommended staged path
 
-Hybrid (pending D1). Every stage independently shippable; every stage's definition-of-done includes deleting its Windows counterpart (invariant 9); rollback at any stage = `Enable-ScheduledTask` (tasks are disabled, never deleted, until the +30-day re-check passes). Closure of the whole effort is outcome-gated (invariant 12): **24 h idle soak, all functions enabled, <15% CPU — measured at close and re-checked +30 days; recurrence auto-reopens the plan.**
+Hybrid, WITHOUT WSL2 (RESOLVED 2026-08-02, Round 3 operator GO — see §5 D1). Every stage independently shippable; every stage's definition-of-done includes deleting its Windows counterpart (invariant 9); rollback at any stage = `Enable-ScheduledTask` (tasks are disabled, never deleted, until the +30-day re-check passes). Closure of the whole effort is outcome-gated (invariant 12): **24 h idle soak, all functions enabled, <15% CPU — measured at close and re-checked +30 days; recurrence auto-reopens the plan.** The build plan implementing this staging is `docs/plans/harness-execution-redesign-2026-08.md`; build proceeds per the orchestrator pattern.
 
-| Stage | Content | LOE (bs) | Observe-first / exit criterion |
-|---|---|---|---|
-| **0 — Stop the bleeding + invariants** | C0 estate drain (per D3) · universal single-flight + doctor recursion guard (in-lib, invariant 4 — kills nested chains today) · SessionStart heavy hooks narrowed to `startup\|clear` matchers · schedule manifest + cadence ≥ 2× cycle check (WARN) · per-Bash hook-count budget (WARN) · HALT/drain wrapper on all ticks | 2.5–4 | Invariant checks run WARN for 1 week before flipping RED (calibration window). Exit: zero nested doctor chains in a 48 h window; CoordSync at PT5M floor with no overlap events. Note: the full derived-fingerprint verdict cache is deliberately NOT built here — stage 1 obsoletes it; only the recursion guard + in-flight short-circuit ship (bloat avoidance) |
-| **1 — Maintenance offload to the plane** | WSL2 Ubuntu provisioning, repos on ext4 · the 6 tasks become systemd user units (wrap existing scripts first, rewrite later) · snapshot-builder unit computes doctor/digest/pressure once per TTL (per D5) into materialized snapshots · output-freshness health (invariant 5) · ONE remaining Windows task: deterministic watchdog · same-stage unregistration of the 6 Windows tasks · both-substrates-alive doctor RED | 2–3 | 1-week parallel observe with Windows tasks disabled-not-deleted; exit: 24 h idle soak <15% CPU with all plane units enabled — **this stage alone captures the ~90% CPU win and makes zero model calls (immune to #41649)** |
-| **2 — Thin Windows edge** | 4–5 per-category stubs generated from shared templates (edge profile == template, doctor-verified — counters the re-fattening pre-mortem) · SessionStart/resume → one snapshot-cat stub · degradation banner via context injection (invariant 6) · same-commit removal of replaced hooks · exit-0 shim retirement in the same freeze window (coordinate-estate skill) | 2–3 | 7-day observe-first: stubs log would-block vs live gate decisions; any wrong-block on protected-orchestrator traffic or golden-scenario divergence → fallback: stubs source existing gate scripts as in-process functions (keeps most of the spawn win). Exit: per-Bash ~4.1 s → ≤0.5 s measured; block-semantics diff = zero |
-| **3 — Attribution + reaper** | Plane: cgroup scoping + PDEATHSIG (orphan class dissolves) · edge: Job Objects for *accounting* (KILL_ON_JOB_CLOSE only for non-survivable types) · reaper armed per D2 with lease check · timeouts on all pollers | 1–2 | Reaper: observe-ledger audit precedes arming; exit: 7 days armed with zero false-positive kills and orphan census ≤ 5 |
-| **4 — Builder hosting (pilot-gated, per D4)** | A/B one workstream in-plane for a week, TTFT instrumented · abort path: builders → Mac mini / Linux box, everything else stands | 1 (+ calendar) | Hard abort at the D4 threshold; no fleet migration until the pilot passes |
-| **5 — Second plane (Mac mini)** | launchd port of plane units; GNU-userland shim audit | 1–2 | Deferred until stage 1–2 outcomes pass the +30-day re-check — do not open a second front while the first is unproven |
-| **Contingency** | Hidden same-filesystem assumptions (worktree salvage, reaper cross-checks, temp handoffs) surfacing during 1–2 | +1–2 | Budgeted, per the platform design's own likeliest-overrun call |
-
-**Total: P50 ~10.5–13 bs, front-loaded — stages 0–1 (~4.5–7 bs) deliver the dominant outcome.** The process-chain fixes (§1.2) ride along structurally: the schedule manifest is the aggregate artifact that never existed (blind spot 4); the budget + cadence checks put the meta-rules on the mechanized rung (the meta-failure); the stage-2 observe-first sweep doubles as the first retroactive regression sweep of the installed base (blind spot 5); and §2's invariant 10 amends the review checklist itself (blind spots 1–3).
-
-**What this path deliberately does not do:** build the bespoke daemon (systemd supersedes it; it remains the documented fallback if WSL2 is rejected at D1 or fails its soak); migrate builders before the pilot; touch any rule's semantics; or claim the kernel-pool leak is fixed — that stays HYPOTHESIZED with its refuter standing (pool measured before/after stage 1 lands in the pressure snapshot as an early-warning field either way).
-
----
-## Addendum — operator dialogue round 2 (2026-08-02, folded post-synthesis)
-The synthesis above predates the operator's second design round. Binding refinements (full detail:
-the two REDESIGN-INPUT entries in ~/.claude/state/nl-issues.jsonl, 2026-08-02):
-1. **Push/pull corrected:** the freeze was UNBOUNDED dispatch, not push-vs-pull; push+capacity-check
-   is valid. Real axis = where capacity knowledge lives (push: dispatcher's model, can go stale;
-   pull: self-assessed at pull time, never stale). Rule: push-materialize when reads >> changes;
-   pull-on-demand when changes >> reads. Pull keeps: work acquisition, anti-entropy floor, trust
-   facts, cold-boot state.
-2. **Lost-event PREVENTION stack (not cleanup):** lease/ack on every pushed obligation; write-ahead
-   intent (emit before acting); open/close brackets as incremental ledger invariant; per-emitter
-   sequence numbers for gap detection.
-3. **Cleanup-as-sensor LAW:** every cleanup logs {what, why-it-existed, which-prevention-failed};
-   a cleanup without a learning record is a defect; weekly aggregation names the top producer for a
-   proactive fix; cleanup volume trending flat (not to zero) is an alarm.
-4. **Death certificates:** supervisor waits on process handles (kernel-pushed death + exit code) +
-   write-ahead intent = every death carries who/what/why; taxonomy accumulates; top killer fixed
-   per cycle. Death causes ranked: self-DoS resource exhaustion (now relieved) > watchdog
-   TERM-kills > operator close/reboot > API cascades > suspended-forever.
-These refine, and where in tension override, sections 4-6 above.
-
----
-
-## Round 3 revamp (2026-08-02, operator GO)
-
-Round 3 is the operator's build authorization plus final directives. Where in tension, this section
-overrides everything above, including the round-2 Addendum. Sources: the two BINDING entries in
-`~/.claude/state/nl-issues.jsonl` dated 2026-08-02 ("OPERATOR DECISION 2026-08-02c" and "REDESIGN
-ROUND 3 — OPERATOR GO 2026-08-02d"). The build plan implementing this revamp is
-`docs/plans/harness-execution-redesign-2026-08.md`; build proceeds per the orchestrator pattern.
-
-### R3.1 — No WSL. Final. (2026-08-02c)
-
-Honest record: no prior no-WSL decision existed (the pilot was on-hold pending research; the
-research recommended a gated pilot) — the operator's 2026-08-02c statement decides it NOW. The
-harness redesign takes **zero WSL dependency**. Consequences:
-
-- §6 stage 1 is amended: maintenance offload does NOT use WSL2/systemd. It uses the brief's own
-  documented fallback = **Windows-native central management**: a portable maintenance core with
-  non-overlapping timers by construction (IgnoreNew + universal single-flight + cadence ≥ 2×
-  measured cycle, i.e. completion-anchored scheduling), TTL-materialized snapshots, and the
-  platform-neutral doctor verdict cache. Stage 0 invariants are posture-independent and unaffected.
-- §3's daemon-vs-plane argument collapses: the plane is off the table, the bespoke resident daemon
-  remains rejected (concentration + cohabitation risk, §4.2/§4.3) — the landing zone is "central
-  management logic, distributed cheap execution," scheduled by the OS scheduler each machine
-  already has.
-- WSL2 remains, at most, a possible FUTURE builder-host experiment — never a dependency of any
-  harness mechanism. §6's old stage 4 (builder-hosting pilot) leaves this program.
-
-### R3.2 — No new hardware; must run well on ALL current machines (2026-08-02d)
-
-Fix-on-Windows is the bet. The estate is 2 Windows machines + 1 Mac, and every mechanism in this
-redesign must run on all three:
-
-- Centralization logic lives in **portable bash**, scheduling in **thin platform adapters**
-  (schtasks on Windows, launchd on darwin — `adapters/claude-code/scripts/ensure-cockpit.sh`'s
-  darwin pattern is the in-repo precedent).
-- Invariant 10 is extended: every recurring mechanism's review carries **per-platform cost lines**
-  (spawns × that platform's spawn cost × fire rate) for each machine class it will run on.
-- D4 is closed by this directive: `buy-box` and `skip-to-mac` are off the table; §6's old stage 5
-  (second plane) is subsumed — darwin support is not a later stage, it is the portability
-  requirement of stage 1 itself.
-
-### R3.3 — Anti-bloat re-affirmed: MODIFY/REPLACE/DELETE, never add (2026-08-02c)
-
-The redesign's success metric is the inventory counting DOWN, doctor-verifiable:
+**Success metric (R3.3, added 2026-08-02, Round 3 operator GO):** the redesign's success metric is the inventory counting DOWN, doctor-verifiable — anti-bloat re-affirmed: MODIFY/REPLACE/DELETE, never add.
 
 | Inventory | Now (PROVEN) | Target |
 |---|---|---|
@@ -295,45 +239,22 @@ The redesign's success metric is the inventory counting DOWN, doctor-verifiable:
 | SessionStart spawns | 16 | 1–2 |
 | Total hook budget | uncapped | doctor-enforced cap |
 
-Every new capability must displace a NAMED old one (invariant 9 generalized from stages to every
-capability). A stage that adds without deleting is not done.
+Every new capability must displace a NAMED old one (invariant 9 generalized from stages to every capability). A stage that adds without deleting is not done.
 
-### R3.4 — The GATE PHILOSOPHY LAW (2026-08-02d)
+**Stage-0 scope additions (R3.5, added 2026-08-02, Round 3 operator GO):** Stage 0 includes the guidance-contract retrofit of the top-5 blocking gates — scope-enforcement, pre-commit, harness-hygiene, plan-header (plan-edit-validator), concurrent-ownership — structured block messages + `--check` modes, doctor-linted (invariants 13-14, §2); a cost-budget dashboard in the workstreams-ui cockpit (per-mechanism cost × fire-rate vs budget, the inventory counts above live, and the gate-friction metric); and gate-friction telemetry ledgered from the first task onward, so later stages are tuned on data, not intuition.
 
-Gates never block silently. This is a law of the redesign, mechanized, not prose:
+| Stage | Content | LOE (bs) | Observe-first / exit criterion |
+|---|---|---|---|
+| **0 — Stop the bleeding + invariants + gate guidance retrofit** | C0 estate drain (per D3) · universal single-flight + doctor recursion guard (in-lib, invariant 4 — kills nested chains today) · SessionStart heavy hooks narrowed to `startup\|clear` matchers · schedule manifest + cadence ≥ 2× cycle check (WARN) · per-Bash hook-count budget (WARN) · HALT/drain wrapper on all ticks · **top-5 gate guidance-contract retrofit + cost-budget dashboard + gate-friction telemetry (R3.5, folded in above)** | 2.5–4 (R3.5 additions carry no revised LOE from the operator — tracked, not yet re-estimated) | Invariant checks run WARN for 1 week before flipping RED (calibration window). Exit: zero nested doctor chains in a 48 h window; CoordSync at PT5M floor with no overlap events. Note: the full derived-fingerprint verdict cache is deliberately NOT built here — stage 1 obsoletes it; only the recursion guard + in-flight short-circuit ship (bloat avoidance) |
+| **1 — Windows-native central maintenance** (CORRECTED 2026-08-02, Round 3 operator GO, R3.1 — was "Maintenance offload to the plane" via WSL2/systemd; no-WSL is final, see §5 D1) | A portable maintenance core in bash with non-overlapping timers by construction (IgnoreNew + universal single-flight + cadence ≥ 2× measured cycle, i.e. completion-anchored scheduling) · the 6 tasks become the same core's scheduled units, wired via thin platform adapters (`schtasks` on Windows, `launchd` on darwin — `adapters/claude-code/scripts/ensure-cockpit.sh`'s darwin pattern is the in-repo precedent; darwin support is this stage's portability requirement, not a later stage, per R3.2) · snapshot-builder computes doctor/digest/pressure once per TTL (per D5) into materialized snapshots · output-freshness health (invariant 5) · ONE remaining always-on Windows task: deterministic watchdog · both-substrates-alive doctor RED (invariant 9) | 2–3 (LOE as originally costed for the plane posture; not re-estimated for the Windows-native path by the operator) | 1-week parallel observe; exit: 24 h idle soak <15% CPU with all Windows-native units enabled on every estate machine class (2 Windows + 1 Mac, invariant 10 extended) — **this stage alone still captures the ~90% CPU win; the "immune to #41649" framing is now moot rather than a virtue, since #41649 (a WSL2/builder-hosting risk) no longer applies to any part of this program** |
+| **2 — Thin Windows edge** | 4–5 per-category stubs generated from shared templates (edge profile == template, doctor-verified — counters the re-fattening pre-mortem) · SessionStart/resume → one snapshot-cat stub · degradation banner via context injection (invariant 6) · same-commit removal of replaced hooks · exit-0 shim retirement in the same freeze window (coordinate-estate skill) | 2–3 | 7-day observe-first: stubs log would-block vs live gate decisions; any wrong-block on protected-orchestrator traffic or golden-scenario divergence → fallback: stubs source existing gate scripts as in-process functions (keeps most of the spawn win). Exit: per-Bash ~4.1 s → ≤0.5 s measured; block-semantics diff = zero |
+| **3 — Lost-event prevention + death certificates + cleanup-as-sensor** (CORRECTED 2026-08-02, Round 3 operator GO, R3.6 — was "Attribution + reaper" via plane cgroups/PDEATHSIG; that mechanism was specific to the now-rejected WSL2 plane) | The prevention stack from §4.1 (lease/ack on every pushed obligation, write-ahead intent, open/close-bracket ledger invariant, per-emitter sequence numbers) · death certificates from §4.2 (process-handle wait + write-ahead intent, ranked death-cause taxonomy, top-killer-fixed-per-cycle) · cleanup-as-sensor law from §4.2 (every cleanup logs {what, why-it-existed, which-prevention-failed}; weekly aggregation names the top producer) | 1–2 (carried from the original stage-3 estimate; the content changed, the LOE band did not get a fresh operator estimate) | Exit: zero un-logged cleanups in a 7-day window; death-certificate taxonomy has ≥1 fixed top-killer per cycle. **Orphan reaper arming is explicitly NOT part of this stage — it stays gated on D2 separately (R3.6), unaffected by this restaging** |
+| **4 — Estate-state cleanup + outcome-gated closure** (CORRECTED 2026-08-02, Round 3 operator GO, R3.1/R3.2/R3.6 — replaces the original stages 4 "Builder hosting" and 5 "Second plane," both CUT: the builder-hosting pilot leaves the program entirely per R3.1, and darwin support is absorbed into stage 1 per R3.2 rather than a later stage) | Remaining estate-state cleanup items surfaced by stages 0–3 · the outcome-gate measurement itself: 24 h idle soak, all functions enabled, <15% CPU | 1–2 (unestimated by the operator at Round 3; carried forward from the nearest prior band as a placeholder) | Hard gate: closure requires the measured outcome, re-checked +30 days; recurrence auto-reopens the plan (invariant 12) |
 
-1. **Structured block messages.** Every block message is a complete instruction with structured
-   fields — {WHAT fired, WHY, exact FIX command/path, sanctioned ESCAPE with its cost} — and the
-   doctor LINTS gate sources for the fields' presence. The scope-enforcement gate's three-options
-   message is the gold standard to retrofit everywhere.
-2. **`--check` pre-flight modes.** Gates gain a consult-before-acting entry point so agents ask
-   "would this pass?" BEFORE doing the work — the gate as guide, not wall.
-3. **Workaround-as-sensor.** Every bypass/workaround attempt is ledgered; a gate that generates
-   workarounds is a DEFECTIVE gate and is auto-filed for redesign. (Extends invariant 7 from escape
-   hatches to all workaround behavior.)
-4. **Incentive-by-design.** Make the right way the cheapest way — the Read/Grep/Glob zero-hook
-   precedent, extended to batched commands and pre-declared scope.
-5. **JIT pre-warnings.** Surface requirements BEFORE the blocked attempt (PostToolUse hints at
-   approach time), so the first contact with a rule is guidance, not a wall.
-6. **Gate-friction metric.** Gate quality = blocks/day × workaround-rate, per gate, surfaced in the
-   cost-budget dashboard. A gate trending hot is a defect to fix, not a fact of life.
+**Total: the LOE bands above are the pre-Round-3 estimates carried forward where a stage's shape survived, and flagged as unestimated where Round 3 replaced the stage's content outright (stages 1, 3, 4) — the operator has not re-priced the corrected staging; re-estimating LOE for stages 1/3/4 under the Windows-native, no-plane shape is an open follow-up, not done here.** The process-chain fixes (§1.2) still ride along structurally: the schedule manifest is the aggregate artifact that never existed (blind spot 4); the budget + cadence checks put the meta-rules on the mechanized rung (the meta-failure); the stage-2 observe-first sweep doubles as the first retroactive regression sweep of the installed base (blind spot 5); and §2's invariant 10 amends the review checklist itself (blind spots 1–3).
 
-### R3.5 — Accepted improvements (2026-08-02d, in scope)
+**What this path deliberately does not do (CORRECTED 2026-08-02, Round 3 operator GO):** build the bespoke daemon (still rejected, §4.2/§4.3 concentration + cohabitation risk — no longer "systemd supersedes it," since systemd is off the table too; the daemon has no admissible landing zone under this program); use WSL2 anywhere, as a dependency of any harness mechanism, or as anything beyond a possible standalone future exploration (R3.1, final); migrate builders to any non-native-Windows host (the pilot this used to gate, D4, is closed); touch any rule's semantics; or claim the kernel-pool leak is fixed — that stays HYPOTHESIZED with its refuter standing (pool measured before/after stage 1 lands in the pressure snapshot as an early-warning field either way).
 
-- **Stage 0 includes the guidance-contract retrofit of the top-5 blocking gates**: scope-enforcement,
-  pre-commit, harness-hygiene, plan-header (plan-edit-validator), concurrent-ownership — structured
-  block messages + `--check` modes, doctor-linted.
-- **Cost-budget dashboard** in the workstreams-ui cockpit: per-mechanism cost × fire-rate vs budget,
-  inventory counts (R3.3 table live), and the gate-friction metric.
-- **Gate-friction telemetry from the first task onward** — blocks and workaround attempts ledgered
-  starting at stage 0, so later stages are tuned on data, not intuition.
+**Contingency (CUT 2026-08-02, Round 3 operator GO, R3.1):** the original contingency row ("hidden same-filesystem assumptions — worktree salvage, reaper cross-checks, temp handoffs — surfacing during stages 1–2") is moot now that WSL2 is dropped: there is no edge/plane filesystem split left to hide cross-boundary assumptions across, since stage 1 is Windows-native throughout. No replacement contingency line is proposed here; if Windows-native central management surfaces its own class of hidden assumptions, that is a fresh finding for whoever builds stage 1, not a carry-forward of this one.
 
-### R3.6 — Staging consequence (what the build plan implements)
-
-§6's table is amended to: Stage 0 = invariant fixes + the top-5 gate guidance retrofit; Stage 1 =
-Windows-native central maintenance (portable bash core + schtasks/launchd adapters,
-completion-anchored scheduling, TTL snapshots, doctor verdict cache); Stage 2 = 4–5 per-category
-tool-call stubs (never one dispatcher); Stage 3 = lost-event prevention stack + death certificates +
-cleanup-as-sensor (round 2); Stage 4 = estate-state cleanup + outcome-gated closure (24 h idle soak
-< 15% CPU, +30-day re-check). Old stages 4–5 (builder-hosting pilot, second plane) are cut per
-R3.1/R3.2. Reaper ARMING remains gated on D2 and is not part of this program.
+**Provenance of the Round-3 corrections above:** the operator's build authorization plus final directives, sourced from the two BINDING entries in `~/.claude/state/nl-issues.jsonl` dated 2026-08-02 ("OPERATOR DECISION 2026-08-02c" and "REDESIGN ROUND 3 — OPERATOR GO 2026-08-02d") and the two REDESIGN-INPUT entries in the same ledger (the round-2 operator dialogue integrated into §4.1/§4.2 above). Where the two rounds were in tension, Round 3 overrides Round 2, which overrides the original synthesis — each override is marked at its point of application above, not narrated separately here.

@@ -78,6 +78,14 @@
 #                         and rules legitimately cite paths in prose.
 #                         Plan files under `docs/plans/*.md` are exempt
 #                         from path-shape detection for the same reason.
+#   Layer 3 (addendum)  — no-addendum lint (REQ-B10): `Addendum`/`Update:`
+#                         ATX headings blocked in `docs/designs/**` +
+#                         `docs/plans/**` (`docs/plans/archive/**`
+#                         excluded entirely); `Round [0-9]` ATX headings
+#                         blocked in `docs/designs/**` ONLY. Case-
+#                         insensitive. Matches are labeled `[addendum-lint]`.
+#                         See `check_addendum_lint()` below for the full
+#                         M-9-narrowed-pattern rationale.
 
 set -u
 
@@ -243,6 +251,93 @@ if [ "${1:-}" = "--self-test" ]; then
     'Words appear and then leave.' \
     > "$HEUR_CLEAN"
 
+  # ---- Layer 3 no-addendum lint fixtures (REQ-B10, M-9-narrowed pattern) --
+  # Negative fixtures are VERBATIM lines lifted from the live corpus
+  # (measured 2026-08-03) so the self-test IS the corpus measurement, not a
+  # synthetic stand-in for it.
+  mkdir -p "$TMPDIR_ST/docs/designs" "$TMPDIR_ST/docs/plans/archive"
+
+  # A1 — POSITIVE: Addendum heading in a design. Verbatim (pre-integration
+  # form) from docs/designs/harness-execution-redesign-considerations-
+  # 2026-08-02.md:225.
+  ADD_DESIGN_POS="$TMPDIR_ST/docs/designs/addendum-fixture.md"
+  printf '%s\n' \
+    '# Fixture design' \
+    '' \
+    '## Addendum — operator dialogue round 2 (2026-08-02, folded post-synthesis)' \
+    'Some addendum content here.' \
+    > "$ADD_DESIGN_POS"
+
+  # A2 — POSITIVE: Round [0-9] heading in a design. Verbatim from the same
+  # golden-case file, line 247.
+  ROUND_DESIGN_POS="$TMPDIR_ST/docs/designs/round-fixture.md"
+  printf '%s\n' \
+    '# Fixture design' \
+    '' \
+    '## Round 3 revamp (2026-08-02, operator GO)' \
+    'Some round-3 content here.' \
+    > "$ROUND_DESIGN_POS"
+
+  # A3 — POSITIVE: Update: heading in a design (no live corpus hit exists
+  # for this sub-pattern; REQ-B10 requires it regardless of a live hit —
+  # synthetic fixture, lowercased to also prove case-insensitivity).
+  UPDATE_DESIGN_POS="$TMPDIR_ST/docs/designs/update-fixture.md"
+  printf '%s\n' \
+    '# Fixture design' \
+    '' \
+    '### update: 2026-08-03 correction' \
+    'Some update content here.' \
+    > "$UPDATE_DESIGN_POS"
+
+  # A4 — POSITIVE: Addendum heading in a NON-archived PLAN — the Addendum/
+  # Update: pattern covers docs/plans/** too, only docs/plans/archive/**
+  # is excluded. Uppercased to also prove case-insensitivity.
+  ADD_PLAN_POS="$TMPDIR_ST/docs/plans/addendum-fixture.md"
+  printf '%s\n' \
+    '# Fixture plan' \
+    '' \
+    '## ADDENDUM — case-insensitive positive' \
+    'Some addendum content here.' \
+    > "$ADD_PLAN_POS"
+
+  # A5 — NEGATIVE, verbatim corpus (measured 2026-08-03): Round 3 / Round 4
+  # review-round headings inside a non-archived PLAN.
+  # docs/plans/review-gate-identity-anchor-2026-07-30.md:249,304. The Round
+  # pattern scopes to docs/designs/** ONLY — review-round records are
+  # established practice inside plans, not addenda.
+  ROUND_PLAN_NEG="$TMPDIR_ST/docs/plans/round-heading-plan-fixture.md"
+  printf '%s\n' \
+    '# Fixture plan' \
+    '' \
+    '### Round 3 — harness-reviewer REJECT on `34e69fc` (3 Critical, 2 Major, 1 Minor)' \
+    'Review content here.' \
+    '' \
+    '## Round 4 — evidence (harness-reviewer REJECT on `3ec297a`)' \
+    'More review content.' \
+    > "$ROUND_PLAN_NEG"
+
+  # A6 — NEGATIVE, verbatim corpus: the archived D.5-addendum heading.
+  # docs/plans/archive/nl-overhaul-program-2026-07-evidence.md:1120.
+  # docs/plans/archive/** is excluded from scope entirely.
+  ADD_ARCHIVE_NEG="$TMPDIR_ST/docs/plans/archive/addendum-archive-fixture.md"
+  printf '%s\n' \
+    '# Fixture archived plan' \
+    '' \
+    '## D.5 addendum — literal full-sweep GREEN achieved post-closure (2026-07-03, orchestrator session)' \
+    'Archived content here.' \
+    > "$ADD_ARCHIVE_NEG"
+
+  # A7 — NEGATIVE control: a clean design with only body-prose mentions of
+  # "addendum"/"round 2" (never as a heading) must pass cleanly.
+  CLEAN_DESIGN_NEG="$TMPDIR_ST/docs/designs/clean-fixture.md"
+  printf '%s\n' \
+    '# Fixture design' \
+    '' \
+    '## Normal section' \
+    'This design mentions an addendum in prose, and round 2 of testing,' \
+    'but never as a heading, so it must not fire.' \
+    > "$CLEAN_DESIGN_NEG"
+
   SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
   # Initialized here (not at its historical spot right before the final
@@ -372,6 +467,22 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_HEUR_CLEAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "clean-prose.md" 2>&1)
   ST_HEUR_CLEAN_RC=$?
 
+  # ---- Layer 3 no-addendum lint invocations (REQ-B10) ----
+  ST_ADD_DESIGN_POS_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/designs/addendum-fixture.md" 2>&1)
+  ST_ADD_DESIGN_POS_RC=$?
+  ST_ROUND_DESIGN_POS_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/designs/round-fixture.md" 2>&1)
+  ST_ROUND_DESIGN_POS_RC=$?
+  ST_UPDATE_DESIGN_POS_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/designs/update-fixture.md" 2>&1)
+  ST_UPDATE_DESIGN_POS_RC=$?
+  ST_ADD_PLAN_POS_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/plans/addendum-fixture.md" 2>&1)
+  ST_ADD_PLAN_POS_RC=$?
+  ST_ROUND_PLAN_NEG_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/plans/round-heading-plan-fixture.md" 2>&1)
+  ST_ROUND_PLAN_NEG_RC=$?
+  ST_ADD_ARCHIVE_NEG_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/plans/archive/addendum-archive-fixture.md" 2>&1)
+  ST_ADD_ARCHIVE_NEG_RC=$?
+  ST_CLEAN_DESIGN_NEG_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/designs/clean-fixture.md" 2>&1)
+  ST_CLEAN_DESIGN_NEG_RC=$?
+
   # ---- Structured-waiver scenarios (F.5 audit row 12 / ADR 059 D4) ----
   # Reuses dirty.txt (the FORBIDDEN_TOKEN fixture) as the "novel false
   # positive" file the waiver covers.
@@ -424,6 +535,19 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_W5_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
   ST_W5_RC=$?
   rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
+
+  # A8 — waiver escape (REQ-B10: "escape = the standard fresh-waiver shape,
+  # ledgered"): a fresh waiver naming the Addendum-design fixture suppresses
+  # the addendum-lint match too — same per-file waiver gate ahead of every
+  # detection layer, no new plumbing needed for this class.
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: docs/designs/addendum-fixture.md is a self-test fixture, not a real addendum"
+    echo "Files: docs/designs/addendum-fixture.md"
+  } > "$ST_WAIVER_STATE/harness-hygiene-waiver-addendum.txt"
+  ST_A8_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/designs/addendum-fixture.md" 2>&1)
+  ST_A8_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-addendum.txt"
 
   # ---- Codename-pattern scenarios (nl-issue [47]) ----
   # These run against the REAL shipped denylist (copied verbatim into a
@@ -611,6 +735,62 @@ if [ "${1:-}" = "--self-test" ]; then
     FAIL=1
   fi
 
+  # ---- Layer 3 no-addendum lint assertions (REQ-B10) ----
+  # A1: Addendum heading in a design must BLOCK with [addendum-lint] label
+  if [ "$ST_ADD_DESIGN_POS_RC" -ne 1 ]; then
+    echo "self-test: FAIL (a1) — expected exit 1 on Addendum heading in docs/designs/, got $ST_ADD_DESIGN_POS_RC" >&2
+    echo "$ST_ADD_DESIGN_POS_OUT" >&2
+    FAIL=1
+  fi
+  if ! printf '%s' "$ST_ADD_DESIGN_POS_OUT" | grep -q '\[addendum-lint\]'; then
+    echo "self-test: FAIL (a1) — Addendum-heading match did not carry the [addendum-lint] label" >&2
+    echo "$ST_ADD_DESIGN_POS_OUT" >&2
+    FAIL=1
+  fi
+  # A2: Round [0-9] heading in a design must BLOCK
+  if [ "$ST_ROUND_DESIGN_POS_RC" -ne 1 ]; then
+    echo "self-test: FAIL (a2) — expected exit 1 on Round-N heading in docs/designs/, got $ST_ROUND_DESIGN_POS_RC" >&2
+    echo "$ST_ROUND_DESIGN_POS_OUT" >&2
+    FAIL=1
+  fi
+  # A3: Update: heading in a design must BLOCK (lowercase fixture — also
+  # proves case-insensitivity)
+  if [ "$ST_UPDATE_DESIGN_POS_RC" -ne 1 ]; then
+    echo "self-test: FAIL (a3) — expected exit 1 on lowercase 'update:' heading in docs/designs/, got $ST_UPDATE_DESIGN_POS_RC" >&2
+    echo "$ST_UPDATE_DESIGN_POS_OUT" >&2
+    FAIL=1
+  fi
+  # A4: Addendum heading in a NON-archived plan must BLOCK (uppercase
+  # fixture — also proves case-insensitivity; pattern covers docs/plans/**)
+  if [ "$ST_ADD_PLAN_POS_RC" -ne 1 ]; then
+    echo "self-test: FAIL (a4) — expected exit 1 on uppercase 'ADDENDUM' heading in docs/plans/, got $ST_ADD_PLAN_POS_RC" >&2
+    echo "$ST_ADD_PLAN_POS_OUT" >&2
+    FAIL=1
+  fi
+  # A5: NEGATIVE — verbatim-corpus Round 3/Round 4 review-round headings
+  # inside a non-archived plan must PASS (scope = docs/designs/** only)
+  if [ "$ST_ROUND_PLAN_NEG_RC" -ne 0 ]; then
+    echo "self-test: FAIL (a5) — Round-N review-round headings inside a plan must NOT fire (scope=docs/designs/ only), expected exit 0, got $ST_ROUND_PLAN_NEG_RC" >&2
+    echo "(verbatim from docs/plans/review-gate-identity-anchor-2026-07-30.md:249,304)" >&2
+    echo "$ST_ROUND_PLAN_NEG_OUT" >&2
+    FAIL=1
+  fi
+  # A6: NEGATIVE — verbatim-corpus archived Addendum heading must PASS
+  # (docs/plans/archive/** excluded from scope entirely)
+  if [ "$ST_ADD_ARCHIVE_NEG_RC" -ne 0 ]; then
+    echo "self-test: FAIL (a6) — Addendum heading under docs/plans/archive/ must NOT fire (archive excluded from scope), expected exit 0, got $ST_ADD_ARCHIVE_NEG_RC" >&2
+    echo "(verbatim from docs/plans/archive/nl-overhaul-program-2026-07-evidence.md:1120)" >&2
+    echo "$ST_ADD_ARCHIVE_NEG_OUT" >&2
+    FAIL=1
+  fi
+  # A7: NEGATIVE control — clean design (body-prose mentions only, never a
+  # heading) must PASS
+  if [ "$ST_CLEAN_DESIGN_NEG_RC" -ne 0 ]; then
+    echo "self-test: FAIL (a7) — clean design with only body-prose mentions of addendum/round must PASS, expected exit 0, got $ST_CLEAN_DESIGN_NEG_RC" >&2
+    echo "$ST_CLEAN_DESIGN_NEG_OUT" >&2
+    FAIL=1
+  fi
+
   # ---- Structured-waiver assertions (F.5 audit row 12 / ADR 059 D4) ----
   # W1: waiver-absent-blocks
   if [ "$ST_W1_RC" -ne 1 ]; then
@@ -652,6 +832,21 @@ if [ "${1:-}" = "--self-test" ]; then
   if [ "$ST_W5_RC" -ne 1 ]; then
     echo "self-test: FAIL (w5) — weak waiver (no purpose-clauses) expected exit 1, got $ST_W5_RC" >&2
     echo "$ST_W5_OUT" >&2
+    FAIL=1
+  fi
+  # A8 (REQ-B10 escape): waiver-honored — an addendum-lint match is
+  # suppressed by the same fresh structured waiver as any other layer, AND
+  # ledgered via ws_record at the existing waiver-honored call site.
+  if [ "$ST_A8_RC" -ne 0 ]; then
+    echo "self-test: FAIL (a8) — waiver-honored addendum-lint match expected exit 0, got $ST_A8_RC" >&2
+    echo "$ST_A8_OUT" >&2
+    FAIL=1
+  fi
+  if ! grep -q '"gate":"harness-hygiene-scan"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     || ! grep -q '"bypass_kind":"waiver-file"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     || ! grep -q '"command_fingerprint":"file=docs/designs/addendum-fixture.md"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test: FAIL (a8) — expected a workaround-sensor ledger row for the addendum-lint waiver-honored run" >&2
+    echo "  ledger content: $(cat "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo '(missing)')" >&2
     FAIL=1
   fi
 
@@ -983,6 +1178,93 @@ check_heuristics() {
   return 0
 }
 
+# ---------- Layer 3: no-addendum lint (REQ-B10, M-9-narrowed pattern) ----
+#
+# check_addendum_lint() — a THIRD detection layer, run per file alongside
+# Layer 1 (denylist) and Layer 2 (heuristics). Enforces the no-addendum
+# convention this design cycle (gated-pipeline-master-2026-08) itself
+# establishes: corrections and follow-up review rounds get folded INTO a
+# design/plan's body, never bolted on as a trailing "Addendum" / "Update:"
+# section a reader has to cross-reference against the sections it amends.
+#
+# Two sub-patterns, DIFFERENT scope each (M-9 narrowing — the original
+# unscoped pattern false-positived on legitimate review-round headings
+# inside plans; corpus measured 2026-08-03: 5 heading-level "Round N" hits
+# total, 3 of them legitimate review-round records inside non-archived
+# plans, 2 in the one design this lint's golden case integrates):
+#   (a) `Addendum` / `Update:` heading — docs/designs/** + docs/plans/**,
+#       with docs/plans/archive/** EXCLUDED FROM SCOPE ENTIRELY (archives
+#       are closed historical records; an archived addendum heading, e.g.
+#       "## D.5 addendum" in nl-overhaul-program-2026-07-evidence.md, is a
+#       coherent negative fixture, not lint bait).
+#   (b) `Round [0-9]` heading — docs/designs/** ONLY. Review-round records
+#       are established practice inside plans (e.g. "### Round 3 —
+#       harness-reviewer REJECT…") and are NOT addenda — they document a
+#       review pass, not a bolted-on correction. Designs don't have this
+#       practice, so the pattern is safe to enforce there without a
+#       measured false-positive class.
+#
+# Both patterns are markdown ATX headings only (`^#{1,6}[[:space:]]`), so
+# body prose that merely mentions "an addendum" or "round 2 of testing"
+# never fires — only a HEADING that opens an addendum/round section does.
+# Both are case-insensitive (stated here, per REQ-B10; enforced via `-i`).
+_hhs_in_designs() {
+  case "$1" in
+    docs/designs/*) return 0 ;;
+  esac
+  return 1
+}
+
+# Returns 0 if $1 is inside docs/plans/** EXCLUDING docs/plans/archive/**.
+_hhs_in_plans_scoped() {
+  case "$1" in
+    docs/plans/archive/*) return 1 ;;
+    docs/plans/*) return 0 ;;
+  esac
+  return 1
+}
+
+# Shared match-emitter for check_addendum_lint's sub-patterns (one helper
+# so both sub-checks report identically and neither drifts). Labeled
+# [addendum-lint] to match the [denylist]/[heuristic] label convention.
+# Args: $1 = repo-relative path, $2 = absolute path, $3 = ERE pattern.
+_hhs_addendum_scan() {
+  local rel_path="$1" abs_path="$2" pattern="$3"
+  local out
+  if out=$(grep -EniIH "$pattern" "$abs_path" 2>/dev/null); then
+    while IFS= read -r match_line; do
+      [ -z "$match_line" ] && continue
+      local rest lineno content
+      rest="${match_line#$abs_path:}"
+      lineno="${rest%%:*}"
+      content="${rest#*:}"
+      if [ "${#content}" -gt 120 ]; then
+        content="${content:0:117}..."
+      fi
+      printf '[addendum-lint] %s\n' "$rel_path:$lineno: $content" >> "$MATCHES_TMP"
+      MATCH_COUNT=$((MATCH_COUNT + 1))
+    done <<< "$out"
+  fi
+  return 0
+}
+
+# Args: $1 = repo-relative path, $2 = absolute path
+# Side-effects: appends matches to $MATCHES_TMP, increments $MATCH_COUNT.
+# Returns 0 always (caller continues regardless).
+check_addendum_lint() {
+  local rel_path="$1"
+  local abs_path="$2"
+
+  if _hhs_in_designs "$rel_path"; then
+    _hhs_addendum_scan "$rel_path" "$abs_path" '^#{1,6}[[:space:]].*(Addendum|Update:)'
+    _hhs_addendum_scan "$rel_path" "$abs_path" '^#{1,6}[[:space:]].*Round[[:space:]]+[0-9]'
+  elif _hhs_in_plans_scoped "$rel_path"; then
+    _hhs_addendum_scan "$rel_path" "$abs_path" '^#{1,6}[[:space:]].*(Addendum|Update:)'
+  fi
+
+  return 0
+}
+
 # ---------- exemption check ----------------------------------------------
 
 # Returns 0 if the path should be skipped, 1 otherwise.
@@ -1235,6 +1517,9 @@ while IFS= read -r -d '' rel_path; do
 
   # ---- Layer 2: heuristic detection ----
   check_heuristics "$check_path" "$abs_path"
+
+  # ---- Layer 3: no-addendum lint (REQ-B10) ----
+  check_addendum_lint "$check_path" "$abs_path"
 done < "$FILE_LIST_TMP"
 
 # ---------- report (R3.4 Gate Philosophy Law — one shared emitter) -------
@@ -1271,7 +1556,8 @@ _hhs_print_report() {
     echo "================================================================"
     echo ""
     echo "WHAT: The following content matches patterns in the harness denylist"
-    echo "      (or the project-shape/repeated-term heuristics):"
+    echo "      (or the project-shape/repeated-term heuristics, or the"
+    echo "      no-addendum/no-round-heading lint — REQ-B10):"
     echo ""
     cat "$MATCHES_TMP"
     echo ""
@@ -1282,6 +1568,9 @@ _hhs_print_report() {
     echo "FIX:  Fix the content, or — if the match is legitimate and durable —"
     echo "      add the file to is_exempt() in this scanner (with a comment"
     echo "      naming the exemption class) and stage both in the same commit."
+    echo "      [addendum-lint] hits: fold the addendum/round section INTO the"
+    echo "      body at the place it corrects, then delete the heading — see"
+    echo "      REQ-B10 / docs/plans/gated-pipeline-master-2026-08.md Task 19."
     echo ""
     echo "ESCAPE: a fresh (<1h), per-file, ledger-logged structured waiver —"
     echo "      suppresses matches on ONLY the named file(s), this run, NEVER"

@@ -360,7 +360,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     1. Hygiene-scan self-test: fixture design with `## Addendum` → blocked with escape named; `## Round 3 — harness-reviewer REJECT` inside a PLAN → passes (negative fixture verbatim)
     2. The brief (`harness-execution-redesign-considerations-2026-08-02.md`) carries no Addendum/Round headings; a changelog line records the integration
     **Wire checks:**
-    - `adapters/claude-code/hooks/harness-hygiene-scan-body.sh` (or its body split) → the narrowed regex + `docs/designs` scoping
+    - `adapters/claude-code/hooks/harness-hygiene-scan.sh` (`check_addendum_lint`/`_hhs_addendum_scan`, invoked as Layer 3 in the main scan loop — implemented in the main file, not a body split, per builder dispatch) → the narrowed regex + `docs/designs` scoping
     - `docs/designs/harness-execution-redesign-considerations-2026-08-02.md` → zero `^#+ .*Addendum` matches post-integration
     **Integration points:**
     - Pre-commit chain ordering unchanged; the lint rides the existing hygiene-scan invocation
