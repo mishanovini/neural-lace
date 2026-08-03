@@ -168,7 +168,10 @@ oracle for G1, G2, G3, and Checks 20–22). A chain entry is valid iff ALL of:
    ⇒ WARN during the calibration window (config date), then BLOCK. Plan-side: `plan-blob:`
    anchors the plan's bytes computed over the file MINUS its `## Review Chain` section and
    `## In-flight scope updates` (canonicalization in the lib, so appending chain entries never
-   self-invalidates). **Inflight visibility (delta-D3):** the chain also carries an
+   self-invalidates; **the record's attested blob for a plan is likewise the CANONICALIZED
+   blob — a raw-file attestation could never three-way-match, since appending the chain entry
+   changes the raw blob; the lib computes both sides of the comparison the same way**).
+   **Inflight visibility (delta-D3):** the chain also carries an
    `inflight-blob:` hash of the excluded In-flight section; G2 emits a LEDGERED WARN (never a
    block) when it changes, and the next fidelity re-anchor covers the accumulated updates — the
    one structurally-excluded section stays visible, closing the P-32 side door. G2 re-verifies
@@ -184,7 +187,9 @@ oracle for G1, G2, G3, and Checks 20–22). A chain entry is valid iff ALL of:
    `artifact_ref` matching the record's reviewed subject (when the row carries one — an empty
    ref satisfies type-match only and is the named degraded form) AND `ts` within the window
    [first commit touching the reviewed artifact, the record's commit time]. **Pre-ledger
-   exemption (harness-delta Critical):** records whose date predates the ledger-landing date
+   exemption (harness-delta Critical; keying per arch r3 note):** records whose FIRST-COMMIT
+   time (`git log --follow --format=%ct | tail -1` of the record file — never a self-declared
+   header date, which would reopen the backdating seam) predates the ledger-landing date
    (recorded in the lib's config, same pattern as G2's gate-landing date) are EXEMPT from rule 3
    — rules 1–2 still apply in full; this covers every record produced before REQ-B14 exists,
    including this design's own review records. Honest residual: the ledger proves *an agent of

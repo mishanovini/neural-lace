@@ -17,22 +17,24 @@ target-completion-date: 2026-08-10
 prd-ref: n/a — harness-development
 ask-id: none — no linked ask
 
-design-ref: docs/designs/gated-pipeline-master-2026-08-03.md@r2
+design-ref: docs/designs/gated-pipeline-master-2026-08-03.md@53fd8f27bbc3fc83c19f0c1aa8021779ce0d7391
 <!-- The design-ref: header field is introduced BY this plan (REQ-B5); carried here from birth,
-     voluntarily, so the plan itself exercises the shape it builds. Blob-sha anchoring begins when
-     review-chain-lib.sh (Task 1) exists to verify it; until then the @r2 tag names the reviewed
-     revision (commit a4cd03f5). -->
+     voluntarily, so the plan itself exercises the shape it builds. The anchor is the design r3
+     BLOB sha (git hash-object), per the r3 chain format. -->
 
 ## Review Chain
-<!-- Introduced by REQ-B5/B6; carried from birth. Entries below are appended as the reviews land.
-     Validity semantics per design §4 (three rules) once Task 1's parser exists. -->
+<!-- Introduced by REQ-B5/B6; carried from birth. Validity semantics per design §4 (three rules)
+     once Task 1's parser exists; all records below predate the dispatch ledger and are covered by
+     rule 3's pre-ledger exemption (rules 1-2 apply in full). -->
 authored-by: Fable main session 4a470c8c (design-author agent does not exist yet — created by Task 12; this plan's authoring provenance is the session itself, named honestly)
-design-ref: docs/designs/gated-pipeline-master-2026-08-03.md@a4cd03f5
+design-ref: docs/designs/gated-pipeline-master-2026-08-03.md@53fd8f27bbc3fc83c19f0c1aa8021779ce0d7391
 design-reviews:
-  - reviewer: harness-reviewer       verdict: REFORMULATE→(delta pending)  record: docs/reviews/2026-08-03-gated-pipeline-design-harness-review.md
-  - reviewer: architecture-reviewer  verdict: SOUND-WITH-AMENDMENTS→(delta pending)  record: docs/reviews/2026-08-03-gated-pipeline-design-architecture-review.md
+  - reviewer: harness-reviewer       verdict: PASS   record: docs/reviews/2026-08-03-gated-pipeline-design-harness-review.md  (r1 REFORMULATE → r2 delta REFORMULATE → r3 scoped confirmation PASS)
+  - reviewer: architecture-reviewer  verdict: SOUND  record: docs/reviews/2026-08-03-gated-pipeline-design-architecture-review.md  (r1 SOUND-WITH-AMENDMENTS → r2 delta SOUND-WITH-AMENDMENTS → r3 scoped confirmation SOUND)
 plan-reviews:
-  - (pending — pre-B3 bootstrap review per design §8.1: performed by harness-reviewer in the plan-fidelity role; replaced by plan-fidelity-reviewer for all future plans once Task 13 lands)
+  - reviewer: harness-reviewer (role: plan-fidelity, bootstrap per design §8.1)  verdict: REFORMULATE→(F-1..F-5 amendment confirmation pending)  record: docs/reviews/2026-08-03-gated-pipeline-plan-fidelity-review.md
+  <!-- replaced by plan-fidelity-reviewer for all future plans once Task 13 lands; T16 re-reviews
+       THIS plan with the real agent and re-anchors. -->>
 
 ## Intended Functionality
 
@@ -66,7 +68,8 @@ Workflow-internal spawn gating (documented residual); transcript-anchored review
 
 ## Goal
 
-Implement `docs/designs/gated-pipeline-master-2026-08-03.md` (r2, reviewed twice at Fable tier):
+Implement `docs/designs/gated-pipeline-master-2026-08-03.md` (r3 — reviewed to harness-reviewer
+PASS + architecture-reviewer SOUND through three Fable-tier rounds):
 fix the four open findings blocking maintenance activation (HR-F1 daemon wedge, HR-F2 cache
 corruption, HR-F6 friction-ledger mismatch, HR-F9 manifest gap) plus the mechanized-flip debt
 (HR-F3/F7/F10/F11), then build the gated pipeline — review-chain artifacts with hook-observed
@@ -94,7 +97,12 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
 
 <!-- Dispatch batching: [parallel] tasks are file-disjoint per the Files map; everything else
      serial in task-ID order. Builders are forbidden from manifest.json and doctrine INDEX
-     regeneration — the orchestrator integrates those serially at merge (established precedent). -->
+     regeneration — the orchestrator integrates those serially at merge (established precedent).
+     NAMED DEVIATION from the design's "manifest entry same-commit" letter (fidelity F-2): under
+     the builder-locked model, each mechanism's manifest delta lands in the SAME MERGE TRAIN as
+     its mechanism — integrated by the orchestrator before any push containing that mechanism,
+     verified by manifest-check before push. Never deferred past the push boundary (the HR-F9
+     class lives exactly there). -->
 
 - [ ] 1. Walking skeleton: `hooks/lib/review-chain-lib.sh` v1 — the three validity rules per
   design r3 §4 (record parse incl. the record's own `**Reviewed:** <path> @ <blob>` attestation;
@@ -105,9 +113,13 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   without fresh record FAILS rule 2; wrong-artifact-ref row FAILS rule 3; pre-ledger-dated record
   PASSES rules 1-2 exempt from 3; stale anchor FAILS-post-calibration; inflight change = ledgered
   WARN, passes; valid chain PASSES) + a `--check`-only skeleton of the G2 gate
-  (`hooks/dispatch-chain-gate.sh --check <fixture-plan>`) proving lib→gate end-to-end —
-  Verification: full — Implements: REQ-B6 (core), REQ-B8 (skeleton) — Docs impact: lib header
-  contract + manifest entry (orchestrator-integrated)
+  (`hooks/dispatch-chain-gate.sh --check <fixture-plan>`) proving lib→gate end-to-end. TWO
+  BINDING implementation constraints (arch r3 confirmation): (i) a plan record's attested blob is
+  the CANONICALIZED plan blob (file minus chain + In-flight sections) — the lib computes both
+  comparison sides identically; (ii) the pre-ledger exemption keys on the record file's
+  first-commit time (`git log --follow --format=%ct | tail -1`), never a self-declared header
+  date — Verification: full — Implements: REQ-B6 (core), REQ-B8 (skeleton) — Docs impact: lib
+  header contract + manifest entry (orchestrator-integrated)
     **Prove it works:**
     1. Run `bash adapters/claude-code/hooks/lib/review-chain-lib.sh --self-test` → all fixture verdicts as specified (derived FAILS, ghost-reviewer FAILS, stale-anchor FAILS, valid PASSES)
     2. Run `bash adapters/claude-code/hooks/dispatch-chain-gate.sh --check tests/fixtures/chainless-plan.md` → exit nonzero with a {WHAT/WHY/FIX/ESCAPE} block naming the missing review
@@ -218,7 +230,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   Verification: mechanical — Implements: REQ-A6 — Docs impact: SCRATCHPAD pointer line
 - [ ] 10. REQ-A7 registration prep: installer + `-Rollback` self-tested end-to-end on this machine
   (register→verify→rollback→verify-gone, under a test task name); DEC-4 ratification ask surfaced
-  via `needs-you.sh` with the §3 compact block; registration itself executes ONLY on operator YES
+  via `needs-you.sh` with the §3 compact block — PRECONDITION (fidelity F-3, hard-stop letter):
+  the ask is surfaced only after the T3 and T4 review-record SHAs exist and are cited inside the
+  ask block (the "fixed AND re-reviewed" bar); registration itself executes ONLY on operator YES
   — Verification: contract — Implements: REQ-A7 — Docs impact: NEEDS-YOU.md entry (via generator)
 - [ ] 11. REQ-B1+B4 register: `config/operator-directives.json` (canonical) + generator for
   `docs/operator-directives.md` view + `hooks/lib/directives-register-lib.sh` (ONE parser,
@@ -279,16 +293,20 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - Fixture schema is the SAME file Task 1 quoted — round-trip test binds them
     - Lands BEFORE Task 16 (bootstrap order per design r3) so the self-review is itself ledgered
 - [ ] 16. REQ-B13 bootstrap self-review (after Tasks 13,14,15): dispatch `plan-fidelity-reviewer`
-  on THIS plan against design r2; commit its record; append the plan-reviews chain entry with
-  plan-blob anchor; only then is Task 17 dispatchable — Verification: mechanical — Implements:
-  REQ-B13 — Docs impact: the review record itself
+  on THIS plan against design r3; commit its record; append the plan-reviews chain entry with
+  CANONICALIZED plan-blob anchor (re-anchoring the bootstrap record); only then is Task 17
+  dispatchable — Verification: mechanical — Implements: REQ-B13 — Docs impact: the review record
+  itself
 - [ ] 17. REQ-B8 G2 gate live (after Task 16): `dispatch-chain-gate.sh` wired PreToolUse
   Task|Agent (subagent_type-keyed per design §4; grandfather list generated at install from extant
   plan slugs; gate-contract messages; `--check`; escape ledgered) + THE THREE-VARIANT DEMO with
   transcripts in the evidence file: (i) plan-phase-builder vs chain-less NEW fixture plan →
   BLOCKED; (ii) same with NO attribution line → BLOCKED; (iii) chain entry naming never-dispatched
-  reviewer → fails validity — Verification: full — Implements: REQ-B8 — Docs impact: manifest
-  entry + orchestrator-pattern doctrine gains the gate step; settings.json.template wiring
+  reviewer → fails validity. Gate ordering rule (fidelity F-4): the gate validates the CHAIN
+  FIRST and applies the grandfather path only when no chain parses — a plan with an earned valid
+  chain (this one, post-T16) never rides the WARN path — Verification: full — Implements: REQ-B8
+  — Docs impact: manifest entry + orchestrator-pattern doctrine gains the gate step;
+  settings.json.template wiring
     **Prove it works:**
     1. The three demo variants, live, transcripts captured (this IS the D-15 acceptance bar)
     2. A grandfathered legacy plan slug → ledgered WARN naming the retrofit path, dispatch proceeds
@@ -339,6 +357,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     1. `dispatch-directives.sh <this-plan> 20` → prints the OD entries whose globs match this task's files
     2. doctrine-jit self-test: an Edit matching BOTH a doctrine trigger AND a register glob → ONE valid JSON object on stdout containing both bodies; jq parses it
     3. Second identical Edit in the same session → no re-injection (markers)
+    4. TIMING (fidelity F-5): the register walk's added latency measured 10-run average and recorded in the evidence file; must be < 50 ms — which forbids any per-event jq/subprocess in the walk (pure-bash parse or a pre-parsed cache file; jq alone costs ~174 ms on this platform)
     **Wire checks:**
     - `adapters/claude-code/scripts/dispatch-directives.sh` → `directives-register-lib.sh` glob matcher
     - `adapters/claude-code/hooks/doctrine-jit.sh` register walk → same lib; single `jq -n` emission site
@@ -360,7 +379,12 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - Concurrent-ownership gate will challenge Status flips on session-owned plans — follow its guidance per flip; never bypass
 - [ ] 22. REQ-C3+C4: honest scorecard in the existing dashboard snapshot (net-artifact delta,
   hooks-per-Bash, SessionStart spawns, machine-census scheduled tasks) + DEC-6 invariant-8
-  amendment and DEC-7 cold-target re-scope recorded in the brief's body — Verification: contract —
+  amendment and DEC-7 cold-target re-scope recorded in the brief's body. Counting method (fidelity
+  weakest-mapping fix): net-artifact delta = `git diff --stat` file census between the program's
+  start tag (predecessor plan's first commit) and HEAD restricted to `adapters/claude-code/**`,
+  cross-checked against the design §7 ledger rows; hooks-per-Bash and SessionStart spawns counted
+  from the live settings.json the same way budget-bash-hooks counts them; the evidence file
+  asserts ONE recomputable number per metric with its exact command — Verification: contract —
   Implements: REQ-C3, REQ-C4 — Docs impact: brief body edits ARE the doc change
 - [ ] 23. REQ-C5 minimal Stage-3 subset: death-certificate fields on nl-maintenance's existing
   handle-wait + cleanup-as-sensor fields on the existing janitor log, each naming its consumer at
@@ -411,9 +435,9 @@ Modify:
 
 ## Assumptions
 
-- The design r2 (`a4cd03f5`) survives both delta re-reviews without structural change; if a delta
-  verdict forces design changes, this plan is amended BEFORE affected tasks dispatch (frozen flips
-  back to false, Decisions Log entry, re-review of the amendment).
+- The design is FINAL at r3 (blob `53fd8f27…`, harness PASS + architecture SOUND, all delta
+  findings discharged); any post-r3 design change re-opens the chain (rule 2) and obliges
+  re-review BEFORE affected tasks dispatch (frozen flips back to false, Decisions Log entry).
 - `subagent_type` is present and inspectable in PreToolUse tool_input for Task|Agent (proven by
   model-pin-gate's live behavior at `model-pin-gate.sh:166-167`).
 - The grounding sweep's line numbers remain valid at dispatch time for Tasks 3-5 (HEAD moves only

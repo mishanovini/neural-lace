@@ -235,3 +235,21 @@ The review-chain parse-by-construction defeat of derived records; gate placement
 ## Summary for the author
 
 REFORMULATE, not REJECT: the chain architecture, gate placement, and Phase-A fidelity are sound, and most reformulation items are additive spec lines rather than redesigns. The single most important fix is **C-2**: give G2 a grandfather/transition story for the estate's existing chain-less plans, or activation day will either train routine escape use or trip the gate's own demotion condition in week one — both of which forfeit the D-15 acceptance bar this entire design exists to hold. Fix **C-1** by restructuring the doctrine-jit register walk as compute-both-emit-once (the current spec's no-starvation claim is false on a single-JSON-stdout channel). Then restore the dropped **F3** with a disposition (M-1) — a silently dropped PROVEN Major inside the design that exists to make silent drops impossible is the finding your own plan-fidelity-reviewer must never be able to make again.
+
+---
+
+# Delta re-review — r2 @ a4cd03f5
+
+**Resolved cleanly (verified in the body, not just §9):** C-1 (merged single-emission JIT walk + both-match self-test) · C-2 (grandfather list at install, ledgered WARN + retrofit path, new plans block day one; C2 retires the population) · M-1 (HR-F3 restored with BOTH fixes — pid-liveness AND 1200s TTL — plus HR-F10 rename; full HR id-space mapped with namespace disambiguation) · M-2 (single-writer form — the preferred fix) · M-3 (JSON-canonical register + one parser lib + round-trip fixture) · M-4 · M-5 (anchor-vs-bytes at HEAD + plan-blob canonicalization — the self-reference paradox solved correctly) · M-6 · M-7 (resolved STRONGER than required: trigger re-keyed to hook-observed `subagent_type`) · M-8 · M-10 · M-11 · Mi-1…Mi-6. No name-check-only dispositions found.
+
+**Unresolved / new defects introduced by resolutions:** [Critical] the H1 dispatch-ledger cross-check had no pre-ledger exemption and B14 was absent from the bootstrap ordering — every review record produced before B14 lands could NEVER have a matching row, making THIS cycle's plan permanently rule-3-invalid (the M-11 deadlock-at-birth through the new trust root; C-2's grandfather covers PLANS, not RECORDS). Required: pre-ledger exemption keyed on a ledger-landing date in the lib config; B14 before B13; the lifetime window defined. [Minor] REQ-B10's narrowed pattern still fired on the archived D.5-addendum hit designated as a negative fixture — exclude `docs/plans/archive/**`. [Minor] REQ-A2 dropped `DOCTOR_VERDICT_CACHE_DISABLE=1`, silently changing the refresher's warm-keeping semantics to TTL-bounded — restore or state. [Wording] grandfather = the install-generated slug list, not blob dates.
+
+## Delta Verdict: REFORMULATE (scoped: one Critical composition gap, two Minors, one wording)
+
+---
+
+# Scoped confirmation — r3 @ e9d0cf9d
+
+CONFIRMED, all four edits verified in the r3 body: (a) §4 rule 3 carries the pre-ledger exemption (rules 1–2 still applying), completion-side row semantics, the `artifact_ref` match with the empty-ref degraded form named, and the lifetime window; the Phase-B order reads B1…B7 → B14 → B13 → B8/B9 with rationale. (b) REQ-B10 excludes `docs/plans/archive/**` entirely. (c) REQ-A2 restores `DOCTOR_VERDICT_CACHE_DISABLE=1` with rationale. (d) G2 grandfather names the install-generated slug list. The two architecture-delta integrations strengthen my M-5/M-7 resolutions: the three-way record-attested anchor closes the author-re-anchor edit path, and the `inflight-blob:` WARN closes the excluded section's visibility gap without a block. No new defects found. My delta REFORMULATE is discharged.
+
+## Delta Verdict: PASS
