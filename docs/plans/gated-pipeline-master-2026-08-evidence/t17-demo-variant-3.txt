@@ -1,0 +1,20 @@
+########################################################################
+# THE THREE-VARIANT D-15 ACCEPTANCE-BAR DEMO -- Variant (iii)
+# plan-phase-builder dispatch, chain entry names a reviewer with ZERO
+# dispatch-ledger rows -- expected: validity FAIL -> BLOCKED
+########################################################################
+$ cd <repo-root>   # the harness checkout root; absolute path elided (harness-hygiene: no machine-identity strings in committed evidence)
+# RC_LEDGER_PATH pointed at an empty scratch ledger (never touches the
+# real machine ledger; the point of this variant is 'zero rows for
+# this reviewer type', which is unconditionally true of an empty file)
+$ RC_LEDGER_PATH=/tmp/tmp.5MM64q5ggi CLAUDE_TOOL_INPUT='{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 1 of docs/plans/g2-live-demo-never-dispatched.md","prompt":"NL-ATTRIBUTION: plan=g2-live-demo-never-dispatched task=1 role=builder\nBuild Task 1 of docs/plans/g2-live-demo-never-dispatched.md in your worktree."}}' bash adapters/claude-code/hooks/dispatch-chain-gate.sh
+dispatch-chain-gate: plan-phase-builder dispatch BLOCKED — docs/plans/g2-live-demo-never-dispatched.md's Review Chain fails validity
+[GATE:WHAT] docs/plans/g2-live-demo-never-dispatched.md's Review Chain fails validity: [FAIL] plan reviewer=harness-reviewer rule3: FAIL: no dispatch-ledger row for type=harness-reviewer artifact_ref=docs/plans/g2-live-demo-never-dispatched.md within window [0,9999999999] (never dispatched, or wrong artifact_ref)
+[GATE:WHY] review-chain-lib.sh's rc_validate_chain found at least one entry that does not satisfy the three validity rules (record parse / three-way anchor match / dispatch-ledger cross-check) — design SS4
+[GATE:FIX] re-dispatch the named reviewer against the current bytes and commit its record (rule 1/3), or restore the chain's anchor to a blob a real record actually attests (rule 2) — see the full detail below
+[GATE:ESCAPE] none — a chain entry that fails validity cannot be waived by editing the plan file; escalate to the plan's owner
+-- detail --
+[PASS] plan reviewer=harness-reviewer rule1: record parses; verdict=PASS reviewer=harness-reviewer
+[PASS] plan reviewer=harness-reviewer rule2: three-way match: chain=3a27c97998527c4555f4023ebaec60f3fd4f8349 record-attested=3a27c97998527c4555f4023ebaec60f3fd4f8349 HEAD=3a27c97998527c4555f4023ebaec60f3fd4f8349
+[FAIL] plan reviewer=harness-reviewer rule3: FAIL: no dispatch-ledger row for type=harness-reviewer artifact_ref=docs/plans/g2-live-demo-never-dispatched.md within window [0,9999999999] (never dispatched, or wrong artifact_ref)
+EXIT CODE: 2

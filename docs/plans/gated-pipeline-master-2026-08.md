@@ -591,6 +591,9 @@ Modify:
   had this landed unremoved, arming G2 (this task's own deliverable) would have BLOCKED the very
   next plan-phase-builder/test-writer dispatch against THIS plan — including the orchestrator's
   own subsequent Task 18+ builds. See the Decisions Log entry below for the full reasoning.
+- 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-1.txt` — one of the three D-15 acceptance-bar live transcripts T17's own task text directs it to create; the `## Files to Modify/Create` table lists T17's gate/wiring/grandfather-list files but not this evidence directory, a pre-existing gap (the Closure Contract independently names it), not something this build introduced; flagged by scope-enforcement-gate on the commit attempt, fixed via this entry per the gate's own option 1.
+- 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-2.txt` — same as the -1.txt entry immediately above (one bullet per file; scope-enforcement-gate's In-flight parser reads one physical line per bullet, not wrapped continuation lines).
+- 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-3.txt` — same as the -1.txt entry above.
 
 ## Assumptions
 

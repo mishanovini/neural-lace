@@ -1,0 +1,15 @@
+########################################################################
+# THE THREE-VARIANT D-15 ACCEPTANCE-BAR DEMO -- Variant (i)
+# plan-phase-builder dispatch, chain-less NEW fixture plan, WITH an
+# NL-ATTRIBUTION header -- expected: BLOCKED
+########################################################################
+$ cd <repo-root>   # the harness checkout root; absolute path elided (harness-hygiene: no machine-identity strings in committed evidence)
+$ CLAUDE_TOOL_INPUT='{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 1 of docs/plans/g2-live-demo-new-plan.md","prompt":"NL-ATTRIBUTION: plan=g2-live-demo-new-plan task=1 role=builder\nBuild Task 1 of docs/plans/g2-live-demo-new-plan.md in your worktree."}}' bash adapters/claude-code/hooks/dispatch-chain-gate.sh
+dispatch-chain-gate: plan-phase-builder dispatch BLOCKED — docs/plans/g2-live-demo-new-plan.md has no Review Chain
+[GATE:WHAT] docs/plans/g2-live-demo-new-plan.md has no ## Review Chain block
+[GATE:WHY] G2 (plan -> build) requires mechanical proof the design/plan reviews ran before a builder dispatches against this plan (D-15's acceptance bar; design docs/designs/gated-pipeline-master-2026-08-03.md SS4)
+[GATE:FIX] dispatch the required reviewers (plan-fidelity-reviewer at minimum; design-author's reviewers too if design-ref is required), then add a ## Review Chain block naming each reviewer/verdict/record — schema in design SS4
+[GATE:ESCAPE] none for a new plan — a legacy plan predating this gate is exempted only via the install-generated grandfather slug list (config/g2-grandfather-slugs.txt), never by this flag
+-- detail --
+[FAIL] chain-presence: no ## Review Chain section found in docs/plans/g2-live-demo-new-plan.md
+EXIT CODE: 2
