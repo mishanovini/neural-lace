@@ -20,11 +20,23 @@
 # =====
 #   --quick (default): checks 1-7 against the LIVE mirror ($HOME/.claude)
 #                       and the repo. Never runs self-tests. Fast (<2s
-#                       typical). Exit 0 iff zero RED lines.
+#                       typical). Exit 0 iff zero RED lines; exit 1 if any
+#                       RED; exit 3 (gated-pipeline-master-2026-08 Task 4,
+#                       REQ-A2/HR-F2+F5+F8) when the invocation itself was
+#                       SKIPPED (single-flight guard held, or HALT draining)
+#                       and no valid cached verdict existed to serve honestly
+#                       instead -- NEVER a bare "exit 0" for a skip (that was
+#                       indistinguishable from GREEN to every caller). See
+#                       "DOCTOR VERDICT CACHE" below for the single-writer
+#                       contract and the sf-skip serve-or-3 behavior.
 #   --full            : quick + check 8 (self-test sweep across every live
 #                       hook that declares --self-test) + check 9 (the
 #                       portability sweep vs its committed baseline).
-#                       Exit 0 iff zero RED.
+#                       Exit 0 iff zero RED. Subject to the SAME sf_guard
+#                       serve-or-3 skip behavior as --quick (one lock covers
+#                       every mode), but only --quick reads/writes the
+#                       verdict cache -- a skipped --full/--portability call
+#                       with no cache to serve exits 3 with no fast-path.
 #   --portability     : check 9 ONLY — run scripts/portability-sweep.sh
 #                       against the repo under the stock system interpreter
 #                       and RED when the failing set grew relative to
@@ -271,6 +283,23 @@ resolve_live_home() {
 # SF_STATE_DIR already does two lines below in the normal-invocation
 # section -- no self-test scenario can ever read/write the REAL machine's
 # cache file.
+#
+# SINGLE-WRITER CONTRACT (gated-pipeline-master-2026-08 Task 4, REQ-A2,
+# fixing HR-F2+F5+F8): this doctor's own quick-mode write path (below,
+# "Doctor verdict cache -- WRITE path") is the cache file's ONLY writer,
+# full stop. session-start-digest.sh's `refresh_doctor_cache` is
+# invoke-and-read-only -- it forces a real recompute here (via
+# SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1) and then reads back
+# whatever THIS script just wrote; it never printfs the file itself.
+# Before this fix, digest's refresher was a SECOND writer with a
+# different (3-field, no fingerprint) schema, which composed with the old
+# sf-skip's bare `exit 0` to corrupt the cache (F2): a skip produced no
+# verdict line, so the refresher overwrote a valid fingerprinted entry
+# with "verdict unavailable (exit 0)", and every digest-side write
+# stripped the fingerprint outright. The fix is structural, not a
+# discipline promise: there is exactly one `>`/`printf ... >` to this
+# file in the whole codebase now (see the WRITE path below); grep
+# `doctor-cache.json|DOCTOR_CACHE_PATH` to re-verify.
 # ------------------------------------------------------------
 _doctor_verdict_cache_path() {
   if [[ -n "${DOCTOR_CACHE_PATH:-}" ]]; then
@@ -280,19 +309,62 @@ _doctor_verdict_cache_path() {
   printf '%s/state/digest/doctor-cache.json' "${1:-${HOME:-$PWD}/.claude}"
 }
 
+# _doctor_serve_cache_or_skip <reason> — gated-pipeline-master-2026-08 Task 4
+# (REQ-A2, fixing HR-F8): called ONLY from the sf_guard skip path below
+# (single-flight lock held, or HALT draining). NEVER a bare `exit 0` -- that
+# was indistinguishable from a real GREEN to every exit-code consumer
+# (`rg -n "harness-doctor.sh --quick"` is the sweep query; F8's proven
+# casualty was F2's cache corruption). Read-only: this function NEVER writes
+# doctor-cache.json (the quick-mode WRITE path far below is the cache's
+# ONLY writer -- the single-writer contract this task establishes).
+#   - A VALID cached record exists (non-empty verdict_line + numeric
+#     exit_code -- the doctor's own 5-field writer always produces both) ->
+#     serve it verbatim (honest AND fast; the cache mostly makes the skip
+#     redundant) and exit ITS exit_code, so a caller that only checks
+#     "0 == pass" still gets the right answer on a skip immediately after a
+#     real run.
+#   - No cache, or an unreadable/incomplete one (e.g. a stale 3-field record
+#     from before this fix) -> exit a DISTINCT documented code, 3, with a
+#     machine-parseable "[doctor] SKIPPED (<reason>)" line. 3 is chosen to
+#     be neither 0 (GREEN) nor 1 (FAILED) -- every exit-code consumer swept
+#     in this task's commit treats 3 as "inconclusive," never as either.
+_doctor_serve_cache_or_skip() {
+  local reason="${1:-single-flight guard active}"
+  local cache; cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"
+  if [[ -f "$cache" ]]; then
+    local verdict exit_code
+    verdict="$(sed -nE 's/.*"verdict_line":"([^"]*)".*/\1/p' "$cache" 2>/dev/null | head -1)"
+    exit_code="$(sed -nE 's/.*"exit_code":([0-9]+).*/\1/p' "$cache" 2>/dev/null | head -1)"
+    if [[ -n "$verdict" && "$exit_code" =~ ^[0-9]+$ ]]; then
+      echo "$verdict"
+      exit "$exit_code"
+    fi
+  fi
+  echo "[doctor] SKIPPED (${reason})"
+  exit 3
+}
+
 # _doctor_compute_fingerprint <live_home> <repo_root> — invariant 8
 # ("derived, never authored"): a coarse fingerprint of the inputs
 # run_quick_checks actually reads from disk -- the live settings.json, the
 # committed settings template, manifest.json, and schedule-manifest.json
-# (mtimes), plus the repo's current commit (if resolvable). Documented as a
-# FIRST-APPROXIMATION fingerprint, not true per-check declared-input
-# tracking (that would need every one of the ~40 check_* functions to
-# declare its own inputs individually -- real scope beyond this task; see
-# the plan's In-flight scope updates / this task's build report for the
-# named follow-up). It is still a REAL derived value: any edit to the
-# files it covers busts the cache on the next read, which is what
-# invariant 8 is actually guarding against (a cache that lies while the
-# world burns) for the highest-traffic input classes.
+# (mtimes), plus the repo's current commit (if resolvable), plus (gated-
+# pipeline-master-2026-08 Task 4, REQ-A2, fixing HR-F5) the newest mtime
+# anywhere under the LIVE hooks mirror ($live_home/hooks -- the doctor's
+# primary claimed-vs-actual drift surface: wiring-resolves/lib-deps/legacy-
+# paths all read live hook files the original 4-file list never covered)
+# and a working-tree-dirty bit (`git -C repo_root diff --quiet`, unstaged
+# changes vs the index -- covers a repo file edited but not yet committed,
+# the other half of D5's "wiring changes bust the cache immediately"
+# promise the original 4-file list only kept for 2 of the ~40 checks'
+# config inputs). Documented as a FIRST-APPROXIMATION fingerprint, not true
+# per-check declared-input tracking (that would need every one of the ~40
+# check_* functions to declare its own inputs individually -- real scope
+# beyond this task; see the plan's In-flight scope updates / this task's
+# build report for the named follow-up). It is still a REAL derived value:
+# any edit to the files/dirs it covers busts the cache on the next read,
+# which is what invariant 8 is actually guarding against (a cache that
+# lies while the world burns) for the highest-traffic input classes.
 _doctor_compute_fingerprint() {
   local live_home="$1" repo_root="$2" parts=""
   local f
@@ -306,11 +378,37 @@ _doctor_compute_fingerprint() {
       parts="${parts}|absent"
     fi
   done
+  # Live-hooks-dir newest-mtime (HR-F5): a portable (GNU+BSD) newest-file
+  # scan -- `find -printf` is GNU-only (portability-sweep's own baseline
+  # would RED it), so this loops `find <dir> -type f` (portable) and reuses
+  # the exact date -r/stat -c fallback the 4-file loop above already uses,
+  # rather than a second mtime-reading idiom.
+  local hooks_dir="${live_home}/hooks" hooks_newest=0
+  if [[ -d "$hooks_dir" ]]; then
+    local hf hf_mtime
+    while IFS= read -r hf; do
+      hf_mtime="$(date -r "$hf" +%s 2>/dev/null || stat -c %Y "$hf" 2>/dev/null || echo 0)"
+      [[ "$hf_mtime" =~ ^[0-9]+$ && "$hf_mtime" -gt "$hooks_newest" ]] && hooks_newest="$hf_mtime"
+    done < <(find "$hooks_dir" -type f 2>/dev/null)
+  fi
+  parts="${parts}|hooksnewest:${hooks_newest}"
   local head=""
   if [[ -n "$repo_root" ]]; then
     head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")"
   fi
   parts="${parts}|${head}"
+  # Working-tree-dirty bit (HR-F5): an uncommitted edit to a checked-in
+  # repo file (e.g. a hook mid-edit) busts the cache immediately instead of
+  # serving a stale-but-plausible verdict for up to DOCTOR_VERDICT_CACHE_TTL_
+  # SECONDS. Unstaged only (`git diff`, not `--cached`), matching REQ-A2's
+  # literal contract; correct honest-recompute is preferred over cheap here
+  # (Edge Cases: "dirty bit changes the fingerprint -> cache miss -> honest
+  # recompute, slightly slower -- never stale-serve").
+  local dirty="clean"
+  if [[ -n "$repo_root" ]]; then
+    git -C "$repo_root" diff --quiet 2>/dev/null || dirty="dirty"
+  fi
+  parts="${parts}|${dirty}"
   if command -v cksum >/dev/null 2>&1; then
     printf '%s' "$parts" | cksum | awk '{print $1}'
   else
@@ -7086,12 +7184,19 @@ EOF
   # lock, still no marker -> the NEW unconditional guard skips it.
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
   _assert "9b-sfguard-second-explicit-call-single-flighted" 0 "$RC" "single-flight" "$OUT"
-  if printf '%s' "$OUT" | grep -q "GREEN"; then
-    echo "self-test (9b-sfguard-skip-means-no-checks-ran): FAIL (expected a bare skip, checks appear to have run): $OUT" >&2
-    FAILED=$((FAILED + 1))
-  else
-    echo "self-test (9b-sfguard-skip-means-no-checks-ran): PASS" >&2
+  # gated-pipeline-master-2026-08 Task 4 (REQ-A2, fixing HR-F2+F5+F8): the
+  # skip now SERVES call 1's cached GREEN verdict verbatim (single-writer
+  # contract) instead of the old bare "no checks ran" skip -- GREEN is now
+  # EXPECTED here, honestly traceable to call 1's real recompute a moment
+  # ago, never fabricated. (The old bare `exit 0` this replaces is exactly
+  # what let digest's now-removed cache writer corrupt the entry on a race
+  # -- F2's proven casualty.)
+  if printf '%s' "$OUT" | grep -q "\[doctor\] GREEN"; then
+    echo "self-test (9b-sfguard-skip-serves-cached-verdict-honestly): PASS" >&2
     PASSED=$((PASSED + 1))
+  else
+    echo "self-test (9b-sfguard-skip-serves-cached-verdict-honestly): FAIL (expected the skip to serve call 1's cached GREEN verdict): $OUT" >&2
+    FAILED=$((FAILED + 1))
   fi
   # Recursion guard: a nested invocation within the SAME process (env var
   # inherited by a subprocess) short-circuits with zero I/O, distinct
@@ -7106,7 +7211,12 @@ EOF
     SF_STATE_DIR="${D}/live/state/single-flight" sf_guard "doctor-quick" 120 >/dev/null 2>&1
     SF_STATE_DIR="${D}/live/state/single-flight" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1
   )"; RC=$?
-  _assert "9c-sfguard-recursion-nested-invocation-short-circuits" 0 "$RC" "recursion" "$OUT"
+  # gated-pipeline-master-2026-08 Task 4 (REQ-A2): this is a FRESH scenario
+  # dir (c9c) -- no prior real run means no cache exists yet, so the honest
+  # outcome on this skip is exit 3 + a parseable SKIPPED line (never a
+  # fabricated 0/GREEN just because there was nothing to serve).
+  _assert "9c-sfguard-recursion-nested-invocation-short-circuits" 3 "$RC" "recursion" "$OUT"
+  _assert "9c-sfguard-recursion-no-cache-exits-3-with-skipped-line" 3 "$RC" "SKIPPED" "$OUT"
 
   # ================================================================
   # Check 9 (portability-sweep) — macos-portability-2026-07 task M5
@@ -7360,9 +7470,21 @@ fi
 # suite single-flight against every OTHER scenario's invocation instead of
 # against the real machine's ~/.claude. See lib/single-flight-lib.sh
 # header for the full recursion-vs-single-flight contract.
+#
+# gated-pipeline-master-2026-08 Task 4 (REQ-A2, fixing HR-F2+F5+F8): a skip
+# here is NEVER a bare `exit 0` anymore -- that was indistinguishable from
+# a real GREEN to every exit-code consumer (F8), and composed with digest's
+# old cache writer to corrupt the cache on every skip (F2). sf_guard's own
+# `echo ... >&2` above (HALT vs single-flight vs recursion) still fires
+# normally on this call -- it is NOT captured/consumed here, so a caller
+# combining stdout+stderr (2>&1, as every self-test scenario below does)
+# still sees the specific reason. _doctor_serve_cache_or_skip then serves
+# the cached verdict (fast path, matches the sf-skip's own spirit: the
+# guard mostly exists because a real recompute was JUST done a moment ago)
+# or exits 3 with a parseable line when no valid cache exists yet.
 if declare -F sf_guard >/dev/null 2>&1; then
   if ! SF_STATE_DIR="${LIVE_HOME}/state/single-flight" sf_guard "doctor-quick" 120; then
-    exit 0
+    _doctor_serve_cache_or_skip "single-flight guard active"
   fi
 fi
 
@@ -7468,11 +7590,15 @@ echo "$_dvc_verdict_line"
 # ------------------------------------------------------------
 # Doctor verdict cache — WRITE path. Only after a REAL quick-mode
 # computation (never for --full/--portability, whose cost this TTL is not
-# pricing). Same file/schema session-start-digest.sh's refresh_doctor_cache
-# writes (ts/verdict_line/exit_code), extended with ts_epoch + fingerprint
-# so THIS reader (and only this reader) can serve a fast-path hit next
-# time (invariant 8: the fingerprint is derived, not authored, from the
-# declared inputs above).
+# pricing). gated-pipeline-master-2026-08 Task 4 (REQ-A2): this is now the
+# cache file's ONLY writer in the entire codebase (single-writer contract
+# fixing HR-F2). session-start-digest.sh's refresh_doctor_cache is
+# invoke-and-read-only -- it forces a real recompute (SF_DISABLE=1
+# DOCTOR_VERDICT_CACHE_DISABLE=1, which lands right here) and then reads
+# back this exact record; it never printfs the file. ts_epoch + fingerprint
+# so THIS reader (and only this reader) can serve a fast-path hit next time
+# (invariant 8: the fingerprint is derived, not authored, from the declared
+# inputs above).
 # ------------------------------------------------------------
 if [[ "$MODE" == "quick" ]]; then
   _dvc_write_cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"
