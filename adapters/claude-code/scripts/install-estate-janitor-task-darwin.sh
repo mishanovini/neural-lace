@@ -215,6 +215,12 @@ _ej_state_dir() {
 # ~/.claude/scripts copy wins, repo is the fallback).
 _ej_resolve_script() {
   local base="$1" override="${2:-}"
+  # Test seam, same convention as EJD_FORCE_NO_BASH / EJD_FORCE_NO_LAUNCHCTL:
+  # force the not-found branch. Needed because the last-resort fallback below
+  # is this script's OWN sibling directory, which in a real checkout always
+  # contains estate-janitor.sh — so without this flag the tolerate-absent
+  # branch is unreachable from a self-test running inside the repo.
+  if [[ "${EJD_FORCE_NO_SCRIPTS:-0}" == "1" ]]; then printf ''; return 0; fi
   if [[ -n "$override" ]]; then printf '%s' "$override"; return 0; fi
   local live="${HOME:-$PWD}/.claude/scripts/$base"
   [[ -f "$live" ]] && { printf '%s' "$live"; return 0; }
@@ -526,12 +532,17 @@ EOF
     "$bash_bin" -c "source '$self_abs'; run_ensure"
   _ck "$(cat "$s2_log" 2>/dev/null)" "disabled by operator" "S2 kill-switch honored"
 
-  echo "Scenario 3: Darwin + janitor unresolved -> tolerate-absent"
+  echo "Scenario 3: Darwin + janitor unresolved -> tolerate-absent BEFORE launchctl is even consulted"
   local s3_log="$tmp/s3.log"
-  EJD_UNAME_OVERRIDE="Darwin" EJD_LOG_PATH="$s3_log" EJD_JANITOR_OVERRIDE="$tmp/nope.sh" \
-    HOME="$tmp/nohome" HARNESS_SELFTEST=1 \
-    "$bash_bin" -c "source '$self_abs'; EJD_JANITOR_OVERRIDE='' run_ensure"
-  _ck "$(cat "$s3_log" 2>/dev/null)" "unresolved" "S3 missing janitor tolerates absent"
+  # A working fake launchctl is supplied deliberately: if the script still
+  # reports 'unresolved' rather than 'launchctl not found', that proves the
+  # script-resolution check runs FIRST and short-circuits — the ordering that
+  # makes the tolerate-absent message actionable.
+  local s3_lc; s3_lc="$(_fake_launchctl "$tmp/s3-lc")"; _require_fake_launchctl "$s3_lc"
+  EJD_UNAME_OVERRIDE="Darwin" EJD_LOG_PATH="$s3_log" EJD_FORCE_NO_SCRIPTS=1 \
+    EJD_LAUNCHCTL_OVERRIDE="$s3_lc" HARNESS_SELFTEST=1 \
+    "$bash_bin" -c "source '$self_abs'; run_ensure"
+  _ck "$(cat "$s3_log" 2>/dev/null)" "estate-janitor.sh unresolved" "S3 missing janitor tolerates absent, and does so before the launchctl probe"
 
   echo "Scenario 4: Darwin + HARNESS_SELFTEST=1 -> stub records shape, writes NOTHING"
   local s4_la="$tmp/s4-la" s4_wr="$tmp/s4-wr" s4_log="$tmp/s4.log"
