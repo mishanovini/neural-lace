@@ -138,6 +138,40 @@ See `adapters/claude-code/work-shapes/build-harness-infrastructure.md` for the f
 - Template: `~/.claude/templates/plan-template.md` includes all seven required sections with placeholder prompts explaining what each should contain.
 - Validator: `~/.claude/hooks/plan-reviewer.sh` performs the mechanical check at plan-edit time. Run with `--self-test` to exercise pass/fail scenarios.
 
+## The Review-Chain fields — `design-ref:`, `## Review Chain`, `Implements:`, `Directives:`
+
+(gated-pipeline-master-2026-08 Task 14, REQ-B5+B7.) A plan that is a faithful, buildable
+projection of a reviewed design carries mechanical proof of that lineage, not just prose linking
+to it — the same "review-linked is not review-performed" distinction Check 17 already applies to
+architecture reviews, generalized to the whole design→plan transition.
+
+- **`design-ref:` header** (top-level, `<path>@<git-blob-sha>`) — required when the plan matches
+  `plan-reviewer.sh` Check 17's architecture-keyword set OR touches `adapters/claude-code/**`
+  anywhere in its own `## Files to Modify/Create` section (the trigger `plan-reviewer.sh` Check 20
+  evaluates). Escape: `design-ref: n/a — <30+ char justification>`, ledgered via `gc_escape_used`.
+- **`## Review Chain` section** — required alongside a real `design-ref:`. Names the design and
+  plan reviews that authorized this plan (`design-reviews:` / `plan-reviews:` entries, each with
+  `reviewer:`, `verdict:`, `record:`, and — for plan-reviews — `plan-blob:`). The ONE validity
+  oracle for every entry is `hooks/lib/review-chain-lib.sh`'s `rc_validate_chain` (design
+  `docs/designs/gated-pipeline-master-2026-08-03.md` §4's three rules: record parse, three-way
+  anchor match at HEAD, dispatch-ledger cross-check). `plan-reviewer.sh` Check 20 enforces
+  presence + design-reviews validity; Check 22 enforces that every entry (design AND plan side)
+  honestly names its reviewer/verdict and has a matching dispatch-ledger row once one exists.
+- **Per-task `Implements: REQ-...`** — names the design's own REQ id(s) (from its
+  `## ... Requirements` table) this task builds. When `design-ref:` is real, `plan-reviewer.sh`
+  Check 21 requires every MUST-level REQ to be claimed by at least one task — an uncovered MUST-REQ
+  is a silently-dropped design requirement, the exact defect class this mechanism exists to close.
+- **Per-task `Directives: OD-...`** — names the `operator-directives.json` register entries this
+  task's file surface is tagged with, or the escape `Directives: n/a — <justification>`. Check 21
+  requires the field's structural presence (not its semantic correctness) on every task once
+  `design-ref:` is real.
+- **Flip/grandfather posture:** all dates live in `adapters/claude-code/config/design-ref-gate.json`
+  (`landing_date`, `flip.flip_date`, demotion/recalibration thresholds) — never hardcoded in the
+  check (the HR-F7 "no prose flips" rule). A plan with no `design-ref:` whose first commit predates
+  `landing_date` is grandfathered: Checks 20-22 skip it with an INFO line, never a finding.
+- **Worked example:** `docs/plans/gated-pipeline-master-2026-08.md` carries a real chain from
+  birth — read it for the exact shape.
+
 ## Integration Verification — Every Full-Level Task Must Prove It Works
 
 **Classification:** Hybrid. The per-task sub-block authoring discipline is Pattern (the planner and the `plan-phase-builder` agent self-apply). The plan-time presence + substance check is Mechanism (`plan-reviewer.sh` Check 13). The build-time **static trace + additive runtime** verification is Mechanism (`wire-check-gate.sh` PreToolUse on plan-file Edit/Write).
