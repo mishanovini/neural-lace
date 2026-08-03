@@ -45,7 +45,16 @@ source "$_SEG_SELF_DIR/lib/gate-contract-lib.sh" 2>/dev/null || true
 # later-defined function would resolve to that function's own first
 # argument, not the script's — see pre-commit-gate.sh's identical fix for
 # why this matters).
-GC_MODE="$(gc_mode "${_SEG_ARGV1:-}" 2>/dev/null || echo enforce)"
+#
+# Fallback to "${1:-}" (2026-08-03, CI triage): same class of bug as
+# concurrent-ownership-gate-body.sh's identical fix this same day. _SEG_ARGV1
+# is ONLY set when this file is sourced by scope-enforcement-gate.sh; the
+# hooks-selftest.yml discovery loop invokes this body file directly too
+# (matches the "--self-test" grep), where _SEG_ARGV1 is unset, so self-test
+# scenario 43 (check-mode-would-block-same-fields)'s --check subprocess
+# actually enforced (rc=2) instead of reporting WOULD-BLOCK (rc=1). At
+# top-level script scope "$1" is the direct invocation's own argv[1].
+GC_MODE="$(gc_mode "${_SEG_ARGV1:-${1:-}}" 2>/dev/null || echo enforce)"
 
 _is_system_managed_path() {
   local p="$1"
