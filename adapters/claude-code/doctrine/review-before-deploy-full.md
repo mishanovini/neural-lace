@@ -303,3 +303,23 @@ REDs for that one commit BY DESIGN, not a regression.
 
 **Retirement.** Hard-block half retires when `install.sh` retires for a reconciling sync path,
 or an anti-fabrication anchor + native review-gate make it redundant.
+
+## Doctor checks that back this gate (names restored 2026-08-03)
+
+The 2026-08-03 trim that brought `review-before-deploy.md` under the 3000-byte cap
+(`evals/golden/rules-index-coverage.sh` invariant 4) correctly moved detail here, but two
+doctor CHECK NAMES fell out of the doctrine corpus entirely: the concepts survived, the
+greppable names did not. Restored below, because this doctrine cites doctor checks by name
+everywhere else and an un-named check is an unfindable one.
+
+- **`review-surface-cross-check`** (`check_review_surface_cross_check`,
+  `hooks/harness-doctor.sh`) — the manifest CROSS-CHECK the compact refers to: every
+  `hooks[]` entry in `manifest.json` must resolve in-surface, else RED.
+- **`review-reviewer-independence`** (`check_review_reviewer_independence`, same file; spec
+  `docs/plans/review-independence.md`) — closes WHO reviews: `scripts/review-queue.sh
+  enqueue` is the authoring session's ONLY legal move, and the check REDs on matching
+  git-commit authorship between author and reviewer. The rule itself also lives in
+  `doctrine/verification-dispatch.md`; only the check name was missing here.
+
+With `review-index-consistency` and `review-grandfather-integrity` (above), these are the
+four doctor checks that keep this gate honest.

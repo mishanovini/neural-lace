@@ -80,6 +80,13 @@ HOOKS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # (not gated on any wiring marker) — see lib/single-flight-lib.sh header.
 # shellcheck disable=SC1091
 { source "$HOOKS_DIR/lib/single-flight-lib.sh" 2>/dev/null; } || true
+# nl_run_bounded: every feed on this SYNCHRONOUS SessionStart path must be
+# time-bounded. Added 2026-08-03 after feed_nl_issues was measured at over half
+# an hour, unbounded, against a copy of the real nl-issues ledger. Guarded
+# source + declare -F at each call site, so an absent lib degrades to the old
+# unbounded form rather than breaking the digest.
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/portable-timeout.sh" 2>/dev/null; } || true
 
 # ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
 # Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
@@ -683,7 +690,21 @@ feed_nl_issues() {
   [[ -x "$nli" ]] || nli="$HOME/.claude/scripts/nl-issue.sh"
   [[ -x "$nli" ]] || return 0
   local out
-  out="$(bash "$nli" --digest-feed 2>/dev/null || true)"
+  # BOUNDED (2026-08-03). This call was unbounded and sits on the SYNCHRONOUS
+  # SessionStart path. Measured against a 192-row/130-untriaged copy of the real
+  # ledger: 2,050,027 ms — over half an hour — and it grows with the ledger, so
+  # every session paid an unbounded, silently-increasing startup cost. The
+  # per-row cost is a separate fix; this is the bound that stops a slow ledger
+  # from holding a session hostage. On timeout nl_run_bounded returns non-zero
+  # and `|| true` degrades to an empty feed, which feed contract already treats
+  # as "nothing to report" — the digest loses one line rather than the session
+  # losing thirty minutes.
+  local nli_timeout="${NL_DIGEST_FEED_TIMEOUT:-10}"
+  if declare -F nl_run_bounded >/dev/null 2>&1; then
+    out="$(nl_run_bounded "$nli_timeout" bash "$nli" --digest-feed </dev/null 2>/dev/null || true)"
+  else
+    out="$(bash "$nli" --digest-feed </dev/null 2>/dev/null || true)"
+  fi
   [[ -z "$out" ]] && return 0
   # Prefix the feed name per this digest's line economy; keep the ESCALATION
   # line (if any) on its own line.
