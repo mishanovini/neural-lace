@@ -382,6 +382,9 @@ Modify:
 - `docs/backlog.md` — drain watermark note (task 6)
 
 ## In-flight scope updates
+- 2026-08-02: `adapters/claude-code/manifest.json` — orchestrator integration commit: the 4 entries (single-flight-recursion-guard, halt-drain-flag, schedule-manifest-cadence, budget-bash-hooks) that task 1's builder was constrained from adding (shared file, orchestrator-owned at merge)
+- 2026-08-02: `adapters/claude-code/doctrine/harness-dev.md` — same integration commit: the execution-layer invariants pointer section (single-flight/HALT/schedule-manifest), also builder-locked by dispatch constraint
+- 2026-08-02: `docs/handoffs/2026-08-02-stage0-pending-integration.md` — Stage-0 handoff record (live-settings reconcile procedure, per-machine rollout, verified evidence, open findings)
 - 2026-08-02: `docs/designs/harness-execution-redesign-considerations-2026-08-02.md` — appended the "Round 3 revamp (2026-08-02, operator GO)" section folding the operator's binding round-3 directives into the spec of record (this session, same commit as this plan)
 - 2026-08-02: `docs/plans/harness-execution-redesign-2026-08.md` — this plan file, created in the same commit
 - 2026-08-02: `docs/reviews/2026-08-02-harness-execution-redesign-architecture-review.md` — derived architecture-review record (Check 17): the pre-mortems + operator rounds already performed, recorded with verdict + provenance at the gate's expected location

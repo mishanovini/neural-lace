@@ -2207,7 +2207,12 @@
       "fp_expectation": "Restated 2026-08-01 with the full denominator (the original sentence excluded the curl/sql population): measured at 3caaeff, the PRE-fix parser scored 986 FAIL / 358 PASS over 1344 non-curl TRUE-evidence lines (~73% false-positive) and 16 FAIL over the curl/sql lines. THE DENOMINATOR IS NAMED, because the FAIL count is 16 in BOTH populations and only the denominator moves — quoting one rate without its population is the defect this sentence previously had. Re-measured 2026-08-01 by re-running the 3caaeff executor line-by-line over each population: 16/25 = 64% of ALL curl/sql OCCURRENCES in docs/ (`grep -rhE '^Runtime verification: (curl|sql) ' docs/ | wc -l` = 25 -> 16 FAIL / 9 PASS), and 16/21 = 76% of UNIQUE curl/sql lines (same grep `| sort -u | wc -l` = 21 -> 16 FAIL / 5 PASS). The gap is entirely explained by the 4 duplicate occurrences (`curl -s http://127.0.0.1:7733/api/state` x4 and `.../api/health` x2), every one of which is a PASS — which is why dedup shrinks PASS 9->5 and leaves FAIL untouched. The commit that introduced this entry quoted the 76% unique-population figure. POST-fix: the three parser defects (trailing annotation, dash-leading pattern, shell self-test idiom) are fixed and the curl/sql population is rerouted to non-blocking UNVERIFIABLE, so that entire FP class is structurally gone; residual FP = a citation whose file genuinely moved (a true stale-evidence FAIL, not a false one).",
       "retirement_condition": "Retire when structured machine-checkable evidence records (the review-record primitive absorbing runtime verification) replace free-text `Runtime verification:` lines as the Stop-chain contract, or when the Stop chain itself is retired by ADR.",
       "chokepoint": "pre-stop-verifier.sh (Stop chain) is the ONLY invoker; the executor refuses execution of curl/sql without an explicit --allow-exec flag that no hook passes, and the suite pins that env vars cannot re-arm it.",
-      "bypass_paths": ["(a) --allow-exec explicit opt-in — operator-invoked runs only; no hook or dispatcher passes it (suite-pinned env-cannot-re-arm-execution).", "(b) UNVERIFIABLE is deliberately non-blocking — a FALSE claim written in an unknown/inexecutable format is reported but not refuted; named residual, accepted because executing it was the CRITICAL.", "(c) evidence files outside the scanned docs/ surface are never parsed — same scope bound as the pre-fix gate.", "(d) NAMED AND ACCEPTED — the `file` branch is a one-bit read oracle over any readable path on the machine. `_rve_resolve_path` (executor ~L184-193) deliberately resolves both absolute (`/...`) and home-relative (`~/...`) citations, and the branch reports PASS or FAIL per pattern, so an evidence line can ask 'does <any file this user can read> contain <arbitrary substring>' and recover the answer as one bit, emitted to stderr at session end. This is NOT closed, on purpose: it is the READ half of the very 'read, don't run' boundary the executor exists to enforce (the CRITICAL was EXECUTION, not reading), and the `~/.claude/...` citations that the repo's own evidence convention depends on are precisely the absolute and `~/` paths a repo-relative-only resolver would reject — closing it would make the convention's dominant evidence shape unverifiable and push authors back toward the `curl`/`command` formats that are strictly more dangerous. Bounded by: read-only (the branch has no write or exec primitive), one bit per evidence line, stderr-only at session end with no network sink, and the same docs/ scope bound as (c) — so exfiltration requires an attacker who can already both write docs/ and read the session's stderr."],
+      "bypass_paths": [
+        "(a) --allow-exec explicit opt-in — operator-invoked runs only; no hook or dispatcher passes it (suite-pinned env-cannot-re-arm-execution).",
+        "(b) UNVERIFIABLE is deliberately non-blocking — a FALSE claim written in an unknown/inexecutable format is reported but not refuted; named residual, accepted because executing it was the CRITICAL.",
+        "(c) evidence files outside the scanned docs/ surface are never parsed — same scope bound as the pre-fix gate.",
+        "(d) NAMED AND ACCEPTED — the `file` branch is a one-bit read oracle over any readable path on the machine. `_rve_resolve_path` (executor ~L184-193) deliberately resolves both absolute (`/...`) and home-relative (`~/...`) citations, and the branch reports PASS or FAIL per pattern, so an evidence line can ask 'does <any file this user can read> contain <arbitrary substring>' and recover the answer as one bit, emitted to stderr at session end. This is NOT closed, on purpose: it is the READ half of the very 'read, don't run' boundary the executor exists to enforce (the CRITICAL was EXECUTION, not reading), and the `~/.claude/...` citations that the repo's own evidence convention depends on are precisely the absolute and `~/` paths a repo-relative-only resolver would reject — closing it would make the convention's dominant evidence shape unverifiable and push authors back toward the `curl`/`command` formats that are strictly more dangerous. Bounded by: read-only (the branch has no write or exec primitive), one bit per evidence line, stderr-only at session end with no network sink, and the same docs/ scope bound as (c) — so exfiltration requires an attacker who can already both write docs/ and read the session's stderr."
+      ],
       "honesty_rationale": "ADR 059 D2 verification-class Stop block — NEVER downgraded under a DONE claim by explicit design; this is the load-bearing case the no-waiver rule exists FOR."
     },
     {
@@ -3319,6 +3324,103 @@
       "honest_status": "REAL lock + REAL merge path, NOT yet the estate's ONLY merge path -- that requires every caller (today: just close-worktree.sh) to actually route through it, which is a convention this slice establishes, not a gate that blocks a bypass. The lock (mkdir-atomic, coord-sync.sh's single-writer idiom, 900s stale-reclaim) genuinely serializes concurrent estate-merge.sh invocations against the same STATE_DIR; it does nothing about a concurrent PLAIN `git merge`. The tracking-since marker (state/estate-merge/tracking-since-sha) means the bypass-detection axis of `--check` is forward-looking only -- merges that landed before this script existed are correctly never flagged (named, not hidden, same discipline as estate-registration-lib.sh's pre-existing-worktree debt).",
       "retirement_condition": "Retire/rewrite when a future slice adds an actual PREVENTIVE gate (e.g. a pre-merge-commit hook refusing a merge commit on a protected branch that didn't originate from an estate-merge.sh-tagged ref) -- at that point this entry's blocking field becomes true and fp_expectation must carry real calibration data, mirroring admission-lib.sh's own T3-to-T6 graduation path. Also re-check 14 days after this lands (docs/plans/accountable-estate-program-2026-07.md's own outcome metric: zero master divergence events while active) -- if `estate-merge.sh --check` has recorded zero RED bypass findings against the real integration target over that window, the norm is holding; if not, the preventive gate becomes the next slice, not a re-ask of this one.",
       "honesty_rationale": "kind:writer and blocking:false are literal -- there is no hook, no PreToolUse interception, and nothing currently prevents a caller from merging outside this script. This entry states the coverage gap (a norm, not an invariant) explicitly rather than implying enforcement the code does not have, per constitution s1/s10 -- the same discipline admission-lib.sh's own manifest entry uses for its OBSERVE-mode honesty."
+    },
+    {
+      "id": "single-flight-recursion-guard",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/single-flight-halt-runbook.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/hooks/lib/single-flight-lib.sh"
+        ],
+        "keywords": [
+          "single-flight",
+          "recursion guard",
+          "sf_guard"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "universal guard (sf_guard) sourced UNCONDITIONALLY by harness-doctor.sh, session-start-digest.sh, coord-sync.sh, supervisor-tick.sh, health-tick.sh -- a library (no hooks[] entry, matching the existing no-manifest-entry convention); proof is the lib --self-test (25/25) plus each caller scenario"
+    },
+    {
+      "id": "halt-drain-flag",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/single-flight-halt-runbook.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/hooks/lib/single-flight-lib.sh"
+        ],
+        "keywords": [
+          "HALT",
+          "drain",
+          "sf_halt_set",
+          "sf_halt_active"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "one-gesture operator stop; honored first-line by coord-sync _main(), supervisor-tick run_tick(), health-tick run_tick(), and by sf_guard itself; proof is each caller HALT self-test scenario"
+    },
+    {
+      "id": "schedule-manifest-cadence",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/single-flight-halt-runbook.md",
+      "hooks": [
+        "harness-doctor.sh"
+      ],
+      "events": [
+        "SessionStart",
+        "manual"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/config/schedule-manifest.json"
+        ],
+        "keywords": [
+          "cadence",
+          "schedule-manifest"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "WARN-only (calibration week; flips to RED later) -- WARNs when declared_cadence_seconds < 2x measured_cycle_seconds; unmeasured entries skipped"
+    },
+    {
+      "id": "budget-bash-hooks",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/single-flight-halt-runbook.md",
+      "hooks": [
+        "harness-doctor.sh"
+      ],
+      "events": [
+        "SessionStart",
+        "manual"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/settings.json.template"
+        ],
+        "keywords": [
+          "per-Bash",
+          "budget-bash-hooks"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "WARN-only (target <=6; real count ~25 today, WARNs until Stage 2) -- counts hook entries across every PreToolUse matcher block containing Bash, live + template"
     }
   ]
 }

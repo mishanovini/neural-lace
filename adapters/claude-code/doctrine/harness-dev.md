@@ -19,3 +19,13 @@
 - `rules/` (now `doctrine/`) = operating rules/doctrine; `docs/decisions/` = ADRs; `docs/discoveries/` = mid-process learnings; `docs/reviews/` = audit passes; `docs/findings.md` = class-aware ledger; `docs/failure-modes.md` = named catalog; `docs/backlog.md` = open work; `SCRATCHPAD.md` = ephemeral (gitignored, ≤30 lines); `~/.claude/local/*` = machine-local config; `.claude/state/` = operational state.
 - **CLAUDE.md routes, it does not store.** ≤200 lines soft target: the `@`-reference to canon, the short-form principle list, standing directives with pointers, a `## Detailed Protocols` index. No multi-paragraph rule bodies, no examples/edge-cases, no decision rationale, no duplicated content — extract to doctrine/ and leave a one-line pointer.
 - Routing one-liner: rules/ constitution-only; doctrine/ everything else; decisions docs/decisions/. New content kind → pick location + lifetime + discoverability before writing.
+
+## Execution-layer invariants (single-flight-halt-runbook.md)
+- Every heavy entry point (doctor, digest, coord-sync, supervisor-tick, health-tick) sources
+  `hooks/lib/single-flight-lib.sh` UNCONDITIONALLY and checks `sf_guard`/`sf_halt_active` first —
+  wiring markers (`NL_SESSIONSTART_ORIGIN`, `NL_HOOK_REENTRY`) are belt, never braces.
+- HALT the whole maintenance layer with one gesture: write a reason line to
+  `~/.claude/state/single-flight/HALT`; clear by deleting it. Drain semantics — in-flight work
+  finishes, nothing new arms.
+- `adapters/claude-code/config/schedule-manifest.json` declares cadence + measured cycle per
+  recurring mechanism; doctor WARNs (calibration week) when cadence < 2x cycle.
