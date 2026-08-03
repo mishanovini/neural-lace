@@ -1,13 +1,19 @@
-# THE GATED PIPELINE — master design (2026-08-03, r2)
+# THE GATED PIPELINE — master design (2026-08-03, r3)
 
-**Status:** DRAFT r2 — reformulated per both reviews; awaiting delta re-verdicts.
+**Status:** r3 — delta findings integrated; awaiting the reviewers' scoped confirmations of the
+amended §4 / REQ-B6 / REQ-B14 / REQ-B10 / REQ-A2 text (both delta verdicts stated no further full
+pass is needed).
 **Author:** Fable (main session 4a470c8c, model claude-fable-5, authored inline — D-13 satisfied
 by construction; the `design-author` agent this design creates will own future design docs).
-**Changelog:** r1 (4fb1b234) → r2: integrated `docs/reviews/2026-08-03-gated-pipeline-design-harness-review.md`
+**Changelog:** r1 (4fb1b234) → r2 (a4cd03f5): integrated `docs/reviews/2026-08-03-gated-pipeline-design-harness-review.md`
 (REFORMULATE: C-1, C-2, M-1…M-11, Mi-1…Mi-6) and
 `docs/reviews/2026-08-03-gated-pipeline-design-architecture-review.md` (SOUND-WITH-AMENDMENTS:
 H1, H2, M1…M4, L1…L5) — every finding integrated in the body per the no-addendum rule this design
-itself establishes. Review-id namespaces are disambiguated throughout: `HR-F*` = the Stage-0/1
+itself establishes. r2 → r3: integrated the delta re-reviews — harness delta REFORMULATE (rule-3
+pre-ledger exemption + B14 bootstrap ordering [Critical]; B10 archive-scope exclusion; A2
+cache-disable flag restored; grandfather wording = slug list) and architecture delta
+SOUND-WITH-AMENDMENTS (D1 record-attested three-way anchor match; D2 artifact-ref'd
+completion-side ledger rows; D3 inflight-blob visibility hash). Review-id namespaces are disambiguated throughout: `HR-F*` = the Stage-0/1
 harness review's findings; `INV-F*` = the inventory Part-6 items; `C-*/M-*/Mi-*` = the r1 harness
 review; `H*/M*(arch)/L*` = the r1 architecture review.
 **Supersedes:**
@@ -153,22 +159,37 @@ oracle for G1, G2, G3, and Checks 20–22). A chain entry is valid iff ALL of:
 1. The `record:` file exists, its `## Verdict:` heading parses to the stated verdict, and the
    record's own `Reviewer:` line names the same agent (an honestly-derived record fails by
    construction).
-2. **Anchor-vs-bytes (H2/M-5):** the referenced artifact's blob at HEAD hashes to the anchored
-   SHA (`git hash-object` comparison). Mismatch ⇒ WARN during the calibration window (config
-   date), then BLOCK, with one named re-anchor path: only a reviewer flow re-anchors — the
-   reviewer folds amendments and issues a fresh or delta record covering the new blob. Plan-side:
-   `plan-blob:` anchors the plan's own bytes, computed over the plan file MINUS its `## Review
-   Chain` section and `## In-flight scope updates` (canonicalization rule in the lib, so adding
-   chain entries never self-invalidates); G2 re-verifies at every dispatch. **The staleness
-   contract in one sentence: no gate ever treats an anchored chain as covering bytes the anchor
-   does not hash to.**
-3. **Dispatch-ledger cross-check (H1):** a matching reviewer-dispatch row exists —
-   `{subagent_type, model, ts, session_id}` appended by the existing Task|Agent hook path
-   (extend `workstreams-emit.sh`'s event parse; anti-bloat: extend, don't add) to
-   `~/.claude/state/dispatch-ledger.jsonl` — for the named reviewer agent, with `ts` within the
-   artifact's lifetime. A chain entry naming a never-dispatched reviewer fails validity. Honest
-   residual: the ledger proves *an agent of that type ran*, not what it read; transcript-anchored
-   proof remains out of scope (named, not overclaimed).
+2. **Anchor-vs-bytes, three-way (H2/M-5 + delta-D1):** validity requires a THREE-WAY match:
+   the chain entry's anchored SHA == the blob the review record itself attests (every review
+   record carries a `**Reviewed:** <path> @ <blob>` header line — the record template field) ==
+   the referenced artifact's blob at HEAD (`git hash-object`). Because the attested blob lives in
+   the REVIEWER's record, an author cannot re-anchor by editing one hex string in the chain:
+   re-anchoring requires a fresh record, which rule 3 ties to a fresh reviewer dispatch. Mismatch
+   ⇒ WARN during the calibration window (config date), then BLOCK. Plan-side: `plan-blob:`
+   anchors the plan's bytes computed over the file MINUS its `## Review Chain` section and
+   `## In-flight scope updates` (canonicalization in the lib, so appending chain entries never
+   self-invalidates). **Inflight visibility (delta-D3):** the chain also carries an
+   `inflight-blob:` hash of the excluded In-flight section; G2 emits a LEDGERED WARN (never a
+   block) when it changes, and the next fidelity re-anchor covers the accumulated updates — the
+   one structurally-excluded section stays visible, closing the P-32 side door. G2 re-verifies
+   at every dispatch. **The staleness contract in one sentence: no gate ever treats an anchored
+   chain as covering bytes the anchor does not hash to.**
+3. **Dispatch-ledger cross-check (H1 + delta-D2 + harness-delta Critical):** a matching
+   reviewer-completion row exists in `~/.claude/state/dispatch-ledger.jsonl` — written by the
+   existing `workstreams-emit.sh` **`--on-builder-complete` PostToolUse path** (the agent
+   actually RAN; a blocked or failed dispatch mints no row), schema
+   `{subagent_type, model, ts, session_id, artifact_ref}` where `artifact_ref` is extracted from
+   the dispatch prompt by workstreams-emit's existing parse (the `docs/…` path or plan slug the
+   reviewer was pointed at; empty when underivable). Rule 3 requires: agent-type match AND
+   `artifact_ref` matching the record's reviewed subject (when the row carries one — an empty
+   ref satisfies type-match only and is the named degraded form) AND `ts` within the window
+   [first commit touching the reviewed artifact, the record's commit time]. **Pre-ledger
+   exemption (harness-delta Critical):** records whose date predates the ledger-landing date
+   (recorded in the lib's config, same pattern as G2's gate-landing date) are EXEMPT from rule 3
+   — rules 1–2 still apply in full; this covers every record produced before REQ-B14 exists,
+   including this design's own review records. Honest residual: the ledger proves *an agent of
+   that type completed against that artifact ref*, not what it read; transcript-anchored proof
+   remains out of scope (named, not overclaimed).
 
 **The three gates that consume chains** (all use `gate-contract-lib.sh` messages + `--check`;
 all carry manifest.json entries in the same commit — Mi-2/HR-F9 generalization):
@@ -195,8 +216,9 @@ all carry manifest.json entries in the same commit — Mi-2/HR-F9 generalization
   ledger row (ad-hoc use is legitimate). With a slug: the plan must be committed (HEAD or index,
   resolved against the session cwd's git toplevel; no-repo ⇒ WARN pass, Mi-5) with plan-reviews
   AND (if design-ref present/required) design-reviews valid per the three rules above.
-  **Grandfather (C-2):** plans whose file blob predates the gate-landing date recorded in the
-  gate's config (grandfather list generated at install, enumerating extant plan slugs) pass with
+  **Grandfather (C-2):** plans on the install-generated grandfather slug list (generated once at
+  gate install, enumerating extant plan slugs — the slug list IS the mechanism; blobs carry no
+  dates) pass with
   a LEDGERED WARN naming the retrofit path (fidelity review + chain block); REQ-C2's stale-plan
   dispositioning covers that population; **new plans BLOCK from day one** — preserving the
   acceptance bar on the golden shape, which is a new plan. *Named residuals:* Workflow-internal
@@ -253,7 +275,7 @@ asserting one valid JSON object)**.
 |---|---|---|
 | REQ-A0 | MUST | Estate reconcile per DEC-10: merge `origin/master`, push both mirrors, verify 0/0 divergence both. Stash-protect `docs/backlog.md`. |
 | REQ-A1 | MUST | HR-F1 fixed: `sf_release` added to the lib (header states run-to-exit assumption); `run_daemon` releases per pass; `run_watchdog` reads `daemon.pid` and, **only after verifying the target's command line contains `nl-maintenance` + `--daemon` (M-8: MSYS2 `/proc/<pid>/cmdline`, fallback `ps -p`; identity mismatch ⇒ log-and-skip, never kill)**, kills the stale daemon before relaunch; S11 re-run WITHOUT `SF_DISABLE=1` asserting ≥2 real ticks (mask at `nl-maintenance.sh:790-791` deleted). Verify: self-test; 3-iteration daemon run under the real guard → 3 heartbeats. |
-| REQ-A2 | MUST | HR-F2+F5+F8 fixed as one contract, **single-writer (M-2 preferred form): the doctor is the cache's ONLY writer** — sf-skip serves the cached verdict when one exists else exits distinct code 3 with parseable `[doctor] SKIPPED (<reason>)` (never bare exit 0); `refresh_doctor_cache` becomes invoke-and-read-only (runs `--quick` with `SF_DISABLE=1`; the doctor's own write path at `:7477-7489` produces the record; the digest never writes the cache file) — no ts re-stamping, no fingerprint stripping, by construction; fingerprint gains live-hooks newest-mtime + `git diff --quiet` dirty bit; self-test asserts the single-writer property (digest path leaves the cache byte-identical except via the doctor's own write). Verify: scenario passes; grep proves no digest-side cache write remains. |
+| REQ-A2 | MUST | HR-F2+F5+F8 fixed as one contract, **single-writer (M-2 preferred form): the doctor is the cache's ONLY writer** — sf-skip serves the cached verdict when one exists else exits distinct code 3 with parseable `[doctor] SKIPPED (<reason>)` (never bare exit 0); `refresh_doctor_cache` becomes invoke-and-read-only (runs `--quick` with `SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1` — **the disable flag restored per the harness delta: the refresher's job is a proactive recompute, so a within-TTL cache-HIT no-op would silently change its warm-keeping semantics**; the doctor's own write path at `:7477-7489` produces the record; the digest never writes the cache file) — no ts re-stamping, no fingerprint stripping, by construction; fingerprint gains live-hooks newest-mtime + `git diff --quiet` dirty bit; self-test asserts the single-writer property (digest path leaves the cache byte-identical except via the doctor's own write). Verify: scenario passes; grep proves no digest-side cache write remains. |
 | REQ-A3 | MUST | HR-F6 fixed: ONE ledger file + ONE schema — `NL_MAINT_FRICTION_LEDGER` defaults to `workaround-sensor.jsonl`; pane jq maps `bypass_kind` → `workarounds`; block-event writer decision recorded (gc_block counters or explicit deferral with metric renamed); end-to-end test: `gc_escape_used` → dashboard row. |
 | REQ-A4 | MUST | HR-F9 fixed: manifest entries for nl-maintenance, doctor-verdict-cache, both-substrates (+ HR-F4 zero-substrate WARN → RED after 14 days, dates in data). `--gen-index` regenerated. |
 | REQ-A5 | MUST | Mechanized flips + small fixes: HR-F7 (cadence/budget WARN flip dates in `schedule-manifest.json`; managed_by entries satisfied-by-construction post-activation); **HR-F3 (M-1 restoration): `_sf_is_stale` gains owner-pid liveness (kill -0) with TTL fallback, AND doctor-quick TTL raised to ≥2× measured cold cycle (1200s), each TTL justified in a comment against a measured cycle**; **HR-F10 (M-1): the `never-suppressed` scenario labels renamed `…-BY-SSF`**; HR-F11 (HALT canonical path split); INV-F10/arch-F10 (one side-by-side CPU counter validation vs Task Manager, documented). |
@@ -261,7 +283,9 @@ asserting one valid JSON object)**.
 | REQ-A7 | SHOULD | Registration prepared (installer + rollback self-tested) + DEC-4 ratification ask surfaced via needs-you.sh; executes on operator YES (NO ⇒ pure-tick flag). |
 | REQ-A8 | MUST | **(arch-M1, moved from Phase C) Doctor 71-red triage, A-parallel:** classify every RED (fix / retire / waiver-with-reason) using the existing dispositions (`docs/reviews/2026-08-02-estate-entropy-triage.md`); target single-digit REDs. Until complete, all Phase-A/B done-bars use targeted self-tests, never global doctor state (stated rule, arch-M1's alternative branch, so A-work is not serialized behind triage). |
 
-**Phase B — the gated pipeline (bootstrap order: B1…B7 → B13 → B8/B9):**
+**Phase B — the gated pipeline (bootstrap order: B1…B7 → **B14 → B13** → B8/B9 — the ledger
+lands BEFORE the bootstrap self-review so that review is itself ledgered; harness-delta
+Critical):**
 | REQ | Level | Requirement |
 |---|---|---|
 | REQ-B1 | MUST | Register per §4: `config/operator-directives.json` canonical + generated md view + `directives-register-lib.sh` (ONE parser, round-trip fixture test) + seeding + supersession semantics + **the ADR forward guard (arch-L1): WARN-lint on decisions/ files asserting standing rules without `register_ref`**. Manifest entry same-commit. |
@@ -269,15 +293,15 @@ asserting one valid JSON object)**.
 | REQ-B3 | MUST | `plan-fidelity-reviewer` agent (frontmatter `model: fable`; category review): protocol per §5; six-field class-aware findings; PASS/REFORMULATE/REJECT; anti-rubber-stamp (names the weakest mapping even on PASS); GOLDEN CASE fixture: the P-32 push-directive drop replayed as a design+plan pair in its eval. |
 | REQ-B4 | MUST | Supersession sweep #1: `derive-cache.js:7-11` header amended in the same commit that registers OD-push-materialize. |
 | REQ-B5 | MUST | Plan template: `design-ref:` header + per-task `Implements: REQ-…` + `Directives: OD-…` + Review Chain section. |
-| REQ-B6 | MUST | `review-chain-lib.sh` — the three validity rules of §4 including anchor-vs-bytes comparison, plan-blob canonicalization, and the dispatch-ledger cross-check; self-test fixtures: honest derived record (fails), never-dispatched reviewer (fails), stale anchor (fails post-calibration), valid chain (passes). Manifest entry same-commit. |
+| REQ-B6 | MUST | `review-chain-lib.sh` — the three validity rules of §4 including the THREE-WAY anchor match (chain == record-attested blob == HEAD), plan-blob canonicalization + `inflight-blob:` WARN hash, and the dispatch-ledger cross-check with pre-ledger exemption + artifact-ref match; self-test fixtures: honest derived record (fails), never-dispatched reviewer (fails rule 3), author-re-anchored chain without a fresh record (fails rule 2 three-way), wrong-artifact-ref row (fails rule 3), pre-ledger-dated record (passes rules 1–2, exempt from 3), stale anchor (fails post-calibration), inflight change (ledgered WARN, passes), valid chain (passes). Manifest entry same-commit. |
 | REQ-B7 | MUST | plan-reviewer Checks 20–22: (20) design-ref required-when-triggered + design-reviews valid **including anchor comparison at HEAD (M-5)**; (21) per-task Directives/Implements present, every design MUST-REQ claimed ≥1 task; (22) chain records name agent+verdict+ledger-row. Check 17 comment marked superseded (kept for keyword-triggering). |
 | REQ-B8 | MUST | G2 per §4 (subagent_type-keyed, grandfathered, gate-contract messages, `--check`, escape ledgered) + **the acceptance-bar demonstration, THREE variants (H1): (i) the P-39 shape — plan-phase-builder dispatch, chain-less NEW plan → BLOCKED; (ii) same dispatch with NO attribution line → still BLOCKED (subagent_type keying); (iii) a chain entry naming a never-dispatched reviewer → fails validity.** Recorded in the evidence file with transcripts. Manifest entry same-commit. |
 | REQ-B9 | MUST | G3 extension per §4/DEC-5: class table config + per-class postures/baselines/flips + provenance-docs exemption + same-push honoring. Manifest entry same-commit. |
-| REQ-B10 | MUST | No-addendum lint riding hygiene-scan, **pattern narrowed per M-9: `Addendum`/`Update:` headings rejected in `docs/designs/**` + `docs/plans/**`; `Round [0-9]` rejected in `docs/designs/**` ONLY (review-round records in plans are established practice — the measured 5 legitimate hits become negative self-test fixtures verbatim); case-insensitive, stated; escape = standard fresh-waiver (ledgered)**. Golden: the considerations brief. Then the brief's addenda integrated into its body. |
+| REQ-B10 | MUST | No-addendum lint riding hygiene-scan, **pattern narrowed per M-9: `Addendum`/`Update:` headings rejected in `docs/designs/**` + `docs/plans/**` — with `docs/plans/archive/**` EXCLUDED from scope entirely (harness delta: archives are closed records; the archived D.5-addendum hit stays a coherent negative fixture); `Round [0-9]` rejected in `docs/designs/**` ONLY (review-round records in plans are established practice — the measured 5 legitimate hits become negative self-test fixtures verbatim); case-insensitive, stated; escape = standard fresh-waiver (ledgered)**. Golden: the considerations brief. Then the brief's addenda integrated into its body. |
 | REQ-B11 | MUST | Carriage channels 2+3: `dispatch-directives.sh` + orchestrator-pattern step + **doctrine-jit merged single-emission walk (C-1)** with the both-match self-test scenario. |
 | REQ-B12 | SHOULD | Register-carriage WARN posture v1 (G1/G2 WARN on tagged-surface plan/dispatch lacking matched OD citations; golden: 2026-08-02e; retirement: zero carriage violations across 10 consecutive plans). |
 | REQ-B13 | MUST | **Bootstrap sequencing (M-11): after B3 lands, `plan-fidelity-reviewer` reviews THIS cycle's plan; its record is committed and the plan's chain entry added; ONLY THEN does REQ-B8/G2 land.** The pipeline's own birth is never its first unplanned block. |
-| REQ-B14 | MUST | **Dispatch ledger (H1): workstreams-emit's Task|Agent path appends `{subagent_type, model, ts, session_id}` rows to `~/.claude/state/dispatch-ledger.jsonl`** (extend, don't add; always-exit-0 preserved). Consumed by review-chain-lib rule 3. Manifest entry same-commit. |
+| REQ-B14 | MUST | **Dispatch ledger (H1 + delta-D2): workstreams-emit's `--on-builder-complete` PostToolUse path appends `{subagent_type, model, ts, session_id, artifact_ref}` rows to `~/.claude/state/dispatch-ledger.jsonl`** — completion-side so a blocked/failed dispatch mints no row; `artifact_ref` from the existing prompt parse (extend, don't add; always-exit-0 preserved); ledger-landing date recorded in the lib config (the rule-3 pre-ledger exemption boundary). **Lands BEFORE B13 in the bootstrap order.** Consumed by review-chain-lib rule 3. Manifest entry same-commit. |
 
 **Phase C — remaining debts + anti-bloat floor:**
 | REQ | Level | Requirement |
