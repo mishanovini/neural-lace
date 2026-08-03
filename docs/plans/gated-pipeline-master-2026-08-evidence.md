@@ -546,3 +546,18 @@ Step 4: watchdog reads daemon.pid, identity-verifies before kill, log-and-skip o
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: both suites re-run green by this verifier on merged master; the fix's RED/GREEN is fully evidenced with the same discriminating command failing pre-fix and passing post-fix; every wire arrow traced to file:line; comprehension-gate precondition now satisfied by the persisted comprehension-reviewer PASS record (9214c3ef, confidence 8, 10/10 exact citations) with independent verifier spot-checks. Accepted from the builder transcript (not re-run): the live bogus-pid watchdog demo — statically traced instead (:637-649); re-running launches a real daemon on this machine.
+
+## Comprehension audit round 2 (comprehension-reviewer, fable, 2026-08-03T11:32Z)
+
+- **Task 1 (re-audit, post-FM-023 fix) — PASS (confidence 8).** All three required-before-re-review
+  items verified resolved; 12/12 citations grounded (11 exact, 1 one-line-off); scenario 9 judged
+  structurally discriminating against the old bug independent of the builder's RED narrative
+  (the t0<t1<t2 fixture forces the old record-keyed window [t2,t2] to reject the inside row). Two
+  trivial wording notes (":181"→:182; "4th argument" ordinal slip — artifact is 3rd, arity claim
+  true), no re-review needed.
+- **Task 4 (first pass) — PASS (confidence 8).** 17/17 sampled citations exact; both default
+  cache paths independently verified to converge (doctor :309, digest :530); the
+  exit-3-unreachable-via-health-tick claim verified by reading; NOT-covered section judged
+  exemplary (both remaining bare-exit-0 skip paths precisely cited). One wording note: the dirty
+  bit sees UNSTAGED edits only (matches REQ-A2's literal contract per the builder's own code
+  comment) — accepted-per-spec blind spots (staged/untracked) noted for the record.
