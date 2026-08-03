@@ -60,12 +60,12 @@ echo "iterations    : $N"
 echo
 
 run_case() {
-  local label="$1" ttl="$2"
+  local label="$1" ttl="$2" snap="${3:-$SNAP}"
   local sb; sb="$(mktemp -d 2>/dev/null || mktemp -d -t benchadm)"
   (
     export HARNESS_SELFTEST=1
     export ADM_STATE_DIR="$sb"
-    export ADM_ESTATE_SNAPSHOT="$SNAP"
+    export ADM_ESTATE_SNAPSHOT="$snap"
     export ADM_OCC_CACHE_TTL_SECS="$ttl"
     # shellcheck disable=SC1090
     source "$LIB" || { echo "FATAL: could not source $LIB" >&2; exit 1; }
@@ -85,5 +85,19 @@ run_case() {
 run_case "BEFORE (TTL cache OFF, ttl=0)"  0
 run_case "AFTER  (TTL cache ON,  ttl=45)" 45
 
+# FORK FLOOR — the load-bearing third number, and the reason a TTL cache alone
+# cannot satisfy T6. Pointing the snapshot at a nonexistent path makes
+# adm_live_sessions return -1 on its very first line, before any file read or
+# string scan. Whatever remains is everything adm_admit does OTHER than read
+# occupancy: ~45 command substitutions, each a real process on this platform.
+# The TTL cache can only ever recover (BEFORE - FLOOR). If FLOOR alone exceeds
+# 5 ms, no cache reaches the budget and the remaining work is fork collapse —
+# exactly the retirement condition admission-lib.sh's own header names:
+# "collapse the $(...)-per-helper style into direct assignment".
+run_case "FLOOR  (snapshot ABSENT, no read)" 45 "/nonexistent/no-such-snapshot.json"
+
 echo
 echo "T6 budget: < 5 ms/dispatch before the enforcement flip."
+echo "Read: (BEFORE - FLOOR) is the snapshot-read cost the cache removes."
+echo "      FLOOR is the irreducible cost of adm_admit's own command"
+echo "      substitutions — untouched by any occupancy cache."
