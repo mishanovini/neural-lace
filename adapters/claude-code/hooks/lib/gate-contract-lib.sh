@@ -84,6 +84,25 @@ gc_exit_code() {
   fi
 }
 
+# gc_escape_used <gate> <bypass_kind> <command_fingerprint> [detail] —
+# records that a gate's sanctioned ESCAPE (the fourth gc_block field) was
+# actually exercised, via lib/workaround-sensor-lib.sh's ws_record
+# (operator's workaround-as-sensor law: "a gate generating workarounds is
+# a defective gate" — the ledger is the evidence; see that lib's header
+# for the full contract + why it is a separate ledger from
+# lib/signal-ledger.sh's generic "waiver" event). Lazily sources the
+# sensor lib — only paid when an escape is actually used, never on the
+# hot pre-check path every gate invocation runs. Never fails the caller
+# (same never-blocks contract as ws_record itself); a missing/broken
+# sensor lib degrades to a silent no-op, not a crash.
+gc_escape_used() {
+  local _gc_dir
+  _gc_dir="$(cd -- "${BASH_SOURCE[0]%/*}" 2>/dev/null && pwd)"
+  { source "$_gc_dir/workaround-sensor-lib.sh" 2>/dev/null; } || true
+  declare -F ws_record >/dev/null 2>&1 && ws_record "$@"
+  return 0
+}
+
 # ============================================================
 # --self-test (direct-execution guard — same convention as
 # lib/waiver-purpose-clause.sh and lib/signal-ledger.sh: only runs when this
@@ -120,6 +139,17 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   _st "exit-enforce-passthrough-1" "1" "$(gc_exit_code "enforce" "1")"
   _st "exit-check-always-1-from-2" "1" "$(gc_exit_code "check" "2")"
   _st "exit-check-always-1-from-1" "1" "$(gc_exit_code "check" "1")"
+
+  # gc_escape_used wiring (workaround-as-sensor law) — sandbox both env
+  # vars so this self-test never touches a real machine's ledger.
+  WS_ST_TMP=$(mktemp -d 2>/dev/null || mktemp -d -t 'gcst')
+  export HARNESS_SELFTEST=1
+  export WORKAROUND_SENSOR_LEDGER_PATH="$WS_ST_TMP/ledger.jsonl"
+  gc_escape_used "test-gate" "waiver" "fp-123" "self-test detail"
+  _st "escape-used-appends-one-row" "1" "$(grep -c '"bypass_kind":"waiver"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo 0)"
+  _st "escape-used-carries-gate-name" "1" "$(grep -c '"gate":"test-gate"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo 0)"
+  rm -rf "$WS_ST_TMP"
+  unset WORKAROUND_SENSOR_LEDGER_PATH HARNESS_SELFTEST
 
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED + FAILED)) scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
