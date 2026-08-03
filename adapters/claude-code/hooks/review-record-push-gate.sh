@@ -208,7 +208,26 @@ _rrpg_infra_warn() {
 _rrpg_mtime_epoch() {
   local f="$1"
   [[ -f "$f" ]] || { echo 0; return; }
-  stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0
+  # GNU stat (-c, Linux CI + Windows/MSYS2) FIRST, BSD/macOS stat (-f) as
+  # fallback -- the order every other portable-mtime helper in this repo
+  # uses (lib/admission-lib.sh, lib/observability-derive.sh,
+  # lib/portable-time.sh, lib/session-heartbeat-lib.sh). This one line had
+  # it backwards: `stat -f %m` on GNU coreutils does NOT fail cleanly with
+  # a single file argument -- it treats "%m" as a bogus first FILE operand,
+  # prints an error for that operand to stderr, but ALSO prints the real
+  # file's multi-line filesystem-status block (an unrelated `-f`
+  # "--file-system" listing, not the requested mtime) to STDOUT before
+  # returning nonzero. That leaked stdout survived the `2>/dev/null` (which
+  # only silences stderr) and got concatenated with the correct epoch from
+  # the `-c %Y` fallback, corrupting $mtime with text like "File: ...". The
+  # subsequent `age=$(( now - mtime ))` arithmetic then treated the bareword
+  # "File" as a variable reference, which is unbound under `set -u`,
+  # aborting the command substitution and making _rrpg_fresh_override
+  # ALWAYS return failure -- silently discarding every genuinely valid
+  # override marker (self-test Scenarios 4 and 14). PROVEN by direct
+  # reproduction: `stat -f %m realfile.txt` on GNU coreutils 8.32 prints the
+  # full filesystem-status block to stdout and exits 1.
+  stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0
 }
 
 # _rrpg_fresh_override <sha> -- echoes the validated reason on stdout + rc 0
