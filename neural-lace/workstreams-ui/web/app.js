@@ -1608,8 +1608,21 @@
   function pollHealth() {
     fetch('/api/health').then(function (r) { return r.json(); }).then(function (j) {
       if (!j) return;
-      if (bootUiBuild === null) { bootUiBuild = j.ui_build_ms; return; }
-      if (j.ui_build_ms && j.ui_build_ms !== bootUiBuild) { location.reload(); }
+      if (bootUiBuild === null) { bootUiBuild = j.ui_build_ms; }
+      else if (j.ui_build_ms && j.ui_build_ms !== bootUiBuild) { location.reload(); }
+      // 2026-08-02 subprocess-storm fix: the server's refresh cadence is no
+      // longer a fixed 30s poll — real changes push a refresh within
+      // seconds (server/state-watch.js); refresh_interval_ms (already on
+      // this payload) is now the low-frequency ANTI-ENTROPY FLOOR (minutes,
+      // not seconds). REFRESH_INTERVAL_MS drives the "STALE" accent
+      // (setAge, 2x this value) — without this update it would keep the
+      // OLD 30s-based threshold and falsely flag every pane STALE within a
+      // minute of legitimate no-change quiet time. window.WorkstreamsShell
+      // export below (this was already a TODO in the constant's own
+      // comment: "re-read from /api/health once available").
+      if (typeof j.refresh_interval_ms === 'number' && j.refresh_interval_ms > 0) {
+        REFRESH_INTERVAL_MS = j.refresh_interval_ms;
+      }
     }).catch(function () {});
   }
   pollHealth();

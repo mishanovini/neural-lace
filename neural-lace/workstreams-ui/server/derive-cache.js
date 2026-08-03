@@ -275,14 +275,34 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-// DeriveCache — one instance per server process. `refreshIntervalMs`
-// defaults to 30s per specs-o §O.4 deliverable 1 ("batch-refreshed <= every
-// 30s"). `since` is a function returning the ISO timestamp `nl shipped
+// ANTI_ENTROPY_FLOOR_DEFAULT_MS (2026-08-02 subprocess-storm fix, operator
+// correction: push is the fast path — see server/state-watch.js). This
+// timer is NO LONGER the primary refresh trigger; it is the low-frequency
+// safety net that heals a missed fs-watch event (fs.watch is not 100%-
+// reliable cross-platform) or a state producer state-watch.js does not
+// know to watch. specs-o §O.4 deliverable 1 originally specified this as
+// the PRIMARY "batch-refreshed <= every 30s" cadence — that requirement is
+// now satisfied by state-watch.js's push path (real changes reach the
+// cache within its debounce window, single-digit seconds, not 30s), so the
+// floor itself can and should be far less frequent. 5 minutes clears every
+// per-subcommand timeout comfortably (worst case backlog at 360s) with
+// room to spare, while still being "minutes, not seconds" per the
+// operator's own framing of the anti-entropy floor. OBS_REFRESH_MS keeps
+// its established name/precedence for backward compatibility with existing
+// env wiring and self-tests (server.selftest.js pins it to 999999 so the
+// floor never refires mid-test).
+const ANTI_ENTROPY_FLOOR_DEFAULT_MS = 300000;
+
+// DeriveCache — one instance per server process. `refreshIntervalMs` is the
+// ANTI-ENTROPY FLOOR (see ANTI_ENTROPY_FLOOR_DEFAULT_MS above) — the push
+// path (state-watch.js, wired by server.js) is the fast path for real
+// changes; this timer only re-fires when nothing has pushed a refresh in a
+// while. `since` is a function returning the ISO timestamp `nl shipped
 // --since` should use; server.js supplies the Q3 last-look anchor (client-
 // persisted, defaulting to 24h per ux-review amendment 3).
 function DeriveCache(opts) {
   opts = opts || {};
-  this.refreshIntervalMs = opts.refreshIntervalMs || (Number(process.env.OBS_REFRESH_MS) || 30000);
+  this.refreshIntervalMs = opts.refreshIntervalMs || (Number(process.env.OBS_REFRESH_MS) || ANTI_ENTROPY_FLOOR_DEFAULT_MS);
   this.getShippedSince = opts.getShippedSince || function () {
     return new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   };
@@ -536,4 +556,7 @@ function runWhy(sessionId, lastBlock) {
   });
 }
 
-module.exports = { DeriveCache, runWhy, runNl, nlBin, bashBin, spawnEnv, SUBCOMMANDS, timeoutMsFor };
+module.exports = {
+  DeriveCache, runWhy, runNl, nlBin, bashBin, spawnEnv, SUBCOMMANDS, timeoutMsFor,
+  ANTI_ENTROPY_FLOOR_DEFAULT_MS,
+};
