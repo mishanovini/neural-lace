@@ -250,6 +250,27 @@ masked test would pass whether or not the fix exists, which is no test at all.
   inheriting the recursion var is the same logical holder (mirrors `sf_guard`'s own recursion
   semantics rather than introducing a new trust boundary).
 
+## Comprehension audit (comprehension-reviewer, fable, 2026-08-03T11:05Z)
+
+- **Task 3 — PASS (confidence 8).** 10/10 citations resolved EXACT against the merged diff;
+  spec-meaning is a genuine own-words paraphrase with causal WHY; the SF_DISABLE-inheritance
+  analysis matches the code comment and diff history exactly; NOT-covered list verified genuine
+  (kill branch confirmed stub-only under HARNESS_SELFTEST). One non-blocking wording-precision
+  note recorded (sf_release ownership absolute-claim holds only within the 120s tick-lock TTL —
+  adjacent premises already surfaced).
+- **Task 1 — FAIL (confidence 8), stage 3a (FM-023 spec-misparaphrase) — A PROVEN REAL BUG
+  surfaced through the articulation audit:** rc_rule3's ts-window low bound computed from the
+  RECORD file's first commit (lib :411-413, :428-430) where design §4 + the lib's OWN header
+  (:53-54) specify the reviewed ARTIFACT's first commit. Single-commit records get a degenerate
+  lo==hi window no real completion row can satisfy; every self-test row was minted at exactly
+  the head-commit epoch (the one passing value), so the suite masked it; latent only because
+  RC_LEDGER_LANDING_DATE is unset (everything exempt) — would detonate at Task 15. Plus two
+  drifted citations (:150-156→:126-131, :251-269→:292-309) and a minor unguarded non-numeric-ts
+  comparison at :439. Builder re-dispatched with the full fix order (artifact-arg for rc_rule3,
+  non-coincident-timestamp scenario, malformed-ts guard, articulation corrections). This is the
+  comprehension gate's designed catch class working: the audit compared the paraphrase against
+  the spec against the code and found all three disagreeing.
+
 ## Post-merge integration state (this train)
 
 - master: `298f988d` → T1 ff (`60e4a3a2`) → T3 merge (`dc9f2299`) → manifest+INDEX integration
