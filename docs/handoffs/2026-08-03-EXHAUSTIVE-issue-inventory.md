@@ -280,8 +280,33 @@ the work."* Every item gets an explicit disposition; nothing discarded for age.
 
 **D-14 [OP] The same rigor must apply converting designs → plans.**
 
-**D-15 [OP] A review between EVERY step** of the end-to-end process, plus mechanical/deterministic
-connections between steps.
+**D-15 [OP] BINDING, EXPANDED 2026-08-03 — THE GATED PIPELINE. This is the load-bearing process
+directive; treat it as the spine of the next design.** Verbatim intent:
+
+1. **A dedicated REVIEWER AGENT sits between every major step.** The pipeline is
+   **design → plan → build → deploy**, and there is a review **between every one** of those
+   transitions. Not one review at the end. Not a review only where someone remembers to ask.
+2. **Each reviewer agent is trained explicitly to be world-class at its ONE specific job.** A
+   generalist reviewer spread across design, plan, build, and deploy is not acceptable — each
+   transition has its own failure modes, its own canon, and its own golden cases. (Ties to D-16:
+   every agent world-class at its job; ties to `doctrine/artifact-evidence-bar`'s seven properties,
+   each reviewer needing its own GOLDEN CASE.)
+3. **Mechanical/deterministic connections between every step, such that skipping a step is
+   IMPOSSIBLE** — not discouraged, not warned about, not caught later by a human noticing.
+   The handoff from each step to the next must carry proof that the prior review ran and passed;
+   the next step must be unable to begin without it. (Directly counters P-29/P-30/P-39/P-40: this
+   session skipped `architecture-reviewer` and `harness-reviewer` entirely, satisfied the one
+   blocking check with a *derived* record, and merged three stages before any adversarial review —
+   all of which a deterministic chain would have made impossible rather than merely improper.)
+4. **ALL proper reviews must run before deployment — it is not a single review.** Deployment is
+   gated on the COMPLETE set applicable to the change (e.g. architecture, harness, security,
+   evidence/verification, and any domain reviewer the surface demands), not on "a review happened."
+   The deploy gate must enumerate the required set for the change class and verify each one ran,
+   naming the reviewing agent and its verdict (ties to S-16: the linked-vs-performed defect).
+
+**Acceptance bar for this directive:** it is satisfied only when a step CANNOT proceed without its
+predecessor's review artifact, and deployment CANNOT proceed without the full required review set —
+demonstrated by an attempted skip being mechanically blocked, not by documentation saying it should be.
 
 **D-16 [OP] Every agent must be explicitly designed to be world-class at its job** — standing ask,
 repeated, still not done. Tracked in nl-issues (6) + backlog + `nl-overhaul-program-2026-07-specs-c.md`.
@@ -335,6 +360,22 @@ re-derived per P-42).
 **S-18 NOT BUILT** — No-addendum lint: designs/plans may not carry `Addendum`/`Round N`/`Update:`
 sections; integrate into the body with a changelog line.
 **S-19 NOT BUILT** — Implement `end-to-end-process.md` with a review between every step.
+**S-19a NOT BUILT** — **Per-transition reviewer agents (D-15.1/.2):** one dedicated,
+world-class-at-one-job reviewer per transition — design→plan, plan→build, build→deploy — each
+with its own named failure modes, canon, output contract, anti-rubber-stamp step, and GOLDEN
+CASE per the evidence bar. Existing agents map partially (architecture-reviewer covers
+design; plan-reviewer is shape-only and does NOT review the design→plan transition; no
+build→deploy reviewer exists at all). Gap analysis required before creating new agents —
+extend where an agent already owns the transition, create only where none does.
+**S-19b NOT BUILT** — **Deterministic step-chaining (D-15.3):** each step consumes its
+predecessor's review artifact as a required input, so a step CANNOT begin without proof the
+prior review ran and passed. Skipping becomes impossible rather than improper. Acceptance:
+an attempted skip is mechanically blocked in a live demonstration.
+**S-19c NOT BUILT** — **Deploy gate requires the COMPLETE review set (D-15.4):** the gate
+enumerates the required reviewers for the change class (architecture · harness · security ·
+evidence/verification · domain-specific as applicable) and verifies each ran, naming the
+reviewing AGENT and its verdict. Not "a review happened." Supersedes the current Check-17
+single-link semantics (S-16 folds into this).
 **S-20 NOT BUILT** — Per-category tool-call stubs (Stage 2): hooks-per-Bash 25 → ~5. **The
 load-bearing anti-bloat stage.**
 **S-21 NOT BUILT** — Job Objects for process attribution (`KILL_ON_JOB_CLOSE` optional; attribution
@@ -395,4 +436,14 @@ right #1, and on what justification?
 **Q-06** Estate drain scope: 135 issues / 1,254 alerts / 23 plans / 10 prunable worktrees — all
 triaged; disposition approach needed (watermark-ack was proposed, never answered).
 **Q-07** Arm the orphan reaper? (24 h of observe data, zero dangerous targets, allowlist + two-strike
+
+**Q-08** (D-15) Which transitions need a NEW dedicated reviewer vs extending an existing agent?
+Current coverage: design→plan has NO reviewer (plan-reviewer is shape-only);
+plan→build has none (task-verifier runs AFTER build); build→deploy has none.
+`architecture-reviewer` covers design itself; `harness-reviewer` covers harness changes.
+**Gap: 3 of the 4 transitions are unreviewed today.**
+
+**Q-09** (D-15.4) What is the required review SET per change class? Proposal to confirm:
+harness change -> architecture + harness + evidence; product change -> architecture +
+security + evidence + domain (UX/functionality as applicable); docs-only -> plan-fidelity only.
 guard proposed.)
