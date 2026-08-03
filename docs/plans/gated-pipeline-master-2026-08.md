@@ -2,7 +2,7 @@
 Status: ACTIVE
 Execution Mode: orchestrator
 Mode: code
-Backlog items absorbed: none
+Backlog items absorbed: AUTO-VERIFY-DISPATCH-2026-08-03 (→ Task 25, operator directive 2026-08-03; row deleted same commit)
 acceptance-exempt: true
 acceptance-exempt-reason: Harness-internal plan — the user is the maintainer; self-tests plus the REQ-B8 three-variant blocked-dispatch demonstration are the deliverable outcome (constitution §4 harness clause).
 tier: 4
@@ -417,6 +417,39 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   fixture with marker set + no such plan → WARN present; fixture with a matching ACTIVE plan →
   WARN clears — Verification: contract — Implements: REQ-C6 — Directives: OD-002, OD-007,
   OD-016, OD-018 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs impact: manifest entry
+- [ ] 25. OPERATOR DIRECTIVE 2026-08-03 (merge→verify mechanization; scope expanded per
+  constitution §8 — correct scope > planned scope; absorbs backlog row AUTO-VERIFY-DISPATCH-
+  2026-08-03, deleted same commit; NOT the T16 record's descoped "Task 25" G1-advisory spec —
+  that disposition stands unchanged): the build→verified transition becomes mechanical and
+  present-moment. (a) OD-022 in `config/operator-directives.json` (directive verbatim: unverified
+  merges must not accumulate; the system gets continuously cleaner as it builds) + regenerated
+  view; (b) verify-obligation tracking: a task build-commit landing on the plan's branch opens an
+  obligation (host: T15's dispatch ledger in `workstreams-emit.sh` — obligation = builder-complete
+  row with no matching verifier-complete row for that task); (c) present-moment friction:
+  `dispatch-chain-gate.sh` (G2) BLOCKS new BUILDER dispatch for a plan when that plan's open
+  obligations ≥ 3 AND no verifier dispatch is in flight (ledgered waiver escape, named reason
+  required); (d) stop-side: the pre-stop chain refuses a DONE/CONTINUING end while obligations
+  are open and unnamed in the marker — Verification: full — Implements: operator directive
+  2026-08-03 / OD-022 (created by this task; completes D-15 "every transition") — Directives:
+  OD-002, OD-007, OD-018, OD-021 — Docs impact: orchestrator-pattern + planning doctrine gain the
+  obligation step
+    **Prove it works (§10 evidence bar):**
+    1. Golden scenario (named): this session's accumulation — 11 tasks merged, 0 verified for
+       hours, operator flagged twice (cockpit chips; the 2026-08-03 directive). Fixture replay:
+       ledger with 3 builder-complete rows, no verifier rows → G2 blocks a 4th builder dispatch
+       naming the open obligations; verifier rows added → dispatch passes.
+    2. Two-state stop proof: open obligations → stop chain blocks with task names; rows closed →
+       passes. Both hermetic fixtures.
+    3. Expected FP rate stated in the gate header comment (legit parallel waves: obligations
+       count only when NO verifier is in flight — calibrated against this session's timeline);
+       retirement condition: Stage-2 auto-dispatch mechanism supersedes the block.
+    **Wire checks:**
+    - `adapters/claude-code/hooks/dispatch-chain-gate.sh` → obligation-count consult (same ledger lib as rule 3)
+    - `adapters/claude-code/scripts/workstreams-emit.sh` → obligation open/close rows
+    **Integration points:**
+    - manifest entry BY REPORT (orchestrator integrates serially); harness-reviewer PASS on the
+      diff REQUIRED before merge (new blocking gate, §10); builder commits its comprehension
+      articulation into the evidence file (capture-loss lesson, this session)
 </br>
 
 ## Files to Modify/Create
@@ -535,6 +568,20 @@ Modify:
   this build introduced. Added a `design-ref:`/`## Review Chain`/`Implements:`/`Directives:`
   compact bullet to `planning.md` and a matching "The Review-Chain fields" subsection to
   `planning-full.md` (both purely additive) to actually deliver the Docs-impact claim T14 made.
+- 2026-08-03 (OPERATOR DIRECTIVE, mid-build — Task 25 added): operator, verbatim: "You were
+  given explicit direction to mechanize verification of every build. … I do not want you deciding
+  that it's OK to tolerate so many build processes just sitting unverified. We need to clean up
+  the mess as we go. We want the system to be continuously getting cleaner as it builds, not
+  messier." Task 25 added under constitution §8 (correct scope > planned scope — expand and
+  finish): merge→verify becomes mechanical (obligation ledger + G2 WIP-limit + stop-side refusal
+  + OD-022). Supersedes the same morning's Stage-2 deferral: backlog row
+  AUTO-VERIFY-DISPATCH-2026-08-03 absorbed and deleted this commit. Root cause recorded honestly
+  (§1): the design projected D-15's "every transition, skip-impossible" onto the four
+  artifact-admission boundaries only; no DEC row records merge→verify as a chosen sacrifice — an
+  under-projection all three design-review rounds also missed (reviewers audited the declared
+  transitions instead of re-deriving the full transition set from D-15). The design file is NOT
+  edited (frozen-flip clause not triggered); harness-reviewer PASS on the T25 gate diff is the
+  review-at-the-transition for this addition.
 
 ## Assumptions
 
@@ -646,7 +693,7 @@ gate-contract message) before any of the surrounding machinery exists. First tas
 
 ## Definition of Done
 
-- [ ] All 24 tasks checked off (task-verifier is the only checkbox-flipper)
+- [ ] All 25 tasks checked off (task-verifier is the only checkbox-flipper)
 - [ ] All self-tests in the Closure Contract pass, re-run by the orchestrator
 - [ ] The three-variant demo transcripts captured in the evidence directory
 - [ ] SCRATCHPAD.md updated with final state
