@@ -748,25 +748,51 @@ _rrpg_verdict_is_pass_shaped() {
   esac
 }
 
-# _rrpg_reviewer_required_satisfied <repo_root> <sha> <reviewer-token> --
-# rc 0 iff a review-record file exists under docs/reviews/** AS OF <sha>
-# (git grep pre-filter + git show materialization against the REF, never
-# the working tree -- same-push honoring: a record committed earlier in
+# _rrpg_reviewer_required_satisfied <repo_root> <sha> <reviewer-token>
+#   <changed_z_file> --
+# rc 0 iff a review-record file was ADDED/MODIFIED IN THIS PUSH'S OWN
+# COMMIT RANGE (the SAME NUL-framed F_CHANGED enumeration the 'evidence'
+# token already uses -- same-push honoring: a record committed earlier in
 # THIS SAME push is visible here) whose **Reviewer:** base token
 # (review-chain-lib.sh's rc_record_reviewer/rc__base_token, reused
 # verbatim -- not re-implemented) equals <reviewer-token> and whose final
 # verdict heading (rc_record_verdict, reused verbatim) is PASS-shaped.
-# rc 1 -- no such record found (genuinely missing).
+# rc 1 -- no such record in THIS push's own changed set (genuinely missing
+#         -- this INCLUDES the case where a matching record exists
+#         elsewhere in the tree from an EARLIER push: that is deliberately
+#         NOT a satisfaction here).
 # rc 2 -- review-chain-lib.sh's parsers are unavailable (degradation, not
 #         "missing" -- the caller must WARN about this distinctly).
+#
+# T16 plan-fidelity review F-2 (Major, docs/reviews/2026-08-03-gated-
+# pipeline-t16-plan-fidelity-review.md): the PRIOR revision of this
+# function searched the ENTIRE tree at <sha> via `git grep ... "$sha" --
+# docs/reviews` -- so ANY pre-existing record anywhere in history with a
+# matching reviewer+PASS-verdict satisfied the token FOREVER, on every
+# future push, regardless of whether that push's own content had anything
+# to do with it (PROVEN vacuous: the two extant gated-pipeline design
+# reviews already on this repo's HEAD would have permanently satisfied the
+# harness class's architecture-reviewer/harness-reviewer tokens for every
+# push from here on -- P-30's "review-linked != review-performed" defect,
+# relocated to push time). Scoping the search to THIS push's own
+# added/modified paths (exactly the 'evidence' token's existing precedent,
+# _rrpg_evidence_present_this_push below) closes that: a later push that
+# adds no new qualifying record must fail the token even though old
+# records exist elsewhere in the tree. Self-test scenario CG6 is the
+# regression pin for this exact shape.
 _rrpg_reviewer_required_satisfied() {
-  local repo_root="$1" sha="$2" token="$3"
+  local repo_root="$1" sha="$2" token="$3" changed_z="$4"
   declare -F rc_record_reviewer >/dev/null 2>&1 || return 2
   declare -F rc_record_verdict >/dev/null 2>&1 || return 2
   [[ -n "$_RRPG_TMPDIR" ]] || return 2
+  [[ -s "$changed_z" ]] || return 1
   local f tmp v rtok
-  while IFS= read -r f; do
+  while IFS= read -r -d '' f; do
     [[ -n "$f" ]] || continue
+    case "$f" in
+      docs/reviews/*) ;;
+      *) continue ;;
+    esac
     tmp="$_RRPG_TMPDIR/rc-rec-$$-${RANDOM}.md"
     git -C "$repo_root" show "${sha}:${f}" > "$tmp" 2>/dev/null || continue
     rtok="$(rc_record_reviewer "$tmp" 2>/dev/null)"
@@ -778,8 +804,7 @@ _rrpg_reviewer_required_satisfied() {
       fi
     fi
     rm -f "$tmp" 2>/dev/null
-  done < <(git -C "$repo_root" grep -l -E "^\*\*Reviewer:\*\*[[:space:]]*${token}([[:space:]]|\(|\$)" "$sha" -- docs/reviews 2>/dev/null \
-             | sed -E 's#^[^:]*:##')
+  done < "$changed_z"
   return 1
 }
 
@@ -934,12 +959,12 @@ _rrpg_class_gate_evaluate() {
           ;;
         architecture-reviewer)
           [[ "$arch_triggered" == 1 ]] || continue
-          _rrpg_reviewer_required_satisfied "$repo_root" "$sha" "$tok"; rrc=$?
+          _rrpg_reviewer_required_satisfied "$repo_root" "$sha" "$tok" "$changed_z"; rrc=$?
           [[ "$rrc" == 2 ]] && { degraded=1; continue; }
           [[ "$rrc" == 0 ]] || missing+=("$tok")
           ;;
         *)
-          _rrpg_reviewer_required_satisfied "$repo_root" "$sha" "$tok"; rrc=$?
+          _rrpg_reviewer_required_satisfied "$repo_root" "$sha" "$tok" "$changed_z"; rrc=$?
           [[ "$rrc" == 2 ]] && { degraded=1; continue; }
           [[ "$rrc" == 0 ]] || missing+=("$tok")
           ;;
@@ -2627,6 +2652,30 @@ _rrpg_self_test() {
     msg="$( ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" --check "$CG1_SHA" "$CG_BASE_SHA" ) 2>&1)"
     case "$msg" in *"WOULD BLOCK"*) pass "CG5: --check output is explicitly labeled WOULD BLOCK (never confused with a real enforce-mode block)" ;; \
       *) fail "CG5: --check output missing the WOULD BLOCK label"; esac
+
+    # ---- CG6 (T16 F-2 regression pin, Major): a push with NO new record --
+    # does NOT get satisfied by an OLD record committed in an EARLIER push
+    # (CG4's harness-reviewer record), even though that old record still
+    # exists in the tree at this sha. Placed under scripts/, deliberately
+    # OUTSIDE architecture_trigger_globs, so this isolates to the
+    # harness-reviewer token specifically (evidence is unrelated and was
+    # never vacuous -- it stays correctly missing here too, harmlessly).
+    mkdir -p "$R2/adapters/claude-code/scripts"
+    echo '# yet another harness thing, deliberately NO new review record' > "$R2/adapters/claude-code/scripts/thirdthing.sh"
+    local thirdthing_blob; thirdthing_blob="$(cd "$R2" && git hash-object adapters/claude-code/scripts/thirdthing.sh)"
+    printf '{"entries":[{"path":"adapters/claude-code/hooks/lib/newthing.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"},{"path":"adapters/claude-code/config/review-class-table.json","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"},{"path":"adapters/claude-code/hooks/lib/anotherthing.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"},{"path":"adapters/claude-code/scripts/thirdthing.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}]}\n' \
+      "$newthing_blob" "$classtable_blob" "$another_blob" "$thirdthing_blob" > "$R2/docs/reviews/records/index.json"
+    ( cd "$R2" && git add -A && git commit -qm "feat: thirdthing, deliberately NO new review record (T16 F-2 regression pin)" ) >/dev/null 2>&1
+    local CG6_SHA; CG6_SHA="$(cd "$R2" && git rev-parse HEAD)"
+
+    rc="$(printf '%s\n' "refs/heads/master $CG6_SHA refs/heads/master $CG4_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+    [[ "$rc" == "1" ]] && pass "CG6 (T16 F-2 non-saturation): a push with NO new harness-reviewer record BLOCKS even though an OLD one exists from an earlier push (rc=1)" \
+      || fail "CG6: expected rc 1 (non-saturation) but got $rc -- F-2 vacuous-satisfaction regression is OPEN again"
+    msg="$(printf '%s\n' "refs/heads/master $CG6_SHA refs/heads/master $CG4_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) 2>&1 >/dev/null)"
+    case "$msg" in *"DEC-5 CLASS REVIEW-SET"*"harness-reviewer"*) pass "CG6: message names the still-missing 'harness-reviewer' token despite an old record existing in history (non-saturation proven)" ;; \
+      *) fail "CG6: message does not name the still-missing harness-reviewer token -- non-saturation not proven"; esac
 
     rm -rf "$T2"
   fi
