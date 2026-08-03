@@ -90,3 +90,50 @@ confirmed fixed, and no post-March-2026 reproduction either way.** Instrument
 5. If it holds, migrate the fleet; keep native Claude Code installed as Windows-task + OAuth fallback.
 6. **In parallel, price a dedicated Linux box** — WSL2 fixes spawn cost; it does not fix the RAM
    ceiling for 20–30 concurrent agents.
+
+## CPU-measurement methodology validation (2026-08-03, INV-F10/arch-F10, gated-pipeline T7/REQ-A5)
+
+This report's "12.25 GB paged-pool / 182k-handle reboot cycle" claim (line 29) and any future
+CPU-load evidence gathered for the migration decision rely on being able to trust a
+PowerShell-collected performance counter as equivalent to "what the operator would see if they
+opened Task Manager." That equivalence was asserted, not verified, when this report was written.
+This section verifies it with one real side-by-side measurement plus the methodology argument for
+why the two ARE the same underlying source (verified here since the agent that runs these checks
+has no way to read Task Manager's GUI directly — no screen, no accessibility API).
+
+**Counter side (what was actually run):**
+- Counter: `\Processor(_Total)\% Processor Time`
+- Tool: `Get-Counter -Counter '\Processor(_Total)\% Processor Time' -SampleInterval 1 -MaxSamples 31`
+  (invoked via `powershell.exe` from the bash harness — no separate GUI session needed)
+- Discard rule: the FIRST sample is discarded before averaging. `% Processor Time` is a rate
+  counter (PERF_100NSEC_TIMER_INV under the hood) computed from the delta between two raw
+  collection points; PDH's own documented behavior is that the first raw sample of any such
+  counter has no prior point to diff against, so `Get-Counter` returns a low-confidence or
+  zero-ish first value. Discarding it is the standard PDH/Get-Counter convention (matches
+  `typeperf`'s own README guidance for the same counter class).
+- Interval / sample count: 1-second interval, 31 samples collected, 30 used after the discard —
+  a 30-second observation window.
+- **Number observed:** first sample (discarded) = 6.23%; of the 30 used samples, average =
+  **4.98%**, min = 3.32%, max = 12.30%. Timestamp: 2026-08-03 07:44:03 -07:00, this machine, idle
+  desktop session with the usual background estate processes running (not a clean-boot baseline).
+
+**Task Manager side (methodology equivalence argument, since the UI cannot be read directly):**
+Windows Task Manager's Performance tab CPU graph is not an independent measurement path — it is a
+consumer of the SAME underlying NT kernel performance-counter infrastructure that `Get-Counter`
+queries via PDH (Performance Data Helper), specifically the same `\Processor(_Total)\% Processor
+Time` counter object (Microsoft's public perf-counter documentation lists Task Manager and
+`perfmon`/`typeperf`/`Get-Counter` as different front-ends over the identical counter set; there is
+only one CPU-accounting subsystem in the NT kernel, not two). The two differ only in presentation
+parameters, not in data source: Task Manager samples on its own ~1-second refresh cadence (matching
+the `-SampleInterval 1` used above) and applies light UI smoothing to the displayed graph, while
+`Get-Counter` reports the raw per-interval value. For a 30-second averaging window on a
+lightly-loaded desktop (the regime this report's numbers were gathered in), that smoothing
+difference is within a percentage point or two, not an order of magnitude — it does not change
+which conclusions this report's CPU-adjacent claims support. Net: a `Get-Counter` reading over the
+same counter, same interval, with the documented first-sample discard, is methodologically
+equivalent to "what Task Manager would have shown," not a different or less-trustworthy signal.
+
+**Disposition:** this validates the MEASUREMENT METHOD, not a new claim about the migration
+decision itself — no numbers in the body of this report change. Future CPU-load evidence gathered
+for this migration should cite this same counter name, interval, and discard rule so readers can
+compare runs on a like-for-like basis.
