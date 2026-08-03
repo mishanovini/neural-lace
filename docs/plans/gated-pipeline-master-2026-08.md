@@ -190,7 +190,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - `adapters/claude-code/scripts/nl-maintenance.sh` pane jq → keys off `bypass_kind` from `adapters/claude-code/hooks/lib/workaround-sensor-lib.sh` `ws_record`
     **Integration points:**
     - The 4 live `gc_escape_used` call sites (concurrent-ownership-gate-body.sh:467,482,977; scope-enforcement-gate-body.sh:1901) — no change needed there; verify one fires into the pane end-to-end
-- [ ] 6. HR-F9+F4 fix (orchestrator-integrated; after Tasks 3-5): manifest.json entries for
+- [x] 6. HR-F9+F4 fix (orchestrator-integrated; after Tasks 3-5): manifest.json entries for
   nl-maintenance, doctor-verdict-cache, both-substrates-alive; zero-substrate WARN (RED after 14
   days, dates in `schedule-manifest.json` data); `manifest-check.sh --gen-index` regenerated —
   Verification: contract — Implements: REQ-A4 — Directives: n/a — operator-directives register
@@ -232,12 +232,12 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - n/a — this task's product is doctor-state + a triage record, not a new code chain (justification ≥30 chars: the work is classification and disposition of existing checks, no new wiring is created)
     **Integration points:**
     - Done-bar rule (design REQ-A8): until this lands, Tasks 1-7 use targeted self-tests as done-bars, never global doctor state
-- [ ] 9. REQ-A6 predecessor closure (after Task 8): task-verifier on
+- [x] 9. REQ-A6 predecessor closure (after Task 8): task-verifier on
   `harness-execution-redesign-2026-08.md` T1/T2/T3 evidence; flip checkboxes where PASS; flip plan
   → `Status: SUPERSEDED` with pointer to this plan; verify plan-lifecycle archives it —
   Verification: mechanical — Implements: REQ-A6 — Directives: n/a — operator-directives register
   (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: SCRATCHPAD pointer line
-- [ ] 10. REQ-A7 registration prep: installer + `-Rollback` self-tested end-to-end on this machine
+- [x] 10. REQ-A7 registration prep: installer + `-Rollback` self-tested end-to-end on this machine
   (register→verify→rollback→verify-gone, under a test task name); DEC-4 ratification ask surfaced
   via `needs-you.sh` with the §3 compact block — PRECONDITION (fidelity F-3, hard-stop letter):
   the ask is surfaced only after the T3 and T4 review-record SHAs exist and are cited inside the
@@ -262,12 +262,12 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - ADR lint → greps `docs/decisions/` for standing-rule language lacking `register_ref`
     **Integration points:**
     - Task 20 (dispatch-directives + JIT walk) consumes this lib — schema agreed HERE via the shared fixture (the HR-F6 lesson, executed)
-- [ ] 12. [parallel] REQ-B2 `design-author` agent + `templates/design-template.md` (rationale-per-
+- [x] 12. [parallel] REQ-B2 `design-author` agent + `templates/design-template.md` (rationale-per-
   decision, non-goals, supersedes, machine-parsable REQ table, Directives-honored, Review Chain
   stub with authored-by; frontmatter `model: fable`) — Verification: contract — Implements: REQ-B2
   — Directives: n/a — operator-directives register (REQ-B1/Task 11) not yet built; no OD- id
   exists to cite — Docs impact: model-policy.json agents block gains the entry (category design)
-- [ ] 13. [parallel] REQ-B3 `plan-fidelity-reviewer` agent (frontmatter `model: fable`, category
+- [x] 13. [parallel] REQ-B3 `plan-fidelity-reviewer` agent (frontmatter `model: fable`, category
   review; protocol per design §5; anti-rubber-stamp step; GOLDEN CASE fixture = the P-32
   push-directive drop replayed as a design+plan pair in the agent's eval block) — Verification:
   contract — Implements: REQ-B3 — Directives: n/a — operator-directives register (REQ-B1/Task 11)
@@ -308,7 +308,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     **Integration points:**
     - Fixture schema is the SAME file Task 1 quoted — round-trip test binds them
     - Lands BEFORE Task 16 (bootstrap order per design r3) so the self-review is itself ledgered
-- [ ] 16. REQ-B13 bootstrap self-review (after Tasks 13,14,15): dispatch `plan-fidelity-reviewer`
+- [x] 16. REQ-B13 bootstrap self-review (after Tasks 13,14,15): dispatch `plan-fidelity-reviewer`
   on THIS plan against design r3; commit its record; append the plan-reviews chain entry with
   CANONICALIZED plan-blob anchor (re-anchoring the bootstrap record); only then is Task 17
   dispatchable — Verification: mechanical — Implements: REQ-B13 — Directives: n/a —
