@@ -3454,7 +3454,7 @@
       "id": "dispatch-chain-gate",
       "kind": "gate",
       "added_after": "2026-08",
-      "doctrine_file": null,
+      "doctrine_file": "doctrine/deterministic-process.md",
       "hooks": [
         "dispatch-chain-gate.sh"
       ],
