@@ -429,12 +429,28 @@ Modify:
 - `docs/designs/harness-execution-redesign-considerations-2026-08-02.md` — addenda integrated (T19)
 - `docs/plans/harness-execution-redesign-2026-08.md` — closure flips + SUPERSEDED (T9)
 - `~/.claude/state` ledgers/markers as specified (runtime state, not committed)
+- `.github/workflows/hooks-selftest.yml` — CI stdin-drain fix + timeout bump (T8, CI triage)
+- `adapters/claude-code/hooks/concurrent-ownership-gate-body.sh` — GC_MODE argv fallback (T8)
+- `adapters/claude-code/hooks/scope-enforcement-gate-body.sh` — GC_MODE argv fallback (T8)
+- `adapters/claude-code/hooks/gh-merge-canonical-gate.sh` — self-test stdin isolation (T8)
+- `adapters/claude-code/doctrine/claims.md`, `claims-full.md`, `findings-ledger.md`,
+  `findings-ledger-full.md`, `harness-dev.md`, `intended-functionality.md`,
+  `intended-functionality-full.md`, `deterministic-process.md`, `deterministic-process-
+  full.md`, `operator-requirement-ledger.md`, `operator-requirement-ledger-full.md`,
+  `review-before-deploy.md`, `review-before-deploy-full.md`, `single-flight-halt-runbook.md`,
+  `single-flight-halt-runbook-full.md` — byte-cap trim for Evals rules-index-coverage (T8)
 
 ## In-flight scope updates
 - 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence.md` — the plan's own evidence
   companion (task-verifier/comprehension/orchestrator records); omitted from the Files map at
   authoring (an oversight — every plan has one), surfaced by scope-enforcement on the first
   evidence-only commit after the predecessor archive.
+- 2026-08-03: CI triage folded into Task 8's arbiter-readability remit (operator directive) —
+  `.github/workflows/hooks-selftest.yml`; `adapters/claude-code/hooks/concurrent-ownership-gate-
+  body.sh`, `scope-enforcement-gate-body.sh`, `gh-merge-canonical-gate.sh`; and 8 oversized
+  `adapters/claude-code/doctrine/*.md` compacts (+ new `-full.md` companions) fixed for the
+  Evals `rules-index-coverage.sh` golden test. Root-causing the two red CI workflows surfaced
+  real bugs outside the original Files map; same class as the evidence-companion entry above.
 - 2026-08-03: `neural-lace/workstreams-ui/web/app.js` + `neural-lace/workstreams-ui/web/index.html`
   — T5's schema change (dropping the never-populated `blocks` key) would have broken the pane's
   live consumer ("undefined blocks" per gate row); the T5 builder fixed the consumer in the same
