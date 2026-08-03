@@ -42,6 +42,23 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
   micro-slices (occupancy TTL cache in admission-lib; env-bypass closure; Loop-2 pressure tick),
   then T9 after T4 lands (T9 builds on T4's generalized closers). T8 waits on telemetry accrual.
 - T9 NOTE (2026-07-30, T7 flip): the append-at-close seam is T9's to build — splice spec in loe-backfill.sh's header; ESTATE-T7-LOE-BACKFILL-FULL-MINE-PENDING-01 closed against 6ffe534.
+- CLAIM: T13 (model-routing enforcement) — Misha-Laptop — 2026-08-03 — config/model-policy.json,
+  the dispatch-path applier, effort-policy-warn, estate-brief.sh compliance panel.
+- CLAIM: T8 (self-learning wiring: anomaly rules + incident capture) — Misha-Laptop — 2026-08-03 —
+  scripts/estate-janitor.sh (anomaly rules + incident capture only), incident artifact schema.
+- CLAIM: T6 criterion (c) (darwin janitor schedule) — Misha-Laptop — 2026-08-03 —
+  scripts/install-estate-janitor-task-darwin.sh (NEW), tests/bench-admission-hotpath.sh (NEW).
+  Authored on Windows, UNVERIFIABLE here; needs a darwin run before it can be called done.
+- DEPENDENCY AUDIT (2026-08-03, answering the operator's "is everything after T6 dependent on
+  T6?"): **No.** Every declared dependency in this plan, checked: T8 needs T1/T3 (both [x]);
+  T11 needs T1/T3 (both [x]); T12 needs T3 ([x]); T13 needs T7 for full classes ([x] — coarse
+  classes work without it); T14 needs T1/T4 (both [x]). **Only T10 depends on T6**, via its own
+  "DEFERRED until T1–T9 prove out", and T10 additionally requires explicit operator
+  re-authorization and is the program's flagged HIGH-variance bet. So T8/T11/T12/T13/T14 are all
+  buildable now, and the 7-day observation clock gates only the T6 *enforcement flip* — build
+  everything, enable at the end. The real serialization constraint is FILE COLLISION, not T6:
+  T8, T11 and T12 all want estate-janitor.sh, and T12 also wants admission-lib.sh. Hence one
+  janitor slice in flight at a time, which is Rule 1's amended form, not a scheduling accident.
 - CLEARED 2026-07-29: T7 remainder — full 163-plan mine completed on the DESKTOP post-purge
   (the purge collapsed the fork tax that killed it 3x); docs/loe/loe-calibration.json/.md
   committed. T7 awaits task-verifier only.
