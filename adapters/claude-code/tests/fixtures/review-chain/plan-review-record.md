@@ -1,7 +1,7 @@
 # Fixture Review Record: plan-fidelity-reviewer on valid-chain-plan.md
 
 **Reviewer:** plan-fidelity-reviewer (model: fable, dispatched by gated-pipeline Task 1's self-test fixture setup)
-**Reviewed:** adapters/claude-code/tests/fixtures/review-chain/valid-chain-plan.md @ 0fefd2f45dd96454e71d954ae8b2cfb074d7c42a
+**Reviewed:** adapters/claude-code/tests/fixtures/review-chain/valid-chain-plan.md @ 0eb2c201f43594fad02bc74744bbf36364824dce
 **Reviewed at:** 2026-08-03
 
 ## Verdict: PASS
