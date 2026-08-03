@@ -62,10 +62,42 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
 - CLEARED 2026-07-29: T7 remainder — full 163-plan mine completed on the DESKTOP post-purge
   (the purge collapsed the fork tax that killed it 3x); docs/loe/loe-calibration.json/.md
   committed. T7 awaits task-verifier only.
-- CLEARED 2026-07-29: T6 prerequisites (a)(b)(d) — landed on desktop master as 5ee67c2 (TTL
-  cache) + 1cdef7f (bypass closure, decision 065) + 4fdfc83 (Loop-2 pressure tick); suites
-  55/55 + 26/26 re-run by the orchestrator post-cherry-pick. T6 flip still gated on the 7-day
-  clock + operator thresholds + criterion (c) darwin janitor schedule (darwin-machine work).
+- ~~CLEARED 2026-07-29: T6 prerequisites (a)(b)(d)~~ — **CORRECTED 2026-08-03: this line was
+  FALSE for (a) and (d).** The three commits did land (5ee67c2 TTL cache, 1cdef7f bypass
+  closure/decision 065, 4fdfc83 Loop-2 pressure tick) and their suites did pass — but "commit
+  landed" was mistaken for "criterion met", which is precisely the outcome-blind closure this
+  program exists to end. Re-derived from live state, not from the commits:
+  - **(a) NOT MET, and unreachable by caching.** `tests/bench-admission-hotpath.sh 20` against a
+    live 59 KB snapshot: cache OFF **1344.2 ms/dispatch**, cache ON **1225.0 ms**, and the FLOOR
+    with occupancy entirely absent **914.4 ms**. The bar is 5 ms. The TTL cache recovers 8.9%;
+    even with occupancy free the floor is **183x the budget**. Profiled: only 4 external execs
+    per dispatch — the cost is MSYS subshell forks at ~28 ms each (~32 forks ≈ the floor). So no
+    occupancy cache can satisfy (a); the required work is the fork collapse that
+    `admission-lib.sh`'s own header already names as its retirement condition, and it is
+    UNSTARTED. HYPOTHESIZED: the original 70.8 ms figure is a fast-fork platform's number
+    (45 x ~1.5 ms); REFUTED IF the same bench on the Mac reads ~1300 ms. Worth settling — the
+    enforcing path may differ ~19x between the two machines.
+  - **(d) NOT MET — the commit is live, the behavior is not.** All **5,830 of 5,830** rows in
+    `~/.claude/state/governor/ledger/Misha-Laptop.jsonl` read `"pressure_src":"absent"` — the
+    tick has never once emitted a real value. Root cause is upstream and chronic: `health-tick`
+    runs one long step to its timeout and then skips the rest — the log carries **500 `rc=124`
+    timeouts and 1,194 `budget exhausted` skips** (most recent run: `worktree-prune rc=124
+    elapsed=237679ms`, then `SKIP perf-snapshot`, `done in 397s (budget 300s)`). The culprit step
+    rotates; the starvation does not. Separately, `pts_run_tick` measures ~14m50s and so could
+    never fit a 300 s budget regardless.
+  - **(b) MET, with a documented residual.** Proven behaviorally rather than read off a comment:
+    a hostile `ADM_STATE_DIR=/tmp/evil` is IGNORED in production and honored only under the
+    self-test seam, and `adm_halt_active` is `[[ -e "$(adm_state_dir)/HALT" ]]`, so HALT cannot
+    be hidden. The still-open bypass is `NL_PROTECTED_ORCHESTRATOR`, and decision 065 does meet
+    T6's "accepted in writing" bar (purpose, who sets it, exposure in both directions, mitigation
+    named as visibility-not-prevention, three retirement triggers). RESIDUAL: a FIFTH tunable,
+    `ADM_PRESSURE_MAX_AGE_SECS`, was added later by review C2 and is documented in the header but
+    never folded into decision 065 — the written acceptance covers 4 of 5.
+  - **(c) BUILT, UNVERIFIED-ON-DARWIN.** `scripts/install-estate-janitor-task-darwin.sh` (launchd
+    LaunchAgent, 300 s), self-test 30/0, landed as f3f5ca24. Deliberately generates a
+    path-quoted wrapper rather than embedding a shell string in the plist, because launchd runs
+    one program and the estate's paths contain a space. Settles only on a Mac run.
+  **Net: two of the four gates for the 2026-08-05 flip are OPEN, not one.**
 
 ## Scope / Tasks (LOE: plan-level reference classes per review F11; 1 bs = one builder-session ≈ 80–150k tokens; bands are P50–P90 priors, calibrated as T7 lands)
 
