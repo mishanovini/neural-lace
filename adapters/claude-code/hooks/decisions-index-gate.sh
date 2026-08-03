@@ -38,6 +38,42 @@
 
 set -u
 
+# ---------- ADR forward-guard (WARN-only; arch-L1 / REQ-B1) --------------
+#
+# DEC-3 (docs/designs/gated-pipeline-master-2026-08-03.md §3) consolidates
+# directive truth to 4 named stores: the operator-directives register
+# (adapters/claude-code/config/operator-directives.json) is the sole
+# citation target for standing BINDING rules; docs/decisions/ stays
+# immutable ADRs. Without a forward guard, a future Tier-2+ decision could
+# silently re-create an eighth directive store the moment it states a new
+# standing rule without ever registering it -- the architecture review's
+# finding (docs/reviews/2026-08-03-gated-pipeline-design-architecture-
+# review.md): "any [ADR] that establishes standing rules silently
+# re-create[s] a directive store beside the register." This check is
+# WARN-only, never BLOCK (design §4: "WARN-lint on decisions/ files
+# asserting standing rules without register_ref") -- this file's EXISTING
+# atomicity rule (record<->index, below) is the only thing that blocks;
+# this check never changes that rule's exit code.
+#
+# Heuristic: a record whose staged text contains binding-standing-rule
+# language (case-insensitive BINDING/MUST/NEVER/ALWAYS, or the phrase
+# "standing rule") must ALSO mention `register_ref` (pointing at the
+# OD-NNN entry that now owns the rule) OR an explicit "no standing rule"
+# opt-out phrase. Missing both -> WARN naming the fix. Reads the STAGED
+# blob (`git show :<path>`), not the working-tree file, matching what is
+# actually about to be committed.
+adr_forward_guard_check() {
+  local repo_root="$1" path="$2"
+  local content
+  content="$(git -C "$repo_root" show ":${path}" 2>/dev/null)"
+  [ -z "$content" ] && return 0
+  printf '%s' "$content" | grep -qiE '\b(BINDING|MUST|NEVER|ALWAYS)\b|standing rule' || return 0
+  printf '%s' "$content" | grep -qi 'register_ref' && return 0
+  printf '%s' "$content" | grep -qi 'no standing rule' && return 0
+  echo "decisions-index-gate: WARN — ${path} asserts binding standing-rule language (BINDING/MUST/NEVER/ALWAYS/'standing rule') but has neither a 'register_ref' mention nor an explicit 'no standing rule' opt-out. If this decision states a standing rule that should be mechanically carried, register it in adapters/claude-code/config/operator-directives.json and add 'register_ref: OD-NNN' to this file; if it does not state a standing rule, add a line containing the words 'no standing rule' to silence this WARN. See docs/operator-directives.md (generated view)." >&2
+  return 0
+}
+
 # ---------- self-test ----------------------------------------------------
 
 if [ "${1:-}" = "--self-test" ]; then
@@ -86,6 +122,42 @@ if [ "${1:-}" = "--self-test" ]; then
     return 0
   }
 
+  # args: case_label expected_rc setup_fn expect_warn(0|1)
+  # Same shape as run_case, plus asserts the ADR-forward-guard WARN marker
+  # is present (expect_warn=1) or absent (expect_warn=0) in combined output.
+  # Never asserts on rc alone -- the WARN must never change the exit code.
+  run_case_warn() {
+    local label="$1"; local expected_rc="$2"; local setup_fn="$3"; local expect_warn="$4"
+    (
+      cd "$TMPDIR_ST" || exit 99
+      git reset -q >/dev/null 2>&1
+      rm -f docs/decisions/099-tmp.md docs/DECISIONS.md
+      git checkout -q -- . 2>/dev/null || true
+      $setup_fn
+    )
+    set +e
+    local out
+    out=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" 2>&1)
+    local rc=$?
+    set -e
+    if [ "$rc" -ne "$expected_rc" ]; then
+      echo "self-test: FAIL — case '$label' expected rc=$expected_rc, got rc=$rc" >&2
+      printf '    %s\n' "$out" >&2
+      return 1
+    fi
+    local has_warn=0
+    if printf '%s' "$out" | grep -q 'asserts binding standing-rule language'; then
+      has_warn=1
+    fi
+    if [ "$has_warn" -ne "$expect_warn" ]; then
+      echo "self-test: FAIL — case '$label' expected WARN-present=$expect_warn, got $has_warn" >&2
+      printf '    %s\n' "$out" >&2
+      return 1
+    fi
+    echo "self-test: case '$label' OK (rc=$rc, warn=$has_warn)"
+    return 0
+  }
+
   setup_a_record_only() {
     # New decision record, no index — should BLOCK
     printf '# Decision 099\n\nBody.\n' > docs/decisions/099-tmp.md
@@ -119,12 +191,48 @@ if [ "${1:-}" = "--self-test" ]; then
     git rm -q docs/decisions/098-tmp.md
   }
 
+  # ---- ADR forward-guard (arch-L1 / REQ-B1) scenarios --------------------
+  # Each pairs record+index (the "both staged" shape) so rc stays 0 and the
+  # WARN presence/absence is the only thing under test.
+
+  setup_f_binding_no_ref() {
+    # Binding standing-rule language, no register_ref, no opt-out -> WARN
+    printf '# Decision 099\n\n**Status:** BINDING. This MUST always apply.\n' > docs/decisions/099-tmp.md
+    printf '# Decisions Index\n\n| # | Title |\n|---|---|\n| 099 | Tmp |\n' > docs/DECISIONS.md
+    git add docs/decisions/099-tmp.md docs/DECISIONS.md
+  }
+
+  setup_g_binding_with_ref() {
+    # Same binding language, but carries register_ref -> no WARN
+    printf '# Decision 099\n\n**Status:** BINDING. This MUST always apply.\nregister_ref: OD-001\n' > docs/decisions/099-tmp.md
+    printf '# Decisions Index\n\n| # | Title |\n|---|---|\n| 099 | Tmp |\n' > docs/DECISIONS.md
+    git add docs/decisions/099-tmp.md docs/DECISIONS.md
+  }
+
+  setup_h_binding_opt_out() {
+    # Same binding language, explicit opt-out -> no WARN
+    printf '# Decision 099\n\n**Status:** BINDING. This MUST always apply.\nThis decision states no standing rule for future work.\n' > docs/decisions/099-tmp.md
+    printf '# Decisions Index\n\n| # | Title |\n|---|---|\n| 099 | Tmp |\n' > docs/DECISIONS.md
+    git add docs/decisions/099-tmp.md docs/DECISIONS.md
+  }
+
+  setup_i_no_binding_language() {
+    # Plain record, no binding language at all -> not applicable, no WARN
+    printf '# Decision 099\n\nJust a routine reversible config change.\n' > docs/decisions/099-tmp.md
+    printf '# Decisions Index\n\n| # | Title |\n|---|---|\n| 099 | Tmp |\n' > docs/DECISIONS.md
+    git add docs/decisions/099-tmp.md docs/DECISIONS.md
+  }
+
   FAIL=0
   run_case "a: record without index" 1 setup_a_record_only || FAIL=1
   run_case "b: index without record" 0 setup_b_index_only || FAIL=1
   run_case "c: both staged"          0 setup_c_both         || FAIL=1
   run_case "d: neither"              0 setup_d_neither      || FAIL=1
   run_case "e: record delete only"   0 setup_e_record_delete || FAIL=1
+  run_case_warn "f: binding language, no register_ref -> WARN"      0 setup_f_binding_no_ref      1 || FAIL=1
+  run_case_warn "g: binding language, register_ref present -> quiet" 0 setup_g_binding_with_ref     0 || FAIL=1
+  run_case_warn "h: binding language, opt-out present -> quiet"      0 setup_h_binding_opt_out      0 || FAIL=1
+  run_case_warn "i: no binding language -> quiet"                    0 setup_i_no_binding_language  0 || FAIL=1
 
   if [ "$FAIL" -eq 0 ]; then
     echo "self-test: OK"
@@ -213,6 +321,15 @@ while [ "$i" -lt "$N" ]; do
       ;;
   esac
 done
+
+# ADR forward-guard: run on every staged add/mod record, regardless of the
+# atomicity outcome below (a WARN here never changes this gate's exit code).
+if [ "$HAS_RECORD_ADD_OR_MOD" -eq 1 ]; then
+  printf '%s' "$RECORD_FILES" | while IFS= read -r rf; do
+    [ -z "$rf" ] && continue
+    adr_forward_guard_check "$REPO_ROOT" "$rf"
+  done
+fi
 
 # ---------- decision table -----------------------------------------------
 

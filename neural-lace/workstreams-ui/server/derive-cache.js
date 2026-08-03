@@ -9,6 +9,22 @@
 // tree-state.json event log) as truth. This module shells the real `nl <sub>
 // --json` oracle (contract C5, adapters/claude-code/scripts/nl.sh) for every
 // pane, caches each subcommand's last-good result, and refreshes on a timer.
+//
+// SUPERSESSION (gated-pipeline-master-2026-08 Task 11, REQ-B4; P-42,
+// docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md): Law 1 itself
+// (derive-from-oracle, above) is UNCHANGED and remains binding — deriving
+// and pushing are orthogonal. What IS superseded is the READING that "and
+// refreshes on a timer" was itself required by Law 1 — it was always this
+// module's own implementation choice, not part of the law (a prior
+// architecture review conflated the two; the operator corrected it,
+// 2026-08-02e). That timer-refresh reading, as applied to hot paths, is now
+// superseded by OD-006 (push over pull / push-materialize — see
+// adapters/claude-code/config/operator-directives.json and the generated
+// docs/operator-directives.md). A future task that converts this module's
+// refresh from a polling timer to an fs-watch/push-notification trigger
+// (the S-12 precedent already shipped elsewhere in this program) executes
+// OD-006, not a Law-1 violation — it satisfies BOTH.
+//
 // It is the ONLY place server.js reads derived truth from — every pane
 // endpoint is a thin read of this cache, so "what the pane shows" and "what
 // `nl <sub> --json` returns" are mechanically the same data path (the
