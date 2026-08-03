@@ -417,6 +417,8 @@ Modify:
 - 2026-08-02 (same fix): `neural-lace/workstreams-ui/web/app.js` — `REFRESH_INTERVAL_MS` (drives the client's "STALE" pane accent, `setAge`) is now updated from `/api/health`'s `refresh_interval_ms` field (already existed) inside the existing `pollHealth()` poll, instead of staying hard-coded at 30000 forever (the constant's own prior comment already flagged this as a TODO: "re-read from /api/health once available"). Required by this fix, not gratuitous: raising the server's anti-entropy floor to 5 minutes without this would have made every pane falsely flag STALE after ~1 minute of legitimate no-change quiet time.
 - 2026-08-03: `docs/reviews/2026-08-03-stage0-stage1-harness-review.md` — the adversarial harness-reviewer pass the constitution requires for harness rule/agent/hook changes, run post-merge over this plan's Stage 0a/0b/1 commits (e9c5bc0f, ce7cca52, 46826022, 0110fdae, ed32a7b4, e5432f3c); verdict REFORMULATE with 2 Critical findings gating Stage-1 activation (do not run install-maintenance-task.ps1 until F1/F2 are fixed). Review-record scope claim only — no task semantics changed.
 
+- 2026-08-03: `docs/reviews/2026-08-03-harness-execution-redesign-REAL-architecture-review.md` — the first FRESH architecture-reviewer dispatch on this design (operator-ordered); supersedes the 2026-08-02 derived record per that record's own "dispatching it and appending its verdict" provision. Verdict SOUND-WITH-AMENDMENTS; its F1/F2 amendments (directives register with supersession; drain resequenced before Stage 2) are addressed to the orchestrator/operator, not absorbed silently here.
+
 ## Assumptions
 
 - The three rounds of operator dialogue recorded in `~/.claude/state/nl-issues.jsonl`
