@@ -657,6 +657,77 @@ Verdict: PASS
 Confidence: 9
 Reason: PROVEN: both suites re-run green by this verifier on merged master — S14 exercises the full real-lib chain gc_escape_used → ledger → pane row (Prove-it 1-2) and S9b the empty-ledger honest-zero case (Prove-it 3); every wire arrow traced writer-to-renderer at the merged blob; the sanctioned DEFER-with-rename branch is recorded (:398-412) and mechanically executed (no blocks key, S9-asserted); the in-flight consumer fix is disclosed in the plan and verified. Accepted (builder-declared, consistent with cockpit-down session): live browser DOM render not exercised — the JSON contract is verified at every layer up to the render call site; carried as an honest gap, not blocking (app.js render is one string-template from verified data).
 
+## Task 6 — HR-F9+F4 manifest entries + zero-substrate inverse (REQ-A4) — Verification: contract
+
+- Built orchestrator-side per the plan's task text (after T3-T5 merges), commit `422257c2`.
+- Manifest entries: `nl-maintenance-core`, `doctor-verdict-cache`, `maintenance-both-substrates-alive`
+  (162 total; each honest_status names its real state incl. the not-registered activation gap and
+  the single-writer provenance); `manifest-check` → 1 pre-existing RED only (session-heartbeat,
+  T8-dispositioned); `--gen-index` regenerated.
+- HR-F4 inverse: `check_maintenance_both_substrates_alive` gains the zero-substrate branch —
+  marker absent ∧ heartbeat stale (<2h window) ∧ all legacy tasks Disabled ∧ manifest declares
+  managed_by=nl-maintenance → WARN, RED after `.zero_substrate.red_after_days` from
+  `.zero_substrate.legacy_disabled_since` (dates in data, HR-F7 rule; fields added to
+  schedule-manifest.json with legacy_disabled_since=2026-08-02).
+- **Live probe (contract evidence): the check FIRED on this machine's real state** —
+  `[doctor] WARN maintenance-zero-substrates: zero maintenance substrates alive (legacy Disabled
+  since 2026-08-02, replacement unregistered; RED at 14d, now 1d) -- T10 registration pending`.
+  Doctor `bash -n` syntax clean.
+- Honest gap: no dedicated self-test scenario for the inverse branch yet (selftest:false stated
+  in the manifest entry honestly; the live probe is the contract evidence; a scenario rides the
+  predecessor's Known-gap-#2 follow-up).
+
+## Task 8 — REQ-A8 doctor triage — Verification: full — STATUS: PARTIAL (open; survivors dispositioned)
+
+- Builder: plan-phase-builder (sonnet), worktree `agent-a87622c2020ce66a5`, commit `a011d934`,
+  merged. Classification table appended to `docs/reviews/2026-08-02-estate-entropy-triage.md`
+  (2026-08-03 section).
+- 8a baseline: quick tier = 34 RED lines / 12 check-ids (NOT the historical 71 — that was the
+  full-tier figure; recorded honestly). The check-8 self-test sweep ran 90+ min without
+  finishing — live confirmation of P-14.
+- 8b fixes (orchestrator re-verified): harness-architecture.md regenerated (cleared
+  wave-f-f2-docs); manifest-check split-exemption + 2 scenarios (REDs 3→1, 30/30 self-test);
+  plan-edit-validator stat-shim fix (20/4 → **24/24, orchestrator re-run**).
+- 8c retires: 0. 8d waivers: 0 — the review-reviewer-independence grandfather candidate was
+  investigated (10 PROVEN post-cutover self-approvals via git-author inspection) and REJECTED
+  after reading decision 067 (deliberately enforceable-RED by design). Correct restraint.
+- 8e re-measure: 22 REDs — **≤9 NOT met**; every survivor dispositioned: 17 RED lines require
+  main-session/T21 execution (live-mirror writes + worktree pruning — sandbox-blocked for
+  builders, 4 denial classes documented), 12 owned by T5/T6/T7/decision-067 enforcement.
+  T8's checkbox stays OPEN until the survivors' owners land and 8e re-measures ≤9.
+- Root-caused (not fixed): the 5 P-14 "jq-parity" self-test failures are a self-test-harness
+  Windows/MSYS2 shim defect (`_nonode_path()` symlinks bash itself → companion-DLL load failure),
+  NOT doctor production bugs (real jq expressions verified standalone against live data). Filed
+  SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 + MODEL-PIN-GATE-SELFTEST-NONHERMETIC-01.
+- Salvage: the builder's backlog delta (3 entries) was hygiene-blocked in its worktree; the
+  orchestrator applied it on master post-exemption (committed in 422257c2).
+
+### Task 8 — Comprehension Articulation (builder-authored, per Decision 020d; diff: a011d934 — AUDIT TARGET when T8 closes)
+
+#### Spec meaning
+Inventory doctor REDs via `--full`, classify every distinct check-id fix/retire/waiver with a
+rationale, execute fixes surgically (never delete-as-fix), land waivers only via the doctor's
+existing waiver convention where the gate genuinely doesn't apply, re-measure, target ≤9 with
+every survivor named.
+
+#### Edge cases covered
+manifest-check exemption doesn't leak (S3c: orphaned body file still REDs; 30/30); stat-shim fix
+tries the real/correct form first so it doesn't mask a genuine BSD-side break; P-14 diagnosis
+independently confirmed against live data before concluding self-test-infra-not-doctor-bug;
+review-reviewer-independence waiver candidate rejected only after reading decision 067 in full.
+
+#### Edge cases NOT covered
+Check-8 sweep incomplete (~40 hooks unswept; plan-reviewer/review-record-gates failures observed,
+not root-caused); docs/backlog.md changes uncommitted in the worktree (orchestrator salvaged);
+the 4 live-mirror REDs and worktree/branch pruning have known-safe remedies the builder could not
+execute (sandbox-blocked; fully specified with exact commands in the triage doc).
+
+#### Assumptions
+"≤9" counts raw RED lines (matches RED_COUNT and the historical framing), not unique check-ids;
+the sandbox's 4 consistent denials across distinct action classes are a structural boundary, not
+a probeable permission; review-reviewer-independence's other 9 records share the same binary
+detection mechanism as the 1 individually verified.
+
 ## Comprehension audit — Task 5 (comprehension-reviewer, fable, 2026-08-03T11:58Z)
 
 - **Task 5 — PASS (confidence 8).** 7/7 citations grounded (+5 corroborating fact-checks); the

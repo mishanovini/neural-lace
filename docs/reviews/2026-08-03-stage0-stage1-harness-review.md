@@ -359,3 +359,22 @@ checks) rather than against the degraded regime the brief itself says maintenanc
 in (120s TTL vs 9m cycle; WARN checks with no flip; zero-substrate interim with no alarm).
 Fix F1/F2/F6 before the in-flight builders land their halves; mechanize the F7 flips; then
 Stage 1 can be activated and this review's conditions closed.
+
+---
+
+# Fix status (maintained per review-finding-fix-gate; plan: docs/plans/gated-pipeline-master-2026-08.md)
+
+| Finding | Status |
+|---|---|
+| F1 (Critical, daemon wedge) | **FIXED** @ 6f5d1b22 (merged dc9f2299); re-reviewed PASS in docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md |
+| F2 (Critical, cache corruption) | **FIXED** @ d46beee5 (merged ec349c3f), single-writer form; re-reviewed PASS (same record) |
+| F3 (TTL vs cycle) | OPEN — gated-pipeline T7 (in flight) |
+| F4 (zero-substrate silent) | **FIXED** @ 422257c2 (inverse check, dates-in-data; live-probed firing) |
+| F5 (fingerprint coverage) | **FIXED** @ d46beee5 (live-hooks mtime + unstaged-dirty bit; staged-edit residual named in the implementation review) |
+| F6 (friction writer/consumer) | **FIXED** @ be5e4273 (T5; one file+schema, end-to-end proven) |
+| F7 (prose-only WARN flips) | OPEN — gated-pipeline T7 |
+| F8 (skip exit-0 aliased) | **FIXED** @ d46beee5 for the sf_guard doctor-quick site (serves-cache-or-exit-3); two non-sf_guard bare-exit-0 paths remain as a filed follow-up (accepted scoping per the implementation review note 3) |
+| F9 (Stage-1 manifest entries absent) | **FIXED** @ c3dae56c (review-chain/dispatch-chain entries) + 422257c2 (nl-maintenance-core, doctor-verdict-cache, maintenance-both-substrates-alive) |
+| F10 (test-name rename) | OPEN — gated-pipeline T7 (7d) |
+| F11 (HALT canonical path) | OPEN — gated-pipeline T7 (7c) |
+| F12 (census undercount) | OPEN — gated-pipeline T22 (counting method specified) |
