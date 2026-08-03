@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "note": "G1 (design->plan) calibration/flip data for plan-reviewer.sh Checks 20-22 (gated-pipeline-master-2026-08 Task 14, REQ-B5+B7; design docs/designs/gated-pipeline-master-2026-08-03.md \"4, G1 spec). HR-F7 rule: no prose flips anywhere in the harness -- every WARN->BLOCK transition, demotion threshold, and recalibration threshold reads from THIS file, never from a hardcoded date/number in plan-reviewer.sh. Checks 20-22 read `landing_date` and `flip.flip_date` (env-overridable via DRG_LANDING_DATE / DRG_FLIP_DATE for --self-test, same sandboxed-subshell convention as review-chain-lib.sh's RC_* vars) -- `demotion` and `recalibration` are recorded here as the design's own numbers but are OPERATOR-ACTED data (a human reads the ledgered-FP/n/a-rate counts and decides whether to demote/recalibrate); no code in this repo currently auto-applies them.",
+  "landing_date": "2026-08-04",
+  "grandfather_rule": "A plan with NO top-level 'design-ref:' header field AND whose OWN first-commit time (git log --follow, never a self-declared date) predates landing_date is GRANDFATHERED: plan-reviewer.sh Checks 20-22 SKIP entirely with an INFO line, never a finding. A plan that already carries a design-ref (including this very program's own master plan, from birth) is never eligible for this grandfather -- it has already opted into the chain it carries. landing_date is deliberately ONE CALENDAR DAY AFTER this gate's actual landing commit date (2026-08-03), not the same day: a same-day boundary compared via `date -d <landing_date> +%s` resolves to that day's 00:00:00, so a commit made LATER on the landing day itself (any real commit time, since epoch-of-now > epoch-of-midnight-same-day) would incorrectly NOT predate the boundary and would wrongly lose its grandfather -- the +1-day boundary guarantees every commit made on or before the gate's actual landing day is covered. Retrofit path for a grandfathered plan: add a design-ref + ## Review Chain block the next time the plan is substantively revised (same shape as G2's install-generated grandfather-slug-list retirement, REQ-C2).",
+  "flip": {
+    "warn_days": 7,
+    "flip_date": "2026-08-11",
+    "flip_date_meaning": "Before this date, a NEW (non-grandfathered) plan that matches the trigger (Check 17's architecture-keyword set OR the adapters/claude-code/** surface in its Files to Modify/Create section) but is missing a required design-ref gets a non-blocking WARN. On/after this date the SAME condition BLOCKS (add_finding). This is the observe-first WARN window the design's \"4 G1 spec names explicitly (\"Flip: WARN 7 days (config date) -> BLOCK at commit-time floor\"). Rule-2 anchor mismatches are a SEPARATE calibration window owned by review-chain-lib.sh's own RC_ANCHOR_CALIBRATION_END_DATE (unset by default -- deliberately not co-mingled with this gate's flip date, since anchor-mismatch calibration spans every chain consumer (G1/G2/G3), not just G1)."
+  },
+  "demotion": {
+    "fp_per_week_threshold": 5,
+    "window": "week",
+    "action": "Mi-6: ledgered-FP count (workaround-sensor rows tagged bypass_kind=waiver, gate=plan-reviewer-check20) > 5/week during the calibration window means the surface trigger stays WARN and the trigger definition itself is recalibrated -- never an automatic schedule-driven flip to BLOCK. Read the count via the same friction-pane jq the dashboard uses (REQ-A3) filtered to gate=plan-reviewer-check20."
+  },
+  "recalibration": {
+    "na_rate_pct_threshold": 30,
+    "window": "fortnight",
+    "action": "Mi-3: if 'design-ref: n/a' escapes exceed 30% of NEW plans in any fortnight, the trigger set (keyword regex + adapters/claude-code/** surface) is over-firing and needs review -- file via nl-issue.sh, auto-filed, not silently absorbed as normal escape traffic."
+  },
+  "corpus_measurement": {
+    "measured_date": "2026-08-03",
+    "measured_by": "gated-pipeline-master-2026-08 Task 14 build (arch-M4)",
+    "method": "adapters/claude-code/scripts/measure-design-ref-surface-trigger.sh: grep for a backtick-or-bare 'adapters/claude-code/' path inside each plan's own '## Files to Modify/Create' section, swept across docs/plans/*.md + docs/plans/archive/*.md",
+    "surface_trigger_fire_count": 146,
+    "surface_trigger_fire_rate_pct": 49.0,
+    "corpus_size": 298,
+    "keyword_trigger_fire_rate_reused_pct": 27.0,
+    "keyword_trigger_source": "plan-reviewer.sh Check 17 ARCH_KEYWORDS corpus study, unchanged by this task"
+  }
+}

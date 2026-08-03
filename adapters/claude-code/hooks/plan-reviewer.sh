@@ -1977,6 +1977,218 @@ CALIB_JSON
     FAILED=1
   fi
 
+  # ============================================================
+  # Checks 20-22 self-test (2026-08-03, gated-pipeline-master-2026-08
+  # Task 14, REQ-B5+B7). ONE throwaway git sandbox (mktemp -d; git init),
+  # mirroring hooks/lib/review-chain-lib.sh's own --self-test convention —
+  # rule 2 (git hash-object) and the grandfather check (git log --follow)
+  # run for REAL, never faked, and this never touches the real repo. A
+  # blocking finding is rendered by add_finding as "  * Check N (...)" in
+  # the FINDINGS block (distinct from a non-blocking
+  # "[plan-reviewer] WARN/INFO Check N (...)" line) — every assertion below
+  # keys off that "* Check N (" prefix specifically so a WARN/INFO can never
+  # be mistaken for a blocking finding.
+  #
+  # SCRIPT_ABS: every earlier self-test scenario invokes `bash "$SCRIPT"
+  # <fixture>` from the ORIGINAL cwd, so $SCRIPT (captured as
+  # "${BASH_SOURCE[0]}" — relative when this file is invoked with a
+  # relative path, the common case) always resolves. This block is the
+  # FIRST to `cd` into a DIFFERENT directory (the throwaway sandbox repo)
+  # before invoking bash — a bare relative $SCRIPT then resolves against
+  # the WRONG cwd ("bash: adapters/claude-code/hooks/plan-reviewer.sh: No
+  # such file or directory", caught by this task's own first full-suite
+  # run). Resolve an absolute path ONCE, before any `cd`, and use it in
+  # every sandboxed invocation below.
+  SCRIPT_ABS="$(cd -- "$(dirname "$SCRIPT")" 2>/dev/null && pwd)/$(basename "$SCRIPT")"
+  C2022_T=$(mktemp -d) || { echo "self-test: mktemp failed for Checks 20-22 sandbox" >&2; FAILED=1; }
+  if [[ -n "${C2022_T:-}" ]]; then
+    C2022_R="$C2022_T/repo"
+    git init -q -b master "$C2022_R" 2>/dev/null
+
+    (
+      cd "$C2022_R" || exit 1
+      git config user.email t@example.com
+      git config user.name t
+      git config core.autocrlf false
+      mkdir -p docs/plans docs/designs docs/reviews
+
+      cat > docs/designs/c2022-design.md <<'DESIGNEOF'
+# Fixture design
+
+## Requirements
+
+| REQ | Level | Requirement |
+|---|---|---|
+| REQ-X1 | MUST | The fixture must do the thing. |
+| REQ-X2 | SHOULD | The fixture should do the other thing. |
+DESIGNEOF
+      git add docs/designs/c2022-design.md >/dev/null
+      git commit -q -m "design fixture"
+      DESIGN_BLOB=$(git hash-object docs/designs/c2022-design.md)
+
+      cat > docs/reviews/c2022-design-record.md <<EOF
+**Reviewer:** architecture-reviewer (model: fable)
+**Reviewed:** docs/designs/c2022-design.md @ $DESIGN_BLOB
+**Reviewed at:** 2026-08-03
+
+## Verdict: SOUND
+EOF
+      git add docs/reviews/c2022-design-record.md >/dev/null
+      git commit -q -m "design record"
+
+      # ---- (A) triggering plan, no design-ref, no chain -> Check 20 ----
+      cat > docs/plans/triggering-no-chain.md <<'EOF'
+# Plan: triggering, no chain
+Status: ACTIVE
+
+## Files to Modify/Create
+- `adapters/claude-code/hooks/foo.sh` — fixture surface trigger
+
+## Tasks
+- [ ] 1. Do a thing.
+EOF
+      git add docs/plans/triggering-no-chain.md >/dev/null
+      git commit -q -m "triggering no chain"
+
+      # ---- (B) real design-ref, chain present, but the plan's ONE task
+      #     never claims REQ-X1 (MUST) -> Check 21 ----
+      cat > docs/plans/missing-must-req.md <<EOF
+# Plan: missing MUST req
+Status: ACTIVE
+
+design-ref: docs/designs/c2022-design.md@$DESIGN_BLOB
+
+## Review Chain
+design-ref: docs/designs/c2022-design.md@$DESIGN_BLOB
+design-reviews:
+  - reviewer: architecture-reviewer  verdict: SOUND  record: docs/reviews/c2022-design-record.md
+
+## Tasks
+- [ ] 1. Only claims REQ-X2, never REQ-X1 — Implements: REQ-X2 — Directives: n/a — fixture, no register
+EOF
+      git add docs/plans/missing-must-req.md >/dev/null
+      git commit -q -m "missing must req plan"
+
+      # ---- (C) NO design-ref at all, but a plan-reviews chain entry whose
+      #     record is honestly self-derived (no real Reviewer line) ->
+      #     Check 22 ONLY (Check 20 never touches plan-reviews entries;
+      #     Check 21 is gated on a real design-ref, absent here — a
+      #     surgical, single-check fixture) ----
+      cat > docs/reviews/c2022-derived-record.md <<'EOF'
+This record was assembled by the plan's own author, not dispatched to a
+real reviewer agent — no **Reviewer:** line names an actual agent.
+
+## Verdict: SOUND
+EOF
+      git add docs/reviews/c2022-derived-record.md >/dev/null
+      git commit -q -m "derived record"
+
+      cat > docs/plans/derived-plan-review.md <<'EOF'
+# Plan: derived plan-review record
+Status: ACTIVE
+
+## Review Chain
+plan-reviews:
+  - reviewer: plan-fidelity-reviewer  verdict: SOUND  record: docs/reviews/c2022-derived-record.md
+
+## Tasks
+- [ ] 1. Do a thing.
+EOF
+      git add docs/plans/derived-plan-review.md >/dev/null
+      git commit -q -m "derived plan-review plan"
+
+      # ---- (D) triggering, no design-ref, backdated first-commit ->
+      #     GRANDFATHERED (skip, INFO, never a finding) ----
+      cat > docs/plans/grandfathered.md <<'EOF'
+# Plan: grandfathered
+Status: ACTIVE
+
+## Files to Modify/Create
+- `adapters/claude-code/hooks/bar.sh` — fixture surface trigger
+
+## Tasks
+- [ ] 1. Do a thing.
+EOF
+      git add docs/plans/grandfathered.md >/dev/null
+      GIT_AUTHOR_DATE="2020-01-01T00:00:00+00:00" GIT_COMMITTER_DATE="2020-01-01T00:00:00+00:00" \
+        git -c commit.gpgsign=false commit -q -m "grandfathered plan (backdated)"
+    )
+
+    # (c20a) chain-less triggering plan -> FAILS Check 20. DRG_FLIP_DATE is
+    # forced to a PAST date so this exercises the POST-calibration hard-fail
+    # branch, not the observe-first WARN branch a real plan gets today (same
+    # convention as review-chain-lib.sh's own self-test forcing
+    # RC_ANCHOR_CALIBRATION_END_DATE into the past for its mismatch
+    # scenarios — the plan's fixture list names unconditional FAILs, not
+    # WARNs, and DRG_LANDING_DATE must ALSO be in the past so the plan is
+    # not accidentally grandfathered when a real design-ref-gate.json is
+    # NOT present in this throwaway sandbox).
+    C20A_OUT=$(cd "$C2022_R" && DRG_LANDING_DATE="2020-01-01" DRG_FLIP_DATE="2020-01-02" bash "$SCRIPT_ABS" docs/plans/triggering-no-chain.md 2>&1 >/dev/null)
+    if printf '%s' "$C20A_OUT" | grep -qE '\* Check 20 \('; then
+      echo "self-test (c20a) chainless-triggering-plan-fails-20: PASS (expected)" >&2
+    else
+      echo "self-test (c20a) chainless-triggering-plan-fails-20: FAIL (expected a blocking Check 20 finding)" >&2
+      printf '%s\n' "$C20A_OUT" >&2
+      FAILED=1
+    fi
+
+    # (c21b) plan missing a MUST-REQ claim -> FAILS Check 21
+    C21B_OUT=$(cd "$C2022_R" && bash "$SCRIPT_ABS" docs/plans/missing-must-req.md 2>&1 >/dev/null)
+    if printf '%s' "$C21B_OUT" | grep -qE '\* Check 21 \(' && printf '%s' "$C21B_OUT" | grep -q "REQ-X1"; then
+      echo "self-test (c21b) missing-must-req-fails-21: PASS (expected)" >&2
+    else
+      echo "self-test (c21b) missing-must-req-fails-21: FAIL (expected a blocking Check 21 finding naming REQ-X1)" >&2
+      printf '%s\n' "$C21B_OUT" >&2
+      FAILED=1
+    fi
+
+    # (c22c) derived-style plan-review record -> FAILS Check 22
+    C22C_OUT=$(cd "$C2022_R" && bash "$SCRIPT_ABS" docs/plans/derived-plan-review.md 2>&1 >/dev/null)
+    if printf '%s' "$C22C_OUT" | grep -qE '\* Check 22 \('; then
+      echo "self-test (c22c) derived-record-fails-22: PASS (expected)" >&2
+    else
+      echo "self-test (c22c) derived-record-fails-22: FAIL (expected a blocking Check 22 finding)" >&2
+      printf '%s\n' "$C22C_OUT" >&2
+      FAILED=1
+    fi
+
+    # (c2022d) grandfathered old plan -> SKIPS with INFO, never a finding
+    D_OUT=$(cd "$C2022_R" && DRG_LANDING_DATE="2026-01-01" bash "$SCRIPT_ABS" docs/plans/grandfathered.md 2>&1 >/dev/null)
+    if printf '%s' "$D_OUT" | grep -q "GRANDFATHERED" && ! printf '%s' "$D_OUT" | grep -qE '\* Check 2[012] \('; then
+      echo "self-test (c2022d) grandfathered-plan-skips-with-info: PASS (expected)" >&2
+    else
+      echo "self-test (c2022d) grandfathered-plan-skips-with-info: FAIL (expected an INFO/GRANDFATHERED line and zero Check 20-22 findings)" >&2
+      printf '%s\n' "$D_OUT" >&2
+      FAILED=1
+    fi
+
+    rm -rf "$C2022_T" 2>/dev/null || true
+  fi
+
+  # (c2022e) THE LIVE FIXTURE: the real gated-pipeline-master-2026-08 plan
+  # carries a real design-ref + a real Review Chain (design-reviews AND
+  # plan-reviews) from birth — the load-bearing worked example every field
+  # this task adds is validated against. It is NOT grandfathered (it
+  # declares a design-ref) and must clear Checks 20-22 with zero blocking
+  # findings (WARN lines are fine — e.g. rule 2's anchor mismatch on the
+  # pre-r3-format historical review records, which the anchor-calibration
+  # window intentionally keeps non-blocking; see review-chain-lib.sh
+  # header). Run from the REAL repo root so git history/blobs resolve for
+  # real, exactly like dispatch-chain-gate.sh's own live-fixture self-test.
+  LIVE_REPO_ROOT="$(cd -- "$(dirname "$SCRIPT_ABS")/../../.." 2>/dev/null && pwd)"
+  if [[ -n "$LIVE_REPO_ROOT" ]] && [[ -f "$LIVE_REPO_ROOT/docs/plans/gated-pipeline-master-2026-08.md" ]]; then
+    LIVE_OUT=$(cd "$LIVE_REPO_ROOT" && bash "$SCRIPT_ABS" docs/plans/gated-pipeline-master-2026-08.md 2>&1 >/dev/null)
+    if ! printf '%s' "$LIVE_OUT" | grep -qE '\* Check 2[012] \('; then
+      echo "self-test (c2022e) live-gated-pipeline-plan-passes-20-21-22: PASS (expected)" >&2
+    else
+      echo "self-test (c2022e) live-gated-pipeline-plan-passes-20-21-22: FAIL (expected zero blocking Check 20-22 findings on the live fixture)" >&2
+      printf '%s\n' "$LIVE_OUT" | grep -E '\* Check 2[012] \(' >&2
+      FAILED=1
+    fi
+  else
+    echo "self-test (c2022e) live-gated-pipeline-plan-passes-20-21-22: SKIP (could not resolve repo root or live plan file — not counted as a failure, but not verified either)" >&2
+  fi
+
   if [[ $FAILED -eq 0 ]]; then
     echo "plan-reviewer --self-test: all scenarios matched expectations" >&2
     exit 0
@@ -3306,6 +3518,21 @@ fi
 # architecture-review-before-build
 # ============================================================
 #
+# SUPERSEDED (2026-08-03, gated-pipeline-master-2026-08 Task 14, REQ-B7):
+# Check 17's single-link semantics ("a review record exists with a SOUND-ish
+# verdict token somewhere in the plan text") are the P-30 defect — a
+# self-assembled *derived* record (never produced by a real reviewer agent)
+# satisfies it. Checks 20-22 below replace it as the REAL validity oracle for
+# any plan carrying a `design-ref:` (record parse + three-way anchor match +
+# dispatch-ledger cross-check, delegated to hooks/lib/review-chain-lib.sh —
+# REQ-B6). Check 17 ITSELF IS KEPT RUNNING, unmodified, for exactly one job
+# now: its `$ARCH_KEYWORDS` regex is REUSED by Check 20 as half of the
+# design-ref-required trigger (the other half is the new
+# adapters/claude-code/** surface trigger). Do not delete this check or its
+# keyword set — Check 20 sources it directly (see "reuse Check 17's
+# ARCH_KEYWORDS" below Check 19). See design
+# docs/designs/gated-pipeline-master-2026-08-03.md §0 "Supersedes" list.
+#
 # constitution §10 generalized (doctrine/artifact-evidence-bar.md): "design ->
 # plan -> REVIEW -> build." A plan that introduces or changes a data
 # architecture, a source-of-truth boundary, a read/write path, a
@@ -3617,6 +3844,353 @@ if [[ "$IF_SCOPE" != "skip" ]]; then
         echo "[plan-reviewer] WARN Check 19: if-statement-check.sh exited $IF_RC (expected 0/1/2) — this is a HARNESS defect, not a plan defect. Intended-Functionality NOT validated for $PLAN_FILE. Output: $IF_OUT" >&2
         ;;
     esac
+  fi
+fi
+
+# ============================================================
+# Checks 20-22 (2026-08-03, gated-pipeline-master-2026-08 Task 14,
+# REQ-B5+B7): the review-chain COMMIT-TIME FLOOR (design
+# docs/designs/gated-pipeline-master-2026-08-03.md §4, G1's "enforcement
+# floor at commit-time" clause). ONE parser: hooks/lib/review-chain-lib.sh
+# (Task 1, REQ-B6) — these checks delegate ALL chain/record parsing to it
+# (the M-3 "no second implementation" rule) via its per-rule functions
+# (rc_rule1 / rc_rule2 / rc_rule3 / rc_chain_entries / rc_chain_design_ref /
+# rc__base_token — documented at their own definitions as "useful
+# individually for a caller building a more granular report", exactly this
+# caller). Checks 20-22 own only the plan-reviewer-side framing: WHICH plans
+# are triggered, WHICH REQs must be claimed, and how findings / WARNs /
+# grandfather-INFO map onto plan-reviewer's existing add_finding / stderr-WARN
+# vocabulary.
+#
+# Split of responsibility (kept deliberately non-overlapping so one root
+# cause never produces two findings under two check numbers):
+#   Check 20 — is a design-ref REQUIRED here, and if a real one is present,
+#              do the design-reviews chain entries parse (rule 1) and anchor
+#              correctly at HEAD (rule 2, the three-way match)?
+#   Check 21 — when a real design-ref resolves to an actual design file: is
+#              every design MUST-REQ claimed by >=1 task's Implements: field,
+#              and does every task carry both Implements: and Directives:?
+#   Check 22 — for EVERY chain entry (design-reviews AND plan-reviews, when a
+#              chain is present at all): does the record honestly name its
+#              reviewer + verdict (rule 1), and is there a matching
+#              dispatch-ledger completion row once the ledger has landed
+#              (rule 3, pre-ledger exempt)? Rule 2 (anchor) is deliberately
+#              OUT of Check 22's scope — that is Check 20's job for design
+#              entries; re-checking it here would double-report the same
+#              mismatch under two numbers, and a plan's plan-reviews entry
+#              legitimately has no anchor-comparable field of its own until a
+#              later fidelity re-anchor (design's own T16 note).
+#
+# Gated on STATUS_AWK == ACTIVE (or unset — a brand-new plan authored
+# straight to ACTIVE), same convention as Checks 10/14/15/17/19.
+#
+# GRANDFATHER (G1 spec, "Flip: WARN 7 days -> BLOCK at commit-time floor"):
+# a plan that (a) carries NO top-level 'design-ref:' header field AND (b)
+# whose OWN first-commit time (git log --follow, never a self-declared date
+# — the same anti-backdating rule review-chain-lib.sh's rule 3 uses) predates
+# the landing_date recorded in adapters/claude-code/config/design-ref-gate.json
+# is grandfathered: Checks 20-22 SKIP entirely with an INFO line, never a
+# finding. A plan that already carries a design-ref (this program's own
+# master plan, from birth — REQ-B5's own worked example) is NEVER eligible:
+# it has already opted into the chain it is carrying, by construction.
+if [[ "$STATUS_AWK" == "ACTIVE" ]] || [[ -z "$STATUS_AWK" ]]; then
+  # Perf: REUSE Check 19's already-paid `git rev-parse --show-toplevel` (it
+  # runs unconditionally on this exact STATUS_AWK gate, immediately above)
+  # instead of spawning a second one — the self-test alone invokes this
+  # script ~80 times, and a Windows process spawn measures 152-190ms
+  # (adapters/claude-code/config/schedule-manifest.json's own cited cost),
+  # so a redundant spawn here is not free. Only fall back to a fresh probe
+  # if `_if_root` is unset/empty (Check 19 skipped classification, e.g. the
+  # plan is outside any git working tree).
+  PLAN_DIR_C2022=$(dirname "$PLAN_FILE")
+  REPO_ROOT_C2022="${_if_root:-}"
+  if [[ -z "$REPO_ROOT_C2022" ]] || [[ ! -d "$REPO_ROOT_C2022" ]]; then
+    # FIXED-POINT walk, not a "/" or "." string match (FM discovered building
+    # this very check, self-test using a non-repo fixture under a Windows
+    # temp path): MSYS `dirname` on a bare drive letter like "C:" returns
+    # "C:" again — an infinite loop under the Check 17/18-style
+    # `while [[ "$probe" != "/" ]] ...` pattern, since "C:" never equals "/"
+    # or ".". Terminate the instant dirname stops making progress instead.
+    probe_c2022="$PLAN_DIR_C2022"
+    while :; do
+      if [[ -d "$probe_c2022/.git" ]] || [[ -f "$probe_c2022/.git" ]]; then
+        REPO_ROOT_C2022="$probe_c2022"
+        break
+      fi
+      _next_c2022=$(dirname "$probe_c2022")
+      if [[ "$_next_c2022" == "$probe_c2022" ]] || [[ -z "$_next_c2022" ]]; then
+        break
+      fi
+      probe_c2022="$_next_c2022"
+    done
+  fi
+  [[ -z "$REPO_ROOT_C2022" ]] && REPO_ROOT_C2022="$PLAN_DIR_C2022"
+
+  RC_LIB_C2022=""
+  for _rc_cand in "$(dirname "$0")/lib/review-chain-lib.sh" \
+                  "$HOME/.claude/hooks/lib/review-chain-lib.sh" \
+                  "$REPO_ROOT_C2022/adapters/claude-code/hooks/lib/review-chain-lib.sh"; do
+    [[ -f "$_rc_cand" ]] && { RC_LIB_C2022="$_rc_cand"; break; }
+  done
+
+  if [[ -z "$RC_LIB_C2022" ]]; then
+    echo "[plan-reviewer] WARN Checks 20-22: review-chain-lib.sh not found — review-chain validity NOT checked for $PLAN_FILE (this is a HARNESS defect, not a plan defect)." >&2
+  else
+    # shellcheck source=./lib/review-chain-lib.sh
+    source "$RC_LIB_C2022"
+  fi
+
+  if declare -F rc_chain_entries >/dev/null 2>&1; then
+    # ---- design-ref-gate.json config (env override wins — same
+    # sandboxed-subshell --self-test convention as review-chain-lib.sh's
+    # RC_LEDGER_LANDING_DATE / RC_ANCHOR_CALIBRATION_END_DATE) ----
+    : "${DRG_LANDING_DATE:=}"
+    : "${DRG_FLIP_DATE:=}"
+    if [[ -z "$DRG_LANDING_DATE" ]]; then
+      DRG_CFG_C2022="$REPO_ROOT_C2022/adapters/claude-code/config/design-ref-gate.json"
+      if [[ -f "$DRG_CFG_C2022" ]] && command -v jq >/dev/null 2>&1; then
+        DRG_LANDING_DATE=$(jq -r '.landing_date // empty' "$DRG_CFG_C2022" 2>/dev/null)
+        DRG_FLIP_DATE=$(jq -r '.flip.flip_date // empty' "$DRG_CFG_C2022" 2>/dev/null)
+      fi
+    fi
+
+    # ---- trigger: Check 17's ARCH_KEYWORDS OR the adapters/claude-code/**
+    # surface (REQ-B5's widened trigger) inside Files to Modify/Create ----
+    FILES_SECTION_C2022=$(awk '
+      /^## Files to Modify\/Create[[:space:]]*$/ { grab = 1; next }
+      /^## / && grab == 1 { grab = 0 }
+      grab == 1 { print }
+    ' "$PLAN_FILE" 2>/dev/null)
+    SURFACE_MATCH_C2022=$(printf '%s\n' "$FILES_SECTION_C2022" | grep -oE 'adapters/claude-code/[A-Za-z0-9_./-]*' 2>/dev/null | head -1)
+    KEYWORD_MATCH_C2022=$(grep -oiE "$ARCH_KEYWORDS" "$PLAN_FILE" 2>/dev/null | head -1)
+    TRIGGER_REASON_C2022=""
+    [[ -n "$KEYWORD_MATCH_C2022" ]] && TRIGGER_REASON_C2022="architecture-keyword \"$KEYWORD_MATCH_C2022\" (Check 17 set)"
+    if [[ -n "$SURFACE_MATCH_C2022" ]]; then
+      if [[ -n "$TRIGGER_REASON_C2022" ]]; then
+        TRIGGER_REASON_C2022="$TRIGGER_REASON_C2022 + adapters/claude-code/** surface (\"$SURFACE_MATCH_C2022\" in Files to Modify/Create)"
+      else
+        TRIGGER_REASON_C2022="adapters/claude-code/** surface (\"$SURFACE_MATCH_C2022\" in Files to Modify/Create)"
+      fi
+    fi
+    TRIGGERED_C2022=0
+    [[ -n "$TRIGGER_REASON_C2022" ]] && TRIGGERED_C2022=1
+
+    # ---- design-ref HEADER field (REQ-B5; top-level, distinct from the
+    # design-ref: field inside ## Review Chain which rc_chain_design_ref
+    # reads for validation) ----
+    DESIGN_REF_RAW_C2022=$(grep -m1 -E '^design-ref:' "$PLAN_FILE" 2>/dev/null | sed -E 's/^design-ref:[[:space:]]*//')
+    HAS_DESIGN_REF_C2022=0
+    [[ -n "$DESIGN_REF_RAW_C2022" ]] && HAS_DESIGN_REF_C2022=1
+    DESIGN_REF_IS_NA_C2022=0
+    DESIGN_REF_NA_JUSTIFICATION_C2022=""
+    if [[ "$DESIGN_REF_RAW_C2022" =~ ^n/a[[:space:]]*—[[:space:]]*(.*)$ ]]; then
+      DESIGN_REF_IS_NA_C2022=1
+      DESIGN_REF_NA_JUSTIFICATION_C2022="${BASH_REMATCH[1]}"
+    fi
+    DESIGN_REF_IS_REAL_C2022=0
+    if [[ "$HAS_DESIGN_REF_C2022" == "1" ]] && [[ "$DESIGN_REF_IS_NA_C2022" == "0" ]] && [[ "$DESIGN_REF_RAW_C2022" == *"@"* ]]; then
+      DESIGN_REF_IS_REAL_C2022=1
+    fi
+
+    # ---- grandfather ----
+    GRANDFATHERED_C2022=0
+    if [[ "$HAS_DESIGN_REF_C2022" == "0" ]] && [[ -n "$DRG_LANDING_DATE" ]]; then
+      _c2022_first_commit=$(rc_file_first_commit_epoch "$PLAN_FILE" 2>/dev/null)
+      _c2022_landing_epoch=$(date -d "$DRG_LANDING_DATE" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$DRG_LANDING_DATE" +%s 2>/dev/null)
+      if [[ -n "$_c2022_first_commit" ]] && [[ -n "$_c2022_landing_epoch" ]] && [[ "$_c2022_first_commit" -lt "$_c2022_landing_epoch" ]]; then
+        GRANDFATHERED_C2022=1
+      fi
+    fi
+
+    if [[ "$GRANDFATHERED_C2022" == "1" ]]; then
+      echo "[plan-reviewer] INFO Checks 20-22 (review-chain commit-time floor, gated-pipeline-master-2026-08 Task 14): $PLAN_FILE has no 'design-ref:' header and its first commit predates the gate-landing date ($DRG_LANDING_DATE, adapters/claude-code/config/design-ref-gate.json) — GRANDFATHERED, skipped. Retrofit path: add a design-ref + '## Review Chain' block the next time this plan is substantively revised." >&2
+    else
+      # ================================================================
+      # Check 20: design-ref required-when-triggered + design-reviews
+      # chain entries valid (rule 1 + rule 2 three-way anchor at HEAD).
+      # ================================================================
+      if [[ "$TRIGGERED_C2022" == "1" ]]; then
+        if [[ "$HAS_DESIGN_REF_C2022" == "0" ]]; then
+          _c20_msg="Check 20 (design-ref-required-when-triggered): plan matches $TRIGGER_REASON_C2022 but carries no 'design-ref:' header field. Add 'design-ref: docs/designs/<slug>.md@<git-blob-sha>' (with a valid '## Review Chain' design-reviews entry) or the escape 'design-ref: n/a — <30+ char justification>'. See design docs/designs/gated-pipeline-master-2026-08-03.md §4."
+          _c20_now=$(date +%s)
+          _c20_flip_epoch=""
+          [[ -n "$DRG_FLIP_DATE" ]] && _c20_flip_epoch=$(date -d "$DRG_FLIP_DATE" +%s 2>/dev/null || date -j -f "%Y-%m-%d" "$DRG_FLIP_DATE" +%s 2>/dev/null)
+          if [[ -n "$_c20_flip_epoch" ]] && [[ "$_c20_now" -ge "$_c20_flip_epoch" ]]; then
+            add_finding "$_c20_msg"
+          else
+            echo "[plan-reviewer] WARN $_c20_msg (calibration window — flips to BLOCK at ${DRG_FLIP_DATE:-<unset>} per adapters/claude-code/config/design-ref-gate.json)" >&2
+          fi
+        elif [[ "$DESIGN_REF_IS_NA_C2022" == "1" ]]; then
+          if [[ "${#DESIGN_REF_NA_JUSTIFICATION_C2022}" -lt 30 ]]; then
+            add_finding "Check 20 (design-ref-required-when-triggered): plan matches $TRIGGER_REASON_C2022 and declares 'design-ref: n/a' but the justification is under 30 characters (\"$DESIGN_REF_NA_JUSTIFICATION_C2022\"). Escape form is 'design-ref: n/a — <30+ char justification>'."
+          else
+            _c20_gcl=""
+            for _c20_cand in "$(dirname "$0")/lib/gate-contract-lib.sh" "$REPO_ROOT_C2022/adapters/claude-code/hooks/lib/gate-contract-lib.sh"; do
+              [[ -f "$_c20_cand" ]] && { _c20_gcl="$_c20_cand"; break; }
+            done
+            if [[ -n "$_c20_gcl" ]]; then
+              # shellcheck source=./lib/gate-contract-lib.sh
+              source "$_c20_gcl"
+              declare -F gc_escape_used >/dev/null 2>&1 && gc_escape_used "plan-reviewer-check20" "waiver" "$PLAN_FILE" "design-ref: n/a escape"
+            fi
+            echo "[plan-reviewer] INFO Check 20: $PLAN_FILE escapes the design-ref requirement via 'n/a' (ledgered): \"$DESIGN_REF_NA_JUSTIFICATION_C2022\"" >&2
+          fi
+        elif [[ "$DESIGN_REF_IS_REAL_C2022" == "1" ]]; then
+          if ! rc_chain_present "$PLAN_FILE"; then
+            add_finding "Check 20 (design-ref-required-when-triggered): plan declares a real 'design-ref:' header but has no '## Review Chain' section at all. A design-ref with no chain is review-LINKED, not review-PERFORMED (the P-30 defect this check exists to close) — add the '## Review Chain' block with design-reviews entries per design §4."
+          else
+            _c20_dref="$(rc_chain_design_ref "$PLAN_FILE" 2>/dev/null)"
+            _c20_dpath="${_c20_dref%%$'\t'*}"
+            _c20_dblob="${_c20_dref#*$'\t'}"
+            _c20_saw_design_entry=0
+            while IFS=$'\t' read -r _c20_role _c20_reviewer _c20_verdict _c20_record _c20_planblob; do
+              [[ "$_c20_role" == "design" ]] || continue
+              _c20_saw_design_entry=1
+              _c20_token="$(rc__base_token "$_c20_reviewer")"
+              if [[ -z "$_c20_dpath" ]]; then
+                add_finding "Check 20 (design-reviews chain, reviewer=$_c20_token): a design-reviews entry exists but the chain's own 'design-ref:' field (inside ## Review Chain) is missing/unparseable."
+                continue
+              fi
+              _c20_r1_out="$(rc_rule1 "$REPO_ROOT_C2022/$_c20_record" "$_c20_verdict" "$_c20_token")"; _c20_r1_rc=$?
+              if [[ $_c20_r1_rc -ne 0 ]]; then
+                add_finding "Check 20 (design-reviews chain rule1, reviewer=$_c20_token): $_c20_r1_out"
+                continue
+              fi
+              _c20_r2_out="$(rc_rule2 "$REPO_ROOT_C2022/$_c20_dpath" "design" "$_c20_dblob" "$REPO_ROOT_C2022/$_c20_record")"; _c20_r2_rc=$?
+              case $_c20_r2_rc in
+                0) : ;;
+                2) echo "[plan-reviewer] WARN Check 20 (design-reviews chain rule2 anchor, reviewer=$_c20_token): $_c20_r2_out" >&2 ;;
+                *) add_finding "Check 20 (design-reviews chain rule2 anchor, reviewer=$_c20_token): $_c20_r2_out" ;;
+              esac
+            done < <(rc_chain_entries "$PLAN_FILE")
+            if [[ "$_c20_saw_design_entry" == "0" ]]; then
+              add_finding "Check 20 (design-reviews chain): plan declares a real 'design-ref:' header but the '## Review Chain' section has no 'design-reviews:' entries."
+            fi
+          fi
+        else
+          add_finding "Check 20 (design-ref-required-when-triggered): 'design-ref: $DESIGN_REF_RAW_C2022' is neither the 'n/a — <justification>' escape nor a valid '<path>@<blob>' anchor. See design §4."
+        fi
+      fi
+
+      # ================================================================
+      # Check 21: when design-ref is real, every design MUST-REQ is
+      # claimed by >=1 task's Implements: field, and every task carries
+      # both Implements: and Directives: fields.
+      # ================================================================
+      if [[ "$DESIGN_REF_IS_REAL_C2022" == "1" ]]; then
+        # Task text in real plans is hand-wrapped across MULTIPLE raw lines
+        # (a task's own paragraph often spans 5-15 physical lines before its
+        # Prove-it-works/Wire-checks sub-blocks begin — verified directly
+        # against this plan's own Task 1, whose 'Implements:' field sits 14
+        # physical lines below its '- [x] 1.' start line). A SINGLE-LINE
+        # regex match misses trailing metadata on every multi-line task —
+        # this extracts the FULL block from each top-level task line up to
+        # (not including) the next one, by line number, ONCE, and reuses it
+        # for BOTH the per-task field-presence check below AND the
+        # design-MUST-REQ-coverage citation extraction above (a prior
+        # version of this check used a whole-file single-line grep for the
+        # citation extraction, which silently missed every wrapped
+        # 'Implements:' value the SAME way — caught by this very task's own
+        # live-fixture self-test scenario, which is exactly why that
+        # fixture is load-bearing rather than decorative).
+        _c21_all_implements=""
+        _c21_tasks_start=$(grep -n '^## Tasks[[:space:]]*$' "$PLAN_FILE" 2>/dev/null | head -1 | cut -d: -f1)
+        if [[ -n "$_c21_tasks_start" ]]; then
+          _c21_tasks_end=$(awk -v s="$_c21_tasks_start" 'NR > s && /^## / { print NR; exit }' "$PLAN_FILE")
+          _c21_total_lines=$(wc -l < "$PLAN_FILE" | tr -d '[:space:]')
+          [[ -z "$_c21_tasks_end" ]] && _c21_tasks_end=$(( _c21_total_lines + 1 ))
+          _c21_task_starts=$(awk -v s="$_c21_tasks_start" -v e="$_c21_tasks_end" 'NR > s && NR < e && /^- \[[ xX]\][[:space:]]+[0-9]+\./ { print NR }' "$PLAN_FILE")
+          _c21_prev_line=""
+          _c21_prev_num=""
+          _c21_check_block() { # <tasknum> <block text>
+            local num="$1" block="$2"
+            if ! grep -qE 'Implements:' <<< "$block"; then
+              add_finding "Check 21 (per-task Implements field): task $num has no 'Implements: REQ-...' field."
+            fi
+            if ! grep -qE 'Directives:' <<< "$block"; then
+              add_finding "Check 21 (per-task Directives field): task $num has no 'Directives: OD-... | n/a — <justification>' field."
+            fi
+            # grep is line-oriented even against a multi-line herestring —
+            # "Implements:" ending one physical line with its REQ-id value
+            # wrapped onto the NEXT (a real shape in this plan: Task 2's
+            # 'Implements:' is the last word on its own line) would
+            # otherwise capture an EMPTY tail and silently drop the
+            # citation. Flatten the block to one logical line first.
+            _c21_flat_block="$(tr '\n' ' ' <<< "$block")"
+            _c21_all_implements+="$(grep -oE 'Implements:[^—]*' <<< "$_c21_flat_block" 2>/dev/null)"$'\n'
+          }
+          while IFS= read -r _c21_ln; do
+            [[ -n "$_c21_ln" ]] || continue
+            if [[ -n "$_c21_prev_line" ]]; then
+              _c21_check_block "$_c21_prev_num" "$(sed -n "${_c21_prev_line},$((_c21_ln - 1))p" "$PLAN_FILE")"
+            fi
+            _c21_prev_line="$_c21_ln"
+            _c21_prev_num=$(sed -n "${_c21_ln}p" "$PLAN_FILE" | sed -E 's/^- \[[ xX]\][[:space:]]+([0-9]+)\..*/\1/')
+          done <<< "$_c21_task_starts"
+          if [[ -n "$_c21_prev_line" ]]; then
+            _c21_check_block "$_c21_prev_num" "$(sed -n "${_c21_prev_line},$((_c21_tasks_end - 1))p" "$PLAN_FILE")"
+          fi
+        fi
+
+        _c21_dref="$(rc_chain_design_ref "$PLAN_FILE" 2>/dev/null)"
+        _c21_dpath="${_c21_dref%%$'\t'*}"
+        [[ -z "$_c21_dpath" ]] && _c21_dpath="${DESIGN_REF_RAW_C2022%%@*}"
+        _c21_design_file="$REPO_ROOT_C2022/$_c21_dpath"
+        if [[ ! -f "$_c21_design_file" ]]; then
+          add_finding "Check 21 (design-MUST-REQ-coverage): design-ref names '$_c21_dpath' which does not exist at $_c21_design_file — cannot verify REQ coverage."
+        else
+          _c21_must_reqs=$(awk '
+            /^## / { grab = ($0 ~ /[Rr]equirements/) ? 1 : 0; next }
+            grab == 1 && /^\|/ { print }
+          ' "$_c21_design_file" | awk -F'|' '
+            {
+              id = $2; level = $3
+              gsub(/^[ \t]+|[ \t]+$/, "", id); gsub(/^[ \t]+|[ \t]+$/, "", level)
+              if (id ~ /^REQ-/ && level == "MUST") print id
+            }
+          ')
+          if [[ -z "$_c21_must_reqs" ]]; then
+            echo "[plan-reviewer] WARN Check 21: no '## ... Requirements' MUST-level REQ table found in $_c21_dpath — REQ coverage NOT checked." >&2
+          else
+            _c21_cited=$(grep -oE 'REQ-[A-Za-z0-9]+' <<< "$_c21_all_implements" 2>/dev/null | sort -u)
+            while IFS= read -r _c21_req; do
+              [[ -n "$_c21_req" ]] || continue
+              if ! grep -qxF "$_c21_req" <<< "$_c21_cited" 2>/dev/null; then
+                add_finding "Check 21 (design-MUST-REQ-coverage): design MUST-requirement '$_c21_req' ($_c21_dpath) is not claimed by any task's 'Implements:' field. Every MUST REQ must map to >=1 task per design §10."
+              fi
+            done <<< "$_c21_must_reqs"
+          fi
+        fi
+      fi
+
+      # ================================================================
+      # Check 22: every chain record (design-reviews AND plan-reviews, when
+      # a chain is present) names its agent + verdict honestly (rule 1) and
+      # has a matching dispatch-ledger completion row once the ledger has
+      # landed (rule 3, pre-ledger exempt).
+      # ================================================================
+      if rc_chain_present "$PLAN_FILE" 2>/dev/null; then
+        while IFS=$'\t' read -r _c22_role _c22_reviewer _c22_verdict _c22_record _c22_planblob; do
+          [[ -n "$_c22_role" ]] || continue
+          _c22_token="$(rc__base_token "$_c22_reviewer")"
+          _c22_r1_out="$(rc_rule1 "$REPO_ROOT_C2022/$_c22_record" "$_c22_verdict" "$_c22_token")"; _c22_r1_rc=$?
+          if [[ $_c22_r1_rc -ne 0 ]]; then
+            add_finding "Check 22 (review-chain record naming, $_c22_role role, reviewer=$_c22_token): $_c22_r1_out"
+            continue
+          fi
+          if [[ "$_c22_role" == "design" ]]; then
+            _c22_dref2="$(rc_chain_design_ref "$PLAN_FILE" 2>/dev/null)"
+            _c22_artifact="$REPO_ROOT_C2022/${_c22_dref2%%$'\t'*}"
+          else
+            _c22_artifact="$PLAN_FILE"
+          fi
+          _c22_r3_out="$(rc_rule3 "$_c22_token" "$_c22_artifact" "$_c22_artifact" "$REPO_ROOT_C2022/$_c22_record")"; _c22_r3_rc=$?
+          if [[ $_c22_r3_rc -ne 0 ]]; then
+            add_finding "Check 22 (dispatch-ledger cross-check, $_c22_role role, reviewer=$_c22_token): $_c22_r3_out"
+          fi
+        done < <(rc_chain_entries "$PLAN_FILE")
+      fi
+    fi
   fi
 fi
 

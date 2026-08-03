@@ -118,8 +118,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   the CANONICALIZED plan blob (file minus chain + In-flight sections) — the lib computes both
   comparison sides identically; (ii) the pre-ledger exemption keys on the record file's
   first-commit time (`git log --follow --format=%ct | tail -1`), never a self-declared header
-  date — Verification: full — Implements: REQ-B6 (core), REQ-B8 (skeleton) — Docs impact: lib
-  header contract + manifest entry (orchestrator-integrated)
+  date — Verification: full — Implements: REQ-B6 (core), REQ-B8 (skeleton) — Directives: n/a —
+  operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
+  impact: lib header contract + manifest entry (orchestrator-integrated)
     **Prove it works:**
     1. Run `bash adapters/claude-code/hooks/lib/review-chain-lib.sh --self-test` → all fixture verdicts as specified (derived FAILS, ghost-reviewer FAILS, stale-anchor FAILS, valid PASSES)
     2. Run `bash adapters/claude-code/hooks/dispatch-chain-gate.sh --check tests/fixtures/chainless-plan.md` → exit nonzero with a {WHAT/WHY/FIX/ESCAPE} block naming the missing review
@@ -134,14 +135,16 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
 - [x] 2. [parallel] Estate reconcile: stash `docs/backlog.md` churn; merge `origin/master` (the two
   duplicate-content review commits) into local master via merge commit; push both mirrors; verify
   `git rev-list --left-right --count` = 0/0 against both — Verification: mechanical — Implements:
-  REQ-A0 — Docs impact: none — git-state operation, no doc surface
+  REQ-A0 — Directives: n/a — operator-directives register (REQ-B1/Task 11) not yet built; no OD-
+  id exists to cite — Docs impact: none — git-state operation, no doc surface
 - [x] 3. [parallel] HR-F1 fix: `sf_release` API in `single-flight-lib.sh` (+ header run-to-exit
   statement); `run_daemon` releases per pass; `run_watchdog` reads `daemon.pid`, verifies the
   target cmdline contains `nl-maintenance` + `--daemon` (identity mismatch ⇒ log-and-skip, never
   kill), kills verified-stale daemon before relaunch; S11 mask (`SF_DISABLE=1` at
   `nl-maintenance.sh:790-791`) DELETED; S11 asserts ≥2 real ticks under the real guard —
-  Verification: full — Implements: REQ-A1 — Docs impact: single-flight-halt-runbook.md gains the
-  sf_release contract + daemon-lifecycle paragraph
+  Verification: full — Implements: REQ-A1 — Directives: n/a — operator-directives register
+  (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact:
+  single-flight-halt-runbook.md gains the sf_release contract + daemon-lifecycle paragraph
     **Prove it works:**
     1. Run `bash adapters/claude-code/scripts/nl-maintenance.sh --self-test` → S11 passes WITHOUT SF_DISABLE, asserting ≥2 heartbeat writes across 3 iterations
     2. Start a daemon (`--daemon --interval 0 --max-iterations 3` in a scoped state dir), confirm 3 heartbeat timestamps, confirm exactly one daemon process at any point
@@ -159,8 +162,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   proactive-recompute semantics, per the harness delta; NEVER writes the cache file);
   fingerprint gains live-hooks newest-mtime + `git diff --quiet` dirty bit; new self-test scenario
   runs digest-then-doctor against one cache file asserting the single-writer property —
-  Verification: full — Implements: REQ-A2 — Docs impact: none — behavior change is inside the two
-  scripts' own header contracts, updated in place
+  Verification: full — Implements: REQ-A2 — Directives: n/a — operator-directives register
+  (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: none — behavior change
+  is inside the two scripts' own header contracts, updated in place
     **Prove it works:**
     1. Prime the cache via `harness-doctor.sh --quick`; run it again within the sf TTL → cached verdict served, exit matches cached exit, cache file byte-identical
     2. Corrupt the guard state to force an sf-skip with an EMPTY cache → exit 3 + parseable SKIPPED line, cache file untouched
@@ -176,7 +180,8 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   `~/.claude/state/workaround-sensor.jsonl`; pane jq maps `bypass_kind` rows → `workarounds`;
   block-event decision recorded in the task evidence (gc_block counter rows or explicit metric
   rename); end-to-end test `gc_escape_used` → pane row — Verification: full — Implements: REQ-A3
-  — Docs impact: none — pane help text updated in place
+  — Directives: n/a — operator-directives register (REQ-B1/Task 11) not yet built; no OD- id
+  exists to cite — Docs impact: none — pane help text updated in place
     **Prove it works:**
     1. Fire `gc_escape_used testgate test-bypass` via a scoped-ledger test invocation
     2. Render the dashboard friction pane → the row appears with gate=testgate under `workarounds`
@@ -189,9 +194,12 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
 - [ ] 6. HR-F9+F4 fix (orchestrator-integrated; after Tasks 3-5): manifest.json entries for
   nl-maintenance, doctor-verdict-cache, both-substrates-alive; zero-substrate WARN (RED after 14
   days, dates in `schedule-manifest.json` data); `manifest-check.sh --gen-index` regenerated —
-  Verification: contract — Implements: REQ-A4 — Docs impact: doctrine/INDEX.md regenerated (generator)
+  Verification: contract — Implements: REQ-A4 — Directives: n/a — operator-directives register
+  (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: doctrine/INDEX.md
+  regenerated (generator)
 - [ ] 7. Mechanized flips + targeted fixes (after Tasks 3,4,6 — shared files), decomposed per
-  target — Verification: full — Implements: REQ-A5 — Docs impact:
+  target — Verification: full — Implements: REQ-A5 — Directives: n/a — operator-directives
+  register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact:
   single-flight-halt-runbook.md HALT-path note; CPU methodology note in the perf research doc
   - 7a. `adapters/claude-code/config/schedule-manifest.json`: HR-F7 flip dates (`warn_since`/`red_after`) per WARN entry + budget-check flip date
   - 7b. `adapters/claude-code/hooks/harness-doctor.sh`: cadence check reads the dates; managed_by entries satisfied-by-construction post-activation
@@ -210,8 +218,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - Tasks 3/4 land first (same files); this task rebases on their result
     - The budget-bash-hooks WARN flip condition also gains a data date (same manifest edit)
 - [ ] 8. [parallel] REQ-A8 doctor triage (A-parallel; independent of Tasks 3-7), decomposed per
-  disposition stage — Verification: full — Implements: REQ-A8 — Docs impact: triage record
-  appended to the entropy-triage review doc
+  disposition stage — Verification: full — Implements: REQ-A8 — Directives: n/a —
+  operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
+  impact: triage record appended to the entropy-triage review doc
   - 8a. Inventory: one full doctor run captured; a classification table (one row per RED check id → fix / retire / waiver) written to the triage record, seeded from `docs/reviews/2026-08-02-estate-entropy-triage.md` dispositions where they exist
   - 8b. Execute the fix class (each fix is one row's named remedy; committed per-file)
   - 8c. Retire class: each retired check removed with a retire-rationale row (never silently deleted)
@@ -227,19 +236,23 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
 - [ ] 9. REQ-A6 predecessor closure (after Task 8): task-verifier on
   `harness-execution-redesign-2026-08.md` T1/T2/T3 evidence; flip checkboxes where PASS; flip plan
   → `Status: SUPERSEDED` with pointer to this plan; verify plan-lifecycle archives it —
-  Verification: mechanical — Implements: REQ-A6 — Docs impact: SCRATCHPAD pointer line
+  Verification: mechanical — Implements: REQ-A6 — Directives: n/a — operator-directives register
+  (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: SCRATCHPAD pointer line
 - [ ] 10. REQ-A7 registration prep: installer + `-Rollback` self-tested end-to-end on this machine
   (register→verify→rollback→verify-gone, under a test task name); DEC-4 ratification ask surfaced
   via `needs-you.sh` with the §3 compact block — PRECONDITION (fidelity F-3, hard-stop letter):
   the ask is surfaced only after the T3 and T4 review-record SHAs exist and are cited inside the
   ask block (the "fixed AND re-reviewed" bar); registration itself executes ONLY on operator YES
-  — Verification: contract — Implements: REQ-A7 — Docs impact: NEEDS-YOU.md entry (via generator)
+  — Verification: contract — Implements: REQ-A7 — Directives: n/a — operator-directives register
+  (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: NEEDS-YOU.md entry (via
+  generator)
 - [ ] 11. REQ-B1+B4 register: `config/operator-directives.json` (canonical) + generator for
   `docs/operator-directives.md` view + `hooks/lib/directives-register-lib.sh` (ONE parser,
   round-trip fixture test) + seeding (nl-issues 153/154/158 + curated D-01…D-23, each intake entry
   `register_ref`'d) + ADR forward-guard WARN lint + same-commit `derive-cache.js:7-11` supersession
-  sweep — Verification: full — Implements: REQ-B1, REQ-B4 — Docs impact: the generated register
-  view IS the doc; nl-issue triage notes
+  sweep — Verification: full — Implements: REQ-B1, REQ-B4 — Directives: n/a — this task BUILDS
+  the operator-directives register; no register exists yet to cite an OD- id from — Docs impact:
+  the generated register view IS the doc; nl-issue triage notes
     **Prove it works:**
     1. `directives-register-lib.sh --self-test` → round-trip fixture passes; glob surface-match returns the tagged entries for a fixture file list
     2. Generator produces the md view; re-running is idempotent (byte-identical)
@@ -253,23 +266,26 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
 - [ ] 12. [parallel] REQ-B2 `design-author` agent + `templates/design-template.md` (rationale-per-
   decision, non-goals, supersedes, machine-parsable REQ table, Directives-honored, Review Chain
   stub with authored-by; frontmatter `model: fable`) — Verification: contract — Implements: REQ-B2
-  — Docs impact: model-policy.json agents block gains the entry (category design)
+  — Directives: n/a — operator-directives register (REQ-B1/Task 11) not yet built; no OD- id
+  exists to cite — Docs impact: model-policy.json agents block gains the entry (category design)
 - [ ] 13. [parallel] REQ-B3 `plan-fidelity-reviewer` agent (frontmatter `model: fable`, category
   review; protocol per design §5; anti-rubber-stamp step; GOLDEN CASE fixture = the P-32
   push-directive drop replayed as a design+plan pair in the agent's eval block) — Verification:
-  contract — Implements: REQ-B3 — Docs impact: model-policy.json entry (category review)
+  contract — Implements: REQ-B3 — Directives: n/a — operator-directives register (REQ-B1/Task 11)
+  not yet built; no OD- id exists to cite — Docs impact: model-policy.json entry (category review)
 - [ ] 14. REQ-B5+B7 template + checks: plan-template gains `design-ref:` header + per-task
   `Implements:`/`Directives:` + Review Chain section; plan-reviewer Checks 20-22 (20: design-ref
   required-when-triggered + design-reviews valid incl. anchor-at-HEAD comparison; 21: every design
   MUST-REQ claimed by ≥1 task + Directives fields present; 22: chain records name
   agent+verdict+ledger-row) with G1 surface-trigger fire-rate measured over the plan corpus and
-  recorded before any flip — Verification: full — Implements: REQ-B5, REQ-B7 — Docs impact:
-  planning doctrine compact + full gain the fields
+  recorded before any flip — Verification: full — Implements: REQ-B5, REQ-B7 — Directives: n/a —
+  this task adds the Directives: field itself; no register exists yet (REQ-B1/Task 11 unbuilt) to
+  cite an OD- id from — Docs impact: planning doctrine compact + full gain the fields
     **Prove it works:**
     1. `plan-reviewer.sh --self-test` → new scenarios: chain-less triggering plan FAILS 20; plan missing a MUST-REQ claim FAILS 21; derived-style record FAILS 22; this plan's own file PASSES all three
     2. Corpus measurement: surface-trigger fire-rate over docs/plans/ recorded in the evidence file with the number
     **Wire checks:**
-    - `adapters/claude-code/hooks/plan-reviewer.sh` Check 20 → `rc_validate_chain` in `adapters/claude-code/hooks/lib/review-chain-lib.sh`
+    - `adapters/claude-code/hooks/plan-reviewer.sh` Checks 20/22 → `rc_rule1`, `rc_rule2`, `rc_rule3`, `rc_chain_entries`, `rc_chain_design_ref`, `rc_chain_present`, `rc__base_token` in `adapters/claude-code/hooks/lib/review-chain-lib.sh` (mid-build refactor from the granular per-rule API, not the monolithic `rc_validate_chain`, so Check 20 owns rule1+rule2 for design-reviews entries only and Check 22 owns rule1+rule3 for every entry without double-reporting a rule2 anchor mismatch under two check numbers — the plan's real plan-reviews entry has no `plan-blob:` yet, T16's job, so a wholesale `rc_validate_chain` call would FAIL Check 20/22 on the very fixture this task must pass)
     - `adapters/claude-code/hooks/plan-reviewer.sh` Check 21 → parses `## Requirements` REQ table from the file named by `design-ref:`
     - `~/.claude/templates/plan-template.md` ← synced from `adapters/claude-code/templates/plan-template.md` (install path)
     **Integration points:**
@@ -280,8 +296,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   `~/.claude/state/dispatch-ledger.jsonl` — completion-side so blocked/failed dispatches mint no
   row; `artifact_ref` from the existing prompt parse; ledger-landing date recorded in the lib
   config (the rule-3 pre-ledger exemption boundary); always-exit-0 preserved; quoted-header parse
-  quirk fixed in the shared parse — Verification: full — Implements: REQ-B14 — Docs impact:
-  orchestrator-pattern doctrine notes the ledger
+  quirk fixed in the shared parse — Verification: full — Implements: REQ-B14 — Directives: n/a —
+  operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
+  impact: orchestrator-pattern doctrine notes the ledger
     **Prove it works:**
     1. Self-test fixture completion event (subagent_type + prompt carrying a docs/ path) → exactly one well-formed JSONL row with artifact_ref populated
     2. Malformed event → no row, exit 0 (writer contract); a PreToolUse dispatch event → no row (completion-side only)
@@ -295,8 +312,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
 - [ ] 16. REQ-B13 bootstrap self-review (after Tasks 13,14,15): dispatch `plan-fidelity-reviewer`
   on THIS plan against design r3; commit its record; append the plan-reviews chain entry with
   CANONICALIZED plan-blob anchor (re-anchoring the bootstrap record); only then is Task 17
-  dispatchable — Verification: mechanical — Implements: REQ-B13 — Docs impact: the review record
-  itself
+  dispatchable — Verification: mechanical — Implements: REQ-B13 — Directives: n/a —
+  operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
+  impact: the review record itself
 - [ ] 17. REQ-B8 G2 gate live (after Task 16): `dispatch-chain-gate.sh` wired PreToolUse
   Task|Agent (subagent_type-keyed per design §4; grandfather list generated at install from extant
   plan slugs; gate-contract messages; `--check`; escape ledgered) + THE THREE-VARIANT DEMO with
@@ -305,7 +323,8 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   reviewer → fails validity. Gate ordering rule (fidelity F-4): the gate validates the CHAIN
   FIRST and applies the grandfather path only when no chain parses — a plan with an earned valid
   chain (this one, post-T16) never rides the WARN path — Verification: full — Implements: REQ-B8
-  — Docs impact: manifest entry + orchestrator-pattern doctrine gains the gate step;
+  — Directives: n/a — operator-directives register (REQ-B1/Task 11) not yet built; no OD- id
+  exists to cite — Docs impact: manifest entry + orchestrator-pattern doctrine gains the gate step;
   settings.json.template wiring
     **Prove it works:**
     1. The three demo variants, live, transcripts captured (this IS the D-15 acceptance bar)
@@ -321,8 +340,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
 - [ ] 18. REQ-B9 G3 extension: `review-record-push-gate.sh` consumes the DEC-5 class-table config
   (harness class → BLOCK by config date; provenance-docs EXEMPT; product/other → WARN with
   per-class baselines measured from the calibration week's real push history); same-push
-  record-honoring stated + tested — Verification: full — Implements: REQ-B9 — Docs impact:
-  manifest entry updated; gate header contract
+  record-honoring stated + tested — Verification: full — Implements: REQ-B9 — Directives: n/a —
+  operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
+  impact: manifest entry updated; gate header contract
     **Prove it works:**
     1. Gate self-test: harness-class fixture push lacking a required review → refused (WARN text during calibration window per config date)
     2. Provenance-docs-only fixture push → exempt, passes silently
@@ -337,7 +357,8 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   `Round [0-9]` in `docs/designs/**` ONLY; case-insensitive; fresh-waiver escape, ledgered; the 5
   measured legitimate hits as verbatim negative fixtures) + the considerations brief's addenda
   integrated into its body (golden case executed) — Verification: full — Implements: REQ-B10 —
-  Docs impact: brief body integration IS the doc change
+  Directives: n/a — operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists
+  to cite — Docs impact: brief body integration IS the doc change
     **Prove it works:**
     1. Hygiene-scan self-test: fixture design with `## Addendum` → blocked with escape named; `## Round 3 — harness-reviewer REJECT` inside a PLAN → passes (negative fixture verbatim)
     2. The brief (`harness-execution-redesign-considerations-2026-08-02.md`) carries no Addendum/Round headings; a changelog line records the integration
@@ -352,7 +373,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   form: both walks compute, ONE `hookSpecificOutput` JSON object emitted containing both bodies;
   per-walk markers; always-exit-0; both-match-same-event self-test scenario) + G1/G2 carriage
   WARNs (tagged-surface plan/dispatch lacking matched OD citations) — Verification: full —
-  Implements: REQ-B11, REQ-B12 — Docs impact: orchestrator-pattern + doctrine-jit header contracts
+  Implements: REQ-B11, REQ-B12 — Directives: n/a — operator-directives register (REQ-B1/Task 11)
+  not yet built; no OD- id exists to cite — Docs impact: orchestrator-pattern + doctrine-jit
+  header contracts
     **Prove it works:**
     1. `dispatch-directives.sh <this-plan> 20` → prints the OD entries whose globs match this task's files
     2. doctrine-jit self-test: an Edit matching BOTH a doctrine trigger AND a register glob → ONE valid JSON object on stdout containing both bodies; jq parses it
@@ -367,8 +390,9 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   population): 10 verified-safe worktrees pruned; 135 nl-issues triaged via the mechanized
   supersession sweep + dispositions; 23 stale ACTIVE plans dispositioned (close/SUPERSEDE/DEFER,
   one line each); the 1,254 alerts: execute the 36%-clearing route fix or explicitly re-own it,
-  disposition the remainder — Verification: full — Implements: REQ-C2 — Docs impact: drain record
-  in docs/reviews/
+  disposition the remainder — Verification: full — Implements: REQ-C2 — Directives: n/a —
+  operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
+  impact: drain record in docs/reviews/
     **Prove it works:**
     1. `git worktree list` count drops by 10 with zero unmerged-content loss (pre-verified safe list)
     2. nl-issues untriaged count 135 → <20, each closure naming supersession evidence or a disposition
@@ -385,14 +409,17 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   cross-checked against the design §7 ledger rows; hooks-per-Bash and SessionStart spawns counted
   from the live settings.json the same way budget-bash-hooks counts them; the evidence file
   asserts ONE recomputable number per metric with its exact command — Verification: contract —
-  Implements: REQ-C3, REQ-C4 — Docs impact: brief body edits ARE the doc change
+  Implements: REQ-C3, REQ-C4 — Directives: n/a — operator-directives register (REQ-B1/Task 11)
+  not yet built; no OD- id exists to cite — Docs impact: brief body edits ARE the doc change
 - [ ] 23. REQ-C5 minimal Stage-3 subset: death-certificate fields on nl-maintenance's existing
   handle-wait + cleanup-as-sensor fields on the existing janitor log, each naming its consumer at
-  birth in the field comment — Verification: contract — Implements: REQ-C5 — Docs impact: none —
-  fields documented at their write sites
+  birth in the field comment — Verification: contract — Implements: REQ-C5 — Directives: n/a —
+  operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
+  impact: none — fields documented at their write sites
 - [ ] 24. REQ-C6 Stage-2 admission trigger: doctor WARN "stage-2 admission open since <date>"
   (data-file date written by Task 8's completion) persisting until a Stage-2 plan goes ACTIVE —
-  Verification: contract — Implements: REQ-C6 — Docs impact: manifest entry
+  Verification: contract — Implements: REQ-C6 — Directives: n/a — operator-directives register
+  (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: manifest entry
 </br>
 
 ## Files to Modify/Create
@@ -408,6 +435,8 @@ Create:
 - `adapters/claude-code/scripts/dispatch-directives.sh` (T20)
 - `adapters/claude-code/config/review-class-table.json` (T18); G2 grandfather slug file under `adapters/claude-code/config/` (T17)
 - test fixtures under `adapters/claude-code/tests/fixtures/` for chain/ledger/plan shapes (T1/T15/T17)
+- `adapters/claude-code/config/design-ref-gate.json` — G1 flip/grandfather/demotion/recalibration dates (T14)
+- `adapters/claude-code/scripts/measure-design-ref-surface-trigger.sh` — re-runnable arch-M4 corpus fire-rate measurement (T14)
 
 Modify:
 - `adapters/claude-code/hooks/lib/single-flight-lib.sh` — sf_release, pid-liveness, HALT dir (T3, T7)
@@ -457,6 +486,22 @@ Modify:
   `directives-register-lib.sh`; fixed by adding a "Structural note" entry matching the existing
   T1 (`review-chain-lib.sh`) and Task-2 (`gate-contract-lib.sh`/`workaround-sensor-lib.sh`)
   precedent entries already in this file. Gate-directed, not scope creep.
+- 2026-08-03: `docs/plans/gated-pipeline-master-2026-08.md` (this file) — T14 backfilled
+  `Directives: n/a — <justification>` onto all 24 existing task lines (the field T14 itself
+  introduces) so THIS plan — declared the load-bearing Checks 20-22 fixture in T14's own task
+  text — actually satisfies the schema it is simultaneously building; also corrected T14's own
+  Wire-checks line (`rc_validate_chain` → the granular `rc_rule1`/`rc_rule2`/`rc_rule3`/
+  `rc_chain_entries`/`rc_chain_design_ref`/`rc_chain_present`/`rc__base_token` API actually called,
+  per the mid-build wire-check-refactor rule) and added a `## In-flight scope updates` entry (this
+  one) documenting both. No task's verified deliverable (Tasks 1-5, already task-verifier PASS) is
+  touched in substance — only trailing per-task metadata and T14's own not-yet-verified task text.
+- 2026-08-03: `adapters/claude-code/doctrine/planning.md` + `adapters/claude-code/doctrine/planning-full.md`
+  — T14's own task text commits to "Docs impact: planning doctrine compact + full gain the
+  fields", but the `## Files to Modify/Create` table's only `planning.md` line is tagged (T3, T15,
+  T17, T20), never T14 — a pre-existing gap in the plan's own scope declaration, not something
+  this build introduced. Added a `design-ref:`/`## Review Chain`/`Implements:`/`Directives:`
+  compact bullet to `planning.md` and a matching "The Review-Chain fields" subsection to
+  `planning-full.md` (both purely additive) to actually deliver the Docs-impact claim T14 made.
 
 ## Assumptions
 
