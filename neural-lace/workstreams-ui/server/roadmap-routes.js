@@ -91,10 +91,27 @@
 //   added_ts, added_mid_build,
 //   status: {
 //     value: 'not-started'|'in-progress'|'merged-unverified'|'complete'
-//            |'stalled'|'unknown',  // the six-value enum (C5)
+//            |'stalled'|'unknown',  // the six DERIVED-FROM-ARTIFACTS values
+//                                   // a plan/task node can carry (C5).
+//                                   // 'running' is NOT one of them and never
+//                                   // will be — see running_now below; it is
+//                                   // an AGENT-leaf / UnboundSessionsNode
+//                                   // value only (2026-08-01).
 //     reason, reason_class, label, since,
 //     unblock,                      // OPTIONAL {label, hash}
 //   },
+//   running_now: bool,              // 2026-08-01 — the LIVE overlay, ORTHOGONAL
+//                                   // to status.value: "a heartbeat-backed
+//                                   // session is attending this item or a
+//                                   // descendant RIGHT NOW". Derived ONLY from
+//                                   // live signals, never from plan text; see
+//                                   // stampRunningNow for the exact gates and
+//                                   // for why this is a separate field rather
+//                                   // than a seventh status value. Present on
+//                                   // EVERY node (plan, task, and the
+//                                   // UnboundSessionsNode); false is the
+//                                   // honest default — no live evidence means
+//                                   // the client claims nothing.
 //   progress: {done,total} | null,
 //   completed_at,                   // ISO ts | ''
 //   from_requests: [{id,title}],    // C6 — the ask(s), if any, that link to
@@ -102,15 +119,35 @@
 //                                   // (never fabricated, never required)
 //   roll_up: { <class>: {count, exemplar} },
 //   children: [RoadmapItem],        // task kind
+//   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
+//                                   // BOTH kinds (2026-08-01). On a TASK: the
+//                                   // sessions attached to it via task_started
+//                                   // (deriveLiveAgentLeaves). On a PLAN: only
+//                                   // attributed dispatches whose task= id
+//                                   // resolves to no task in that plan
+//                                   // (deriveUnbindableDispatchLeaves); [] on
+//                                   // every plan without one. Each member's
+//                                   // status.value is 'running'|'stalled'|
+//                                   // 'unknown' — a NON-EMPTY array is not a
+//                                   // running claim (see the client's
+//                                   // RUNNING-CLAIM block).
 //   // ---- task-kind-only fields (round-6 gap 1 + round-7 7A/7B/7B-i) ----
 //   lead_points: [string],
 //   subtasks: [{title, body_points: [string]}],
-//   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
 // }
 // UnboundSessionsNode (R9-7b, OPTIONAL — null when no such session exists,
 // honest absence, never a fake/empty node) = {
 //   id: '(unattributed)', kind: 'unbound-sessions', title,
-//   status: {value:'in-progress', label, reason:'', since:''},
+//   status: {value:'running', label, reason:'', since:''},
+//                                   // 'running', NOT 'in-progress' (fixed
+//                                   // 2026-08-01): the label always read
+//                                   // "N running" while the value denied it,
+//                                   // so the client's AGENT_STATUS_GLYPH —
+//                                   // which has no 'in-progress' key —
+//                                   // rendered live sessions with the UNKNOWN
+//                                   // glyph. Members carry 'running' too.
+//   running_now: true,              // always, by construction: the node only
+//                                   // exists when >=1 such session is live.
 //   live_sessions: [{id, kind:'agent', title, status:{value,label,since}}],
 // }
 //
@@ -149,10 +186,21 @@ const planParse = require('./plan-parse.js');
 const WEB_DIR = path.join(__dirname, '..', 'web');
 const COMPLETED_AGE_DAYS = Number(process.env.ROADMAP_COMPLETED_AGE_DAYS) || 7;
 
-// The five roll-up attention classes, in the pinned precedence order
+// The roll-up attention classes, in the pinned precedence order
 // (adjudication (b) + delta R4: precedence governs display ORDER only —
 // one badge per class present, a higher class never masks a lower one).
-const ROLLUP_CLASSES = ['waiting-on-you', 'crashed', 'blocked-on', 'limit-parked', 'unknown'];
+//
+// DERIVED from derive-lib's ATTENTION_PRECEDENCE (2026-07-30), never
+// re-typed. This used to be a hand-maintained duplicate of that list, and
+// the duplication was actively harmful rather than merely redundant:
+// absorbOneChildRollUp (below) falls back to 'blocked-on' for any
+// reason_class it does not recognise, so the moment derive-lib gained a
+// new reason the copy here did not know about, every affected task
+// silently rolled up as "stalled — blocked on a predecessor" — a
+// fabricated dependency claim. Caught by S20e-reason when 'idle-dispatch'
+// was added. One source of truth means a new reason can never again be
+// silently re-attributed to an unrelated class.
+const ROLLUP_CLASSES = deriveLib.ATTENTION_PRECEDENCE.slice();
 
 function sendJson(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json' });
@@ -652,6 +700,18 @@ function mapDerivedValue(value) {
   return value === 'merged-deploy-unverified' ? 'merged-unverified' : value;
 }
 
+// STALLED_REASON_PHRASE — human text for reason codes whose bare machine
+// name would MISLEAD in the badge. Only codes listed here are rewritten;
+// every other code keeps its existing verbatim rendering (the label is
+// 'stalled — ' + code), so this map adds meaning without disturbing any
+// pre-existing label string. 'idle-dispatch' needs it precisely because the
+// operator's complaint was being pointed at the wrong investigation: the
+// badge must say the session is ALIVE and the task merely went quiet, not
+// leave a terse code that reads like a synonym for 'crashed'.
+const STALLED_REASON_PHRASE = {
+  'idle-dispatch': 'no recent dispatch (the session that touched it is still alive)',
+};
+
 function statusObj(value, opts) {
   const o = opts || {};
   let label;
@@ -662,7 +722,7 @@ function statusObj(value, opts) {
   if (o.terminal_label) label = o.terminal_label;
   else if (value === 'unknown') label = 'status unknown — ' + (o.reason || 'derivation failed');
   else if (value === 'merged-unverified') label = 'merged — deploy unverified';
-  else if (value === 'stalled') label = 'stalled — ' + (o.reason || 'reason unavailable');
+  else if (value === 'stalled') label = 'stalled — ' + (STALLED_REASON_PHRASE[o.reason] || o.reason || 'reason unavailable');
   else if (value === 'complete') label = 'complete' + (o.override ? ' (operator override)' : '');
   else if (value === 'in-progress') label = 'in progress';
   else label = 'not started';
@@ -699,9 +759,20 @@ function statusFromDerived(derived, opts) {
 // status (deriveTaskNode, above) has already downgraded to 'stalled' for
 // the identical reason — an inconsistency between the task's own badge and
 // its child leaf that this parameter closes.
-function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdleExpired) {
+function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdleExpired, taskStatusValue) {
   const th = deriveLib.activityThresholdsMs();
   const ids = (sessionIds || []).filter(Boolean);
+  // A leaf may claim 'running' ONLY when the task's own derived status is
+  // 'in-progress' (2026-07-30). Found by S20g/S20h: a task whose own
+  // task_started evidence was unreadable derived 'unknown', yet its leaves
+  // still rendered 'running' off the session heartbeat alone — and the
+  // owning plan then rolled up a green "1 running" badge for a task the
+  // server had just admitted it could not classify. The leaf, the task
+  // badge and the plan roll-up must never contradict each other; the task
+  // status is the authority, and a leaf can only ever narrow it.
+  // `undefined` keeps the pre-existing behaviour for any caller that has
+  // not been updated (it is passed explicitly by deriveTaskNode).
+  const taskProvenRunning = taskStatusValue === undefined || taskStatusValue === 'in-progress';
   return ids.map((sid) => {
     const hb = (heartbeats || []).find((h) => h && h.session_id === sid);
     if (!hb) {
@@ -714,10 +785,25 @@ function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdl
     }
     const ageMs = nowMs - Date.parse(hb.last_activity_ts);
     const ageCls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
-    const value = (ageCls === 'crashed' || startedIdleExpired) ? 'stalled' : 'running';
+    // The task's own status could not be established at all — say so on the
+    // leaf rather than upgrading a live heartbeat into a running claim the
+    // task badge itself does not make.
+    if (!taskProvenRunning && taskStatusValue === 'unknown') {
+      return {
+        id: taskId + '/agent/' + sid,
+        kind: 'agent',
+        title: 'session ' + sid + (hb.branch ? ' (' + hb.branch + ')' : ''),
+        status: {
+          value: 'unknown',
+          label: 'status unknown — this session is alive, but this task\'s own start evidence could not be read',
+          reason: '', since: hb.last_activity_ts || '',
+        },
+      };
+    }
+    const value = (ageCls === 'crashed' || startedIdleExpired || !taskProvenRunning) ? 'stalled' : 'running';
     const label = value === 'running'
       ? 'running'
-      : (startedIdleExpired && ageCls !== 'crashed'
+      : (ageCls !== 'crashed'
         ? 'stalled — this task has not been (re-)dispatched in a while, even though the session that touched it is still alive'
         : 'stalled — no recent heartbeat');
     return {
@@ -773,12 +859,29 @@ function deriveUnboundSessionsNode(hbCtx) {
     const ageMs = hbCtx.nowMs - Date.parse(h.last_activity_ts);
     const cls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
     const shortId = String(h.session_id).slice(0, 8);
-    const label = cls === 'active' ? 'running' : ('running (' + cls + ')');
+    // 2026-08-01 (harness-reviewer finding 4): was `cls === 'active'`, a
+    // comparison that could NEVER match — classifyHeartbeatAge's whole
+    // vocabulary is 'live' | 'quiet' | 'crashed' (derive-lib.js), so the
+    // freshest possible session was labelled "running (live)" instead of
+    // plain "running". A dead comparator on the one surface that says
+    // "running" out loud; the correct token is 'live'.
+    const label = cls === 'live' ? 'running' : ('running (' + cls + ')');
     return {
       id: 'unattributed/' + h.session_id,
       kind: 'agent',
       title: 'session ' + shortId + (h.branch ? ' (' + h.branch + ')' : ''),
-      status: { value: 'in-progress', label: label, reason: '', since: h.last_activity_ts || '' },
+      // RUNNING-VALUE SPLIT-BRAIN FIX (2026-08-01, operator: "I do not see
+      // any items in the cockpit that state that they are actively
+      // running"). These members were stamped value:'in-progress' while
+      // their own LABEL said "running" — the one node in the whole tree
+      // that is a pure live-heartbeat truth claim was the one node whose
+      // machine-readable value denied it. Consequences the operator saw:
+      // the client's AGENT_STATUS_GLYPH has no 'in-progress' key, so every
+      // genuinely-live session rendered with the UNKNOWN glyph ('○'), and
+      // .rm-agent-running's green never applied. The value now matches the
+      // label. This is NOT a widening of the running claim: the filter
+      // above (non-crashed heartbeat) is unchanged — only its name is.
+      status: { value: 'running', label: label, reason: '', since: h.last_activity_ts || '' },
     };
   });
   return {
@@ -786,12 +889,163 @@ function deriveUnboundSessionsNode(hbCtx) {
     kind: 'unbound-sessions',
     title: 'live sessions not yet attributed to a task (' + running.length + ')',
     status: {
-      value: 'in-progress',
+      value: 'running',
       label: running.length + ' running, unattributed to a task',
       reason: '', since: '',
     },
     live_sessions: children,
   };
+}
+
+// ----------------------------------------------------------------------
+// deriveUnbindableDispatchLeaves(slug, tasks, startedTs, sessionsByTask,
+// hbCtx) -> [agent leaf, ...]  (2026-08-01)
+//
+// THE GAP THIS CLOSES. A dispatch's `NL-ATTRIBUTION: plan=<slug> task=<id>`
+// header makes workstreams-emit.sh write a real `task_started` event. That
+// event names a plan_slug AND a task_id. The plan side always resolves; the
+// task side often does not, because `task=` is written by hand and the
+// roadmap joins on the plan file's OWN leading id token (plan-parse.js
+// TASK_ID_TOKEN_RE — `T6`, `9`, `12.3`; a token WITHOUT digits can never be
+// one). Observed 2026-08-01: `task=cockpit-running-representation` against a
+// plan whose real ids are T1..T14.
+//
+// Before this function, such an event was silently dropped:
+// sessionsByTask[<slug-that-is-not-a-task-id>] matched no task node, and the
+// session was ALSO absent from the unattributed node (that node lists only
+// sessions no task claimed — and nothing claimed this one either, because
+// the claim failed). A genuinely running, genuinely attributed agent was
+// invisible in BOTH places. That is precisely the failure R9-7 forbids:
+// "running work is NEVER invisible."
+//
+// WHAT IT DOES NOT DO. It does not guess which task was meant, and it does
+// not repair the join — an unresolvable id stays unresolved and is printed
+// verbatim on the leaf so the operator can see what was actually sent. The
+// dispatch is surfaced at the level it COULD be attributed to (the plan),
+// never promoted to a task row it was never bound to.
+//
+// GATES ARE THE TASK-LEVEL ONES, UNCHANGED. Leaves go through
+// deriveLiveAgentLeaves, so a stale heartbeat still renders 'stalled' and an
+// absent one still renders 'unknown'. The task-started idle window
+// (th.taskStartedIdleMs) is applied to the dispatch's OWN timestamp, exactly
+// as deriveItemStatus applies it to a task's — an attributed dispatch that
+// went quiet an hour ago is NOT running, here or anywhere else.
+// ----------------------------------------------------------------------
+function deriveUnbindableDispatchLeaves(slug, tasks, startedTs, sessionsByTask, hbCtx) {
+  const realIds = {};
+  (tasks || []).forEach((t) => { if (t && t.id) realIds[t.id] = true; });
+  const th = deriveLib.activityThresholdsMs();
+  const out = [];
+  Object.keys(sessionsByTask || {}).forEach((taskId) => {
+    if (realIds[taskId]) return; // bound normally — deriveTaskNode owns it
+    const usable = (sessionsByTask[taskId] || []).filter(Boolean);
+    if (!usable.length) return;
+    const startedAtMs = startedTs[taskId] ? Date.parse(startedTs[taskId]) : null;
+    // NaN (present-but-unparseable) counts as EXPIRED, not as absent — the
+    // same "malformed is not absent" direction deriveItemStatus takes; a
+    // timestamp we cannot read must never license a running claim.
+    const startedIdleExpired = startedAtMs === null || isNaN(startedAtMs) ||
+      (hbCtx.nowMs - startedAtMs > th.taskStartedIdleMs);
+    const leaves = deriveLiveAgentLeaves(slug + '/(unbindable)', usable, hbCtx.heartbeats,
+      hbCtx.nowMs, startedIdleExpired, 'in-progress');
+    leaves.forEach((leaf) => {
+      // The id the dispatch actually sent, verbatim and quoted — this is the
+      // whole diagnostic value of the leaf.
+      leaf.title += ' — dispatched for task "' + taskId + '", which is not a task id in this plan';
+      out.push(leaf);
+    });
+    // R9-7b bookkeeping — SCOPED TO RUNNING LEAVES ONLY (2026-08-01,
+    // harness-reviewer Critical). This used to mark EVERY session id it
+    // touched as bound, including ones whose leaf renders 'stalled' or
+    // 'unknown'. Marking a session bound removes it from the unattributed
+    // node — the ONE surface in the whole cockpit that says "N running" —
+    // so a session with a heartbeat seconds old vanished from the running
+    // count merely because the dispatch it sent for THIS plan was older
+    // than the 60-minute taskStartedIdleMs window. Reviewer A/B on one
+    // fixture: with this function unscoped the node read "1 running"; with
+    // the function stubbed out it read "3 running". That is the exact
+    // R9-7 violation ("running work is NEVER invisible") this whole change
+    // exists to remove, re-introduced by the change itself.
+    //
+    // THE ASYMMETRY IS DELIBERATE. Binding is a claim that some OTHER row
+    // already accounts for this session as live. Only a 'running' leaf makes
+    // that claim; a 'stalled'/'unknown' leaf explicitly says the opposite.
+    // So a stalled leaf renders on the plan row AND its session still
+    // counts in the unattributed node. Those are not contradictory: the
+    // plan row's claim is about the DISPATCH (it went quiet), the node's is
+    // about the SESSION (it is alive). Both are true, and the leaf's own
+    // text says which is which.
+    //
+    // Note derive-lib.js's activityThresholdsMs header warns that the
+    // 60-minute taskStartedIdleMs produces false negatives for long-running
+    // single-dispatch work — precisely the agents the operator most wants
+    // to see marked running. That makes fail-open here the only safe side.
+    // deriveLiveAgentLeaves maps its (already-truthy) id list 1:1 and in
+    // order, so index i of `leaves` is the leaf for `usable[i]`.
+    leaves.forEach((leaf, i) => {
+      if (leaf.status && leaf.status.value === 'running' && hbCtx.boundSessionIds) {
+        hbCtx.boundSessionIds[usable[i]] = true;
+      }
+    });
+  });
+  return out;
+}
+
+// ----------------------------------------------------------------------
+// stampRunningNow(node) — THE ONE DEFINITION of "someone is working on
+// this RIGHT NOW", added 2026-08-01 (operator, repeated: "the purple items
+// are not representing what they're supposed to be representing ... it's
+// supposed to represent items that are currently being worked on. At the
+// moment, I actually do not see any items in the cockpit that state that
+// they are actively running").
+//
+// WHY A SEPARATE FIELD AND NOT A STATUS VALUE. `status.value` is DERIVED
+// FROM ARTIFACTS — plan checkboxes, task_started/task_done events, commit
+// state. 'in-progress' there means "started and not finished" (it fires on
+// done>0 alone; see derivePlanRootNode's `anyInProgress || done > 0`
+// branch), which says NOTHING about whether a session is attending it this
+// minute. Overloading that value would destroy the distinction the
+// operator is asking for. `running_now` is the orthogonal LIVE overlay.
+//
+// SOURCE OF TRUTH — live signals ONLY, never plan-file text: a leaf
+// `live_sessions[].status.value === 'running'`. TWO functions in this file
+// produce that value, and their gates DIFFER — name both, never imply one
+// (harness-reviewer finding 1, 2026-08-01):
+//
+//   deriveLiveAgentLeaves (TASK-BOUND leaves) emits 'running' only when ALL
+//   of these hold:
+//     (1) a real heartbeat file exists for that session id (else 'unknown'),
+//     (2) its last_activity_ts is not crashed-stale (else 'stalled'),
+//     (3) the task's own task_started is not idle-expired (startedIdleExpired,
+//         the 60-minute window),
+//     (4) the task's derived status is itself running-capable (taskProvenRunning).
+//
+//   deriveUnboundSessionsNode (the top-of-tree UNATTRIBUTED node) emits
+//   'running' on gate (1)+(2) ALONE — there is no task to apply (3)/(4) to,
+//   which is the entire point of that node. Its freshness bar is therefore
+//   WEAKER: any heartbeat inside activityWindowMs, i.e. up to ~24h, and
+//   members past activeMs carry the word "(quiet)" in their own label. That
+//   is a deliberate pre-existing threshold, not a widening introduced here —
+//   but it means a green claim on that node is backed by less evidence than
+//   a green claim on a task row, and any future tightening belongs THERE,
+//   not in this function.
+// An ancestor is running_now iff a descendant is — the same C1 roll-up law
+// absorbOneChildRollUp already applies to the 'running' badge class, but
+// computed here directly off the leaf values so it is independent of
+// roll-up merge ORDER (a master's child-plan roll-ups are absorbed later,
+// in applyMasterHierarchy).
+//
+// HONEST ABSENCE (R9-7's binding rule): no live evidence -> `false`, and the
+// client renders NOTHING running. A comforting badge is worse than a blank.
+// ----------------------------------------------------------------------
+function stampRunningNow(node) {
+  if (!node) return false;
+  const own = hasOwnRunningLeaf(node); // ONE definition, shared with computeRollUps
+  let descendant = false;
+  (node.children || []).forEach((c) => { if (stampRunningNow(c)) descendant = true; });
+  (node.child_plans || []).forEach((c) => { if (stampRunningNow(c)) descendant = true; });
+  node.running_now = own || descendant;
+  return node.running_now;
 }
 
 // buildWaitingOnYouMap(scanRoot) -> { '<slug>/<task_id>': <needs-you ledger
@@ -872,11 +1126,20 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     // heartbeats below) can never prove this SPECIFIC task has current
     // activity (that session is the DISPATCHING session, not a per-task
     // worker, and stays alive across many unrelated dispatches).
-    const startedAtMsRaw = startedTs[t.id] ? Date.parse(startedTs[t.id]) : NaN;
+    // MALFORMED IS NOT ABSENT (fail-open fix, 2026-07-30): this used to
+    // collapse an unparseable ts to `null` — indistinguishable from "no
+    // task_started at all" — which silently disabled the idle gate and
+    // restored the pre-fix green-forever behaviour on exactly the corrupt
+    // input we least want to trust. NaN is now passed THROUGH so
+    // deriveItemStatus can tell the two apart and render 'unknown' for
+    // present-but-unreadable evidence (its own branch documents why),
+    // mirroring how the heartbeat side already treats an unparseable
+    // last_activity_ts. `null` remains reserved for genuine absence.
+    const startedAtMs = startedTs[t.id] ? Date.parse(startedTs[t.id]) : null;
     const derived = deriveLib.deriveItemStatus({
       done: false,
       startedEvent: !!startedTs[t.id],
-      startedAtMs: isNaN(startedAtMsRaw) ? null : startedAtMsRaw,
+      startedAtMs: startedAtMs,
       sessionIds: taskSessionIds,
       heartbeats: hbCtx.heartbeats,
       heartbeatsStoreOk: hbCtx.heartbeatsStoreOk,
@@ -909,7 +1172,7 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     body_points: deriveLib.splitIntoSentences(s.body),
   }));
   const liveSessions = (!t.done && taskSessionIds.length)
-    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs, startedIdleExpired)
+    ? deriveLiveAgentLeaves(slug + '/' + t.id, taskSessionIds, hbCtx.heartbeats, hbCtx.nowMs, startedIdleExpired, status.value)
     : [];
   // R9-7b bookkeeping: a session id ATTACHED to a not-done task is
   // "attributed" regardless of whether a matching heartbeat file exists —
@@ -1186,6 +1449,13 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
     rank: null, added_ts: addedTs, added_mid_build: false,
     status: null, progress: null, completed_at: '',
     from_requests: fromRequests,
+    // Plan-level live sessions (2026-08-01): populated ONLY by
+    // deriveUnbindableDispatchLeaves — an attributed dispatch whose task=
+    // id resolves to no task in this plan. Default [] so the field's SHAPE
+    // is uniform across every node kind (a client can read live_sessions
+    // without a kind check), including the terminal-status early return
+    // above, which never reaches the events pass.
+    live_sessions: [],
     roll_up: {}, children: [],
   };
 
@@ -1266,6 +1536,7 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
   const tasks = loaded.tasks || [];
   const batchLabels = deriveTaskBatches(tasks); // R11 Critical 1/2
   node.children = tasks.map((t) => deriveTaskNode(pf.slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabels[t.id]));
+  node.live_sessions = deriveUnbindableDispatchLeaves(pf.slug, tasks, startedTs, sessionsByTask, hbCtx);
   const total = tasks.length;
   const done = tasks.filter((t) => t.done).length;
   const anyInProgress = node.children.some((c) => c.status.value === 'in-progress');
@@ -1322,7 +1593,13 @@ function absorbIntoRollUp(agg, cls, count, exemplar) {
 function absorbOneChildRollUp(agg, child) {
   const st = child.status || {};
   if (st.value === 'stalled') {
-    const cls = ROLLUP_CLASSES.indexOf(st.reason_class) !== -1 ? st.reason_class : 'blocked-on';
+    // Unrecognised reason -> 'unknown', NOT 'blocked-on' (2026-07-30).
+    // The old fallback invented a specific, wrong, actionable claim ("this
+    // is blocked on a predecessor") out of what is really an absence of
+    // classification, and it fired silently for every reason code this
+    // file had not been taught. 'unknown' is the honest bucket for "we
+    // could not classify this" and already exists for exactly that.
+    const cls = ROLLUP_CLASSES.indexOf(st.reason_class) !== -1 ? st.reason_class : 'unknown';
     absorbIntoRollUp(agg, cls, 1, child.id);
   }
   if (st.value === 'unknown') absorbIntoRollUp(agg, 'unknown', 1, child.id);
@@ -1354,11 +1631,33 @@ function absorbOneChildRollUp(agg, child) {
   // folds the task_started idle-expiry into that value — see its header —
   // so this one check also inherits that fix, with no separate age math
   // needed here).
-  const hasRunningLeaf = (child.live_sessions || []).some((s) => s && s.status && s.status.value === 'running');
-  if (hasRunningLeaf) absorbIntoRollUp(agg, 'running', 1, child.id);
+  //
+  // COUNTED EXACTLY ONCE (2026-08-01, harness-reviewer Major 1). Since
+  // a84f422 a PLAN can carry its own live_sessions (an attributed dispatch
+  // whose task= id resolves to no task — deriveUnbindableDispatchLeaves), so
+  // "running leaves live only on task children" is no longer true. The rule
+  // is now split by who owns the stamp, so no session is ever counted twice:
+  //   - TASK children do NOT self-stamp (a "1 running" badge on a leaf task
+  //     row would just duplicate its own column-3 "running" chip), so the
+  //     PARENT counts them here.
+  //   - PLAN nodes self-stamp in computeRollUps below, so this function must
+  //     NOT count them again — their contribution arrives via the
+  //     `child.roll_up` absorption at the bottom of this function.
+  if (!nodeSelfStampsRunning(child) && hasOwnRunningLeaf(child)) {
+    absorbIntoRollUp(agg, 'running', 1, child.id);
+  }
   Object.keys(child.roll_up || {}).forEach((cls) => {
     absorbIntoRollUp(agg, cls, child.roll_up[cls].count, child.roll_up[cls].exemplar);
   });
+}
+
+// hasOwnRunningLeaf(node) / nodeSelfStampsRunning(node) — the two halves of
+// the count-exactly-once rule documented in absorbOneChildRollUp above.
+function hasOwnRunningLeaf(node) {
+  return (node && node.live_sessions || []).some((s) => s && s.status && s.status.value === 'running');
+}
+function nodeSelfStampsRunning(node) {
+  return !!node && node.kind !== 'task';
 }
 
 function computeRollUps(node) {
@@ -1367,6 +1666,18 @@ function computeRollUps(node) {
     computeRollUps(child);
     absorbOneChildRollUp(agg, child);
   });
+  // A node's OWN live sessions roll up too (2026-08-01, harness-reviewer
+  // Major 1). Before this, computeRollUps aggregated ONLY children, so a
+  // plan whose only running evidence was its own unbindable-dispatch leaf
+  // got roll_up:{} — and the client's deriveTaskSpanLabel, which reads
+  // roll_up.running, printed "<id> next" while the title rendered GREEN.
+  // That is a colour-only running claim, which app.css's own WCAG 1.4.1
+  // note promises never happens (the word "running" is the non-colour
+  // carrier). Now the plan row gets its "N running" roll-up badge and its
+  // "<id> running" task-span token like any other running ancestor.
+  if (nodeSelfStampsRunning(node) && hasOwnRunningLeaf(node)) {
+    absorbIntoRollUp(agg, 'running', 1, node.id);
+  }
   node.roll_up = agg;
 }
 
@@ -1595,6 +1906,13 @@ function buildRoadmapTree() {
   // R11 Critical 3/4/5: resolve parent-plan -> nest verified children under
   // their master, break+flag cycles, aggregate the two labeled counts.
   const hierarchy = applyMasterHierarchy(items);
+
+  // RUNNING-NOW pass: LAST, after nesting, so a master sees its resolved
+  // child plans' leaves too (see stampRunningNow's header). Walks the
+  // top-level roots; `items` shares the same node objects, so flatItems
+  // carries the stamp as well.
+  hierarchy.topLevel.forEach(stampRunningNow);
+  if (unboundSessionsNode) stampRunningNow(unboundSessionsNode);
 
   return {
     flatItems: items, // every node, id-addressable, incl. nested child plans

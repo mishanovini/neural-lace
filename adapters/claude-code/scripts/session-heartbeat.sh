@@ -22,9 +22,10 @@
 # CONTRACT
 # ============================================================
 #
-#   session-heartbeat.sh touch --event <start|turn-end|compact|resume>
+#   session-heartbeat.sh touch --event <start|prompt|tool-use|turn-end|compact|resume>
 #                               [--marker <DONE|PAUSING|BLOCKED|CONTINUING|none>]
 #                               [--session <sid>]
+#                               [--if-older-than <seconds>]
 #     Atomically writes/overwrites a session's heartbeat file (schema
 #     per C1; see hooks/lib/session-heartbeat-lib.sh's header for the exact
 #     JSON shape). NEVER BLOCKS — exit 0 always, on every code path
@@ -37,6 +38,69 @@
 #     session id, overriding the $CLAUDE_CODE_SESSION_ID fallback — the
 #     session-resumer's `--event resume` touch attributes to the RESUMED
 #     session this way instead of the literal sid "unknown".
+#     --if-older-than <seconds> (2026-08-01 liveness-starvation fix, see
+#     WHY THE DIRECT settings.json WIRING below) makes the touch a
+#     CHEAP NO-OP when the session's heartbeat file was already written
+#     less than <seconds> ago, so a frequently-fired call-site does not pay
+#     hb_write's ~43s git/nl-paths/escape fan-out every time. Fails OPEN —
+#     any uncertainty (no file, unreadable mtime, non-numeric argument,
+#     or a FUTURE mtime / clock skew) means "not fresh", i.e. WRITE. A
+#     liveness writer that skipped on doubt would silently stop refreshing,
+#     which is the exact defect this flag exists to help close. Paired with
+#     the claim-stake in cmd_touch, without which the guard reads an mtime
+#     the write only advances ~43s later and is blind to an in-flight
+#     sibling.
+#
+# ============================================================
+# WHY THE DIRECT settings.json WIRING (2026-08-01 — the starvation fix)
+# ============================================================
+#
+# PROVEN on this machine 2026-08-01: every heartbeat file in
+# ~/.claude/state/heartbeats/ carried "last_event":"start" — the
+# SessionStart touch was the ONLY one that ever landed, so the cockpit's
+# age-only classifier (workstreams-ui/server/derive-lib.js
+# classifyHeartbeatAge) could never see a session as currently active and
+# no roadmap row could ever render RUNNING.
+#
+# The turn-end touch was NOT missing — it was STARVED. It sits at the END
+# of workstreams-stop-writer.sh, AFTER that hook's 5-member fork loop, whose
+# own emitted turn-trace timings measure 30s-547s per Stop.
+#
+# PROVEN (observable, re-derived independently by the harness-reviewer
+# 2026-08-02): that touch does not run. The signal ledger holds 535
+# `stop-verdict-dispatcher` turn-traces against 200
+# `workstreams-stop-writer` ones, the last of the latter on
+# 2026-07-31T17:18:29Z while the dispatcher kept emitting every turn; on
+# 2026-08-01 session d3059d78 emitted 27 dispatcher turn-traces with ZERO
+# heartbeat updates; all 14 heartbeat files read "last_event":"start".
+#
+# HYPOTHESIZED (mechanism): WHICH kill ends the hook. The original reading
+# — "Claude Code's 60s hook timeout kills it before the touch" — does not
+# survive its own evidence: 154 of those 200 stop-writer traces recorded
+# total_ms > 60000 (max 571,816ms), and `ledger_emit` at
+# workstreams-stop-writer.sh:260 is a direct append NINE LINES BEFORE the
+# touch at :269, so those runs demonstrably ran past 60s AND reached :260,
+# which a hard 60s kill forbids. An equally-consistent mechanism: the ~43s
+# hb_write at the tail is itself what dies — corroborated by the leaked
+# `a83f29bd-….json.iqLTc8` mktemp file in the real heartbeats dir, a kill
+# landing between hb_write's printf and its mv. REFUTED IF: instrumenting
+# the Stop chain shows :269 entered and hb_write returning normally.
+# The fix below works under EITHER mechanism, because it removes the
+# dependency on that hook finishing at all — which is why the mechanism was
+# not chased further.
+#
+# The fix is therefore NOT another in-hook splice — it is giving this
+# writer its OWN top-level settings.json entries (UserPromptSubmit and
+# Stop; NOT PostToolUse — see the cost note in _sh_hb_fresher_than's header
+# and the manifest entry), so that a heartbeat refresh can never again be
+# starved by an unrelated hook's slow member chain. The pre-existing
+# in-hook splices are left in place. Note what that does and does not
+# collapse: the two direct entries pass `--if-older-than 15` and, thanks to
+# the claim-stake in cmd_touch, genuinely collapse a duplicate between
+# themselves. The pre-existing splices (workstreams-stop-writer.sh:220 and
+# :269, session-start-digest.sh, pre-compact-continuity.sh) pass NO
+# `--if-older-than` and therefore always write; that duplicate is tolerated,
+# not prevented, because hb_write is an idempotent atomic overwrite.
 #
 #   session-heartbeat.sh sweep [--json] [--stale-min <n>]
 #     Report-only: lists every heartbeat file's session id + classification
@@ -118,7 +182,15 @@ if [[ -f "$SCRIPT_DIR/../hooks/lib/signal-ledger.sh" ]]; then
   source "$SCRIPT_DIR/../hooks/lib/signal-ledger.sh" 2>/dev/null || true
 fi
 
-ALLOWED_EVENTS=(start turn-end compact resume)
+# The `-auto` spellings are the ADR-061 D2 reentry variants already emitted
+# in production by session-start-digest.sh / workstreams-stop-writer.sh /
+# pre-compact-continuity.sh; `prompt` and `tool-use` are the 2026-08-01
+# direct-wiring events (see WHY THE DIRECT settings.json WIRING above).
+# Listing them here is not cosmetic: cmd_touch writes an UNRECOGNISED event
+# anyway, but first prints a diagnostic to stderr — and hook stderr is
+# operator-visible, so an event this repo itself wires must be on the list
+# or every automation-spawned turn emits a spurious warning.
+ALLOWED_EVENTS=(start start-auto prompt tool-use turn-end turn-end-auto compact compact-auto resume)
 ALLOWED_MARKERS=(DONE PAUSING BLOCKED CONTINUING none)
 
 _sh_in_list() {
@@ -129,6 +201,69 @@ _sh_in_list() {
 }
 
 # ----------------------------------------------------------------------
+# _sh_hb_fresher_than <sid> <seconds> — exit 0 (true) iff <sid>'s heartbeat
+# file exists AND its mtime is younger than <seconds>. Backs the
+# `touch --if-older-than` cheap guard.
+#
+# WHY MTIME AND NOT last_activity_ts: mtime is the moment the writer
+# COMMITTED to writing (the claim-stake below touches the destination BEFORE
+# hb_write's fan-out), which is <= the moment last_activity_ts is stamped.
+# It is a WRITE-INTENT marker, which is exactly what this guard needs, and
+# deliberately NOT a liveness signal -- if hb_write dies mid-flight the two
+# diverge without bound. Nothing consumes heartbeat-file mtime for liveness
+# (cmd_reap uses last_activity_ts + transcript mtime; hb_classify and
+# roadmap-routes.js use last_activity_ts), so the divergence is contained.
+# 2026-08-02 review B1: the claim-stake invalidated this block's previous
+# "mtime IS the moment last_activity_ts was stamped" assertion. Reading it
+# costs ONE `date -r` fork, where parsing the ISO string back out would cost
+# a jq (or sed) fork PLUS a `date -d` fork. Cost, re-measured by the
+# harness-reviewer on the committed blob (3 runs, sandboxed, on a LOADED
+# machine — 2026-08-02, ~217 bash processes / 96% memory): bare bash spawn
+# 509-1106ms, guarded no-op 4675-7147ms, a FULL hb_write 42267-44834ms.
+# (The round-1 figures in this file's history — 250ms / ~2s / 19.9s — were
+# taken on a quieter machine and were ~2x optimistic; these are the numbers
+# to cite.) The guard therefore turns a ~43s call into a ~6s call — which is
+# what makes a sub-turn call-site thinkable at all; it does not make one
+# free (see the settings.json wiring note in the header for why PostToolUse
+# is deliberately NOT wired even at the guarded cost).
+#
+# FAILS OPEN — every uncertain path returns 1 ("not fresh" => DO write): a
+# missing file, an unreadable/zero mtime, a non-numeric <seconds>, a clock
+# that cannot be read, or a mtime in the FUTURE. Skipping on doubt would let
+# a liveness writer silently stop refreshing, which is precisely the defect
+# being closed here.
+#
+# THE FUTURE-MTIME CASE IS NOT THEORETICAL (harness-reviewer 2026-08-02,
+# Critical 1). The obvious spelling of the last line —
+# `[[ $(( now - mtime )) -lt "$secs" ]]` — is TRUE for a NEGATIVE age, so a
+# heartbeat stamped in the future is treated as permanently fresh and the
+# writer stops refreshing until wall-clock catches up: the exact freeze this
+# whole change exists to close, re-introduced by the guard meant to make it
+# cheap. Proven with `touch -d '2026-08-03'`: the call took the ~5s skip
+# path, not the ~42s write path, and last_event stayed "start". Reachable
+# via an NTP correction, MSYS DST/timezone handling, a heartbeat copied
+# between worktrees, or a restored backup — so the negative age is rejected
+# explicitly BEFORE the freshness comparison, and Scenario K asserts it.
+# ----------------------------------------------------------------------
+_sh_hb_fresher_than() {
+  local sid="$1" secs="$2" f mtime now age
+  [[ "$secs" =~ ^[0-9]+$ ]] || return 1
+  f="$(hb_path_for "$sid")"
+  [[ -f "$f" ]] || return 1
+  mtime="$(date -u -r "$f" +%s 2>/dev/null || stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+  [[ "$mtime" =~ ^[0-9]+$ ]] && [[ "$mtime" -gt 0 ]] || return 1
+  # bash builtin epoch (>=4.2) — no fork; falls back to `date` only if the
+  # builtin format is unsupported.
+  now="$(printf '%(%s)T' -1 2>/dev/null)"
+  [[ "$now" =~ ^[0-9]+$ ]] || now="$(date -u +%s 2>/dev/null || echo 0)"
+  [[ "$now" -gt 0 ]] || return 1
+  age=$(( now - mtime ))
+  # Future mtime (negative age) => clock skew, NOT freshness. Fail open.
+  [[ "$age" -ge 0 ]] || return 1
+  [[ "$age" -lt "$secs" ]]
+}
+
+# ----------------------------------------------------------------------
 # cmd_touch — parse --event/--marker, validate, call hb_write. NEVER
 # BLOCKS: an invalid --event or a write failure still exits 0 (this is a
 # liveness tick, not a gate); it prints a diagnostic to stderr on the
@@ -136,12 +271,13 @@ _sh_in_list() {
 # never fails the calling hook chain.
 # ----------------------------------------------------------------------
 cmd_touch() {
-  local event="" marker="none" session=""
+  local event="" marker="none" session="" if_older=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --event) event="${2:-}"; shift 2 ;;
       --marker) marker="${2:-none}"; shift 2 ;;
       --session) session="${2:-}"; shift 2 ;;
+      --if-older-than) if_older="${2:-}"; shift 2 ;;
       *) echo "session-heartbeat.sh touch: unknown flag '$1' (ignored, never blocks)" >&2; shift ;;
     esac
   done
@@ -155,6 +291,43 @@ cmd_touch() {
   fi
   if [[ -n "$marker" ]] && ! _sh_in_list "$marker" "${ALLOWED_MARKERS[@]}"; then
     echo "session-heartbeat.sh touch: unknown --marker '$marker' (expected one of: ${ALLOWED_MARKERS[*]}; writing anyway)" >&2
+  fi
+
+  # CHEAP FRESHNESS GUARD (--if-older-than): skip the whole write when this
+  # session's heartbeat is already younger than the requested age. Placed
+  # AFTER validation (so a misconfigured caller still gets its diagnostic)
+  # and BEFORE hb_write (the only expensive thing this verb does). Fails
+  # open — see _sh_hb_fresher_than's header.
+  if [[ -n "$if_older" ]]; then
+    if _sh_hb_fresher_than "${session:-${CLAUDE_CODE_SESSION_ID:-unknown}}" "$if_older"; then
+      return 0
+    fi
+  fi
+
+  # CLAIM-STAKE (harness-reviewer 2026-08-02, Critical 2). Bump the
+  # DESTINATION's mtime the INSTANT we commit to writing, BEFORE hb_write's
+  # ~43s nl-paths/git/escape/mktemp/mv fan-out. Without this the guard reads
+  # an mtime that hb_write only advances on COMPLETION, so it is blind for
+  # ~3x its own 15s window: a guarded call fired 2s after an in-flight
+  # detached write was measured taking the FULL 45,760ms write path. Staking
+  # the claim up front is what makes "the guard collapses the duplicate
+  # write" a true statement rather than an aspiration, and it bounds the
+  # process pile-up on a machine where each write costs ~43s.
+  #
+  # ONLY when the file ALREADY EXISTS. `touch` on an absent path would
+  # create an EMPTY file, and every reader parses it as JSON (this script's
+  # own sweep/hb_classify, observability-derive's od_sessions, the cockpit's
+  # listRawHeartbeats) — a truncated-looking heartbeat is worse than a
+  # duplicate write. The first write of a session has nothing to collapse
+  # against anyway, and the guard already fails open on absence.
+  #
+  # If hb_write subsequently fails, the bumped mtime still records a TRUE
+  # fact: this session ran the writer at that moment. It never invents
+  # liveness for a session that did not run.
+  local _dest
+  _dest="$(hb_path_for "${session:-${CLAUDE_CODE_SESSION_ID:-unknown}}")"
+  if [[ -f "$_dest" ]]; then
+    touch "$_dest" 2>/dev/null || true
   fi
 
   # ADR-061 D2: explicit --session overrides the env-derived sid (see
@@ -320,6 +493,39 @@ cmd_reap() {
     fi
   done
 
+  # ---- ORPHANED mktemp LEFTOVERS (harness-reviewer 2026-08-02, minor 7) --
+  # hb_write's atomic write is `mktemp "${path}.XXXXXX"` + `mv`. A kill
+  # landing between its printf and its mv leaks a `<sid>.json.XXXXXX` file
+  # that the `*.json` glob above can NEVER match — one has sat unreaped in
+  # the real heartbeats dir since 2026-07-23, and the 2026-08-01 direct
+  # wiring doubled the number of call-sites that can leak them. Reaped on
+  # the SAME threshold, which is orders of magnitude beyond any in-flight
+  # write (~43s at this machine's measured worst), so a live write's tmp
+  # file is never at risk. Counted separately and reported on its own line:
+  # `--json`'s documented shape is an array of SESSION IDS, and a tmp
+  # leftover is not one — widening that array would break its consumers.
+  local tmp_reaped=0 tf_mtime tf_age_min
+  # -print0 + read -d '', matching this file's own convention at the sweep and
+  # heartbeat loops above (2026-08-02 review B2: the previous unquoted for-over-find
+  # word-split on whitespace, so on any state dir containing a space the reap
+  # silently processed NOTHING and still reported "0 leftover(s) reaped" — a
+  # false-negative report, and this repo itself lives under a spaced path).
+  while IFS= read -r -d '' f; do
+    [[ -f "$f" ]] || continue
+    tf_mtime="$(date -u -r "$f" +%s 2>/dev/null || stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
+    if [[ "$tf_mtime" =~ ^[0-9]+$ ]] && [[ "$tf_mtime" -gt 0 ]]; then
+      tf_age_min=$(( (now_epoch - tf_mtime) / 60 ))
+    else
+      # Unreadable mtime: cannot prove it is old, so LEAVE IT (the opposite
+      # of the heartbeat path's convention, deliberately — deleting a file
+      # we cannot age could destroy an in-flight write).
+      continue
+    fi
+    [[ "$tf_age_min" -gt "$reap_min" ]] || continue
+    tmp_reaped=$(( tmp_reaped + 1 ))
+    [[ "$dry_run" == "1" ]] || rm -f "$f" 2>/dev/null || true
+  done < <(find "$dir" -maxdepth 1 -type f -name '*.json.*' -print0 2>/dev/null)
+
   if [[ "$as_json" == "1" ]]; then
     local out="[" first=1 r
     for r in "${reaped[@]}"; do
@@ -336,6 +542,7 @@ cmd_reap() {
   for r in "${reaped[@]}"; do
     printf '  %s\n' "$r"
   done
+  printf '%d orphaned mktemp leftover(s) reaped (*.json.XXXXXX, same %dmin threshold)\n' "$tmp_reaped" "$reap_min"
   return 0
 }
 
@@ -606,6 +813,289 @@ EOF
     fail "reap: OBS_HEARTBEAT_REAP_MIN=1 override did not take effect (file survived)"
   fi
 
+  echo "Scenario J: the direct-wiring refresh — a second touch with a NEW event advances last_activity_ts AND moves last_event off 'start' (the 2026-08-01 starvation defect: every real heartbeat file on this machine was frozen at last_event=start because the only touch that ever landed was SessionStart's)"
+  local refresh_dir="$TMP/hb-refresh"
+  mkdir -p "$refresh_dir"
+  (
+    export HEARTBEAT_STATE_DIR="$refresh_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-refresh"
+    cmd_touch --event start
+  )
+  local frf="$refresh_dir/sess-refresh.json"
+  local ts_before ev_before
+  ts_before="$(_hb_field "$frf" "last_activity_ts")"
+  ev_before="$(_hb_field "$frf" "last_event")"
+  # Age the file by a full second so the second write's ISO timestamp
+  # (1s resolution) is provably LATER, not merely equal.
+  sleep 1
+  (
+    export HEARTBEAT_STATE_DIR="$refresh_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-refresh"
+    cmd_touch --event prompt
+  )
+  local ts_after ev_after
+  ts_after="$(_hb_field "$frf" "last_activity_ts")"
+  ev_after="$(_hb_field "$frf" "last_event")"
+  if [[ "$ev_before" == "start" && "$ev_after" == "prompt" ]]; then
+    pass "refresh: last_event advanced start -> prompt (no longer frozen at 'start')"
+  else
+    fail "refresh: expected last_event start -> prompt, got '$ev_before' -> '$ev_after'"
+  fi
+  local epoch_before epoch_after
+  epoch_before="$(_hb_epoch "$ts_before")"
+  epoch_after="$(_hb_epoch "$ts_after")"
+  if [[ "$epoch_after" -gt "$epoch_before" ]]; then
+    pass "refresh: last_activity_ts ADVANCED ($ts_before -> $ts_after)"
+  else
+    fail "refresh: last_activity_ts did not advance ($ts_before -> $ts_after)"
+  fi
+
+  echo "Scenario K: --if-older-than cheap guard — a FRESH file is not rewritten; a STALE one is; a non-numeric threshold fails OPEN (writes)"
+  local guard_dir="$TMP/hb-guard"
+  mkdir -p "$guard_dir"
+  (
+    export HEARTBEAT_STATE_DIR="$guard_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-guard"
+    cmd_touch --event start
+  )
+  local gf="$guard_dir/sess-guard.json"
+  local g_ev_before g_ts_before
+  g_ev_before="$(_hb_field "$gf" "last_event")"
+  g_ts_before="$(_hb_field "$gf" "last_activity_ts")"
+  sleep 1
+  (
+    export HEARTBEAT_STATE_DIR="$guard_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-guard"
+    cmd_touch --event tool-use --if-older-than 600
+  )
+  local g_ev_fresh g_ts_fresh
+  g_ev_fresh="$(_hb_field "$gf" "last_event")"
+  g_ts_fresh="$(_hb_field "$gf" "last_activity_ts")"
+  if [[ "$g_ev_fresh" == "$g_ev_before" && "$g_ts_fresh" == "$g_ts_before" ]]; then
+    pass "guard: a file younger than --if-older-than 600 was NOT rewritten (event and ts both unchanged)"
+  else
+    fail "guard: fresh file WAS rewritten (event '$g_ev_before'->'$g_ev_fresh', ts '$g_ts_before'->'$g_ts_fresh')"
+  fi
+  # Same call with a 0-second threshold: nothing can be younger than 0s, so
+  # the guard must fall through to a real write.
+  (
+    export HEARTBEAT_STATE_DIR="$guard_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-guard"
+    cmd_touch --event tool-use --if-older-than 0
+  )
+  local g_ev_stale
+  g_ev_stale="$(_hb_field "$gf" "last_event")"
+  if [[ "$g_ev_stale" == "tool-use" ]]; then
+    pass "guard: --if-older-than 0 falls through to a real write (last_event -> tool-use)"
+  else
+    fail "guard: --if-older-than 0 did not write (last_event still '$g_ev_stale')"
+  fi
+  # Fail-open: a non-numeric threshold must WRITE, never silently skip.
+  local guard_open_dir="$TMP/hb-guard-open"
+  mkdir -p "$guard_open_dir"
+  (
+    export HEARTBEAT_STATE_DIR="$guard_open_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-guard-open"
+    cmd_touch --event start
+  )
+  sleep 1
+  (
+    export HEARTBEAT_STATE_DIR="$guard_open_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-guard-open"
+    cmd_touch --event turn-end --if-older-than abc
+  )
+  local go_ev
+  go_ev="$(_hb_field "$guard_open_dir/sess-guard-open.json" "last_event")"
+  if [[ "$go_ev" == "turn-end" ]]; then
+    pass "guard: a non-numeric --if-older-than FAILS OPEN (writes rather than skipping)"
+  else
+    fail "guard: non-numeric --if-older-than skipped the write (last_event '$go_ev', expected turn-end)"
+  fi
+  # CLOCK SKEW / FUTURE MTIME (harness-reviewer 2026-08-02, Critical 1): a
+  # heartbeat stamped in the FUTURE has a NEGATIVE age. The naive
+  # `age -lt secs` test is TRUE for it, so the writer would treat the file
+  # as permanently fresh and stop refreshing until wall-clock caught up —
+  # re-introducing the exact freeze this change closes, via the guard meant
+  # to make it cheap. The write MUST land.
+  local guard_skew_dir="$TMP/hb-guard-skew"
+  mkdir -p "$guard_skew_dir"
+  (
+    export HEARTBEAT_STATE_DIR="$guard_skew_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-guard-skew"
+    cmd_touch --event start
+  )
+  local skf="$guard_skew_dir/sess-guard-skew.json"
+  local future_stamp
+  future_stamp="$(date -u -d '+1 day' '+%Y%m%d%H%M' 2>/dev/null || date -u -v+1d '+%Y%m%d%H%M' 2>/dev/null)"
+  if [[ -n "$future_stamp" ]] && touch -t "$future_stamp" "$skf" 2>/dev/null; then
+    (
+      export HEARTBEAT_STATE_DIR="$guard_skew_dir"
+      export CLAUDE_CODE_SESSION_ID="sess-guard-skew"
+      cmd_touch --event turn-end --if-older-than 15
+    )
+    local sk_ev
+    sk_ev="$(_hb_field "$skf" "last_event")"
+    if [[ "$sk_ev" == "turn-end" ]]; then
+      pass "guard: a FUTURE mtime (clock skew) fails OPEN — the write lands instead of freezing the heartbeat until wall-clock catches up"
+    else
+      fail "guard: future-mtime file was treated as fresh and skipped (last_event '$sk_ev', expected turn-end) — negative-age regression"
+    fi
+  else
+    echo "  (could not stamp a future mtime on this platform — skipping the clock-skew assertion)"
+  fi
+
+  # A guard against a session with NO heartbeat file yet must also write.
+  local guard_new_dir="$TMP/hb-guard-new"
+  mkdir -p "$guard_new_dir"
+  (
+    export HEARTBEAT_STATE_DIR="$guard_new_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-guard-new"
+    cmd_touch --event prompt --if-older-than 600
+  )
+  if [[ -f "$guard_new_dir/sess-guard-new.json" ]]; then
+    pass "guard: a session with no heartbeat file yet is written despite --if-older-than (fail-open on absence)"
+  else
+    fail "guard: --if-older-than suppressed the FIRST write for a session with no heartbeat file"
+  fi
+
+  echo "Scenario L: the writer NEVER returns nonzero — not on an unwritable state dir, and not on the guard path either (writer-never-blocks contract: a liveness tick must not be able to fail a tool call)"
+  local unwritable="$TMP/unwritable-file"
+  printf 'x\n' > "$unwritable"
+  local rc_unwritable rc_unwritable_guard rc_unwritable_script
+  # A regular FILE used as the state DIR: mkdir -p cannot create the
+  # directory under it, so every write path fails — and must still exit 0.
+  (
+    export HEARTBEAT_STATE_DIR="$unwritable/hb"
+    export CLAUDE_CODE_SESSION_ID="sess-unwritable"
+    cmd_touch --event turn-end 2>/dev/null
+  )
+  rc_unwritable=$?
+  if [[ "$rc_unwritable" == "0" ]]; then
+    pass "writer: touch on an unwritable state dir still returns 0"
+  else
+    fail "writer: touch on an unwritable state dir returned $rc_unwritable (expected 0)"
+  fi
+  (
+    export HEARTBEAT_STATE_DIR="$unwritable/hb"
+    export CLAUDE_CODE_SESSION_ID="sess-unwritable"
+    cmd_touch --event tool-use --if-older-than 60 2>/dev/null
+  )
+  rc_unwritable_guard=$?
+  if [[ "$rc_unwritable_guard" == "0" ]]; then
+    pass "writer: guarded touch on an unwritable state dir still returns 0"
+  else
+    fail "writer: guarded touch on an unwritable state dir returned $rc_unwritable_guard (expected 0)"
+  fi
+  # Same through the real entry point (a hook calls the SCRIPT, not the
+  # function) — the exit-0 contract has to hold at process level too.
+  (
+    export HEARTBEAT_STATE_DIR="$unwritable/hb"
+    export CLAUDE_CODE_SESSION_ID="sess-unwritable"
+    bash "$SCRIPT_DIR/session-heartbeat.sh" touch --event tool-use --if-older-than 60 >/dev/null 2>&1
+  )
+  rc_unwritable_script=$?
+  if [[ "$rc_unwritable_script" == "0" ]]; then
+    pass "writer: the SCRIPT exits 0 on an unwritable state dir (process-level never-blocks contract)"
+  else
+    fail "writer: the script exited $rc_unwritable_script on an unwritable state dir (expected 0)"
+  fi
+
+  echo "Scenario M: the CLAIM-STAKE — a guarded call fired while a sibling write is still IN FLIGHT must skip. The guard reads the destination's mtime, which hb_write only advances on COMPLETION (~43s later), so without staking the claim up front the guard is blind for ~3x its own window and both calls take the full write path (harness-reviewer 2026-08-02, Critical 2)."
+  local stake_dir="$TMP/hb-stake"
+  mkdir -p "$stake_dir"
+  (
+    export HEARTBEAT_STATE_DIR="$stake_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-stake"
+    cmd_touch --event start
+  )
+  local stake_file="$stake_dir/sess-stake.json"
+  local stake_calls="$stake_dir/hb_write.calls"
+  local old_stamp
+  old_stamp="$(date -u -d '1 hour ago' '+%Y%m%d%H%M' 2>/dev/null || date -u -v-1H '+%Y%m%d%H%M' 2>/dev/null)"
+  if [[ -n "$old_stamp" ]] && touch -t "$old_stamp" "$stake_file" 2>/dev/null; then
+    (
+      export HEARTBEAT_STATE_DIR="$stake_dir"
+      export CLAUDE_CODE_SESSION_ID="sess-stake"
+      : > "$stake_calls"
+      # Stand in for the real ~43s writer: this isolates the ONE thing under
+      # test — whether the DESTINATION's mtime is advanced BEFORE the write
+      # body runs, rather than after it.
+      hb_write() { printf 'call\n' >> "$stake_calls"; sleep 5; return 0; }
+      cmd_touch --event turn-end &
+      sleep 1
+      # Sibling guarded call, 1s into a 5s "write". With the claim-stake it
+      # sees a fresh mtime and skips; without it, it piles on a second write.
+      cmd_touch --event tool-use --if-older-than 60
+      wait
+    )
+    local stake_n
+    stake_n="$(wc -l < "$stake_calls" 2>/dev/null | tr -d ' \r')"
+    if [[ "$stake_n" == "1" ]]; then
+      pass "claim-stake: a guarded call during an in-flight write SKIPPED (hb_write invoked exactly once, not twice)"
+    else
+      fail "claim-stake: expected exactly 1 hb_write invocation, got '$stake_n' — the guard is blind to the in-flight sibling"
+    fi
+  else
+    echo "  (could not stamp a past mtime on this platform — skipping the claim-stake assertion)"
+  fi
+  # The claim-stake must NEVER create a file that does not exist: `touch` on
+  # an absent path yields an EMPTY file, and every reader parses these as
+  # JSON (sweep/hb_classify here, od_sessions, the cockpit's
+  # listRawHeartbeats). Absent + guarded must still produce VALID JSON.
+  local stake_new_dir="$TMP/hb-stake-new"
+  mkdir -p "$stake_new_dir"
+  (
+    export HEARTBEAT_STATE_DIR="$stake_new_dir"
+    export CLAUDE_CODE_SESSION_ID="sess-stake-new"
+    cmd_touch --event prompt --if-older-than 60
+  )
+  local stake_new_file="$stake_new_dir/sess-stake-new.json"
+  if [[ -s "$stake_new_file" ]] && { ! command -v jq >/dev/null 2>&1 || jq -e . "$stake_new_file" >/dev/null 2>&1; }; then
+    pass "claim-stake: a first-ever write produces a NON-EMPTY, jq-valid heartbeat (the stake never creates a truncated file readers would choke on)"
+  else
+    fail "claim-stake: first-ever guarded write left an empty/invalid heartbeat at $stake_new_file"
+  fi
+
+  echo "Scenario N: reap also removes ORPHANED mktemp leftovers (<sid>.json.XXXXXX) — hb_write's tmp+mv leaks one whenever a kill lands between its printf and its mv, and the *.json glob can never match them (one has sat in the real state dir since 2026-07-23)"
+  local orphan_dir="$TMP/hb-orphan"
+  mkdir -p "$orphan_dir"
+  local orphan_transcripts="$TMP/orphan-transcripts"
+  mkdir -p "$orphan_transcripts"
+  printf '{"schema":1}\n' > "$orphan_dir/abc-def.json.iqLTc8"
+  printf '{"schema":1}\n' > "$orphan_dir/fresh-sid.json.ZZZZZZ"
+  local ancient_stamp
+  ancient_stamp="$(date -u -d '30 days ago' '+%Y%m%d%H%M' 2>/dev/null || date -u -v-30d '+%Y%m%d%H%M' 2>/dev/null)"
+  if [[ -n "$ancient_stamp" ]] && touch -t "$ancient_stamp" "$orphan_dir/abc-def.json.iqLTc8" 2>/dev/null; then
+    local orphan_out
+    orphan_out="$(HEARTBEAT_STATE_DIR="$orphan_dir" OBS_TRANSCRIPTS_ROOT="$orphan_transcripts" cmd_reap)"
+    if [[ ! -f "$orphan_dir/abc-def.json.iqLTc8" ]]; then
+      pass "reap: a >24h-old mktemp leftover was removed"
+    else
+      fail "reap: the ancient mktemp leftover survived"
+    fi
+    if [[ -f "$orphan_dir/fresh-sid.json.ZZZZZZ" ]]; then
+      pass "reap: a FRESH mktemp leftover (possible in-flight write) was NOT removed"
+    else
+      fail "reap: removed a fresh mktemp leftover — an in-flight write could be destroyed"
+    fi
+    if printf '%s' "$orphan_out" | grep -q "1 orphaned mktemp leftover(s) reaped"; then
+      pass "reap: plain output reports the leftover count on its own line (oracle-named)"
+    else
+      fail "reap: leftover count not reported: $orphan_out"
+    fi
+    # --json's documented shape is an array of SESSION IDS; a tmp leftover is
+    # not one and must not widen it.
+    local orphan_json
+    orphan_json="$(HEARTBEAT_STATE_DIR="$orphan_dir" OBS_TRANSCRIPTS_ROOT="$orphan_transcripts" cmd_reap --json)"
+    if command -v jq >/dev/null 2>&1 && printf '%s' "$orphan_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+      pass "reap --json remains a valid array of session ids (leftover reaping did not change its shape)"
+    else
+      fail "reap --json shape broke: $orphan_json"
+    fi
+  else
+    echo "  (could not stamp an ancient mtime on this platform — skipping the leftover-reap assertions)"
+  fi
+
   rm -rf "$TMP" 2>/dev/null || true
 
   echo ""
@@ -645,10 +1135,14 @@ case "${1:-}" in
 session-heartbeat.sh — per-session liveness file (NL Observability Program O.2)
 
 Verbs:
-  touch --event <start|turn-end|compact|resume> [--marker <state>] [--session <sid>]
+  touch --event <start|prompt|tool-use|turn-end|compact|resume>
+        [--marker <state>] [--session <sid>] [--if-older-than <seconds>]
                           Atomically write/refresh a session's heartbeat
                           file (--session targets an explicit sid,
-                          overriding $CLAUDE_CODE_SESSION_ID — ADR-061 D2).
+                          overriding $CLAUDE_CODE_SESSION_ID — ADR-061 D2;
+                          --if-older-than makes the touch a cheap no-op
+                          when the file is already younger than <seconds>,
+                          failing OPEN so any doubt still writes).
                           Never blocks; exit 0 always.
   sweep [--json] [--stale-min <n>]
                           Report-only: list every heartbeat file's

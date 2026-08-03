@@ -262,6 +262,25 @@
         </div>
         <div class="pane-body" id="backlogHealthBody"></div>
       </section>
+
+      <!-- Maintenance budget — harness-execution-redesign-2026-08 Task 3
+           (R3.5 cost-budget dashboard panel). Reads nl-maintenance.sh's
+           dashboard snapshot directly (server/server.js's
+           buildMaintenancePane, GET /api/pane/maintenance-budget): R3.3
+           inventory counts (hooks-per-Bash, SessionStart spawns, legacy
+           scheduled tasks still enabled) vs their targets, per-mechanism
+           cost x fire-rate from config/schedule-manifest.json, and the
+           gate-friction ledger (lib/workaround-sensor-lib.sh's ws_record
+           ledger, wired gated-pipeline-master-2026-08 Task 5 / HR-F6;
+           renders an honest "not available yet" note on any machine
+           without that ledger file yet). -->
+      <section id="paneMaintenance" class="pane pane-maintenance" aria-label="maintenance layer budget">
+        <div class="pane-head">
+          <span class="pane-title">Maintenance budget</span>
+          <span class="pane-age" data-age-for="maintenance">—</span>
+        </div>
+        <div class="pane-body" id="maintenanceBudgetBody"></div>
+      </section>
     </main>
 
     <!-- Machines — cross-machine peer state (PEERS-SURFACE-RETIRED-01,

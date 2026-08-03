@@ -1,8 +1,19 @@
-Last updated: 2026-07-30
+Last updated: 2026-07-31
 
 # Neural Lace — Harness Backlog
 
-**Last updated:** 2026-07-30 v72 — cockpit-roadmap-redesign ACTIVE @70f7133: five-round operator
+**Last updated:** 2026-07-31 v73 — integration merge (desktop stack + wip/harness-hardening
+takeover wave); both prior v72 notes preserved. Desktop v72 — ROADMAP-R11 rows 01-03 (ACTIVE-PATH-EXPANSION,
+L0-FOUR-BUCKET-STRIP, KANBAN-MASTER-CHIPS) found ALREADY BUILT on master @18e8f65 (the
+orchestrator's gap-closures landed in the SAME commit as the R11 hierarchy-renderer build,
+2026-07-27 — the filed rows were never removed after the fix). Verified structurally
+(self-test web/cockpit.selftest.js 305/0, incl. R9-2b/R11-L0/R11-C6/R11-I4 assertions) AND
+at runtime on a live :7799 instance: real-data four-bucket strip + active-path
+auto-expansion observed directly; the kanban master-chip rule was proven via a synthetic
+master/child_plans payload (fetch-override injection, since no real in-repo master/child
+family currently exists) rendering exactly two child cards each carrying the master's
+chip, master itself never its own card. No code changes were needed; rows removed. Prior —
+2026-07-18 v71 — cockpit-roadmap-redesign ACTIVE @70f7133: five-round operator
 sit-down synthesized, BOTH design gates run (arch SOUND-WITH-AMENDMENTS A1-A10; ux FAIL→delta
 PASS-WITH-CONCERNS, C1-C9/I1-I6 + delta R1-R6 all folded); cockpit-ui-polish SUPERSEDED+archived
 (absorbed as tasks 6+8); badge-storm auditor fix LANDED+DEPLOYED (unmatched_dispatch age-bounded
@@ -23,6 +34,51 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 ## Open work — substantive deferrals
 
+
+- **PREDECESSOR-CLOSURE-CARRYFORWARDS-2026-08-03-01 — five items with no successor-plan owner, registered at the harness-execution-redesign SUPERSEDED flip so the archive loses nothing** (added 2026-08-03 by the gated-pipeline orchestrator from the closure verification in `docs/plans/archive/harness-execution-redesign-2026-08-evidence.md` §"Closure verification under supersession"; label: `harness-gap`, `priority:medium`; fold-in: per-item below). The predecessor's T1 closed PASS; T2 FAIL / T3 INCOMPLETE with these exact unowned gaps: (1) **Doctor gate-message lint** (T2's own outcome arbiter, "lint 5/5" unmeetable without it) — NOTE this is ALSO a design→plan fidelity slip in the successor: design r3 §9 dispositions S-29→REQ-A5 but successor T7's task text never carried it; candidate owner: fold into successor T14 (plan-reviewer Checks 20-22 work, same file family) or a dedicated small task; the fidelity re-review at T16 should catch this class going forward. (2) **Contract fields on the five retrofitted gates' manifest entries + a gate-contract convention section in harness-dev.md** (T2 Docs impact, jq-verified absent). (3) **Workaround-rate threshold → nl-issue.sh auto-file** (D-04's auto-file leg; either build at the T20 carriage work or record an explicit design-cut). (4) **harness-dev.md install/uninstall/rollback runbook section + workstreams-ui README dashboard note** (T3 Docs impact; natural owner: successor T10 registration work). (5) **T2/T3 Comprehension Articulations** if either archived task is ever to flip post-archive (Decision 020d holds; articulations must be graded against e5432f3c-era diffs). Re-derive: read the closure-verification section in the archived evidence file.
+
+- **BRANCH-SALVAGE-2026-08-01 — six unmerged branches hold work master genuinely lacks; the other 56 are proven-superseded and delete-eligible** (added 2026-08-01 from the branch-disposition sweep; label: `harness-gap`, `priority:medium`; fold-in: one lane per row below, highest-value first). Full evidence table + per-branch citations: `docs/reviews/2026-08-01-branch-disposition-sweep.md`. **Why this took a manual pass:** this repo squash-merges, so `git cherry` patch-ids and "unmerged" branch status are both near-meaningless here — 40 of 74 branches had >=90% of their added lines already verbatim on master, and 24 had a commit subject present in master's log under a different SHA. The mechanical purge (`purge-verified-20260729.sh`) correctly refused to touch any of them, which is why it exhausted at 3 removals. The six salvage rows:
+  1. **SWEEP-SQUASH-MERGE-VISIBILITY-01** (`feat/sweep-squash-merge-visibility`, tip `e7e10f3`) — ~470 lines teaching `scripts/worktree-hygiene-sweep.sh` to recognise a squash-merged branch as PROVEN-MERGED via merged-PR lookup (`load_merged_prs`, `lookup_merged_pr`), plus its 2026-07-17 harness-review fixes (1 Critical, 3 Major, 2 Minor). Master's sweep has ZERO squash-merge visibility — this branch is the mechanism that makes the whole class above self-service. **Highest-value salvage in the estate; land this before the next sweep.**
+  2. **RECLAMATION-PROPOSAL-AMENDMENT-01** (same branch; `docs/reclamation-proposal-amendment`'s 2 commits are its ancestors) — an unlanded 124-line amendment to `docs/proposals/2026-07-08-worktree-branch-reclamation.md`: root-cause 1 refuted, the operator decisions (keep the approval channel; expiry SURFACES, never destroys) and 7 edge cases learned from the first real sweep. Master still carries the un-amended 92-line original. Salvaging row 1 covers this; delete `docs/reclamation-proposal-amendment` only AFTER that lands.
+  3. **PREPUSH-PII-PATTERN-CLASS-01** (`salvage/pre-push-pii-patterns-20260702`, tip `0a44e69`) — SECURITY-RELEVANT: ~131 lines adding a PII/SSN pattern class to `hooks/pre-push-scan.sh`, a `sensitive-patterns-allowlist.local.example`, and `docs/harness-improvements/001-stop-gate-reflective-escalation.md`. None on master; the credential scanner still has no PII class.
+  4. **RESUMER-JQ-BROKEN-NOT-ABSENT-01** (`claude/dreamy-mclaren-6f2ac3`, tip `fbbfc19`) — fixes a latent defect master STILL has: `scripts/session-resumer.sh` treats `command -v jq` as proof jq WORKS, so a present-but-broken jq silently drops digest-feed lines and TRUNCATES `write_backoff_state`'s file (`jq ... > "$path"` truncates before failing). Fix builds the line first and falls back to manual JSON on any failure.
+  5. **EVENT-DRIVEN-HEARTBEAT-BEAT-MODE-01** (`feat/event-driven-heartbeat`, tip `9ff78f6`) — an unlanded `--beat` event-driven heartbeat mode for `workstreams-emit.sh` (+ self-tests + frozen spec) meant to replace the polling scheduled task; master still polls via `--heartbeat`. Treat as a DESIGN to re-evaluate against today's `session-heartbeat.sh`/`health-tick.sh`, not a patch to cherry-pick — 9 weeks of divergence. (Its other half, workstreams tree real-nesting, already landed as `3da37b1`.)
+  6. **OPERATOR-TODO-FIXTURE-POLLUTION-REVIEW-01** (`claude/infallible-montalcini-26a8f0`, tip `2bb52d0`) — a 64-line review, `docs/reviews/2026-07-13-operator-todo-fixture-pollution.md`, correcting an earlier misdiagnosis of operator-todo fixture pollution. Absent from master; cheap to preserve, and this is the kind of correction that gets re-learned expensively.
+  **Two judgment calls the operator can overrule cheaply:** `claude/interesting-lederberg-3ad04d` was called ABANDONED (a one-line manifest edit removing `hooks/lib/sessionstart-singleflight.sh` from a `hooks[]` array, contradicting the 32-place convention) — if `harness-doctor.sh` actually flags that entry it flips to SALVAGE, and one doctor run settles it. Four ACTIVE-LANE branches sit on the <3-day boundary with 94-98% of content already on master; kept this pass, sweepable next.
+
+- **EMIT-REPLAY-THIRD-SILENCED-STATE-WRITE-01 — the debounce-token write is the one `|| true` site the defect-4 sweep missed, and its comment misstates the failure direction** (added 2026-08-01 from the round-7 review of the emitter transport, finding F2; label: `harness-gap`, `priority:medium`; fold-in: the next touch of the replay subsystem, or a dedicated sweep of the idiom). **PROVEN by direct probe of the extracted `_dispatch_replay_token`** (reviewer's evidence): the mkdir-fails path returned two DIFFERENT tokens (fails open), the token-write-fails path returned two DIFFERENT tokens (fails open), and the healthy control returned the SAME token (dedups). The subsystem has THREE state writes; `bf5ddad` fixed two (`workstreams-emit.sh:688-703` spawn, `:3960-3985` builder) and left the third — the debounce token at `:3674` (`>"$f" 2>/dev/null || true`) and its mkdir fallback at `:3654` — still silenced, failing open with NO WARN. The rationale comment at `:3641` asserts the fallback is "merely conservative", which is TRUE for the noclock branch and FALSE for the unwritable-state-dir branch. **Fix:** correct `:3641` to distinguish the two fallback directions, and either capture the write status the way the other two sites now do or record this site as a named residual in the same comment. **Reachability caveat, stated honestly:** this layer only decides anything once the identity ledger (layer 1) has already failed, so the practical exposure is narrow — but the CLASS (silenced state write fails open invisibly) is exactly the one the commit set out to close, and a partial sweep leaves it alive behind a fixed instance. **Re-derive:** `rg -n '>>?\s*"\$[a-z_]+"\s*2>/dev/null\s*\|\|\s*true' adapters/claude-code/hooks/workstreams-emit.sh adapters/claude-code/hooks/plan-lifecycle.sh`.
+
+- **MANIFEST-SUPPRESSION-CLAIM-OUTLIVED-ITS-EXCEPTION-01 — `manifest.json`'s dispatch-provenance entry states an unconditional suppression the emitter now PROVES has a condition** (added 2026-08-01 from the round-7 review, finding F3; label: `harness-gap`, `priority:medium`; fold-in: the next manifest edit, or any commit touching the dispatch-provenance unit). The entry's `honest_status` says **"Both sinks are suppressed for a REPLAYED dispatch identity"** with no qualifier, while `bf5ddad` proved (RED/GREEN, ledger path pre-created as a directory) that an unwritable ledger makes the gate **fail open** — the duplicate IS re-emitted, so the sinks are NOT suppressed in that case. Constitution §10: every mechanism claim in the enforcement inventory must be true at runtime. **Deliberately NOT fixed in that commit:** `manifest.json` is outside its declared two-file scope and editing it would have tripped `scope-enforcement-gate.sh` — the same discipline that correctly sent the TAKEOVER-brief correction to a backlog row instead of a scope stretch. **Fix:** amend the sentence to "…suppressed for a REPLAYED dispatch identity **whose identity write succeeded**; an unwritable ledger fails open (see EMIT-REPLAY-FAIL-OPEN residual)". **Re-derive:** `git show HEAD:adapters/claude-code/manifest.json | grep "Both sinks are suppressed"`.
+
+- **RESTATE-COUNTS-RULE-OVERREACHES-ONTO-IMMUTABLE-RECORDS-01 — the standing count-restatement rule, as written, demands rewriting dated review records** (added 2026-08-01 from the round-7 review, finding F4; label: `harness-gap`, `priority:low`; fold-in: next edit of the STANDING RULE block at `docs/backlog.md`). The rule says restate every count "in every artifact quoting one". Taken literally that includes `docs/reviews/2026-07-31-integration-merge-consolidated-review.md:70,79,81` and `docs/reviews/records/2026-08-01-harness-change-review-4586088a.json` — immutable dated artifacts whose whole value is being a snapshot of what was true when written; rewriting them would corrupt the record. The rule's own author correctly did NOT rewrite them, which means the shipped practice already contains an unstated exception. **Fix:** add the exception inline — "…in every artifact quoting one AS A PRESENT-TENSE CLAIM; dated snapshots and immutable review records are exempt when labelled as such, and an out-of-scope artifact gets a fold-in row instead." **Generalization:** a standing rule whose first application requires an unstated exception should ship with that exception, or the next reader reads the correct deviation as a violation.
+- **POST-MERGE-REVIEW-ADVISORIES-20260731-01 — six Minor advisories from the consolidated post-merge review of integration merge 301e35f, deferred not dropped** (added 2026-07-31; label: `harness-hygiene`, `priority:low`; fold-in: next hygiene sweep, or the takeover lane whose file each touches). Source: the 9-agent consolidated review (verdict FAIL on two Majors, both fixed in the remediation commit that added this row; these six are the non-blocking residue). (1) Merge 301e35f committed four runtime session-state files from the wip side — `adapters/claude-code/.claude/state/stop-hook-retries-*.txt`, `unresolved-stop-hooks.log`, one more under workstreams-ui — remove from tracking + gitignore the state dirs. (2) `hooks/workstreams-emit.sh` is mode 100644 while every sibling hook is 100755 (^2 had 755; inert today — all call sites use `bash <file>` — likely core.filemode=false artifact; align when convenient). (3) `scripts/close-plan.sh` S30 reuses variable name `D22` from an earlier scenario — legal and non-contaminating, but a future splice hazard; rename to D30 on next touch. (4) `hooks/lib/admission-lib.sh:1660` dead `rc=$?` (inherited byte-for-byte from ^2, not merge damage). (5) Suite-baseline correction: the pre-merge briefing numbers (admission-lib "67 scenarios", needs-you "53") match no tree state; the merged-tree oracle numbers are admission-lib 31 scenarios/80 assertions, needs-you 61/0, perf-tick 28/0, emit 123/123, close-plan 30 scenarios, janitor 22/22, brief 34/34 — use THESE as baselines, never re-propagate 67/53. **emit SUPERSEDED 2026-08-01: `131/131`** (re-derive: `HARNESS_SELFTEST=1 bash adapters/claude-code/hooks/workstreams-emit.sh --self-test | tail -2`). The commit that transported `f018623`+`ab8055b` added the 8 defect-4 regression assertions RPL9-RPL9g, so 123 is now a HISTORICAL SNAPSHOT (2026-07-31 merged-tree oracle) and 131 is the present-tense baseline; every other figure in this list is untouched by that commit. (6) Four `{ source lib; } || true` guards at emit :84/:90/:92/:142 share the brace-group set-u hazard in BOTH parents but cannot be subshelled (source must mutate the shell) — inherent residual, recorded so nobody re-finds it; a fix would need a different guard idiom (e.g. pre-flight `bash -n` + existence check).
+- **TAKEOVER-BRIEF-EMITTER-RESUME-POINT-STALE-01 — `docs/TAKEOVER-2026-07-31.md` §2b still tells the next machine to do work that is now DONE, and prescribes a probe that cannot work here** (added 2026-08-01; label: `harness-hygiene`, `priority:medium`; fold-in: the next touch of the takeover brief, or whichever plan adopts that file — **no active plan declares `docs/TAKEOVER-2026-07-31.md` in scope**, which is why the correction is recorded here instead of applied there: `scope-enforcement-gate.sh` correctly blocked staging it alongside the emitter transport, and stretching an unrelated plan's scope to cover a handoff doc would be exactly the silent scope expansion that gate exists to stop). **The stale text**, §2b "Resume points, per lane": *"Emitter (`ab8055b`) — only remaining step is an in-suite regression pin for defect 4 (scenario `RPL9`: `chmod 500` the ledger dir → assert WARN + `replay=?`). A working probe is at `scratchpad/prove-d4-red.sh`; no re-derivation needed. Suite 120p/1f."* **Three corrections, all PROVEN 2026-08-01 on the Windows machine:** (1) **DONE** — the transport commit for `f018623`+`ab8055b` added `RPL9`-`RPL9g` (8 executing assertions) and the suite is **131/0**, not 120p/1f; that lane has no remaining step. (2) **`scratchpad/prove-d4-red.sh` DOES NOT EXIST here** — it was Mac-local and did not come across, so "no re-derivation needed" is false and the probe *was* re-derived from the code; anyone following the brief literally will hunt for a missing file. (3) **`chmod 500` IS THE WRONG TRIGGER ON THIS TARGET** — MSYS/Git-Bash `chmod` does not produce a write-denying ACL, so the append SUCCEEDS and a permissions-based probe passes **vacuously** (a false GREEN, the worst outcome for a regression pin). The portable trigger, which is what `RPL9` actually uses, is to pre-create the ledger PATH as a **directory**: `>>` to a directory fails on every POSIX shell and on Git-Bash (`Is a directory`, rc=1) and `[[ -f ]]` is false for it, so the code takes exactly the branch a missing file takes. Also worth folding in when that file is next touched: §4's live-hook hash claim is Mac-scoped (see `ROADMAP-FALSE-ETERNAL-RUNNING-01`'s 2026-08-01 correction — the live hook on THIS machine is byte-identical to master, i.e. unfixed).
+- **PATH-EQUIVALENCE-CLASS-01 — harness path predicates decide membership case-SENSITIVELY while the delivery filesystem is case-INSENSITIVE; `rrg_in_surface` is fixed, `local-edit-gate.sh` is the named live sibling** (added 2026-07-30 closing harness-reviewer CRITICAL round 5 on `review-record-push-gate.sh`; label: `harness-gap`, `priority:high`). **PROVEN, end-to-end against a real bare remote with `git-hooks/pre-push` installed as the actual pre-push hook:** `git update-index --add --cacheinfo 100755,<blob>,adapters/claude-code/Hooks/injected.sh` (capital H) + commit + push returned **rc=0, gate SILENT, and the path LANDED on the remote**; `git clone` + `git checkout master` then materialised it at `adapters/claude-code/hooks/injected.sh` mode 755 — inside the real carrier directory, beside `review-record-push-gate.sh` itself. `--cacheinfo` is what makes it reachable: it writes the index entry directly, so the capital-H path never has to survive a case-insensitive working tree. **THE CLASS:** a membership predicate that decides from a path STRING must normalise on every equivalence the DELIVERY LAYER collapses; if its equivalence relation is narrower, every string in the gap is a silent hole. Same class as round 4's CRITICAL 2 (predicate asked about git's C-quoted *rendering* rather than the path) — there the gap was enumerator→predicate, here it is predicate→checkout. **MEASURED on this APFS volume** (two byte-distinct names created; did the second overwrite the first): ASCII case COLLAPSED · Unicode case COLLAPSED · U+017F long-s→s COLLAPSED · U+212A Kelvin→k COLLAPSED · NFC vs NFD COLLAPSED · trailing dot DISTINCT · trailing space DISTINCT. **FIXED in that commit — `hooks/lib/review-record-gate-lib.sh`'s `rrg_in_surface`** (fold before the surface test; exact-path exemptions stay case-SENSITIVE so an exemption cannot be widened by case). All 13 surface arms were broken identically, not just the 5 reported. The three consumers of that predicate — `hooks/review-record-push-gate.sh`, `hooks/review-record-commit-gate.sh`, `hooks/lib/review-queue-auto-enqueue-lib.sh` — call `rrg_in_surface` and carry no independent path arms, so they inherit the fix. **NOT FIXED — the one live sibling, named rather than dropped: `hooks/local-edit-gate.sh:101-114` (`is_under_claude_local`).** HYPOTHESIZED (from a read-only sweep of `hooks/`, `scripts/`, `git-hooks/`; NOT yet reproduced end-to-end — that is the next step): its `case "$normalized" in "$normalized_local"/*|"$normalized_local")` arms normalise Windows separators and double slashes but not case, so `~/.claude/Local/CLAUDE.md` would answer "not under ~/.claude/local", and the gate (`manifest.json` entry `local-edit-authorization`, `blocking: true`, PreToolUse on Edit|Write|MultiEdit) would allow the write with no `/grant-local-edit` marker while APFS materialises it at the real path. **REFUTED BY:** running the gate against a capital-L path and observing it still block. Fix shape: fold both `$normalized` and `$normalized_local` before the glob. **Audited and SAFE (no action) — 41 further callsites**, all either exemption/exclusion arms where a case-variant miss yields MORE scrutiny (`harness-hygiene-scan.sh:689-879`, `scope-enforcement-gate.sh:165-195`, `concurrent-ownership-gate.sh:1048`) or non-enforcing classification/routing (`doctrine-jit.sh:188,259`, `backlog-plan-atomicity.sh:190,210`, `vaporware-volume-gate.sh:283,290,309`, `decisions-index-gate.sh:205`, `env-local-protection.sh:219`, `work-integrity-gate.sh:998`). **Re-derive:** `rg -n 'case "\$(rel|full|path|p|f)" in' adapters/claude-code/hooks/ adapters/claude-code/scripts/ adapters/claude-code/git-hooks/ | rg -v 'casefold|nocasematch|tr .A-Z..a-z.'`. **Standing rule** (extends GIT-PATH-QUOTING-CLASS-01's): every harness consumer of git path output must disable quoting AND use NUL separation **AND normalise to the delivery filesystem's equivalence class before the predicate decides membership**. Trailing dot/space (a Windows-checkout equivalence) stays open and untestable here — no Windows checkout of this repo exists.
+
+- **DOCTOR-DEBT-SNAPSHOT-20260801-01 — post-integration full doctor: 87 red / 55 warn, decomposed; each class routed** (added 2026-08-01; label: `harness-hygiene`, `priority:medium`; fold-in: the lanes named per class). Breakdown: 81× budget-worktrees-branches (57 worktrees vs ≤6 — the purge lane; purge-verified-20260729.sh is the operator-authorized per-row-reverifying tool); budget-active-plans 23 vs ≤3 (F.3 dispositions lane — operator did 3 on 2026-07-31); obs-ask-capture-completeness 13/14 sessions unregistered (workstreams-read ask-capture splice — own lane); budget-blocking-gates **15/14 — the +1 is the merged attribution gate, so the operator's pending KEEP/VETO decision (NY-1785556662-b3bd) RESOLVES this row either way** (VETO→demote→14; KEEP→consolidate per ADR 059 D7); obs-scheduled-tasks: janitor transient (reboot window, self-healed to 267009-running), session-resumer Disabled-by-recorded-defer (false-fire class, nl-issue filed 2026-08-01); legacy-paths health-tick.sh FIXED same day (config-driven sweep root). NOT new debt — a routing snapshot so the next doctor reader does not re-triage from scratch.
+
+- **GIT-PATH-QUOTING-CLASS-01 — 30 harness consumers feed `git`'s C-QUOTED path rendering straight into a path predicate; the review-surface three are fixed, the rest are audited-not-fixed** (added 2026-07-30 closing harness-reviewer CRITICAL 2 round 4 on `review-record-push-gate.sh`; label: `harness-gap`, `priority:high`). **PROVEN, end-to-end against a real bare remote with the live gate as the real pre-push hook:** a brand-new `adapters/claude-code/hooks/pré-push-gate.sh` pushed **rc=0, gate SILENT, file ON the remote** as `"adapters/claude-code/hooks/pr\303\251-push-gate.sh"`. `git diff --name-only` does not emit paths — it emits a RENDERING, and under git's default `core.quotePath=true` a non-ASCII byte or a backslash makes that rendering a C-quoted string. `rrg_in_surface` (correct in itself) answers OUT for the quoted form and IN for the raw path: **the predicate was right and the CALLER was wrong.** Measured, so the fix is not guessed: plain `--name-only` quotes non-ASCII AND backslash; `-c core.quotePath=false` alone STILL quotes backslash; `-z` alone yields raw; **both tokens together** is the safe form, consumed with `while IFS= read -r -d ''` (verified on `/bin/bash` 3.2.57: 3/3 records). A SPACE is never quoted, which is exactly why the obvious "weird filename" probe never found this. **FIXED in that commit — the three consumers that feed the review-surface predicate:** `hooks/review-record-push-gate.sh` (all production enumerations, via `_rrpg_diff_z`/`_rrpg_diff_raw_z` which bake both tokens in so a future call site cannot forget one), `hooks/review-record-commit-gate.sh:428`, `hooks/lib/review-queue-auto-enqueue-lib.sh:100`. **NOT FIXED — the remaining 27, enumerated here rather than left as "audit the class someday".** Highest-value first: **`hooks/pre-push-scan.sh:218`** (`files=$(git diff --name-only "$range")` — the CREDENTIAL scanner; a C-quoted path is a file whose contents are never scanned for secrets, i.e. the same shape as this finding but on the security scanner, and it is the one to fix next). Then: `hooks/scope-enforcement-gate.sh:1681`, `hooks/findings-ledger-schema-gate.sh:564`, `hooks/definition-on-first-use-gate.sh:457`, `hooks/evidence-before-fix-gate.sh:639`, `hooks/harness-claim-lint.sh:322`, `hooks/pre-commit-tdd-gate.sh:217,231,289`, `hooks/no-test-skip-gate.sh:47`, `hooks/observed-errors-gate.sh:136`, `hooks/migration-naming-gate.sh:153`, `hooks/claude-md-hygiene-gate.sh:334`, `hooks/wire-check-gate.sh:866`, `hooks/work-integrity-gate.sh:822`, `hooks/bug-persistence-gate.sh:540,550`, `hooks/find-scan-warn.sh:50`, `scripts/static-trace.sh:326,343`, `scripts/review-runner.sh:310,359`, `scripts/end-manifest.sh:208,513`, `scripts/coord-pull.sh:102`. **Already correct (no action):** `hooks/harness-hygiene-scan.sh:963,972`, `hooks/harness-doctor.sh:2662`, `hooks/review-finding-fix-gate.sh:228`, `hooks/decisions-index-gate.sh`, `hooks/pre-commit-gate.sh:158`. **Why not fixed here:** the dispatched scope was the review-record gate family; rewriting 27 unrelated gates' enumeration + consumption loops (each needs a temp file, since NUL cannot survive command substitution) is a separate sweep with its own FP surface per gate. **Re-derive the list:** `bash` the audit in the round-4 evidence section of `docs/plans/review-gate-identity-anchor-2026-07-30.md`, or `grep -rnE 'git .*(diff --name-only|diff --cached --name-only|ls-files)' adapters/claude-code/hooks/ adapters/claude-code/scripts/ | grep -v -- '-z'`. **Standing rule now in doctrine** (`doctrine/review-before-deploy.md`, "Subject-set enumeration", rule 3): every harness consumer of git path output that feeds a path predicate must disable quoting AND use NUL separation.
+
+- **HARNESS-DISPATCHER-MODE-01 — `adapters/claude-code/git-hooks/post-commit` is tracked `100644` at master, so git silently refuses to run it in every clone** (added 2026-07-30 while closing harness-reviewer CRITICAL 3 round 4; label: `harness-gap`, `priority:high`). **PROVEN:** `git ls-tree master adapters/claude-code/git-hooks/` returns `100644 … post-commit` against `100755` for `pre-commit`, `pre-merge-commit`, `pre-push`, `pre-push-pr-template.sh`. Git checks the executable bit before running a hook and skips a non-executable one with only an `advice.ignoredHook` hint, so this dispatcher has not fired for anyone whose checkout carries that mode. This is the LIVE instance of the class CRITICAL 3 named (the repo has been bitten twice before — HARNESS-GAP-65 and the 2026-07-14 I3 incident). **Directly related, and CLOSED in that commit:** `review-record-push-gate.sh` now enumerates file MODE on a `git diff --raw` arm and treats any transition on an in-surface path as UNCOVERED, so a `git update-index --chmod=-x` of a dispatcher is BLOCKED at push time (self-test Scenario 17g, mutation-proven by 21d). What is NOT closed is the working-tree `chmod -x` variant — git runs no hook at all for that push, so no control inside the hook chain is reached; enumerated as `manifest.json` `review-record-push-gate.bypass_paths[14](c2)` with its impossibility argument. **Not fixed here** because flipping the mode ARMS a hook that has not run in its current form — a behaviour change needing its own verification (what does `post-commit` do, does it still do the right thing, what fires when it starts running?), not a side effect of a review-gate fix. **Fix (future session):** (a) read `git-hooks/post-commit` and establish whether it should still run at all (Chesterton's Fence — it may have been deliberately disarmed by mode at some point, in which case say so IN the file); (b) if yes, `git update-index --chmod=+x adapters/claude-code/git-hooks/post-commit` and verify what it does on a real commit before pushing; (c) consider a `harness-doctor.sh` check that REDs when any tracked `git-hooks/<dispatcher>` lacks the executable bit — golden scenario = this entry; expected FP rate = 0 (a dispatcher is either meant to run or should not be in that directory); retirement condition = the dispatchers move out of the working tree into a location the pusher cannot rewrite. Note (c) would RED immediately on `post-commit`, which is why it belongs with (a)/(b) and not before them.
+- **SCOPE-GATE-HEADER-CLAIMS-INTERSECTION-IMPLEMENTS-UNION-01 — three defects in `scope-enforcement-gate.sh`, fix BUILT and COMMITTED IN A BUILDER WORKTREE, not yet on any shared branch; residuals recorded here** (added 2026-07-30; label: `harness-gap`, `priority:medium`). **Status:** LANDED on master 2026-08-01 — the fix (amended to `dfc9f75` on `worktree-agent-a2605766de68f6102`) was cherry-picked by the takeover session; suite + review + record gated the push — resolve any claim about what those branches contain with `git log <branch> -- <path>`, never against a worktree HEAD (the `worktree-base-reported-as-branch-state` class recorded under REVIEW-RECORD-GATE-STAGE-AND-COMMIT-FAIL-OPEN-01 below). All three were reproduced by EXECUTION before any edit, and each carries a mutation-proven self-test scenario (suite 40/0 of 38 → **47/0 of 42**, identical on `/bin/bash` 3.2.57 and `/opt/homebrew/bin/bash` 5.3.15).
+  **D1 — header documented INTERSECTION, code implemented UNION** (header ~:105-107 vs the `reject_count -eq NUM_PLANS` test ~:2035). PROVEN by execution: two active plans, A claiming `src/alpha/module-one.ts` and B claiming `src/beta/module-two.ts`, staging only A's file → **rc=0** (union). **Resolved in favour of the CODE — union is correct, the comment was the defect.** Reasons, now written into the file's header: (a) plans are independent concurrent workstreams and this repo routinely carries ~20 ACTIVE at once, so under intersection a file would have to be declared by ALL of them and essentially every commit would block — intersection is not merely stricter, at N>1 it is degenerate; (b) intersection would falsify the gate's OWN option-2 remedy ("open a new plan listing the staged files and re-commit"), which provably cannot work if the other active plans must also claim the file — the same remedy-chain defect already recorded for review records in `_is_system_managed_path`; (c) union is the pre-existing tested oracle — self-test scenario 12 has asserted "in scope iff at least one active plan claims it" since the gate was written. Scope discipline is preserved because the union is over DECLARED scopes: every in-scope file is still named by some plan.
+  **D2 — the scope parser read BULLETS ONLY, so a markdown-TABLE `## Files to Modify/Create` section declared zero paths.** Now parses table rows as first-class scope declarations. **Attribution defect fixed alongside it:** a plan whose scope section yields nothing gets `__STRUCTURAL__` and therefore rejects every staged file, and it used to be printed on the SAME "Rejected by plan(s)" line as plans that genuinely evaluated the path — so with one broken plan and one healthy one the message named BOTH, sending the reader to edit the innocent plan. The two causes are now separate lists with separate wording ("Rejected by plan(s)" vs "NOT judged on scope by plan(s) … they did not evaluate this file at all"), and the zero-paths case is LOUD by name ("declares a … section that yields NO paths" + "Effect: a plan that declares no paths rejects EVERY staged file").
+  **D3 — NEW, found by execution while probing D1/D2: the `RAWLEN < 20` emptiness heuristic ran BEFORE the parsed-entry check**, so a section that was SHORT BUT VALID (`- \`a/b.ts\`` — 18 non-whitespace chars, one perfectly good path) blocked an in-scope commit and told the author the plan was "empty / placeholder-only" — naming a defect the plan did not have. Successfully-parsed entries now outrank the byte-count proxy; RAWLEN is consulted only to explain WHY a zero-path section is empty.
+  **BLAST RADIUS — measured by executing the gate's real parser over every plan (`docs/plans/` and `docs/plans/archive/`), section-scoped to `## Files to Modify/Create` alone: ZERO plans use a table today.** Top level: 54 files, 20 ACTIVE, 21 yield paths, **0 table-form, 0 zero-path**, 33 with no such section — all of them `*-evidence*.md` sidecars and **none ACTIVE**. Archive: 242 files, **0 table-form**, 4 zero-path (bullet-form but prose/placeholder-only), 78 no section. So D2 was a LATENT defect with no current instance — the table parser prevents a future incident rather than curing a present one. **How the gate treats a missing section:** `NO_SCOPE_SECTION` → `__STRUCTURAL__` → that plan rejects everything and the commit blocks; harmless today only because no ACTIVE plan lacks the section, and a single ACTIVE plan acquiring one would block every commit repo-wide until fixed.
+  **Residual 1 (deliberate, documented in-file):** table parsing scans ALL cells of a row, not just the first, so a description cell that backticks another real path contributes it to the plan's scope. This matches the established bullet behaviour (§D.0.7 already loops every backtick pair on a bullet including its trailing prose), and for a blocking gate the widening direction is the safe one — it can only allow a commit the plan's own text names, never block one it declares. Revisit only if a plan is observed gaining scope it did not intend.
+  **Residual 2 (unreproduced, do not act without more data):** one run of `hooks/lib/git-command-parse.sh --self-test` under `/opt/homebrew/bin/bash` 5.3.15 reported `114 passed, 1 failed` with no FAIL line in the captured output; 6 immediate re-runs on 5.3 and 6 on 3.2 all returned `115 passed, 0 failed`, and the cross-gate agreement check reported `28/28 commands resolve identically` every time. HYPOTHESIZED transient (the suite forks ~11760 fixture combinations, so a transient fork/temp-dir failure is plausible); REFUTED by any reproduction with a named failing scenario. Unrelated to this change by construction — `git diff --stat` for the fix touches `scope-enforcement-gate.sh` only, and no commit-target-resolution code was modified.
+
+- **COCKPIT-ASKS-ENDPOINT-DOWN-ANTINOISE-DENYLIST-01 — `GET /api/asks` and `GET /api/ask/<id>` are returning `ok:false` on the LIVE cockpit right now, so the entire ask-tree pane renders its error state for the operator** (added 2026-07-30 while sweeping COCKPIT-DEAD-FILE-HREF-RESIDUAL-01; label: `product-bug`, `priority:high`). PROVEN, live at `127.0.0.1:7733` AND reproduced on a clean instance from this worktree at `:7744`: `curl -s http://127.0.0.1:7733/api/asks` returns `{"ok":false,"error":"payload schema validation failed","diagnostics":["gate/hook identifier leaked at $.groups[1].asks[0].summary (matched /\\b(plan-lifecycle|workstreams-emit|…)\\b/i): \"Take a look at <task-notification> handling in workstreams-read.\"", …]}`, and `GET /api/ask/ask-auto-4001cc513f6957da` fails the same way at `$.summary` and `$.narrative[0].summary`. **Root cause (PROVEN):** `server/payload-schema.js`'s `GATE_HOOK_DENYLIST_PATTERNS` anti-noise scan is fail-closed for the WHOLE payload, and a real operator ask's own `summary` legitimately names a mechanism (`workstreams-read`) because that mechanism *is what the operator was asking about*. The denylist cannot distinguish "UI copy that leaked an internal identifier" (what it exists to stop) from "operator prose whose subject matter IS the identifier". **This is the exact failure shape the 2026-07-19 respec already fixed once for `/api/todo`** — see `server.js`'s own header comment there: *"a fail-closed 500 here nuked the ENTIRE list because one item mentioned a .ps1 path (live operator-visible outage)… Availability outranks lint"* — the same reasoning was never applied to the asks payload. **Not fixed here** (out of scope: this round's dispatch was the dead-`file://`-href class sweep; changing the anti-noise fail-closed policy is a deliberate constraint-1 decision that needs its own scope call, and the `description` field already carries a documented `DENYLIST_EXEMPT_KEYS` precedent for exactly this "the identifier is the subject matter" argument). **Note this MASKS part of the dead-href fix's live visibility:** the asks pane's cured links cannot be seen live until this is resolved (they were instead proven by executing the real shipped `asks.js` in a real browser DOM against a stubbed-valid payload). **Candidate fixes:** (a) extend `DENYLIST_EXEMPT_KEYS` to `summary`/`narrative_excerpt` with the same compensating length cap `description` uses; (b) apply the `/api/todo` respec verbatim — flag the offending item (`noise_flag`) and render it anyway, rather than failing the whole payload; (c) scope the scan to hardcoded client copy only and drop it from server-prepared operator prose entirely. (b) matches the established precedent and the constitution's availability-outranks-lint principle.
+- **SCOPE-GATE-HEADER-CLAIMS-INTERSECTION-IMPLEMENTS-UNION-01 — `scope-enforcement-gate.sh`'s header documents multi-plan scope as INTERSECTION while the code implements UNION; and its files-to-modify parser silently ignores markdown TABLES** (added 2026-07-30 while building `docs/designs/code-trace-methodology.md`; label: `harness-gap`, `priority:medium`). Two independent defects in the same gate, both found by that document's own Move 9 (claim-vs-measurement on a stated contract) after the gate blocked this session's commit. **(a) Doc/code divergence, PROVEN by reading both:** the header at `adapters/claude-code/hooks/scope-enforcement-gate.sh:104-107` states *"Multiple active plans: Required behavior is intersection — a file in scope of plan A but not plan B is out of scope."* The implementation at `:2035` is `if [[ "$reject_count" -eq "$NUM_PLANS" ]]` — a staged file is out-of-scope only when **every** active plan rejects it, i.e. UNION (in scope of ANY plan ⟹ allowed). With 21 active plans the documented semantics would block essentially every commit; the implemented semantics are the sane ones, so **the code is right and the header is wrong**. Anyone reasoning from the header will mis-predict the gate. **(b) Table-format blind spot, PROVEN by direct repro:** the parser (contract at `:89-97`) extracts paths only from bullet lines (`- ` / `* `). A `## Files to Modify/Create` section written as a markdown table — the shape `~/.claude/templates/plan-template.md` itself renders in several places, and the shape this session's plan was first written in — yields ZERO declared paths, so the plan silently declares nothing and the gate rejects every file in it. The failure is silent: no "your plan declares no files" warning, just an out-of-scope block naming all 21 plans, which points the reader at the wrong cause entirely. Reproduced twice this session (table → rejected; identical content as bullets → allowed). **Fix:** (a) correct the header to say union and state the rationale (a file governed by any active plan is in scope); (b) either teach the parser to read table rows (first cell, backtick-stripped) or make an empty declared-path set an explicit, named error — "plan `<slug>` declares no files under `## Files to Modify/Create` (bullets only; tables are not parsed)" — so the silent-zero case can never masquerade as a scope violation. (b) is the load-bearing half: a silent parse-to-empty in a blocking gate is the same fail-silent class this repo has been sweeping all week.
+
+- **COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — `asks.js` and `backlog.js` STILL emit `file://` anchors from the http-served cockpit page; only `roadmap.js` (Round 15) and `inbox.js` (Round 17) were ever cured** (added 2026-07-30 while building `docs/designs/code-trace-methodology.md`; label: `product-bug`, `priority:medium`). This is the SAME class the ledger closed twice — row 70 ("plan links don't work") and row 87 ("the links on the Inbox tab don't work") — surviving in two more panes. **PROVEN by execution, not by reading**: extracting the real `toFileUrl`/`absoluteLinkHref`/`isAbsoluteHref` bodies from the working tree at `366a88b` and running them over four representative inputs emitted **6 `file://` anchors** (`node` harness, output retained in the design doc's Defect-6 row). **Call-graph reachability confirmed, both sites reach a real DOM `href`:** (a) `neural-lace/workstreams-ui/web/asks.js:94-100` `toFileUrl` -> `:122-128` `absoluteLinkNode` sets `fa.href = fileUrl` on a clickable `<a>`, reached from FOUR callsites — `:484` (`item.raw_link` recovery row), `:506` (`item.links[]`), `:573` (`t.evidence_link`), `:732` (`detail.verbatim_ref`); (b) `neural-lace/workstreams-ui/web/backlog.js:45-56` `toFileUrl`/`absoluteLinkHref` -> `:484-492` sets `openLink.href = fileHref` on an `<a target="_blank">` labelled "open backlog.md". **Why these are dead:** the page is served over `http://127.0.0.1:7733` (the `local.neurallace.workstreams-cockpit` LaunchAgent sets `CTREE_PORT=7733`), and a browser silently blocks `file://` navigation from an `http` document — the fact the repo ALREADY recorded in `web/roadmap.js:1014` ("the OLD `file:///` href was a DEAD link from this http-served page (confirmed live at :7733 — no navigation, no network activity on click)") and in `web/app.css:613,1892`. **Not fixed here** (this session's scope was the trace-methodology design doc, not a cockpit build). **Fix:** route both through the in-page doc modal exactly as row 70/87 did — `/api/doc {project,path}` + the shared md-render + `docModal` — never a second renderer; keep the existing copy-path affordance as the fallback for paths outside every configured project root. **Detection note (why this matters beyond the two files):** ONE command finds the whole class and would have found it at either prior fix — `git grep -n "file://" -- neural-lace/workstreams-ui/web`. Both prior fixes cured the reported pane and left the siblings; a class-wide sweep at fix time is the cheap generalization. Cross-ref: `docs/reviews/cockpit-ui-requirements-ledger.md` rows 70 and 87; `docs/designs/code-trace-methodology.md` Defect 6 + Move 1 (producer/consumer scan).
+
+- **DETERMINISTIC-PROCESS-PROOF-OBLIGATION-UNWIRED-01 — `deterministic-process.md` mandates `chokepoint` + `bypass_paths` on every blocking manifest unit, but `manifest.schema.json` FORBIDS both keys and 0 of 40 blocking units carry them** (added 2026-07-30 while building the Intended-Functionality gate; label: `harness-gap`, `priority:high`). PROVEN, three independent observations: (1) `adapters/claude-code/doctrine/deterministic-process.md` §"The proof obligation" states *"Every `\"blocking\": true` manifest unit declares: `chokepoint` … `bypass_paths` …"* and its header claims *"`harness-doctor.sh` REDs on one declaring neither"*; (2) `python3 -c` over `manifest.json` returns `chokepoint: []` and `bypass_paths: []` across all 149 pre-existing entries, of which **40** are `blocking: true`; (3) adding those two keys to a new entry makes `manifest-check.sh` emit `RED schema: unknown key 'chokepoint' (additionalProperties: false)` and the same for `bypass_paths` — i.e. the schema actively rejects compliance with the doctrine. **This is precisely the constitution §10 "theatre" defect the same doctrine file names** ("documented enforcement that does not fire … wire it or delete the claim"): the proof obligation is documented, unsatisfiable, and unchecked. The doctrine landed 2026-07-30 in commit `e91cdfa`, one commit before this was found. **Not fixed here** — the correct fix touches `manifest.schema.json` plus a backfill decision across all 40 blocking units, which is an operator/orchestrator-owned scope call, not a side effect of an unrelated build. **Workaround used by the new `intended-functionality-if-statement` entry (so no information is lost):** its chokepoint and its four enumerated bypass paths are written inline into `honest_status`, with a note naming this contradiction. **Fix (future session):** (a) add `chokepoint` (string) and `bypass_paths` (array of strings) as optional properties to `adapters/claude-code/schemas/manifest.schema.json`; (b) decide whether the doctor's claimed RED is built now or the claim is softened until the 40-unit backfill lands — per §10 the claim must not outlive the mechanism; (c) backfill the 40 blocking units, or scope the requirement to `added_after >= 2026-07` and say so in the doctrine.
+- **REVIEW-RECORD-GATE-STAGE-AND-COMMIT-FAIL-OPEN-01 — `review-record-commit-gate.sh` silently fails open when `git add` and `git commit` are ONE compound command** (found 2026-07-30 while committing the ROADMAP-FALSE-ETERNAL-RUNNING-01 second pass; label: `harness-gap`, `priority:high`, constitution §10 theater). **PROVEN by executed trace, all three runs against the same worktree changes:** with the files STAGED, `{"command":"git commit -m x"}` → **exit 2 (BLOCKED)** and `{"command":"git add -A && git status --short && git commit -F …"}` → **exit 2 (BLOCKED)**; with the IDENTICAL changes left UNSTAGED, that same compound command → **exit 0, zero output**. Cause: the gate resolves staged-file coverage by reading the git INDEX at PreToolUse time — which is *before* the `git add` in the very command it is judging has run — so it sees an empty index, matches its own documented bailout #1 ("No staged in-surface file → silent allow, the common case"), and allows. **Consequence, live:** commit `d0430ca` landed `adapters/claude-code/hooks/workstreams-emit.sh` (an in-surface file; new blob `62a6346d…`, NOT the blob `e36a925d…` that `docs/reviews/records/grandfather-manifest.json` pins for that path, and covered by no PASS record in `docs/reviews/records/`) with **no review record and no block** — exactly the state the gate exists to prevent. This is not a bypass-env story: no `REVIEW_RECORD_GATE_OVERRIDE` was set and none was needed. **Severity reasoning:** `git add -A && git commit` is an extremely common single-call shape (it is what the agent above used unprompted), so the gate's real-world coverage is far below its documented coverage — and the failure is SILENT, so nobody learns it happened. **Candidate fixes:** (a) when the command itself stages (`git add …`, `git commit -a/-A`), resolve coverage against the WORKING TREE rather than the index — the gate's own "bailouts resolve toward BLOCK" principle already argues for this; (b) failing that, detect a staging verb in the same command string and resolve toward BLOCK with a message telling the operator to stage first and re-run; (c) add a self-test scenario for the unstaged-compound shape — the existing suite covers command-position parsing (Scenarios 14/21) but never varies INDEX state, which is why this was invisible. **Composes with:** the gate's existing NL-FINDING-016 remedy-chain note (a fix and its retry are never one compound command) — the same one-call habit that note accommodates is what defeats the gate here.
+  **SCOPE CORRECTION (same day, before this entry was acted on — the finding is real but NARROWER than first written).** A JIT doctrine injection surfaced **Amendment H (2026-07-30, `deterministic-process.md`)**, which already demotes `review-record-commit-gate.sh` to **ADVISORY** and moves authority to a new `hooks/review-record-push-gate.sh` wired into `git-hooks/pre-push`, reading coverage **at the COMMITTED blob**. A push-time check over committed blobs is **structurally immune to this fail-open** — there is no index-vs-worktree timing window at push time — so Amendment H closes the class by architecture, not by patching the parser. **Therefore: do NOT spend effort fixing the commit gate's index timing.** What remains true and worth acting on: **`origin/master` (`17c0d4c`) has neither** — verified `git cat-file -e origin/master:adapters/claude-code/hooks/review-record-push-gate.sh` → *does not exist* — so on the merge target the commit gate is still documented-BLOCKING and still fails open exactly as measured, and **the fail-open window persists for anyone on master until Amendment H lands there.**
+  **DRIFT CLAIM RETRACTED (round 3).** An earlier revision of this entry said "this branch and `origin/master` contain NEITHER" and called the live harness "AHEAD of origin/master … drift worth a look". **That was FALSE and the operator was told it.** The BRANCH `wip/harness-hardening-2026-07-29` (tip `366a88b`) has had BOTH since **`3a6e821`, authored 2026-07-30 17:03:00** — verified `git log --diff-filter=A wip/harness-hardening-2026-07-29 -- …push-gate.sh`, and its commit gate carries 9× ADVISORY. That is ~40 minutes BEFORE the sentence was written. Live `~/.claude/` installs from the branch, so live-having-them is **ordinary in-flight state, not out-of-band drift** — there is nothing to investigate.
+  **Root cause of MY error, recorded because it generalizes:** I resolved a claim about *the branch* against *my detached worktree's base* (`17c0d4c`), which is merely where this worktree was cut from and says nothing about where the branch has moved since. **Class: worktree-base-reported-as-branch-state. Standing rule: any claim about what a branch or a merge target contains resolves against `git rev-parse <branch>` / `git cat-file -e <branch>:<path>` / `git log <branch> -- <path>` — NEVER against the current worktree's HEAD or base.** Class for the ledger is unchanged and still worth recording: *a blocking gate whose precondition is evaluated before the command that establishes it*.
+
 - **ESTATE-T9-EVIDENCE-POINTERS-NOISE-01 — close-plan.sh's T9 "Evidence pointers" derivation inherits generate_completion_report's pre-existing high-churn-file noise** (added 2026-07-30 from accountable-estate T9's live acceptance demonstration; label: `harness-gap`, `priority:low`). T9's `generate_closure_outcome_section` deliberately reuses `generate_completion_report`'s EXISTING files-to-modify -> `git log --oneline --no-merges -- <path>` derivation ("one implementation, not two"), but that derivation was already noisy for any plan whose `## Files to Modify/Create` names a high-churn shared file (e.g. `docs/backlog.md`, touched by thousands of unrelated commits repo-wide) — observed live closing `context-watermark-opus5-window.md` for real: its "Evidence pointers" section filled with `sort -u`-ordered (effectively SHA-random, not date-ordered) commits spanning the WHOLE repo's history, none related to that plan's actual W1-W3 work. This is a PRE-EXISTING characteristic (the Completion Report's own "Commits referencing these files" section has the identical noise, confirmed by inspecting the same archived plan), not a T9 regression — T9 inherited it by design (shared derivation) rather than building a second, competing one. **Not fixed here** (T9's own scope discipline: reuse the existing derivation, don't fork a second evidence-pointer algorithm mid-task). **Candidate fixes for a future session:** (a) bound `git log` to commits between the plan's own first-commit and close timestamps (`--since`/`--until`), which would exclude the vast majority of a shared file's unrelated history; (b) exclude known always-touched shared files (`docs/backlog.md`, `SCRATCHPAD.md`, `NEEDS-YOU.md`) from the evidence-pointer file list specifically, while still listing them in the Completion Report's own file list; (c) cap by commit-message keyword/slug relevance rather than a bare `head -N`. **Composes with:** any future rework of `generate_completion_report` itself, since fixing the shared derivation fixes both consumers at once.
 
 - **HARNESS-GAP-57 — anti-vaporware config-control policy doesn't cover the INVERSE shape: a consumed lever with zero producers** (added 2026-07-29 from accountable-estate T7 D-4's live counter-example; label: `harness-gap`, `priority:high`; **disposition: COMPLETED 2026-07-30 → `docs/plans/archive/anti-vaporware-config-controls-generalization.md` (single-task plan, opened per scope-enforcement-gate's own "genuinely separate work gets its own plan" remediation path since 16 unrelated plans were ACTIVE on this branch; task-verifier PASS conf 9 at commit a40da18, reproduced the mutation transcript itself; closed + archived via close-plan.sh at commit 51757e8)**). **Context.** HARNESS-GAP-45 (closed 2026-07-13 via `docs/plans/archive/vaporware-config-controls.md`, 8/8 task-verifier PASS) named the "decorative config control" vaporware class and built its enforcement: the registry-vs-callsite invariant (`doctrine/vaporware-prevention-full.md`), functionality-verifier's config-control protocol, and functionality-auditor's registry-vs-callsite sweep. That enforcement checks ONE direction — does a registry entry (permission ID, feature flag with a UI) have an enforce-mode CONSUMER — and structurally assumes the other half (the producer) is guaranteed, because a UI toggle's producer is the user clicking it. **The gap.** Non-UI config levers — env vars, CLI overrides, caller-set fields read deep in library code — have no such guarantee. `NL_PROTECTED_ORCHESTRATOR`, documented in `hooks/lib/admission-lib.sh` as the tag a "protected downstream orchestrator" must set, was discovered (accountable-estate T7, task-verifier pass 4, D-4, 2026-07-29) to have ZERO producers anywhere in the repo — all 888 live ledger rows carry `protected:0`. It IS consumed (real read site, real branch); nothing ever sets it. Neither functionality-auditor's sweep (no registry+UI surface here) nor functionality-verifier's config-control protocol (no `Verification: full` task ever claimed this flag governs behavior) would have caught it — a task-verifier pass caught it only by reading the comment narratively, and hand-wrote the honest-status annotation now sitting in the file. Nothing made that catch mechanical or repeatable. **What was built.** (1) `scripts/config-control-producer-scan.sh` — a standing, self-testing, bash-3.2-compatible scan (both `/bin/bash` 3.2.57 and `/opt/homebrew/bin/bash` 5.3.15 verified) that classifies every consumed `NL_*`-prefixed lever under `hooks/`+`scripts/` as PRODUCED (real standalone assignment exists) / MARKED (no producer, but an honest-status marker sits within a small line-proximity of ANY mention of the var — anchored on mention, not the syntactic read site, because the real admission-lib.sh annotation sits 566 lines from the functional read and 1 line from the var's own name) / ALLOWLISTED (documented external-producer carve-out) / FLAGGED (none of the above — the vaporware shape). 7/7 self-test scenarios pass under both interpreters, including a golden-pre-fix/golden-post-fix pair reproducing the real admission-lib.sh text verbatim (proves the scan keys on the marker, not the var name) and a live-repo scenario asserting zero FLAGGED against the actual current trees. Mutation-tested: deleting the `NL_CHECKOUT_OVERRIDE` allowlist entry flips the live-repo scenario and overall self-test from PASS to a reported FLAGGED + exit 1; restoring the entry returns both interpreters to GREEN. (2) `config/config-control-allowlist.txt` — the documented external-producer carve-out (7 pre-existing legitimate operator-shell/self-test-only overrides audited against their real read sites and recorded with per-entry justification: `NL_CHECKOUT_OVERRIDE`, `NL_CROSS_REPO_TOUCH_OK`, `NL_EXCLUSIONS_VERIFY_TIMEOUT`, `NL_ISSUES_BACKLOG_PATH`, `NL_ISSUE_CLI_OVERRIDE`, `NL_SELFTEST_EXCLUSIONS_FILE`, `NL_SPAWN_PROCESS_COUNT_OVERRIDE`). (3) Doctrine: `doctrine/vaporware-prevention.md` (compact, new "Its inverse" clause, 2914B, under the 3000B cap) + `doctrine/vaporware-prevention-full.md` (new "The inverse shape" section: definition, originating case, mechanical-check description, why-standing-not-blocking rationale, full constitution §10 fields). (4) `docs/failure-modes.md` FM-038 — new "Generalization — the inverse shape" bullet. (5) `adapters/claude-code/manifest.json` — new `config-control-producer-scan` entry (kind: gate, blocking: false, wired_template: false, `added_after: "2026-07"` — full new-gate-evidence-bar per ADR 059 D4: `golden_scenario`/`fp_expectation`/`retirement_condition`/`honesty_rationale`/`honest_status` all populated); `manifest-check.sh` GREEN at 146 entries; `doctrine/INDEX.md` regenerated via `--gen-index`. **Why standing, not a new blocking hook (constitution §10).** D-2 in the archived GAP-45 plan declined a new gate for the registry-vs-callsite class, reasoning the existing functionality-verifier/task-verifier blocking chain was sufficient until a decorative control shipped past it — that recurrence being the trigger for a future gate. `NL_PROTECTED_ORCHESTRATOR` IS that recurrence, but in a shape (no registry+UI surface) D-2 didn't anticipate, so this ships the mechanical, self-testing check first (invocable standalone or in CI) rather than a new blocking PreToolUse hook, consistent with D-2's spirit: prove the false-positive rate in practice before wiring it to block. **§10 fields (also in the manifest entry and doctrine-full section verbatim):** golden scenario = `NL_PROTECTED_ORCHESTRATOR` pre/post-annotation states (both are `--self-test` scenarios); expected FP rate = 0% against the live repo today (7 pre-existing legitimate overrides accounted for via the allowlist, not suppressed); retirement condition = a FLAGGED verdict proven wrong by a producer-shape this scan's regex can't see escalates to either extending the regex or retiring the static approach in favor of HARNESS-GAP-39's runtime audit-log method for the same "wired but never exercised" class. **Follow-ups (not this task's scope, logged for a future session):** wiring the scan into `harness-doctor.sh --quick` or a CI workflow as an actually-blocking check once its FP rate has stood for a review cycle; the scan's `NL_*`-prefix scope could generalize to other config-lever naming conventions if this class recurs outside that prefix. Cross-ref: HARNESS-GAP-45 (the registry-vs-callsite half this generalizes), HARNESS-GAP-39 (the runtime audit-log alternative named in the retirement condition), `docs/plans/archive/vaporware-config-controls.md` D-2/D-3 (the prior decisions this respects and extends).
@@ -30,6 +86,14 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 - **HARNESS-GAP-63 — `check_evidence_first`'s prose-path awk double-prints "MATCH" (breaking the caller's exact-string comparison) whenever an EARLIER same-task-id block already satisfies it and a LATER block for the same task follows** (added 2026-07-30 from the harness-change-review REFORMULATE closure on `plan-edit-validator.sh`'s SE4 flip-ledger-emit code; label: `harness-gap`, `priority:medium`). PROVEN (direct awk repro, 2026-07-30): a two-block evidence.md where block 1 has `Task ID: X` + a `Runtime verification:` line (satisfying `in_block && task_id==wanted_id && has_runtime`) followed by a SECOND `EVIDENCE BLOCK` header for the same task prints `MATCH` TWICE — the main-body action's `print "MATCH"; exit 0` still runs the `END` rule afterward (POSIX awk semantics: `exit` outside `END` still executes `END` once), and `END`'s own condition re-evaluates true against the pre-reset state. The caller (`check_evidence_first`, `adapters/claude-code/hooks/plan-edit-validator.sh` ~L1429-1458) does `if [[ "$result" == "MATCH" ]]` — an exact-string comparison — so a genuinely-authorized flip (real evidence exists) is wrongly BLOCKED the moment a plan's evidence file accumulates 2+ same-task-id blocks where an earlier one already has a `Runtime verification:` line, exactly the FAIL-then-fix-then-PASS re-verification shape this repo produces routinely (see 3404bd1's T7 FLIP history). Confirmed the double-print reproduces with the exact awk body verbatim; NOT fixed here (out of the SE4 flip-EMIT finding's scope, which only touches the ledger-reporting awk in `_pev_extract_prose_flip_fields`, a structurally-similar but functionally distinct parser this task DID fix for the analogous first-match-wins bug). **Workaround used to keep this task's own F18 self-test fixture authorizable:** the fixture's first (stale) block omits `Runtime verification:` so it never satisfies `check_evidence_first`'s own condition, side-stepping the block without altering `check_evidence_first`'s code. **Fix (future session):** either replace the bare `exit 0` with a flag + `next` so the main loop consumes remaining input without letting `END` re-fire (mirroring the `record_if_match()`/`found` pattern this task's `_pev_extract_prose_flip_fields` fix now uses), or add a guard in `END` (`if (!printed) ...`). Add a self-test scenario asserting a real authorized flip against a two-same-id-block evidence file with an EARLY runtime-verification-bearing block succeeds (rc=0), not just that the ledger reports the right verdict once it does.
   (HARNESS-GAP-63 sibling, comprehension-review 2026-07-30): check_mechanical_or_contract_evidence's Path-B awk (plan-edit-validator.sh ~:1502-1513) carries the IDENTICAL print-MATCH-then-exit-0-then-END double-print shape — widen GAP-63's fix to both awks (sweep: rg -n 'print "MATCH"; exit 0' adapters/claude-code/hooks/plan-edit-validator.sh).
+
+- **DOCTRINE-REVIEW-SURFACE-DECISION-OPEN-01 — `doctrine/**` (89 tracked files) is outside the review-record surface; the measured decision is written and awaiting the operator** (added 2026-07-30; label: `harness-gap`, `priority:medium`; **status: MEASURED, NOT LANDED — no surface change was made**). Decision record: `docs/decisions/069-doctrine-review-record-surface.md`. **Measured at `3caaeff` on BOTH `/bin/bash` 3.2.57 and `/opt/homebrew/bin/bash` 5.3.15, agreeing:** over 90 days (`--since=2026-05-01`, `--no-merges`), **69** commits touched doctrine; **9** touched ONLY doctrine; **15** touched doctrine and NO already-in-surface file (= the true added friction, **1.16 commits/wk**, since records are keyed per-FILE so a doctrine+backlog.md commit gets no record today); **54** already require a record (adding doctrine widens the reviewer's diff but adds no round-trip). Pairs: **32** compact/`-full` pairs (64 files) + 2 orphan `-full` + 23 singletons = 89; **co-change rate only 57%** (48 both / 27 compact-alone / 8 `-full`-alone of 83 pair-touching commits), so the "one review covers two files" discount is weaker than assumed AND the 43% divergence is itself the harm mechanism. **Harm (PROVEN, 2 incidents):** (1) `orchestrator-pattern.md` carried the retracted "a quoted header … is inert" claim for ~52 min while its corrected `-full` sat beside it (`1394fe8` 17:47:58 fixed `-full` only; `b24f4ff` 18:39:48 fixed the compact); (2) `deterministic-process.md` shipped with a 3-part false ENFORCEMENT claim (`e91cdfa`), retracted by `b815b00` after a builder — not a gate — caught it; **both `e91cdfa` and `b815b00` are in the 15-commit zero-review set**. Coverage today: **3 of 293** review-index entries touch a doctrine path, all voluntary. **Options measured:** all-doctrine 89 files @1.16/wk (catches both); JIT-only 23 files @0.70/wk (**catches NEITHER**); JIT+CLAUDE.md-named 29 @0.85/wk (catches 1); `Enforcement:`-header-bearing 54 @1.01/wk (catches both, but content-derived surface). Recommendation in the decision record: **all-doctrine**, and **do not exempt "mechanical" cap-trim/INDEX commits** — 7 of the 15 are cap trims, and those are precisely the commits that rewrite delivered compacts most heavily (`2c74fe8` rewrote 5 compacts, `diagnosis.md` −112 and `evidence-before-fix.md` −180 lines; `6fc33cf` cut `orchestrator-pattern.md` 3451→2730B with NO change to its `-full` sibling, verified by `--numstat`). **Operator call, not landed here.**
+
+- **DECISIONS-INDEX-GATE-DID-NOT-FIRE-FOR-066-068-01 — `docs/DECISIONS.md` is three records behind (`066`, `067`, `068` exist as files with no index row) despite a `blocking: true` gate that claims to enforce record↔index atomicity** (added 2026-07-30 while adding the row for `069`; label: `harness-gap`, `priority:medium`; constitution §10 theater class). PROVEN: `ls docs/decisions/` shows `066-macos-coord-sync-launchagent-and-credential-fix.md`, `067-review-independence-same-session-pathway.md`, `068-macos-limit-resume-turn-scoped-auto-arm.md`; `grep -n '^| 06[6-8]' docs/DECISIONS.md` returns **nothing**, and the index table's last row is `065` (2026-07-29). `adapters/claude-code/hooks/decisions-index-gate.sh` documents behaviour (a): a staged `docs/decisions/[0-9]{3}-.*\.md` with `docs/DECISIONS.md` NOT staged → BLOCK exit 1; the manifest entry `decisions-index` is `blocking: true` with `honest_status: "invoked via pre-commit-gate.sh chain"`, and that chain membership is real (`adapters/claude-code/hooks/pre-commit-gate.sh:124` lists `decisions-index-gate.sh`). So a gate that exists, is chained, and is declared blocking did not prevent three consecutive unindexed decision records. **Not diagnosed here** (out of scope for the doctrine-surface measurement; I did not determine WHICH of the three candidate causes applies). **Candidate causes to check, in order:** (a) `pre-commit-gate.sh` itself is not installed as the repo's actual `.git/hooks/pre-commit` on the machine those commits were authored on — the gate file's own header admits *"Not wired into the repo's pre-commit hook automatically. Follow-up task: extend `install-repo-hooks.sh`…"*, which directly contradicts the manifest's `honest_status`; (b) the records were committed with `--no-verify`; (c) the records landed in commits that staged them alongside a `DECISIONS.md` edit that did not actually add the row (behaviour (c) allows silently). **Fix:** determine which, then either wire the chain via `install-repo-hooks.sh` or correct the manifest `honest_status` to stop claiming enforcement that does not fire — per §10, wire it or delete the claim. Backfill rows for 066-068 either way.
+
+- **REVIEW-SURFACE-COUNT-311-IS-FALSE-01 — the "surface was extended today from 283 to 311 files (`git-hooks/*`, `schemas/*.json`, `install.sh`, `sync.sh`)" claim is false at the branch tip; the executed count is 283** (added 2026-07-30 while measuring the doctrine decision; label: `harness-gap`, `priority:medium`; class: *number-carried-forward-from-a-draft*, the recurring defect on this branch). **PROVEN by execution, not grep:** sourcing the real `rrg_in_surface` from `adapters/claude-code/hooks/lib/review-record-gate-lib.sh` and running it over all **1762** tracked files at `3caaeff` yields **283** in-surface files — byte-identical file lists on both interpreters. The four claimed arms are **absent** from the `case` statement; the only surface change that landed today was Amendment G (cockpit product JS, `39a3dc3`). The archived plan `docs/plans/archive/deterministic-process-gate-2026-07-30.md` lists widening to `git-hooks/*` in its OUT-of-scope section verbatim — *"noted, not fixed in this pass"* — and repeats it under Assumptions as a "known residual". So the extension was **proposed and deferred, never landed**, and 311 describes nothing at HEAD. **Action:** anyone quoting a surface size must re-execute `rrg_in_surface` at the commit they are quoting; do not restate 311. **Note the `git-hooks/*` gap is real and still open** — the pre-push dispatcher that decides whether the authoritative review gate runs at all is itself unreviewed.
+
+- **B24F4FF-COMMIT-MESSAGE-JIT-CLAIM-FALSE-01 — commit `b24f4ff`'s root-cause paragraph asserts `doctrine-jit.sh` injects `orchestrator-pattern.md`; it does not, and cannot** (added 2026-07-30; label: `harness-gap`, `priority:low`). The message states *"manifest.json entry[79] sets doctrine_file=\"doctrine/orchestrator-pattern.md\" and doctrine-jit.sh resolves THAT, so agents were being served the false version."* **The `doctrine_file` half is true; the resolution half is false.** That manifest entry has `jit_triggers.paths: []`, and `doctrine-jit.sh:229` (`[ "$paths_json" = "[]" ] && continue`) skips such entries outright — the hook's own self-test T8 asserts exactly this ("pattern-kind (empty jit_triggers) never fires"). **Verified BEHAVIOURALLY, not by reading:** executing the real hook against the real `manifest.json` across all **81** distinct trigger patterns injected `orchestrator-pattern` **0 times**, on both interpreters, with a passing control (`docs/plans/` does inject `artifact-evidence-bar`, proving the probe was live — the first probe run reported a false "0 hits" because the payload omitted `tool_name`, and only the control caught it). **The underlying harm claim still stands** by a different delivery path: `orchestrator-pattern.md` is named as required reading by `CLAUDE.md` and by 4 agent definitions (`plan-phase-builder`, `harness-reviewer`, `systems-designer`, `end-user-advocate`), so agents do read it — via prompt reference, not JIT. **Why this matters beyond the record:** it was the stated basis for "gate only the JIT-delivered compacts" as a cheap control, and that option provably misses this very file (see DOCTRINE-REVIEW-SURFACE-DECISION-OPEN-01). **Fix:** correct the causal sentence if the historical record is amended; more usefully, consider backfilling `jit_triggers.paths` for the high-traffic compacts that are currently referenced-but-never-injected.
 
 - **PORTABILITY-TOUCH-D-SWEEP-01 — ~18 GNU-only `touch -d` callsites outside M4's `date -d` grep, same silent-failure class** (added 2026-07-29 from `docs/plans/macos-portability-2026-07.md` M4's build; label: `harness-gap`, `priority:medium`). M4 audited `grep 'date -d'` and fixed that class. While doing so it surfaced a SIBLING class the grep does not catch: bare `touch -d '<relative>'` / `touch -d "@<epoch>"` with no BSD fallback, which fails silently on macOS and leaves a fixture UN-AGED — so a staleness self-test asserts the opposite of its own name while still printing a verdict. Two such sites were inside M4's own files and were fixed (`concurrent-ownership-gate.sh:700` scenario 4, `:752` scenario 12 — the latter had been reporting PASS only because a sibling `date -d` bug had disabled the whole claim scan, i.e. two failures cancelling into a green). **Still open, one line each:** `session-start-digest.sh:1442`, `local-edit-gate.sh:291`, `stale-active-plan-surfacer.sh:339,362`, `lib/session-heartbeat-lib.sh:1046`, `lib/observability-derive.sh:2429`, `scripts/session-resumer.sh:2148,3104,3191`, `scripts/agent-heartbeat.sh:228`, `scripts/worktree-hygiene-sweep.sh:1090`, `scripts/f4-retro.sh:870,873,906`, `scripts/session-wrap.sh:388`, `hooks/cross-repo-nl-touch-warn.sh:463`. **Fix:** each becomes `nl_touch_age <file> <seconds>` from the helper M4 landed at `adapters/claude-code/hooks/lib/portable-time.sh` (sourced inside the self-test branch only, so production pays nothing), with NO `|| true` — the swallowed failure IS the bug. **DONE 2026-07-29 (M5):** all 19 executable sites converted across 12 files + 1 markdown recipe; `grep -rn "touch -d" adapters/claude-code` now returns comments only. Measured on stock macOS (BSD `touch`/`date`, UTC-7): 3 sites never aged at all, 5 more aged into the FUTURE because a `date -u` fallback was rendered in UTC and fed to a LOCAL-time `touch -t`. Suites recovered on BOTH bash 3.2.57 and 5.3.15: `session-resumer.sh` 51/31 -> 69/0, `worktree-hygiene-sweep.sh` 16/27 -> 37/6, `agent-heartbeat.sh` 18/1 -> 20/0, `session-heartbeat-lib.sh` 21/1 -> 22/0, `cross-repo-nl-touch-warn.sh` 10/1 -> 11/0.
 
@@ -1225,44 +1289,6 @@ from the plan's own repo path. The DISCLOSURE gap above is the separate, still-o
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
 
-## ROADMAP-R11-ACTIVE-PATH-EXPANSION-01 — Critical 6 not implemented
-
-**Severity:** P1 (a bound Critical constraint of the Round-11 hierarchy binding
-spec, docs/reviews/2026-07-28-roadmap-hierarchy-ux-review.md).
-**Gap:** `openSet` in `neural-lace/workstreams-ui/web/roadmap.js` still starts
-empty every session with no default-expansion heuristic. The spec requires:
-L0 project groups open (already true — not collapsible), every L1 row
-visible as one line (already true — summary rows), but auto-open chains to
-in-progress/live-session/waiting-on-operator descendants on first render,
-with a persisted-openSet-always-wins rule, is NOT built.
-**Fix shape:** a `seedDefaultOpenSet()` walk over the first successful
-payload (before the first `renderAll()`), guarded by a one-time flag so
-subsequent user toggles are never re-clobbered by the heuristic.
-**Filed by:** cockpit-roadmap-redesign R11 hierarchy-renderer build, wall-clock
-stop at 90 minutes.
-
-## ROADMAP-R11-L0-FOUR-BUCKET-STRIP-01 — L0 count strip not built
-
-**Severity:** P2.
-**Gap:** the Tree anatomy's L0 project header calls for a four-bucket count
-strip (upcoming / in progress / partially done / complete; merged-unverified
-maps to partially done). `projectGroupHeaderText()` in roadmap.js still
-renders a six-value prose breakdown (all enum values, unmapped), not the
-four-bucket strip the spec names.
-**Filed by:** same build/stop as above.
-
-## ROADMAP-R11-KANBAN-MASTER-CHIPS-01 — I4 kanban master-chip rule not built
-
-**Severity:** P2.
-**Gap:** I4 requires kanban cards to stay PLANS with masters rendering as
-CHIPS on child cards (never as their own cards). `renderKanban()` in
-roadmap.js still treats `child_plans` as invisible to the kanban view (a
-nested child plan currently never appears there at all, since
-`visibleItems` is the top-level-only list) — neither the "master renders as
-a chip on the child card" rule nor "nested child plans appear as cards" is
-implemented.
-**Filed by:** same build/stop as above.
-
 ## ROADMAP-R11-CROSS-REPO-RETROFIT-PATCH-01 — apply a verified cross-repo parent-plan header
 
 **Severity:** P3 (data-only, no code change).
@@ -1606,29 +1632,7 @@ refactor needs its `FUNCS` extraction taught to also source the lib file, or the
 **Filed by:** neural-lace session, 2026-07-29 (session-start-auto-install.sh SELF-SYNC-01 fix).
 
 
-## ASK-SENTINEL-QUARANTINE-SURFACER-01 — unattributed.jsonl / unlinked.jsonl growth is invisible
-
-**Severity:** P3 (observability only; no data loss — quarantine/unlinked lanes preserve events).
-**Context:** the 2026-07-27/28 ask-id sentinel fixes route placeholder-shaped
-ask-ids (`<id`…) to `~/.claude/state/progress-logs/unattributed.jsonl`
-(quarantine — indicates a live emitter bug) and no-ask events (`none`/empty)
-to `unlinked.jsonl` (legitimate lane). Nothing surfaces either file's growth:
-a REGROWING quarantine file after the remap means a pre-fix emitter is still
-live somewhere, and today only the remap script's reborn-source guard would
-notice — and only when manually run.
-**Action:** add a quarantine/unlinked line to the estate snapshot
-(`estate-janitor.sh`) and the brief (`estate-brief.sh`) — counts + growth
-since last tick; WARN in the brief when unattributed.jsonl grows at all.
-Ship WITH self-test scenarios (both artifacts have suites; extend, don't
-bypass). Deferred from the emitter-fix delta commit by the harness
-re-review's own severity call (Minor-4): surfacing is follow-up scope,
-the fix itself must not wait on it.
-**Fold-in point:** any estate-program slice touching estate-janitor.sh or
-estate-brief.sh next (T8 consumes T1 data and is the natural carrier), or a
-standalone micro-plan if the estate program closes first.
-**Filed by:** ask-id emitter-fix reformulation (re-review 2026-07-28, Minor-4).
-
-## ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01 — sentinel guard replicated at 6 sites, test-enforced at only 2
+## ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01 — IMPLEMENTED 2026-07-29 (site-local regression tests added at all 4 remaining extractors; dual inventory collapsed)
 
 **Severity:** P3 (all six sites PROVEN correct today by the delta re-review's isolation tests; this is future-regression hardening).
 **Context:** the `'<'* | none` ask-id sentinel guard (commit 0758232, review
@@ -1643,10 +1647,50 @@ progress-log-lib.sh _pl_is_none_sentinel) — currently consistent, drift is
 silent; prefer one canonical list + reference, or a doctor grep check.
 **Action:** add a none-header→empty (and real→preserved) assertion to each of
 the four uncovered suites; collapse the dual inventory to one canonical list.
-**Fold-in point:** same carrier as [[ASK-SENTINEL-QUARANTINE-SURFACER-01]]
-(any slice touching these files next), or batch both rows as one micro-plan.
+**Resolution (2026-07-29):** added a site-local none-header→empty assertion
+to each of the four uncovered suites, exercising that site's OWN extractor
+(real-id→preserved already existed at all four via pre-existing scenarios,
+cited inline): plan-lifecycle.sh Scenario 13c (`extract_ask_id`; real-id
+already covered by Scenario 14), workstreams-emit.sh PL4e
+(`_resolve_ask_id_for_plan_slug`; real-id already covered by PL1),
+merge-scan-lib.sh Scenarios 21-23 (`_ms_resolve_ask_id` — added BOTH the
+file-lookup arm, Scenario 21, and the previously-untested git-fallback arm
+at ~line 340, Scenarios 22-23, covering both none→empty and real-id→
+preserved since neither existed there before), close-plan.sh S22
+(`extract_ask_id_cp`; real-id already covered by S20/S21). Collapsed the
+dual-maintained inventory: progress-log-lib.sh's `_pl_is_none_sentinel`
+comment now points to plan-template.md's SENTINEL COUPLING comment as the
+single canonical list instead of hand-duplicating it. All touched suites
+green (plan-lifecycle, close-plan, merge-scan-lib, remap, progress-log-lib).
+(Sibling row ASK-SENTINEL-QUARANTINE-SURFACER-01 RESOLVED 2026-07-30 and
+removed: quarantine/unlinked growth now surfaced via estate-janitor.sh's
+`ask_sentinel` reduction + WARN-on-growth in estate-brief.sh, both suites
+extended.)
 **Filed by:** emitter-fix delta re-review PASS (2026-07-29, Minor advisories 1+2).
 
+
+## ESTATE-T6-ADM-RATE-CAP-BYPASS-UNCLOSED-01 — ADM_ABSURD_RATE_PER_MIN left open (sibling of the closed session-cap bypass)
+
+**Severity:** P3 (cosmetic inconsistency; zero production callsites today, same as the three
+closed bypasses).
+**Finding:** T6-PREREQUISITES (b) (accountable-estate-program-2026-07 T6, desktop build,
+2026-07-29) closed three of the four T6-named env bypasses in
+`adapters/claude-code/hooks/lib/admission-lib.sh` (`ADM_ABSURD_SESSION_CAP`,
+`ADM_ESTATE_SNAPSHOT`, `ADM_STATE_DIR` — see `docs/decisions/065-admission-lib-env-bypass-closure.md`)
+by gating them behind `HARNESS_SELFTEST=1`. `ADM_ABSURD_RATE_PER_MIN` (`_adm_decide`'s rate-backstop
+threshold, same code shape as the now-closed `ADM_ABSURD_SESSION_CAP`) was NOT one of the four
+bypasses the 2026-07-28 review named, so it was deliberately left out of that slice's scope — but
+it is the identical failure class (an unauthenticated environment override of an absurd-level
+backstop) sitting right next to the closed one, and a reviewer comparing the two will find the
+asymmetry confusing.
+**Not fixed here** — out of the T6-PREREQUISITES (b) task's explicitly-scoped four bypasses;
+closing a fifth, un-named item risked scope creep in a slice whose acceptance criterion counts
+exactly four.
+**Action (future):** apply the same `_adm_session_cap`-style closure to the rate backstop (a
+`_adm_rate_cap()` resolver honoring `ADM_ABSURD_RATE_PER_MIN` only under `HARNESS_SELFTEST=1`),
+with a matching self-test scenario pair (closed in production / still available under
+HARNESS_SELFTEST=1), for consistency — low effort, same pattern already proven in this build.
+**Filed by:** accountable-estate-program-2026-07 T6-PREREQUISITES (b) build (desktop, 2026-07-29).
 ## NL-ISSUE-JSON-FIELD-BSD-SED-ALTERNATION-BUG-01 — FIXED: `_nli_json_field`'s `\|` alternation silently matched nothing under BSD sed
 
 **Severity:** was `error` (silent, total breakage of a load-bearing helper on
@@ -2050,13 +2094,341 @@ via `nl-issue.sh` the same session for cross-project triage visibility.
   sweep, the Inbox links, and the requests pipeline all passed in sandbox and were broken live.
   A UI round's acceptance must require evidence from the real deployed app.
 
-## ROADMAP-FALSE-ETERNAL-RUNNING-01 — NOT FIXED: one dispatch fans out into many spurious task_started events (refuted 2026-07-30, see CORRECTION below)
+## ROADMAP-FALSE-ETERNAL-RUNNING-01 — emitter fix WRITTEN + HAND-INSTALLED, still NOT MERGED (and therefore reversible at any SessionStart)
 
-**Severity:** HIGH, OPEN (operator-reported: "The green items are supposed to indicate something
-is actively running. I see several green plans that aren't running.").
+> **STATUS DISCIPLINE (corrected 2026-07-30 after an adversarial refutation caught this entry
+> committing the very defect class it documents).** This entry previously headed
+> "emitter fixed 2026-07-30" and described the change as "**FIX (landed 2026-07-30 …)**" while
+> **nothing was committed and the live hook was byte-identical to the unfixed one.** Constitution
+> §1: done = merged to master with a SHA. The correct status of the work described below is
+> **WRITTEN, staged in a builder worktree, NOT merged and NOT installed.**
+>
+> **SUPERSEDED 2026-07-31 — the "NOT INSTALLED" half of the heading above was itself stale.**
+> The shasum this entry used to carry at this point — `shasum ~/.claude/hooks/workstreams-emit.sh`
+> == `git show HEAD:adapters/claude-code/hooks/workstreams-emit.sh | shasum` ==
+> `87743bca9d440964b0a4f7ca01216eef232dd349`, cited as proof the live hook was the OLD one —
+> was true when written and is no longer. The fix WAS hand-installed on the authoring machine
+> at 2026-07-30 20:05 PDT, ~30 minutes AFTER commit `f018623`.
+> *(Wording repaired 2026-08-01 during transport: this sentence read "the shasum **below**"
+> while `ab8055b` had DELETED that shasum block in the same hunk, so the pointer resolved to
+> nothing. The deleted value is restored inline above rather than left as a dangling
+> reference — a retraction that cites evidence the reader cannot find is not a retraction.)*
+>
+> **PROVEN now:** `shasum -a 256 ~/.claude/hooks/workstreams-emit.sh` ==
+> `git show f018623:adapters/claude-code/hooks/workstreams-emit.sh | shasum -a 256` ==
+> `031fe941d6d7236a5a348dbb3b9426f6e0a93eaef7d2007b96a9ae8882d9e315` — byte-identical, so the
+> live hook IS the fixed one. Master's blob differs
+> (`94905d0d4faa49328ff8c919b40869b3ac2286d5b2e712666b1154eb2c3d2026`), which is exactly the
+> risk below. (The live file is a hand-installed regular file, not a symlink.)
+>
+> **BOTH HASHES ABOVE ARE NOW STALE, AND THE PREDICTION BELOW CAME TRUE — measured
+> 2026-08-01 on the TRANSPORT machine (Windows), by the commit that added this paragraph.**
+> The two shasums above were taken on the AUTHORING machine (macOS) on 2026-07-31; neither is
+> a fact about this repo today, and "this machine" in the paragraph above does not mean the
+> machine you are reading it on. Re-executed here with `sha256sum`:
+> - master's blob at `dc05aa2` = `8c75322213828e41efd223da96df01d9e29f2309483e253d463ebc4ed7790b7e`
+>   — **not** `94905d0d…`. Master's copy moved on (the NL-ATTRIBUTION attribution pipeline,
+>   scenario PL4e, the 120s debounce default), which is precisely why a bare blob hash goes
+>   stale the moment EITHER side edits.
+> - live `~/.claude/hooks/workstreams-emit.sh` on this machine = `8c753222…` — **byte-identical
+>   to MASTER**, i.e. the content WITHOUT the defect-4 fix. Whether that is a revert by
+>   `session-start-auto-install.sh` or simply a machine that never got the hand-install cannot
+>   be told apart from a hash, and no claim is made either way. What IS proven: the fixed blob
+>   (`031fe941…`) is not what executes here. The reversion risk below is observed, not predicted.
+>
+> **TRANSPORT (2026-08-01).** The commit carrying this paragraph re-applies `f018623` +
+> `ab8055b`'s claim-corrections and the defect-4 fix onto master's evolved copy, and adds the
+> in-suite regression pin both commits admitted was missing (RPL9-RPL9g, see the Proven-by
+> block below). It is a builder-branch commit: the heading's "still NOT MERGED" is true as
+> written and flips only when this lands on master.
+>
+> **THE INSTALL IS REVERSIBLE AND WILL BE REVERTED — merging is what makes it durable.**
+> `session-start-auto-install.sh` is **master-wins for `hooks/*.sh`** (its own self-test
+> scenarios L4/L6 assert precisely that), so the **next SessionStart silently copies master's
+> UNFIXED content back over the fixed live hook** and the eternal-green defect returns with no
+> warning and no diff anyone is watching. The hand-install buys quiet only until the next
+> session starts. **Nothing here is safe until this lands on master.**
+>
+> The original point still stands for the *cockpit*: the running harness executes
+> `~/.claude/hooks/`, not the repo, so "the greens will age out" is measured from INSTALL,
+> never from commit — and that clock resets every time auto-install reverts the file.
 
-**CORRECTION 2026-07-30 (adversarial refutation, agent a7b621c3, verdict PARTIAL — the earlier
-"FIXED this build" claim in this entry was FALSE and is retracted):**
+**Severity:** HIGH. Emitter fix WRITTEN (see below); the entry stays OPEN both because the fix
+is not yet live AND because the honest replacement signal then depends on `NL-ATTRIBUTION`
+header adoption, which sits in a LOW BAND (see `NL-ATTRIBUTION-ADOPTION-12-PERCENT-01` for why
+no single percentage is quotable — the log rotates, so the denominator is not monotonic).
+(Operator-reported: "The green items are supposed to indicate something is actively running.
+I see several green plans that aren't running.")
+
+**SECOND CORRECTION 2026-07-30 (builder, independent re-derivation from the raw data — the
+refutation below got the DIRECTION right and the MECHANISM wrong):**
+- The refutation's claim "ONE Task dispatch produced 42 markers" is NOT what the data shows.
+  MEASURED from `~/.claude/logs/conversation-tree-emit.log`: that window
+  (22:16:59Z-22:18:06Z) contains **100 separate `--on-builder-dispatch` hook fires**, not one.
+- WHAT THEY ACTUALLY ARE (PROVEN): the fires walk
+  `~/.claude/state/conversation-tree-emit/builder-a3fcb6ea-….jsonl` **in ledger order from
+  index 0** — beginning with "Verify T3 admission lib", whose real tool call happened
+  **2026-07-29T03:12:13Z, 43 hours earlier** — with exactly 2 genuinely-new dispatches
+  (ledger idx 103, 104) spliced in. PreToolUse **re-fires for every historical Task/Agent
+  tool call in the transcript**. Five such replays on 2026-07-30 (21:11, 21:32, 21:36,
+  22:17, 22:28), each re-emitting `task_started` for every plan/task any prompt in 43h of
+  history ever named. THAT is why plans stayed green with nothing running.
+- The single-`child_id` observation is real but proves nothing about fan-out:
+  `child_id = "ss-" + sha1(session_id)`, so EVERY dispatch from one session shares it by
+  construction. It is a session id, not a dispatch id.
+- BOTH defects were live and BOTH had to be fixed. Mention-scraping alone explains the
+  wrong-task attribution; replay alone explains the eternal re-greening. Fixing only the
+  first would have left the observed incident **100% intact** — counterfactual over the five
+  measured bursts: 468 fires, 60 of them `attributed=1`, but **0** were first-fires of their
+  dispatch identity, so a header-only fix emits 0 of the 95 spurious events and also 0 of the
+  real ones. Every task_started emitted in those five bursts was spurious.
+
+**THE FIX — WRITTEN 2026-07-30, NOT MERGED, NOT INSTALLED** (`adapters/claude-code/hooks/workstreams-emit.sh`): the two sinks
+inside `_emit_dispatch_provenance` were one code path and are now separated, because they are
+not the same kind of claim — `task_started` is a claim about the PRESENT that the operator
+reads as a green chip, while the dispatch-provenance marker is a correlation hint for
+`pl_classify_session`. `task_started` now requires BOTH:
+1. **Header-authoritative attribution.** Only `NL-ATTRIBUTION: plan=… task=…` may name the
+   task that started. `_extract_plan_slug`/`_extract_task_id` are no longer a source of
+   `task_started` at all. A mention is not a dispatch.
+2. **First fire of the dispatch identity.** `item_id = sha1(sid|tool|title)` (deliberately
+   time-bucket-free) already has first-seen semantics in the builder correlation ledger; that
+   ledger read is now load-bearing. A fire for an identity already recorded is a transcript
+   replay, not a start. Correct from the first fire after install — the ledger already holds
+   the session's history, so no warm-up period. The spawn surface got the same treatment
+   keyed on `(child_id, title)`, plus the `NL-ATTRIBUTION` parse it never had.
+   **THE IDENTITY LEDGER MUST OUTLIVE THE TURN (second pass, 2026-07-30).** The spawn half of
+   this gate first keyed on `opened-<sid>.jsonl` — the CONCLUDE ledger, which `--on-stop`
+   deletes at every turn boundary and `--heartbeat` deletes on staleness. PROVEN by executed
+   trace: first spawn → 1 event; replay with no Stop → still 1 (gate holds); ledger dir after
+   `--on-stop` → empty; replay after `--on-stop` → **2** — i.e. the "first fire only"
+   guarantee this entry claimed evaporated one turn after being set, and the eternal-green
+   defect was still fully live on the spawn surface while the code, the commit message, the
+   doctrine, the manifest AND this entry all said it was fixed. A dispatch-identity SET and a
+   conclude QUEUE have different lifetimes, so they are now different files: `spawn-<sid>.jsonl`
+   is append-only and deleted by nothing, matching `builder-<sid>.jsonl` (which is why the
+   builder surface never had the hole). Pinned by RPL6/RPL6b/RPL6c.
+3. **The header must OPEN the dispatch, not merely appear in it** (second pass, 2026-07-30).
+   The parse matched `NL-ATTRIBUTION:` ANYWHERE in the joined prompt text, so a **QUOTED**
+   header was indistinguishable from a real one: a prompt merely DISCUSSING a prior dispatch
+   ("…it was dispatched with the line `NL-ATTRIBUTION: plan=X task=9 role=builder` and it
+   failed") emitted a real `task_started` for task 9. That is the SAME mention-is-not-a-dispatch
+   defect this entry exists for, surviving inside the source the fix had just declared
+   authoritative — and a LIVE vector, since handoff/review/post-mortem prompts routinely paste
+   the builder prompt they are about. The header must now start a line AND sit within the first
+   `NL_ATTRIBUTION_MAX_LINE` (default 5) lines **of the JOINED `prompt + description + content`**
+   (NOT of the prompt alone — see the residual note below), which is what
+   `doctrine/orchestrator-pattern.md` already required in words ("MUST open with"). Pinned by
+   RPL7/RPL7b, with RPL7c pinning that a real dispatch is not collateral damage.
+No-header policy is **honest silence**: an unattributed event names no task, so it can turn no
+chip green — it could only pollute the orphan lane (the
+`PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` class), and the WARN counter already logs every
+unattributed dispatch with a running total. Falling back to scraping was never an option:
+scraping is the bug.
+**Proven by** (every figure below RE-EXECUTED at the current HEAD, not carried forward — see
+the standing rule at the end of this block): `workstreams-emit.sh --self-test`
+**120 passed / 1 failed**, identical on BOTH `/bin/bash` (3.2.57) and
+`/opt/homebrew/bin/bash` (the 1 is pre-existing ST11, failing identically at baseline 92/1);
+**+28 executing assertions over baseline** (PL1a, PL1d, RPL1-RPL8b) — never a regex over
+source text, every one drives the real hook. Siblings green on both interpreters:
+`progress-log-lib.sh` 48/0, `dispatch-provenance.sh` 17/0; Node `roadmap-routes` 116/0,
+`derive-lib` 65/0. **Mutations — every kill set non-empty, and identical on both
+interpreters:**
+| mutation | kill set at HEAD | suite |
+|---|---|---|
+| M1 restore-the-scrape | PL1, RPL3, RPL4 | — |
+| M2 scrape-beats-header | PL1, RPL1b, RPL1c, RPL3, RPL4 | — |
+| M3 replay-gate-off | PL1d, RPL2b, RPL2c, RPL5b | — |
+| M4 spawn-gate-keyed-on-the-deleted-ledger | RPL6b, RPL6c | 118/3 |
+| M5 header-matched-anywhere | RPL7, RPL7b, RPL7e, RPL7g, RPL7h, RPL7j | 114/7 |
+| M5b line-start-kept / window-removed | RPL7b, RPL7e, RPL7j | 117/4 |
+| M5c window-kept / line-start-removed | RPL7, RPL7g, RPL7h | 117/4 |
+| M6 awk-field-equality → `grep -qF` | RPL8, RPL8b | 118/3 |
+| M8 TIGHTENING (window → 2 *or* → 1) | RPL7d, RPL7f, RPL7i | 117/4 |
+M5b + M5c prove EACH HALF of the anchor is independently load-bearing. M8 is the opposite
+direction: loosening reddens six scenarios, tightening reddens the three that assert the
+residual, so the residual cannot move silently either way. (M1-M3 predate the per-mutation
+suite-count capture and are listed by kill set only.)
+
+> **EVERY FIGURE IN THIS BLOCK IS A DATED SNAPSHOT, NOT A PRESENT-TENSE CLAIM — applying
+> this entry's own STANDING RULE (below) to itself, 2026-08-01.** The `120 passed / 1 failed`
+> baseline and the whole `suite` column above were measured on the AUTHORING machine (macOS,
+> both interpreters) at commit `ab8055b`. That suite no longer exists: master's copy diverged
+> (attribution pipeline, PL4e, the 120s debounce) and the transport commit then added 8 more
+> assertions, so **every total in the table is invalidated — including by this very commit,
+> which is exactly the failure mode the rule names.**
+>
+> **Re-executed on the TRANSPORT machine (Windows/Git-Bash, `/usr/bin/bash`), 2026-08-01:**
+> `HARNESS_SELFTEST=1 bash adapters/claude-code/hooks/workstreams-emit.sh --self-test`
+> -> **131 passed / 0 failed**, `self-test: OK`. (Note the `1 failed` above is gone: master's
+> ST11 passes here.) That is the merged-tree baseline **123/123** plus the **8** new
+> defect-4 assertions RPL9-RPL9g. **+36 executing assertions over the original baseline**
+> (PL1a, PL1d, RPL1-RPL8b, RPL9-RPL9g).
+>
+> **NOT RE-EXECUTED, AND SAID SO RATHER THAN QUIETLY RESTATED:** the per-mutation `suite`
+> column (M4 118/3, M5 114/7, M5b/M5c/M8 117/4, M6 118/3). Re-running nine mutations x a
+> full suite is hours on this fork-taxed target and was not done, so those totals are marked
+> STALE at their measurement point rather than carried forward as current. The **kill sets**
+> are NOT invalidated — no scenario in them was renamed, removed or altered by the transport,
+> and RPL9-RPL9g touch a different mechanism (the ledger WRITE's failure path) than any
+> mutation in the table (the header anchor and the gate's identity key).
+>
+> **ONE INTERPRETER ONLY.** The two-interpreter claim above does NOT extend to the 131/0
+> figure: this machine has no second bash, so `/bin/bash` 3.2.57 (the portability floor named
+> in `docs/TAKEOVER-2026-07-31.md` §7) is UNVERIFIED for the transported content.
+**STANDING RULE, learned the hard way three times in this entry (F8, then the M8 kill set,
+then this block): a numeric claim about a suite is invalidated by ANY change to that suite —
+INCLUDING one's own. Every commit that adds or renames an assertion must, in the same commit,
+re-run and restate every count and every kill set in every artifact quoting one.** The
+recurring failure was always the same shape: a figure measured at the PARENT commit, restated
+as current. Concretely, this block once read 113/1 and "M5b → RPL7b only" — both true at
+`d0430ca`, both false the moment RPL7e/RPL7i/RPL7j were added.
+
+**RESIDUAL — WHAT IS STILL WRONG AFTER THIS FIX (honest):**
+- **AN UNWRITABLE LEDGER STILL FAILS OPEN — the defect-4 fix made it LOUD, not SAFE**
+  (measured 2026-08-01, now pinned by RPL9c). If the replay gate's own state write fails
+  (`LEDGER_DIR` unwritable while `LOG_DIR` still works), the identity is never recorded,
+  every later fire re-decides `dispatch_is_new=1`, and **the duplicate `task_started` IS
+  re-emitted** — this entry's own eternal-green defect, live. Executed RED/GREEN, ledger path
+  pre-created as a directory so the append fails: master's pre-fix copy logged `replay=0`
+  twice with ZERO warnings while emitting 2 events; the fixed copy emits the same 2 events
+  but logs a WARN naming `ROADMAP-FALSE-ETERNAL-RUNNING-01` on every fire and reports
+  `replay=?` instead of a confident `0`. So what the fix bought is that the dead gate can no
+  longer be read off the log as a healthy one — **not** that the gate survives. The direction
+  is DELIBERATE: this is a WRITER hook that never blocks, so suppressing on a failed write
+  would trade a visible duplicate for an invisible missing green. RPL9c is where a future
+  change of direction has to be re-argued. **Next action if this ever bites in the wild: a
+  durable identity store outside the ledger, which is new machinery and needs its own
+  constitution §10 evidence bar first.**
+- **The cockpit now UNDER-reports, and this is the big one.** Only a LOW BAND of dispatches
+  carry an `NL-ATTRIBUTION` header, and the WARN counter only climbs — see
+  `NL-ATTRIBUTION-ADOPTION-12-PERCENT-01` for the measurement commands and why a single
+  percentage is NOT quotable here (the log rotates). Real work in progress will show NOTHING
+  until orchestrators actually emit the header that `doctrine/orchestrator-pattern.md` already
+  calls MANDATORY. Silence is the correct direction (a missing green is not a lie) but it is
+  not the destination. **Next action: make the header a dispatch-time requirement, not a WARN.**
+- **No END signal at this layer.** The fix stops re-greening; it adds no "task stopped" event.
+  A green still ages out only via the downstream 60-min `taskStartedIdleMs`
+  (`derive-lib.js:690`, `:914`), so a genuinely-finished task stays green for up to an hour.
+- **Accepted cost:** a genuine re-dispatch reusing an IDENTICAL (session, tool, title) emits no
+  second `task_started` — indistinguishable from a replay at PreToolUse. Errs toward a missing
+  green over a false one. Pinned by scenario PL1d. All 105 identities in the operator's real
+  43h ledger have distinct titles, so the empirical cost today is zero.
+- **No one-shot cleanup of stale rows is required** (checked, not assumed): green is gated on
+  `startedAtMs` being within `taskStartedIdleMs` (60 min default, `derive-lib.js:690`), so
+  spurious rows age out on their own once **no new ones are emitted**. The 1394 historical
+  `task_started` rows can stay; they are inert to the green chip.
+  **CORRECTED 2026-07-30 — the earlier "they age out within an hour of the last replay
+  (22:29:23Z)" was WRONG, and wrong in the direction that flatters the fix.** 22:29Z was not
+  the last replay; it was merely the last one that had happened when the sentence was written.
+  PROVEN from `~/.claude/logs/conversation-tree-emit.log`, minute-bucketed: bursts continued at
+  **22:44-22:46Z (711 fires), 23:26-23:28Z (739), and 23:39-23:40Z (723)** — at least three
+  more after the cited "last" one, on top of the five already counted. **The clock does not
+  start at the last observed replay, and it does not start at commit: it starts at INSTALL.**
+  Replays keep firing the OLD hook until `install.sh` copies the new one into `~/.claude/`,
+  which happens only after this merges to master. Any "N minutes until the cockpit is honest"
+  estimate must be measured from that moment.
+  HYPOTHESIZED (not runtime-verified — no cockpit instance was exercised from this worktree):
+  the operator's live cockpit goes quiet ~60 min after the last replay THAT FOLLOWS INSTALL.
+  REFUTED BY: a green chip persisting past that with no `task_started` newer than 60 min for
+  its task.
+- **The replay gate is per-session and per-ledger-file, and both are defeatable** (disclosed
+  after an adversarial refutation executed them, 2026-07-30 — neither is a regression, both
+  were always true and were simply never written down):
+  (a) **A NEW `session_id` re-emits every identity.** The gate key includes the session id, so
+  replaying the same dispatch identities under a fresh session id emits them all again
+  (measured 4 → 8). This is by construction — a genuinely new session dispatching the same
+  work IS a new start — but it means a session-id churn (resume, re-attach, a new window over
+  the same transcript) can re-green tasks. Not currently distinguishable at PreToolUse.
+  (b) **Deleting the identity ledger re-emits.** Removing `spawn-<sid>.jsonl` /
+  `builder-<sid>.jsonl` and replaying emits again (measured 1 → 2). The ledger is now
+  deleted by no code path in this repo (that was the F1 fix), so this requires external
+  removal — but it means the gate's durability is exactly the durability of
+  `~/.claude/state/conversation-tree-emit/`, which nothing guarantees against manual cleanup,
+  tmp-reaping, or a machine migration.
+- **The header's positional anchor is a heuristic, and the residual is WIDER than this entry
+  first claimed** (restated 2026-07-30 from the EXECUTED boundary after a harness-reviewer
+  REFORMULATE; the earlier "a paste must be the first thing in the prompt" was understated,
+  and its doctrine counterpart — "a quoted header below the prose that introduces it is
+  inert" — was outright FALSE and is retracted). **TRUE RESIDUAL: any quoted header that
+  STARTS A LINE — with arbitrary leading whitespace, including the indentation a fenced or
+  indented paste adds — anywhere within the first `NL_ATTRIBUTION_MAX_LINE` (default 5) lines
+  **of the JOINED `prompt + description + content`** still emits a real `task_started`.**
+  PROVEN against the shipping parser: 2-line preamble + fenced paste → EMITS; 4-space-indented
+  paste → EMITS; TAB-indented header on line 2 → EMITS; 3-line preamble + fence (header on
+  line 5, the last admitted line) → EMITS. Silent: header on line 6+ (RPL7e), `> ` prefix
+  (RPL7g), `- ` prefix (RPL7h).
+  **THE WINDOW IS OVER THE JOINED TEXT, NOT OVER THE PROMPT** (corrected in round 3; every
+  earlier statement here said "the first 5 lines of your prompt", which is advice an author
+  cannot act on). `_dispatch_text` (in `adapters/claude-code/hooks/workstreams-emit.sh` — cited
+  by SYMBOL, not line number, because the same commit edits that file and a line citation goes
+  stale the moment it does; it was written as `:3110` and was already wrong by one edit) joins `[prompt, description,
+  content]` with newlines BEFORE the window applies, so the admitted region spans a SECOND
+  INPUT FIELD whenever the prompt is short: a 3-line prompt with the header alone in
+  `description` lands on JOINED line 4 and EMITS (RPL7i), while the same description behind a
+  10-line prompt is silent (RPL7j). Same field-scope error class as F2 itself, one level up.
+  **Operative rule for authors quoting a header: keep it below line 5 of the JOINED text AND
+  out of the `description` field of a short-prompt dispatch — or just prefix it with `> ` /
+  `- `, which is robust because it does not require counting lines across three fields.** This
+  matters because it is the shape of a REAL handoff/review prompt (short preamble, then a
+  fenced paste), not an exotic one, and the failure direction is a FALSE green — the one
+  remaining known path to the original defect. Closing it needs an out-of-band field the prose
+  cannot forge, unreachable from PreToolUse `tool_input` today.
+  **HOW THE UNDERSTATEMENT SURVIVED, recorded because the mechanism generalizes:** scenario
+  RPL7b passes with a preamble that happens to run EIGHT lines — comfortably past the 5-line
+  window — so it certified a general claim it only tested one side of. Class:
+  *understated-residual-certified-by-a-window-tuned-test*. **Standing rule adopted: every
+  threshold or positional guard ships a negative case ADJACENT to the threshold (n-1, n, n+1),
+  never one comfortably beyond it, and the prose residual is written from the executed
+  boundary rather than the motivating anecdote.** Now pinned by RPL7f/RPL7d/RPL7e.
+  **The residual is pinned in BOTH directions**, so it cannot drift silently either way
+  (kill sets RE-EXECUTED at HEAD, identical on both interpreters): loosening the anchor
+  reddens RPL7/RPL7b/RPL7e/RPL7g/RPL7h/**RPL7j** (M5, 114/7; M5b → RPL7b/RPL7e/RPL7j, 117/4;
+  M5c → RPL7/RPL7g/RPL7h, 117/4), and TIGHTENING it reddens the three residual-asserting pins
+  RPL7d/RPL7f/**RPL7i** (M8, 117/4).
+  **TIGHTENING LEVER — evaluated at 5 / 2 / 1, decision recorded (round 3).** Measured at
+  HEAD, both interpreters: `NL_ATTRIBUTION_MAX_LINE=2` and `=1` each redden **exactly
+  RPL7d + RPL7f + RPL7i** and nothing else — identical kill sets, **117 passed / 4 failed**
+  (the fourth being pre-existing ST11). *(This figure was previously written as "RPL7d+RPL7f,
+  116/3" — true at `3c18c0d`, wrong at HEAD, because the very commit that recorded it added
+  RPL7i, which asserts EMISSION at joined line 4 and therefore reddens under any tightening.
+  Same measurement-from-a-prior-commit class as the F8 retraction; see the standing rule in
+  the Proven-by block above.)* **`=2` was the missing middle option:** an earlier
+  revision of this entry framed the choice as 5-vs-1, which was a false dichotomy — `=2`
+  eliminates the fence-paste shapes that land at joined lines 3-5 while still admitting the
+  one cost case that argued against `=1` (a real header under a title or blank line).
+  **DECISION: keep the default at 5 for now, and sequence the tightening AFTER a header
+  constructor exists.** Reasoning: the cost of tightening is genuinely UNMEASURABLE today —
+  header POSITION is not recorded in the emit log, so there is no way to count how many real
+  dispatches would fall outside a 2-line window; once a constructor emits the header, position
+  becomes uniform by construction and the cost goes to zero, at which point `=2` (or `=1`) is
+  free. Tightening first would trade a measurable false-green reduction for an unmeasurable
+  missing-green increase, against an adoption rate already in the low band
+  (`NL-ATTRIBUTION-ADOPTION-12-PERCENT-01`).
+  **FRAMING ERROR CORRECTED:** the previous revision called this "an operator call, not a
+  builder's". That was wrong — a one-line-reversible env default is **decide-and-go under
+  constitution §8** (undoing it is a single edit), so it is mine to decide with a trail, which
+  is what this paragraph now is. The operator-call framing was permission-seeking dressed as
+  deference.
+- **`harness-doctor.sh --quick`: the RED set is UNCHANGED by this work — 17 red / 8 warn at
+  both `17c0d4c` and `d0430ca`, identical RED names, empty diff** (corrected 2026-07-30 by an
+  independent harness-reviewer measurement; my original "13 RED → 14 RED, one added" was
+  WRONG). **Why mine was wrong, recorded because the class recurs:** I measured baseline and
+  after at DIFFERENT TIMES in a live worktree, via `git stash` / `git stash pop`. But
+  `manifest-freshness` compares the LIVE `~/.claude/manifest.json` against the repo tree, and
+  the live copy is continuously re-synced from origin/master by
+  `session-start-auto-install.sh` — so it is a MOVING TARGET, not a constant, and any
+  before/after separated in time silently attributes environment drift to the change. The
+  controlled measurement (both refs checked out back-to-back in ONE isolated clone) shows
+  `manifest-freshness` was ALREADY RED at baseline: the live manifest (`cc53eea6`) matches
+  NEITHER tree. **Class: environment-coupled metric reported as a controlled delta.** Standing
+  rule: a metric that reads state outside the repo cannot be A/B'd across time in a live
+  checkout — check both refs out back-to-back in one clean clone, or do not claim a delta.
+
+**FIRST CORRECTION 2026-07-30 (adversarial refutation, agent a7b621c3, verdict PARTIAL — the
+earlier "FIXED this build" claim in this entry was FALSE and is retracted; this correction's
+own mechanism claim is in turn corrected above, though its "stop scraping the prompt text"
+prescription was right):**
 - The live app STILL renders all three operator-reported tasks green (verified 22:24:52Z against
   the shipped 60-min default, server PID started after the commit) — including
   `cockpit-roadmap-redesign/9`, an Acceptance task requiring the OPERATOR'S OWN walkthrough,
@@ -2076,7 +2448,9 @@ is actively running. I see several green plans that aren't running.").
   fifteen unrelated tasks.
 - CORRECT FIX (upstream, not downstream): `--on-builder-dispatch` must emit exactly ONE
   task_started for the task actually dispatched — the `NL-ATTRIBUTION` header already carries
-  it (workstreams-emit.sh:2001) — instead of one per prompt-text mention.
+  it (`_extract_nl_attribution` in workstreams-emit.sh — cited by symbol; the original
+  `:2001` line citation is long stale, this file having been edited many times since) —
+  instead of one per prompt-text mention.
 - WHAT DID LAND AND IS KEPT: the rollup gate (`live_sessions.length` -> `hasRunningLeaf`) is an
   unambiguous correctness improvement independent of the window, mutation-proven (3 disjoint
   mutations each kill the correct disjoint test subset), and demonstrably fires in production.
@@ -2086,6 +2460,71 @@ is actively running. I see several green plans that aren't running.").
 - Threshold evidence understated: the 60-min bound was justified from a cherry-picked 50-min
   stretch (max gap 12 min); over the full active window real gaps reach 41.1 min, so the true
   margin is 1.46x, not 5x.
+
+**FOLLOW-ON 2026-07-30 (harness-reviewer REJECT on `ebc9a12`, all findings closed — see the
+commit that adds this block):** the reviewer's verdict was that the server-side work was sound
+but *did not close the operator's reported symptom*. Five defects closed:
+1. **The green chip was still painted (CRITICAL).** `web/roadmap.js`'s `taskSpanCell` used the
+   IDENTICAL `live_sessions.length` membership predicate that had been fixed server-side, so
+   every TASK row (including `cockpit-roadmap-redesign/9`, the operator's headline example)
+   kept its green chip. PLAN rows were never affected (they read the server's verified
+   `roll_up.running`). Swept all four client sites the reviewer named: 724 chip (FIXED),
+   813 "currently running (N)" header (FIXED — it counted stalled leaves), 1333 `nodeIsActive`
+   auto-expand (FIXED), 1979 unbound-sessions gate (AUDITED, deliberately unchanged — that
+   collection is server-filtered and stamps members `in-progress`, so applying the predicate
+   would hide genuinely-running work; the audit note lives with the code and is pinned by a
+   test). Class: **non-empty-collection-as-truth-claim**.
+2. **The fix introduced a NEW false claim (MAJOR).** `startedIdleExpired` was folded into the
+   `crashed` reason, so a task whose session had a heartbeat written seconds earlier rendered
+   "stalled — crashed" and rolled a `crashed` badge up to its plan — pointing the operator at
+   a dead-process investigation that did not exist (constitution §1). Split out a distinct
+   `idle-dispatch` reason with its own precedence slot (ranked LAST among stalled reasons:
+   any specific known cause must outrank the weakest "nothing happened lately" one) and its
+   own label/CSS. Class: **reason-code-reuse-misattribution**.
+3. **The retraction above had landed in this ledger but NOT in the source (MAJOR).**
+   `derive-lib.js`'s threshold header still argued the discredited "~12min gap / 50-minute
+   stretch / ample margin" case. Rewritten to the re-measured distribution and labelled
+   PROVISIONAL. Class: **correction-landed-in-one-artifact-only** — when retracting a claim,
+   sweep every artifact carrying it, not just the ledger.
+4. **The threshold is calibrated on the corrupted telemetry it exists to compensate for
+   (MAJOR, HYPOTHESIZED).** Now stated in the header itself. **OPEN FOLLOW-UP: re-derive
+   `taskStartedIdleMs` once `--on-builder-dispatch` emits one event per real dispatch.** Until
+   then the default is provisional and may be too tight — a task genuinely worked >60 min on a
+   single dispatch will render 'stalled' (a false NEGATIVE the upstream fix will introduce).
+   REFUTED IF a post-fix scan shows the >60min share of same-task gaps materially unchanged
+   (~3%). Class: **threshold-calibrated-on-corrupted-telemetry**.
+5. **Malformed evidence conflated with absent evidence (MAJOR, fail-open).** A PRESENT-but-
+   unparseable `task_started.ts` collapsed to `null`, silently disabling the idle gate and
+   restoring green-forever on exactly the least trustworthy input. The heartbeat side already
+   handled its own unparseable timestamp correctly; the asymmetry is closed — both now render
+   `unknown`. Class: **fail-open-on-unreadable-input**.
+Plus two MINORs (partial `thresholds` override now MERGES over complete defaults instead of
+NaN-disabling the gate; `startedIdleExpired` is present on every `deriveItemStatus` return
+instead of relying on a non-local invariant in another function).
+
+**Re-measured gap distribution (2026-07-30, `~/.claude/state/progress-logs/*.jsonl`):** 151
+files, 1617 `task_started`, 1596 same-task gaps. p50 4.4min / p90 17.4min / p95 41.1min;
+largest sub-threshold gap 49.1min; **49 gaps (3.07%) exceed 60min**, another 48 in 30-60min.
+Busiest single minute: 18 distinct task keys (the fan-out signature). This independently
+reproduces the reviewer's scan and is what the source header now cites.
+
+**Two defects found BY the new tests while closing the above (both fixed in the same commit):**
+- `roadmap-routes.js` kept a hand-maintained duplicate of `ATTENTION_PRECEDENCE`
+  (`ROLLUP_CLASSES`) AND fell back to `'blocked-on'` for any reason class it did not
+  recognise — so the new `idle-dispatch` code silently rolled up as "stalled — blocked on a
+  predecessor", a fabricated dependency claim. `ROLLUP_CLASSES` is now DERIVED from
+  derive-lib, and the fallback is `'unknown'` (honest) rather than a specific wrong claim.
+  Class: **duplicated-vocabulary-with-misattributing-fallback**.
+- A task deriving `unknown` still emitted `running` session leaves off the heartbeat alone,
+  and its plan then rolled up a green "1 running" badge for a task the server had just
+  admitted it could not classify. `deriveLiveAgentLeaves` now takes the task's own derived
+  status and can only ever narrow it. Class: **leaf-contradicts-its-own-parent-status**.
+
+**Minor, NOT fixed (deliberate scope hold):** the drill-down reason row renders the raw code
+("stalled: idle-dispatch"), consistent with how every other reason code renders there. The
+full human phrasing is already carried by the adjacent badge label and the session leaf, so
+this is terse rather than misleading. Worth a consistent reason-phrase pass across all five
+codes if the vocabulary grows again.
 **Root cause, PROVEN against real deployed data (2026-07-30):** `roadmap-routes.js`'s
 `absorbOneChildRollUp` rolled a task up as `running` whenever `child.live_sessions.length` was
 merely non-empty — independent of whether the attached session's heartbeat was actually fresh.
@@ -2124,6 +2563,94 @@ which it does not currently have (the child session doesn't exist yet at PreTool
 of scope for this task; flagged for a future round.
 **Filed by:** plan-phase-builder, false-eternal-running-fix build, 2026-07-30.
 
+## NL-ATTRIBUTION-ADOPTION-12-PERCENT-01 — the honest green signal now depends on a header almost nobody sends
+
+**Severity:** HIGH, OPEN. Direct consequence of ROADMAP-FALSE-ETERNAL-RUNNING-01's fix above.
+
+**THE PERCENTAGE IS NOT A STABLE FACT — DO NOT QUOTE ONE** (this rule is stated FIRST,
+deliberately: an earlier revision put a headline `~12%` above it and then left two more copies
+elsewhere in this file, which is a rule its own document violates and therefore teaches
+nothing). FOUR readings the same day, each correct when taken: ~12% (12 of 103 distinct
+identities in one window, WARN 4090), 10.2% (822/8081 lines, WARN 5146), 13.8% (899/6522,
+independent reviewer, WARN 5623), 10.6% (960/9084, WARN 6011). They disagree partly on
+numerator/denominator choice and partly because **`~/.claude/logs/conversation-tree-emit.log`
+ROTATES — the denominator is not monotonic**, so a later reading can legitimately be over a
+SMALLER log. Record the command and BOTH terms, never a bare rate:
+```
+L=~/.claude/logs/conversation-tree-emit.log
+grep -c 'builder-dispatch item=' "$L"                          # denominator (rotates!)
+grep 'builder-dispatch item=' "$L" | grep -c 'attributed=1'    # numerator
+grep -o 'unattributed dispatch #[0-9]*' "$L" | grep -o '[0-9]*' | sort -n | tail -1
+```
+All readings agree on the only durable conclusion: **adoption sits in a low band (roughly
+10-14%) and the WARN counter (4090 → 4963 → 5146 → 5623 → 6011 across the day) only climbs.**
+
+**RETRACTED 2026-07-31 — "the WARN series survives log rotation, while the rate does not."**
+That claimed an asymmetry that does not exist, in the same entry that correctly says the log
+rotates. PROVEN false by reading the implementation: the counter is
+`grep -c 'WARN unattributed builder dispatch' "$LOG_FILE"` (`workstreams-emit.sh`, in the
+`--on-builder-dispatch` WARN block) — a **line count over the very file** whose line count is
+the rate's denominator. Numerator and denominator share one file, so they share its fate: if
+that file is truncated, rotated or deleted, **both** restart. The WARN series is not
+rotation-proof and is not more durable than the rate.
+
+The honest property: it is a **whole-file running total, monotonic only within one log file's
+lifetime**. Two further corrections in the same breath — (a) it has **no session predicate**,
+so it is a total across ALL sessions, not per-session (13 distinct `session=` values were
+feeding one series when this was caught; the message wrongly said "logged this session" and is
+now relabelled); (b) **nothing in this harness currently rotates
+`~/.claude/logs/conversation-tree-emit.log`** — `grep -rn 'rotate'` over `adapters/` finds
+rotation machinery only for the admission ledger, supervisor tick and coord-sync logs, never
+this one. That is an *absence of machinery*, not a durability guarantee, and it does not
+resurrect the retracted claim: a manual `rm`/truncate resets the counter just the same.
+
+**If a genuinely monotonic adoption metric is ever needed**, it requires a durable counter
+kept OUTSIDE the log (its own state file, incremented and read independently of `$LOG_FILE`).
+That is a new mechanism and, per constitution §10, would need its own golden scenario,
+expected false-positive behaviour and retirement condition before it lands. It was
+deliberately NOT built here — this pass retracts a false claim rather than shipping unproven
+machinery to justify it.
+
+**THE ADOPTION MECHANISM DOES NOT EXIST — this is the load-bearing finding, not the
+percentage.** `grep -rn 'NL-ATTRIBUTION'` over `agents/`, `templates/`, `skills/`,
+`commands/`, `hooks/` and `scripts/` returns **ZERO constructors**: the only matches are the
+PARSER (`hooks/workstreams-emit.sh`) and two consumers (`hooks/lib/admission-lib.sh`,
+`scripts/dispatch-provenance.sh`). **No harness surface emits the header.** Every dispatch
+prompt that carries one carries it because a human or an agent typed it from memory of a
+doctrine file. So adoption has no mechanical carrier, and the WARN counter can only climb —
+which makes this a textbook constitution §10 case: a documented convention with no mechanism
+is not a mechanism, and a WARN ignored 5146 times is not enforcement. **The fix is a
+CONSTRUCTOR, not more doctrine:** the header must be emitted by whatever composes dispatch
+prompts (the orchestrator's dispatch path / a `plan-phase-builder` prompt template), so that
+sending it is the default rather than an act of recall.
+**Why it matters now:** `task_started` is header-authoritative as of today, so an unheadered
+dispatch produces NO green chip. That is deliberate (a missing green is not a lie; a false one
+is) but it means the cockpit under-reports real work until adoption rises.
+**`doctrine/orchestrator-pattern.md` already calls the header MANDATORY** — so this is a
+mechanism gap, not a doctrine gap: the only enforcement is a non-blocking WARN, and 4090
+ignored WARNs is the measured proof that a WARN is not a mechanism (constitution §10:
+"documented enforcement that does not fire is the cardinal harness defect").
+**Fix direction:** make the header a dispatch-time requirement with a real block (or have the
+dispatching layer inject it automatically from the task it is dispatching, which removes the
+human step entirely — preferred, since it cannot be forgotten).
+**Filed by:** plan-phase-builder, false-eternal-running upstream fix, 2026-07-30.
+
+## DISPATCH-PROVENANCE-MARKER-SECOND-COLLISION-01 — markers are silently overwritten within the same second
+
+**Severity:** MEDIUM, OPEN. Found while building the ROADMAP-FALSE-ETERNAL-RUNNING-01 fix.
+**Finding (PROVEN by executing test):** `scripts/dispatch-provenance.sh`'s marker filenames are
+`UNRESOLVED__<YYYYMMDDHHMMSS>.json` — **one-second granularity with no disambiguator**. Three
+distinct dispatches emitted inside one second leave **two** files, not three; the third
+silently overwrote a sibling. Reproduced deterministically in
+`workstreams-emit.sh --self-test` scenario RPL2 (3 real dispatches -> 2 marker files), which is
+why RPL2c asserts "the replay pass adds no new markers" rather than an exact count — pinning
+the count would couple that assertion to this unrelated bug.
+**Impact:** `pl_classify_session`'s spawned-session guard loses evidence for bursty dispatches,
+exactly when there is most of it. Aggravated (not caused) by the 200-marker cap.
+**Fix direction:** add a uniqueness suffix (pid + counter, or the item_id's short sha) to the
+marker filename, the same way `_dispatch_replay_token` already keys on a hash.
+**Filed by:** plan-phase-builder, false-eternal-running upstream fix, 2026-07-30.
+
 ## PROGRESS-LOG-ID-PLACEHOLDER-STILL-LIVE-CHECK-01 — "<id" ask_id placeholder bug: checked, currently quarantined and NOT growing
 
 **Severity:** informational (re-confirms `PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` above, checked
@@ -2140,7 +2667,7 @@ and does not explain it.
 **Action:** none required beyond what `PROGRESS-LOG-ID-JSONL-UNACCOUNTED-01` already tracks.
 **Filed by:** plan-phase-builder, false-eternal-running-fix build, 2026-07-30 (investigation
 requested alongside the roadmap rollup fix).
-- **REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01** (CRITICAL, measured 2026-07-30):
+- **REVIEW-GATE-UNSATISFIABLE-FROM-BUILDER-01** — Resolved (CRITICAL, measured 2026-07-30):
   review-record-commit-gate.sh demands a harness-reviewer PASS record before a builder
   subagent may commit — but builder subagents have NO Task/Agent-dispatch tool, so they
   cannot invoke harness-reviewer. The gate's prescribed remedy is UNREACHABLE from the
@@ -2154,3 +2681,555 @@ requested alongside the roadmap rollup fix).
   where the ORCHESTRATOR — which does have dispatch capability — is the actor, so the
   remedy is reachable from the layer that enforces it. Keep the commit-time gate as
   advisory-only early feedback so builders are informed without being deadlocked.
+- **REVIEWED-BYTES-ARE-NOT-COMMITTED-BYTES-01** (HIGH, class confirmed by 2 independent
+  occurrences 2026-07-30): a reviewer verifies the WORKING TREE while the INDEX still holds
+  the version it rejected — so a commit ships bytes no review ever covered, and the PASS is
+  an unfalsifiable claim. Occurrence 1: the cockpit review-surface builder (`MM` on both
+  doctrine files + manifest, `AM` on the plan, `??` on the proposal doc; committing would
+  have shipped the carrier-parity theatre the reviewer had just removed). Occurrence 2: the
+  IF-statement builder (`git show :.../if-statement-check.sh | grep -c perception` = 0 while
+  the worktree had the fix; the index held the draft with the `I see ` escape).
+  Note only manifest.json is blob-checked by the review gate — doctrine/, plans/ and
+  docs/harness-improvements/ are OUTSIDE the surface, so stale staged copies of those ship
+  with NO mechanical complaint.
+  FIX DIRECTION: (a) any request for review of "staged" work must assert staged-ness
+  mechanically (`git diff --stat` empty) IN the request; (b) the reviewer verifies
+  index-vs-worktree parity BEFORE issuing a verdict; (c) a review record's blob_shas should
+  be taken from the INDEX, and the record capture should refuse when worktree != index.
+  This belongs in deterministic-process.md: a gate that verifies bytes other than the ones
+  that ship is enforcing nothing.
+- **DETERMINISM-PROOF-OBLIGATION-UNBUILT-01** (HIGH, self-caught 2026-07-30):
+  `doctrine/deterministic-process.md` shipped with an Enforcement header claiming
+  manifest units carry `chokepoint`/`bypass_paths` and that harness-doctor REDs without
+  them. MEASURED, all three halves false: 39 blocking units, **0** with `chokepoint`;
+  `determinism-chokepoint-declared` has 0 occurrences in harness-doctor.sh;
+  `manifest.schema.json` is `additionalProperties: false` and would REJECT both keys.
+  Caught by a builder within hours — the file whose thesis is that unbuilt enforcement
+  claims are the cardinal defect shipped an unbuilt enforcement claim. Header corrected
+  to PATTERN + a named correction rather than silently edited.
+  TO CLOSE: (1) schema gains both properties; (2) a real doctor check; (3) backfill the
+  blocking units (dated grandfather acceptable, per the review-record precedent);
+  only then does the Enforcement line come back.
+  **UPDATE 2026-07-30 (harness-reviewer follow-up):** (1) and (2) are DONE — the schema
+  defines both fields, and `check_deterministic_process_proof` REDs on a blocking entry
+  missing EITHER (tightened from both-missing-only). The doctrine header now states the
+  hybrid state instead of the stale "NONE YET", which had itself become an INVERSE
+  vaporware claim (asserting the schema "would REJECT both keys" after the same commit
+  added them). Also corrected: the unit count was 40, not 39 — `intended-functionality-
+  if-statement` was blocking:true with neither field and on no grandfather list, so the
+  doctor RED'd from the moment the check landed; it is now backfilled with a real
+  chokepoint + 8 enumerated bypasses. (3) REMAINS OPEN: 38 of 40 blocking units still
+  carry neither field and are exempted only by the dated grandfather list. This entry
+  closes when that list reaches empty. Re-derive, never quote:
+  `jq -r '.entries[]|select(.blocking==true)|select((((.chokepoint//"")|length)==0) or (((.bypass_paths//[])|length)==0))|.id' adapters/claude-code/manifest.json | wc -l`
+- **REVIEW-COVERAGE-DB-IS-UNGATED-REPO-CONTENT-01** (HIGH, PROVEN 2026-07-30 by
+  harness-reviewer against live fixtures, partially closed same day): the coverage
+  database `review-record-push-gate.sh` consults (`docs/reviews/records/{index,
+  grandfather-manifest}.json`) is unprotected repo content the pushing agent can author
+  in the SAME push, and neither `rrg_in_surface` nor `scope-enforcement-gate.sh:188`
+  gates that path. Three routes each took the gate from rc=1 to rc=0. CLOSED: a
+  self-authored grandfather row (rows are now verified against the manifest's own
+  `cutover_ref`), and deleting both coverage files (the bootstrap fail-open is now
+  scoped to repos without `adapters/claude-code/manifest.json`). **STILL OPEN:** a
+  self-written `{kind:"harness-change-review", verdict:"PASS"}` row in `index.json`
+  still covers the pusher's own content — indistinguishable at push time from the
+  legitimate `review-runner.sh finalize` flow, which writes exactly that row in exactly
+  that push. Detected only post-hoc by the doctor's `review-index-consistency` check,
+  which `deterministic-process.md:31-33` names as auditing-instead-of-enforcement.
+  TO CLOSE: an independence signal the pushing agent cannot mint — a reviewer-side
+  signature over `{path, blob_sha, verdict}`, or a server-side required-status-check.
+  Tracked alongside `docs/plans/review-independence.md`.
+  CLASS LESSON (the reason this is HIGH and not a one-off): a gate whose verdict depends
+  on repo-resident state must treat that state as part of its own trust boundary.
+- **REVIEW-SURFACE-OMITS-ITS-OWN-DISPATCHER-01** (HIGH, PROVEN 2026-07-30 while
+  fixing harness-reviewer M8): `adapters/claude-code/git-hooks/pre-push` — the
+  dispatcher that DECIDES WHETHER the authoritative review gate runs at all — is NOT
+  in the review-record trigger surface. `rrg_in_surface` matches `hooks/**/*.sh`,
+  `scripts/**/*.sh`, `agents/*.md`, `config/**`, `manifest.json`,
+  `settings.json.template`, `rules/**`; `git-hooks/pre-push` matches none of them
+  (it is extensionless and under `git-hooks/`, not `hooks/`). PROVEN by sourcing the
+  lib and running `rrg_in_surface` over this very commit's changed files: the
+  dispatcher came back "not gated" while the five `hooks/*.sh` + `manifest.json`
+  files came back in-surface, and the live gate's own block message listed exactly
+  those five. So an edit to the dispatcher — including deleting the stage that
+  invokes the review gate — reaches master with ZERO review coverage. This is the
+  sharpest form of harness-reviewer M8 ("the enforcing bytes are mutable"): M8 is
+  about a checkout/stash disarming the gate locally, this is about an unreviewed
+  COMMIT disarming it permanently for everyone.
+  ALSO NOT IN SURFACE, same root cause: `adapters/claude-code/schemas/
+  manifest.schema.json` (governs what every manifest entry may declare, including
+  the chokepoint/bypass_paths proof obligation) and `adapters/claude-code/
+  doctrine/**` (the doctrine the gates cite as their authority).
+  TO CLOSE: extend `rrg_in_surface` to cover `git-hooks/*` and `schemas/*.json` at
+  minimum, then re-bootstrap the grandfather manifest so existing content is
+  covered. Note the cost is real and should be measured first (the Amendment G
+  precedent measured 26 newly in-surface files before landing).
+  CLASS LESSON: the trigger surface of a review gate must include every file that
+  can change whether that gate runs — enumerate the gate's own carrier chain, not
+  just the code it inspects.
+  **RESOLVED (mostly) 2026-07-30** — harness-reviewer CRITICAL 3 confirmed this
+  finding and rejected the deferral rationale as unmeasured, so the cost was
+  measured and four of the five arms landed as Amendment H in `rrg_in_surface`:
+  `git-hooks/*` (5 files), `schemas/*.json` (11), `install.sh` + `sync.sh` (2), and
+  non-`.sh` code members of `hooks/`+`scripts/` (10). Surface 283 → 311 tracked
+  files (+28, +9.9%), measured identically on `/bin/bash` 3.2.57 and
+  `/opt/homebrew/bin/bash` 5.3.15. Pure DELETION of an in-surface file also blocks
+  now (`--diff-filter=ACMR` excluded `D`, so `git rm` of a gate was a rc=0 no-op);
+  measured FP cost of that arm: 8 of 1763 commits on master (0.45%) delete an
+  in-surface file. NOTE the reviewer's suggested "cover executable non-`.sh`
+  members" rule was measured and REJECTED: all 13 tracked non-`.sh` files under
+  `hooks/`+`scripts/` are mode 100644, so a mode-bit rule would have matched ZERO
+  files and shipped as theatre; the landed rule is extension-based.
+  **FULLY RESOLVED 2026-07-30 (round 3)** — harness-reviewer returned a second
+  REJECT showing the round-2 closure was partial in two independent ways, both
+  now closed and both regression- and mutation-tested:
+  (1) **The outcome had four verbs, and only two were closed.** "The enforcing
+  file is gone from its enforcing path" is reachable by edit (`M`), `git rm`
+  (`D`), `git mv` (`R100 <old> <new>` — `--diff-filter=ACMR` emits ONLY the
+  destination, `--diff-filter=D` emits NOTHING) and typechange (`T` — excluded by
+  BOTH). PROVEN against a real bare remote with the live gate as the pre-push
+  hook: `git mv adapters/claude-code/git-hooks/pre-push docs/pre-push` pushed
+  **rc=0 with ZERO gate bytes and the path GONE from the remote**, and a
+  regular-file→symlink typechange pushed rc=0 leaving the remote carrying mode
+  120000. Closed by `--diff-filter=ACMRT` + a `--diff-filter=D --no-renames`
+  pass. Re-measured FP bill independently over all 1763 master commits: rename
+  sources **+38 files / +7 commits (0.40%)** — note this is HIGHER than the
+  0.34% the review cited, which counted only renames *out of* the surface and
+  omitted one rename *within* it (`rules/conversation-tree-state.md` →
+  `rules/workstreams-state.md`, `e272c3e`); typechanges 0/0, free. Still cheaper
+  than the 0.45% deletion arm already accepted.
+  (2) **The extension-based rule was itself the hand-written list the header
+  disclaimed.** `hooks/`, `scripts/` and `schemas/` were extension allowlists
+  while the lib header claimed the surface was "derived from the gate's CARRIER
+  CHAIN, not from a hand-written path list". Today's tree was fully covered, so
+  there was no present-day hole — the defect was the absence of the very
+  drift-resistance the claim advertised (`hooks/lib/evil.mjs`, `.cjs`,
+  `hooks/evil.rb`, `.pl`, `.lua`, `schemas/x.yaml` each probed NOT-COVERED). All
+  four carrier trees are now UNFILTERED minus an exact-path exemption list of
+  three known non-code members; MEASURED identical 311-file surface either way,
+  so zero present-day FP cost. The earlier "the landed rule is extension-based"
+  sentence above is therefore SUPERSEDED — the executable-bit rejection stands,
+  its replacement did not.
+  CLASS LESSON (extended): every gate deriving a subject set from `git diff` must
+  enumerate by the **codes through which its subject can change or LEAVE the
+  surface**, never by a hand-listed set of verbs; and every new self-test carries
+  a `git mv` case and a typechange case beside its `git rm` case.
+  **STILL DEFERRED — `adapters/claude-code/doctrine/**`**, with its cost now
+  measured rather than asserted: **89 tracked files** (`git ls-files
+  'adapters/claude-code/doctrine/*' | wc -l`), a +31% surface expansion on its own
+  and larger than all four landed arms combined. Doctrine is prose that changes far
+  more often than the code enforcing it, so the merge-friction bill is real and
+  recurring — this is the one arm where deferral survives measurement. TO CLOSE:
+  decide whether doctrine changes warrant a review record at all (they are
+  authority, not enforcement bytes — a doctrine edit cannot by itself disarm a
+  gate), and if so re-bootstrap the grandfather manifest over all 89 first.
+- **DOCTOR-BUDGET-BLOCKING-GATES-RED-15-OF-14-01** (MEDIUM, PROVEN pre-existing
+  2026-07-30): `harness-doctor.sh --quick` REDs `budget-blocking-gates: blocking
+  session-event units: 15/14`. Reproduced identically against HEAD's manifest with the
+  same full adapter tree, so it predates and is unrelated to the deterministic-process
+  work. Not fixed there to avoid bundling an unrelated demotion decision into a review-
+  findings commit. TO CLOSE: demote one unit via `scripts/gate-demotion.sh` or
+  consolidate per ADR 059 D7 — an explicit budget decision, not a mechanical fix.
+- **REVIEW-RECORD-GATE-STAGE-AND-COMMIT-FAIL-OPEN-01** (CRITICAL, PROVEN 2026-07-30 by a
+  builder that self-reported it, orchestrator-confirmed by code read):
+  `review-record-commit-gate.sh:427-428` reads the index at PreToolUse:
+  `staged="$(git -C "$repo_root" diff --cached --name-only ...)"` then
+  `[[ -n "$staged" ]] || return 0   # exemption 1: nothing staged`.
+  For the command `git add -A && git commit ...` the `git add` HAS NOT RUN YET at
+  PreToolUse, so the index is empty, `$staged` is empty, and the gate SILENTLY ALLOWS
+  (exit 0, zero output). Builder's executed matrix:
+    staged   + `git commit -m x`                     -> exit 2 (BLOCKED)
+    staged   + `git add -A && ... && git commit -F`  -> exit 2 (BLOCKED)
+    UNSTAGED + `git add -A && ... && git commit -F`  -> exit 0, SILENT ALLOW
+  `git add -A && git commit` is the single most common commit idiom; the builder reached
+  for it unprompted. No bypass env is needed or set — this is invisible in the override
+  audit log, so the 78 logged overrides UNDERSTATE unreviewed landings.
+  WORSE: the gate's own self-test Scenario 4 ASSERTS the hole as correct behaviour
+  (`[[ "$rc" == "0" ]] && pass "no staged files -> allowed"`), so the suite defends it.
+  This is deterministic-process rule 1 exactly: the gate is at a layer where it cannot
+  see what will actually be committed. At pre-push the commits already exist, so the
+  class cannot occur — further evidence for moving authority to the funnel.
+  TO CLOSE: (a) the gate must evaluate what the COMMAND WILL STAGE (parse `git add`
+  args / use the post-add tree), not the pre-command index; (b) Scenario 4 must
+  distinguish "genuinely empty commit" from "empty index because add has not run yet";
+  (c) AUDIT what landed via this route historically.
+  **RESOLVED** (builder aff45ca5, same commit as this entry's update): hooks/
+  review-record-push-gate.sh landed as the authoritative pre-push carrier (wired into
+  git-hooks/pre-push); review-record-commit-gate.sh demoted to blocking:false
+  (advisory-only, REVIEW_RECORD_GATE_OVERRIDE removed entirely — nothing left to
+  waive). Self-test 1b on the commit gate proves a builder with no override set makes
+  forward progress; Scenarios 1-13b on the push gate prove the same content is still
+  refused at push time. harness-reviewer PASS obtained on the full diff (Critical/Major
+  findings fixed in the same commit: a range-diff fail-open at push-gate.sh, a missing
+  bypass_paths enumeration entry for self-issued override markers, and stale doctrine/
+  review-before-deploy.md claims that the commit gate "IS the enforcement").
+
+- **PRE-PUSH-SCAN-RANGE-DIFF-FAIL-OPEN-01** (Major, found 2026-07-30 by harness-reviewer
+  during the above review, spawned as task_28b9098f): hooks/pre-push-scan.sh (the
+  credential/secret scanner) line ~218 scores a failed `git diff --name-only "$range"`
+  (e.g. an unresolvable `remote_sha`, PROVEN reachable on both a plain push and a
+  `--force` push) as "zero files changed" via `2>/dev/null || echo ""`, silently
+  skipping the scan instead of falling back to a wider range. Same bug class already
+  fixed in hooks/review-record-push-gate.sh's `_rrpg_main` (see the `diff_rc` handling
+  and self-test Scenario 13b) — apply the identical empty-tree fallback here. Flagged
+  as a spawned task rather than fixed in-line to keep this commit's diff reviewable.
+
+- **RQ-AUTO-ENQUEUE-NOT-RANGE-AWARE-01** (Minor, found 2026-07-30 by harness-reviewer):
+  hooks/lib/review-queue-auto-enqueue-lib.sh's rq_auto_enqueue_uncovered reads `git diff
+  --cached` (the INDEX) — correct for review-record-commit-gate.sh's commit-time call,
+  but a hypothetical push-time caller would find the index normally equal to HEAD and the
+  call would be wired-but-permanently-inert. review-record-push-gate.sh deliberately does
+  NOT call it (see the gate's own comment at its RI1b section) rather than wire an inert
+  step. A RANGE-aware entry point (taking an explicit path+blob-sha list rather than
+  re-deriving from the index) would let the push gate auto-enqueue independent review for
+  content it blocks or overrides too — not built in this pass.
+
+## NL-ISSUES-TRIAGE-20260731 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 109 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 2d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+- **LEARNING-LEDGER-CAPTURES-MACHINE-NOISE-AS-OPERATOR-VERBATIM-01** (HIGH, MEASURED
+  2026-07-31): the operator-defect learning loop built today is being poisoned at the source.
+  Of 25 nl-issue rows tagged `[src:operator-verbatim]`, **17 are SYSTEM `<task-notification>`
+  blocks, not the operator** — only 8 carry the operator's real words. The PROBLEM-CAPTURE
+  vocabulary in workstreams-read.sh fires on the injected task-notification text (which
+  contains complaint-shaped words from agent reports) as if the operator had typed it.
+  CONSEQUENCE: the ledger whose entire purpose is capturing operator-reported defects — the
+  thing that is supposed to make the harness learn without the operator having to shout —
+  is 68% machine noise. Its class-rollup escalation therefore escalates on agent chatter.
+  EXACT SAME CLASS as the Requests-tab defect fixed today (machine output displacing the
+  operator's own words; there the 401 error string overwrote a real request title).
+  FIX: PROBLEM-CAPTURE must exclude injected system blocks — a turn whose text begins with
+  `[SYSTEM NOTIFICATION` or contains a `<task-notification>` element is NOT operator input,
+  by the same rule the session prompt states outright. Add a RED fixture per shape.
+- **SPAWN-TASK-CHIPS-ARE-A-NON-DETERMINISTIC-HANDOFF-01** (HIGH, operator 2026-07-31:
+  "What happened to you agreeing not to spawn sessions through chips? ... it probably sat
+  there for hours before I saw it"): a spawn_task chip reaches the operator ONLY if they
+  happen to look — deterministic-process.md rule 3 (a step nothing invokes is not part of
+  the process). task_28b9098f sat unseen for hours. Root cause of THIS instance: the
+  constraint was never carried into subagent dispatch briefs, so a builder spawned it.
+  FIX: (a) every dispatch brief carries "do not spawn_task chips; file to docs/backlog.md
+  or needs-you.sh instead"; (b) anything genuinely needing the operator goes to NEEDS-YOU.md
+  AND is stated in chat the same turn — the durable ledger is the deterministic surface,
+  the chip is not.
+
+## SURFACE-PREDICATE-NARROWER-THAN-DELIVERY-IDENTITY-01 — the same class, caught twice in one day
+
+**Severity:** CRITICAL, OPEN (fix in flight)
+**Confidence:** PROVEN — reproduced end-to-end against a real bare remote with the gate
+installed as the actual pre-push hook, by an independent harness-reviewer.
+
+**The class.** A harness predicate decides membership by comparing a path STRING under an
+equivalence relation NARROWER than the one the delivery layer actually applies. The predicate
+answers truthfully about the string it was given, and the wrong thing lands anyway.
+
+**Instance 1 (closed, round 4).** `rrg_in_surface` was asked about git's C-quoted *rendering*
+of a path rather than the path. `hooks/pré-push-gate.sh` classified out-of-surface → rc=0,
+silent, unreviewed hook landed. Closed in 802a937.
+
+**Instance 2 (OPEN, found in round 5).** The same predicate matches tree prefixes
+case-SENSITIVELY (`case "$rel" in hooks/*)`, review-record-gate-lib.sh:138-211) while the
+surface it protects is realised on a case-INSENSITIVE filesystem. PROVEN:
+`git update-index --add --cacheinfo 100755,<blob>,adapters/claude-code/Hooks/injected.sh`
+(capital H) + commit + push → **rc=0, gate SILENT, LANDS on the remote**, and a later clone
+materialises it at `adapters/claude-code/hooks/injected.sh`, inside the real carrier directory
+alongside the genuine hooks. Same silent rc=0 for `Git-Hooks/pre-push`, `SCRIPTS/evil.sh`,
+`adapters/Claude-Code/hooks/evil.sh`, `Manifest.json`.
+Direction matters: the CLOBBER direction is NOT exploitable (0 of 311 in-surface canonical
+paths contain an uppercase letter, so the all-lowercase real path sorts last in the index and
+wins the checkout race). The exploitable direction is INJECTION of a new path with no
+lowercase competitor. `review-record-gate-lib.sh:161` currently claims "a new file of any kind
+under these trees is IN surface by default" — false for case variants, exactly as it was false
+for C-quoted paths before round 4.
+
+**Still untested, same class:** Unicode NFC/NFD normalisation on APFS; trailing dot/space
+stripping on Windows checkouts.
+
+**The generalization (this is the point of the row).** Every predicate deciding membership
+from a path string must normalise on EVERY equivalence the delivery layer collapses —
+encoding (closed), case (in flight), Unicode normalisation (untested), Windows trailing
+characters (untested). The round-4 rule "disable quoting AND use NUL separation" is
+insufficient and must be extended with "AND normalise to the delivery filesystem's equivalence
+class before the predicate."
+**Sweep:** `rg -n 'case "\$(rel|full|path|f)" in' adapters/claude-code/hooks/lib/ adapters/claude-code/hooks/ adapters/claude-code/scripts/ | rg -v 'tr .A-Z..a-z.|casefold|nocasematch'`
+
+## RUNTIME-VERIFICATION-EXECUTES-MARKDOWN-AT-SESSION-END-01 — arbitrary write + exfil path
+
+**Severity:** CRITICAL, OPEN (fix in flight). **Current exposure: NONE** — the gate is not
+installed (live `~/.claude/hooks/runtime-verification-gate.sh` absent; live dispatcher still
+lists 3 member gates). It becomes live if `worktree-wf_795d2726-dc4-5` reaches master.
+**Confidence:** PROVEN by execution, by an independent harness-reviewer.
+
+The rewired Stop gate executes `curl` command lines harvested from MARKDOWN at every session
+end, unattended. A fixture whose only evidence line was
+`Runtime verification: curl -o <path> file:///etc/hosts` caused the file to be created (213
+bytes of /etc/hosts); a second run **overwrote an executable hook script** — i.e. next-session
+code execution. The only filter is a metacharacter regex
+(`runtime-verification-executor.sh:413`); there is NO curl-flag filtering, so `-o` (arbitrary
+write), `-T` (upload/exfiltrate any readable file) and `-K` (arbitrary curl config) all pass.
+
+**Two further delivery paths, both PROVEN:** (i) a CLEAN working tree with someone else's
+branch checked out executes THEIR committed curl lines via the base..HEAD diff; (ii) an
+UNTRACKED `.md` is read whole-file (`:170`), so a postmortem or review that merely QUOTES an
+evidence line executes it.
+
+**The boundary this violates, stated positively:** verify by READING files, never by RUNNING
+content. The gate's own header at `:44-49` ALREADY CLAIMS it does this — the claim is true for
+three branches and false for `curl` and `sql`.
+
+**Do not resolve this by retiring the gate.** Operator directive 2026-07-31, verbatim: "Are
+you seriously suggesting that the solution is to simply give in to the theater? Rewire it!
+Make it work!" The fix is to classify curl/sql UNVERIFIABLE like `command`/`bash`, which also
+collapses the companion defect below.
+
+**Companion — fp_expectation measured on a filtered corpus.** The entry claims "Near-zero on
+added lines, by construction and by measurement," but the measurement covered only "the 1344
+NON-CURL Runtime verification: lines" — it excluded the single format with the highest FP
+rate. Re-measured over the 25 real curl/sql lines in docs/: **16 failures / 9 passes = 64%
+failure on real, largely TRUE evidence.** A corpus filtered to remove the failing class is not
+a measurement. Class: `fp-measurement-excludes-the-failing-population`.
+
+**Companion — a stale date evades the §10 evidence bar.** `manifest.json` `runtime-verification`
+carries `added_after: "2026-04"` while `harness-doctor.sh:2354` does
+`if (addedAfter < "2026-07") continue;`, so the doctor SKIPS the new-gate bar entirely and never
+validates golden_scenario / fp_expectation / retirement_condition — on an enforcing artifact
+written 2026-07-31 that has never fired. `harness-doctor.sh:2288-2295` says grandfathering must
+go via `PRE_BAR_GRANDFATHERED`, "never by under-dating." Generalization: `added_after` tracks
+the landing month of the ENFORCING ARTIFACT, not the unit's inception.
+
+## INBOX-EXPLAINS-THE-SYSTEM-NOT-THE-DECISION-01 — the card answers the wrong question
+
+**Severity:** HIGH, PARTIALLY FIXED 2026-07-31 (client ordering landed; the producer
+half is untouched). **Source:** operator, verbatim: "the info that's presented to me in
+the Inbox doesn't do a fantastic job of providing context to help me understand the
+issue and determine what to do about it."
+
+**LANDED this round (client, `inbox.js`):** actions hoisted into a "Run this" block
+above the prose; labelled commands (`STEP 3: powershell ...`) now fence with their own
+Copy button carrying the command ONLY; the 5-line cap no longer drops action lines; the
+trade-offs table and My-pick now render ABOVE the background instead of below it; the
+30s tick no longer re-renders when nothing changed. Live-verified: 2 ticks, 0 DOM
+mutations, scroll held at 900.
+
+**STILL OPEN — the producer half, which is where the real defect lives.** The card
+faithfully renders what `needs-you.sh` was given, and what it is given is an explanation
+of the SYSTEM rather than the material for a DECISION. Concretely, on the operator's own
+live item NY-1785425479-0d4d:
+
+1. **Process noise occupies the most prominent text.** The title ends "(supersedes
+   retracted NY-1785394095-d8ec; corrected after a wrong diagnosis)". A retracted id and
+   the author's own wrong turn are provenance, not decision content, and they sit in the
+   headline. FIX: the cold-reader lint should REJECT retracted-id references and
+   self-referential correction notes in `--text` titles; provenance belongs in the
+   collapsed "Raw verbatim + session lineage" block that already exists.
+2. **Double labelling.** Renders as "Decision needed: Action needed: register the ...".
+   The server strips ONE redundant prefix; the producer wrote two.
+3. **No "why does this need ME" field.** This is the single highest-value missing datum —
+   the operator's first question is always "can't you just do it?". One item answers it
+   well (the settings.json row names the grant-local-edit bar); the others do not. FIX:
+   make it a REQUIRED field, lint-enforced, alongside the existing five.
+4. **No effort estimate.** "three commands" appears only inside My-pick prose. FIX:
+   required field, rendered as a chip next to the age.
+5. **No currency signal.** The item is 14h old and nothing says whether it is still true.
+   FIX: re-derive at render and show "still current as of <t>", or flag it stale.
+6. **Background explains architecture, not consequence.** "coord-sync pushes each
+   machine's live session state ... every 60s" is how the system works; what the operator
+   needs is what they gain and what they lose. The options table already carries that and
+   is now rendered first — the background should be SHORTER, not merely later.
+
+**The generalization:** an inbox card is a decision surface, not a status report. Every
+field must earn its place by changing what the operator would DO. The producer's lint
+currently checks that fields are PRESENT and cold-readable; it does not check that they
+are DECISION-RELEVANT, which is why a structurally-perfect card can still be unusable.
+
+## NL-ISSUES-TRIAGE-20260801 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 111 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 23d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## NL-ISSUES-TRIAGE-20260802 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 7 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 0d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## CI-REQUIRED-CHECK-PR-ONLY-01 — the required check IS real; the defects are red-since-07-29 checks, an admin bypass, and a push/PR trigger asymmetry
+
+**Severity:** HIGH, OPEN. **Confidence:** PROVEN by protection API + PR #106 check rollup +
+run history + local reproduction, 2026-08-02, work account `MishaPT`.
+
+**CORRECTS an unmerged row.** Commit `10b4e5a` on branch `wip/harness-hardening-2026-07-29`
+(not on master) filed `CI-REQUIRED-CHECK-NAMES-NOTHING-01`, whose headline — "no workflow
+produces a check named `validate`" — is **FALSE**. When that branch merges, its row must be
+replaced by this one. That commit was itself a retraction of an earlier false claim ("you have
+no CI"); this is the second false headline in the same investigation, and the cause of both was
+reasoning from workflow-level `name:` fields without reading the produced check names.
+
+**REFUTED — claim (a).** `.github/workflows/pr-template-check.yml` declares `jobs: validate:`
+with **no** `name:` key. GitHub derives a check-run name from the job's `name:` when present and
+falls back to the **job ID** otherwise, so the produced check name is literally `validate` —
+exactly matching `required_status_checks.contexts: ["validate"]`. Decisive evidence, not
+inference: `gh pr view 106 --json statusCheckRollup` returns
+`{"name":"validate","workflowName":"PR Template Check","conclusion":"FAILURE"}`.
+The gate is real, it reports, and it is currently RED on #106.
+
+**CONFIRMED — claim (b).** `enforce_admins.enabled: false`. Owner pushes skip protection.
+
+**CONFIRMED but understated — claim (c).** Not "three consecutive pushes": `Evals` and
+`Server-side enforcement` have failed on **12 consecutive master pushes**, last green
+2026-07-29T23:09Z. `Secret scan CI backstop` failed once more (2026-08-01T13:48Z). Both
+failures reproduce locally:
+- `Evals` → `evals/golden/rules-index-coverage.sh` exits 1: 10 doctrine compacts lack an
+  `INDEX.md` row, 6 exceed the 3000-byte cap. **This is a regression of an already-fixed
+  defect** — backlog v69 (2026-07-17) records "5 over-cap doctrine compacts trimmed, Evals CI
+  GREEN again". Fix: `bash adapters/claude-code/scripts/manifest-check.sh --gen-index`.
+- `Server-side enforcement` → `plan-edit-validator.sh --self-test` = 15 passed / 4 failed
+  (F16-F19). Root cause is a shell bug, not a policy failure: `plan-edit-validator.sh:1467`
+  and `:1535` run `stat -c %Y "$f"`, which on a non-GNU `stat` emits a multi-line `stat -f`
+  style block; that block is then fed to `age=$((now - mtime))`, producing
+  `syntax error in expression (error token is ": "/tmp/...")`. The three sibling jobs
+  (credential-scan, harness-hygiene, no-test-skip) all pass.
+
+**PARTLY REFUTED — claim (d).** The premise "all six workflows trigger on `push:[master]` +
+`pull_request`" is wrong for two of six: `pr-template-check.yml` is `pull_request` **only**,
+and `synthetic-runner.yml` is weekly `schedule` + `pull_request` (paths-filtered). The
+*conclusion* stands and is confirmed: **no workflow has a `push:` trigger for any non-master
+branch**, so branch pushes run zero checks. `gh run list --limit 100` shows exactly one
+non-master branch with runs — `claude/busy-kare-3dba65`, and those are `pull_request`-triggered
+(PR #106), not push-triggered. The "13 branches on 07-31" count is also low: the repo activity
+API shows **20+ `branch_creation` events on 2026-07-31 alone**, plus non-master pushes to
+`wip/harness-hardening-2026-07-29`, `ws-ui-server-stable`, and three `harness/active-sessions/*`.
+
+**THE COUPLING TRAP — do not flip `enforce_admins` first.** Because `validate` is produced only
+by a `pull_request`-triggered workflow, a **push** to master can never produce it. Today that is
+harmless (`enforce_admins:false`). Setting `enforce_admins: true` while `validate` remains the
+required context would make direct pushes to master permanently unmergeable — the owner's normal
+push-to-master workflow would hard-stop with "Required status check 'validate' is expected".
+HYPOTHESIZED (standard GitHub protection semantics; not executed here — refuter: flip it and a
+direct master push still succeeds). **Fix the context list BEFORE touching `enforce_admins`.**
+
+**PR #106 is blocked by neither billing nor a phantom check.** `mergeable: MERGEABLE`,
+`mergeStateStatus: BEHIND`, `rebaseable: false`. `strict: true` (require branches up to date)
+is the blocker; the branch is behind master. Its `validate` check is additionally FAILURE, so
+the branch also needs a template-compliant PR body. Actions billing is not implicated: runs
+executed normally through 2026-08-02T00:41Z and `actions/permissions` returns `enabled:true`.
+
+**GENERALIZATION (retained from `10b4e5a`, and now proven both ways).** A required step whose
+IDENTIFIER does not match the thing that PRODUCES it is indistinguishable, in every inventory
+and dashboard, from a step that works. The converse is the trap this investigation actually hit:
+an identifier that LOOKS orphaned because the producer's name is implicit — GitHub's job-ID
+fallback — is indistinguishable from a genuine orphan. **Verify against the produced name, never
+the declared name, and never the absence of a declaration.**
+
+**Sweep run 2026-08-02 (identifier vs producer), results:**
+- `required_status_checks` — 1 context (`validate`), producer found. CLEAN.
+- manifest `entries[].hooks[]` — 0 missing of 127 references. CLEAN.
+- manifest `entries[].doctrine_file` — 0 missing of 106 references. CLEAN.
+- hook scripts on disk unreferenced by manifest — 0 of 112. CLEAN.
+- `settings.json.template` → disk — 0 missing of 56 referenced scripts. CLEAN.
+- manifest `wired_template:true` → template — 1 of 48 absent
+  (`lib/sessionstart-singleflight.sh`); **not a defect**, it is `source`d by
+  `session-start-auto-install.sh:595`, not wired as its own hook.
+- manifest `selftest:true` → `--self-test` branch present — **1 of 96 fails**:
+  `adapters/claude-code/hooks/runtime-verification-reviewer.sh` has no `--self-test` handler,
+  and its only invoker is `adapters/claude-code/attic/pre-stop-verifier.sh:587` (retired to
+  attic). The manifest asserts a capability the artifact does not have, for a script nothing
+  live calls. **This is the one true in-repo instance of the class.** Fix: drop `selftest` from
+  the `runtime-verification` entry's second hook, or retire the script alongside its caller.
+- **Sweep-method caveat, filed because it is the same class:** the first three runs of this
+  sweep reported 127/127 and 106/106 "MISSING" — a total false positive. Cause: `jq` on this
+  machine writes **CRLF** when redirected to a file, so `read` produced `foo.sh\r` and every
+  `[ -e ]` test failed. Any sweep that shells `jq > file` on Windows must `tr -d '\r'`.
+  Consistent with the standing `od -c` lesson (NL-FINDING-038).
+
+**FIX, ordered (each independent; commands in the 2026-08-02 session report):**
+1. Regenerate the doctrine index + trim over-cap compacts → re-greens `Evals`.
+2. Fix the `stat -c %Y` arithmetic in `plan-edit-validator.sh:1467,1535` → re-greens
+   `Server-side enforcement`.
+   **RESOLVED 2026-08-03 (gated-pipeline-master-2026-08 Task 8 triage), corrected diagnosis:**
+   the fault is NOT in production lines 1467/1535 (those `stat -c %Y ... || echo 0` call sites
+   are fine — GNU `stat -c` works correctly on both this machine and the Linux CI runner). The
+   actual break is in the self-test's OWN `F16_BINSHIM` fixture (around line 1118): a `stat`
+   shim built for the F16-F19 scenarios unconditionally translated `-c %Y` to
+   `/usr/bin/stat -f %m`, assuming `/usr/bin/stat` is BSD's. On GNU coreutils (this Windows/
+   MSYS2 checkout, and any GNU/Linux CI runner) `-f` means `--file-system` (dump filesystem
+   info, wrong shape entirely, not an error) — reproduced directly:
+   `/usr/bin/stat -f %m <file>` prints a multi-line `File: ... Block size: ... Inodes: ...`
+   block, which `age=$((now - mtime))` then chokes on exactly as this entry describes. Fixed by
+   trying the GNU form for real first (`/usr/bin/stat -c %Y "$@" 2>/dev/null || /usr/bin/stat -f %m "$@"`)
+   — verified `plan-edit-validator.sh --self-test` now 24/24 PASS (was 20/4). This should also
+   re-green CI's `Server-side enforcement` job (same self-test, same shim, same GNU runner).
+3. Only then widen `required_status_checks.contexts` to include push-produced job names
+   (`Bash hooks --self-test`, `All-checks summary`, `Golden behavioral tests`,
+   `Credential + hygiene-denylist scan (defense-in-depth backstop)`).
+4. Only after (3) is green, decide `enforce_admins` — it converts push-to-master into a
+   PR-only workflow.
+5. Branch-push triggers are a COST decision, not a correctness one: adding `push:` for all
+   branches multiplies Actions minutes by the ~20-branches/day worktree churn. Recommend
+   `push: branches-ignore: [worktree-*, harness/active-sessions/*]` if adopted at all.
+
+## SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 — harness-doctor.sh's own P-14 jq-parity self-test
+cannot exercise its nonode fallback on Windows/MSYS2 (added 2026-08-03, gated-pipeline-master-
+2026-08 Task 8 doctor triage; label: `harness-gap`, `priority:medium`).
+
+**Symptom:** `harness-doctor.sh --self-test` reports 5 failing scenarios (`dpp-jq-parity-red`,
+`dpp-jq-parity-grandfather`, `ngeb-jq-parity-red`, `claim-honesty-jq-parity-red`,
+`budget-chains-jq-parity-red`) — exactly the P-14 finding
+(`docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md`). Each fails with "jq branch produced
+NOTHING on a fixture that must report."
+
+**Root cause, PROVEN, and it is NOT a doctor logic defect:** `_nonode_path()` (harness-doctor.sh
+~line 4139) builds a PATH-shim directory of symlinks to every tool the doctor needs except
+`node`, then `_run_quick_nonode` does `PATH="$shim" bash "$SELF_TEST_HOOK" --quick ...`. Because
+a bash prefix-assignment affects lookup of the command itself, this re-execs the SYMLINKED
+`bash` inside the shim. On Windows/MSYS2, `bash.exe` needs companion DLLs sitting next to the
+real binary — a bare symlink to the exe (no DLLs alongside it) fails to load at all. Reproduced
+directly: `PATH=<shim-dir> bash -c 'true'` → `error while loading shared libraries: ?: cannot
+open shared object file`. The child crashes before the doctor script (or the check being tested)
+ever runs, so grepping the check-id out of its (empty) output correctly reports "produced
+NOTHING" — the symptom is real, the cause is the shim's own launcher, not the checks'
+`node`/`jq` branching.
+
+**Independent confirmation the doctor's jq branches themselves are fine:** ran the real jq
+expressions standalone against live/fixture data outside the shim — e.g.
+`jq -r --arg ev Stop '[(.hooks[$ev] // [])[] | (.hooks // []) | length] | add // 0'
+~/.claude/settings.json` → `9`, exactly matching the live `budget-chains` RED count. No
+divergence found in any of the four checks' jq expressions by inspection either (mirrors the
+node branch logic line for line).
+
+**Fix (not done here — self-test-harness portability work, its own scoped task, same family as
+the existing macOS-portability program):** `_nonode_path()` needs a Windows-safe way to hide
+`node` from a child bash WITHOUT symlinking `bash` itself — e.g. don't put `bash` in the shim at
+all (let the child inherit the real, already-loaded interpreter via `$BASH`/`command -v bash`
+resolved BEFORE the PATH override, only restricting PATH for the grandchild `node`/`jq` lookups
+the script performs internally) or copy (not symlink) the real bash + its DLL directory into the
+shim. Until fixed, this 5-scenario failure is expected and reproducible on any Windows/MSYS2
+checkout; it does not indicate the doctor's non-node fallback is broken in production (Linux/
+macOS runners, real GNU/BSD `bash` resolves fine from a symlink — no DLL sidecar dependency).
+
+## MODEL-PIN-GATE-SELFTEST-NONHERMETIC-01 — model-pin-gate.sh's self-test intermittently reads
+live tier-exhaustion state instead of a fixed fixture (added 2026-08-03, gated-pipeline-master-
+2026-08 Task 8 doctor triage; label: `harness-gap`, `priority:low`).
+
+**Symptom:** `harness-doctor.sh --full`'s selftest-sweep (check 8) reported
+`model-pin-gate.sh --self-test exited 1: model-pin-gate self-test: 15 passed, 2 failed`. Running
+`bash adapters/claude-code/hooks/model-pin-gate.sh --self-test` directly, ~15 minutes later, gave
+**17 passed, 0 failed** — full GREEN, same commit, same file, no edits in between.
+
+**Diagnosis, HYPOTHESIZED (refuter: instrument the two "tier exhausted" scenarios to print the
+tier-state value they read at the moment of failure; if it is genuinely stable across both runs,
+this diagnosis is wrong):** the two scenario names most likely to be timing-sensitive are
+`pinned agent + tier exhausted → BLOCK naming fallback` and
+`explicit model:fable + fable exhausted → BLOCK naming fallback` — both PASSED in my direct
+run, and the sweep's own child ran under `nl_run_bounded` + `NL_SELFTEST_SWEEP=1` with a
+~15-20 minute gap in wall-clock, real machine tier-exhaustion state, from my run. A self-test
+whose outcome depends on real model-tier exhaustion (rather than an injected/mocked tier state)
+is non-hermetic by construction — it will flake whenever it happens to run near a tier
+boundary. Not chased further (would require reading model-pin-gate.sh's fixture-injection path
+in depth); flagged so a future pass hermeticizes the tier-state input for these two scenarios
+rather than reading `adapters/claude-code/config/model-policy.json`'s live state.

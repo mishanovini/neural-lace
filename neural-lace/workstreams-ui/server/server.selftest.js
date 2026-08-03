@@ -209,10 +209,22 @@ async function main() {
   // in place. Scenario 28 below re-enables it via a direct, manual
   // `auditor.runCycle()` call once every env var is safely sandboxed.
   process.env.AUDITOR_DISABLED = '1';
+  // 2026-08-02 subprocess-storm fix — state-watch.js's push watchers start
+  // in the SAME 'listening' callback as cache.start()/auditor.start()
+  // above, and (like the auditor) would otherwise fs.watch the REAL
+  // ~/.claude/state estate before this test's own env sandboxing is in
+  // place (this suite never overrides HEARTBEAT_STATE_DIR/NEEDS_YOU_STATE_DIR/
+  // SIGNAL_LEDGER_PATH/OBS_BACKLOG_PATH globally — HEARTBEAT_STATE_DIR is
+  // only pointed at a tmp dir later, mid-file, for the ask-fixture section).
+  // Disabled here for the same self-test-pollution reason as
+  // AUDITOR_DISABLED; state-watch.selftest.js is the dedicated, sandboxed
+  // test for the push mechanism itself (OBS_WATCH_DIRS pointed at a tmp dir).
+  process.env.OBS_WATCH_DISABLED = '1';
 
   delete require.cache[require.resolve('./derive-cache.js')];
   delete require.cache[require.resolve('./reconciler.js')];
   delete require.cache[require.resolve('./auditor.js')];
+  delete require.cache[require.resolve('./state-watch.js')];
   delete require.cache[require.resolve('./server.js')];
   const { server, cache, auditor } = require('./server.js');
   const derive = require('./derive-cache.js');

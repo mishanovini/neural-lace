@@ -1,0 +1,2 @@
+{"subagent_type":"architecture-reviewer","model":"claude-fable-5","ts":1785751212,"session_id":"gated-pipeline-t1-fixture","artifact_ref":"adapters/claude-code/tests/fixtures/review-chain/valid-chain-design.md"}
+{"subagent_type":"plan-fidelity-reviewer","model":"claude-fable-5","ts":1785751212,"session_id":"gated-pipeline-t1-fixture","artifact_ref":"adapters/claude-code/tests/fixtures/review-chain/valid-chain-plan.md"}

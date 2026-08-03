@@ -1,7 +1,36 @@
 # Deterministic process — compact
 
-> Enforcement: `manifest.json` carries `chokepoint` + `bypass_paths` on every
-> `"blocking": true` unit; `harness-doctor.sh` REDs on one declaring neither.
+> Enforcement: **HYBRID — the proof obligation is now a Mechanism; the
+> BACKFILL is not.**
+>
+> WHAT EXISTS (verify, do not trust this line): `manifest.schema.json` defines
+> both `chokepoint` and `bypass_paths` as optional typed fields; and
+> `harness-doctor.sh`'s `check_deterministic_process_proof` REDs on any
+> `"blocking": true` entry that is missing EITHER field, unless it is on a
+> dated, closed grandfather exempt-list or carries `added_after < "2026-07"`.
+> Re-derive rather than believe:
+> `grep -c check_deterministic_process_proof adapters/claude-code/hooks/harness-doctor.sh`
+> and `jq '.properties.entries.items.properties | has("chokepoint")' adapters/claude-code/schemas/manifest.schema.json`.
+>
+> WHAT DOES NOT EXIST: the backfill. Of the 40 `blocking: true` units, only 2
+> are outside the grandfather list, and the rest still declare neither field —
+> they are exempted by a DATED list that is meant to shrink to empty, not by
+> having discharged the obligation. Count it, do not quote this sentence:
+> `jq -r '.entries[]|select(.blocking==true)|select((((.chokepoint//"")|length)==0) or (((.bypass_paths//[])|length)==0))|.id' adapters/claude-code/manifest.json | wc -l`.
+> Nor does a server-side check exist: every gate here is LOCAL, so `--no-verify`
+> and a web-UI merge remain open on all of them.
+>
+> HISTORY, kept because it is this file's own best evidence. The FIRST version
+> of this header claimed the mechanism existed when it did not; the SECOND
+> (the "NONE YET" correction) stayed on the page after the mechanism actually
+> landed, so the file spent a day understating itself while asserting
+> `manifest.schema.json` "would REJECT both keys" — false the moment the
+> schema was extended in the same commit that added the check. A doc that
+> lies in EITHER direction about its own enforcement is the defect this file
+> names; the inverse error is not the safe one, because a stale "not built"
+> is exactly how a real control goes unused. Tracked as
+> `DETERMINISM-PROOF-OBLIGATION-UNBUILT-01` (docs/backlog.md), which closes
+> when the grandfather list reaches empty.
 > Applies: every required step — reviews, verifications, gates, emits.
 > Operator directive 2026-07-30: "We should never need to review whether the
 > reviewers fired. Make them a deterministic part of the process."
@@ -43,6 +72,11 @@ watchdog's marker — consumed by a script, written by nobody; `/calibrate` —
 zero entries ever.)
 
 ## The proof obligation
+
+**STATUS: SPECIFIED, NOT BUILT** (see the corrected Enforcement note above —
+0 of 39 blocking units carry these fields; the schema rejects them; no doctor
+check exists). This is the obligation the standard *requires*, written down so
+the gap is visible and closable, NOT a description of what runs today.
 
 Every `"blocking": true` manifest unit declares:
 - `chokepoint` — the firing event, in verifiable form (`pre-push`, `Stop`, …).

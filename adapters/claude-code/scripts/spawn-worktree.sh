@@ -270,13 +270,17 @@ remove_worktree() {
   # failure. reg_close is itself a no-op (rc 0) for a slug that was never
   # registered — the honest "pre-existing, unattributed worktree" case this
   # slice's outcome metric names, not a bug.
-  {
-    local _sw_hooks_dir
+  (
+    # SUBSHELL, not brace group — same set -u containment as the admission
+    # and registration splices (2026-07-31 post-merge review F2: the round-3
+    # M1 sibling sweep missed this third splice; a set -u abort inside the
+    # sourced lib escapes `{...} || true` and would report a COMPLETED
+    # removal as failed, exactly what the fail-open contract above forbids).
     _sw_hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks"
     source "$_sw_hooks_dir/lib/estate-registration-lib.sh" 2>/dev/null \
       && declare -F reg_close >/dev/null 2>&1 \
       && reg_close "$slug" "${REMOVE_DISPOSITION:-$branch_disposition}" >/dev/null 2>&1
-  } || true
+  ) || true
   return 0
 }
 
@@ -456,12 +460,17 @@ fi
 # counts worktrees that actually exist, not attempts. OBSERVE MODE: never
 # blocks, never changes this script's exit code — a broken lib leaves
 # spawn-worktree byte-identical in behavior.
-{
+(
+  # SUBSHELL, not brace group (post-hoc review 2026-07-30, PROVEN): a set -u
+  # abort inside the sourced lib escapes `{...} || true` and would exit
+  # nonzero AFTER the create, orphaning the worktree and skipping the
+  # --print-cd contract. A subshell contains it (and stops _sw_hooks_dir
+  # leaking into this script's namespace).
   _sw_hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks"
   source "$_sw_hooks_dir/lib/admission-lib.sh" 2>/dev/null \
     && declare -F adm_admit >/dev/null 2>&1 \
     && adm_admit worktree kind=builder >/dev/null 2>&1
-} || true
+) || true
 
 # ---- NO-ORPHAN REGISTRATION SPLICE (accountable-estate T4) -----------------
 # design §6c: "branches/worktrees are REGISTERED at creation ... Anything
@@ -473,14 +482,18 @@ fi
 # written (slug/path/branch/created_at/host are always known), just with
 # fewer attribution labels — a caller that supplies none of them still gets
 # a strictly better answer than "no record at all" for "who created this."
-{
+(
+  # SUBSHELL, not brace group — same set -u containment as the admission
+  # splice above (2026-07-31 integration merge: the round-3 M1 sibling
+  # sweep applies to this splice too; it arrived from the other machine
+  # pre-hardening).
   _sw_hooks_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/../hooks"
   source "$_sw_hooks_dir/lib/estate-registration-lib.sh" 2>/dev/null \
     && declare -F reg_register >/dev/null 2>&1 \
     && reg_register "$SLUG" "$WT" "$BRANCH" \
          ${REG_PLAN:+plan="$REG_PLAN"} ${REG_TASK:+task="$REG_TASK"} ${REG_WHO:+who="$REG_WHO"} \
          >/dev/null 2>&1
-} || true
+) || true
 log "  CREATED: $WT  (branch $BRANCH from $BASE_REF)"
 log "  cd into it: cd \"$WT\""
 log "  at session end, tear down: spawn-worktree.sh --remove $SLUG   (or rely on worktree-prune.sh)"

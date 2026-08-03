@@ -1,5 +1,20 @@
 # Plan: PS 5.1 em-dash parse hotfix (scheduled-task installers)
-Status: ACTIVE
+Status: DEFERRED
+
+## Disposition 2026-07-31 (operator: "dispositions") — QUEUED, not dropped
+
+Real, still-unfixed latent bug: a UTF-8 em-dash (U+2014) inside a double-quoted string in a
+BOM-less `.ps1` file makes Windows PowerShell 5.1 decode the file as ANSI and fail to parse the
+WHOLE file. Three scheduled-task installer scripts are affected.
+
+Deferred to the queue rather than built now because it is small, self-contained, and not blocking:
+nothing currently depends on those installers being edited. Operator principle recorded 2026-07-30:
+*ignored ≠ unimportant — it means the system had no queue.* This is now queued work with a backlog
+row, to be pulled in normal priority order — NOT abandoned.
+
+Note (2026-07-31): `install-coord-sync-task.ps1` was run successfully on the desktop today, so the
+defect is latent-not-blocking on that path; it bites when one of the affected files is next edited
+in a way that reintroduces or relocates a non-ASCII character.
 Execution Mode: direct
 Mode: code
 Backlog items absorbed: none

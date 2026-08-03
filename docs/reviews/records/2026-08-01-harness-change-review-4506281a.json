@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260801-4506281a",
+  "created_at": "2026-08-01T04:35:09Z",
+  "verdict": "PASS",
+  "reviewer": "post-merge-consolidated-review(8-finders+synthesis)+remediation-verifier",
+  "reviewer_model": "fable/opus",
+  "plan_ref": "docs/reviews/2026-07-31-integration-merge-consolidated-review.md",
+  "change_ref": {
+    "commit_sha": "24c2b9c",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit.sh",
+      "blob_sha": "f2c86e7f5bc878bf69559b2621b7c0a188b60dd5"
+    },
+    {
+      "path": "adapters/claude-code/scripts/needs-you.sh",
+      "blob_sha": "e68b8a7c61590713ba2a84943fc717ab2bcc25fa"
+    },
+    {
+      "path": "adapters/claude-code/scripts/spawn-worktree.sh",
+      "blob_sha": "4f03f41af30e6ccb2bc9a247aaf5ee1bfe902867"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "workflow wf_42691992-57c + agent a2ce1b5500ecb40ee (session d3059d78)",
+    "verdict_quote": "Both PROVEN Majors are remediated, and F1's remediation is a genuine root fix — it disarms the auditor mechanism that reverted the first attempt, verified both by reading the guard and by watching the live auditor decline to re-flip across ~13 cycles. REMEDIATION: PASS",
+    "findings_summary": "9-agent consolidated review of merge 301e35f: OVERALL FAIL (2 PROVEN Majors) -> both remediated (11c8006, 0b26ff0) -> independent remediation verification PASS. Suites: emit 123/123 (PL4e adapted, 1b41f31), spawn-worktree SELFTEST PASS re-proven on committed blob 4f03f41 (SUT-fingerprint gap closed), needs-you 61/0, perf-tick 28/0, admission-lib/close-plan/janitor/brief all exit=0. Six Minor advisories deferred to backlog row POST-MERGE-REVIEW-ADVISORIES-20260731-01."
+  },
+  "written_by": "integration session d3059d78 (Misha-Laptop takeover)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

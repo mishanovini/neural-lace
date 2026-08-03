@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260801-5c7e16aa",
+  "created_at": "2026-08-01T10:35:23Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer(round-6)+suite-evidence",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/TAKEOVER-2026-07-31.md",
+  "change_ref": {
+    "commit_sha": "9774866",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "4693ec3b3c94b0aeb8a78f49e3291f3df560e880"
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-push-gate.sh",
+      "blob_sha": "b59e2718598a28ca732c37d09f4a0057ea8ffbdb"
+    },
+    {
+      "path": "adapters/claude-code/scripts/health-tick.sh",
+      "blob_sha": "046aa811e2b872feba7e8e74a7399835dcaebaf7"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "3de2eb6c239616e8b232cb248ce4434f91b4cd91"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "agent ac521e21bdcaa262a (harness-reviewer, session d3059d78)",
+    "verdict_quote": "Commit 1's round-5 CRITICAL is genuinely closed and I verified it three independent ways the author did not... a from-scratch reproduction of the attack's delivery-layer premise on NTFS. [79e9cac PASS-conditional; conditions satisfied in 9774866. 271eb84 REFORMULATE; reformulated in 9774866 per the reviewer's minimal-delta prescription.]",
+    "findings_summary": "Round-6 review of 79e9cac (case-fold CRITICAL fix, cherry-pick of 3803255) + 271eb84 (health-tick sweep root): 79e9cac PASS-conditional (2 Major: manifest clause (v) contradicted runtime + no e2e gate scenario; 1 Minor: no interpreter line) -- ALL closed in 9774866 (clause (v) rewritten, clause (vi) added w/ reviewer's NTFS protectNTFS measurement retiring the trailing-dot/space residual, push-gate Scenario 23 e2e pin, interpreter echo). 271eb84 REFORMULATE (4 Major: unreachable delta, missing config seam, divergent parser, undocumented positional semantics) -- reformulated in 9774866 exactly per the minimal-delta prescription (seam + janitor grammar + Scenario 9 incl. composed-tick reachability + docs both sides). Suites: gate-lib 113/0 w/ case-fold mutation proof; push-gate 66 pass incl. Scenario 23, 11 fails PROVEN pre-existing Windows-fixture-only (A/B identical at 910606a); health-tick 28/1, Scenario 9 4/4 green, the 1 = Scenario 4 wall-clock bound PROVEN environmental by xtrace (4-6s scheduling stalls at pure-bash statements under 83% RAM; budget mechanism itself fired at rc=124/3.2s; identical logic 6s in quiet window)."
+  },
+  "written_by": "integration session d3059d78 (Misha-Laptop takeover)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

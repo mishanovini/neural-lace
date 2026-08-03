@@ -2,6 +2,28 @@
   "schema_version": 1,
   "entries": [
     {
+      "path": ".claude/state/observed-errors.md",
+      "blob_sha": "55a5c056843037d92d2992a8228a3602f42b1591",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/agents/functionality-verifier.md",
+      "blob_sha": "c62237ca00ae3a174e81f962eca93f346d995067",
+      "record_id": "hcr-20260730-672b255a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:50:47Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
       "path": "adapters/claude-code/agents/task-verifier.md",
       "blob_sha": "c9d7fa39bc8c652c5862bc7d4e244aad326c407e",
       "record_id": "hcr-20260730-3de76764",
@@ -42,6 +64,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T05:59:49Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/doctrine/intended-functionality.md",
+      "blob_sha": "7bca4ccbf9ad38f740f35a7cc5c021d2124c51f7",
+      "record_id": "hcr-20260730-672b255a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:50:47Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -597,6 +630,17 @@
     },
     {
       "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "90c96d0682c5231a9abf15bc3c2ed6057a6ccaec",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
       "blob_sha": "9d67ffba2d1642b99383e0b6c8aef54da398b205",
       "record_id": "hcr-20260724-63b76ebb",
       "kind": "harness-change-review",
@@ -620,6 +664,17 @@
         "session_id": "a1bed5264b506cf2a"
       },
       "independence": "pathway"
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "dd4c9915006bbf79ea60cd4c214b93eea16b61c7",
+      "record_id": "hcr-20260730-30797d1d",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:57:29Z",
+      "reviewer_principal": null,
+      "independence": null
     },
     {
       "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
@@ -862,12 +917,34 @@
     },
     {
       "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "1441b8ddc8791b7cad1255a46731ac50e4c6918c",
+      "record_id": "hcr-20260730-30797d1d",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:57:29Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
       "blob_sha": "33341d94311a2296463e6eb7b5755a92e016cbb4",
       "record_id": "hcr-20260716-30d61135",
       "kind": "harness-change-review",
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-16T06:27:55Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-record-gate-lib.sh",
+      "blob_sha": "4693ec3b3c94b0aeb8a78f49e3291f3df560e880",
+      "record_id": "hcr-20260801-5c7e16aa",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(round-6)+suite-evidence",
+      "created_at": "2026-08-01T10:35:23Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -901,6 +978,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T00:35:42Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/session-heartbeat-lib.sh",
+      "blob_sha": "fd1f40a6bdae1b5bf21ce5d1ea09f49ae7a25151",
+      "record_id": "hcr-20260803-110426f8",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(cockpit-r3+heartbeat-r2 consolidated)",
+      "created_at": "2026-08-03T03:08:56Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -1118,6 +1206,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-29T12:09:42Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-reviewer.sh",
+      "blob_sha": "03bcd31f2263ab7e59d30efb7f6f93d85882bace",
+      "record_id": "hcr-20260730-672b255a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:50:47Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -1397,6 +1496,50 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/hooks/review-record-commit-gate.sh",
+      "blob_sha": "819249d2e4c2964400a998f702ba0cd881d6da7d",
+      "record_id": "hcr-20260730-30797d1d",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:57:29Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-push-gate.sh",
+      "blob_sha": "1a7b589bb550ffd1a671802b6c9dd99b997256c3",
+      "record_id": "hcr-20260802-2fd65601",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(portability-round)",
+      "created_at": "2026-08-02T13:30:15Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-push-gate.sh",
+      "blob_sha": "abf2854be50a302670e8183b42d0905eccfd0654",
+      "record_id": "hcr-20260730-30797d1d",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:57:29Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-push-gate.sh",
+      "blob_sha": "b59e2718598a28ca732c37d09f4a0057ea8ffbdb",
+      "record_id": "hcr-20260801-5c7e16aa",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(round-6)+suite-evidence",
+      "created_at": "2026-08-01T10:35:23Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
       "path": "adapters/claude-code/hooks/runtime-verification-executor.sh",
       "blob_sha": "4a75d6f722389302a0170556688ec743c88c0076",
       "record_id": "hcr-20260730-25543eda",
@@ -1415,6 +1558,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-24T01:17:30Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/runtime-verification-executor.sh",
+      "blob_sha": "8e3dfe60c329564e176055b3c001318a5957b23d",
+      "record_id": "hcr-20260802-2fd65601",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(portability-round)",
+      "created_at": "2026-08-02T13:30:15Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -1492,6 +1646,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-16T06:27:55Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-digest.sh",
+      "blob_sha": "59134eefcdabed8a903509d38021a8fc3c53f986",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -1926,6 +2091,17 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/hooks/workstreams-emit.sh",
+      "blob_sha": "f2c86e7f5bc878bf69559b2621b7c0a188b60dd5",
+      "record_id": "hcr-20260801-4506281a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "post-merge-consolidated-review(8-finders+synthesis)+remediation-verifier",
+      "created_at": "2026-08-01T04:35:09Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
       "path": "adapters/claude-code/hooks/workstreams-extract-pending.sh",
       "blob_sha": "b8016157bd647e3c23499a6d3d6903062e556950",
       "record_id": "hcr-20260730-21aa1471",
@@ -2004,6 +2180,17 @@
     },
     {
       "path": "adapters/claude-code/hooks/workstreams-stop-writer.sh",
+      "blob_sha": "15ae3720a211e024db619f6daa40e65779788c6b",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-stop-writer.sh",
       "blob_sha": "7c49603a73678f00418d85af00d0cf089819d2ca",
       "record_id": "hcr-20260730-21aa1471",
       "kind": "harness-change-review",
@@ -2048,6 +2235,39 @@
     },
     {
       "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "10eefbf90cb2aa305fcefe2ab0f5c7bed69712db",
+      "record_id": "hcr-20260802-2fd65601",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(portability-round)",
+      "created_at": "2026-08-02T13:30:15Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "3de2eb6c239616e8b232cb248ce4434f91b4cd91",
+      "record_id": "hcr-20260801-5c7e16aa",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(round-6)+suite-evidence",
+      "created_at": "2026-08-01T10:35:23Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "43377d847aa2be0fea53820ee0c73348286fe80f",
+      "record_id": "hcr-20260730-672b255a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:50:47Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
       "blob_sha": "4f935e51711e00018d099d245a32ce273086fbb8",
       "record_id": "hcr-20260730-18003980",
       "kind": "harness-change-review",
@@ -2059,12 +2279,34 @@
     },
     {
       "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "61140198531d438f85cf2d45f8d9747dbb23d9dc",
+      "record_id": "hcr-20260730-30797d1d",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:57:29Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
       "blob_sha": "6414125ed9031ce2f89467c8286a717241c8eaf1",
       "record_id": "hcr-20260716-30d61135",
       "kind": "harness-change-review",
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-16T06:27:55Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "6e4d5714960c9e9fb67f3ff45dae85601faa5701",
+      "record_id": "hcr-20260803-110426f8",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(cockpit-r3+heartbeat-r2 consolidated)",
+      "created_at": "2026-08-03T03:08:56Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2114,6 +2356,28 @@
     },
     {
       "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "a45aa72956533815f93448468303c21c033718cb",
+      "record_id": "hcr-20260730-28112fca",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T21:01:46Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "f3498ee4816adef409f763d951233149174f5347",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
       "blob_sha": "fd02503861c4079fd6bb45d6fea1ca384164fc18",
       "record_id": "hcr-20260730-0a183380",
       "kind": "harness-change-review",
@@ -2126,6 +2390,17 @@
         "session_id": "a8a6d7399d7f16bf9"
       },
       "independence": "pathway"
+    },
+    {
+      "path": "adapters/claude-code/rules/constitution.md",
+      "blob_sha": "b7e91f0714cc8228cf19b5d67ee59d2b6303fdae",
+      "record_id": "hcr-20260730-03414616",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T12:57:54Z",
+      "reviewer_principal": null,
+      "independence": null
     },
     {
       "path": "adapters/claude-code/scripts/agent-heartbeat.sh",
@@ -2179,6 +2454,39 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-21T00:47:39Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/ask-registry.sh",
+      "blob_sha": "fe9745ef7163b1b60a2b3ec03b04e1ed9fd22d3e",
+      "record_id": "hcr-20260730-05284b04",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T20:59:37Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/authorize-review-record-push-override.sh",
+      "blob_sha": "a1c94d18ca23673b6a99f6faab73010401205fcd",
+      "record_id": "hcr-20260730-30797d1d",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:57:29Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/backfill-classify-amendment-candidates.sh",
+      "blob_sha": "64f6efef1ecd5131fcddfba1d4b3c9f3160183e2",
+      "record_id": "hcr-20260730-05284b04",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T20:59:37Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2412,12 +2720,45 @@
     },
     {
       "path": "adapters/claude-code/scripts/health-tick.sh",
+      "blob_sha": "046aa811e2b872feba7e8e74a7399835dcaebaf7",
+      "record_id": "hcr-20260801-5c7e16aa",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(round-6)+suite-evidence",
+      "created_at": "2026-08-01T10:35:23Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/health-tick.sh",
       "blob_sha": "686e35ddc4fca990e76f9791896ebf21991c3621",
       "record_id": "hcr-20260730-601259d4",
       "kind": "harness-change-review",
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T05:52:56Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/health-tick.sh",
+      "blob_sha": "85b161c298332632f907918968507d2e488366cb",
+      "record_id": "hcr-20260730-0f821897",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "task-verifier",
+      "created_at": "2026-07-30T13:22:00Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/if-statement-check.sh",
+      "blob_sha": "219779c2cd164ff329b7ab81acfebcb1647e31be",
+      "record_id": "hcr-20260730-672b255a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:50:47Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2433,6 +2774,28 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/scripts/install-limit-resume-task.ps1",
+      "blob_sha": "afb85d081eb0972ffa4616e9838c6c037b2a6e46",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/install-limit-resume.sh",
+      "blob_sha": "8956302a4e413bd7fa10703cba7e2c15b4d0b6b7",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
       "path": "adapters/claude-code/scripts/lib/state-json-init.sh",
       "blob_sha": "d832b195c895852e7f8c865a67f2dcdd1fbe4eb7",
       "record_id": "hcr-20260730-755f1109",
@@ -2440,6 +2803,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T06:01:15Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/limit-resume.sh",
+      "blob_sha": "5e1e861dccdacc398d2e140ad9b072e604963edf",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2566,6 +2940,17 @@
     },
     {
       "path": "adapters/claude-code/scripts/needs-you.sh",
+      "blob_sha": "281916e8e341b1533c90cbea5330e159d7dda651",
+      "record_id": "hcr-20260730-6c3d6b88",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T13:22:40Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/needs-you.sh",
       "blob_sha": "7096d601869b5091b397f4ee9678ffd9c0892d84",
       "record_id": "hcr-20260721-3a1b30a6",
       "kind": "harness-change-review",
@@ -2583,6 +2968,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T05:53:16Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/needs-you.sh",
+      "blob_sha": "e68b8a7c61590713ba2a84943fc717ab2bcc25fa",
+      "record_id": "hcr-20260801-4506281a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "post-merge-consolidated-review(8-finders+synthesis)+remediation-verifier",
+      "created_at": "2026-08-01T04:35:09Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2694,6 +3090,17 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/scripts/session-heartbeat.sh",
+      "blob_sha": "f92b32e60b9e132621017c2acf30ef8d84bdfac5",
+      "record_id": "hcr-20260803-110426f8",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(cockpit-r3+heartbeat-r2 consolidated)",
+      "created_at": "2026-08-03T03:08:56Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
       "path": "adapters/claude-code/scripts/session-resumer.sh",
       "blob_sha": "6d191adbb77961d2a02a979910e7729df539385b",
       "record_id": "hcr-20260721-1c7a60ac",
@@ -2712,6 +3119,17 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T05:53:16Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/session-resumer.sh",
+      "blob_sha": "e9973c9d529b8d4fdafacd82598449d2d66306e5",
+      "record_id": "hcr-20260730-3ea32f11",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T12:56:44Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2745,6 +3163,28 @@
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-30T06:01:39Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/spawn-worktree.sh",
+      "blob_sha": "4f03f41af30e6ccb2bc9a247aaf5ee1bfe902867",
+      "record_id": "hcr-20260801-4506281a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "post-merge-consolidated-review(8-finders+synthesis)+remediation-verifier",
+      "created_at": "2026-08-01T04:35:09Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/scripts/spawn-worktree.sh",
+      "blob_sha": "b6a3313c77a9231c10f4daa35f5a2012f507268f",
+      "record_id": "hcr-20260730-68c52683",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T12:57:17Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2875,6 +3315,17 @@
     },
     {
       "path": "adapters/claude-code/settings.json.template",
+      "blob_sha": "c7d9749295cb9caf5d2a7d814394a092f1575b37",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/settings.json.template",
       "blob_sha": "de765570ae6d3082a5573b8199dc8205e391c938",
       "record_id": "hcr-20260716-30d61135",
       "kind": "harness-change-review",
@@ -2897,12 +3348,56 @@
     },
     {
       "path": "adapters/claude-code/templates/plan-template.md",
+      "blob_sha": "13d04191892c8b22ed8a73b4041a7ee76a1ff3ce",
+      "record_id": "hcr-20260730-672b255a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:50:47Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/templates/plan-template.md",
       "blob_sha": "29e25df2cd927cb906c3a3366e454ace3117fcfa",
       "record_id": "hcr-20260729-4586088a",
       "kind": "harness-change-review",
       "verdict": "PASS",
       "reviewer": "harness-reviewer",
       "created_at": "2026-07-29T12:09:42Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "adapters/claude-code/tests/if-statement-check/run-tests.sh",
+      "blob_sha": "5df73695fcd0920b29ac062a96e0e704f1a76d21",
+      "record_id": "hcr-20260730-672b255a",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T23:50:47Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "docs/backlog.md",
+      "blob_sha": "81b5e7005d40741920e6bb1d1183fd94dd039a56",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
+      "path": "docs/decisions/068-macos-limit-resume-turn-scoped-auto-arm.md",
+      "blob_sha": "0d233550bb85df6c64f07cb07c319d11e492d5f8",
+      "record_id": "hcr-20260730-3f821afe",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-07-30T22:28:28Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2929,35 +3424,13 @@
       "independence": null
     },
     {
-      "path": "adapters/claude-code/manifest.json",
-      "blob_sha": "a45aa72956533815f93448468303c21c033718cb",
-      "record_id": "hcr-20260730-28112fca",
+      "path": "neural-lace/workstreams-ui/server/derive-lib.js",
+      "blob_sha": "097e2f7c7a574face6d30ee64576c83ba28f40f0",
+      "record_id": "hcr-20260803-110426f8",
       "kind": "harness-change-review",
       "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T21:01:46Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/scripts/ask-registry.sh",
-      "blob_sha": "fe9745ef7163b1b60a2b3ec03b04e1ed9fd22d3e",
-      "record_id": "hcr-20260730-05284b04",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T20:59:37Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/scripts/backfill-classify-amendment-candidates.sh",
-      "blob_sha": "64f6efef1ecd5131fcddfba1d4b3c9f3160183e2",
-      "record_id": "hcr-20260730-05284b04",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T20:59:37Z",
+      "reviewer": "harness-reviewer(cockpit-r3+heartbeat-r2 consolidated)",
+      "created_at": "2026-08-03T03:08:56Z",
       "reviewer_principal": null,
       "independence": null
     },
@@ -2984,6 +3457,17 @@
       "independence": null
     },
     {
+      "path": "neural-lace/workstreams-ui/server/roadmap-routes.js",
+      "blob_sha": "ea934ff07b391e72f5d93767098ec3914d7da6a8",
+      "record_id": "hcr-20260803-110426f8",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(cockpit-r3+heartbeat-r2 consolidated)",
+      "created_at": "2026-08-03T03:08:56Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
       "path": "neural-lace/workstreams-ui/server/verbatim-resolver.js",
       "blob_sha": "a35f62010d7c69832d2456bf9c9e842e4584490d",
       "record_id": "hcr-20260730-61174097",
@@ -3006,6 +3490,17 @@
       "independence": null
     },
     {
+      "path": "neural-lace/workstreams-ui/web/app.css",
+      "blob_sha": "579d3e8000fa420523401382292caeae330ced30",
+      "record_id": "hcr-20260803-110426f8",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer(cockpit-r3+heartbeat-r2 consolidated)",
+      "created_at": "2026-08-03T03:08:56Z",
+      "reviewer_principal": null,
+      "independence": null
+    },
+    {
       "path": "neural-lace/workstreams-ui/web/requests.js",
       "blob_sha": "07244d0c99cdaf22a56ce4131c85720cf3b3f8e3",
       "record_id": "hcr-20260730-28112fca",
@@ -3017,123 +3512,13 @@
       "independence": null
     },
     {
-      "path": ".claude/state/observed-errors.md",
-      "blob_sha": "55a5c056843037d92d2992a8228a3602f42b1591",
-      "record_id": "hcr-20260730-3f821afe",
+      "path": "neural-lace/workstreams-ui/web/roadmap.js",
+      "blob_sha": "0896409beea370bddd93f88b13aa2b1aa35bcdb5",
+      "record_id": "hcr-20260803-110426f8",
       "kind": "harness-change-review",
       "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/hooks/harness-doctor.sh",
-      "blob_sha": "90c96d0682c5231a9abf15bc3c2ed6057a6ccaec",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/hooks/session-start-digest.sh",
-      "blob_sha": "59134eefcdabed8a903509d38021a8fc3c53f986",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/hooks/workstreams-stop-writer.sh",
-      "blob_sha": "15ae3720a211e024db619f6daa40e65779788c6b",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/manifest.json",
-      "blob_sha": "f3498ee4816adef409f763d951233149174f5347",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/scripts/install-limit-resume-task.ps1",
-      "blob_sha": "afb85d081eb0972ffa4616e9838c6c037b2a6e46",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/scripts/install-limit-resume.sh",
-      "blob_sha": "8956302a4e413bd7fa10703cba7e2c15b4d0b6b7",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/scripts/limit-resume.sh",
-      "blob_sha": "5e1e861dccdacc398d2e140ad9b072e604963edf",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "adapters/claude-code/settings.json.template",
-      "blob_sha": "c7d9749295cb9caf5d2a7d814394a092f1575b37",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "docs/backlog.md",
-      "blob_sha": "81b5e7005d40741920e6bb1d1183fd94dd039a56",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
-      "reviewer_principal": null,
-      "independence": null
-    },
-    {
-      "path": "docs/decisions/068-macos-limit-resume-turn-scoped-auto-arm.md",
-      "blob_sha": "0d233550bb85df6c64f07cb07c319d11e492d5f8",
-      "record_id": "hcr-20260730-3f821afe",
-      "kind": "harness-change-review",
-      "verdict": "PASS",
-      "reviewer": "harness-reviewer",
-      "created_at": "2026-07-30T22:28:28Z",
+      "reviewer": "harness-reviewer(cockpit-r3+heartbeat-r2 consolidated)",
+      "created_at": "2026-08-03T03:08:56Z",
       "reviewer_principal": null,
       "independence": null
     }

@@ -23,6 +23,17 @@
 #                        (scans the listed paths directly)
 #   4. Self-test:        harness-hygiene-scan.sh --self-test
 #                        (runs internal assertions, prints OK/FAIL, exits)
+#   5. Pre-flight check: harness-hygiene-scan.sh --check [path/to/a ...]
+#                        (R3.4 Gate Philosophy Law — read-only "would this
+#                        block" verdict. Runs the IDENTICAL scan pipeline —
+#                        same is_exempt/waiver/denylist/heuristic checks —
+#                        as the enforce path via the shared report emitter
+#                        `_hhs_print_report`, so --check cannot drift from
+#                        what the real gate does. With no path args, checks
+#                        the currently staged files, same as mode 1. Exit
+#                        code mirrors the verdict: 0 = would-pass, 1 = would
+#                        block; nothing is written or blocked by --check
+#                        itself — it is advisory only.)
 #
 # EXEMPT PATHS (never scanned)
 #   - The denylist file itself (would match infinitely)
@@ -83,6 +94,13 @@ _HHS_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 source "$_HHS_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
 # shellcheck source=lib/signal-ledger.sh
 source "$_HHS_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+# shellcheck source=lib/workaround-sensor-lib.sh
+# Workaround-as-sensor law (operator directive, harness-execution-redesign-
+# 2026-08 Task 2 deferred remainder): this gate is not yet retrofitted onto
+# gate-contract-lib.sh (that retrofit is separately deferred), so it calls
+# ws_record directly at its waiver-honored site below rather than going
+# through gc_escape_used. Never fails the caller (see that lib's header).
+source "$_HHS_SELF_DIR/lib/workaround-sensor-lib.sh" 2>/dev/null || true
 
 # _hhs_waived_files <state-dir>
 # Prints, one per line, every repo-relative file path named in a fresh
@@ -115,7 +133,14 @@ if [ "${1:-}" = "--self-test" ]; then
   # created .claude/state/signal-ledger.jsonl without it, nothing with it.
   export HARNESS_SELFTEST=1
   TMPDIR_ST=$(mktemp -d)
-  trap 'rm -rf "$TMPDIR_ST"' EXIT
+  # Workaround-as-sensor sandbox (ws_record): an explicit path (rather than
+  # relying on HARNESS_SELFTEST's own PID-keyed default) so the W6
+  # ledger-row assertion below is deterministic — each W-scenario invokes
+  # the scan as a fresh CHILD PROCESS (a new $$), so the default sandbox
+  # path would differ per invocation and never be readable back here.
+  WS_LEDGER_DIR=$(mktemp -d)
+  export WORKAROUND_SENSOR_LEDGER_PATH="$WS_LEDGER_DIR/ledger.jsonl"
+  trap 'rm -rf "$TMPDIR_ST" "$WS_LEDGER_DIR"' EXIT
 
   # Portable fixture aging (macos-portability-2026-07 M4), sourced inside
   # the self-test branch so the scan's normal path is untouched.
@@ -220,6 +245,11 @@ if [ "${1:-}" = "--self-test" ]; then
 
   SCRIPT_PATH="$(cd "$(dirname "$0")" && pwd)/$(basename "$0")"
 
+  # Initialized here (not at its historical spot right before the final
+  # assertion block) because the R3.4 --check scenarios below run earlier
+  # in the suite now and set FAIL=1 on failure before that spot is reached.
+  FAIL=0
+
   # Invoke from the tmp repo so REPO_ROOT resolves to $TMPDIR_ST.
   # Pass relative paths so the exemption logic sees the repo-relative path,
   # matching how staged paths appear in pre-commit mode.
@@ -228,6 +258,97 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_DIRTY_RC=$?
   ST_CLEAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "clean.txt" 2>&1)
   ST_CLEAN_RC=$?
+
+  # ---- R3.4 Gate Philosophy Law: --check parity + message fields ----
+  # Placed here (right after the dirty/clean captures, before the heavier
+  # heuristic/waiver/codename/secret-layer blocks below) to keep this
+  # environment's live subprocess count away from its ceiling — each of
+  # these nested invocations forks its own mktemp/awk/grep/sort children,
+  # same as every other scenario in this suite.
+  #
+  # Structured fields: ST_DIRTY_OUT (already captured, normal enforce path)
+  # must carry the four fields the doctor's gate-message lint checks for.
+  ST_MSGFIELDS_OK=1
+  for marker in "WHAT:" "WHY:" "FIX:" "ESCAPE:"; do
+    if [[ "$ST_DIRTY_OUT" != *"$marker"* ]]; then
+      ST_MSGFIELDS_OK=0
+      echo "self-test: FAIL (msg-fields) — BLOCKED output missing '$marker' field" >&2
+    fi
+  done
+  [ "$ST_MSGFIELDS_OK" -eq 1 ] && echo "self-test (msg-fields) structured-block-message: PASS" >&2
+
+  # --check would-block parity: same violating fixture (dirty.txt), --check
+  # flag. Proves --check and enforce share the SAME decision (one scan
+  # loop, one _hhs_print_report emitter) — no separate code path to drift.
+  ST_CHECK_DIRTY_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" --check "dirty.txt" 2>&1)
+  ST_CHECK_DIRTY_RC=$?
+  ST_CHECK_DIRTY_OK=1
+  if [ "$ST_CHECK_DIRTY_RC" -ne 1 ]; then
+    ST_CHECK_DIRTY_OK=0
+    echo "self-test: FAIL (check-dirty) — --check on violating fixture expected exit 1 (would-block), got $ST_CHECK_DIRTY_RC" >&2
+  fi
+  if [[ "$ST_CHECK_DIRTY_OUT" != *"WOULD BLOCK"* ]]; then
+    ST_CHECK_DIRTY_OK=0
+    echo "self-test: FAIL (check-dirty) — --check output missing 'WOULD BLOCK' verdict" >&2
+  fi
+  if [[ "$ST_CHECK_DIRTY_OUT" != *"advisory only"* ]]; then
+    ST_CHECK_DIRTY_OK=0
+    echo "self-test: FAIL (check-dirty) — --check output missing advisory-only notice" >&2
+  fi
+  for marker in "WHAT:" "WHY:" "FIX:" "ESCAPE:"; do
+    if [[ "$ST_CHECK_DIRTY_OUT" != *"$marker"* ]]; then
+      ST_CHECK_DIRTY_OK=0
+      echo "self-test: FAIL (check-dirty-fields) — --check output missing '$marker' field" >&2
+    fi
+  done
+  if [ "$ST_CHECK_DIRTY_OK" -eq 1 ]; then
+    echo "self-test (check-dirty) --check-would-block-parity: PASS" >&2
+  else
+    printf '    %s\n' "$ST_CHECK_DIRTY_OUT" >&2
+    FAIL=1
+  fi
+
+  # --check would-pass parity: clean fixture, --check flag.
+  ST_CHECK_CLEAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" --check "clean.txt" 2>&1)
+  ST_CHECK_CLEAN_RC=$?
+  ST_CHECK_CLEAN_OK=1
+  if [ "$ST_CHECK_CLEAN_RC" -ne 0 ]; then
+    ST_CHECK_CLEAN_OK=0
+    echo "self-test: FAIL (check-clean) — --check on clean fixture expected exit 0 (would-pass), got $ST_CHECK_CLEAN_RC" >&2
+  fi
+  if [[ "$ST_CHECK_CLEAN_OUT" != *"would-pass"* ]]; then
+    ST_CHECK_CLEAN_OK=0
+    echo "self-test: FAIL (check-clean) — --check clean-fixture output missing would-pass verdict" >&2
+  fi
+  if [ "$ST_CHECK_CLEAN_OK" -eq 1 ]; then
+    echo "self-test (check-clean) --check-would-pass-parity: PASS" >&2
+  else
+    printf '    %s\n' "$ST_CHECK_CLEAN_OUT" >&2
+    FAIL=1
+  fi
+
+  # Cheap relevance pre-filter: nothing staged, no file args, --check mode
+  # -> would-pass ("nothing to scan"), without reaching the denylist-file
+  # read or PATTERNS_TMP build (same TMPDIR_ST repo has no staged index —
+  # no commits exist yet in it at this point in the suite).
+  ST_CHECK_PREFILTER_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" --check 2>&1)
+  ST_CHECK_PREFILTER_RC=$?
+  ST_CHECK_PREFILTER_OK=1
+  if [ "$ST_CHECK_PREFILTER_RC" -ne 0 ]; then
+    ST_CHECK_PREFILTER_OK=0
+    echo "self-test: FAIL (check-prefilter) — --check with nothing staged expected exit 0, got $ST_CHECK_PREFILTER_RC" >&2
+  fi
+  if [[ "$ST_CHECK_PREFILTER_OUT" != *"nothing to scan"* ]]; then
+    ST_CHECK_PREFILTER_OK=0
+    echo "self-test: FAIL (check-prefilter) — --check with nothing staged missing 'nothing to scan' notice" >&2
+  fi
+  if [ "$ST_CHECK_PREFILTER_OK" -eq 1 ]; then
+    echo "self-test (check-prefilter) --check-relevance-prefilter: PASS" >&2
+  else
+    printf '    %s\n' "$ST_CHECK_PREFILTER_OUT" >&2
+    FAIL=1
+  fi
+
   ST_PLAN_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "docs/plans/foo.md" 2>&1)
   ST_PLAN_RC=$?
   ST_EXEMPT_RULE_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "adapters/claude-code/rules/harness-hygiene.md" 2>&1)
@@ -380,7 +501,8 @@ if [ "${1:-}" = "--self-test" ]; then
 
   set -e
 
-  FAIL=0
+  # FAIL was initialized to 0 earlier (see comment above SCRIPT_PATH) so the
+  # R3.4 --check scenarios above can accumulate into the same flag.
   if [ "$ST_DIRTY_RC" -ne 1 ]; then
     echo "self-test: FAIL — expected exit 1 on dirty file, got $ST_DIRTY_RC" >&2
     echo "output was:" >&2
@@ -502,6 +624,18 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "$ST_W2_OUT" >&2
     FAIL=1
   fi
+  # W6 (workaround-as-sensor): the SAME W2 waiver-honored run both (a) still
+  # honors the waiver identically (asserted above, unchanged) AND (b)
+  # appended a row to the workaround-sensor ledger (ws_record) — confirms
+  # the operator's workaround-as-sensor law is wired at this gate's own
+  # waiver-honored call site, not just a self-tested-in-isolation library.
+  if ! grep -q '"gate":"harness-hygiene-scan"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     || ! grep -q '"bypass_kind":"waiver-file"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     || ! grep -q '"command_fingerprint":"file=dirty.txt"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test: FAIL (w6) — expected a workaround-sensor ledger row for the W2 waiver-honored run" >&2
+    echo "  ledger content: $(cat "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo '(missing)')" >&2
+    FAIL=1
+  fi
   # W3: waiver-stale-rejected (>1h old) → BLOCK
   if [ "$ST_W3_RC" -ne 1 ]; then
     echo "self-test: FAIL (w3) — waiver-stale expected exit 1, got $ST_W3_RC" >&2
@@ -597,11 +731,54 @@ if [ "${1:-}" = "--self-test" ]; then
   exit 1
 fi
 
+# ---------- --check pre-flight mode (R3.4 Gate Philosophy Law) -----------
+# Leading `--check` flag only; consumed here so every mode below (staged /
+# --full-tree / explicit files) works identically for both the enforce
+# path and the pre-flight path — one file-list assembly, one scan, one
+# report emitter (`_hhs_print_report`). No second code path to drift.
+CHECK_MODE=0
+if [ "${1:-}" = "--check" ]; then
+  CHECK_MODE=1
+  shift
+fi
+
 # ---------- repo discovery -----------------------------------------------
 
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
 if [ -z "$REPO_ROOT" ]; then
   # Not in a git repo — silent no-op.
+  exit 0
+fi
+
+# ---------- cheap relevance pre-filter ------------------------------------
+# Assemble the file list to scan FIRST — before reading the denylist file
+# or building PATTERNS_TMP (an awk pass + a mktemp) — so an invocation with
+# nothing to scan (nothing staged, or explicit paths that don't exist)
+# bails before paying that setup cost. Mode selection is unchanged from
+# the original ordering: `--full-tree` / explicit file args / staged
+# (default) — only WHEN it runs moved earlier.
+MODE="staged"
+FILE_LIST_TMP=$(mktemp)
+trap 'rm -f "$FILE_LIST_TMP"' EXIT
+
+if [ "${1:-}" = "--full-tree" ]; then
+  MODE="full-tree"
+  (cd "$REPO_ROOT" && git ls-files -z) > "$FILE_LIST_TMP"
+elif [ "$#" -gt 0 ]; then
+  MODE="files"
+  # Pass each argv as null-terminated so filenames with spaces survive.
+  for arg in "$@"; do
+    printf '%s\0' "$arg"
+  done > "$FILE_LIST_TMP"
+else
+  # Default: staged files for pre-commit (and --check with no path args).
+  (cd "$REPO_ROOT" && git diff --cached --name-only -z --diff-filter=ACMR) > "$FILE_LIST_TMP"
+fi
+
+if [ ! -s "$FILE_LIST_TMP" ]; then
+  if [ "$CHECK_MODE" -eq 1 ]; then
+    echo "[harness-hygiene-scan --check] would-pass (nothing to scan)" >&2
+  fi
   exit 0
 fi
 
@@ -614,7 +791,7 @@ fi
 # ---------- build the regex patterns file grep will read ------------------
 # We strip comments and blank lines so grep -f only sees real patterns.
 PATTERNS_TMP=$(mktemp)
-trap 'rm -f "$PATTERNS_TMP"' EXIT
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP"' EXIT
 
 awk '
   # skip blank lines and comment-only lines
@@ -830,6 +1007,23 @@ is_exempt() {
     adapters/claude-code/hooks/decisions-index-gate.sh) return 0 ;;
   esac
 
+  # Machine-generated operator ledgers (exemption class added 2026-08-03,
+  # gated-pipeline session; scoped harness-reviewer confirmation in
+  # docs/reviews/ — see the T8 evidence trail). These files are churned by
+  # generators (needs-you.sh / backlog regeneration) and accumulate
+  # HISTORICAL ask/issue text that can name orgs or hosts; a commit that
+  # merely TOUCHES them re-triggers matches on lines the committer did not
+  # write and cannot scrub without falsifying the ledger (three occurrences
+  # blocked this session: operator-todo checkbox flips, two backlog deltas).
+  # The durable fix for the CONTENT belongs to the generators (nl-issues
+  # filed 2026-08-03: needs-you/operator-todo writers should not embed org
+  # names); exempting the LEDGERS keeps the gate honest at its real target —
+  # hand-authored harness source and docs. NOT exempt: any other docs/ file.
+  case "$path" in
+    docs/backlog.md) return 0 ;;
+    docs/operator-todo.md) return 0 ;;
+  esac
+
   # SECRET-SCAN-CI-BACKSTOP-01 fixture files. These deliberately contain
   # AWS's own public documentation placeholder access-key ID
   # (AKIAIOSFODNN7EXAMPLE — never a live credential) so the CI-backstop
@@ -951,32 +1145,9 @@ is_exempt() {
   return 1
 }
 
-# ---------- file-list assembly -------------------------------------------
-
-MODE="staged"
-FILE_LIST_TMP=$(mktemp)
-# extend trap: preserve removal of PATTERNS_TMP + also remove FILE_LIST_TMP
-trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP"' EXIT
-
-if [ "${1:-}" = "--full-tree" ]; then
-  MODE="full-tree"
-  (cd "$REPO_ROOT" && git ls-files -z) > "$FILE_LIST_TMP"
-elif [ "$#" -gt 0 ]; then
-  MODE="files"
-  # Pass each argv as null-terminated so filenames with spaces survive.
-  for arg in "$@"; do
-    printf '%s\0' "$arg"
-  done > "$FILE_LIST_TMP"
-else
-  # Default: staged files for pre-commit
-  (cd "$REPO_ROOT" && git diff --cached --name-only -z --diff-filter=ACMR) > "$FILE_LIST_TMP"
-fi
-
-if [ ! -s "$FILE_LIST_TMP" ]; then
-  exit 0
-fi
-
 # ---------- scan each file -----------------------------------------------
+# (file list already assembled by the cheap relevance pre-filter above —
+# MODE / FILE_LIST_TMP are set there)
 
 MATCH_COUNT=0
 WAIVED_COUNT=0
@@ -1028,6 +1199,7 @@ while IFS= read -r -d '' rel_path; do
   if _hhs_is_waived "$check_path"; then
     WAIVED_COUNT=$((WAIVED_COUNT + 1))
     command -v ledger_emit >/dev/null 2>&1 && ledger_emit "harness-hygiene-scan" "waiver" "file=$check_path"
+    declare -F ws_record >/dev/null 2>&1 && ws_record "harness-hygiene-scan" "waiver-file" "file=$check_path"
     continue
   fi
 
@@ -1065,52 +1237,81 @@ while IFS= read -r -d '' rel_path; do
   check_heuristics "$check_path" "$abs_path"
 done < "$FILE_LIST_TMP"
 
-# ---------- report -------------------------------------------------------
+# ---------- report (R3.4 Gate Philosophy Law — one shared emitter) -------
+#
+# _hhs_print_report — the ONE structured-message emitter, called by BOTH
+# the enforce path and --check with the same MATCHES_TMP/MATCH_COUNT
+# computed by the identical scan loop above. Fields: WHAT / WHY / FIX /
+# ESCAPE (doctor-lintable). The hatch block (structured waiver) was
+# already a copy-pasteable command; it now also carries the ESCAPE label
+# so the doctor's gate-message lint can find it mechanically.
 
 if [ "$MATCH_COUNT" -eq 0 ]; then
+  if [ "$CHECK_MODE" -eq 1 ]; then
+    echo "[harness-hygiene-scan --check] would-pass (0 matches)" >&2
+  fi
   exit 0
 fi
 
-if [ "$MODE" = "full-tree" ]; then
-  header="HARNESS HYGIENE SCAN — FULL TREE — $MATCH_COUNT MATCHES"
-else
-  header="HARNESS HYGIENE SCAN — BLOCKED"
-fi
+_hhs_print_report() {
+  local check_mode="$1"
+  local header
+  if [ "$MODE" = "full-tree" ]; then
+    header="HARNESS HYGIENE SCAN — FULL TREE — $MATCH_COUNT MATCHES"
+  elif [ "$check_mode" -eq 1 ]; then
+    header="HARNESS HYGIENE SCAN — [--check] WOULD BLOCK — $MATCH_COUNT MATCHES"
+  else
+    header="HARNESS HYGIENE SCAN — BLOCKED"
+  fi
 
-{
-  echo ""
-  echo "================================================================"
-  echo "$header"
-  echo "================================================================"
-  echo ""
-  echo "The following content matches patterns in the harness denylist."
-  echo "Harness repos must not ship personal/business identifiers. Clean"
-  echo "these up, or add the file to the scanner exemption list if the"
-  echo "match is legitimate and durable."
-  echo ""
-  cat "$MATCHES_TMP"
-  echo ""
-  echo "Hatch (cost: suppresses matches on ONLY the named file(s), this run,"
-  echo "ledger-logged — never a blanket suppression of the whole scan):"
-  echo "  A genuine NOVEL false-positive (not a known-legitimate file worth"
-  echo "  a durable exemption) gets a fresh (<1h) structured waiver naming"
-  echo "  BOTH purpose clauses AND the file(s) it covers:"
-  echo "    mkdir -p $HHS_STATE_DIR && \\"
-  echo "    { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
-  echo "      printf 'Because: <Y>\\n'; \\"
-  echo "      printf 'Files: <repo-relative-path> [<repo-relative-path> ...]\\n'; \\"
-  echo "    } > $HHS_STATE_DIR/harness-hygiene-waiver-\$(date +%s).txt"
-  echo "  Re-run the commit after writing the waiver."
-  echo ""
-  echo "Durable remedy: fix the content, or add the file to is_exempt() in this"
-  echo "scanner (with a comment naming the exemption class) and stage both in the"
-  echo "same commit. (git commit --no-verify skips only the git-native hook layer,"
-  echo "cannot bypass this scan's PreToolUse wiring, and is prohibited without"
-  echo "operator say-so — constitution §7.)"
-  echo "Denylist: adapters/claude-code/patterns/harness-denylist.txt"
-  echo "Rule: principles/harness-hygiene.md"
-  echo "This gate: ~/.claude/hooks/harness-hygiene-scan.sh (source: adapters/claude-code/hooks/harness-hygiene-scan.sh)"
-  echo "================================================================"
-} >&2
+  {
+    echo ""
+    echo "================================================================"
+    echo "$header"
+    echo "================================================================"
+    echo ""
+    echo "WHAT: The following content matches patterns in the harness denylist"
+    echo "      (or the project-shape/repeated-term heuristics):"
+    echo ""
+    cat "$MATCHES_TMP"
+    echo ""
+    echo "WHY:  Harness repos must not ship personal, business, or identity-"
+    echo "      bearing strings. This scan is the last-line mechanical"
+    echo "      enforcement for the harness-hygiene principle."
+    echo ""
+    echo "FIX:  Fix the content, or — if the match is legitimate and durable —"
+    echo "      add the file to is_exempt() in this scanner (with a comment"
+    echo "      naming the exemption class) and stage both in the same commit."
+    echo ""
+    echo "ESCAPE: a fresh (<1h), per-file, ledger-logged structured waiver —"
+    echo "      suppresses matches on ONLY the named file(s), this run, NEVER"
+    echo "      a blanket suppression of the whole scan. Cost: the waiver ages"
+    echo "      out in 1h, is logged to the signal ledger, and still requires"
+    echo "      naming BOTH purpose clauses honestly (a false clause is a"
+    echo "      harness-hygiene violation in its own right). Use only for a"
+    echo "      genuine NOVEL false-positive, not a known-legitimate file"
+    echo "      (those get the durable is_exempt() remedy above instead):"
+    echo "        mkdir -p $HHS_STATE_DIR && \\"
+    echo "        { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
+    echo "          printf 'Because: <Y>\\n'; \\"
+    echo "          printf 'Files: <repo-relative-path> [<repo-relative-path> ...]\\n'; \\"
+    echo "        } > $HHS_STATE_DIR/harness-hygiene-waiver-\$(date +%s).txt"
+    echo "      Re-run the commit after writing the waiver. (git commit"
+    echo "      --no-verify skips only the git-native hook layer, cannot"
+    echo "      bypass this scan's PreToolUse wiring, and is prohibited"
+    echo "      without operator say-so — constitution §7.)"
+    echo ""
+    echo "Denylist: adapters/claude-code/patterns/harness-denylist.txt"
+    echo "Rule: principles/harness-hygiene.md"
+    echo "This gate: ~/.claude/hooks/harness-hygiene-scan.sh (source: adapters/claude-code/hooks/harness-hygiene-scan.sh)"
+    if [ "$check_mode" -eq 1 ]; then
+      echo "[--check mode: advisory only, no side effects — re-run without"
+      echo " --check to see this enforced for real at commit time]"
+    fi
+    echo "================================================================"
+  } >&2
+}
+
+_hhs_print_report "$CHECK_MODE"
 
 exit 1

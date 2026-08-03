@@ -27,6 +27,17 @@
 # default 20 per section — a "+N more" line covers the rest so a
 # 94-worktree estate still renders as ONE screen, not a wall of text).
 #
+# ASK-SENTINEL-QUARANTINE-SURFACER-01 addition: a new "ASK SENTINEL"
+# section reports estate-janitor.sh's `.ask_sentinel` reduction —
+# unattributed.jsonl (quarantine: a placeholder-shaped ask-id, meaning a
+# pre-fix emitter bug is still live somewhere) and unlinked.jsonl
+# (legitimate no-ask lane). unattributed.jsonl WARNs whenever its growth
+# since the previous tick is > 0 (the live-emitter-bug signal); growth ==
+# 0, growth < 0, or no baseline yet (first observation) never warn.
+# unlinked.jsonl is always reported neutrally — growing there is expected,
+# ordinary traffic, never a warning. Absent files (or a snapshot predating
+# this field) render "absent", never a fabricated count of 0.
+#
 # ============================================================
 # USAGE
 # ============================================================
@@ -181,6 +192,31 @@ _eb_render() {
         else (if $d >= 1 then "due in \($d)d" else "due in \($h)h" end)
         end
       end;
+    # ASK-SENTINEL-QUARANTINE-SURFACER-01: unattributed.jsonl (quarantine —
+    # a placeholder-shaped ask-id means a pre-fix emitter is still live
+    # somewhere) / unlinked.jsonl (legitimate no-ask lane), both reduced by
+    # estate-janitor.sh into `.ask_sentinel`. Honesty law: an object missing
+    # entirely (older snapshot predating this field) or present:false both
+    # render "absent" — NEVER a fabricated 0. growth:null (no prior-tick
+    # baseline yet) renders "no baseline yet" — NEVER an imputed 0. Only
+    # the unattributed.jsonl WARN is judged HERE (at render time, same
+    # discipline as the SLA panel above) — growth > 0 is the one signal
+    # that means "investigate: a pre-fix emitter may still be live";
+    # growth == 0 or negative (e.g. after a remap ran) is NOT a warning.
+    # unlinked.jsonl is always reported neutrally — it is the legitimate
+    # no-ask lane, growing there is expected, ordinary traffic.
+    def sentinel_obj(x): (x // {});
+    def sentinel_line(lbl; x):
+      (sentinel_obj(x)) as $o |
+      if ($o.present // false) != true then "  \(lbl): absent (no events)"
+      elif ($o.growth == null) then "  \(lbl): \($o.count) events (no baseline yet)"
+      else "  \(lbl): \($o.count) events (\(if $o.growth >= 0 then "+" else "" end)\($o.growth) since last tick)"
+      end;
+    def sentinel_warn(x):
+      (sentinel_obj(x)) as $o |
+      if ($o.present // false) == true and ($o.growth != null) and ($o.growth > 0)
+      then " [WARN: growing — a pre-fix emitter may still be live]"
+      else "" end;
     (.sessions // []) as $ss | (.asks // []) as $asks |
     (.orphaned_worktrees // []) as $owt | (.orphaned_branches // []) as $obr |
     ($asks | map(. + {_bucket: sla_bucket, _epoch: sla_epoch}) | sort_by([._bucket, (._epoch // 0)])) as $asks_sorted |
@@ -209,6 +245,10 @@ _eb_render() {
           [$obr[:$maxn][] | "  \(.repo | short(30)) | \(.branch) | last commit \(.last_commit_age_days // "?" | tostring)d ago"]
           + more($obr | length; $maxn)
         end)
+      + [""]
+      + ["ASK SENTINEL (ask-id quarantine/unlinked lanes)"]
+      + [(sentinel_line("unattributed.jsonl"; .ask_sentinel.unattributed) + sentinel_warn(.ask_sentinel.unattributed))]
+      + [sentinel_line("unlinked.jsonl"; .ask_sentinel.unlinked)]
       + [""]
       + ["COUNTS",
          "  bash.exe: \(.process_counts.bash_count) | claude.exe: \(.process_counts.claude_count) | worktrees: \(.worktrees | length) (across \(.repos_scanned | length) repos) | signal-ledger tail: \(.signal_ledger_tail | length) lines",
@@ -390,6 +430,67 @@ EOF
   local out8b; out8b="$(ESTATE_BRIEF_MAX_ASK_ROWS=3 _eb_render)"
   local ask_rows_shown_b; ask_rows_shown_b=$(printf '%s\n' "$out8b" | grep -cE '^  ask-[0-9]+ \|')
   [[ "$ask_rows_shown_b" == "3" ]] && pass "ESTATE_BRIEF_MAX_ASK_ROWS is env-overridable (3 shown)" || fail "expected exactly 3 ask rows with ESTATE_BRIEF_MAX_ASK_ROWS=3, got $ask_rows_shown_b"
+
+  echo "Scenario 9a (ASK-SENTINEL-QUARANTINE-SURFACER-01): unattributed.jsonl growth > 0 renders the count + growth AND the WARN"
+  cat > "$ESTATE_SNAPSHOT_PATH" <<'EOF'
+{"schema":1,"generated_at":"2026-01-01T00:00:00Z","machine":"testhost","asks_fold":"simplified","repos_config_source":"x",
+"sessions":[],"sessions_degraded":false,"process_counts":{"bash_count":0,"claude_count":0,"degraded":false},
+"worktrees":[],"worktrees_degraded":false,"orphaned_worktrees":[],"orphaned_branches":[],"repos_scanned":["/x"],
+"signal_ledger_tail":[],"signal_ledger_degraded":false,"asks":[],"asks_degraded":false,
+"ask_sentinel":{"unattributed":{"present":true,"count":5,"growth":2},"unlinked":{"present":true,"count":120,"growth":7}}}
+EOF
+  local out9a; out9a="$(_eb_render)"
+  [[ "$out9a" == *"unattributed.jsonl: 5 events (+2 since last tick)"* ]] && pass "unattributed.jsonl growth renders count + signed delta" || fail "expected 'unattributed.jsonl: 5 events (+2 since last tick)', got: $out9a"
+  [[ "$out9a" == *"unattributed.jsonl: 5 events (+2 since last tick) [WARN: growing"* ]] && pass "unattributed.jsonl GROWTH (growth>0) triggers the WARN — a live pre-fix emitter signal" || fail "expected a WARN on the unattributed.jsonl line, got: $out9a"
+  [[ "$out9a" == *"unlinked.jsonl: 120 events (+7 since last tick)"* ]] && pass "unlinked.jsonl reports its own growth neutrally" || fail "expected 'unlinked.jsonl: 120 events (+7 since last tick)', got: $out9a"
+  local unlinked_line; unlinked_line="$(printf '%s\n' "$out9a" | grep 'unlinked.jsonl')"
+  [[ "$unlinked_line" != *"WARN"* ]] && pass "unlinked.jsonl growth NEVER triggers a WARN (legitimate lane, growth is ordinary traffic)" || fail "unlinked.jsonl line incorrectly carries a WARN: $unlinked_line"
+
+  echo "Scenario 9b: unattributed.jsonl growth == 0 does NOT warn (no false alarm on a flat count)"
+  cat > "$ESTATE_SNAPSHOT_PATH" <<'EOF'
+{"schema":1,"generated_at":"2026-01-01T00:00:00Z","machine":"testhost","asks_fold":"simplified","repos_config_source":"x",
+"sessions":[],"sessions_degraded":false,"process_counts":{"bash_count":0,"claude_count":0,"degraded":false},
+"worktrees":[],"worktrees_degraded":false,"orphaned_worktrees":[],"orphaned_branches":[],"repos_scanned":["/x"],
+"signal_ledger_tail":[],"signal_ledger_degraded":false,"asks":[],"asks_degraded":false,
+"ask_sentinel":{"unattributed":{"present":true,"count":5,"growth":0},"unlinked":{"present":true,"count":120,"growth":0}}}
+EOF
+  local out9b; out9b="$(_eb_render)"
+  local unattr_line_b; unattr_line_b="$(printf '%s\n' "$out9b" | grep 'unattributed.jsonl')"
+  [[ "$unattr_line_b" == *"5 events (+0 since last tick)"* && "$unattr_line_b" != *"WARN"* ]] && pass "growth==0 renders the flat count, no WARN" || fail "expected no WARN for growth==0, got: $unattr_line_b"
+
+  echo "Scenario 9c: unattributed.jsonl FIRST observation (growth == null, no prior-tick baseline) renders 'no baseline yet', never an imputed 0, never a WARN"
+  cat > "$ESTATE_SNAPSHOT_PATH" <<'EOF'
+{"schema":1,"generated_at":"2026-01-01T00:00:00Z","machine":"testhost","asks_fold":"simplified","repos_config_source":"x",
+"sessions":[],"sessions_degraded":false,"process_counts":{"bash_count":0,"claude_count":0,"degraded":false},
+"worktrees":[],"worktrees_degraded":false,"orphaned_worktrees":[],"orphaned_branches":[],"repos_scanned":["/x"],
+"signal_ledger_tail":[],"signal_ledger_degraded":false,"asks":[],"asks_degraded":false,
+"ask_sentinel":{"unattributed":{"present":true,"count":3,"growth":null},"unlinked":{"present":false,"count":null,"growth":null}}}
+EOF
+  local out9c; out9c="$(_eb_render)"
+  local unattr_line_c; unattr_line_c="$(printf '%s\n' "$out9c" | grep 'unattributed.jsonl')"
+  [[ "$unattr_line_c" == *"3 events (no baseline yet)"* && "$unattr_line_c" != *"WARN"* ]] && pass "no-baseline first tick renders '3 events (no baseline yet)', no WARN" || fail "expected 'no baseline yet' with no WARN, got: $unattr_line_c"
+  [[ "$out9c" == *"unlinked.jsonl: absent (no events)"* ]] && pass "unlinked.jsonl absent renders 'absent', never a fabricated 0" || fail "expected unlinked.jsonl absent line, got: $out9c"
+
+  echo "Scenario 9d: both lanes absent -> both render 'absent', no WARN, no crash"
+  cat > "$ESTATE_SNAPSHOT_PATH" <<'EOF'
+{"schema":1,"generated_at":"2026-01-01T00:00:00Z","machine":"testhost","asks_fold":"simplified","repos_config_source":"x",
+"sessions":[],"sessions_degraded":false,"process_counts":{"bash_count":0,"claude_count":0,"degraded":false},
+"worktrees":[],"worktrees_degraded":false,"orphaned_worktrees":[],"orphaned_branches":[],"repos_scanned":["/x"],
+"signal_ledger_tail":[],"signal_ledger_degraded":false,"asks":[],"asks_degraded":false,
+"ask_sentinel":{"unattributed":{"present":false,"count":null,"growth":null},"unlinked":{"present":false,"count":null,"growth":null}}}
+EOF
+  local out9d; out9d="$(_eb_render)"
+  [[ "$out9d" == *"unattributed.jsonl: absent (no events)"* && "$out9d" == *"unlinked.jsonl: absent (no events)"* && "$out9d" != *"WARN"* ]] && pass "both lanes absent render honestly, no WARN, no crash" || fail "expected both 'absent (no events)' with no WARN, got: $out9d"
+
+  echo "Scenario 9e: a snapshot predating this field (no ask_sentinel key at all) degrades to 'absent' for both lanes, never a crash"
+  cat > "$ESTATE_SNAPSHOT_PATH" <<'EOF'
+{"schema":1,"generated_at":"2026-01-01T00:00:00Z","machine":"testhost","asks_fold":"simplified","repos_config_source":"x",
+"sessions":[],"sessions_degraded":false,"process_counts":{"bash_count":0,"claude_count":0,"degraded":false},
+"worktrees":[],"worktrees_degraded":false,"orphaned_worktrees":[],"orphaned_branches":[],"repos_scanned":["/x"],
+"signal_ledger_tail":[],"signal_ledger_degraded":false,"asks":[],"asks_degraded":false}
+EOF
+  local out9e; out9e="$(_eb_render)"
+  [[ "$out9e" == *"ASK SENTINEL"* && "$out9e" == *"unattributed.jsonl: absent (no events)"* && "$out9e" == *"unlinked.jsonl: absent (no events)"* ]] && pass "a legacy snapshot missing 'ask_sentinel' entirely still renders the section honestly (degrade, never crash)" || fail "expected the ASK SENTINEL section to degrade gracefully on a legacy snapshot, got: $out9e"
 
   rm -rf "$T" 2>/dev/null || true
   unset ESTATE_STATE_DIR ESTATE_SNAPSHOT_PATH

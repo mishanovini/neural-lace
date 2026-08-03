@@ -27,11 +27,16 @@
  * header comment for the full rationale). This module renders row
  * title/preview verbatim as server-prepared text.
  *
- * Absolute-links law (hard constraint 2): the ONE href this module ever
- * sets is the "open backlog.md" affordance, built from the server's
- * `file_path` (an absolute filesystem path) — duplicated absolute-href
- * helpers below, matching todo.js/asks.js's own per-file duplication
- * convention (no shared client-side module system in this app).
+ * Absolute-links law (hard constraint 2, TIGHTENED by
+ * COCKPIT-DEAD-FILE-HREF-RESIDUAL-01): the "open backlog.md" affordance
+ * used to be an `<a href>` built by converting the server's absolute
+ * `file_path` to `file://` — a DEAD link from this http-served page
+ * (PROVEN live at :7733). It is now a real `<button>` opening the EXISTING
+ * in-page docs viewer via the server's `file_doc_ref` {project, path},
+ * the same cure inbox.js/roadmap.js already carry; `absoluteLinkHref`
+ * survives but can only ever return an http(s) URL. Helpers stay
+ * duplicated per-file, matching asks.js's own convention (no shared
+ * client-side module system in this app).
  */
 (function () {
   var root = document.getElementById('backlogBody');
@@ -42,17 +47,59 @@
   // ============================================================
   // absolute-href helpers (duplicated from todo.js/asks.js by convention)
   // ============================================================
-  function toFileUrl(p) {
-    var norm = String(p).replace(/\\/g, '/');
-    if (/^[A-Za-z]:\//.test(norm)) return 'file:///' + norm;
-    if (/^\/\//.test(norm)) return null; // UNC — copy-only is the honest fallback
-    if (/^\//.test(norm)) return 'file://' + norm;
-    return null;
-  }
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 (operator, live: "the links … don't
+  // work"): `toFileUrl` USED TO LIVE HERE and turned `payload.file_path`
+  // into `<a href="file:///…/docs/backlog.md">open backlog.md</a>` — PROVEN
+  // dead live at :7733 (it was the ONLY file:// anchor in the entire
+  // rendered DOM; a browser loading this page over http silently refuses to
+  // navigate it, so the link looked clickable and did nothing). DELETED,
+  // not patched — the same class row 70 fixed for roadmap plan links and
+  // R17 fixed for inbox pointer rows, swept here.
+  // ABSOLUTE-LINK-HREF-BEGIN
+  // absoluteLinkHref(value) — returns a genuinely navigable href or null.
+  // http(s) only: a local absolute path is NEVER converted to a href by
+  // this module any more (it routes through openBacklogDocModal instead).
   function absoluteLinkHref(value) {
     if (typeof value !== 'string' || value === '') return null;
     if (/^https?:\/\//i.test(value)) return value;
-    return toFileUrl(value);
+    return null;
+  }
+  // ABSOLUTE-LINK-HREF-END
+
+  // openBacklogDocModal(project, docPath) — reuses the EXISTING docModal DOM
+  // + /api/doc + the shared window.MdRender pipeline (inbox.js's
+  // openInboxDocModal / roadmap.js's openPlanDocModal are the same pattern,
+  // duplicated per this file's own no-shared-client-module convention — see
+  // this file's header). Best-effort no-op if the shared modal elements are
+  // absent from this page for any reason.
+  function openBacklogDocModal(project, docPath) {
+    var docModal = $('docModal'), docTitle = $('docTitle'), docBody = $('docBody'), docOpenEditor = $('docOpenEditor');
+    if (!docModal || !docTitle || !docBody) return;
+    docTitle.textContent = project + ' / ' + docPath;
+    docBody.textContent = 'loading…';
+    docModal.hidden = false;
+    fetch('/api/doc?project=' + encodeURIComponent(project) + '&path=' + encodeURIComponent(docPath))
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (j && j.ok) {
+          if (window.MdRender && typeof window.MdRender.renderMarkdown === 'function') {
+            docBody.innerHTML = window.MdRender.renderMarkdown(j.content);
+          } else {
+            docBody.textContent = j.content;
+          }
+        } else {
+          docBody.textContent = 'error: ' + (j && j.error);
+        }
+      })
+      .catch(function (err) { docBody.textContent = 'error: ' + err; });
+    if (docOpenEditor) {
+      docOpenEditor.onclick = function () {
+        fetch('/api/doc/open', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ project: project, path: docPath }),
+        }).catch(function () {});
+      };
+    }
   }
 
   var TIER_LABELS = { high: 'High priority', medium: 'Medium priority', low: 'Low priority', unlabeled: 'Unlabeled' };
@@ -481,8 +528,25 @@
       ' in flight · ' + payload.counts.terminal_total + ' closed';
     header.appendChild(summary);
 
+    // OPEN-FILE-AFFORDANCE-BEGIN
+    // The "open backlog.md" affordance. A server-resolved file_doc_ref opens
+    // the file in the EXISTING in-page docs viewer (a REAL <button> — this
+    // codebase's "no click-only divs, no dead hrefs" convention); an http(s)
+    // file_path stays an ordinary anchor; with neither, the affordance is
+    // omitted entirely rather than rendered as a link that cannot work.
+    var fileDocRef = payload.file_doc_ref;
     var fileHref = absoluteLinkHref(payload.file_path);
-    if (fileHref) {
+    if (fileDocRef && fileDocRef.project && fileDocRef.path) {
+      var openBtn = document.createElement('button');
+      openBtn.type = 'button';
+      openBtn.className = 'backlog-open-file-link backlog-open-file-btn';
+      openBtn.textContent = 'open backlog.md';
+      openBtn.title = payload.file_path + ' — open the rendered file in-page';
+      openBtn.addEventListener('click', function () {
+        openBacklogDocModal(fileDocRef.project, fileDocRef.path);
+      });
+      header.appendChild(openBtn);
+    } else if (fileHref) {
       var openLink = document.createElement('a');
       openLink.className = 'backlog-open-file-link';
       openLink.href = fileHref;
@@ -491,6 +555,7 @@
       openLink.textContent = 'open backlog.md';
       header.appendChild(openLink);
     }
+    // OPEN-FILE-AFFORDANCE-END
 
     var toggleBtn = document.createElement('button');
     toggleBtn.type = 'button';

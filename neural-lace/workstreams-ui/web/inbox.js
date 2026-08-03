@@ -170,6 +170,9 @@
   var openSetQ = {};      // quarantined item id -> details-open bool
   var replyEdits = {};    // item id -> in-progress (uncommitted) reply-stub text
   var lastPayload = null;
+  // Signature of the ITEMS currently rendered (see load()). Null until the
+  // first successful render; deliberately excludes generated_at.
+  var lastRenderSig = null;
   var lastFetchFailed = false;
   var lastDerivedAt = null;
   var landingId = null;
@@ -356,6 +359,11 @@
     var head = el('div', 'ib-anatomy-head', (item.kind === 'question' ? 'Question: ' : 'Decision needed: ') + item.title);
     box.appendChild(head);
 
+    // Background prose is BUILT with the context (so the action/prose split
+    // happens in one place) but APPENDED after the trade-offs table and my
+    // pick — see the ordering note at block 3.
+    var deferredContext = null;
+
     // 2. Context (decisions only — questions carry no structure). Shows the
     // first 5 lines directly; INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01
     // fix (round 14): content beyond 5 lines is NEVER silently dropped —
@@ -363,18 +371,57 @@
     // below), but the primary anatomy now says so explicitly ("+N more —
     // see Raw verbatim below") instead of just stopping with no note.
     if (item.context && item.context.length) {
-      var ctxBox = el('div', 'ib-context');
-      // R17 deliverable 2 (audit F1): a context line can itself BE a
-      // command (the live defect: "run: powershell -File ... -> the task
-      // registers…" rendered as one prose run with no delimiter).
-      item.context.slice(0, 5).forEach(function (line) { ctxBox.appendChild(renderCat(el('div', 'ib-context-line'), line)); });
-      if (item.context.length > 5) {
-        ctxBox.appendChild(el('div', 'ib-context-more', '+' + (item.context.length - 5) + ' more line(s) — see "Raw verbatim" below'));
+      // Round 18 (operator, 2026-07-31): "it's kind of a wall of text and
+      // much of it is spent explaining it to me, and it's not very easy to
+      // find exactly what it is that's actually needed."
+      //
+      // TWO defects, both MEASURED on the operator's own live item
+      // NY-1785425479-0d4d:
+      //  (1) the runnable steps sat BELOW four paragraphs of background, so
+      //      the ask was the last thing found rather than the first;
+      //  (2) the 5-line cap dropped "STEP 3: powershell -File ..." entirely
+      //      — the single line the whole item exists to deliver — leaving
+      //      only "+1 more line(s) — see Raw verbatim below".
+      // Truncating the ANSWER to protect the reader from the EXPLANATION is
+      // backwards. So: partition, hoist the actions, never truncate them,
+      // and cap only the prose that caused the wall in the first place.
+      var isAction = (window.CommandRender && typeof window.CommandRender.isActionLine === 'function')
+        ? window.CommandRender.isActionLine
+        : function () { return false; };
+      var actionLines = [], proseLines = [];
+      item.context.forEach(function (line) { (isAction(line) ? actionLines : proseLines).push(line); });
+
+      if (actionLines.length) {
+        var doBox = el('div', 'ib-needed');
+        doBox.appendChild(el('div', 'ib-needed-head', actionLines.length === 1 ? 'Run this' : 'Run these, in order'));
+        actionLines.forEach(function (line) {
+          doBox.appendChild(renderCat(el('div', 'ib-needed-line'), line));
+        });
+        box.appendChild(doBox);
       }
-      box.appendChild(ctxBox);
+
+      // Held, not appended here — see the ordering note below.
+      if (proseLines.length) {
+        deferredContext = el('div', 'ib-context');
+        // R17 deliverable 2 (audit F1): a context line can itself BE a
+        // command (the live defect: "run: powershell -File ... -> the task
+        // registers…" rendered as one prose run with no delimiter).
+        proseLines.slice(0, 5).forEach(function (line) { deferredContext.appendChild(renderCat(el('div', 'ib-context-line'), line)); });
+        if (proseLines.length > 5) {
+          deferredContext.appendChild(el('div', 'ib-context-more', '+' + (proseLines.length - 5) + ' more line(s) of background — see "Raw verbatim" below'));
+        }
+      }
     }
 
     // 3. Trade-offs table (decisions only).
+    // Round 18 (operator): "the info ... doesn't do a fantastic job of
+    // providing context to help me understand the issue and determine what
+    // to do about it." This table IS the decision content — what happens
+    // each way — and it was rendered BELOW several paragraphs of system
+    // background, so the operator read architecture before ever seeing
+    // their choices. Order now follows how a decision is actually made:
+    // what to run -> what happens either way -> what I recommend -> and
+    // only then the background explaining why any of it exists.
     var table = optionsTable(item.options);
     if (table) box.appendChild(table);
 
@@ -388,6 +435,9 @@
       pickBox.appendChild(pickInline);
       box.appendChild(pickBox);
     }
+
+    // 4a. Background LAST of the explanatory blocks — demoted, never dropped.
+    if (deferredContext) box.appendChild(deferredContext);
 
     // 4b. Links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01 part b) —
     // producer `--link` entries PLUS anchors extracted from the raw text
@@ -926,11 +976,45 @@
           if (!lastPayload) renderErrorState(j && j.error);
           return;
         }
-        lastPayload = j;
         lastFetchFailed = false;
         lastDerivedAt = j.generated_at;
         setAgeLabel();
+
+        // Round 18 (operator, 2026-07-31): "the page keeps refreshing on
+        // its own, which forces the view back to the top of the page,
+        // which makes it difficult for me to read when the page is
+        // jumping around like that."
+        //
+        // The 30s tick called renderAll() UNCONDITIONALLY, so every tick
+        // rebuilt the whole list and dropped scroll to 0 — even though
+        // `generated_at` is the only field that actually changes on a
+        // typical tick. Two guards, cheapest first:
+        //   1. If the ITEMS are byte-identical to what is already on
+        //      screen, do not touch the DOM at all. This is the common
+        //      case (the inbox changes when the operator or a session
+        //      writes to it, i.e. rarely), so most ticks now cost nothing
+        //      and cannot move the viewport. `generated_at` is excluded
+        //      from the signature precisely because it changes every tick
+        //      and would defeat the guard.
+        //   2. When items HAVE changed a re-render is required, so
+        //      preserve the scroll position across it rather than letting
+        //      the rebuild reset it. Same technique restoreState() already
+        //      uses for view switches.
+        var sig;
+        try {
+          sig = JSON.stringify({ a: j.answerable || [], q: j.quarantined || [] });
+        } catch (_) { sig = null; }
+        var unchanged = (sig !== null && lastPayload && sig === lastRenderSig);
+        lastPayload = j;
+        if (unchanged) {
+          var q0 = whenLoadedQueue.splice(0);
+          q0.forEach(function (cb) { try { cb(); } catch (_) {} });
+          return;
+        }
+        lastRenderSig = sig;
+        var keepY = window.scrollY;
         renderAll();
+        if (keepY) window.scrollTo(0, keepY);
         var q = whenLoadedQueue.splice(0);
         q.forEach(function (cb) { try { cb(); } catch (_) {} });
       })

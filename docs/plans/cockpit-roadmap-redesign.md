@@ -617,6 +617,42 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   `neural-lace/workstreams-ui/server/roadmap-routes.js`/its selftest are UNTOUCHED — drag-and-
   drop persists through the pre-existing `/api/roadmap/rank` endpoint unchanged, no new server
   contract needed.
+- 2026-08-02: `adapters/claude-code/scripts/session-heartbeat.sh`,
+  `adapters/claude-code/settings.json.template`, `adapters/claude-code/manifest.json` —
+  the DATA half of this plan's RUNNING-NOW rendering. The cockpit lane landed the render
+  (green RUNNING-NOW, live-derived only); it could never light up because nothing refreshed
+  a heartbeat after SessionStart, so `last_activity_ts` was session-START time and no row
+  could be classified currently-active. PROVEN (observable, re-derived independently by
+  harness-reviewer 2026-08-02): the turn-end touch does not run — it sits after
+  `workstreams-stop-writer.sh`'s 5-member fork loop, measured at 30s-547s per Stop by that
+  hook's own turn-trace events; signal ledger holds 535 `stop-verdict-dispatcher`
+  turn-traces vs 200 `workstreams-stop-writer` ones, the latter last emitted
+  2026-07-31T17:18:29Z while the former emitted every turn; session `d3059d78` emitted 27
+  dispatcher turn-traces on 2026-08-01 with ZERO heartbeat updates; all 14 heartbeat files
+  read `"last_event":"start"`. HYPOTHESIZED (mechanism): WHICH kill ends that hook. The
+  60s-hook-timeout reading is contradicted by its own evidence (154 of the 200 stop-writer
+  traces recorded total_ms > 60000, max 571,816ms, while still reaching an emit nine lines
+  above the touch); the ~43s `hb_write` dying at the tail fits equally well, corroborated by
+  a leaked mktemp file in the real heartbeats dir. REFUTED IF instrumenting the Stop chain
+  shows the touch line entered and `hb_write` returning normally. The fix holds under EITHER
+  mechanism because it removes the dependency on that hook finishing.
+  Fix: two DIRECT top-level settings.json.template entries
+  (UserPromptSubmit + Stop), detached per the limit-resume precedent, so a liveness tick can
+  never again be starved by another hook's chain; plus a `--if-older-than` cheap guard on
+  `touch` and a claim-stake that bumps the destination mtime BEFORE the ~43s write body, so
+  the guard is not blind to an in-flight sibling. Round 2 (harness-reviewer REFORMULATE,
+  2026-08-02) additionally: rejected a negative age in the guard (a future mtime from clock
+  skew was being read as permanent freshness — the same freeze, via the guard), set
+  `hooks: ["scripts/session-heartbeat.sh"]` so manifest-check (c) can actually verify the
+  `wired_template: true` claim instead of iterating an empty list, restated all cost figures
+  from the reviewer's loaded-machine re-measurement (full write 42-45s, guarded no-op 5-7s),
+  and extended `reap` to clear orphaned `<sid>.json.XXXXXX` mktemp leftovers. Same commit
+  also lands the paired constant in
+  `neural-lace/workstreams-ui/server/derive-lib.js` (already declared above):
+  `activityWindowMs` 24h -> 6h, which only becomes a real staleness policy once the refresh
+  works. Closure trigger: this entry closes with task 9's acceptance pass — the cockpit
+  rendering a genuinely-running session as RUNNING-NOW is the acceptance criterion the
+  render half was already written against.
 
 ## Assumptions
 - The ask registry IS the work-item registry plus fields (title, timeline, rank) — no new store

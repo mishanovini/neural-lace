@@ -106,6 +106,12 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HOOKS_DIR="$SCRIPT_DIR/../hooks"
 
+# harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 11): the
+# HALT/drain flag, sourced UNCONDITIONALLY — see
+# hooks/lib/single-flight-lib.sh header.
+# shellcheck disable=SC1091
+{ source "$HOOKS_DIR/lib/single-flight-lib.sh" 2>/dev/null; } || true
+
 # --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
 # nl_run_bounded returns 124 on expiry exactly as GNU `timeout` does, so
 # _ht_run_step's existing rc handling (and the "timeout 124" reasoning in
@@ -136,6 +142,39 @@ _ht_alert_dir() {
     return 0
   fi
   printf '%s/.claude/state/external-monitor-alerts' "${HOME:-$PWD}"
+}
+
+# _ht_resolve_sweep_root — the worktree-sweep target repo (stdout; empty =
+# no sweep, the caller's honest-skip arm). Resolution: HEALTH_TICK_SWEEP_ROOT
+# env override wins; else the FIRST entry of the estate-repos config, whose
+# path is itself overridable via HEALTH_TICK_REPOS_CONFIG (test seam — same
+# ${VAR:-default} shape as ESTATE_JANITOR_REPOS_CONFIG; 2026-08-01 review
+# Major: a new external-config read without a path seam is untestable by
+# construction); else empty. Parse grammar deliberately matches
+# estate-janitor.sh's _ej_resolve_repos for this SHARED file — CR strip,
+# inline-#-comment strip, whitespace trim, skip blanks — because two
+# consumers with two acceptance grammars diverge at the first CRLF
+# (2026-08-01 review Major; on Windows CRLF is the standing hazard).
+# FIRST-entry-only is deliberate: health-tick sweeps ONE repo where
+# estate-janitor iterates all — stated here AND in the config header,
+# because config-line ORDER selects the target of a (when armed) deleting
+# operation, and the operator edits the file, not this script.
+_ht_resolve_sweep_root() {
+  if [[ -n "${HEALTH_TICK_SWEEP_ROOT:-}" ]]; then
+    printf '%s' "$HEALTH_TICK_SWEEP_ROOT"
+    return 0
+  fi
+  local cfg="${HEALTH_TICK_REPOS_CONFIG:-$HOME/.claude/config/estate-repos.txt}"
+  [[ -f "$cfg" ]] || return 0
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    line="$(printf '%s' "$line" | sed -E 's/#.*$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
+    [[ -n "$line" ]] || continue
+    printf '%s' "$line"
+    return 0
+  done < "$cfg"
+  return 0
 }
 
 _ht_now_iso() { date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown; }
@@ -195,6 +234,12 @@ _ht_run_step() {
 # ----------------------------------------------------------------------
 run_tick() {
   SECONDS=0
+  # harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 11):
+  # HALT/drain — checked first; an operator's one-gesture stop always wins.
+  if declare -F sf_halt_active >/dev/null 2>&1 && sf_halt_active; then
+    echo "[health-tick] HALT flag set ($(sf_halt_reason 2>/dev/null)) — draining: exiting without running this tick"
+    return 0
+  fi
   local started_at ended_at
   started_at="$(_ht_now_iso)"
 
@@ -313,24 +358,39 @@ run_tick() {
     # _ht_alert_dir implements — an explicit override wins, otherwise a
     # self-test never reaches the real sweep at all.
     local wt_cmd
+    # Sweep-root resolution lives in _ht_resolve_sweep_root (top of file):
+    # env override -> FIRST config entry (janitor-grammar parse, seam via
+    # HEALTH_TICK_REPOS_CONFIG) -> empty = the honest-skip arm below. Was
+    # hardcoded to the RETIRED legacy repo path until 2026-08-01 (doctor
+    # legacy-paths RED) -- a silent no-op since the repo moved.
+    local sweep_root; sweep_root="$(_ht_resolve_sweep_root)"
     if [[ -n "${HEALTH_TICK_WORKTREE_PRUNE_CMD:-}" ]]; then
       wt_cmd="$HEALTH_TICK_WORKTREE_PRUNE_CMD"
     elif [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
       wt_cmd="echo 'sandboxed: worktree prune skipped under HARNESS_SELFTEST'"
+    elif [[ -z "$sweep_root" || ! -d "$sweep_root" ]]; then
+      wt_cmd=""
+      echo "[health-tick] worktree prune skipped: no sweep root (set ~/.claude/config/estate-repos.txt or HEALTH_TICK_SWEEP_ROOT)"
     elif [[ -f "$arm_marker" ]]; then
-      wt_cmd="WORKTREE_SWEEP_APPROVE=1 bash \"$whs\" --prune \"\$HOME/claude-projects/neural-lace\""
+      wt_cmd="WORKTREE_SWEEP_APPROVE=1 bash \"$whs\" --prune \"$sweep_root\""
     else
       # Observe-first default: classify and report, delete NOTHING.
-      wt_cmd="bash \"$whs\" \"\$HOME/claude-projects/neural-lace\""
+      wt_cmd="bash \"$whs\" \"$sweep_root\""
     fi
-    _ht_run_step "worktree-prune" "$wt_cmd"
-    if [[ "$_HT_STEP_RC" -eq 0 ]]; then
-      local pruned_n
-      pruned_n="$(printf '%s\n' "$_HT_STEP_OUT" | grep -c 'PRUNED worktree' || true)"
-      [[ -n "$pruned_n" ]] || pruned_n=0
-      echo "[health-tick] worktree prune: ${pruned_n} worktree(s) pruned (SAFE-PRUNE class only; see $HOME/.claude/state/worktree-sweep.log)"
-    elif [[ "$_HT_STEP_RC" -ne 125 ]]; then
-      echo "[health-tick] WARN: worktree prune step failed (rc=${_HT_STEP_RC}, non-fatal, no alert): ${_HT_STEP_OUT:0:200}" >&2
+    # Run the step ONLY when an arm composed a command — the honest-skip
+    # arm prints its own line and runs nothing (routing an echo through
+    # _ht_run_step would make the rc=0 handler report "0 worktree(s)
+    # pruned", a sweep-ran claim for a sweep that never ran).
+    if [[ -n "$wt_cmd" ]]; then
+      _ht_run_step "worktree-prune" "$wt_cmd"
+      if [[ "$_HT_STEP_RC" -eq 0 ]]; then
+        local pruned_n
+        pruned_n="$(printf '%s\n' "$_HT_STEP_OUT" | grep -c 'PRUNED worktree' || true)"
+        [[ -n "$pruned_n" ]] || pruned_n=0
+        echo "[health-tick] worktree prune: ${pruned_n} worktree(s) pruned (SAFE-PRUNE class only; see $HOME/.claude/state/worktree-sweep.log)"
+      elif [[ "$_HT_STEP_RC" -ne 125 ]]; then
+        echo "[health-tick] WARN: worktree prune step failed (rc=${_HT_STEP_RC}, non-fatal, no alert): ${_HT_STEP_OUT:0:200}" >&2
+      fi
     fi
   else
     echo "[health-tick] WARN: worktree-hygiene-sweep.sh not found at ${whs} — worktree prune skipped this fire (graceful, no crash)" >&2
@@ -690,6 +750,56 @@ cmd_selftest() {
   else
     fail "worktree-hygiene-sweep.sh not found at $whs (cannot test step (d))"
   fi
+
+  echo "Scenario 9: sweep-root resolution (2026-08-01 review) — env override wins; config first-entry parses janitor-grammar; missing config -> honest skip"
+  local d9="$TMP/s9-cfg"; mkdir -p "$d9"
+  # (a) env override wins even when a config exists
+  printf '/cfg/repo-one\n' > "$d9/repos.txt"
+  local r9a; r9a="$(HEALTH_TICK_SWEEP_ROOT="/env/wins" HEALTH_TICK_REPOS_CONFIG="$d9/repos.txt" _ht_resolve_sweep_root)"
+  [[ "$r9a" == "/env/wins" ]] && pass "env override wins over an existing config" || fail "env override lost: got '$r9a'"
+  # (b) FIRST entry under the janitor grammar: CRLF endings, full-line and
+  # inline #-comments, surrounding whitespace — the exact shapes the
+  # 2026-08-01 review proved the first draft mis-parsed into a misleading
+  # "config not set" skip.
+  printf '# header comment\r\n\r\n   /cfg/first-repo   # inline note\r\n/cfg/second-repo\r\n' > "$d9/crlf.txt"
+  local r9b; r9b="$(HEALTH_TICK_SWEEP_ROOT= HEALTH_TICK_REPOS_CONFIG="$d9/crlf.txt" _ht_resolve_sweep_root)"
+  [[ "$r9b" == "/cfg/first-repo" ]] && pass "CRLF+comment+whitespace config parses to the FIRST clean entry" || fail "janitor-grammar parse broken: got '$r9b'"
+  # (c) missing config -> empty -> never a guessed path
+  local r9c; r9c="$(HEALTH_TICK_SWEEP_ROOT= HEALTH_TICK_REPOS_CONFIG="$d9/absent.txt" _ht_resolve_sweep_root)"
+  [[ -z "$r9c" ]] && pass "missing config resolves to empty (no guessed path)" || fail "missing config guessed a path: '$r9c'"
+  # (c2) branch COMPOSITION, reachable past the suite-wide interlock: one
+  # composed tick with the *_CMD prune override cleared and HARNESS_SELFTEST
+  # off, every other step stubbed green and the alert dir sandboxed — the
+  # skip arm's exact message must surface in the tick's own output. This is
+  # the scenario the 2026-08-01 review demanded: without it, the suite's
+  # totals are invariant under reverting the whole sweep-root delta.
+  local out9
+  out9="$(HEALTH_TICK_WORKTREE_PRUNE_CMD= HARNESS_SELFTEST=0 HEALTH_TICK_ALERT_DIR="$d9/alerts" \
+      HEALTH_TICK_SWEEP_ROOT= HEALTH_TICK_REPOS_CONFIG="$d9/absent.txt" \
+      HEALTH_TICK_DOCTOR_CMD="$GREEN_DOCTOR" HEALTH_TICK_TASK_HEALTH_CMD="$HEALTHY_TASKS" \
+      HEALTH_TICK_REAP_CMD="$OK_REAP" HEALTH_TICK_PERF_SNAPSHOT_CMD="true" \
+      bash "$SELF" 2>&1)"
+  case "$out9" in *"worktree prune skipped: no sweep root"*) pass "composed tick takes the honest-skip arm with its exact message" ;; \
+    *) fail "composed tick did not surface the skip-arm message" ;; esac
+
+  echo "Scenario 10 (harness-execution-redesign-2026-08 Task 1, invariant 11): HALT/drain -- set the flag, confirm the next tick exits immediately with a drain notice and writes no alert; clear it, confirm normal resumption"
+  local d10="$TMP/s10-alerts" sf10="$TMP/s10-sf"; mkdir -p "$d10" "$sf10"
+  printf '%s %s\n' "$(date +%s 2>/dev/null || echo 0)" "s10-test-halt" > "$sf10/HALT"
+  local out10a
+  out10a="$(SF_STATE_DIR="$sf10" HEALTH_TICK_ALERT_DIR="$d10" HEALTH_TICK_DOCTOR_CMD="$RED_DOCTOR" \
+    HEALTH_TICK_TASK_HEALTH_CMD="$HEALTHY_TASKS" HEALTH_TICK_REAP_CMD="$OK_REAP" \
+    bash "$SELF" 2>&1)"
+  case "$out10a" in *"HALT"*) pass "Scenario 10a: HALT flag set -> tick drains with a notice naming HALT" ;; \
+    *) fail "Scenario 10a: expected a HALT notice, got: $out10a" ;; esac
+  [[ -z "$(ls "$d10" 2>/dev/null)" ]] && pass "Scenario 10b: HALT drain wrote NO alert even though the stubbed doctor was RED (never ran the tick body)" \
+    || fail "Scenario 10b: an alert was written despite HALT being set"
+  rm -f "$sf10/HALT"
+  local out10c
+  out10c="$(SF_STATE_DIR="$sf10" HEALTH_TICK_ALERT_DIR="$d10" HEALTH_TICK_DOCTOR_CMD="$RED_DOCTOR" \
+    HEALTH_TICK_TASK_HEALTH_CMD="$HEALTHY_TASKS" HEALTH_TICK_REAP_CMD="$OK_REAP" \
+    bash "$SELF" 2>&1)"
+  [[ -n "$(ls "$d10" 2>/dev/null)" ]] && pass "Scenario 10c: HALT cleared -> next tick runs normally (RED doctor now produces an alert)" \
+    || fail "Scenario 10c: expected an alert after HALT was cleared, got none"
 
   rm -rf "$TMP" 2>/dev/null || true
   echo ""

@@ -101,7 +101,7 @@
 # ESTATE-T1-HB-CLASSIFY-PERF-01, 12m38s for a full janitor pass); occupancy is
 # read from the janitor's already-computed snapshot instead.
 #
-# DERIVED, NEVER DECLARED — TRUE FOR ARGUMENTS, FALSE FOR THE ENVIRONMENT.
+# DERIVED, NEVER DECLARED — TRUE FOR ARGUMENTS, MOSTLY TRUE FOR THE ENVIRONMENT NOW.
 #
 # RETIRED CLAIM (2026-07-28, same retirement): this header previously said
 # "Nothing here trusts a caller-supplied claim about capacity." task-verifier
@@ -122,10 +122,38 @@
 #                                     this slice exists to produce
 # The accurate claim: no caller ARGUMENT decides — the key enum drops
 # live_sessions=/verdict=/rate_1m= and the snapshot wins (self-test Scenario 10).
-# The environment channels above are NAMED T6 BYPASSES. They are harmless while
-# nothing blocks; before the enforcement flip T6 must either read this state
-# from a fixed path that ignores the environment, or accept that any dispatcher
-# can opt out of admission control by exporting one variable.
+#
+# T6-PREREQUISITES (b) UPDATE (2026-07-29): of the four bypasses above, THREE
+# are now CLOSED — ADM_ABSURD_SESSION_CAP, ADM_ESTATE_SNAPSHOT, and
+# ADM_STATE_DIR are honored ONLY under HARNESS_SELFTEST=1 (see adm_state_dir,
+# _adm_snapshot_path, _adm_session_cap below). No production callsite ever set
+# any of the three (grep across adapters/claude-code confirmed zero non-lib,
+# non-self-test occurrences at closure time), so gating them behind the flag
+# this lib's own self-test now exports globally closes the bypass for every
+# real dispatcher with zero production behavior change. Self-test Scenario 10b
+# proves both halves: closed in production, still available under
+# HARNESS_SELFTEST=1.
+# NL_PROTECTED_ORCHESTRATOR stays OPEN by design — it is a genuine production
+# signal the real protected orchestrator sets in ITS OWN environment; gating
+# it behind HARNESS_SELFTEST would defeat its actual purpose (edge 3
+# calibration-pollution tagging). There is no mechanism to verify a caller's
+# self-declared identity without new authentication infrastructure
+# disproportionate to this micro-slice — accepted in writing, residual risk
+# named, at docs/decisions/065-admission-lib-env-bypass-closure.md.
+#
+# FIFTH TUNABLE, ADDED TO THIS INVENTORY (2026-07-30 delta re-review finding
+# 2): ADM_PRESSURE_MAX_AGE_SECS (adm_pressure_color's reader-side age bound,
+# added same day by review REJECT C2) is ALSO a sourcing-shell-settable
+# env var, same channel as the four above. It stays OPEN in production, same
+# as NL_PROTECTED_ORCHESTRATOR and for the same reason — it is a legitimate
+# operator tunable (how stale a color is allowed to be before it stops being
+# authoritative), not an unauthenticated identity claim to close. What it
+# DOES get, which it was missing at introduction: input validation. A
+# non-numeric value reached the `(( max_age > 0 ))` arithmetic directly and
+# aborted the calling subshell instead of degrading to the fail-open
+# default — fixed by `[[ "$max_age" =~ ^[0-9]+$ ]] || max_age=7200` before
+# any arithmetic touches it. Self-test Scenario 10b pins this alongside its
+# four siblings.
 #
 # ============================================================================
 # API
@@ -147,14 +175,24 @@
 #                                  "(called by the janitor)" annotation was
 #                                  hallucinated infrastructure, 2026-07-28)
 #   _adm_mtime <file>           -> portable mtime (GNU stat -c / BSD stat -f)
+#   _adm_mtime_size <file>      -> portable "mtime size" in one stat call
+#   adm_occ_cache_path          -> occupancy TTL cache file path (T6-prereq a)
+#   _adm_snapshot_path          -> resolved janitor-snapshot path (ADM_ESTATE_
+#                                  SNAPSHOT closed outside HARNESS_SELFTEST=1)
+#   _adm_session_cap            -> resolved absurd-session-cap threshold
+#                                  (ADM_ABSURD_SESSION_CAP closed likewise)
 #
 # STATE (all overridable for tests; hostname-scoped per review F10 so there is
 # exactly ONE writer per file and cross-machine merge is append-only):
 #   ADM_STATE_DIR      default $HOME/.claude/state/governor
 #     HALT             kill switch      (one `touch` stops the estate — T6)
 #     DRAIN            drain flag       (deny-new at safe boundaries — T4/T6)
-#     pressure.json    written by the Loop-2 pressure tick (NOT BUILT YET —
-#                      absent means pressure=unknown, which admits; see below)
+#     pressure.json    written by the Loop-2 pressure tick (T6-PREREQUISITES
+#                      (d), 2026-07-29 — hooks/lib/perf-tick-snapshot.sh's
+#                      pts_write_pressure_tick, wired into pts_run_tick and
+#                      therefore into health-tick.sh's existing hourly
+#                      cadence; absent still means pressure=unknown, which
+#                      admits; see below)
 #     rate/            stamp file per dispatch (review F9: never a
 #                      read-modify-write token bucket — those lose updates)
 #     ledger/<host>.jsonl   the would-block ledger, O_APPEND, one writer
@@ -174,12 +212,20 @@
 #                      18 registered worktrees against an operator-set budget
 #                      of 6 -- the default is that same number, not invented.
 #
-# WHAT IS HONESTLY NOT BUILT HERE: the Loop-2 pressure tick that writes
-# pressure.json is NOT part of T3. Until it exists, adm_pressure_color returns
-# "unknown" and the pressure rung of the ladder never fires. The ledger records
-# pressure_src=absent on those lines so calibration cannot mistake "we never saw
-# pressure" for "pressure was fine". Do not read a 7-day window as
-# pressure-calibrated until that file starts appearing.
+# LOOP-2 PRESSURE TICK — WHAT IS BUILT AND WHAT IS STILL PARTIAL
+# (T6-PREREQUISITES (d), 2026-07-29, replacing the prior "NOT BUILT HERE"
+# claim): perf-tick-snapshot.sh's pts_write_pressure_tick now writes
+# pressure.json every tick, so adm_pressure_color reads a real "tick" source
+# instead of permanently "unknown", and the ledger's pressure_src field
+# reads "tick" once a tick has run (self-test Scenario 18) rather than
+# permanently "absent" (Scenario 19 still proves the honest fallback when it
+# has not). The color ladder implemented there is PARTIAL: only the
+# bash-count leg of the design's "CPU>75%/90% OR bash>60/90 OR RAM<15%"
+# ladder is built (no CPU%/RAM% sampler exists anywhere in this repo to
+# reuse, and building one is out of scope for this prerequisite slice); it
+# never emits "black" (needs cross-tick persistence tracking, also not
+# built). Do not read a 7-day window as FULLY pressure-calibrated on the
+# CPU/RAM axes until those are built — the bash-count axis is real today.
 #
 # SCRUB-AT-WRITE (design 6b edge 4 — occurred 2x this week). This lib is
 # machine-wide and its ledger is committed for cross-machine visibility, so it
@@ -219,23 +265,33 @@
 # per-caller relies on every future caller remembering. So the defense lives
 # HERE: under HARNESS_SELFTEST=1 with no explicit ADM_STATE_DIR, the lib
 # redirects to a throwaway per-process dir instead of real state. An explicit
-# ADM_STATE_DIR always wins, so this lib's own self-test still controls its
-# sandbox precisely.
+# ADM_STATE_DIR STILL wins over that guard, but ONLY under HARNESS_SELFTEST=1
+# (T6-PREREQUISITES (b), 2026-07-29 -- CLOSED bypass, was open before: the
+# 2026-07-28 review found ADM_STATE_DIR honored unconditionally, which any
+# sourcing shell could set to redirect the lib away from the real HALT kill
+# switch. No production callsite ever set this var (grep across
+# adapters/claude-code found zero non-lib, non-self-test occurrences), so
+# gating it behind the flag this lib's OWN self-test now sets globally --
+# see _adm_self_test's `export HARNESS_SELFTEST=1` -- closes the bypass for
+# every real dispatcher without touching test isolation at all).
 #
-# CORRECTION (2026-07-29, task-verifier): the sentence above overstated it, and
-# the overstatement cost real data. The guard KEYS ON HARNESS_SELFTEST=1, so it
-# is only in force for a host that SETS that variable — it is not, as claimed,
-# independent of the callers. spawn-worktree.sh did not set it, so its
-# --self-test appended 2 fabricated `source=worktree` rows to the operator's
-# REAL ledger on every run (32 -> 34 reproduced in isolation) for four review
-# rounds, undetected. The honest statement: the lib provides the MECHANISM and each
-# spliced host must arm it. Scenario 16b checks this BEHAVIORALLY — it runs each
-# host's own --self-test in a throwaway HOME with the guard unset and asserts no
-# ledger appears. An earlier version of that scenario grepped for the variable
-# name and was inert (it matched comments); do not regress it to a text match.
-# A guard is only as good as its weakest caller.
+# CORRECTION (2026-07-29, task-verifier; kept through the 2026-07-31
+# integration merge): an earlier header claimed the sandbox was independent
+# of callers -- the overstatement cost real data. The guard KEYS ON
+# HARNESS_SELFTEST=1, so it is only in force for a host that SETS that
+# variable. spawn-worktree.sh did not set it, so its --self-test appended 2
+# fabricated `source=worktree` rows to the operator's REAL ledger on every
+# run (32 -> 34 reproduced in isolation) for four review rounds, undetected.
+# The honest statement: the lib provides the MECHANISM and each spliced host
+# must arm it. Scenario 16b checks this BEHAVIORALLY -- it runs each host's
+# own --self-test in a throwaway HOME with the guard unset and asserts no
+# ledger appears. An earlier version of that scenario grepped for the
+# variable name and was inert (it matched comments); do not regress it to a
+# text match. A guard is only as good as its weakest caller.
 adm_state_dir() {
-  if [[ -n "${ADM_STATE_DIR:-}" ]]; then printf '%s' "$ADM_STATE_DIR"; return 0; fi
+  if [[ -n "${ADM_STATE_DIR:-}" && "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s' "$ADM_STATE_DIR"; return 0
+  fi
   if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
     # Honor the harness-wide HARNESS_SELFTEST_DIR convention (doctrine-jit.sh,
     # context-watermark.sh, pre-compact-continuity.sh all pair the two). The
@@ -258,6 +314,16 @@ _adm_mtime() {
   m="$(stat -c %Y "$f" 2>/dev/null)" || m=""
   [[ -n "$m" ]] || m="$(stat -f %m "$f" 2>/dev/null)" || m=""
   printf '%s' "${m:-0}"
+}
+
+# Portable mtime+size in ONE stat call (T6-prereq (a) — the occupancy TTL
+# cache below needs both fields to key its cache; a separate `wc -c` per
+# dispatch would be a second fork for no reason). Prints "mtime size".
+_adm_mtime_size() {
+  local f="$1" out=""
+  out="$(stat -c '%Y %s' "$f" 2>/dev/null)" || out=""
+  [[ -n "$out" ]] || out="$(stat -f '%m %z' "$f" 2>/dev/null)" || out=""
+  printf '%s' "${out:-0 0}"
 }
 adm_ledger_dir() { printf '%s' "$(adm_state_dir)/ledger"; }
 adm_rate_dir()   { printf '%s' "$(adm_state_dir)/rate"; }
@@ -371,13 +437,72 @@ _adm_json_scalar() {
   printf '%s' "$val"
 }
 
+# _ADM_PRESSURE_REASON / _ADM_PRESSURE_COLOR — side-channel globals set by
+# adm_pressure_color as a side effect (mirrors the existing _ADM_LAST_VERDICT
+# pattern below). WHY a global instead of a second return value: bash has no
+# multi-value return, and command substitution ($(...)) forks a subshell, so
+# any global a function sets while running INSIDE a $(...) capture is lost
+# the instant that subshell exits. adm_admit needs both "what color" (for the
+# ledger's pressure field) and "why" (fresh/stale/unreadable/absent, for
+# pressure_src — 2026-07-30 delta re-review finding 4) from ONE call, so it
+# calls this function directly (no $(...)) and reads both globals afterward.
+_ADM_PRESSURE_REASON=""
+_ADM_PRESSURE_COLOR=""
+
 adm_pressure_color() {
   local f="${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}"
-  [[ -r "$f" ]] || { printf 'unknown'; return 0; }
+  if [[ ! -r "$f" ]]; then
+    _ADM_PRESSURE_REASON="absent"
+    _ADM_PRESSURE_COLOR="unknown"
+    printf 'unknown'; return 0
+  fi
+  # READER-SIDE AGE BOUND (review REJECT C2, 2026-07-30): without this, a
+  # stopped tick freezes the last color into authority FOREVER — at T6 a
+  # frozen red would block every dispatch, a frozen green would admit
+  # through a real storm (the exact frozen-occupancy class the 2026-07-28
+  # review fixed one axis over). Default 7200s = 2x the hourly carrier
+  # cadence (health-tick). Stale -> 'unknown' (which admits, fail-open).
+  #
+  # ENV VALIDATION (2026-07-30 delta re-review finding 2): ADM_PRESSURE_
+  # MAX_AGE_SECS is a new sourcing-shell-settable tunable (see the file
+  # header's env inventory, now updated to list it). A non-numeric value
+  # reached the `(( max_age > 0 ))` arithmetic below directly and aborted
+  # the calling subshell instead of degrading to the default — a caller-
+  # supplied garbage value must never crash a fail-open lib. Self-test
+  # Scenario 10b pins this: a non-numeric value falls back to 7200, it does
+  # not disable the bound and does not abort.
+  local max_age="${ADM_PRESSURE_MAX_AGE_SECS:-7200}"
+  [[ "$max_age" =~ ^[0-9]+$ ]] || max_age=7200
+  if (( max_age > 0 )); then
+    local p_m now_p
+    # PORTABLE MTIME (2026-07-30 delta re-review finding 1, CRITICAL): this
+    # used to call `stat -c %Y "$f"` directly. GNU-only — BSD/macOS `stat`
+    # does not accept -c and prints nothing with a nonzero rc, so on a real
+    # BSD/macOS box p_m was permanently unreadable and every fresh pressure
+    # file read as stale ("unknown") forever, even seconds after a real tick
+    # wrote it. Route through this file's own portable helper (_adm_mtime,
+    # already used everywhere else in this file for exactly this GNU/BSD
+    # split) instead of re-inventing a GNU-only stat call here. Self-test
+    # Scenario 22 shims a BSD-only `stat` on PATH and proves a fresh file
+    # still reads its real color through it.
+    p_m="$(_adm_mtime "$f")"
+    now_p="$(_adm_now)"
+    if [[ ! "$p_m" =~ ^[0-9]+$ ]] || (( p_m == 0 )) || (( now_p < p_m )) || (( now_p - p_m > max_age )); then
+      _ADM_PRESSURE_REASON="stale"
+      _ADM_PRESSURE_COLOR="unknown"
+      printf 'unknown'; return 0
+    fi
+  fi
   local color; color="$(_adm_json_scalar "$f" color)" || color=""
   case "$color" in
-    green|yellow|red|black) printf '%s' "$color" ;;
-    *) printf 'unknown' ;;
+    green|yellow|red|black)
+      _ADM_PRESSURE_REASON="fresh"
+      _ADM_PRESSURE_COLOR="$color"
+      printf '%s' "$color" ;;
+    *)
+      _ADM_PRESSURE_REASON="unreadable"
+      _ADM_PRESSURE_COLOR="unknown"
+      printf 'unknown' ;;
   esac
 }
 
@@ -401,10 +526,101 @@ adm_pressure_color() {
 # so this IS the shared oracle's verdict (F8: slot liveness derives from
 # heartbeats), just read from the janitor's cached pass instead of recomputed.
 #
+# ---------------------------------------------------------------------------
+# Occupancy TTL cache (T6-PREREQUISITES (a), 2026-07-29)
+# ---------------------------------------------------------------------------
+# WHY: the header's measured cost (19.0 ms/dispatch snapshot-absent, 70.8 ms
+# snapshot-present) is ~52 ms of reading the janitor's document into a shell
+# variable and running two O(n) parameter expansions over it, below. The
+# janitor snapshot only changes every ~5 min (its own scheduled cadence), so
+# re-parsing it on EVERY dispatch is wasted work almost always.
+#
+# STALENESS CONTRACT (read this before changing ADM_OCC_CACHE_TTL_SECS):
+# the cache is keyed on (source path, mtime-seconds, byte-size) — NOT a blind
+# wall-clock cache. Any real snapshot change (new mtime OR new size) is an
+# IMMEDIATE cache miss regardless of TTL, so a fresh janitor pass is never
+# masked by a stale read. The TTL (default 45s, override
+# ADM_OCC_CACHE_TTL_SECS, 0 disables caching entirely) is a SECONDARY,
+# defensive bound for the one case identity-keying alone cannot catch: a
+# rewrite that lands in the same wall-clock SECOND (stat's mtime resolution)
+# AND happens to produce a byte-identical size to the previous content. That
+# is exactly what this lib's own self-test does back-to-back
+# (`_mk_snapshot 77` called twice around Scenario 9/10) — harmless there
+# because both calls report the same count, but the TTL is what bounds the
+# worst case in general to "at most one stale read per identity collision",
+# which stays fail-open (an admission, not a false block) same as every other
+# path in this observe-only slice. 45 s sits far inside the ~5 min snapshot
+# cadence (the sizing this task asked for). A cache HIT does not re-evaluate
+# ADM_SNAPSHOT_MAX_AGE_SECS staleness — safe because default TTL is 1/120th
+# of default age_max; an operator setting age_max below the TTL window is
+# trading that margin away deliberately.
+#
+# FORMAT: single line, TAB-delimited: mtime, size, count, computed_at(epoch),
+# source path. Builtin `read` only — no fork on the hit path beyond the one
+# `stat` already needed to know current (mtime,size) identity.
+adm_occ_cache_path() { printf '%s/occupancy.cache' "$(adm_state_dir)"; }
+
+_adm_occ_cache_write() {
+  local path="$1" mtime="$2" size="$3" count="$4"
+  local d; d="$(adm_state_dir)"
+  [[ -d "$d" ]] || mkdir -p "$d" 2>/dev/null || return 0
+  local now; now="$(_adm_now)"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$mtime" "$size" "$count" "$now" "$path" \
+    > "$(adm_occ_cache_path)" 2>/dev/null || true
+  return 0
+}
+
 # Counting is builtin-only: strip every occurrence and divide the length delta.
+#
+# ADM_ESTATE_SNAPSHOT closure (T6-PREREQUISITES (b), 2026-07-29): the
+# 2026-07-28 review named `ADM_ESTATE_SNAPSHOT=/dev/null` as a T6 bypass --
+# any sourcing shell could erase occupancy by pointing this var elsewhere. No
+# production callsite ever sets it (same grep result as ADM_STATE_DIR above),
+# so the override is now honored ONLY under HARNESS_SELFTEST=1 (which every
+# self-test scenario in this file gets for free from _adm_self_test's global
+# `export HARNESS_SELFTEST=1`). CLOSED for every real dispatcher.
+# Side-effect-free path resolver, factored out so the self-test can assert
+# the ADM_ESTATE_SNAPSHOT closure directly (T6-PREREQUISITES (b)) without
+# needing to drive a full adm_admit cycle.
+_adm_snapshot_path() {
+  local f="$HOME/.claude/state/estate/snapshot.json"
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" && -n "${ADM_ESTATE_SNAPSHOT:-}" ]]; then
+    f="$ADM_ESTATE_SNAPSHOT"
+  fi
+  printf '%s' "$f"
+}
+
 adm_live_sessions() {
-  local f="${ADM_ESTATE_SNAPSHOT:-$HOME/.claude/state/estate/snapshot.json}"
+  local f; f="$(_adm_snapshot_path)"
   [[ -r "$f" ]] || { printf '%s' -1; return 0; }
+
+  local ms snap_m snap_sz
+  ms="$(_adm_mtime_size "$f")"
+  snap_m="${ms%% *}"; snap_sz="${ms#* }"
+
+  # ---- TTL cache fast path — see the staleness contract above ----
+  local ttl="${ADM_OCC_CACHE_TTL_SECS:-45}"
+  if (( ttl > 0 )); then
+    local cache_f; cache_f="$(adm_occ_cache_path)"
+    if [[ -r "$cache_f" ]]; then
+      local c_mtime="" c_size="" c_count="" c_at="" c_path=""
+      IFS=$'\t' read -r c_mtime c_size c_count c_at c_path < "$cache_f" 2>/dev/null
+      # READ-BOUNDARY VALIDATION (review REJECT C1, 2026-07-30): c_count and
+      # c_at come from a FILE and feed a bash arithmetic sink + an unquoted
+      # JSON numeric field — the reviewer EXECUTED code through the
+      # unvalidated path (array-subscript command substitution) and wrote
+      # invalid JSON into the ledger. Anything non-numeric = cache miss.
+      if [[ "$c_path" == "$f" && "$c_mtime" == "$snap_m" && "$c_size" == "$snap_sz" ]] \
+         && [[ "$c_count" =~ ^-?[0-9]+$ ]] && [[ "$c_at" =~ ^[0-9]+$ ]]; then
+        local now; now="$(_adm_now)"
+        if (( now >= c_at && now - c_at < ttl )); then
+          printf '%s' "$c_count"
+          return 0
+        fi
+      fi
+    fi
+  fi
+
   local data; data="$(<"$f")" 2>/dev/null || { printf '%s' -1; return 0; }
   case "$data" in *'"sessions"'*) ;; *) printf '%s' -1; return 0 ;; esac
 
@@ -422,10 +638,12 @@ adm_live_sessions() {
   # a faithful proxy here because estate-janitor.sh writes the snapshot via
   # tmp+mv (ej_write_snapshot), so mtime IS the write time.
   local age_max="${ADM_SNAPSHOT_MAX_AGE_SECS:-5400}"
-  local snap_m; snap_m="$(_adm_mtime "$f")"
   if [[ "$snap_m" != "0" ]]; then
-    local now; now="$(_adm_now)"
-    (( now - snap_m > age_max )) && { printf '%s' -1; return 0; }
+    local now2; now2="$(_adm_now)"
+    if (( now2 - snap_m > age_max )); then
+      (( ttl > 0 )) && _adm_occ_cache_write "$f" "$snap_m" "$snap_sz" -1
+      printf '%s' -1; return 0
+    fi
   fi
 
   # SCOPE THE COUNT TO sessions[] (2026-07-28 review C3): counting the needle
@@ -447,7 +665,9 @@ adm_live_sessions() {
   local stripped="${region//$needle/}"
   local delta=$(( ${#region} - ${#stripped} ))
   (( delta >= 0 )) || { printf '%s' -1; return 0; }
-  printf '%s' $(( delta / ${#needle} ))
+  local count=$(( delta / ${#needle} ))
+  (( ttl > 0 )) && _adm_occ_cache_write "$f" "$snap_m" "$snap_sz" "$count"
+  printf '%s' "$count"
 }
 
 
@@ -557,6 +777,23 @@ _adm_wip_open_count() {
 # 120/min and exists only to catch a runaway retry loop (the UNRESOLVED__ spam
 # class named in F7), not to shape normal load.
 
+# ADM_ABSURD_SESSION_CAP closure (T6-PREREQUISITES (b), 2026-07-29): named as
+# a T6 bypass by the 2026-07-28 review (any sourcing shell could raise the
+# absurd-level backstop past derived occupancy). No production callsite ever
+# sets it -- the only place that has ever set this var is this file's own
+# self-test (Scenario 10b). So the override is honored ONLY under
+# HARNESS_SELFTEST=1; every real dispatcher gets the fixed default of 50.
+# A real, operator-authorized tunable threshold (per T6's calibration data)
+# is T6's own job at the enforcement flip, not this observe-only prereq --
+# this closure only removes the UNAUTHENTICATED environment-channel version.
+_adm_session_cap() {
+  local cap=50
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" && -n "${ADM_ABSURD_SESSION_CAP:-}" ]]; then
+    cap="$ADM_ABSURD_SESSION_CAP"
+  fi
+  printf '%s' "$cap"
+}
+
 _adm_decide() {
   if adm_halt_active; then printf 'would-block:halt'; return 0; fi
   if adm_drain_active; then printf 'would-block:drain'; return 0; fi
@@ -573,14 +810,22 @@ _adm_decide() {
     fi
   fi
 
-  local color; color="$(adm_pressure_color)"
+  # Reuse the caller's single measurement when it supplied one (adm_admit
+  # does — 2026-07-30 delta re-review finding 5), so the verdict and the
+  # ledger's recorded pressure/live_sessions fields can never disagree AND
+  # adm_pressure_color/adm_live_sessions each run only ONCE per adm_admit
+  # instead of once here and once again for the ledger. Mirrors the
+  # pre-existing _ADM_RATE_PRECOMPUTED idiom just below.
+  local color="${_ADM_COLOR_PRECOMPUTED:-}"
+  [[ -n "$color" ]] || color="$(adm_pressure_color)"
   case "$color" in
     black) printf 'would-block:pressure-black'; return 0 ;;
     red)   printf 'would-block:pressure-red';   return 0 ;;
   esac
 
-  local live; live="$(adm_live_sessions)"
-  if [[ "$live" != "-1" ]] && (( live >= ${ADM_ABSURD_SESSION_CAP:-50} )); then
+  local live="${_ADM_LIVE_PRECOMPUTED:-}"
+  [[ -n "$live" ]] || live="$(adm_live_sessions)"
+  if [[ "$live" != "-1" ]] && (( live >= $(_adm_session_cap) )); then
     printf 'would-block:session-backstop'; return 0
   fi
 
@@ -655,7 +900,31 @@ adm_admit() {
   # once inside _adm_decide, once for the ledger field — so the value that drove
   # the verdict could differ from the value recorded beside it.
   local rate; rate="$(adm_rate_in_window)"
-  local verdict; verdict="$(_ADM_RATE_PRECOMPUTED="$rate" _ADM_SOURCE_PRECOMPUTED="$source" _adm_decide)"
+
+  # Compute pressure color and occupancy ONCE too (2026-07-30 delta
+  # re-review finding 5, MAJOR — measured +13.7%/dispatch). The C2 reader-
+  # side age bound added one `stat` fork to adm_pressure_color; before this
+  # fix that function ran TWICE per admit (once here for the ledger, once
+  # again inside _adm_decide), so the C2 fix alone cost +2 unconditional
+  # stat execs/dispatch. Same double-read existed for adm_live_sessions.
+  # Fixed the same way the rate field already was: compute once, hand the
+  # value into _adm_decide via a precomputed global (mirrors
+  # _ADM_RATE_PRECOMPUTED) so the verdict and the ledger field can never
+  # disagree AND each helper runs exactly once.
+  #
+  # adm_pressure_color is called DIRECTLY here (no $(...) command
+  # substitution) so its _ADM_PRESSURE_REASON side-channel (finding 4,
+  # below) survives into this shell — $(...) forks a subshell and the
+  # global would be lost the instant it returned.
+  #
+  # _ADM_SOURCE_PRECOMPUTED (T4 WIP rung, 2026-07-31 integration merge):
+  # hands _adm_decide the dispatch source so the worktree-scoped rung
+  # fires without re-deriving it.
+  local color; adm_pressure_color >/dev/null; color="$_ADM_PRESSURE_COLOR"
+  local live; live="$(adm_live_sessions)"
+
+  local verdict
+  verdict="$(_ADM_COLOR_PRECOMPUTED="$color" _ADM_LIVE_PRECOMPUTED="$live" _ADM_RATE_PRECOMPUTED="$rate" _ADM_SOURCE_PRECOMPUTED="$source" _adm_decide)"
   _ADM_LAST_VERDICT="$verdict"
 
   # --- assemble the line (labels are enum-keyed and scrubbed) ---
@@ -669,16 +938,27 @@ adm_admit() {
     labels="$labels,\"$k\":\"$v\""
   done
 
-  local color live mono mono_src pressure_src
-  color="$(adm_pressure_color)"
-  live="$(adm_live_sessions)"
-  # $rate is already computed above and was the value the verdict used.
+  # LEDGER NUMERIC CLAMP (review REJECT C1): live/rate land in unquoted JSON
+  # numeric positions — a non-numeric value would corrupt the 7-day
+  # calibration ledger this program exists to produce. Unknown -> -1.
+  [[ "$live" =~ ^-?[0-9]+$ ]] || live=-1
+  [[ "$rate" =~ ^-?[0-9]+$ ]] || rate=-1
+  local mono mono_src
   read -r mono mono_src <<< "$(_adm_mono)"
-  if [[ -r "${ADM_PRESSURE_FILE:-$(adm_state_dir)/pressure.json}" ]]; then
-    pressure_src="tick"
-  else
-    pressure_src="absent"
-  fi
+  # pressure_src (2026-07-30 delta re-review finding 4): "unknown" alone
+  # used to conflate THREE distinct causes into one "tick-stale" label — a
+  # genuine AGE staleness, a present-but-garbled color value, and no tick
+  # file at all — so a calibration reader could not tell a dead tick (age)
+  # from a corrupt one (content) from never-ran (absent). Sourced straight
+  # from adm_pressure_color's own _ADM_PRESSURE_REASON (set by the direct
+  # call above), never re-derived here from a second file check.
+  local pressure_src
+  case "$_ADM_PRESSURE_REASON" in
+    fresh)      pressure_src="tick" ;;
+    stale)      pressure_src="tick-stale" ;;
+    unreadable) pressure_src="tick-unreadable" ;;
+    *)          pressure_src="absent" ;;
+  esac
 
   local d; d="$(adm_ledger_dir)"
   [[ -d "$d" ]] || mkdir -p "$d" 2>/dev/null || { printf '%s' "$verdict"; return 0; }
@@ -705,6 +985,12 @@ _adm_self_test() {
   fail() { FAIL=$((FAIL+1)); echo "  FAIL: $*"; }
 
   local T; T="$(mktemp -d 2>/dev/null)" || { echo "cannot mktemp"; return 1; }
+  # T6-PREREQUISITES (b), 2026-07-29: this self-test IS the sanctioned
+  # HARNESS_SELFTEST context, so it declares itself globally -- this is what
+  # lets adm_state_dir/adm_live_sessions/_adm_session_cap honor their
+  # ADM_STATE_DIR/ADM_ESTATE_SNAPSHOT/ADM_ABSURD_SESSION_CAP overrides below
+  # while closing those SAME overrides for every real (non-self-test) caller.
+  export HARNESS_SELFTEST=1
   export ADM_STATE_DIR="$T/governor"
   export ADM_ESTATE_SNAPSHOT="$T/snapshot.json"
   export ADM_PRESSURE_FILE="$T/governor/pressure.json"
@@ -759,11 +1045,25 @@ _adm_self_test() {
   else fail "unknown pressure not recorded"; fi
 
   echo "Scenario 6: rate uses stamp-files-per-dispatch, not read-modify-write (F9)"
+  # WINDOW OVERRIDE -- pre-existing flake found INCIDENTALLY while verifying
+  # this session's 8 named findings (not one of them itself; reproduced
+  # byte-identically -- "rate 3 -> 3" -- on the UNMODIFIED baseline before
+  # any edit in this session, so it predates and is unrelated to this
+  # delta). By the time this scenario runs, Scenarios 1-5's own fork cost on
+  # this machine's documented Windows fork-taxed target can already exceed
+  # the 60s default rate window, so some of THEIR stamps age out of the
+  # window mid-scenario and can net-cancel the +2 stamps this scenario adds
+  # -- a suite-pacing artifact, not an admission-control defect. Same
+  # fragility class this file already defends against elsewhere (Scenario
+  # 9's `ADM_SNAPSHOT_MAX_AGE_SECS=99999999`): give this check its own
+  # generous window instead of depending on the whole preceding suite
+  # finishing inside 60s of wall-clock. Assertion strength is UNCHANGED --
+  # still requires exactly +2, never weakened to "at least" or skipped.
   local before after
-  before="$(adm_rate_in_window)"
-  adm_admit emit-feed >/dev/null
-  adm_admit emit-feed >/dev/null
-  after="$(adm_rate_in_window)"
+  before="$(ADM_RATE_WINDOW_SECS=999999 adm_rate_in_window)"
+  ADM_RATE_WINDOW_SECS=999999 adm_admit emit-feed >/dev/null
+  ADM_RATE_WINDOW_SECS=999999 adm_admit emit-feed >/dev/null
+  after="$(ADM_RATE_WINDOW_SECS=999999 adm_rate_in_window)"
   (( after == before + 2 )) && pass "two dispatches -> +2 stamps (no lost updates)" || fail "rate $before -> $after"
   local stamps; stamps=0
   local sf; for sf in "$(adm_rate_dir)"/*; do [[ -e "$sf" ]] && stamps=$((stamps+1)); done
@@ -913,30 +1213,79 @@ _adm_self_test() {
   esac
   rm -f "$ADM_ESTATE_SNAPSHOT"
 
-  echo "Scenario 10b: the ENVIRONMENT channel is a KNOWN T6 BYPASS — assert it, don't pretend"
-  # task-verifier D5/D3 (2026-07-28) falsified the absolute "nothing here trusts
-  # a caller-supplied claim" header. The lib is SOURCED into the dispatcher's
-  # shell, so its environment decides. These assertions PIN the current honest
-  # behavior so T6 cannot flip enforcement while believing the bypass is closed.
-  _mk_snapshot 77
-  local bypass; bypass="$(ADM_ABSURD_SESSION_CAP=999999 adm_admit emit-feed)"
-  if [[ "$bypass" == "admit" ]]; then
-    pass "KNOWN BYPASS pinned: ADM_ABSURD_SESSION_CAP from the environment overrides derived occupancy (must be closed at T6)"
-  else
-    fail "behavior changed: env cap no longer bypasses ('$bypass') — update the header's named-bypass list and this test"
-  fi
-  rm -f "$ADM_ESTATE_SNAPSHOT"   # isolate HALT as the only signal in play
-  : > "$ADM_STATE_DIR/HALT"
-  local halt_seen halt_bypassed
-  halt_seen="$(adm_admit emit-feed)"
-  halt_bypassed="$(ADM_STATE_DIR="$T/elsewhere" adm_admit emit-feed)"
-  if [[ "$halt_seen" == "would-block:halt" && "$halt_bypassed" != "would-block:halt" ]]; then
-    pass "KNOWN BYPASS pinned: ADM_STATE_DIR redirection hides the HALT kill switch (must be closed at T6)"
-  else
-    fail "HALT bypass behavior changed (seen='$halt_seen' redirected='$halt_bypassed') — re-derive the T6 bypass list"
-  fi
-  rm -f "$ADM_STATE_DIR/HALT"
-  rm -f "$ADM_ESTATE_SNAPSHOT"
+  echo "Scenario 10b: the four T6 bypasses -- three now CLOSED, one ACCEPTED in writing"
+  # 2026-07-28 review named four environment bypasses. T6-PREREQUISITES (b)
+  # (2026-07-29) closed three of them (no production callsite ever set any of
+  # the three -- verified by grep across adapters/claude-code) by gating their
+  # overrides behind HARNESS_SELFTEST=1, which this self-test now exports
+  # globally. The fourth (NL_PROTECTED_ORCHESTRATOR) is a genuine production
+  # signal set by the REAL protected orchestrator's own environment -- gating
+  # it behind HARNESS_SELFTEST would break its actual purpose, so it stays
+  # open by design; see docs/decisions/065-admission-lib-env-bypass-closure.md
+  # for the written acceptance. Scenario 11 above already proves it still
+  # works in production (no HARNESS_SELFTEST needed to tag protected=1).
+  #
+  # These checks call the PURE, side-effect-free resolvers directly
+  # (_adm_session_cap / adm_state_dir / _adm_snapshot_path), never adm_admit
+  # with HARNESS_SELFTEST=0 -- that would fall through to the REAL production
+  # state dir and write a real ledger line, exactly the sandbox escape
+  # Scenario 16 exists to catch.
+  local cap_prod cap_test
+  cap_prod="$(HARNESS_SELFTEST=0 ADM_ABSURD_SESSION_CAP=999999 _adm_session_cap)"
+  [[ "$cap_prod" == "50" ]] && pass "CLOSED: ADM_ABSURD_SESSION_CAP ignored outside HARNESS_SELFTEST (production sees the fixed default of 50)" \
+    || fail "ADM_ABSURD_SESSION_CAP still honored in production: got cap=$cap_prod, expected 50"
+  cap_test="$(HARNESS_SELFTEST=1 ADM_ABSURD_SESSION_CAP=999999 _adm_session_cap)"
+  [[ "$cap_test" == "999999" ]] && pass "still available under HARNESS_SELFTEST=1 (the escape hatch itself still works for tests)" \
+    || fail "ADM_ABSURD_SESSION_CAP override broken even under HARNESS_SELFTEST=1: got '$cap_test'"
+
+  local dir_prod dir_test
+  dir_prod="$(HARNESS_SELFTEST=0 ADM_STATE_DIR="$T/elsewhere" adm_state_dir)"
+  [[ "$dir_prod" == "$HOME/.claude/state/governor" ]] && pass "CLOSED: ADM_STATE_DIR ignored outside HARNESS_SELFTEST (production resolves to real state, HALT kill switch cannot be hidden)" \
+    || fail "ADM_STATE_DIR still honored in production: got '$dir_prod'"
+  dir_test="$(HARNESS_SELFTEST=1 ADM_STATE_DIR="$T/elsewhere" adm_state_dir)"
+  [[ "$dir_test" == "$T/elsewhere" ]] && pass "still available under HARNESS_SELFTEST=1 (Scenario 17 covers this too; re-confirmed here alongside its siblings)" \
+    || fail "ADM_STATE_DIR override broken even under HARNESS_SELFTEST=1: got '$dir_test'"
+
+  local snap_prod snap_test
+  snap_prod="$(HARNESS_SELFTEST=0 ADM_ESTATE_SNAPSHOT="$T/elsewhere.json" _adm_snapshot_path)"
+  [[ "$snap_prod" == "$HOME/.claude/state/estate/snapshot.json" ]] && pass "CLOSED: ADM_ESTATE_SNAPSHOT ignored outside HARNESS_SELFTEST (production reads the real janitor snapshot path, occupancy cannot be erased via /dev/null)" \
+    || fail "ADM_ESTATE_SNAPSHOT still honored in production: got '$snap_prod'"
+  snap_test="$(HARNESS_SELFTEST=1 ADM_ESTATE_SNAPSHOT="$T/elsewhere.json" _adm_snapshot_path)"
+  [[ "$snap_test" == "$T/elsewhere.json" ]] && pass "still available under HARNESS_SELFTEST=1 (this file's own fixture-swapping in Scenario 9 depends on it)" \
+    || fail "ADM_ESTATE_SNAPSHOT override broken even under HARNESS_SELFTEST=1: got '$snap_test'"
+
+  echo "  (NL_PROTECTED_ORCHESTRATOR: ACCEPTED open by design -- see Scenario 11 and docs/decisions/065-admission-lib-env-bypass-closure.md)"
+
+  # ADM_PRESSURE_MAX_AGE_SECS (2026-07-30 delta re-review finding 2): the
+  # fifth env tunable named in this inventory (see the file header). Stays
+  # OPEN in production by design (a legitimate operator tunable, not an
+  # identity claim to close) -- but a non-numeric value must NOT disable
+  # the age bound and must NOT abort the calling subshell; it must degrade
+  # to the fail-safe 7200s default. The reviewer's own probe: under this
+  # file's strict `[[ =~ ]]`-guarded arithmetic, an unvalidated non-numeric
+  # value reaching `(( max_age > 0 ))` directly aborts the subshell.
+  echo "  ADM_PRESSURE_MAX_AGE_SECS: non-numeric input must fall back, never abort or disable"
+  printf '{"color":"red"}\n' > "$ADM_PRESSURE_FILE"
+  # UNDER set -u SPECIFICALLY (not just this self-test's own default shell
+  # mode): this lib is SOURCED (never executed) into workstreams-emit.sh
+  # (`set -uo pipefail`), session-resumer.sh (`set -u`), and
+  # spawn-worktree.sh (`set -u`) -- all three real production callers -- so
+  # adm_pressure_color inherits the CALLER's nounset, not its own. Bash's
+  # DEFAULT (non -u) mode silently treats an unset bare-word arithmetic
+  # operand as 0 (a non-numeric value like "not-a-number" parses as
+  # `not - a - number`, three unset vars, evaluating to harmless 0), so
+  # testing this guard in this self-test's own non -u shell would pass
+  # whether or not the validation line exists -- proven empirically: it did,
+  # against a scratch mutation with the validation removed. Wrapping the
+  # call in its own `set -u` subshell reproduces the REAL production risk
+  # the reviewer's probe named and actually distinguishes fixed from broken.
+  local garbage_rc pc_garbage
+  pc_garbage="$(set -u; ADM_PRESSURE_MAX_AGE_SECS='not-a-number' ADM_PRESSURE_FILE="$ADM_PRESSURE_FILE" adm_pressure_color)"; garbage_rc=$?
+  [[ "$garbage_rc" == "0" ]] && pass "non-numeric ADM_PRESSURE_MAX_AGE_SECS does not abort the call even under an inherited set -u (rc=0)" \
+    || fail "non-numeric ADM_PRESSURE_MAX_AGE_SECS aborted the call under set -u: rc=$garbage_rc"
+  [[ "$pc_garbage" == "red" ]] && pass "non-numeric ADM_PRESSURE_MAX_AGE_SECS falls back to the 7200s default (does NOT disable the bound) -- fresh color still reads through" \
+    || fail "non-numeric ADM_PRESSURE_MAX_AGE_SECS did not fall back to the safe default: got '$pc_garbage'"
+  rm -f "$ADM_PRESSURE_FILE"
 
   echo "Scenario 11: calibration-pollution tag (edge 3)"
   v="$(NL_PROTECTED_ORCHESTRATOR=1 adm_admit emit-feed)"
@@ -1108,7 +1457,182 @@ _adm_self_test() {
     || fail "production path wrong: '$prod'"
   [[ -n "$saved_dir" ]] && export ADM_STATE_DIR="$saved_dir"
 
-  echo "Scenario 18: WIP rung (T4, design §6c 'closure gates new work') — scoped to source=worktree, OBSERVE ONLY"
+  echo "Scenario 18: pressure_src populated end-to-end from the Loop-2 tick (T6-PREREQUISITES (d))"
+  # Wires perf-tick-snapshot.sh's pts_write_pressure_tick (the Loop-2 writer)
+  # straight into this lib's own adm_pressure_color/adm_admit reader, proving
+  # pressure_src stops being permanently "absent" once the tick has run --
+  # the exact gap this header used to document as "NOT BUILT YET".
+  local pts_lib; pts_lib="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/perf-tick-snapshot.sh"
+  if [[ -r "$pts_lib" ]]; then
+    (
+      # subshell: PTS_* globals and PERF_TICK_* overrides never leak into
+      # the rest of this suite; ADM_PRESSURE_FILE is inherited (not
+      # re-exported) so the write lands exactly where adm_pressure_color
+      # will look.
+      source "$pts_lib"
+      export PERF_TICK_PRESSURE_FILE="$ADM_PRESSURE_FILE"
+      export PERF_TICK_PROCESS_LIST_CMD="printf 'Node,CreationDate,Name,ParentProcessId,ProcessId\nOFFICE_PC,20260101000000.000000-420,node.exe,0,1\n'"
+      export PERF_TICK_DEFENDER_CMD="true"
+      pts_collect_processes
+      pts_write_pressure_tick
+    )
+    if [[ -r "$ADM_PRESSURE_FILE" ]]; then
+      pass "Loop-2 tick wrote a real pressure.json (was 'NOT BUILT YET' per this file's own header)"
+    else
+      fail "pts_write_pressure_tick did not create $ADM_PRESSURE_FILE"
+    fi
+    local pc_after; pc_after="$(adm_pressure_color)"
+    [[ "$pc_after" == "green" ]] && pass "adm_pressure_color reads the tick's output (0 bash rows -> green, the design's own bash>60/90 ladder)" \
+      || fail "expected green from the tick-written file, got '$pc_after'"
+    v="$(adm_admit emit-feed)"
+    last="$(tail -1 "$led")"
+    case "$last" in
+      *'"pressure_src":"tick"'*) pass "ledger records pressure_src=tick once the Loop-2 tick has run (was permanently 'absent' before this slice)" ;;
+      *) fail "pressure_src still absent after a real tick ran: $last" ;;
+    esac
+    rm -f "$ADM_PRESSURE_FILE"
+  else
+    fail "perf-tick-snapshot.sh not found at $pts_lib -- cannot prove the Loop-2 wiring"
+  fi
+
+  echo "Scenario 19: pressure_src stays absent when no tick has ever run (unchanged honesty contract)"
+  rm -f "$ADM_PRESSURE_FILE"
+  v="$(adm_admit emit-feed)"
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"pressure_src":"absent"'*) pass "pressure_src=absent when the tick file is genuinely missing (fail-open, never silently defaulted to a color)" ;;
+    *) fail "pressure_src not absent with no pressure file: $last" ;;
+  esac
+
+  echo "Scenario 20: CORRUPT OCCUPANCY CACHE is a MISS, never an arithmetic sink (review REJECT C1 — the reviewer executed code through the unvalidated path)"
+  # Poison the cache with the reviewer's own injection payload shape; the
+  # snapshot identity fields are made to MATCH so only the numeric guard
+  # stands between the payload and the (( )) sink.
+  snap20="$T/snap20.json"
+  # PRODUCER-SHAPED fixture (the 2026-07-28 review's own law): the region
+  # parse requires the '],"sessions_degraded"' terminator estate-janitor
+  # emits — without it the lib honestly refuses to count (-1). Two drafts
+  # of this scenario failed their own recount assert by violating the
+  # producer shape ("x" generated_at; missing terminator).
+  printf '{"generated_at":%s,"sessions":[{"classify":"live"},{"classify":"live"}],"sessions_degraded":false}\n' "$(date -u +%s)" > "$snap20"
+  # Portable mtime+size (2026-07-30 delta re-review finding 1, second site):
+  # this used to call `stat -c %Y`/`stat -c %s` raw. Same GNU-only bug as
+  # adm_pressure_color's C2 bound — on BSD/macOS both calls print nothing,
+  # so the cache-identity fields this scenario writes would never match a
+  # real snapshot's (mtime,size) there. Route through the file's own
+  # portable helper instead of re-inventing the GNU/BSD split a second time.
+  s20_ms="$(_adm_mtime_size "$snap20")"
+  s20_m="${s20_ms%% *}"; s20_sz="${s20_ms#* }"
+  inj_marker="$T/injected-by-scenario-20"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$s20_m" "$s20_sz" 'x[$(touch '"$inj_marker"')]' "$(date -u +%s)" "$snap20" > "$(adm_occ_cache_path)"
+  occ20_err="$T/occ20.stderr"
+  occ20="$(ADM_ESTATE_SNAPSHOT="$snap20" adm_live_sessions 2>"$occ20_err")"
+  if [[ ! -e "$inj_marker" ]]; then
+    pass "injection payload in the cache did NOT execute via adm_live_sessions alone (numeric gate holds)"
+  else
+    fail "COMMAND INJECTION: the cache payload created $inj_marker"
+  fi
+  [[ "$occ20" == "2" ]] && pass "corrupt cache degraded to a MISS and the real snapshot was re-parsed (count=2)" \
+    || fail "expected recount 2 after corrupt-cache miss, got '$occ20'"
+  [[ -s "$occ20_err" ]] && fail "corrupt cache leaked bash diagnostics to stderr: $(head -1 "$occ20_err")" \
+    || pass "fail-open path stayed silent on stderr under a poisoned cache"
+
+  # RE-AIMED injection assertion (2026-07-30 delta re-review finding 3,
+  # MAJOR): the assertion above drives adm_live_sessions directly, which
+  # only ever `printf`s c_count -- it never puts the cache-supplied value
+  # through a `(( ))` arithmetic evaluation itself, so removing/weakening
+  # the `[[ "$c_count" =~ ^-?[0-9]+$ ]]` guard would NOT be caught there:
+  # a poisoned string just gets printf'd back out unexecuted. The actual
+  # arithmetic sink is `_adm_decide`'s `(( live >= $(_adm_session_cap) ))`,
+  # reached only via adm_admit. Re-poison the cache with a FRESH marker and
+  # drive it through the full adm_admit path so a reverted guard would be
+  # caught at the sink that actually evaluates it.
+  inj_marker2="$T/injected-by-scenario-20-admit"
+  printf '%s\t%s\t%s\t%s\t%s\n' "$s20_m" "$s20_sz" 'x[$(touch '"$inj_marker2"')]' "$(date -u +%s)" "$snap20" > "$(adm_occ_cache_path)"
+  occ20b_err="$T/occ20-admit.stderr"
+  ADM_ESTATE_SNAPSHOT="$snap20" adm_admit selftest >/dev/null 2>"$occ20b_err"
+  if [[ ! -e "$inj_marker2" ]]; then
+    pass "injection payload survives the FULL adm_admit path (the real (( )) sink in _adm_decide) without executing"
+  else
+    fail "COMMAND INJECTION via adm_admit's arithmetic sink: created $inj_marker2"
+  fi
+
+  echo "Scenario 21: STALE pressure file -> color unknown + pressure_src tick-stale (review REJECT C2 — existence is not a staleness signal)"
+  printf '{"color":"red"}\n' > "$ADM_PRESSURE_FILE"
+  # max_age=0 disables the bound entirely (matches the ttl>0 idiom
+  # elsewhere in this file) -- pin that disable semantics directly (2026-
+  # 07-30 delta re-review finding 7: this assignment used to be dead, its
+  # only comment claiming the behavior with nothing asserting it).
+  pc21="$(ADM_PRESSURE_MAX_AGE_SECS=0 ADM_PRESSURE_FILE="$ADM_PRESSURE_FILE" adm_pressure_color)"
+  [[ "$pc21" == "red" ]] && pass "ADM_PRESSURE_MAX_AGE_SECS=0 disables the age bound entirely -- a fresh color reads through untouched" \
+    || fail "expected max_age=0 to disable the bound and read the real color 'red', got '$pc21'"
+  # Now bound against a backdated file instead.
+  touch -d '2000-01-01' "$ADM_PRESSURE_FILE" 2>/dev/null || touch -t 200001010000 "$ADM_PRESSURE_FILE" 2>/dev/null
+  pc21="$(ADM_PRESSURE_MAX_AGE_SECS=1 ADM_PRESSURE_FILE="$ADM_PRESSURE_FILE" adm_pressure_color)"
+  [[ "$pc21" == "unknown" ]] && pass "a color older than the reader-side age bound reads unknown (a frozen red can never become permanently authoritative)" \
+    || fail "expected unknown from a stale pressure file, got '$pc21'"
+  v="$(ADM_PRESSURE_MAX_AGE_SECS=1 adm_admit emit-feed)"
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"pressure_src":"tick-stale"'*) pass "ledger records pressure_src=tick-stale specifically for the AGE cause (calibration readers can discount it)" ;;
+    *) fail "expected pressure_src=tick-stale for a stale file: $last" ;;
+  esac
+  rm -f "$ADM_PRESSURE_FILE"
+
+  # tick-unreadable (2026-07-30 delta re-review finding 4): a FRESH file
+  # (age bound satisfied) whose color value is garbage is a DIFFERENT cause
+  # than staleness -- content is unreadable, not old. Before this fix both
+  # collapsed into the same "tick-stale" label; distinguishing them lets a
+  # calibration reader tell "the tick is dead" (age) apart from "the tick
+  # wrote something broken" (content).
+  printf '{"color":"not-a-real-color"}\n' > "$ADM_PRESSURE_FILE"
+  pc21="$(adm_pressure_color)"
+  [[ "$pc21" == "unknown" ]] && pass "a fresh file with a garbage color value still reads unknown" \
+    || fail "expected unknown from a garbage color value, got '$pc21'"
+  adm_admit emit-feed >/dev/null
+  last="$(tail -1 "$led")"
+  case "$last" in
+    *'"pressure_src":"tick-unreadable"'*) pass "ledger records pressure_src=tick-unreadable for a fresh-but-garbled color (distinct from tick-stale)" ;;
+    *) fail "expected pressure_src=tick-unreadable for a fresh garbage-color file: $last" ;;
+  esac
+  rm -f "$ADM_PRESSURE_FILE"
+
+  echo "Scenario 22: BSD-only stat() shim -- adm_pressure_color must still read a fresh file's real color (2026-07-30 delta re-review finding 1, CRITICAL)"
+  # THE BUG: adm_pressure_color's C2 age bound called `stat -c %Y` directly
+  # instead of this file's own portable _adm_mtime helper. GNU `stat`
+  # supports -c; BSD/macOS `stat` does NOT -- it prints nothing and exits
+  # nonzero -- so on a real BSD/macOS box p_m was permanently empty and
+  # every FRESH pressure file read as stale ("unknown") forever, regardless
+  # of how recently the tick actually ran. Reproduce that machine here,
+  # without a Mac, by shimming a BSD-shaped `stat` earlier on PATH: reject
+  # -c (GNU), accept -f FORMAT (BSD) -- the exact contract split _adm_mtime
+  # already codes against. Built-in `printf '%(%s)T'` avoids any recursive
+  # subprocess call back into `stat` (a naive shim shelling out to `stat`
+  # for the "real" mtime would just re-invoke itself via PATH).
+  bshim_dir="$T/bsd-stat-shim"
+  mkdir -p "$bshim_dir"
+  cat > "$bshim_dir/stat" <<'BSDSTAT'
+#!/bin/bash
+# Minimal BSD/macOS-shaped `stat` shim, self-test only.
+case "$1" in
+  -c) exit 1 ;;
+  -f)
+    fmt="$2"
+    case "$fmt" in
+      %m) printf '%(%s)T\n' -1 ;;
+      *) exit 1 ;;
+    esac
+    ;;
+  *) exit 1 ;;
+esac
+BSDSTAT
+  chmod +x "$bshim_dir/stat"
+  printf '{"color":"green"}\n' > "$ADM_PRESSURE_FILE"
+  pc22="$(PATH="$bshim_dir:$PATH" ADM_PRESSURE_MAX_AGE_SECS=7200 adm_pressure_color)"
+  [[ "$pc22" == "green" ]] && pass "fresh pressure file still reads its real color through a BSD-only stat (was permanently 'unknown' pre-fix)" \
+    || fail "BSD-stat regression: expected green through the BSD-shaped stat shim, got '$pc22'"
+  rm -f "$ADM_PRESSURE_FILE"
+  echo "Scenario 23: WIP rung (T4, design §6c 'closure gates new work') — scoped to source=worktree, OBSERVE ONLY"
   # Fixture registrations: plain files under a sandboxed ADM_REGISTRATIONS_DIR
   # (this scenario never touches estate-registration-lib.sh's own writer —
   # it only needs *.json files to exist for the glob-count under test, the
@@ -1140,12 +1664,12 @@ _adm_self_test() {
     *) fail "ledger line missing wip-exceeded verdict: $last" ;;
   esac
 
-  echo "Scenario 18b: OBSERVE MODE — rc still 0 under the WIP rung (never blocks)"
+  echo "Scenario 23b: OBSERVE MODE — rc still 0 under the WIP rung (never blocks)"
   v="$(adm_admit worktree)"; rc=$?
   [[ "$rc" == "0" ]] && pass "rc 0 even at/over the WIP limit — observe mode never blocks" \
     || fail "OBSERVE-MODE VIOLATION under WIP rung: rc=$rc"
 
-  echo "Scenario 18c: WIP rung is SCOPED to source=worktree — emit-feed/resumer are NOT gated by it"
+  echo "Scenario 23c: WIP rung is SCOPED to source=worktree — emit-feed/resumer are NOT gated by it"
   # design rationale (see the block comment above _adm_wip_open_count): only
   # the worktree dispatch path has a real DERIVED open-item count today: an
   # emit-feed or resumer dispatch is not a registered work-item at all, so
@@ -1157,7 +1681,7 @@ _adm_self_test() {
   [[ "$v" == "admit" ]] && pass "resumer admits even with 6 open registrations (same scoping)" \
     || fail "WIP rung leaked into resumer: got '$v'"
 
-  echo "Scenario 18d: ADM_WIP_LIMIT is honored (operator-configurable threshold)"
+  echo "Scenario 23d: ADM_WIP_LIMIT is honored (operator-configurable threshold)"
   v="$(ADM_WIP_LIMIT=10 adm_admit worktree)"
   [[ "$v" == "admit" ]] && pass "6 open registrations under a raised limit (10) -> admit" \
     || fail "got '$v' — ADM_WIP_LIMIT override not honored"
@@ -1168,7 +1692,7 @@ _adm_self_test() {
   rm -rf "$wipdir"
   unset ADM_REGISTRATIONS_DIR
 
-  echo "Scenario 18e: an empty/absent registrations dir counts as 0 open (fail-open, never a false block)"
+  echo "Scenario 23e: an empty/absent registrations dir counts as 0 open (fail-open, never a false block)"
   v="$(ADM_REGISTRATIONS_DIR="$T/no-such-dir" adm_admit worktree)"
   [[ "$v" == "admit" ]] && pass "absent registrations dir -> 0 open -> admit" \
     || fail "got '$v' — should fail open to admit, not manufacture a block from a missing directory"
