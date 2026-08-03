@@ -127,7 +127,13 @@
 # 2026-08-03: Task 15 (REQ-B14) lands the ledger WRITER
 # (workstreams-emit.sh --on-builder-complete) in this same commit — this date
 # is the rule-3 pre-ledger exemption boundary the comment above documents.
-: "${RC_LEDGER_LANDING_DATE:=2026-08-03}"
+# 2026-08-04, not -03: the ledger WRITER went live on master mid-day 2026-08-03
+# (T15 merge). The exemption is day-granular, so a -03 boundary would subject
+# that same day's EARLIER records (the design/plan reviews, committed hours
+# before the writer existed) to a rule-3 check no honest row can satisfy —
+# caught live by Check 22 FAILing on the gated-pipeline plan's own chain at the
+# T14+T15 merge. Records first-committed 2026-08-04+ are fully enforced.
+: "${RC_LEDGER_LANDING_DATE:=2026-08-04}"
 : "${RC_ANCHOR_CALIBRATION_END_DATE:=}"
 
 # ============================================================

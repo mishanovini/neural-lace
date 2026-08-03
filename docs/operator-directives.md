@@ -17,8 +17,8 @@ this view is regenerated, not edited.
 
 | Metric | Count |
 |---|---|
-| Total entries | 20 |
-| BINDING | 20 |
+| Total entries | 21 |
+| BINDING | 21 |
 | SUPERSEDED | 0 |
 | Operator-only (no code surface) | 2 |
 
@@ -368,4 +368,19 @@ this view is regenerated, not edited.
 > Sanctioned alternative: operator sets the policy key directly (elevated); Stop-Service remains the agent-safe interim mitigation.
 
 *Source: docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 5 (S-35)*
+
+### OD-021 — ci-is-read-mandatory
+
+**Status:** BINDING
+
+**Surfaces:**
+- `.github/workflows/*`
+- `adapters/claude-code/doctrine/git*`
+- `adapters/claude-code/doctrine/orchestrator-pattern*`
+
+**Instruction:**
+
+> Every push is followed by a CI-result check for the pushed SHA (gh run list / gh run watch); red CI on the default branch is stop-and-fix, never background noise. Golden case: 2026-08-03, two workflows red on ~23 consecutive master pushes while sessions kept pushing (25+ unread failure emails). Anti-pattern: logging Required-status-check output as trivia. Sanctioned alternative: a genuinely environment-bound red goes into the workflow allowlist WITH a tracking reference (KNOWN_FAILING_HOOKS convention), never a silent skip.
+
+*Source: operator directive 2026-08-03 (session 4a470c8c) + backlog CI-RESULT-CONSUMPTION-GAP-2026-08-03-01*
 
