@@ -615,6 +615,17 @@ dashboard row end-to-end plus the empty-ledger honest-empty case.
 - The plan's Files-to-Modify reflects planned scope, not a bar against same-commit fixes to a
   consumer one's own change breaks — disclosed, recorded in In-flight scope updates.
 
+## Comprehension audit — Task 5 (comprehension-reviewer, fable, 2026-08-03T11:58Z)
+
+- **Task 5 — PASS (confidence 8).** 7/7 citations grounded (+5 corroborating fact-checks); the
+  sanctioned DEFER-with-rename decision verified as honestly recorded AND mechanically executed
+  (rename executable-asserted by S9's no-blocks assertion; rationale's load-bearing facts all
+  PROVEN — gc_block carries no gate id, bypass_kind is documented as escape-kind); the
+  no-other-consumer grep independently re-run (zero residuals). Two non-blocking notes: a
+  syntactically-corrupt ledger line fails the whole slurped jq read → safe honest-empty but
+  silently drops valid rows (handled incidentally, unlisted — T21-class follow-up candidate);
+  one two-line citation imprecision.
+
 ## Comprehension audit round 2 (comprehension-reviewer, fable, 2026-08-03T11:32Z)
 
 - **Task 1 (re-audit, post-FM-023 fix) — PASS (confidence 8).** All three required-before-re-review
