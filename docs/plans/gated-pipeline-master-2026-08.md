@@ -431,7 +431,11 @@ Modify:
 - `~/.claude/state` ledgers/markers as specified (runtime state, not committed)
 
 ## In-flight scope updates
-(no in-flight changes yet)
+- 2026-08-03: `neural-lace/workstreams-ui/web/app.js` + `neural-lace/workstreams-ui/web/index.html`
+  — T5's schema change (dropping the never-populated `blocks` key) would have broken the pane's
+  live consumer ("undefined blocks" per gate row); the T5 builder fixed the consumer in the same
+  commit, disclosed it, and verified via node --check + maintenance-pane.selftest.js (9/9). A fix
+  to a break one's own edit causes, not scope creep.
 
 ## Assumptions
 

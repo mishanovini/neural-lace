@@ -547,6 +547,74 @@ Verdict: PASS
 Confidence: 9
 Reason: PROVEN: both suites re-run green by this verifier on merged master; the fix's RED/GREEN is fully evidenced with the same discriminating command failing pre-fix and passing post-fix; every wire arrow traced to file:line; comprehension-gate precondition now satisfied by the persisted comprehension-reviewer PASS record (9214c3ef, confidence 8, 10/10 exact citations) with independent verifier spot-checks. Accepted from the builder transcript (not re-run): the live bogus-pid watchdog demo — statically traced instead (:637-649); re-running launches a real daemon on this machine.
 
+## Task 5 — HR-F6 friction unification (REQ-A3) — Verification: full
+
+- Builder: plan-phase-builder (sonnet), worktree `agent-a067991d14d11d751`, commit `be5e4273`.
+  Merged to master (task-order slot 5).
+- What shipped: `NL_MAINT_FRICTION_LEDGER` default → `~/.claude/state/workaround-sensor.jsonl`
+  (`nl-maintenance.sh:413`); pane jq keys off non-empty `bypass_kind` → per-gate `workarounds`
+  (:414-419, defensive null/empty filter). **Block-event decision: DEFERRED with recorded
+  rationale (:398-412)** — gc_block's 7+ call sites carry no gate identifier and its four-line
+  output contract is lint-locked; a block is definitionally not an escape, so routing blocks
+  through `bypass_kind` would corrupt the workaround-rate signal; metric renamed workarounds-only
+  rather than shipping a permanently-zero field (constitution ¶1 class). End-to-end proven:
+  `gc_escape_used` via the real lib chain → dashboard row `{"gate":"testgate","workarounds":1}`;
+  empty-ledger → `{"available":true,"rows":[]}`.
+- Self-tests: nl-maintenance **37/37** (new S9 round-trip, S9b empty-ledger, S14 end-to-end via
+  the real lib) — **orchestrator re-run in worktree AND on merged master: 37/37**;
+  workaround-sensor 15/15; gate-contract 16/16; maintenance-pane.selftest.js **9/9**
+  (orchestrator re-run).
+- In-flight scope disclosure: app.js + index.html consumer fix (recorded in the plan's In-flight
+  scope updates; the pane renderer would otherwise print "undefined blocks").
+- Honest gaps (builder-declared): live browser DOM render not verified (JSON contract verified;
+  no dev server — cockpit deliberately down this session); `docs/harness-guide.md:385` carries a
+  stale gate-friction sentence from an earlier plan (candidate for T21 drain, noted not fixed);
+  concurrent ledger writers unlocked (pre-existing `-sc` behavior, unchanged).
+- Builder-authored Comprehension Articulation included in the builder report verbatim (audit
+  target below, appended at the report's own section).
+
+### Task 5 — Comprehension Articulation (builder-authored, per Decision 020d; diff: be5e4273 — AUDIT TARGET)
+
+#### Spec meaning
+
+REQ-A3/HR-F6: the friction pane's reader and the only real writer (`gc_escape_used` →
+`ws_record`) pointed at different files with different schemas, so the pane was structurally
+guaranteed to stay empty forever. Fix: point the reader's default at the writer's actual path,
+make the jq key off the writer's actual field (`bypass_kind`, not the never-emitted `event`),
+decide honestly whether block-events can join the same ledger, and prove `gc_escape_used` →
+dashboard row end-to-end plus the empty-ledger honest-empty case.
+
+#### Edge cases covered
+
+- Ledger file absent entirely → `available:false`, honest empty state, pre-existing behavior
+  preserved (`nl-maintenance.sh:851-869`, Scenario 8, untouched).
+- Ledger exists but is 0 bytes (distinct from absent) → `available:true, rows:[]`, zero-counts
+  not an error (:880-888, new Scenario 9b).
+- Multiple rows for one gate → aggregated via `group_by(.gate)` into one `workarounds` count
+  (:414-419; Scenario 9 asserts `"workarounds":2`).
+- A row with missing/empty `bypass_kind` is not counted (defensive filter :418) — malformed
+  lines cannot corrupt the count.
+- The real caller path — Scenario 14 sources the actual gate-contract-lib and calls the actual
+  `gc_escape_used`, proving the wire, not just the schema shape.
+
+#### Edge cases NOT covered
+
+- Block-event counting itself: explicitly deferred with recorded rationale — scoped, recorded
+  non-coverage, not an oversight.
+- Concurrent writers to the ledger during a dashboard read (no locking) — pre-existing `-sc`
+  behavior, unchanged by this task.
+- Live browser verification of the pane render — JSON contract verified (self-test + manual
+  e2e); DOM render not (no dev server running; app.js outside T5's declared scope).
+
+#### Assumptions
+
+- `ws_record`'s schema is stable — read directly from `workaround-sensor-lib.sh:186-221` rather
+  than trusting the plan's paraphrase (the HR-F6 lesson applied to itself).
+- No other consumer reads `gate_friction.rows[].blocks` — verified by grepping the full
+  workstreams-ui tree before removing the key; only the one render site matched.
+- The plan's Files-to-Modify reflects planned scope, not a bar against same-commit fixes to a
+  consumer one's own change breaks — disclosed, recorded in In-flight scope updates.
+
 ## Comprehension audit round 2 (comprehension-reviewer, fable, 2026-08-03T11:32Z)
 
 - **Task 1 (re-audit, post-FM-023 fix) — PASS (confidence 8).** All three required-before-re-review
