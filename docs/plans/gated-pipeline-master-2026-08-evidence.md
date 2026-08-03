@@ -56,7 +56,7 @@ checkout, key sites read); "orchestrator-verified" lines cite what was actually 
   refused to commit there and created a fresh worktree via `spawn-worktree.sh`. Both filed as
   harness issues (worktree base ref; auto-clean resume footgun) in nl-issues 2026-08-03.
 
-### Task 1 — Comprehension Articulation (builder-authored, per Decision 020d; diff: 6bff352d+942b156f+60e4a3a2)
+### Task 1 — Comprehension Articulation (builder-authored, per Decision 020d; diff: 6bff352d+942b156f+60e4a3a2) — SUPERSEDED by the post-FM-023 version below (see "### Task 1 — Comprehension Articulation (updated)"); retained as the audited-FAIL historical record
 
 #### Spec meaning
 
@@ -271,7 +271,129 @@ masked test would pass whether or not the fix exists, which is no test at all.
   comprehension gate's designed catch class working: the audit compared the paraphrase against
   the spec against the code and found all three disagreeing.
 
-## Post-merge integration state (this train)
+## Task 1 — FM-023 fix cycle (commit 6c0cc0e5, merged at 4323339e)
+
+- Fix: `rc_rule3` gains the reviewed artifact as a required 4th argument; window lo = the
+  ARTIFACT's first-commit epoch via the generalized `rc_file_first_commit_epoch` (:174), hi = the
+  record's commit time — matching design §4 and the lib's own header. Call site updated
+  (rc_validate_chain :565). Malformed-ts guard (:467 regex + :483 WARN, skip-row fail-open form).
+- RED proof (builder-run, method recorded): the OLD 3-argument signature was reconstructed
+  standalone and run against the identical non-coincident t0<t1<t2 fixture — it produced the
+  degenerate window [t2,t2] and REJECTED the legitimately-inside row, proving new scenario 9
+  would have failed against the real bug.
+- New scenarios: s9 (inside passes / before rejected / after rejected — three isolated rc_rule3
+  calls on backdated commits) + s10 (malformed-ts: fails-not-crashes, WARN text present,
+  malformed-plus-valid still passes). **Orchestrator re-run on merged master: 17/17 lib, 6/6
+  gate.**
+- New assumption surfaced (genuinely valuable for T15/T17): a ledger row with ts AFTER its
+  record's commit (speculatively-committed record) would be wrongly rejected — nothing handles
+  that case; T15/T17 dispatch flow must commit records after completion (the natural flow) or
+  revisit.
+
+### Task 1 — Comprehension Articulation (updated — post-FM-023 fix, commit 6c0cc0e5; AUDIT TARGET)
+
+#### Spec meaning
+
+Task 1 asks for the walking skeleton of THE GATED PIPELINE: a single parser/validator library
+(`hooks/lib/review-chain-lib.sh`, REQ-B6) implementing the THREE validity rules from design §4
+exactly — (1) record parse: the `record:` file exists, its LAST `## Verdict:`/`## Delta
+Verdict:` heading matches the chain's declared verdict, and its `**Reviewer:**` line names the
+same agent; (2) three-way anchor match: chain-declared blob == the blob the record's own
+`**Reviewed:** <path> @ <blob>` header attests == `git hash-object` of the artifact at HEAD,
+with plan-side bytes CANONICALIZED and a separate WARN-only `inflight-blob:` visibility check;
+(3) dispatch-ledger cross-check: a completion row matching reviewer type + artifact_ref, with
+`ts` falling in the window **[the reviewed ARTIFACT's first commit, the record's own commit
+time]** — two distinct files, two distinct git-log lookups, not the same file's history read
+twice — plus a pre-ledger exemption keyed on the *record's* own first-commit time. Paired with
+this is a `--check`-only skeleton of the G2 gate (`hooks/dispatch-chain-gate.sh`) proving
+lib→gate wiring end-to-end on real fixtures, with no PreToolUse enforcement wiring yet (Task 17).
+
+#### Edge cases covered
+
+- Amendment-round records with a later heading superseding an earlier one — rule 1 takes the
+  LAST matching heading (`rc_record_verdict`, review-chain-lib.sh:126-131, `tail -1`).
+- Author re-anchoring the chain's blob hex without a fresh record vs. content drifting after a
+  legitimate review with the chain never touched — two distinct fixture constructions hitting
+  the same three-way-mismatch code path with different WARN/FAIL calibration outcomes
+  (`rc_rule2`; self-test scenarios 3 and 6).
+- Records predating the dispatch ledger — pre-ledger exemption keyed on the RECORD's own
+  `git log --follow` first-commit time (`rc_rule3`, review-chain-lib.sh:432, using the renamed
+  generic `rc_file_first_commit_epoch`, line 174).
+- **FM-023 fix, empirically RED→GREEN verified**: rule 3's ts-window lower bound is now the
+  REVIEWED ARTIFACT's first commit (review-chain-lib.sh:450), not the record's — the call site
+  in `rc_validate_chain` (line 565) passes `"$artifact"` as a required 4th argument. Self-test
+  scenario 9 (lines 841-876) constructs non-coincident t0<t1<t2 and asserts a row at t1 PASSES
+  while rows before t0 or after t2 are REJECTED. The OLD 3-argument signature was reconstructed
+  standalone and run against the identical fixture: it produced window [t2,t2] and rejected the
+  legitimately-inside row (exit 1), proving scenario 9 would have gone RED against the real bug.
+- Malformed (non-numeric) `ts` in a ledger row — guarded by a regex check
+  (`[[ "$rts" =~ ^-?[0-9]+$ ]]`, :467) that skips just that row with a WARN note (:483) rather
+  than crashing bash's integer comparison; scenario 10 (:878-896) covers malformed-only (clean
+  FAIL, no crash, WARN present) and malformed-plus-valid (still PASSES — the guard never costs a
+  real match).
+- Rename-detection false-positives across near-identical templated fixtures — `--follow`'s
+  default similarity threshold mis-traced one fixture's history during debugging; fixed with
+  `--find-renames=100%` (:181).
+- A plan with no `## Review Chain` section — `dispatch-chain-gate.sh` emits all four gc_block
+  fields and exits 1 (`_dcg_check`, dispatch-chain-gate.sh:56-100).
+
+#### Edge cases NOT covered
+
+- The design-role anchor path's POSITIVE case IS executably asserted (valid-chain-design.md
+  validated end-to-end by the gate's `valid-chain-exit-zero` scenario). Genuinely untested:
+  design-role FAILURE branches — every negative fixture in both self-tests uses plan-role.
+- `never-dispatched-*.md` and `derived-record.md` fixtures are built and manually verified, not
+  wired to an executable assertion — staged material for Task 17's three-variant demo.
+- `dispatch-chain-gate.sh` has no PreToolUse wiring, subagent_type trigger logic, or
+  grandfather-slug handling — explicitly Task 17's scope.
+- No test exercises two simultaneous reviewers under one role (`rc_chain_entries`, :296-313,
+  parses a list; only single-entry-per-role fixtures built).
+- The malformed-ts guard is tested for literal non-numeric strings; a wholly-missing `ts` field
+  is handled by the pre-existing `[[ -n "$rts" ]] || continue` one line above, covered
+  incidentally rather than by a targeted assertion.
+
+#### Assumptions
+
+- `git hash-object` / `git log --follow` consistency under MSYS2/Git-Bash — verified directly
+  (the rename bug surfaced this platform's `--follow` behavior; the FM-023 fix was verified
+  against real git history, not assumed).
+- Window semantics assume reviewer dispatches are never backdated relative to their record's
+  commit; a ledger row with ts legitimately AFTER its record's commit (speculatively-committed
+  record) would be wrongly rejected — unhandled by design or diff, unconfirmed against
+  T15/T17's real flow (surfaced for those tasks).
+- `jq` present for rule-3 ledger parsing (confirmed jq-1.8.1; no fallback, matching harness
+  convention).
+- The dispatch-ledger row schema `{subagent_type, model, ts, session_id, artifact_ref}` is fixed
+  until T15 lands (no code to verify against; design/plan-quoted schema only).
+
+## Task 4 — HR-F2+F5+F8 single-writer cache fix (REQ-A2) — Verification: full
+
+- Builder: plan-phase-builder (sonnet), worktree `agent-af6a93a3178eb7fd7`, commit `d46beee5`.
+  Merged to master at `ec349c3f`.
+- What shipped: doctor's quick-mode writer is the cache's ONLY writer repo-wide; sf-skip serves
+  the cached verdict verbatim (exit = cached exit_code) or exits DISTINCT code 3 with
+  `[doctor] SKIPPED (<reason>)` (:343-344; contract documented :24-26, :328); digest
+  `refresh_doctor_cache` is invoke-and-read-only; fingerprint gains live-hooks newest-mtime
+  (:381-394) + working-tree-dirty bit (HR-F5); install.sh --verify treats exit 3 as
+  SKIPPED-not-FAILED (consumer sweep fix).
+- Live demonstrations (builder-run, scoped HOME): (1) valid cache + fresh lock → cached verdict
+  served verbatim, cache md5-identical before/after; (2) no cache + pre-claimed lock → SKIPPED
+  line, RC=3, no cache created; (3) refresh → doctor's own 5-field record with fingerprint,
+  digest never wrote.
+- Self-tests: digest **102/102 incl. new S23 single-writer scenario (5 sub-assertions)** —
+  **orchestrator re-run on merged master: 102/102**; single-flight 25/25 (untouched file — note:
+  the T3-merged master version is 34/34; the worktree predates T3's merge, irrelevant to T4's
+  diff); doctor 174/179 with the 5 failures PROVEN pre-existing via git-stash A/B by the builder
+  (jq-parity class, unrelated checks — orchestrator accepts the A/B method; the 5 belong to the
+  T8 triage population).
+- Consumer sweep (builder, repo-wide rg): install.sh FIXED; health-tick path structurally
+  unreachable for exit 3 (always SF_DISABLE=1); two eval scenarios A/B-verified byte-identical;
+  three non-consumers confirmed prose/pattern-only.
+- Honest gaps (builder-declared): two OTHER doctor skip paths (NL-FINDING-040 reentry guard,
+  SESSIONSTART-SINGLEFLIGHT-01) still bare-exit-0 — outside HR-F2/F5/F8's named site; recorded
+  here + nl-issue for the sweep class. Real --quick scans measure 200-300s+ on this repo
+  (consistent with HR-F3's TTL finding, Task 7's scope). docs/backlog.md was un-committable due
+  to the pre-existing hygiene-gate condition (same class as the operator-todo nl-issue).
 
 - master: `298f988d` → T1 ff (`60e4a3a2`) → T3 merge (`dc9f2299`) → manifest+INDEX integration
   commit (this train's tip; SHA in the commit log).
@@ -308,3 +430,51 @@ Runtime verification: command git merge-base --is-ancestor 298f988d pt/master   
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: every convergence fact re-observed directly against freshly-fetched remote refs — 298f988d is a two-parent merge commit present as the exact tip of both origin/master and pt/master, 0/0 at the reconcile point, 0-behind both mirrors now; duplicate-content review commits confirmed present. Re-ran everything; accepted nothing on faith (stash-handling narrative in notes is unverifiable post-drop but is not part of the Done criterion).
+
+## Task 3 — Verifier verdict (task-verifier, final — supersedes the 2026-08-03T10:44Z INCOMPLETE)
+
+EVIDENCE BLOCK
+==============
+Task ID: 3
+Task description: [parallel] HR-F1 fix: sf_release API in single-flight-lib.sh (+ header run-to-exit statement); run_daemon releases per pass; run_watchdog identity-verified kill; S11 mask DELETED; S11 asserts ≥2 real ticks under the real guard — Verification: full — Implements: REQ-A1
+Verified at: 2026-08-03T11:12:00Z
+Verifier: task-verifier agent
+
+Oracle: derived (pre-fix behavior) — the HR-F1 wedge symptom (1 heartbeat + recursion-skips across 3 passes) is the RED baseline; the fix's discriminating test (S11) demonstrably FAILS against it (commit 6f5d1b22 message, PROVEN block: sf_release stubbed → S11b/S11c FAIL, 29/31; restored → 31/31).
+
+Comprehension-gate: PASS (confidence 8) — comprehension-reviewer (fable) audit persisted in this file ("## Comprehension audit", commit 9214c3ef): 10/10 citations resolved EXACT against the merged diff; spec-meaning a genuine own-words paraphrase with causal WHY; NOT-covered list verified genuine. Articulation (all four sub-sections, diff-anchored to 6f5d1b22) at "### Task 3 — Comprehension Articulation", commit e12feec1. Verifier spot-checked citations independently: sf_release :312, run_daemon release :533-534, _nm_pid_cmdline :560-563 with ps -fp fallback, watchdog log-and-skip :637-649, SF_DISABLE=0 :902, S11 --interval 1 :887 — all exact.
+Operator invariants: none registered (exit 3) — `ask-registry.sh invariant-check --plan-slug gated-pipeline-master-2026-08`
+
+Checks run (all re-executed by this verifier on merged master @ c3dae56c, 2026-08-03):
+1. `single-flight-lib.sh --self-test` → 34 passed, 0 failed (S14 release/re-acquire = THE HR-F1 fix; S15 idempotency; S16 ownership safety). PASS
+2. `nl-maintenance.sh --self-test` → 31 passed, 0 failed; S11 observed live under the REAL guard: S11b "3 distinct" heartbeat epochs across 3 passes, S11c zero recursion-skips. PASS
+3. RED demonstrated (FIX-task reproduction rule): commit 6f5d1b22 message records before/after with the SAME command — sf_release disabled + SF_DISABLE=0 → S11 FAILS with the exact original symptom (1 distinct epoch, recursion-skip x2, 29/31); restored → 31/31 (re-run green by this verifier). PASS
+4. S11 mask deleted: no SF_DISABLE=1 at the S11 invocation; suite-global :746 export explicitly overridden by SF_DISABLE=0 at :902 (required-not-optional comment :888-893). PASS
+5. Docs impact: single-flight-halt-runbook.md carries the sf_release contract (:44) + daemon-lifecycle paragraph (:70); lib header carries THE RUN-TO-EXIT ASSUMPTION. PASS
+6. Integration point: install-maintenance-task.ps1 untouched by this train (last commit e5432f3c, predecessor plan) — matches builder claim. PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/lib/single-flight-lib.sh --self-test   # → 34 passed, 0 failed (verifier re-run)
+Runtime verification: command bash adapters/claude-code/scripts/nl-maintenance.sh --self-test         # → 31 passed, 0 failed incl. S11 under real guard, 3 distinct epochs (verifier re-run)
+Runtime verification (before): nl-maintenance.sh --self-test with sf_release disabled
+  Commit: 6f5d1b22 (recorded in-message; pre-fix behavior = 9d3afbb9 state)
+  Expected: FAIL — S11b 1 distinct epoch + S11c recursion-skip (the HR-F1 wedge)
+  Observed: "29 passed, 2 failed" with exactly those two failures (commit message PROVEN block)
+Runtime verification (after): same command, fix in place
+  Commit: 6f5d1b22 (merged at dc9f2299)
+  Expected: PASS — 31/31
+  Observed: 31 passed, 0 failed — re-run by this verifier on merged master
+
+DEPENDENCY TRACE
+================
+Step 1: run_daemon pass completes
+  ↓ Verified at: nl-maintenance.sh:533-534 (sf_release "nl-maintenance-tick" per pass)
+Step 2: sf_release clears recursion var + lock, re-acquire succeeds
+  ↓ Verified at: single-flight-lib.sh:312 + S14b/S14c/S14d observed green
+Step 3: next pass writes a fresh heartbeat
+  ↓ Verified at: S11b live — 3 distinct epochs across 3 passes
+Step 4: watchdog reads daemon.pid, identity-verifies before kill, log-and-skip on mismatch
+  ↓ Verified at: nl-maintenance.sh:108/:637 (_nm_pid_path read), :560-575 (/proc cmdline + ps -fp fallback), :637-649 (verified-kill vs "NOT killing (log-and-skip; PIDs are reused)")
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: both suites re-run green by this verifier on merged master; the fix's RED/GREEN is fully evidenced with the same discriminating command failing pre-fix and passing post-fix; every wire arrow traced to file:line; comprehension-gate precondition now satisfied by the persisted comprehension-reviewer PASS record (9214c3ef, confidence 8, 10/10 exact citations) with independent verifier spot-checks. Accepted from the builder transcript (not re-run): the live bogus-pid watchdog demo — statically traced instead (:637-649); re-running launches a real daemon on this machine.
