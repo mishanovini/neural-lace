@@ -198,6 +198,7 @@ Disable any time by flipping `"enabled": false` — no further cleanup required.
 │   ├── explorer.md                    # Fast codebase exploration (uses haiku)
 │   ├── harness-reviewer.md            # Adversarial review of harness rule/hook/agent changes
 │   ├── plan-evidence-reviewer.md      # Independent second opinion on task evidence
+│   ├── plan-fidelity-reviewer.md      # Design→plan fidelity: REQ coverage, contradiction sweep, directive carriage, anchor check
 │   ├── research.md                    # Read-only research agent
 │   ├── security-reviewer.md           # Security-focused code review
 │   ├── task-verifier.md               # ONLY agent that can check task boxes (Gen 4 evidence-first protocol)
