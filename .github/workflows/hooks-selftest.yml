@@ -122,16 +122,20 @@ jobs:
             # gh-merge-canonical-gate.sh's "empty input" self-test fixture silently
             # truncated every run of this loop to ~30 of 83 discovered hooks, alphabetically
             # stopping just before "h" (harness-doctor.sh is next). Now that the loop
-            # actually reaches it: 5 of ~200 self-test scenarios FAIL (prefixes
-            # 9b-sfguard-*, 9c-portability-*, m6-exclusions-* — all tied to TODAY's active
-            # harness-execution-redesign-2026-08 plan work, landed same-day). Root cause not
-            # yet investigated (out of scope for this CI-triage session — harness-doctor.sh
-            # is ~7000 lines and these scenarios belong to a different in-flight plan this
-            # session has no context on). ALSO independently documented as extremely slow
-            # (~9 min standalone) in docs/reviews/2026-08-02-estate-entropy-triage.md — a
-            # second, pre-existing, already-tracked concern this allowlisting does not
-            # address. Tracking: file an nl-issue for "harness-doctor.sh --self-test: 5
-            # scenarios (9b-sfguard-*/9c-portability-*/m6-exclusions-*) fail cold in CI,
+            # actually reaches it: 5 of 185 self-test scenarios FAIL, all the SAME shape —
+            # "jq branch produced NOTHING on a fixture that must report (silent no-op)" —
+            # for checks deterministic-process-proof (x2: dpp-jq-parity-red, dpp-jq-parity-
+            # grandfather), new-gate-evidence-bar (ngeb-jq-parity-red), claim-honesty
+            # (claim-honesty-jq-parity-red), budget-chains (budget-chains-jq-parity-red).
+            # HYPOTHESIZED: a jq-version-dependent expression (bash-vs-jq parity check) that
+            # this machine's jq happens to satisfy differently than the fixture assumes —
+            # UNVERIFIED, needs a session with context on the jq-parity harness (out of scope
+            # here — harness-doctor.sh is ~7000 lines and this is unrelated to either CI
+            # workflow this session was dispatched to fix). ALSO independently documented as
+            # extremely slow (~9 min standalone) in docs/reviews/2026-08-02-estate-entropy-
+            # triage.md — a second, pre-existing, already-tracked concern this allowlisting
+            # does not address. Tracking: nl-issue owed for "harness-doctor.sh --self-test:
+            # 5 jq-parity scenarios (dpp/ngeb/claim-honesty/budget-chains) fail cold in CI,
             # newly-visible after the 2026-08-03 hooks-selftest.yml stdin-drain fix."
             "harness-doctor.sh"
           )

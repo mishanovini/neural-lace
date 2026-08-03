@@ -181,3 +181,32 @@ The rule is Pattern-class. Mechanical detection of "this sentence is an untagged
 ## Scope
 
 This rule applies in every project whose Claude Code installation has this rule file present at `~/.claude/rules/claims.md`. The rule is loaded contextually by the harness; no opt-in or hook wiring is required to make the rule active. The labeling discipline binds every agent in every session mode — interactive local, parallel local, cloud-remote / Dispatch orchestrator, scheduled, and agent-team — because untagged causal claims surface in all of them and the case study that motivated this rule was authored by the Dispatch orchestrator specifically.
+
+## Status vocabulary lock (status-event-ledger plan SE10, 2026-07-30)
+
+Chat reports, sign-offs, and session-end markers use EXACTLY the cockpit's status
+vocabulary — never a synonym, hedge, or ad-hoc phrasing:
+
+- **Status enum** (one of six): not-started | in-progress | running | complete |
+  stalled(reason) | unknown(reason). "In flight", "wrapping up", "done-ish",
+  "basically complete" are not in the enum — a reader cannot tell which of the
+  six states they actually mean.
+- **Task/plan references**: the fused `<PlanKey><TaskId>` token (e.g. `SE3`,
+  `T9`) — never a bare number ("task 9"), never key and number split across
+  words. A bare task id names no plan.
+
+PARSE-LEVEL LESSON (2026-07-30): a vocabulary convention isn't real until every
+consumer's grammar accepts it. SE/RI fused ids parsed to ZERO tasks in the
+cockpit until `plan-parse`'s token regex widened to `[A-Z]{0,3}` fused prefixes
+(commit a8b114c) — and, discovered while building SE4, `plan-edit-validator.sh`'s
+OWN checkbox-flip `TASK_ID` regex is STILL the pre-fix dotted-only pattern
+(`[A-Z]+\.[0-9]+`), so a real flip of `SE3`/`RI1`-style tasks is refused today
+(PROVEN: `grep -oE` against that exact pattern empty-matches `SE3`/`RI1`, tested
+2026-07-30; docs/backlog.md tracks the fix). Any FUTURE `<Key><TaskId>` format
+change must land in EVERY parser that reads it, plus a discriminating test
+proving the new shape parses, in the same commit — not just the cockpit's.
+
+Enforcement: `stop-verdict-dispatcher.sh`'s vocabulary-lock check (Stop,
+WARN-only — teaches, never blocks) scans the final assistant message for
+off-vocabulary status phrasing; see its own header for the golden scenario, FP
+estimate, and retirement condition.

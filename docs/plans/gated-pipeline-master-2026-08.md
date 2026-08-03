@@ -433,12 +433,21 @@ Modify:
 - `adapters/claude-code/hooks/concurrent-ownership-gate-body.sh` — GC_MODE argv fallback (T8)
 - `adapters/claude-code/hooks/scope-enforcement-gate-body.sh` — GC_MODE argv fallback (T8)
 - `adapters/claude-code/hooks/gh-merge-canonical-gate.sh` — self-test stdin isolation (T8)
-- `adapters/claude-code/doctrine/claims.md`, `claims-full.md`, `findings-ledger.md`,
-  `findings-ledger-full.md`, `harness-dev.md`, `intended-functionality.md`,
-  `intended-functionality-full.md`, `deterministic-process.md`, `deterministic-process-
-  full.md`, `operator-requirement-ledger.md`, `operator-requirement-ledger-full.md`,
-  `review-before-deploy.md`, `review-before-deploy-full.md`, `single-flight-halt-runbook.md`,
-  `single-flight-halt-runbook-full.md` — byte-cap trim for Evals rules-index-coverage (T8)
+- `adapters/claude-code/doctrine/claims.md` — byte-cap trim for Evals rules-index-coverage (T8)
+- `adapters/claude-code/doctrine/claims-full.md` — byte-cap trim companion (T8)
+- `adapters/claude-code/doctrine/findings-ledger.md` — byte-cap trim (T8)
+- `adapters/claude-code/doctrine/findings-ledger-full.md` — byte-cap trim companion (T8)
+- `adapters/claude-code/doctrine/harness-dev.md` — byte-cap trim (T8)
+- `adapters/claude-code/doctrine/intended-functionality.md` — byte-cap trim (T8)
+- `adapters/claude-code/doctrine/intended-functionality-full.md` — new byte-cap companion (T8)
+- `adapters/claude-code/doctrine/deterministic-process.md` — byte-cap trim (T8)
+- `adapters/claude-code/doctrine/deterministic-process-full.md` — new byte-cap companion (T8)
+- `adapters/claude-code/doctrine/operator-requirement-ledger.md` — byte-cap trim (T8)
+- `adapters/claude-code/doctrine/operator-requirement-ledger-full.md` — new companion (T8)
+- `adapters/claude-code/doctrine/review-before-deploy.md` — byte-cap trim (T8)
+- `adapters/claude-code/doctrine/review-before-deploy-full.md` — byte-cap trim companion (T8)
+- `adapters/claude-code/doctrine/single-flight-halt-runbook.md` — byte-cap trim (T8)
+- `adapters/claude-code/doctrine/single-flight-halt-runbook-full.md` — new companion (T8)
 
 ## In-flight scope updates
 - 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence.md` — the plan's own evidence
