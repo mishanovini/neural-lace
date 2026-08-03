@@ -28,6 +28,7 @@
 
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const projects = require('../config/projects.js');
@@ -184,6 +185,50 @@ function paneResponse(sub, entry, extraArgsLabel) {
     derived_at: entry.derived_at,
     command: cmdLine,
   };
+}
+
+// buildMaintenancePane — harness-execution-redesign-2026-08 Task 3. Reads
+// the dashboard snapshot nl-maintenance.sh writes directly off disk
+// (~/.claude/state/nl-maintenance/snapshots/dashboard.json) instead of
+// going through the DeriveCache/`nl <sub> --json` machinery the six
+// sketch-question panes use: this data is ALREADY a TTL-materialized
+// snapshot (invariant 3, "sessions read O(1)") written by a completion-
+// anchored job, so a second cache layer in front of it would just be
+// caching a cache. Response shape matches paneResponse's envelope
+// (schema/pane/data/rc/derived_at/command) for client-side consistency,
+// but `command` names the real read path instead of an `nl` subcommand
+// (there is none -- this is a direct file read).
+function buildMaintenancePane() {
+  const snapPath = path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'nl-maintenance', 'snapshots', 'dashboard.json');
+  try {
+    const raw = fs.readFileSync(snapPath, 'utf8');
+    const data = JSON.parse(raw);
+    return {
+      schema: 1,
+      pane: 'maintenance-budget',
+      data: data,
+      rc: 0,
+      stderr_tail: '',
+      derived_at: data.generated_at || null,
+      command: 'cat ' + snapPath,
+    };
+  } catch (e) {
+    // Honest empty state (ux-review amendment 1 discipline, same as every
+    // other pane): rc!=0 renders a NAMED error, e.g. "nl-maintenance.sh
+    // has not run yet on this machine" -- never a silent blank pane.
+    const missing = e && e.code === 'ENOENT';
+    return {
+      schema: 1,
+      pane: 'maintenance-budget',
+      data: null,
+      rc: 1,
+      stderr_tail: missing
+        ? 'no snapshot yet at ' + snapPath + ' -- run: bash adapters/claude-code/scripts/nl-maintenance.sh --tick'
+        : String(e && e.message || e),
+      derived_at: null,
+      command: 'cat ' + snapPath,
+    };
+  }
 }
 
 // ============================================================
@@ -1547,6 +1592,9 @@ const server = http.createServer((req, res) => {
   }
   if (url === '/api/pane/backlog') { // backlog oracle (not one of the six sketch questions, same discipline)
     return sendJson(res, 200, paneResponse('backlog', cache.get('backlog')));
+  }
+  if (url === '/api/pane/maintenance-budget') { // harness-execution-redesign-2026-08 Task 3 — direct file read, not cached (see buildMaintenancePane)
+    return sendJson(res, 200, buildMaintenancePane());
   }
   if (url === '/api/pane/why') { // Q6, on-demand, not part of the batch cache
     const sid = q.session;

@@ -460,6 +460,11 @@ _guard_slug() {
     core=$(_slug_core "$slug")
     if wfile=$(_has_fresh_waiver "$core") || wfile=$(_has_fresh_waiver "$slug"); then
       command -v ledger_emit >/dev/null 2>&1 && ledger_emit "concurrent-ownership-gate" "waiver" "op=$op target=$slug waiver=$wfile"
+      # Workaround-as-sensor law (operator directive): a sanctioned escape's
+      # USE is itself a signal — ledger it via gc_escape_used regardless of
+      # this ledger_emit call's own success (spawn-free, never blocks; see
+      # gate-contract-lib.sh's own header).
+      declare -F gc_escape_used >/dev/null 2>&1 && gc_escape_used "concurrent-ownership-gate" "waiver-file" "target=$slug" "op=$op waiver=$wfile"
       echo "[concurrent-ownership-gate] ALLOW: fresh structured waiver covers owned target '$slug' ($wfile) — ledger-logged." >&2
       return 0
     fi
@@ -474,6 +479,7 @@ _guard_branch() {
   if _check_branch_owner "$branch"; then
     if wfile=$(_has_fresh_waiver "$branch"); then
       command -v ledger_emit >/dev/null 2>&1 && ledger_emit "concurrent-ownership-gate" "waiver" "op=$op target=$branch waiver=$wfile"
+      declare -F gc_escape_used >/dev/null 2>&1 && gc_escape_used "concurrent-ownership-gate" "waiver-file" "target=$branch" "op=$op waiver=$wfile"
       echo "[concurrent-ownership-gate] ALLOW: fresh structured waiver covers owned branch '$branch' ($wfile) — ledger-logged." >&2
       return 0
     fi
@@ -518,6 +524,10 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # Full sandbox: claims + ledger never touch real state.
   export COG_CLAIMS_DIR="$TMPROOT/claims"
   export SIGNAL_LEDGER_PATH="$TMPROOT/ledger.jsonl"
+  # Workaround-as-sensor sandbox (gc_escape_used -> ws_record): same
+  # never-touch-real-state discipline as SIGNAL_LEDGER_PATH above.
+  # HARNESS_SELFTEST=1 is already exported at the top of this block.
+  export WORKAROUND_SENSOR_LEDGER_PATH="$TMPROOT/ws-ledger.jsonl"
   mkdir -p "$COG_CLAIMS_DIR"
 
   MAIN="$TMPROOT/main"
@@ -756,6 +766,30 @@ CLAIMJSON
   OK=0; [[ "$RC" == "0" ]] && OK=1
   _report "21 check-mode-clean-pass-allowed" "$OK" "(rc=$RC, expected 0)"
 
+  # ---- 22: workaround-as-sensor — a waiver-honored ALLOW (same fixture as
+  # scenario 3) both (a) still honors the waiver identically (verdict
+  # unchanged, rc=0) AND (b) appends a row to the workaround-sensor ledger
+  # (gc_escape_used -> ws_record), independent of the pre-existing
+  # signal-ledger "waiver" event scenario 3 already asserts. Confirms the
+  # operator's workaround-as-sensor law is wired end-to-end at this gate's
+  # waiver-honored call site, not just a self-tested-in-isolation library.
+  {
+    echo "Purpose: this gate exists to prevent mutating plan/branch state owned by another live session"
+    echo "Because: self-test fixture — the owning worktree is a synthetic fixture, not a live session"
+    echo "Target: owned-plan"
+  } > "$MAIN/.claude/state/concurrent-ownership-waiver-selftest22.txt"
+  rm -f "$WORKAROUND_SENSOR_LEDGER_PATH"
+  RC=$(_run_cmd "$MAIN" "$BULK_CMD")
+  OK=0
+  if [[ "$RC" == "0" ]] \
+     && grep -q '"gate":"concurrent-ownership-gate"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     && grep -q '"bypass_kind":"waiver-file"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     && grep -q '"command_fingerprint":"target=owned-plan-2026-07-11"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null; then
+    OK=1
+  fi
+  _report "22 workaround-sensor-ledger-row-on-waiver-honored" "$OK" "(rc=$RC, expected 0 + workaround-sensor ledger row)"
+  rm -f "$MAIN/.claude/state/concurrent-ownership-waiver-selftest22.txt"
+
   echo "" >&2
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED+FAILED)) scenarios)" >&2
   [[ "$FAILED" -eq 0 ]] && exit 0 || exit 2
@@ -940,6 +974,7 @@ if [[ -n "$WT_REMOVE_TARGET" ]]; then
     if [[ "$OWNED" -eq 1 ]]; then
       if WFILE=$(_has_fresh_waiver "${WT_BRANCH:-$WT_REMOVE_TARGET}"); then
         command -v ledger_emit >/dev/null 2>&1 && ledger_emit "concurrent-ownership-gate" "waiver" "op=worktree-remove target=$WT_REMOVE_TARGET waiver=$WFILE"
+        declare -F gc_escape_used >/dev/null 2>&1 && gc_escape_used "concurrent-ownership-gate" "waiver-file" "target=$WT_REMOVE_TARGET" "op=worktree-remove waiver=$WFILE"
         echo "[concurrent-ownership-gate] ALLOW: fresh structured waiver covers claimed worktree '$WT_REMOVE_TARGET' ($WFILE) — ledger-logged." >&2
       else
         _block "git worktree remove" "$WT_REMOVE_TARGET"

@@ -245,6 +245,93 @@ resolve_live_home() {
   printf '%s\n' "${HOME:-}/.claude"
 }
 
+# ------------------------------------------------------------
+# Doctor verdict cache (harness-execution-redesign-2026-08 Task 3, invariant
+# 3 + 7 + 8). REUSES the exact file/schema session-start-digest.sh's
+# `refresh_doctor_cache`/`feed_doctor` already read/write
+# (~/.claude/state/digest/doctor-cache.json: {"ts","verdict_line",
+# "exit_code"}) -- this is a second READER (and, on a real cache-miss run,
+# a second WRITER) of the SAME materialized snapshot, not a parallel cache
+# (anti-bloat R3.3: one source of truth for "what did doctor last say").
+# What digest's existing mechanism did NOT do: `harness-doctor.sh --quick`
+# invoked DIRECTLY (an operator/scheduled task calling this file, not going
+# through session-start-digest.sh) always recomputed -- this is the real
+# gap Task 3 closes (**Prove it works** #4: "doctor --quick serves the
+# cached verdict in <2s"). nl-maintenance.sh's `doctor-verdict-refresh` job
+# (schedule-manifest.json) is what keeps this fresh on a dedicated 30-min
+# (D5) cadence, in addition to health-tick.sh's pre-existing hourly refresh
+# via session-start-digest.sh --refresh-doctor-cache.
+#
+# Path resolution mirrors session-start-digest.sh's own _doctor_cache_path
+# EXACTLY (same DOCTOR_CACHE_PATH override) but scopes the real-machine
+# default to $LIVE_HOME (== $HOME/.claude on a real run, identical to
+# digest's literal $HOME/.claude/state/digest/... path) instead of a bare
+# $HOME, so every doctor self-test scenario (which sandboxes LIVE_HOME via
+# HARNESS_DOCTOR_HOME) gets automatic per-scenario isolation the same way
+# SF_STATE_DIR already does two lines below in the normal-invocation
+# section -- no self-test scenario can ever read/write the REAL machine's
+# cache file.
+# ------------------------------------------------------------
+_doctor_verdict_cache_path() {
+  if [[ -n "${DOCTOR_CACHE_PATH:-}" ]]; then
+    printf '%s' "$DOCTOR_CACHE_PATH"
+    return 0
+  fi
+  printf '%s/state/digest/doctor-cache.json' "${1:-${HOME:-$PWD}/.claude}"
+}
+
+# _doctor_compute_fingerprint <live_home> <repo_root> — invariant 8
+# ("derived, never authored"): a coarse fingerprint of the inputs
+# run_quick_checks actually reads from disk -- the live settings.json, the
+# committed settings template, manifest.json, and schedule-manifest.json
+# (mtimes), plus the repo's current commit (if resolvable). Documented as a
+# FIRST-APPROXIMATION fingerprint, not true per-check declared-input
+# tracking (that would need every one of the ~40 check_* functions to
+# declare its own inputs individually -- real scope beyond this task; see
+# the plan's In-flight scope updates / this task's build report for the
+# named follow-up). It is still a REAL derived value: any edit to the
+# files it covers busts the cache on the next read, which is what
+# invariant 8 is actually guarding against (a cache that lies while the
+# world burns) for the highest-traffic input classes.
+_doctor_compute_fingerprint() {
+  local live_home="$1" repo_root="$2" parts=""
+  local f
+  for f in "${live_home}/settings.json" \
+           "${repo_root}/adapters/claude-code/settings.json.template" \
+           "${repo_root}/adapters/claude-code/manifest.json" \
+           "${repo_root}/adapters/claude-code/config/schedule-manifest.json"; do
+    if [[ -f "$f" ]]; then
+      parts="${parts}|$(date -r "$f" +%s 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+    else
+      parts="${parts}|absent"
+    fi
+  done
+  local head=""
+  if [[ -n "$repo_root" ]]; then
+    head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")"
+  fi
+  parts="${parts}|${head}"
+  if command -v cksum >/dev/null 2>&1; then
+    printf '%s' "$parts" | cksum | awk '{print $1}'
+  else
+    # No cksum -> the concatenated mtimes/HEAD string IS the fingerprint
+    # (still deterministic and comparable, just longer).
+    printf '%s' "$parts"
+  fi
+}
+
+# _doctor_ledger_bypass <reason> — invariant 7 (escape hatches are
+# ledgered). Appends a JSONL row to the SAME state area the verdict cache
+# lives under; best-effort, never blocks.
+_doctor_ledger_bypass() {
+  local live_home="$1" reason="$2" dir file ts
+  dir="${live_home}/state/digest"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  file="${dir}/doctor-cache-bypass-ledger.jsonl"
+  ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
+  printf '{"ts":"%s","reason":"%s"}\n' "$ts" "${reason//\"/\\\"}" >> "$file" 2>/dev/null || true
+}
+
 RED_COUNT=0
 WARN_COUNT=0
 CHECKS_RUN=0
@@ -2357,6 +2444,62 @@ check_budget_bash_hooks() {
 }
 
 # ------------------------------------------------------------
+# Check: maintenance-both-substrates-alive (harness-execution-redesign-2026-08
+# Task 3, invariant 9: "doctor REDs both-substrates-alive > 14 days"). RED
+# when nl-maintenance.sh's daemon has been alive (fresh heartbeat observed
+# at least once, per its own activation marker) for > 14 days AND any of
+# the legacy per-mechanism scheduled tasks (schedule-manifest.json's
+# legacy_task_name entries) is STILL Enabled -- the stall-at-stage-2 trap
+# the platform pre-mortem names (both substrates running forever). Non-
+# Windows / schtasks-absent / nl-maintenance never activated -> WARN-free
+# skip (nothing to compare yet), never a fabricated RED.
+# ------------------------------------------------------------
+check_maintenance_both_substrates_alive() {
+  local live_home="$1" repo_root="$2"
+  local manifest="${repo_root}/adapters/claude-code/config/schedule-manifest.json"
+  local activation="${live_home}/state/nl-maintenance/activation-marker"
+
+  if [[ ! -f "$activation" ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v schtasks >/dev/null 2>&1; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  [[ -f "$manifest" ]] || { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local activated_epoch now age_days
+  activated_epoch="$(cat "$activation" 2>/dev/null | tr -d '\r\n')"
+  [[ "$activated_epoch" =~ ^[0-9]+$ ]] || { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  now="$(date +%s 2>/dev/null || echo 0)"
+  age_days=$(( (now - activated_epoch) / 86400 ))
+  if [[ "$age_days" -lt 14 ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local names name state still_enabled=""
+  if command -v jq >/dev/null 2>&1; then
+    names="$(jq -r '.mechanisms[] | select(.legacy_task_name != null) | .legacy_task_name' "$manifest" 2>/dev/null | tr -d '\r')"
+  else
+    names=""
+  fi
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    state="$(MSYS_NO_PATHCONV=1 schtasks /Query /TN "$name" /FO LIST /V 2>/dev/null | tr -d '\r' | sed -nE 's/^Scheduled Task State:[[:space:]]*//p' | head -1)"
+    if [[ "$state" == "Enabled" ]]; then
+      still_enabled="${still_enabled}${still_enabled:+, }${name}"
+    fi
+  done <<< "$names"
+
+  if [[ -n "$still_enabled" ]]; then
+    _red "maintenance-both-substrates-alive" "nl-maintenance.sh core has been active ${age_days} days but legacy scheduled task(s) still Enabled: ${still_enabled} -- disable them (schtasks /Change /TN \"<name>\" /Disable) now that the core covers this mechanism, or delete via the +30-day Stage 4 pass if already past due"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: orphaned-worktree-work — the OUT-OF-SESSION complement to
 # session-start-digest.sh's feed_stranded_work (same shared detector, two
 # surfaces; constitution §5 "persist in the same response" + the
@@ -3756,6 +3899,8 @@ run_quick_checks() {
   # harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariants 1/2)
   check_schedule_manifest_cadence "$live_home" "$repo_root"
   check_budget_bash_hooks "$live_home" "$repo_root"
+  # harness-execution-redesign-2026-08 Task 3 (Stage 1, invariant 9)
+  check_maintenance_both_substrates_alive "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -7247,6 +7392,47 @@ if [[ "${NL_SESSIONSTART_ORIGIN:-0}" == "1" ]]; then
   fi
 fi
 
+# ------------------------------------------------------------
+# Doctor verdict cache — READ path (Task 3, invariant 3: "doctor --quick
+# serves the cached verdict in <2s on a cache hit"). Only MODE=="quick"
+# consults it (full/portability always recompute for real -- their own
+# multi-minute cost is not what this TTL is pricing). NL_FORCE=1 or a
+# literal --no-cache argument always bypasses AND is ledgered (invariant
+# 7). See _doctor_verdict_cache_path's header comment above for the schema
+# + why this reuses session-start-digest.sh's existing cache file.
+# ------------------------------------------------------------
+if [[ "$MODE" == "quick" && "${DOCTOR_VERDICT_CACHE_DISABLE:-0}" != "1" ]]; then
+  _dvc_bypass=0
+  [[ "${NL_FORCE:-0}" == "1" ]] && _dvc_bypass=1
+  for _dvc_a in "$@"; do [[ "$_dvc_a" == "--no-cache" ]] && _dvc_bypass=1; done
+  if [[ "$_dvc_bypass" == "1" ]]; then
+    _doctor_ledger_bypass "$LIVE_HOME" "NL_FORCE=1 or --no-cache requested a real recompute"
+  else
+    _dvc_cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"
+    if [[ -f "$_dvc_cache" ]]; then
+      _dvc_ts_epoch="$(sed -nE 's/.*"ts_epoch":([0-9]+).*/\1/p' "$_dvc_cache" 2>/dev/null | head -1)"
+      _dvc_fp="$(sed -nE 's/.*"fingerprint":"([^"]*)".*/\1/p' "$_dvc_cache" 2>/dev/null | head -1)"
+      _dvc_verdict="$(sed -nE 's/.*"verdict_line":"([^"]*)".*/\1/p' "$_dvc_cache" 2>/dev/null | head -1)"
+      _dvc_exit="$(sed -nE 's/.*"exit_code":([0-9]+).*/\1/p' "$_dvc_cache" 2>/dev/null | head -1)"
+      _dvc_ttl="${DOCTOR_VERDICT_CACHE_TTL_SECONDS:-1800}"
+      # An entry with no fingerprint (e.g. one written by session-start-
+      # digest.sh's own --refresh-doctor-cache, which does not compute one)
+      # is honestly untrusted for the fast path -- falls through to a real
+      # recompute below, which then writes a fully fingerprinted entry.
+      if [[ -n "$_dvc_fp" && "$_dvc_ts_epoch" =~ ^[0-9]+$ ]]; then
+        _dvc_now=$(date +%s 2>/dev/null || echo 0)
+        _dvc_age=$(( _dvc_now - _dvc_ts_epoch ))
+        _dvc_cur_fp="$(_doctor_compute_fingerprint "$LIVE_HOME" "$REPO_ROOT")"
+        if [[ "$_dvc_age" -ge 0 && "$_dvc_age" -lt "$_dvc_ttl" && "$_dvc_fp" == "$_dvc_cur_fp" ]]; then
+          echo "${_dvc_verdict} (cached verdict, ${_dvc_age}s old -- run with --no-cache or NL_FORCE=1 to force a real recompute)"
+          [[ "$_dvc_exit" =~ ^[0-9]+$ ]] && exit "$_dvc_exit"
+          exit 0
+        fi
+      fi
+    fi
+  fi
+fi
+
 if [[ "$MODE" == "portability" ]]; then
   check_portability_sweep "$LIVE_HOME" "$REPO_ROOT"
 else
@@ -7271,9 +7457,35 @@ else
 fi
 
 if [[ "$RED_COUNT" -eq 0 ]]; then
-  echo "[doctor] GREEN — ${CHECKS_RUN} checks passed"
-  exit 0
+  _dvc_verdict_line="[doctor] GREEN — ${CHECKS_RUN} checks passed"
+  _dvc_exit_code=0
 else
-  echo "[doctor] FAILED — ${RED_COUNT} red, ${WARN_COUNT} warn, ${CHECKS_RUN} checks run"
-  exit 1
+  _dvc_verdict_line="[doctor] FAILED — ${RED_COUNT} red, ${WARN_COUNT} warn, ${CHECKS_RUN} checks run"
+  _dvc_exit_code=1
 fi
+echo "$_dvc_verdict_line"
+
+# ------------------------------------------------------------
+# Doctor verdict cache — WRITE path. Only after a REAL quick-mode
+# computation (never for --full/--portability, whose cost this TTL is not
+# pricing). Same file/schema session-start-digest.sh's refresh_doctor_cache
+# writes (ts/verdict_line/exit_code), extended with ts_epoch + fingerprint
+# so THIS reader (and only this reader) can serve a fast-path hit next
+# time (invariant 8: the fingerprint is derived, not authored, from the
+# declared inputs above).
+# ------------------------------------------------------------
+if [[ "$MODE" == "quick" ]]; then
+  _dvc_write_cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"
+  mkdir -p "$(dirname "$_dvc_write_cache")" 2>/dev/null || true
+  _dvc_write_ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
+  _dvc_write_epoch=$(date +%s 2>/dev/null || echo 0)
+  _dvc_write_fp="$(_doctor_compute_fingerprint "$LIVE_HOME" "$REPO_ROOT")"
+  _dvc_verdict_esc="${_dvc_verdict_line//\\/\\\\}"; _dvc_verdict_esc="${_dvc_verdict_esc//\"/\\\"}"
+  _dvc_write_tmp="${_dvc_write_cache}.tmp.$$"
+  printf '{"ts":"%s","ts_epoch":%s,"verdict_line":"%s","exit_code":%d,"fingerprint":"%s"}\n' \
+    "$_dvc_write_ts" "$_dvc_write_epoch" "$_dvc_verdict_esc" "$_dvc_exit_code" "$_dvc_write_fp" \
+    > "$_dvc_write_tmp" 2>/dev/null && mv -f "$_dvc_write_tmp" "$_dvc_write_cache" 2>/dev/null \
+    || rm -f "$_dvc_write_tmp" 2>/dev/null
+fi
+
+exit "$_dvc_exit_code"
