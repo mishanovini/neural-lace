@@ -165,15 +165,19 @@ rc_record_attested() {
   printf '%s\t%s\n' "$path" "$blob"
 }
 
-# rc_record_first_commit_epoch <record-file> — epoch of the file's first commit
-# in this repo's history (`--follow`, never a self-declared header date — the
-# rule-3 pre-ledger exemption boundary keys on this).
-rc_record_first_commit_epoch() {
+# rc_file_first_commit_epoch <file> — epoch of the file's first commit in this
+# repo's history (`--follow`, never a self-declared header date). Generic over
+# ANY tracked file — used on a RECORD for the rule-3 pre-ledger exemption
+# boundary, and on the REVIEWED ARTIFACT for rule 3's window lower bound
+# (FM-023 fix: these are two different files with two different first-commit
+# times; conflating them collapses the window — see rc_rule3 below).
+rc_file_first_commit_epoch() {
   # --find-renames=100%: `--follow`'s DEFAULT similarity threshold (~50%) can
-  # mis-trace a record's history across an UNRELATED file that happens to
-  # share boilerplate structure (the review-record template's fixed fields).
+  # mis-trace a file's history across an UNRELATED file that happens to share
+  # boilerplate structure (the review-record template's fixed fields — this
+  # was observed directly during this lib's own self-test development).
   # Pinning renames to exact-content-match keeps `--follow`'s real job (a
-  # record genuinely moved/renamed keeps its true first-commit time) without
+  # file genuinely moved/renamed keeps its true first-commit time) without
   # false-positive cross-file attribution.
   git log --follow --find-renames=100% --format=%ct -- "$1" 2>/dev/null | tail -1
 }
@@ -403,39 +407,67 @@ rc_rule2() {
   return 1
 }
 
-# rc_rule3 <reviewer-token> <artifact-ref-path> <record-file>
+# rc_rule3 <reviewer-token> <artifact-ref-path> <artifact-file> <record-file>
 # stdout: one-line reason. rc 0 pass (incl. exempt/degraded forms, both named),
 # 1 fail.
+#
+# FM-023 (comprehension-reviewer, PROVEN): the ts-window's lower bound is the
+# REVIEWED ARTIFACT's first commit, NOT the record's — design §4 rule 3 and
+# this file's own header (above) both say "[artifact's first commit, record's
+# HEAD commit time]". A record almost always lands in ONE commit (rules 1-2
+# don't require history), so keying lo off the record collapses lo==hi to a
+# single second — no realistic completion row (which fires BEFORE the record
+# documenting it gets committed) can ever land inside that window. <artifact>
+# is now a required 3rd argument so the caller (rc_validate_chain, which
+# already has this path — the same value it passes to rc_rule2) supplies it.
 rc_rule3() {
-  local reviewer="$1" artifact_ref="$2" record="$3"
-  local first_commit landing_epoch landing_rc head_commit lo hi
-  local row rt rts rref match_degraded match_full
-  first_commit="$(rc_record_first_commit_epoch "$record")"
+  local reviewer="$1" artifact_ref="$2" artifact="$3" record="$4"
+  local record_first_commit landing_epoch landing_rc artifact_first_commit head_commit lo hi
+  local row rt rts rref match_degraded match_full skipped_malformed
+  # The PRE-LEDGER EXEMPTION is keyed on the RECORD's own first-commit time
+  # (design: "records whose OWN first-commit time... predates
+  # RC_LEDGER_LANDING_DATE are EXEMPT") — this is deliberately NOT the
+  # artifact's first commit; a long-lived artifact reviewed for the first
+  # time post-ledger must NOT inherit an old exemption from its own history.
+  record_first_commit="$(rc_file_first_commit_epoch "$record")"
   landing_epoch="$(rc_ledger_landing_epoch 2>/dev/null)"
   landing_rc=$?
   if [[ $landing_rc -ne 0 ]]; then
     echo "EXEMPT: RC_LEDGER_LANDING_DATE unset (ledger not yet landed — Task 15) — every record is pre-ledger"
     return 0
   fi
-  if [[ -n "$first_commit" ]] && [[ "$first_commit" -lt "$landing_epoch" ]]; then
-    echo "EXEMPT: record's first commit ($first_commit) predates ledger-landing ($landing_epoch)"
+  if [[ -n "$record_first_commit" ]] && [[ "$record_first_commit" -lt "$landing_epoch" ]]; then
+    echo "EXEMPT: record's first commit ($record_first_commit) predates ledger-landing ($landing_epoch)"
     return 0
   fi
   if [[ ! -f "$RC_LEDGER_PATH" ]]; then
     echo "FAIL: no dispatch ledger at $RC_LEDGER_PATH (reviewer type=$reviewer never dispatched, or ledger missing)"
     return 1
   fi
+  # THE WINDOW: [reviewed artifact's first commit, record's HEAD commit time]
+  # — two DIFFERENT files, two different git-log calls. (FM-023: previously
+  # both bounds were derived from the record, collapsing the window.)
+  artifact_first_commit="$(rc_file_first_commit_epoch "$artifact")"
   head_commit="$(rc_record_head_commit_epoch "$record")"
-  lo="${first_commit:-0}"
+  lo="${artifact_first_commit:-0}"
   hi="${head_commit:-9999999999}"
   match_degraded=0
   match_full=0
+  skipped_malformed=0
   while IFS= read -r row; do
     [[ -n "$row" ]] || continue
     rt="$(printf '%s' "$row" | jq -r '.subagent_type // empty' 2>/dev/null)"
     [[ "$rt" == "$reviewer" ]] || continue
     rts="$(printf '%s' "$row" | jq -r '.ts // empty' 2>/dev/null)"
     [[ -n "$rts" ]] || continue
+    # Fail-open on a malformed ts (plan's Behavioral Contracts: never silent,
+    # never fail-closed on a data-shape error) — skip THIS row, not the whole
+    # rule, and say so, rather than letting `[[ "$rts" -lt "$lo" ]]` abort
+    # with a bash "integer expression expected" error on a non-numeric value.
+    if ! [[ "$rts" =~ ^-?[0-9]+$ ]]; then
+      skipped_malformed=1
+      continue
+    fi
     if [[ "$rts" -lt "$lo" ]] || [[ "$rts" -gt "$hi" ]]; then
       continue
     fi
@@ -447,15 +479,17 @@ rc_rule3() {
       break
     fi
   done < "$RC_LEDGER_PATH"
+  local malformed_note=""
+  [[ "$skipped_malformed" == 1 ]] && malformed_note=" -- WARN: at least one row for type=$reviewer had a non-numeric ts and was skipped (degraded ledger data, fail-open per the plan's Behavioral Contracts)"
   if [[ "$match_full" == 1 ]]; then
-    echo "PASS: ledger row matches type=$reviewer artifact_ref=$artifact_ref within window [$lo,$hi]"
+    echo "PASS: ledger row matches type=$reviewer artifact_ref=$artifact_ref within window [$lo,$hi]$malformed_note"
     return 0
   fi
   if [[ "$match_degraded" == 1 ]]; then
-    echo "PASS (DEGRADED: type-match only — ledger row had an empty artifact_ref) type=$reviewer"
+    echo "PASS (DEGRADED: type-match only — ledger row had an empty artifact_ref) type=$reviewer$malformed_note"
     return 0
   fi
-  echo "FAIL: no dispatch-ledger row for type=$reviewer artifact_ref=$artifact_ref within window [$lo,$hi] (never dispatched, or wrong artifact_ref)"
+  echo "FAIL: no dispatch-ledger row for type=$reviewer artifact_ref=$artifact_ref within window [$lo,$hi] (never dispatched, or wrong artifact_ref)$malformed_note"
   return 1
 }
 
@@ -528,7 +562,7 @@ rc_validate_chain() {
       *) RC_DETAIL_LINES+=("[FAIL] $role reviewer=$reviewer_token rule2: $rule_out"); any_fail=1; continue ;;
     esac
 
-    rule_out="$(rc_rule3 "$reviewer_token" "$artifact_ref" "$record")"
+    rule_out="$(rc_rule3 "$reviewer_token" "$artifact_ref" "$artifact" "$record")"
     rule_rc=$?
     if [[ $rule_rc -ne 0 ]]; then
       RC_DETAIL_LINES+=("[FAIL] $role reviewer=$reviewer_token rule3: $rule_out")
@@ -803,6 +837,65 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   _ledger_row "architecture-reviewer" "$RTS" "$P"
   rc_validate_chain "$P"
   _st "s8-valid-chain-passes" "PASS" "$RC_VERDICT"
+
+  # ── Scenario 9 (FM-023 regression): rule-3 window uses the ARTIFACT's first
+  # commit as lo, not the record's — non-coincident timestamps t0<t1<t2, so a
+  # degenerate lo==hi window (the bug: both bounds derived from the record,
+  # which usually lands in one commit) would falsely reject the INSIDE row
+  # too, and could never distinguish "before" from "after". Direct rc_rule3
+  # calls (not rc_validate_chain) for precise, isolated window assertions.
+  P=docs/plans/f9-artifact.md
+  _write_plan "$P" "architecture-reviewer" "SOUND" "docs/reviews/f9-record.md" "IGNORED-NOT-PARSED-BY-RULE3" ""
+  git add "$P" >/dev/null
+  _commit "f9 artifact (t0)" "2026-02-01"
+  BLOB="$(rc_blob_of "$P" plan)"
+  T0="$(rc_file_first_commit_epoch "$P")"
+  _write_record docs/reviews/f9-record.md "architecture-reviewer (model: fable)" "$P" "$BLOB" "SOUND"
+  git add docs/reviews/f9-record.md >/dev/null
+  _commit "f9 record (t2)" "2026-03-01"
+  T2="$(rc_record_head_commit_epoch docs/reviews/f9-record.md)"
+  T1_INSIDE=$(( T0 + (T2 - T0) / 2 ))          # strictly between t0 and t2
+  T_BEFORE=$(( T0 - 86400 ))                    # one day before t0
+  T_AFTER=$(( T2 + 86400 ))                     # one day after t2
+
+  SAVED_LEDGER="$RC_LEDGER_PATH"
+
+  RC_LEDGER_PATH="$T/f9-inside.jsonl"; : > "$RC_LEDGER_PATH"
+  _ledger_row "architecture-reviewer" "$T1_INSIDE" "$P"
+  rc_rule3 "architecture-reviewer" "$P" "$P" docs/reviews/f9-record.md >/dev/null
+  _st "s9-window-inside-passes" "0" "$?"
+
+  RC_LEDGER_PATH="$T/f9-before.jsonl"; : > "$RC_LEDGER_PATH"
+  _ledger_row "architecture-reviewer" "$T_BEFORE" "$P"
+  rc_rule3 "architecture-reviewer" "$P" "$P" docs/reviews/f9-record.md >/dev/null
+  _st "s9-window-before-rejected" "1" "$?"
+
+  RC_LEDGER_PATH="$T/f9-after.jsonl"; : > "$RC_LEDGER_PATH"
+  _ledger_row "architecture-reviewer" "$T_AFTER" "$P"
+  rc_rule3 "architecture-reviewer" "$P" "$P" docs/reviews/f9-record.md >/dev/null
+  _st "s9-window-after-rejected" "1" "$?"
+
+  # ── Scenario 10: a malformed (non-numeric) ts row is skipped, not fatal ────
+  RC_LEDGER_PATH="$T/f9-malformed-only.jsonl"
+  printf '{"subagent_type":"architecture-reviewer","model":"claude-fable-5","ts":"not-a-number","session_id":"selftest","artifact_ref":"%s"}\n' "$P" > "$RC_LEDGER_PATH"
+  OUT="$(rc_rule3 "architecture-reviewer" "$P" "$P" docs/reviews/f9-record.md)"
+  RC=$?
+  _st "s10-malformed-ts-only-fails-not-crashes" "1" "$RC"
+  MW=$(printf '%s' "$OUT" | grep -c "non-numeric ts")
+  _st "s10-malformed-ts-warn-text-present" "1" "$MW"
+
+  # Malformed row ALONGSIDE a genuinely valid one: the guard skips the bad
+  # row and still finds the good one — fail-open never costs a real match.
+  RC_LEDGER_PATH="$T/f9-malformed-plus-valid.jsonl"
+  printf '{"subagent_type":"architecture-reviewer","model":"claude-fable-5","ts":"garbage","session_id":"selftest","artifact_ref":"%s"}\n' "$P" > "$RC_LEDGER_PATH"
+  _ledger_row "architecture-reviewer" "$T1_INSIDE" "$P"
+  OUT="$(rc_rule3 "architecture-reviewer" "$P" "$P" docs/reviews/f9-record.md)"
+  RC=$?
+  _st "s10-malformed-plus-valid-still-passes" "0" "$RC"
+  MW=$(printf '%s' "$OUT" | grep -c "non-numeric ts")
+  _st "s10-malformed-plus-valid-warn-text-present" "1" "$MW"
+
+  RC_LEDGER_PATH="$SAVED_LEDGER"
 
   # ── Extra: rc_chain_present / rc_validate_chain on a chain-less plan ────────
   P=docs/plans/chainless.md
