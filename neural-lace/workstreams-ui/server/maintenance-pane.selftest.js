@@ -53,12 +53,23 @@ async function main() {
   process.env.HOME = tmp;
   process.env.AUDITOR_DISABLED = '1';
   process.env.OBS_REFRESH_MS = '999999';
+  // 2026-08-02 subprocess-storm fix — state-watch.js's push watchers start
+  // in the same 'listening' callback as cache.start(); without this, the
+  // nl-subcommand watch group's backlogDir (resolved via
+  // deriveLib.mainRepoRoot(), which is NOT sandboxed by this test's
+  // HOME=tmp override) would fs.watch this REAL repo's docs/ directory
+  // during the test. Harmless functionally (an extra refreshAll() against
+  // the NL_BIN stub) but impure — disabled for the same hygiene reason
+  // server.selftest.js disables it; see state-watch.selftest.js for the
+  // dedicated, sandboxed push-mechanism test.
+  process.env.OBS_WATCH_DISABLED = '1';
   const PORT = 18733 + (process.pid % 1000);
   process.env.CTREE_PORT = String(PORT);
 
   delete require.cache[require.resolve('./derive-cache.js')];
   delete require.cache[require.resolve('./reconciler.js')];
   delete require.cache[require.resolve('./auditor.js')];
+  delete require.cache[require.resolve('./state-watch.js')];
   delete require.cache[require.resolve('./server.js')];
 
   try {

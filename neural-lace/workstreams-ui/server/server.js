@@ -35,6 +35,12 @@ const projects = require('../config/projects.js');
 const { DeriveCache, runWhy } = require('./derive-cache.js');
 const reconciler = require('./reconciler.js');
 const payloadSchema = require('./payload-schema.js');
+// state-watch.js — 2026-08-02 subprocess-storm fix (operator correction:
+// push is the fast path, the DeriveCache timer below is now only the
+// anti-entropy floor). See state-watch.js's own header for the full
+// design; wired up in the server.listen() callback below, alongside
+// cache.start()/auditor.start().
+const stateWatch = require('./state-watch.js');
 // cockpit-v2-push-materialized-store Task 2 / amendment A4 — every
 // local-disk derivation function (plan-row computation, ask-registry fold,
 // session heartbeat classification, etc.) now lives in this requireable
@@ -120,6 +126,24 @@ function isLobotomized(cacheObj, uptimeMs) {
   });
 }
 
+// pushWatchSummary(handle) — /api/health's push_watch fields (2026-08-02
+// subprocess-storm fix): a plain, JSON-safe projection of a
+// state-watch.js handle. `handle` is null in the near-zero window before
+// the listen callback runs, or when the whole module is unavailable
+// (should not happen given state-watch.js is required unconditionally
+// above, but this stays defensive like every other /api/health field).
+function pushWatchSummary(handle) {
+  if (!handle) return { enabled: false, reason: 'not started yet' };
+  if (handle.disabled) return { enabled: false, reason: 'OBS_WATCH_DISABLED=1' };
+  return {
+    enabled: true,
+    watched_dirs: handle.watchedDirs.length,
+    watch_errors: handle.stats.watchErrors.length,
+    events_seen: handle.stats.events,
+    triggers_fired: handle.stats.triggers,
+  };
+}
+
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 var CT = 'Content-Ty' + 'pe'; // split-literal keeps the hygiene heuristic from false-positiving on a standard HTTP primitive
 
@@ -198,8 +222,20 @@ function paneResponse(sub, entry, extraArgsLabel) {
 // (schema/pane/data/rc/derived_at/command) for client-side consistency,
 // but `command` names the real read path instead of an `nl` subcommand
 // (there is none -- this is a direct file read).
+//
+// maintenanceSnapshotDir() — SAME resolution buildMaintenancePane's
+// snapPath uses, factored out so state-watch.js's second watch group (2026-
+// 08-02 push fix) can watch the exact directory this pane reads, without
+// duplicating the path-join logic. This pane is already a pure disk read
+// (never a subprocess spawn) -- the push wiring here exists to tell the
+// BROWSER to re-fetch promptly when nl-maintenance.sh writes a fresh
+// snapshot, not to change how this function itself reads the file.
+function maintenanceSnapshotDir() {
+  return path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'nl-maintenance', 'snapshots');
+}
+
 function buildMaintenancePane() {
-  const snapPath = path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'nl-maintenance', 'snapshots', 'dashboard.json');
+  const snapPath = path.join(maintenanceSnapshotDir(), 'dashboard.json');
   try {
     const raw = fs.readFileSync(snapPath, 'utf8');
     const data = JSON.parse(raw);
@@ -1547,6 +1583,18 @@ const server = http.createServer((req, res) => {
       // off `lobotomized`.
       server_uptime_ms: uptimeMs,
       lobotomized: isLobotomized(cache, uptimeMs),
+      // push_watch — 2026-08-02 subprocess-storm fix (invariant 5: health =
+      // output freshness, made visible). refresh_interval_ms above is now
+      // the ANTI-ENTROPY FLOOR only, not the primary cadence — this block
+      // names the push path so a stale cache is diagnosable as "push isn't
+      // firing" vs "nothing has changed" rather than looking identical to
+      // the pre-fix pure-poll behavior. Both handles are null for the first
+      // instant between a successful bind and the listen callback finishing
+      // (near-zero window) — rendered as enabled:false, never a crash.
+      push_watch: {
+        nl_subcommands: pushWatchSummary(stateWatchHandle),
+        maintenance_snapshot: pushWatchSummary(maintenanceWatchHandle),
+      },
     });
     return;
   }
@@ -1714,6 +1762,16 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
+// stateWatchHandle / maintenanceWatchHandle — set inside the listen
+// callback below (SAME single-instance-guard timing as cache.start(); a
+// losing EADDRINUSE instance exits before ever reaching this callback, so
+// at most one pair of watchers runs against a given port). Declared here
+// (module scope) so /api/health and module.exports can read them regardless
+// of whether the callback has fired yet — both are null until then, which
+// /api/health's push_watch block below renders as an honest "not started".
+let stateWatchHandle = null;
+let maintenanceWatchHandle = null;
+
 server.listen(PORT, HOST, () => {
   process.stdout.write('[server] workstreams-ui (O.4 cockpit) listening on http://' + HOST + ':' + PORT + '\n');
   process.stdout.write('[server] nl bin: ' + require('./derive-cache.js').nlBin() + '\n');
@@ -1724,6 +1782,30 @@ server.listen(PORT, HOST, () => {
   // reaches this callback, so at most one auditor cadence loop runs against
   // a given port.
   auditor.start();
+  // 2026-08-02 subprocess-storm fix — PUSH fast path (state-watch.js).
+  // Group 1: the on-disk state feeding the six nl-subcommand panes
+  // (heartbeats, signal-ledger.jsonl, needs-you ledger, doctor-cache.json,
+  // obs-costs-cache.json, remote-ledgers, docs/backlog.md) — a real change
+  // triggers a debounced cache.refreshAll() instead of waiting for
+  // cache.start()'s own timer, which is now only the anti-entropy floor.
+  stateWatchHandle = stateWatch.startStateWatch({
+    mainRepoRoot: mainRepoRoot,
+    onTrigger: () => cache.refreshAll().catch(() => {}),
+  });
+  // Group 2: the nl-maintenance dashboard snapshot directory — a SEPARATE
+  // group (see state-watch.js's opts.dirs doc) because this pane is
+  // already a materialized-snapshot disk read (buildMaintenancePane, never
+  // a spawn); a snapshot write should push the BROWSER to re-fetch it via
+  // the existing SSE channel, but must NOT also re-trigger the six
+  // nl-subcommand spawns, which have nothing to do with this snapshot.
+  maintenanceWatchHandle = stateWatch.startStateWatch({
+    dirs: [maintenanceSnapshotDir()],
+    onTrigger: broadcastRefresh,
+  });
 });
 
-module.exports = { server, cache, isLobotomized, auditor };
+module.exports = {
+  server, cache, isLobotomized, auditor,
+  getStateWatchHandle: () => stateWatchHandle,
+  getMaintenanceWatchHandle: () => maintenanceWatchHandle,
+};
