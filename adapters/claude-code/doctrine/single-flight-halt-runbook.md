@@ -41,6 +41,62 @@ Fail-open on every internal error path (unwritable state dir, missing `find`, a 
 race) — HALT is the only mechanism allowed to deliberately block real work. Bypass:
 `SF_DISABLE=1` (every self-test that needs to isolate itself from this guard uses it).
 
+### `sf_release` — releasing a resident-loop guard (HR-F1, 2026-08-03)
+
+`sf_guard`'s recursion guard is an exported env var that nothing clears automatically — a
+**run-to-exit assumption**. For a caller that acquires once and then runs to completion, process
+exit clears it for free. For a caller that lives inside a resident loop (the SAME process calling
+`sf_guard` for the SAME `<name>` on every pass — e.g. a `--daemon` mode), that assumption breaks:
+pass 1 acquires and exports the var; every later pass in that same process sees it already set,
+hits the recursion branch, and skips — forever. This is exactly what happened to
+`nl-maintenance.sh`'s `--daemon` mode (2026-08-03 harness review, finding HR-F1): it ticked
+exactly once, then silently wedged on its own guard for the rest of its life, while the watchdog
+kept relaunching new daemons on top of the stuck one (see "Daemon lifecycle" below).
+
+```
+sf_release <name>
+  Clears the recursion-guard env var and removes the cross-process mkdir lock for <name>.
+  Idempotent — a second call, or a call for a name this process never itself acquired, is a
+  silent no-op. Ownership-safe — it only acts when the recursion var IT set is still 1, so it
+  can never tear down a DIFFERENT process's active single-flight hold.
+```
+
+**The rule**: any `sf_guard` call site inside a resident loop MUST pair every acquire with an
+`sf_release` once that pass's guarded work is done — `guard -> work -> release`, every pass. A
+call site that runs to process exit after a single guard does not need to call `sf_release` at
+all. Get this wrong and the symptom is silent and easy to miss in review: the first pass works,
+every later pass quietly no-ops.
+
+## Daemon lifecycle: `nl-maintenance.sh --daemon` / `--watchdog` (HR-F1)
+
+`--daemon` loops `sf_guard "nl-maintenance-tick" -> tick body -> sf_release "nl-maintenance-tick"`
+once per pass (the resident-loop pattern above), so every pass writes a fresh heartbeat instead of
+only the first. `run_daemon` also writes its own pid to `daemon.pid` on startup.
+
+`--watchdog` (the one recurring OS task, fired every 300s by `install-maintenance-task.ps1`) now
+reads `daemon.pid` before relaunching on a stale heartbeat, and verifies the named pid's command
+line actually names `nl-maintenance` + `--daemon` before ever killing it:
+
+- **Verification order**: try `/proc/<pid>/cmdline` first (present under MSYS2/Git-Bash on
+  Windows and on Linux); fall back to `ps -fp <pid>` (`-f` is required — a bare `ps -p` on this
+  repo's MSYS2 `ps` prints only the executable path in `COMMAND`, never the args, which would
+  make identity verification impossible).
+- **Match**: kill the verified-stale daemon, then relaunch.
+- **Mismatch** (missing pid file, dead pid, or a live pid whose command line doesn't match —
+  e.g. Windows reused the pid for an unrelated process): **log-and-skip, never kill**, then
+  relaunch anyway. An unverified kill is unbounded harm (an innocent process dies); leaving a
+  genuine stale daemon alive for one extra relaunch cycle is bounded harm — and now self-healing,
+  because that daemon's own `sf_release`-per-pass fix means it keeps ticking correctly instead of
+  wedging, so two briefly-coexisting daemons is a transient, self-resolving condition, not
+  unbounded accumulation.
+- Under `HARNESS_SELFTEST=1`, both the kill and the relaunch are stubbed (logged, never
+  performed) — mirrors the existing relaunch-stub contract exactly.
+
+`nl-maintenance.sh --self-test`'s S11 exercises the daemon loop under the REAL guard (no
+`SF_DISABLE`) across 3 passes and asserts >= 2 distinct heartbeat writes plus the absence of any
+`recursion detected` message — the previous version of S11 ran under `SF_DISABLE=1`, which made it
+structurally incapable of catching HR-F1 at all.
+
 ## Relationship to the two guards that already existed — Chesterton's Fence
 
 - `hooks/lib/hook-reentry-guard.sh` (`NL_HOOK_REENTRY`) and
