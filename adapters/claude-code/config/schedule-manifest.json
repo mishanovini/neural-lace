@@ -54,7 +54,9 @@
       "id": "session-heartbeat",
       "description": "workstreams-heartbeat: per-session liveness refresh + stale-session conclude sweep (2026-08-02 brief's six-mechanism inventory)",
       "script": "adapters/claude-code/hooks/workstreams-emit.sh",
-      "script_args": ["--heartbeat"],
+      "script_args": [
+        "--heartbeat"
+      ],
       "installer": null,
       "managed_by": "nl-maintenance",
       "legacy_task_name": "NL-workstreams-heartbeat",
@@ -132,7 +134,9 @@
       "id": "doctor-verdict-refresh",
       "description": "NEW (Task 3, invariant 3 + D5): dedicated TTL-driven refresh of the doctor verdict cache (`harness-doctor.sh --quick`, which now self-writes ~/.claude/state/digest/doctor-cache.json -- see harness-doctor.sh's _doctor_verdict_cache_path). health-tick.sh's own hourly `session-start-digest.sh --refresh-doctor-cache` call already refreshes the SAME file on a coarser cadence; this entry gives it the D5-specified 30-minute TTL directly instead of waiting on health-tick's hourly slot.",
       "script": "adapters/claude-code/hooks/harness-doctor.sh",
-      "script_args": ["--quick"],
+      "script_args": [
+        "--quick"
+      ],
       "installer": null,
       "managed_by": "nl-maintenance",
       "legacy_task_name": null,
@@ -149,5 +153,10 @@
         }
       }
     }
-  ]
+  ],
+  "zero_substrate": {
+    "legacy_disabled_since": "2026-08-02",
+    "red_after_days": 14,
+    "note": "HR-F4 inverse clock (gated-pipeline T6/REQ-A4): legacy NL-* tasks Disabled at Stage 0 on this date; doctor WARNs on zero-substrate state and REDs red_after_days later. Cleared by the activation marker (T10 registration) or a fresh daemon heartbeat."
+  }
 }

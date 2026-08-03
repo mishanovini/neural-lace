@@ -3474,6 +3474,72 @@
       "retirement_condition": "None as a pipeline invariant (it IS D-15.3). Demotion condition stands in data: >3 ledgered FPs/week in calibration demotes to WARN pending trigger recalibration. Fields events/wired_template flip to [\"PreToolUse\"]/true at T17.",
       "honesty_rationale": "Entry lands with the skeleton commit (same merge train, HR-F9 generalization) so claimed-vs-actual never diverges: today's honest state is a --check-only tool with a 6/6 self-test; the manifest is updated again at T17 when it becomes an enforcing PreToolUse gate.",
       "honest_status": "SKELETON: fires today ONLY via explicit `dispatch-chain-gate.sh --check <plan>` invocation (6/6 self-test); NOT wired to any event. T17 of docs/plans/gated-pipeline-master-2026-08.md lands the PreToolUse Task|Agent wiring + the three-variant blocked-dispatch demo, flipping events/wired_template in the same merge train."
+    },
+    {
+      "id": "nl-maintenance-core",
+      "kind": "pattern",
+      "doctrine_file": "doctrine/single-flight-halt-runbook.md",
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/scripts/nl-maintenance.sh",
+          "adapters/claude-code/scripts/install-maintenance-task.ps1",
+          "adapters/claude-code/config/schedule-manifest.json"
+        ],
+        "keywords": [
+          "nl-maintenance",
+          "completion-anchored",
+          "maintenance tick"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "Windows-native central maintenance core (tick/daemon/watchdog + dashboard snapshot), self-tested 37/37 incl. S11-under-real-guard after the HR-F1 fix (6f5d1b22, re-reviewed PASS in docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md). NOT REGISTERED as a scheduled task on any machine: activation awaits DEC-4 operator ratification (gated-pipeline T10). Until then the maintenance-zero-substrates doctor check (HR-F4 inverse) carries the honest state."
+    },
+    {
+      "id": "doctor-verdict-cache",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [
+        "harness-doctor.sh"
+      ],
+      "events": [
+        "SessionStart",
+        "manual"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "Fingerprinted TTL verdict cache on the arbiter (9m12s cold -> 1.557s hit, measured). SINGLE-WRITER since d46beee5 (HR-F2 fix, re-reviewed PASS): the doctor's quick-mode writer is the only writer; the digest refresher is invoke-and-read-only; sf-skip serves-cache-or-exit-3 (never bare exit 0); fingerprint covers 4 config mtimes + HEAD + live-hooks newest-mtime + unstaged-dirty bit (staged-edit residual named in the review record). Proven by digest S23a-e (102/102)."
+    },
+    {
+      "id": "maintenance-both-substrates-alive",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [
+        "harness-doctor.sh"
+      ],
+      "events": [
+        "SessionStart",
+        "manual"
+      ],
+      "wired_template": true,
+      "selftest": false,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "BOTH migration directions since gated-pipeline T6: both-alive (activation marker present + legacy task still Enabled >=14d -> RED, original direction) AND zero-substrate (HR-F4 inverse: marker absent + heartbeat stale + all legacy Disabled -> WARN, RED after .zero_substrate.red_after_days from .zero_substrate.legacy_disabled_since in schedule-manifest.json — dates in data per the HR-F7 rule). Live-probed 2026-08-03: fires WARN on this machine's real zero-substrate state. selftest:false honest — no dedicated scenario yet (evidence Known gap #2 predecessor carry-over; probe evidence in the T6 evidence entry)."
     }
   ]
 }

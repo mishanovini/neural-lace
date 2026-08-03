@@ -2558,6 +2558,52 @@ check_maintenance_both_substrates_alive() {
   local activation="${live_home}/state/nl-maintenance/activation-marker"
 
   if [[ ! -f "$activation" ]]; then
+    # HR-F4 inverse direction (gated-pipeline T6, REQ-A4): the original check
+    # covered both-alive only and returned SILENTLY here — which is the
+    # estate's actual failure state (legacy Disabled, replacement never
+    # registered, NO recurring maintenance at all, doctor GREEN-capable
+    # throughout). Zero-substrate detection, data-driven per the HR-F7 rule:
+    # the clock and threshold live in schedule-manifest.json .zero_substrate
+    # {legacy_disabled_since: YYYY-MM-DD, red_after_days: N}; absent data =
+    # absent check (never a prose-only flip).
+    if [[ -f "$manifest" ]] && command -v jq >/dev/null 2>&1; then
+      local zs_since zs_days zs_managed
+      zs_since="$(jq -r '.zero_substrate.legacy_disabled_since // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+      zs_days="$(jq -r '.zero_substrate.red_after_days // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+      zs_managed="$(jq -r '[.mechanisms[] | select(.managed_by == "nl-maintenance")] | length' "$manifest" 2>/dev/null | tr -d '\r')"
+      if [[ -n "$zs_since" && "$zs_days" =~ ^[0-9]+$ && "$zs_managed" =~ ^[0-9]+$ && "$zs_managed" -gt 0 ]]; then
+        # A fresh daemon heartbeat (<2h) counts as a live substrate even
+        # pre-marker (tick-mode trials); only marker-absent AND heartbeat-
+        # stale AND no legacy task Enabled is truly zero-substrate.
+        local zs_hb="${live_home}/state/nl-maintenance/daemon.heartbeat.json"
+        local zs_hb_fresh=0 zs_now zs_hb_m
+        zs_now="$(date +%s 2>/dev/null || echo 0)"
+        if [[ -f "$zs_hb" ]]; then
+          zs_hb_m="$(date -r "$zs_hb" +%s 2>/dev/null || stat -c %Y "$zs_hb" 2>/dev/null || echo 0)"
+          [[ "$zs_hb_m" =~ ^[0-9]+$ && $(( zs_now - zs_hb_m )) -lt 7200 ]] && zs_hb_fresh=1
+        fi
+        local zs_legacy_enabled=""
+        if [[ "$zs_hb_fresh" -eq 0 ]] && command -v schtasks >/dev/null 2>&1; then
+          local zs_names zs_name zs_state
+          zs_names="$(jq -r '.mechanisms[] | select(.legacy_task_name != null) | .legacy_task_name' "$manifest" 2>/dev/null | tr -d '\r')"
+          while IFS= read -r zs_name; do
+            [[ -z "$zs_name" ]] && continue
+            zs_state="$(MSYS_NO_PATHCONV=1 schtasks /Query /TN "$zs_name" /FO LIST /V 2>/dev/null | tr -d '\r' | sed -nE 's/^Scheduled Task State:[[:space:]]*//p' | head -1)"
+            [[ "$zs_state" == "Enabled" ]] && zs_legacy_enabled="yes" && break
+          done <<< "$zs_names"
+          if [[ -z "$zs_legacy_enabled" ]]; then
+            local zs_since_epoch zs_age_days
+            zs_since_epoch="$(date -d "$zs_since" +%s 2>/dev/null || echo 0)"
+            zs_age_days=$(( (zs_now - zs_since_epoch) / 86400 ))
+            if [[ "$zs_age_days" -ge "$zs_days" ]]; then
+              _red "maintenance-zero-substrates" "ZERO maintenance substrates alive for ${zs_age_days}d (legacy tasks Disabled since ${zs_since}, NL-Maintenance never registered, no fresh heartbeat) -- ${zs_managed} managed_by=nl-maintenance mechanisms are running NOWHERE. Fix: complete DEC-4 ratification + register (docs/plans/gated-pipeline-master-2026-08.md T10), or re-enable a legacy task as a stopgap"
+            else
+              _warn "maintenance-zero-substrates" "zero maintenance substrates alive (legacy Disabled since ${zs_since}, replacement unregistered; RED at ${zs_days}d, now ${zs_age_days}d) -- T10 registration pending"
+            fi
+          fi
+        fi
+      fi
+    fi
     CHECKS_RUN=$((CHECKS_RUN + 1))
     return 0
   fi

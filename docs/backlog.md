@@ -3149,6 +3149,19 @@ the declared name, and never the absence of a declaration.**
 1. Regenerate the doctrine index + trim over-cap compacts → re-greens `Evals`.
 2. Fix the `stat -c %Y` arithmetic in `plan-edit-validator.sh:1467,1535` → re-greens
    `Server-side enforcement`.
+   **RESOLVED 2026-08-03 (gated-pipeline-master-2026-08 Task 8 triage), corrected diagnosis:**
+   the fault is NOT in production lines 1467/1535 (those `stat -c %Y ... || echo 0` call sites
+   are fine — GNU `stat -c` works correctly on both this machine and the Linux CI runner). The
+   actual break is in the self-test's OWN `F16_BINSHIM` fixture (around line 1118): a `stat`
+   shim built for the F16-F19 scenarios unconditionally translated `-c %Y` to
+   `/usr/bin/stat -f %m`, assuming `/usr/bin/stat` is BSD's. On GNU coreutils (this Windows/
+   MSYS2 checkout, and any GNU/Linux CI runner) `-f` means `--file-system` (dump filesystem
+   info, wrong shape entirely, not an error) — reproduced directly:
+   `/usr/bin/stat -f %m <file>` prints a multi-line `File: ... Block size: ... Inodes: ...`
+   block, which `age=$((now - mtime))` then chokes on exactly as this entry describes. Fixed by
+   trying the GNU form for real first (`/usr/bin/stat -c %Y "$@" 2>/dev/null || /usr/bin/stat -f %m "$@"`)
+   — verified `plan-edit-validator.sh --self-test` now 24/24 PASS (was 20/4). This should also
+   re-green CI's `Server-side enforcement` job (same self-test, same shim, same GNU runner).
 3. Only then widen `required_status_checks.contexts` to include push-produced job names
    (`Bash hooks --self-test`, `All-checks summary`, `Golden behavioral tests`,
    `Credential + hygiene-denylist scan (defense-in-depth backstop)`).
@@ -3157,3 +3170,64 @@ the declared name, and never the absence of a declaration.**
 5. Branch-push triggers are a COST decision, not a correctness one: adding `push:` for all
    branches multiplies Actions minutes by the ~20-branches/day worktree churn. Recommend
    `push: branches-ignore: [worktree-*, harness/active-sessions/*]` if adopted at all.
+
+## SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 — harness-doctor.sh's own P-14 jq-parity self-test
+cannot exercise its nonode fallback on Windows/MSYS2 (added 2026-08-03, gated-pipeline-master-
+2026-08 Task 8 doctor triage; label: `harness-gap`, `priority:medium`).
+
+**Symptom:** `harness-doctor.sh --self-test` reports 5 failing scenarios (`dpp-jq-parity-red`,
+`dpp-jq-parity-grandfather`, `ngeb-jq-parity-red`, `claim-honesty-jq-parity-red`,
+`budget-chains-jq-parity-red`) — exactly the P-14 finding
+(`docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md`). Each fails with "jq branch produced
+NOTHING on a fixture that must report."
+
+**Root cause, PROVEN, and it is NOT a doctor logic defect:** `_nonode_path()` (harness-doctor.sh
+~line 4139) builds a PATH-shim directory of symlinks to every tool the doctor needs except
+`node`, then `_run_quick_nonode` does `PATH="$shim" bash "$SELF_TEST_HOOK" --quick ...`. Because
+a bash prefix-assignment affects lookup of the command itself, this re-execs the SYMLINKED
+`bash` inside the shim. On Windows/MSYS2, `bash.exe` needs companion DLLs sitting next to the
+real binary — a bare symlink to the exe (no DLLs alongside it) fails to load at all. Reproduced
+directly: `PATH=<shim-dir> bash -c 'true'` → `error while loading shared libraries: ?: cannot
+open shared object file`. The child crashes before the doctor script (or the check being tested)
+ever runs, so grepping the check-id out of its (empty) output correctly reports "produced
+NOTHING" — the symptom is real, the cause is the shim's own launcher, not the checks'
+`node`/`jq` branching.
+
+**Independent confirmation the doctor's jq branches themselves are fine:** ran the real jq
+expressions standalone against live/fixture data outside the shim — e.g.
+`jq -r --arg ev Stop '[(.hooks[$ev] // [])[] | (.hooks // []) | length] | add // 0'
+~/.claude/settings.json` → `9`, exactly matching the live `budget-chains` RED count. No
+divergence found in any of the four checks' jq expressions by inspection either (mirrors the
+node branch logic line for line).
+
+**Fix (not done here — self-test-harness portability work, its own scoped task, same family as
+the existing macOS-portability program):** `_nonode_path()` needs a Windows-safe way to hide
+`node` from a child bash WITHOUT symlinking `bash` itself — e.g. don't put `bash` in the shim at
+all (let the child inherit the real, already-loaded interpreter via `$BASH`/`command -v bash`
+resolved BEFORE the PATH override, only restricting PATH for the grandchild `node`/`jq` lookups
+the script performs internally) or copy (not symlink) the real bash + its DLL directory into the
+shim. Until fixed, this 5-scenario failure is expected and reproducible on any Windows/MSYS2
+checkout; it does not indicate the doctor's non-node fallback is broken in production (Linux/
+macOS runners, real GNU/BSD `bash` resolves fine from a symlink — no DLL sidecar dependency).
+
+## MODEL-PIN-GATE-SELFTEST-NONHERMETIC-01 — model-pin-gate.sh's self-test intermittently reads
+live tier-exhaustion state instead of a fixed fixture (added 2026-08-03, gated-pipeline-master-
+2026-08 Task 8 doctor triage; label: `harness-gap`, `priority:low`).
+
+**Symptom:** `harness-doctor.sh --full`'s selftest-sweep (check 8) reported
+`model-pin-gate.sh --self-test exited 1: model-pin-gate self-test: 15 passed, 2 failed`. Running
+`bash adapters/claude-code/hooks/model-pin-gate.sh --self-test` directly, ~15 minutes later, gave
+**17 passed, 0 failed** — full GREEN, same commit, same file, no edits in between.
+
+**Diagnosis, HYPOTHESIZED (refuter: instrument the two "tier exhausted" scenarios to print the
+tier-state value they read at the moment of failure; if it is genuinely stable across both runs,
+this diagnosis is wrong):** the two scenario names most likely to be timing-sensitive are
+`pinned agent + tier exhausted → BLOCK naming fallback` and
+`explicit model:fable + fable exhausted → BLOCK naming fallback` — both PASSED in my direct
+run, and the sweep's own child ran under `nl_run_bounded` + `NL_SELFTEST_SWEEP=1` with a
+~15-20 minute gap in wall-clock, real machine tier-exhaustion state, from my run. A self-test
+whose outcome depends on real model-tier exhaustion (rather than an injected/mocked tier state)
+is non-hermetic by construction — it will flake whenever it happens to run near a tier
+boundary. Not chased further (would require reading model-pin-gate.sh's fixture-injection path
+in depth); flagged so a future pass hermeticizes the tier-state input for these two scenarios
+rather than reading `adapters/claude-code/config/model-policy.json`'s live state.
