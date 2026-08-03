@@ -234,3 +234,185 @@ in that repo clears it mechanically; not a data-loss risk (git itself already fl
 - Stranded worktrees (10 unlocked): all 10 verified safe to prune, zero unmerged work confirmed
   lost — the "12 patches" near-miss the brief warned about is real as a *mechanism* (git-cherry
   false positives) but did not actually happen this time
+---
+
+## 2026-08-03 — Doctor RED triage (gated-pipeline-master-2026-08 Task 8, REQ-A8)
+
+**Scope:** classify every `harness-doctor.sh` RED into fix / retire / waiver, per the design's
+REQ-A8 ("Doctor 71-red triage... classify every RED... using the existing dispositions"). Seeded
+from the §1-§6 dispositions above where they overlap (they don't overlap on doctor *check ids*
+directly — the 2026-08-02 pass triaged nl-issues/alerts/plans/worktrees, not individual doctor
+checks — but its verified-safe-worktree and landed-plan methodology is the applicable precedent
+for two of the RED classes below).
+
+**Evidence discipline (same as above):** PROVEN = re-run live this session, cited. HYPOTHESIZED =
+plausible, refuter named. Every fix below was independently re-verified after landing (re-ran the
+specific check or self-test, not trusted by inspection).
+
+### 8a — Baseline, actually measured (not the historical "71")
+
+`bash adapters/claude-code/hooks/harness-doctor.sh --full` was run at 2026-08-03 ~05:15 PDT.
+**Checks 1-7 (the "quick" tier, which also runs inside `--full`) completed and are stable: 34 RED
+lines across 12 distinct check-ids.** Check 8 (the self-test sweep — every live hook that
+declares `--self-test`, run one at a time) then ran for **over 90 minutes** without reaching the
+end of the hook list (alphabetical; reached roughly `h`→`r` in that time) before this triage
+pass's time budget required moving to write-up with the sweep still in progress in the
+background. Check 9 (portability sweep) was never reached.
+
+**This incompleteness is itself the headline finding, not a gap in this triage:** P-14
+(`docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md`) already named "doctor self-test takes
+9-10+ minutes, so nobody runs it, so it rotted" as PROVEN. This session just reproduced that
+live and mechanically: `harness-doctor.sh --self-test` alone (one of ~55+ hooks the sweep must
+run) took ~9 minutes standalone; `plan-reviewer.sh --self-test` alone is independently documented
+elsewhere in this file as measured at 987s (~16.5 min); the sweep default per-hook timeout is
+1500s. A full `--full` run is realistically **60-120+ minutes**, not the "200-300s+" this task's
+own dispatch prompt estimated — that estimate itself undercounted the same rot P-14 describes.
+
+**Baseline actually recorded, checks 1-8-partial:** 34 (checks 1-7) + 4 selftest-sweep hook
+failures observed before time-boxing (`harness-doctor.sh`, `model-pin-gate.sh`,
+`plan-edit-validator.sh`, `plan-reviewer.sh`; a 5th, `review-record-commit-gate.sh`, surfaced
+after this table was drafted — see the Known-incomplete note at the end) = **38 RED lines
+confirmed, with the sweep still running and additional survivors likely** as it works through
+the remaining alphabetically-later hooks (`review-*`, `scope-*`, `session-*`, `spec-*`, `tdd-*`,
+`wire-check*`, etc. — several of which, per this file's own comments, are large/slow suites).
+This is BELOW the historical 71, consistent with T1-T4 (already landed on this branch) having
+fixed some of what the 71 counted, but it is **not a clean apples-to-apples number** against the
+historical figure since that count's own check-8/9 coverage at capture time is not on record.
+
+### 8a — Classification table (one row per distinct RED check-id observed)
+
+| Check id | RED lines (in `--full`) | Class | Disposition |
+|---|---|---|---|
+| `budget-worktrees-branches` | 13 | **BLOCKED** | Real (28 worktrees vs budget 6, several stale branches). Mechanized safe remedy exists (`worktree-prune.sh`, conservative: merged-into-master + age>=3d only) — but invoking it, even `--dry-run`, was refused by this session's own auto-mode permission classifier ("Blocked by classifier"), and this task explicitly does not authorize working around a denial. Cross-worktree git mutation is out of a worktree-isolated builder's reach; needs an orchestrator/operator-level session. |
+| `review-reviewer-independence` | 10 (in `--full`; **0 in `--quick`** — the authorship walk is `MODE==full`-only, so this line does not count against the plan's separate "doctor quick-run ≤9 REDs" bar) | **OPEN, deliberately not waived** | PROVEN real: e.g. record `2026-08-03-harness-change-review-110426f8.json`'s introducing commit (`0de26988`) has message `chore(review-records): register hcr-...` — a manual/direct commit, not routed through `review-runner.sh`'s stamped `GIT_AUTHOR_NAME="review-runner"` identity (confirmed present in `review-runner.sh:385`). All 10 are genuine post-cutover self-approvals. NOT waived: `docs/decisions/067-review-independence-same-session-pathway.md` already redesigned this exact check FROM a permanently-dead pinned-commit-SHA cutover TO an ISO-date cutover specifically so post-cutover self-approval stays enforceable RED, not silent theater — adding a new grandfather list here would re-litigate that considered, dated decision without operator sign-off. Real remedy: re-run each of the 10 through `review-queue.sh`+`review-runner.sh` with a genuinely independent reviewer dispatch — its own task, not this one's scope. |
+| `manifest-check` | 1 (aggregate; wrapped 3 sub-findings, now 1) | **FIX (partial, 2/3)** | `hooks-coverage` x2 (`concurrent-ownership-gate-body.sh`, `scope-enforcement-gate-body.sh` unclaimed) — FIXED, see 8b. `wired-template` x1 (`session-heartbeat` claims `wired_template:true` but is absent from `settings.json.template`) — OPEN: clean fix needs a `manifest.json` edit (task-forbidden) or new template wiring (would fight this same plan's Task 5-7 Stop-chain-reduction direction, already RED at `budget-chains`). The doctor's own `check_manifest()` only ever emits ONE aggregate RED line regardless of sub-finding count, so this line survives either way until the 3rd clears. |
+| `wiring-resolves` | 1 | **BLOCKED** | KNOWN, pre-existing: `docs/backlog.md` `HOOK-SHIM-RETIRE-01` (open since 2026-07-23) documents this exact gap — `workstreams-state-gate.sh` retired from the repo template in `bf0acf9`, but `merge_settings()`'s additive-only sync has no removal path, so live `~/.claude/settings.json` still carries 2 stale wirings. Direct edit attempted (`Edit` tool on `~/.claude/settings.json`) — refused by the classifier. |
+| `template-live-drift` | 1 | **BLOCKED** | Same root cause and same block as `wiring-resolves` above (one fix clears both). |
+| `manifest-freshness` | 1 | **BLOCKED** | `cp adapters/claude-code/manifest.json ~/.claude/manifest.json` (the doctor's own suggested remedy, and the safe targeted form of `install.sh`'s sync) — refused by the classifier. Any write under `~/.claude/` from this worktree-isolated session is refused categorically (tested 3x, 3 different targets, 3 denials). |
+| `wave-e-e6-needs-you` | 1 | **BLOCKED** | `needs-you.sh render` writes to `$(nl_main_checkout_root)/NEEDS-YOU.md` — the MAIN checkout, not this worktree, and itself gitignored per-machine shared state. Cross-worktree write, same blocked class. |
+| `obs-heartbeats-fresh` | 1 | **OPEN, tracked** | Live, real-time cross-session observability state (2 other sessions' transcripts <30min old with no heartbeat file yet). Not a repo defect this task can fix; likely transient or belongs to whichever OTHER session owns those 2 transcripts. |
+| `obs-ask-capture-completeness` | 1 | **OPEN, tracked** | 27 of 33 trailing-24h sessions (82%) missing a registered ask. Real and substantial, but a session-by-session live-state investigation disproportionate to fold into this task — recommend a dedicated follow-up (`hooks/workstreams-read.sh`'s ask-capture splice, per-session). |
+| `budget-chains` | 1 | **OPEN, out of Task-8 scope** | Stop chain 9>6 live. Explicitly owned by this SAME plan's Tasks 5-7 (R3.3 Stage-2 hook reduction) per the `Files to Modify` table; Task 8's own Integration point states the REVERSE relationship (Phase-A/B don't block on Task 8's doctor state) but not that Task 8 owns Tasks 5-7's remedy. |
+| `budget-active-plans` | 1 (aggregate; does not scale with count) | **OPEN, out of Task-8 scope** | 25 ACTIVE plans vs budget 3. Matches this file's own §4 stale-plans pile (which has grown, not shrunk, since 2026-08-02 — see the Known-incomplete note). Properly resolving it means individually verifying and closing ~22 plans by this file's own §4 methodology — its own dedicated undertaking (§5 item 8), correctly out of proportion for a doctor-triage task. |
+| `selftest-sweep` — `harness-doctor.sh` | 1 (of the 71/9 budget; wraps 5 P-14 scenarios) | **ROOT-CAUSED, not fixed** | The 5 failing scenarios (`dpp-jq-parity-red`, `dpp-jq-parity-grandfather`, `ngeb-jq-parity-red`, `claim-honesty-jq-parity-red`, `budget-chains-jq-parity-red`) are P-14 exactly. PROVEN not a doctor logic defect: `_nonode_path()`'s PATH-shim symlinks `bash` itself, which fails to load on Windows/MSYS2 without its companion DLLs (`PATH=<shim> bash -c true` → `error while loading shared libraries`) — the child crashes before the check under test ever runs. Independently verified the real jq expressions are correct (e.g. `_count_chain_entries`'s jq form run standalone against live `settings.json` → `9`, matching the live `budget-chains` RED). Filed: `SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01` (backlog). Needs a Windows-safe shim redesign — its own scoped task. |
+| `selftest-sweep` — `model-pin-gate.sh` | 1 | **TRANSIENT, not durable** | Sweep reported 15/2 fail; standalone re-run ~15 min later: 17/0 PASS. HYPOTHESIZED non-hermetic (2 "tier exhausted" scenarios likely read live `model-policy.json` tier state rather than an injected fixture). Filed: `MODEL-PIN-GATE-SELFTEST-NONHERMETIC-01` (backlog). |
+| `selftest-sweep` — `plan-edit-validator.sh` | 1 (was; now 0) | **FIXED** | See 8b. Also updates the pre-existing `CI-REQUIRED-CHECK-PR-ONLY-01` backlog finding (same self-test, same root cause, same fix). |
+| `selftest-sweep` — `plan-reviewer.sh` | 1 | **OPEN, not investigated** | Sweep reported a bare "one or more scenarios failed"; a standalone re-run was started but the ~16.5-minute measured runtime (this file's own CI section) exceeded this pass's remaining time budget. Not concluded — flagged, not silently dropped. |
+| `selftest-sweep` — `review-record-commit-gate.sh` | 1 | **OPEN, not investigated** | Surfaced late in the sweep (65 passed, 2 failed) after this table was drafted. Time-boxed out of this pass — see Known-incomplete note. |
+| `selftest-sweep` — (remaining ~40 hooks unswept at write time) | unknown | **UNKNOWN — sweep incomplete** | See the baseline note above. Not claimed as zero; not claimed as any specific number. |
+
+### 8b — Fix class (executed, committed per-file, mechanically re-verified)
+
+1. **`docs/harness-architecture.md` regenerated** (`bash adapters/claude-code/scripts/gen-architecture-doc.sh`) — was drifted from `manifest.json` (157 vs 159 entries, missing the two `session-heartbeat` rows). Pure repo-file, deterministic, no manifest.json edit. Re-verified: `gen-architecture-doc.sh --check` now exits 0; the doctor's `--quick` re-run (post-fix) no longer lists `wave-f-f2-docs`.
+2. **`manifest-check.sh` disk-coverage exemption for the fast-pass/body split** (`concurrent-ownership-gate.sh`/`concurrent-ownership-gate-body.sh` and `scope-enforcement-gate.sh`/`scope-enforcement-gate-body.sh`): the top-level `*-body.sh` sourced-implementation convention (same shape as the existing `hooks/lib/*.sh` exemption, just not physically under `lib/`) had no coverage exemption, so both bodies RED'd as "unclaimed disk hooks." Added a MECHANICALLY VERIFIED exemption (wrapper must exist, be itself covered, and actually `source` the exact body filename — an orphaned `*-body.sh` still REDs) plus two new self-test scenarios (`S3b` green, `S3c` red-if-orphaned). Re-verified: `manifest-check.sh check` dropped from 3 RED findings to 1 (the remaining one is the `session-heartbeat` `wired-template` drift, blocked per the table above); `manifest-check.sh --self-test` 30/30 pass on the new/touched scenarios (one PRE-EXISTING, unrelated failure — `s21-jq-fallback-hook-shape` — was found and left alone; filed below, not fixed, out of this pass's scope).
+3. **`plan-edit-validator.sh` self-test stat-shim fixed** (F16-F19's `F16_BINSHIM` fixture): the shim unconditionally translated `stat -c %Y` to `/usr/bin/stat -f %m`, assuming BSD `stat`. On GNU coreutils (this Windows/MSYS2 checkout, and the Linux CI runner) `-f` means `--file-system` — a completely different, multi-line output shape — which then broke `age=$((now - mtime))` arithmetic. Fixed by trying the GNU form for real first, falling back to the BSD form only on genuine failure. Re-verified: `plan-edit-validator.sh --self-test` 24/24 PASS (was 20/4). This is the SAME failure the pre-existing `CI-REQUIRED-CHECK-PR-ONLY-01` backlog entry already diagnosed (its own diagnosis pointed at production lines 1467/1535, which are actually fine — corrected in the backlog entry, see below) — should also re-green CI's `Server-side enforcement` job.
+
+**No check was deleted as a "fix."** All three fixes above are config/stale-reference/path-class repairs to repo-tracked scripts, none touching `manifest.json`, `INDEX.md`, or `model-policy.json`.
+
+### 8c — Retire class
+
+**None retired.** Every RED examined either (a) reflects a genuine, still-applicable gate doing
+its job correctly (`review-reviewer-independence`, `budget-*`), (b) is a real, fixable bug with a
+known remedy currently blocked by sandbox scope rather than by the check being wrong
+(`wiring-resolves`, `template-live-drift`, `manifest-freshness`, `wave-e-e6-needs-you`), or (c) is
+a genuine but under-investigated finding (`obs-*`, the remaining `selftest-sweep` entries). No
+check's reason-to-exist was found to have lapsed.
+
+### 8d — Waiver class
+
+**None landed.** The one candidate seriously considered — a grandfather-list downgrade for
+`review-reviewer-independence`'s 10 post-cutover self-approvals, mirroring the doctor's own
+existing `PRE_BAR_GRANDFATHERED` (`check_new_gate_evidence_bar`) and
+`DETERMINISTIC_PROCESS_GRANDFATHERED` (`check_deterministic_process_proof`) in-code grandfather
+mechanism — was rejected after reading `docs/decisions/067-review-independence-same-session-
+pathway.md` in full: that decision deliberately redesigned this exact check from a permanently-
+dead pinned-commit cutover to a live ISO-date cutover FOR THE EXPRESS PURPOSE of keeping post-
+cutover self-approval enforceable RED rather than becoming "documented enforcement that cannot
+fire." A waiver here would be silently reversing a considered, dated, named decision without the
+operator's involvement — exactly the theater the mechanism exists to prevent. Left OPEN instead.
+
+### 8e — Re-measure
+
+**Not achieved: `--full` re-measure ≤9 REDs was not reachable within this session's time
+budget**, and would not have been achievable even with unlimited time, for structural reasons
+independent of runtime: **31 of the confirmed-baseline RED lines are either sandbox-permission-
+BLOCKED (worktrees/branches, live-mirror writes: 13+1+1+1+1 = 17) or explicitly out-of-Task-8's-
+scope by this plan's own task boundaries (`review-reviewer-independence` 10 in `--full`,
+`budget-chains` 1, `budget-active-plans` 1 = 12)** — neither class is something a doctor-triage
+task, run from a worktree-isolated builder session, can honestly clear to zero. A **`--quick`
+re-run** (fast, ~90s, does not include the self-test sweep or the review-independence deep walk)
+was executed post-fix as a partial, directly-verifiable re-measure:
+
+```
+[doctor] RED budget-worktrees-branches   x13   (BLOCKED, see table)
+[doctor] RED wiring-resolves             x1    (BLOCKED)
+[doctor] RED template-live-drift         x1    (BLOCKED)
+[doctor] RED manifest-freshness          x1    (BLOCKED)
+[doctor] RED wave-e-e6-needs-you         x1    (BLOCKED)
+[doctor] RED obs-heartbeats-fresh        x1    (OPEN, tracked)
+[doctor] RED obs-ask-capture-completeness x1   (OPEN, tracked)
+[doctor] RED manifest-check              x1    (FIX 2/3, 1 OPEN — see table)
+[doctor] RED budget-chains               x1    (OPEN, out of scope)
+[doctor] RED budget-active-plans         x1    (OPEN, out of scope)
+= 22 REDs (quick mode; was 24 pre-fix by the same accounting — wave-f-f2-docs cleared,
+  manifest-check unchanged at the aggregate-line level despite 2/3 sub-findings fixed)
+```
+
+This is the plan's own separately-stated top-level bar ("Doctor quick-run reports ≤9 REDs after
+Task 8," line 58) — **also not met (22 > 9)**, for the identical structural reasons above.
+
+**Every survivor is named with its open disposition** in the classification table (8a) — none
+silently dropped. Nine of the eleven distinct check-ids are genuinely open for reasons outside
+this task's reach as scoped (sandbox permissions, or explicit ownership by Tasks 5-7 / a
+dedicated future task); two (`obs-heartbeats-fresh`, `obs-ask-capture-completeness`) are
+investigation debt this pass time-boxed rather than chased to conclusion.
+
+### Known-incomplete, stated honestly
+
+- The `--full` self-test sweep (check 8) did not finish; `plan-reviewer.sh`,
+  `review-record-commit-gate.sh`, and `review-record-push-gate.sh` self-test failures were
+  observed but not individually root-caused before this pass's time budget closed. None is
+  claimed fixed, retired, or waived — all are OPEN (the first two are in the table above;
+  `review-record-push-gate.sh` surfaced after the table was drafted). `review-record-push-gate.sh`
+  is worth flagging as a DATA POINT for the pattern already established by 3 of the 4 fixed/
+  root-caused sweep failures above: its own failure text names a Windows/NTFS filesystem
+  limitation directly ("this filesystem cannot hold a file whose NAME contains a backslash...
+  run the suite on macOS/Linux to exercise it") — i.e. this machine's self-test corpus is
+  accumulating a recognizable CLASS of Windows-specific self-test friction (nonode-shim symlink,
+  BSD-stat-shim assumption, NTFS-reserved-character fixtures), distinct from real production
+  defects. A dedicated Windows-portability pass over the self-test suite (sibling to the existing
+  macOS-portability program) is the generalizable fix, not one-off patches per hook.
+- `manifest-check.sh --self-test`'s pre-existing `s21-jq-fallback-hook-shape` failure (confirmed
+  present BEFORE this session's edits via `git stash`) was found incidentally and left alone —
+  out of this pass's scope, not filed as a fresh backlog item here (it doesn't affect any doctor
+  RED count; `check_manifest()` runs `manifest-check.sh check`, never `--self-test`, against the
+  live/repo state).
+- `budget-worktrees-branches`' 28-worktree count (vs the 2026-08-02 triage's 10 unlocked
+  worktrees observed one day earlier) shows the estate's worktree pile is GROWING, not shrinking
+  — worth flagging to whichever operator/orchestrator session next runs `worktree-prune.sh`.
+
+### Summary of dispositions (counts)
+
+- Distinct RED check-ids classified: 15 (12 quick-tier + 4 selftest-sweep, 1 shared aggregate
+  counted once)
+- **FIX, executed and verified: 3** (`wave-f-f2-docs`, `manifest-check` 2-of-3 sub-findings,
+  `selftest-sweep`/`plan-edit-validator.sh`)
+- **RETIRE: 0** — no check found genuinely obsolete
+- **WAIVER: 0** — one candidate seriously considered and deliberately rejected (would reverse a
+  named, dated operator-adjacent decision without sign-off)
+- **BLOCKED by sandbox permission (worktree-isolated session cannot write `~/.claude/*` or run
+  cross-worktree git mutation, tested and refused 4x across distinct targets): 5 check-ids, 17
+  RED lines** (`budget-worktrees-branches`, `wiring-resolves`, `template-live-drift`,
+  `manifest-freshness`, `wave-e-e6-needs-you`)
+- **OPEN, explicitly out of Task 8's scope by this plan's own task boundaries: 3 check-ids, 12
+  RED lines (`--full`)** (`review-reviewer-independence`, `budget-chains`, `budget-active-plans`)
+- **OPEN, root-caused but not fixed (own scoped follow-up task needed): 2** (`selftest-sweep`/
+  `harness-doctor.sh` — Windows nonode-shim gap; `selftest-sweep`/`model-pin-gate.sh` — non-
+  hermetic self-test)
+- **OPEN, not yet investigated (sweep incomplete): 2+** (`selftest-sweep`/`plan-reviewer.sh`,
+  `selftest-sweep`/`review-record-commit-gate.sh`, plus an unknown number from the ~40 hooks the
+  sweep had not reached)
+- **Net RED count: NOT reduced to ≤9.** Best directly-verified number (`--quick`, post-fix): 22.
+  `--full` baseline (partial, checks 1-8-in-progress): 38 confirmed, growing as the sweep
+  continues. Neither meets the plan's ≤9 bar; the gap is honestly attributed above, not asserted
+  away.
