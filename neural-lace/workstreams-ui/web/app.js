@@ -71,6 +71,7 @@
       refreshBtn, refreshFeedback,
       interruptStrip,
       needsMeBody, statusBody, healthBody, costsBody, shippedBody, backlogHealthBody,
+      maintenanceBudgetBody,
       lastLookAnchor, markSeenBtn,
       whyScrim, whyDrawer, whyTitle, whyBody, whyClose,
       diagnosticsBody, machinesBody;
@@ -1047,13 +1048,75 @@
       fetchPane('health').then(renderHealth),
       fetchPane('costs').then(renderCosts),
       fetchPane('backlog').then(renderBacklog),
+      fetchPane('maintenance-budget').then(renderMaintenanceBudget),
       fetchReconciler().then(renderReconciler),
     ]).then(renderInterruptStrip);
   }
   function renderLoadingIfEmpty() {
-    [statusBody, needsMeBody, shippedBody, healthBody, costsBody, backlogHealthBody].forEach(function (el) {
+    [statusBody, needsMeBody, shippedBody, healthBody, costsBody, backlogHealthBody, maintenanceBudgetBody].forEach(function (el) {
       if (!el.hasChildNodes()) renderLoading(el);
     });
+  }
+
+  // Maintenance budget pane — harness-execution-redesign-2026-08 Task 3.
+  // Renders R3.3 inventory (hooks-per-Bash / SessionStart spawns / legacy
+  // scheduled tasks still enabled) each with a color-coded chip (text +
+  // color, never color-only — a11y baseline, same convention as costs'
+  // per-session status chips), the cost-budget table, and the gate-
+  // friction rows OR an honest "not available yet" note (rc=0 with
+  // data.gate_friction.available=false is a legitimate empty state, not
+  // an error — Task 2's remaining scope owns the ledger writer).
+  function renderMaintenanceBudget(resp) {
+    setAge('maintenance', resp.derived_at, resp.rc !== 0 && !isLoading(resp));
+    if (isLoading(resp)) { renderLoading(maintenanceBudgetBody); return; }
+    if (resp.rc !== 0) { renderError(maintenanceBudgetBody, resp); return; }
+    var d = resp.data || {};
+    var inv = d.inventory || {};
+    maintenanceBudgetBody.innerHTML = '';
+
+    function invRow(label, cell, target) {
+      var row = document.createElement('div');
+      row.className = 'maint-row';
+      var v = (cell && (cell.live != null ? cell.live : cell.count));
+      var overBudget = (typeof v === 'number' && typeof target === 'number' && v > target);
+      var chip = document.createElement('span');
+      chip.className = 'chip maint-chip-' + (overBudget ? 'over' : 'ok');
+      chip.textContent = (v == null ? '—' : v) + ' / target ' + target;
+      row.textContent = label + ': ';
+      row.appendChild(chip);
+      maintenanceBudgetBody.appendChild(row);
+    }
+    invRow('hooks per Bash call', inv.hooks_per_bash, inv.hooks_per_bash && inv.hooks_per_bash.target);
+    invRow('SessionStart spawns', inv.sessionstart_spawns, inv.sessionstart_spawns && inv.sessionstart_spawns.target);
+    invRow('legacy scheduled tasks still enabled', inv.legacy_scheduled_tasks_enabled, inv.legacy_scheduled_tasks_enabled && inv.legacy_scheduled_tasks_enabled.target_max);
+
+    var costRows = Array.isArray(d.cost_budget) ? d.cost_budget : [];
+    if (costRows.length > 0) {
+      var table = document.createElement('table');
+      table.className = 'maint-cost-table';
+      costRows.forEach(function (r) {
+        var tr = document.createElement('tr');
+        var idTd = document.createElement('td'); idTd.textContent = r.id; tr.appendChild(idTd);
+        var cadTd = document.createElement('td'); cadTd.textContent = (r.declared_cadence_seconds != null ? r.declared_cadence_seconds + 's cadence' : '—'); tr.appendChild(cadTd);
+        var costTd = document.createElement('td');
+        costTd.textContent = (r.est_spawn_ms_per_day != null ? Math.round(r.est_spawn_ms_per_day) + ' ms/day' : '(cost not priced: ' + (r.managed_by || 'unknown') + ')');
+        tr.appendChild(costTd);
+        table.appendChild(tr);
+      });
+      maintenanceBudgetBody.appendChild(table);
+    }
+
+    var friction = d.gate_friction || {};
+    var frictionNote = document.createElement('div');
+    frictionNote.className = 'maint-note';
+    if (friction.available && Array.isArray(friction.rows) && friction.rows.length > 0) {
+      frictionNote.textContent = 'gate friction: ' + friction.rows.map(function (r) {
+        return r.gate + ' (' + r.blocks + ' blocks, ' + r.workarounds + ' workarounds)';
+      }).join(', ');
+    } else {
+      frictionNote.textContent = 'gate friction: not available yet (ledger not written on this machine)';
+    }
+    maintenanceBudgetBody.appendChild(frictionNote);
   }
 
   // ============================================================
@@ -1277,6 +1340,7 @@
     needsMeBody = $('needsMeBody'); statusBody = $('statusBody');
     healthBody = $('healthBody'); costsBody = $('costsBody');
     shippedBody = $('shippedBody'); backlogHealthBody = $('backlogHealthBody');
+    maintenanceBudgetBody = $('maintenanceBudgetBody');
     lastLookAnchor = $('lastLookAnchor'); markSeenBtn = $('markSeenBtn');
     whyScrim = $('whyScrim'); whyDrawer = $('whyDrawer');
     whyTitle = $('whyTitle'); whyBody = $('whyBody'); whyClose = $('whyClose');

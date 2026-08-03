@@ -372,6 +372,18 @@ Hooks are shell scripts that run automatically at specific lifecycle points. Con
 
 **Why:** The 2026-08-02 self-DoS incident's trigger was a wiring-marker-only debounce (`NL_SESSIONSTART_ORIGIN`) that only protects the ONE call site remembering to set it — a resume-origin invocation sailed through and 16 concurrent doctor chains followed. This lib is the unconditional, library-level fix (harness-execution-redesign-2026-08 Task 1); see `docs/plans/harness-execution-redesign-2026-08.md` and `adapters/claude-code/doctrine/single-flight-halt-runbook.md` for the full runbook.
 
+#### Central maintenance core (`scripts/nl-maintenance.sh`) + platform adapters
+**When:** Stage 1 of the execution-layer redesign (Task 3). Replaces the six per-machine scheduled tasks (coord-sync, supervisor-tick, workstreams-heartbeat, session-resumer, health-tick, plus a new dedicated doctor-verdict-refresh job) with completion-anchored INTERNAL jobs hosted by one portable bash core, reading its job table from `config/schedule-manifest.json`.
+**What it does:**
+1. `--tick` runs every due job (`bash <script> <args>`, unchanged — the core schedules, it never forks the scripts' own logic) then refreshes a TTL-gated dashboard snapshot; single-flighted via `single-flight-lib.sh`, honors HALT.
+2. `--daemon` loops `--tick` + sleep, writing a heartbeat every pass (fresh even while HALTed — freshness, not liveness).
+3. `--watchdog` is the ONE remaining recurring OS task's actual command: checks the heartbeat's freshness and relaunches `--daemon` (backgrounded) only if stale.
+4. Platform adapters register that one watchdog task: `scripts/install-maintenance-task.ps1` (Windows `schtasks`, `MultipleInstances IgnoreNew`, same-stage disables the legacy per-mechanism tasks) and `scripts/install-maintenance-task-darwin.sh` (macOS `launchd` LaunchAgent, mirrors `ensure-cockpit.sh`'s darwin pattern).
+5. `harness-doctor.sh --quick` gained a self-serving verdict cache (reusing `session-start-digest.sh`'s pre-existing `~/.claude/state/digest/doctor-cache.json`): a fresh, fingerprint-matched entry short-circuits `run_quick_checks` entirely (`NL_FORCE=1` / `--no-cache` force + ledger a bypass row). Measured on this machine: cold `--quick` ≈ 9m12s even against a clean live-mirror fixture; a cache hit ≈ 1.6s.
+6. The workstreams-ui cockpit's Harness Health tab gained a "Maintenance budget" pane (`GET /api/pane/maintenance-budget`, direct read of the dashboard snapshot — no derive-cache indirection) showing R3.3 inventory counts vs targets, per-mechanism cost×fire-rate, and gate-friction rows once Task 2's remaining scope ships that ledger.
+
+**Why:** R3.1 (2026-08-02c) rules out WSL2/systemd; the fallback the considerations brief names is "central management logic, distributed cheap execution, scheduled by the OS scheduler each machine already has" — this is that core. See `docs/plans/harness-execution-redesign-2026-08.md` Task 3 and `docs/designs/harness-execution-redesign-considerations-2026-08-02.md` §2 (invariants 2, 3, 5, 9, 11).
+
 #### Safety Hooks (inline in settings.json)
 **PreToolUse hooks that block dangerous actions at the tool level:**
 - Editing `.env`, `.env.local`, `.env.production`, `credentials.json`, `secrets.yaml` → **BLOCKED**
