@@ -1,7 +1,7 @@
 # Fixture: valid-chain plan (gated-pipeline-master-2026-08 Task 1)
 
 Status: ACTIVE
-design-ref: adapters/claude-code/tests/fixtures/review-chain/valid-chain-design.md@DESIGN_BLOB_PLACEHOLDER
+design-ref: adapters/claude-code/tests/fixtures/review-chain/valid-chain-design.md@a50754fe60d0f726e80afdbb28d3deb9b31d4f9c
 
 A plan fixture with a fully valid `## Review Chain` block — every rule (record
 parse, three-way anchor match, dispatch-ledger cross-check) passes for both
@@ -11,11 +11,11 @@ prove a genuinely valid chain is never blocked.
 
 ## Review Chain
 authored-by: design-author (model: fable)
-design-ref: adapters/claude-code/tests/fixtures/review-chain/valid-chain-design.md@DESIGN_BLOB_PLACEHOLDER
+design-ref: adapters/claude-code/tests/fixtures/review-chain/valid-chain-design.md@a50754fe60d0f726e80afdbb28d3deb9b31d4f9c
 design-reviews:
   - reviewer: architecture-reviewer  verdict: SOUND  record: adapters/claude-code/tests/fixtures/review-chain/design-review-record.md
 plan-reviews:
-  - reviewer: plan-fidelity-reviewer  verdict: PASS  record: adapters/claude-code/tests/fixtures/review-chain/plan-review-record.md  plan-blob: PLAN_BLOB_PLACEHOLDER
+  - reviewer: plan-fidelity-reviewer  verdict: PASS  record: adapters/claude-code/tests/fixtures/review-chain/plan-review-record.md  plan-blob: 0fefd2f45dd96454e71d954ae8b2cfb074d7c42a
 
 ## Goal
 
