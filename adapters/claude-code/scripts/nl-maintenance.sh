@@ -293,10 +293,9 @@ _nm_run_job() {
 # heavier doctor-verdict TTL). Computes: hooks-per-Bash, SessionStart
 # spawn count (from settings.json.template, LIVE-settings when present),
 # per-mechanism cost x fire-rate from schedule-manifest.json, and gate-
-# friction from a workaround ledger IF one exists yet (Task 2's remaining
-# scope owns building the ledger writer -- see In-flight scope updates in
-# the plan; this reader degrades to an honest empty state, never fakes
-# data, when the file is absent).
+# friction read from lib/workaround-sensor-lib.sh's ws_record ledger (HR-F6
+# fix, gated-pipeline-master-2026-08 Task 5 -- this reader degrades to an
+# honest empty state, never fakes data, when the ledger file is absent).
 # ----------------------------------------------------------------------
 _nm_dashboard_ttl_seconds() { printf '%s' "${NL_MAINT_DASHBOARD_TTL_SECONDS:-300}"; }
 
@@ -384,19 +383,39 @@ _nm_refresh_dashboard_snapshot() {
     [[ -z "$cost_rows" ]] && cost_rows="[]"
   fi
 
-  # Gate friction: reads a workaround ledger IF one exists yet. Schema
-  # (proposed here, honest about not being pre-agreed -- Task 2's
-  # remaining scope owns the writer; see the plan's In-flight scope
-  # updates for this exact note): one JSONL line per event,
-  # {"ts":"...","gate":"<name>","event":"block"|"workaround"|"check"}.
+  # Gate friction (HR-F6 fix, gated-pipeline-master-2026-08 Task 5 /
+  # REQ-A3): reads the REAL writer, lib/workaround-sensor-lib.sh's
+  # ws_record ledger (default ~/.claude/state/workaround-sensor.jsonl),
+  # not the never-written gate-friction/ledger.jsonl path this reader
+  # used to assume (HR-F6 -- the writer/consumer schema mismatch;
+  # docs/reviews/2026-08-03-stage0-stage1-harness-review.md F6). That
+  # ledger's row schema is {"ts","gate","session","bypass_kind",
+  # "command_fingerprint","detail"} -- ONE row per sanctioned-escape use
+  # (gc_escape_used -> ws_record), never a "block" event; every row that
+  # carries a non-empty bypass_kind counts toward that gate's workaround
+  # total.
+  #
+  # Block-event decision (task's sanctioned either/or, recorded here AND
+  # in the task's build report): DEFERRED, not wired. gc_block
+  # (hooks/lib/gate-contract-lib.sh) has 7+ call sites across 5 gate/
+  # validator files, none in this task's file scope, and its signature
+  # (what/why/fix/escape strings only) carries no gate identifier to
+  # ledger a block row with -- adding one would require an incompatible
+  # signature change breaking every existing self-tested call site AND
+  # the doctor gate-message lint's "exactly four [GATE:*] lines" contract
+  # (that lib's own header). Worse, ws_record's bypass_kind field is
+  # documented as "the kind of escape exercised" -- a block is definitionally
+  # NOT an escape, so routing block rows through it would corrupt the
+  # workaround-rate signal the field exists for. Metric renamed to
+  # workarounds-only below (no "blocks" key) rather than shipping a
+  # permanently-zero, no-mechanism field (constitution paragraph-1 class).
   local friction_path friction_rows="[]"
-  friction_path="${NL_MAINT_FRICTION_LEDGER:-${live_home}/state/gate-friction/ledger.jsonl}"
+  friction_path="${NL_MAINT_FRICTION_LEDGER:-${live_home}/state/workaround-sensor.jsonl}"
   if [[ -f "$friction_path" ]]; then
     friction_rows="$(_nm_jq -sc '
       group_by(.gate) | map({
         gate: .[0].gate,
-        blocks: (map(select(.event=="block")) | length),
-        workarounds: (map(select(.event=="workaround")) | length)
+        workarounds: (map(select(.bypass_kind != null and .bypass_kind != "")) | length)
       })' "$friction_path")"
     [[ -z "$friction_rows" ]] && friction_rows="[]"
   fi
@@ -705,6 +724,7 @@ run_self_test() {
 
   _ok() { if [[ "$1" == "$2" ]]; then echo "PASS: $3"; pass=$((pass+1)); else echo "FAIL: $3 (got '$1' want '$2')" >&2; fail=$((fail+1)); fi; }
   _contains() { if [[ "$1" == *"$2"* ]]; then echo "PASS: $3"; pass=$((pass+1)); else echo "FAIL: $3 (did not contain '$2'; got: $1)" >&2; fail=$((fail+1)); fi; }
+  _not_contains() { if [[ "$1" != *"$2"* ]]; then echo "PASS: $3"; pass=$((pass+1)); else echo "FAIL: $3 (unexpectedly contained '$2'; got: $1)" >&2; fail=$((fail+1)); fi; }
   _file_exists() { if [[ -f "$1" ]]; then echo "PASS: $2"; pass=$((pass+1)); else echo "FAIL: $2 (file missing: $1)" >&2; fail=$((fail+1)); fi; }
 
   if ! command -v jq >/dev/null 2>&1; then
@@ -848,14 +868,24 @@ EOF
   s8_after="$(cat "$s8_state/snapshots/dashboard.json" 2>/dev/null)"
   _ok "$s8_after" "$s8_before" "S8 within-TTL re-call is a no-op (identical snapshot, not recomputed)"
 
-  echo "Scenario 9: dashboard gate-friction reads a REAL ledger when present"
+  echo "Scenario 9: dashboard gate-friction reads the REAL ws_record ledger schema when present (HR-F6 fix -- {ts,gate,session,bypass_kind,command_fingerprint,detail}, no 'event' field)"
   local s9_state="$tmp/s9" s9_ledger="$tmp/s9-ledger.jsonl"
-  printf '{"ts":"2026-01-01T00:00:00Z","gate":"scope-enforcement-gate","event":"block"}\n' > "$s9_ledger"
-  printf '{"ts":"2026-01-01T00:00:01Z","gate":"scope-enforcement-gate","event":"workaround"}\n' >> "$s9_ledger"
+  printf '{"ts":"2026-01-01T00:00:00Z","gate":"scope-enforcement-gate","session":"unknown","bypass_kind":"exemption-list","command_fingerprint":"fp-1","detail":"reason=test"}\n' > "$s9_ledger"
+  printf '{"ts":"2026-01-01T00:00:01Z","gate":"scope-enforcement-gate","session":"unknown","bypass_kind":"exemption-list","command_fingerprint":"fp-2","detail":"reason=test2"}\n' >> "$s9_ledger"
   NL_MAINT_STATE_DIR="$s9_state" HARNESS_DOCTOR_HOME="$s8_settings_dir" NL_MAINT_FRICTION_LEDGER="$s9_ledger" \
     bash -c "source '$self_abs'; _nm_refresh_dashboard_snapshot 0"
   _contains "$(cat "$s9_state/snapshots/dashboard.json" 2>/dev/null)" '"available":true' "S9 gate_friction.available:true when the ledger exists"
   _contains "$(cat "$s9_state/snapshots/dashboard.json" 2>/dev/null)" 'scope-enforcement-gate' "S9 friction row names the real gate"
+  _contains "$(cat "$s9_state/snapshots/dashboard.json" 2>/dev/null)" '"workarounds":2' "S9 friction row counts both bypass_kind rows into workarounds"
+  _not_contains "$(cat "$s9_state/snapshots/dashboard.json" 2>/dev/null)" '"blocks"' "S9 no 'blocks' key emitted (block-event decision: deferred, metric renamed workarounds-only)"
+
+  echo "Scenario 9b: empty-but-EXISTING ledger file (distinct from S8's absent-file case) renders zero-counts honestly, never an error (REQ-A3 Prove-it-works step 3)"
+  local s9b_state="$tmp/s9b" s9b_ledger="$tmp/s9b-ledger.jsonl"
+  : > "$s9b_ledger"
+  NL_MAINT_STATE_DIR="$s9b_state" HARNESS_DOCTOR_HOME="$s8_settings_dir" NL_MAINT_FRICTION_LEDGER="$s9b_ledger" \
+    bash -c "source '$self_abs'; _nm_refresh_dashboard_snapshot 0"
+  _contains "$(cat "$s9b_state/snapshots/dashboard.json" 2>/dev/null)" '"available":true' "S9b gate_friction.available:true — the (empty) ledger file exists"
+  _contains "$(cat "$s9b_state/snapshots/dashboard.json" 2>/dev/null)" '"rows":[]' "S9b zero-counts (empty rows array), no error, no crash"
 
   echo "Scenario 10: --watchdog stub — fresh heartbeat means no relaunch; stale heartbeat means a logged (never-real-spawned under HARNESS_SELFTEST) relaunch"
   local s10_state="$tmp/s10"
@@ -945,6 +975,20 @@ EOF
     echo "PASS: S13 no bash-4-only construct (bash 3.2 floor holds)"; pass=$((pass+1))
   else
     echo "FAIL: S13 bash-4-only construct(s) present: $b4" >&2; fail=$((fail+1))
+  fi
+
+  echo "Scenario 14: HR-F6 end-to-end -- a real gc_escape_used call (gate-contract-lib.sh) writes a row this dashboard reads (REQ-A3 Prove-it-works steps 1-2)"
+  local s14_state="$tmp/s14" s14_ledger="$tmp/s14-ledger.jsonl"
+  local gc_lib; gc_lib="$(cd -- "${self_abs%/*}/../hooks/lib" 2>/dev/null && pwd)/gate-contract-lib.sh"
+  if [[ -f "$gc_lib" ]]; then
+    HARNESS_SELFTEST=1 WORKAROUND_SENSOR_LEDGER_PATH="$s14_ledger" \
+      bash -c "source '$gc_lib'; gc_escape_used 'testgate' 'test-bypass' 'fp-e2e' 'S14 end-to-end'"
+    NL_MAINT_STATE_DIR="$s14_state" HARNESS_DOCTOR_HOME="$s8_settings_dir" NL_MAINT_FRICTION_LEDGER="$s14_ledger" \
+      bash -c "source '$self_abs'; _nm_refresh_dashboard_snapshot 0"
+    _contains "$(cat "$s14_state/snapshots/dashboard.json" 2>/dev/null)" '"gate":"testgate"' "S14 gc_escape_used row reaches the dashboard under gate=testgate"
+    _contains "$(cat "$s14_state/snapshots/dashboard.json" 2>/dev/null)" '"workarounds":1' "S14 the single escape use counts as one workaround"
+  else
+    echo "FAIL: S14 gate-contract-lib.sh not found at $gc_lib" >&2; fail=$((fail+1))
   fi
 
   echo ""

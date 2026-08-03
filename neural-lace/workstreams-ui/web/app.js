@@ -1058,14 +1058,24 @@
     });
   }
 
-  // Maintenance budget pane — harness-execution-redesign-2026-08 Task 3.
-  // Renders R3.3 inventory (hooks-per-Bash / SessionStart spawns / legacy
-  // scheduled tasks still enabled) each with a color-coded chip (text +
-  // color, never color-only — a11y baseline, same convention as costs'
-  // per-session status chips), the cost-budget table, and the gate-
-  // friction rows OR an honest "not available yet" note (rc=0 with
-  // data.gate_friction.available=false is a legitimate empty state, not
-  // an error — Task 2's remaining scope owns the ledger writer).
+  // Maintenance budget pane — harness-execution-redesign-2026-08 Task 3,
+  // gate-friction schema fixed by gated-pipeline-master-2026-08 Task 5
+  // (HR-F6: the writer, lib/workaround-sensor-lib.sh's ws_record, and this
+  // reader now agree on ONE ledger + ONE schema). Renders R3.3 inventory
+  // (hooks-per-Bash / SessionStart spawns / legacy scheduled tasks still
+  // enabled) each with a color-coded chip (text + color, never color-only
+  // — a11y baseline, same convention as costs' per-session status chips),
+  // the cost-budget table, and the gate-friction rows OR an honest "not
+  // available yet" note (rc=0 with data.gate_friction.available=false is a
+  // legitimate empty state, not an error — this machine simply has no
+  // ledger file yet). Each row carries ONLY `workarounds` (a per-gate count
+  // of sanctioned-escape uses) — no `blocks` field: block-event counting
+  // was evaluated and explicitly DEFERRED (would require an incompatible
+  // gc_block signature change across 5+ gate files, and would overload
+  // ws_record's bypass_kind field beyond its documented escape-only
+  // contract — see nl-maintenance.sh's gate-friction comment for the full
+  // rationale), so the metric is workarounds-only rather than shipping a
+  // permanently-zero, no-mechanism "blocks" number.
   function renderMaintenanceBudget(resp) {
     setAge('maintenance', resp.derived_at, resp.rc !== 0 && !isLoading(resp));
     if (isLoading(resp)) { renderLoading(maintenanceBudgetBody); return; }
@@ -1111,7 +1121,7 @@
     frictionNote.className = 'maint-note';
     if (friction.available && Array.isArray(friction.rows) && friction.rows.length > 0) {
       frictionNote.textContent = 'gate friction: ' + friction.rows.map(function (r) {
-        return r.gate + ' (' + r.blocks + ' blocks, ' + r.workarounds + ' workarounds)';
+        return r.gate + ' (' + r.workarounds + ' workarounds)';
       }).join(', ');
     } else {
       frictionNote.textContent = 'gate friction: not available yet (ledger not written on this machine)';
