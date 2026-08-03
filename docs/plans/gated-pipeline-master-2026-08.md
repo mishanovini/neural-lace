@@ -172,7 +172,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     **Integration points:**
     - Every exit-code consumer of `--quick` (grep sweep in task) tolerates exit 3 as SKIPPED-not-GREEN — sweep + fix consumers in the same commit
     - Task 7's cadence-flip data lives in `schedule-manifest.json` — no file overlap, but the doctor check text changes land there; serialized after
-- [ ] 5. HR-F6 fix (after Task 3 — same file): `NL_MAINT_FRICTION_LEDGER` default →
+- [x] 5. HR-F6 fix (after Task 3 — same file): `NL_MAINT_FRICTION_LEDGER` default →
   `~/.claude/state/workaround-sensor.jsonl`; pane jq maps `bypass_kind` rows → `workarounds`;
   block-event decision recorded in the task evidence (gc_block counter rows or explicit metric
   rename); end-to-end test `gc_escape_used` → pane row — Verification: full — Implements: REQ-A3
