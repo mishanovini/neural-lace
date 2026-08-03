@@ -3426,6 +3426,54 @@
       "blocking": false,
       "budget_class": "none",
       "honest_status": "WARN-only (target <=6; real count ~25 today, WARNs until Stage 2) -- counts hook entries across every PreToolUse matcher block containing Bash, live + template"
+    },
+    {
+      "id": "review-chain-lib",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/hooks/lib/review-chain-lib.sh",
+          "adapters/claude-code/hooks/dispatch-chain-gate.sh"
+        ],
+        "keywords": [
+          "review chain",
+          "rc_validate_chain",
+          "design-ref"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "the ONE parser/validator for Review Chain blocks (design gated-pipeline-master-2026-08-03 r3 SS4: rule 1 record parse, rule 2 three-way anchor match w/ plan-blob canonicalization + inflight-blob WARN, rule 3 dispatch-ledger cross-check w/ pre-ledger exemption). A sourced lib, no hook wiring (matching the single-flight-lib convention); proof is its --self-test (10/10 incl. all eight r3 fixtures) and the dispatch-chain-gate consumer. Consumed today by dispatch-chain-gate --check only; plan-reviewer Checks 20-22 (T14) and the PreToolUse wiring (T17) land later in the same plan."
+    },
+    {
+      "id": "dispatch-chain-gate",
+      "kind": "gate",
+      "added_after": "2026-08",
+      "doctrine_file": null,
+      "hooks": [
+        "dispatch-chain-gate.sh"
+      ],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/hooks/dispatch-chain-gate.sh"
+        ],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "golden_scenario": "P-39 (2026-08-02): builders dispatched against a plan whose reviews never ran -- the orchestrator accepted a derived record and merged three stages before any adversarial review. The gate's --check refuses a chain-less plan with a complete WHAT/WHY/FIX/ESCAPE instruction; the T17 live wiring must block the same dispatch shape at PreToolUse Task|Agent (three-variant demo: chain-less plan BLOCKED, no-attribution builder-type dispatch BLOCKED, ghost-reviewer chain entry fails parse).",
+      "fp_expectation": "SKELETON (--check only, blocking:false, events [] -- honest: NOT wired until T17). FP model for the wired form per design SS4/SS11: non-build subagent_types pass untouched; grandfathered legacy plan slugs get a ledgered WARN, never a block; new plans block from day one. Modeled FP <3/week; ledgered-FP >3/week during the calibration fortnight demotes to WARN (data-file condition in the gate config).",
+      "retirement_condition": "None as a pipeline invariant (it IS D-15.3). Demotion condition stands in data: >3 ledgered FPs/week in calibration demotes to WARN pending trigger recalibration. Fields events/wired_template flip to [\"PreToolUse\"]/true at T17.",
+      "honesty_rationale": "Entry lands with the skeleton commit (same merge train, HR-F9 generalization) so claimed-vs-actual never diverges: today's honest state is a --check-only tool with a 6/6 self-test; the manifest is updated again at T17 when it becomes an enforcing PreToolUse gate.",
+      "honest_status": "SKELETON: fires today ONLY via explicit `dispatch-chain-gate.sh --check <plan>` invocation (6/6 self-test); NOT wired to any event. T17 of docs/plans/gated-pipeline-master-2026-08.md lands the PreToolUse Task|Agent wiring + the three-variant blocked-dispatch demo, flipping events/wired_template in the same merge train."
     }
   ]
 }
