@@ -236,3 +236,224 @@ structurally identical to the cold-miss branch, already timed above).
    run 24h", "On the Mac, run the darwin adapter") describe an operator/orchestrator
    integration step this worktree-isolated build correctly did not perform. The 24h soak
    itself is explicitly Stage 4's job per the plan's own Closure Contract.
+
+---
+
+# Closure verification under supersession (gated-pipeline T9 / REQ-A6), 2026-08-03
+
+Verifier note: the caller described this plan as `rung: 3`; the header declares `rung: 4`.
+Either way ≥ 2, so the Decision 020 comprehension-gate applies per-task. Decision 020's text
+(2026-05-04, three months before this plan's creation; the plan itself cites "rung-4
+requirement, Decision 020d" for Task 1) contains NO grandfather provision and supports none
+for this plan. What its text DOES support: the gate attaches per-task via the evidence block
+(020e), so each task is judged on its own articulation — supersession-closure is not an
+exemption anywhere in 020.
+
+## Task 1 — closure verdict
+
+EVIDENCE BLOCK
+==============
+Task ID: 1
+Task description: Stage 0a — Stop the bleeding: invariants in the lib, not the wiring — Verification: full
+Verified at: 2026-08-03T13:58:58Z
+Verifier: task-verifier agent (dispatched by gated-pipeline T9/REQ-A6 supersession closure)
+
+Oracle: specified — the task's four Prove-it-works steps + Wire checks + Docs impact, cross-checked
+against the adversarial post-merge review (docs/reviews/2026-08-03-stage0-stage1-harness-review.md,
+Stage 0a CONDITIONAL-PASS) and its maintained Fix-status table.
+
+Comprehension-gate: PASS — articulation present in this file (four canonical sub-sections, each far
+above the 30-char bar); diff-correspondence checked by this verifier (all five sourcing sites
+re-verified live today; honest not-covered items match the known-gaps list) and independently by the
+2026-08-03 adversarial review's full code trace. The comprehension-reviewer agent is not invocable
+from this verification context (no Task tool); the check above is the substantive equivalent,
+performed first-hand.
+
+Operator invariants: none registered (exit 3)
+
+Checks run:
+1. Commit trail — e9c5bc0f (build) + 67505638 (manifest entries + harness-dev.md section) both on
+   master. Result: PASS
+2. single-flight-lib.sh --self-test replayed this session → 34 passed, 0 failed (post-HR-F1 count,
+   matching the independent re-review). Result: PASS
+3. sf_guard sourced unconditionally at all five heavy entry points, verified by grep today:
+   harness-doctor.sh:200, session-start-digest.sh:82, coord-sync.sh:152, supervisor-tick.sh:152,
+   health-tick.sh:113. Result: PASS
+4. SessionStart matcher narrowing verified live TODAY via jq: template AND live ~/.claude/settings.json
+   both 3 blocks, doctor+digest under `startup|clear` only. Result: PASS
+5. schedule-manifest.json present (mode "warn"); cadence + budget checks wired (manifest entries
+   schedule-manifest-cadence, budget-bash-hooks verified in manifest.json today); review confirmed both
+   fire on real violations (coord-sync 60s vs 110s; 25-vs-6). Result: PASS
+6. HALT/drain: demonstrated live per the orchestrator-replayed record above (all three tick wrappers
+   drained then resumed); no stale HALT flag set today (state dir contains only a doctor_quick.lock).
+   Result: PASS
+7. Docs impact: harness-dev.md §"Execution-layer invariants" present (line 23); all four manifest
+   entries present (single-flight-recursion-guard, halt-drain-flag, schedule-manifest-cadence,
+   budget-bash-hooks); full runbook at doctrine/single-flight-halt-runbook.md. Result: PASS
+8. Review conditions (Stage 0a CONDITIONAL-PASS): F2/F8 FIXED @ d46beee5 (serve-cache-or-exit-3 +
+   single-writer cache), re-reviewed PASS in docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md;
+   F1 (touched this task's lib — sf_release added) FIXED @ 6f5d1b22, re-reviewed PASS same record.
+   F3 + F7 OPEN, owned by gated-pipeline T7 (in flight) — hardening findings on delivered mechanisms,
+   not undelivered scope (task text never sized the TTL; the shipped manifest honest_status already
+   assigns the RED flip to "a later task"). Result: PASS with named carry-forwards
+9. Gate-friction ledger bootstrap clause ("blocks + workaround attempts recorded"): workaround side
+   LIVE today (gc_escape_used at 4 real call sites in scope-enforcement-gate-body.sh /
+   concurrent-ownership-gate-body.sh + harness-hygiene-scan.sh via ws_record; end-to-end
+   ledger→dashboard proven by nl-maintenance S9/S14, replayed 37/37 today; HR-F6 fix @ be5e4273).
+   Block side formally superseded: gated-pipeline T5 evidence records the DEFER-with-rename decision
+   (blocks not ledgered; metric renamed workarounds-only; comprehension-audited @ 077ad2c6). Result:
+   PASS via cited supersession trail
+
+Runtime verification: test adapters/claude-code/hooks/lib/single-flight-lib.sh::--self-test
+Runtime verification: file adapters/claude-code/hooks/harness-doctor.sh::source "$SCRIPT_DIR/lib/single-flight-lib.sh"
+Runtime verification: file adapters/claude-code/settings.json.template::startup|clear
+Runtime verification: file adapters/claude-code/doctrine/harness-dev.md::Execution-layer invariants
+Runtime verification: file adapters/claude-code/manifest.json::single-flight-recursion-guard
+Runtime verification: functionality-verifier harness-execution-redesign-t1::SKIP (rationale: agent not invocable from this context — no Task tool; harness-internal class exercised directly: every cited --self-test replayed first-hand this session, live wiring + matcher state verified via grep/jq)
+
+DEPENDENCY TRACE
+================
+Step 1: any heavy entry point invoked (doctor/digest/coord-sync/supervisor-tick/health-tick)
+  ↓ Verified at: unconditional `source .../single-flight-lib.sh` at the five sites cited in check 3
+Step 2: sf_guard recursion/single-flight/HALT decision
+  ↓ Verified at: single-flight-lib.sh --self-test 34/34 (replayed today) + live nested-doctor 0.39s short-circuit (orchestrator record above)
+Step 3: operator-observable outcome (no nested chains; one-gesture HALT; WARN visibility)
+  ↓ Verified at: live HALT drain demo (record above); cadence/budget WARNs firing on real violations (review evidence trail); machine recovered 99.9%→~13% CPU (handoff)
+
+Git evidence:
+  e9c5bc0f (2026-08-02, build) · 67505638 (integration) · 6f5d1b22 + d46beee5 (successor fixes to
+  this task's artifacts, merged, re-reviewed PASS) — all confirmed ancestors of master today.
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN: every enumerated deliverable exists, is wired, and was re-exercised first-hand today
+(34/34 lib suite; five sourcing sites; live+template matcher narrowing; manifest + doctrine deltas);
+three of four Prove-it-works executed live per the orchestrator-replayed record, the fourth (resume
+spawn count) structurally proven with an honestly-declared platform limitation; the adversarial
+review's Stage-0a conditions are met (F2/F8, fixed + re-reviewed) or named-and-owned (F3/F7 at
+gated-pipeline T7, tracked in the maintained Fix-status table). Carried findings named below do not
+falsify any Prove-it-works item or enumerated deliverable.
+Carried forward (owned): F3 (guard TTL vs measured cycle), F7 (mechanized WARN→RED flip dates),
+F10 (test-name rename) — gated-pipeline T7; resume-path spawn measurement remains a declared
+known-gap (platform-triggered).
+
+## Task 2 — closure verdict
+
+EVIDENCE BLOCK
+==============
+Task ID: 2
+Task description: Stage 0b — Gate Philosophy Law: guidance-contract retrofit of the five blocking gates — Verification: full
+Verified at: 2026-08-03T13:58:58Z
+Verifier: task-verifier agent (dispatched by gated-pipeline T9/REQ-A6 supersession closure)
+
+Oracle: specified — the task's enumerated deliverables (five retrofits + doctor gate-message lint +
+workaround-as-sensor incl. auto-file threshold + JIT pre-warnings) and its Docs impact, cross-checked
+against today's on-disk state.
+
+Comprehension-gate: INCOMPLETE — no `## Comprehension Articulation` exists for Task 2; this file
+explicitly defers it ("will be written when its remaining scope lands"). Decision 020d at rung 4:
+missing articulation → task-verifier returns FAIL. 020's text supports no grandfathering (see the
+closure-verification header note above).
+
+Operator invariants: none registered (exit 3)
+
+Checks run (delivered half — credit, all replayed first-hand today):
+1. gate-contract-lib.sh --self-test → 16/16; workaround-sensor-lib.sh --self-test → 15/15. PASS
+2. Gate suites: scope-enforcement 50/50 · pre-commit 11/11 · concurrent-ownership 22/22 ·
+   plan-edit-validator 24/24 (incl. the F20-F24 --check scenarios) · harness-hygiene-scan OK. PASS
+3. Escape-hatch wiring live: gc_escape_used at 4 real call sites (concurrent-ownership-gate-body.sh
+   :467,:482,:977; scope-enforcement-gate-body.sh:1901) + hygiene's direct ws_record — grep-verified
+   today. Friction ledger unified writer→pane end-to-end (HR-F6 FIXED @ be5e4273; nl-maintenance
+   S9/S14 replayed green today). PASS
+4. blocks/day metric clause: superseded by T5's recorded DEFER-with-rename decision (workarounds-only,
+   lint-locked, audited @ 077ad2c6) — not counted as a gap. N/A by supersession
+5. JIT pre-warnings: design-cut — successor plan Scope OUT (gated-pipeline-master-2026-08.md:92,
+   design NON-GOALS), grounded in the REAL architecture review's hot-path finding
+   (docs/reviews/2026-08-03-harness-execution-redesign-REAL-architecture-review.md:169) and the
+   master handoff cut-list. Not counted as a gap. N/A by design-cut
+6. Doctor gate-message lint: grep of harness-doctor.sh for any gate-message/check_gate lint → ZERO
+   matches today. The outcome metric "doctor lint 5/5" is unmeetable. FAIL
+7. Docs impact: harness-dev.md has NO gate-contract convention section (headings enumerated today);
+   the five gates' manifest entries carry NO contract/check fields (jq over manifest.json today:
+   ABSENT on all five). FAIL
+8. Workaround-rate threshold auto-file via nl-issue.sh ("a gate above the threshold is auto-filed as
+   a defective gate"): no such mechanism exists in workaround-sensor-lib.sh, nl-maintenance.sh, or any
+   gate (grep today). FAIL
+
+Runtime verification: test adapters/claude-code/hooks/lib/gate-contract-lib.sh::--self-test
+Runtime verification: test adapters/claude-code/hooks/scope-enforcement-gate.sh::--self-test
+Runtime verification: test adapters/claude-code/hooks/plan-edit-validator.sh::--self-test
+
+Verdict: FAIL — do not flip
+Confidence: 9
+Reason: PROVEN: the retrofit half is real and verified (all suites replayed green today), but three
+enumerated deliverables are absent on disk TODAY (doctor gate-message lint; manifest contract fields
++ harness-dev.md convention section; workaround-rate auto-file), and the Decision-020d articulation
+is missing — each independently blocks the flip. The two remaining scope clauses (blocks/day metric,
+JIT pre-warnings) are legitimately closed by cited supersession/design-cut decisions and are NOT gaps.
+Gaps (each needs an owner — NONE has one in the successor plan today):
+  - Doctor gate-message lint (the outcome metric's own arbiter) — absent; no successor task builds it
+  - Five gates' manifest entries: contract fields (Docs impact) — absent
+  - harness-dev.md gate-contract convention section (Docs impact) — absent
+  - Workaround-rate threshold → nl-issue.sh auto-file — absent (or record a design-cut for it)
+  - Task 2 Comprehension Articulation (Decision 020d, rung 4) — absent, explicitly deferred
+
+## Task 3 — closure verdict
+
+EVIDENCE BLOCK
+==============
+Task ID: 3
+Task description: Stage 1 — Windows-native central maintenance: portable core + platform adapters — Verification: full
+Verified at: 2026-08-03T13:58:58Z
+Verifier: task-verifier agent (dispatched by gated-pipeline T9/REQ-A6 supersession closure)
+
+Oracle: specified — the task's five Prove-it-works steps + outcome metrics, cross-checked against the
+adversarial review (Stage 1 REJECT-AS-SHIPPED for the activation path) and the Fix-status trail.
+
+Comprehension-gate: INCOMPLETE — Task 3's block above contains self-tests and live proof but NO
+`## Comprehension Articulation` section. Decision 020d at rung 4: missing articulation →
+task-verifier returns FAIL/INCOMPLETE. No grandfather support in 020's text.
+
+Operator invariants: none registered (exit 3)
+
+Checks run (delivered half — credit, replayed first-hand today):
+1. nl-maintenance.sh --self-test → 37/37 (includes S11 under the REAL guard post-HR-F1, and the
+   T5/REQ-A3 friction end-to-end scenario). maintenance-pane.selftest.js → 9/9. PASS
+2. Both Criticals on this task's artifacts FIXED and independently re-reviewed PASS: HR-F1 @ 6f5d1b22
+   (sf_release + identity-verified watchdog kill + unmasked S11), HR-F2+F5+F8 @ d46beee5
+   (single-writer cache, fingerprint hooks-mtime + dirty bit, serve-cache-or-exit-3) — see
+   docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md ("The hard stop is MET").
+   F4+F9 FIXED @ 422257c2 (manifest entries nl-maintenance-core / doctor-verdict-cache /
+   maintenance-both-substrates-alive verified present today; zero-substrate inverse clock with
+   red_after_days in schedule-manifest.json verified today). PASS via cited trail
+3. Live-machine correspondence: -WhatIf against real Task Scheduler (5 legacy tasks Disabled) per the
+   record above; measured verdict-cache cold/hit 9m12s → 1.557s. PASS (as recorded)
+4. Prove-it-works #1 (live Windows registration + exactly-one-OS-task + 24h) and #3 (Mac launchd):
+   NOT performed — deliberately operator-gated: DEC-4 ratification ask is successor T10 (its
+   fixed-AND-re-reviewed precondition is now met); T7 recommended before activation. FAIL (task's own
+   done-bar unmet today)
+5. Outcome metrics requiring live operation (6→1-2 tasks live on three machines; zero overlap events
+   across 7 days; snapshot freshness green 7 consecutive days; dashboard from live data): unmet —
+   no live registration exists anywhere. FAIL
+6. Docs impact: manifest entries LANDED (422257c2); but harness-dev.md has NO install/uninstall/
+   rollback runbook section (the stage-1 handoff's owed section remains unlanded — headings
+   enumerated today) and workstreams-ui README/docs carry NO dashboard note (grep today: zero
+   matches). FAIL
+
+Runtime verification: test adapters/claude-code/scripts/nl-maintenance.sh::--self-test
+Runtime verification: test neural-lace/workstreams-ui/server/maintenance-pane.selftest.js::all
+Runtime verification: file adapters/claude-code/manifest.json::nl-maintenance-core
+
+Verdict: INCOMPLETE — do not flip
+Confidence: 9
+Reason: PROVEN: the build half is delivered, hardened (F1/F2/F5/F8 fixed in stronger-than-required
+forms, re-reviewed PASS), and re-exercised green today; but the task's own Prove-it-works #1/#3 and
+its live-operation outcome metrics are deliberately unexecuted pending the operator's DEC-4
+ratification (successor T10) and T7 pre-activation hardening — the activation half of this task's
+scope is successor-owned, not done.
+Gaps / carry-forwards:
+  - Activation: registration + 24h/7-day observation — gated-pipeline T10 (ask) after T7; darwin
+    install needs a Mac
+  - F3/F11 (T7), F12 census counting (T22) — open on this task's artifacts, owned
+  - harness-dev.md runbook section + workstreams-ui README dashboard note (Docs impact) — no owner
+  - Task 3 Comprehension Articulation (Decision 020d, rung 4) — absent, no owner named

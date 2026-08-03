@@ -378,3 +378,5 @@ Stage 1 can be activated and this review's conditions closed.
 | F10 (test-name rename) | OPEN — gated-pipeline T7 (7d) |
 | F11 (HALT canonical path) | OPEN — gated-pipeline T7 (7c) |
 | F12 (census undercount) | OPEN — gated-pipeline T22 (counting method specified) |
+
+(Predecessor plan archived 2026-08-03 under docs/plans/archive/ — the F1-F12 fix-status above is the authoritative disposition; carry-forwards registered in docs/backlog.md.)

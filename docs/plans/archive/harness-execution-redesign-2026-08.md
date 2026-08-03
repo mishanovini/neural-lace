@@ -1,5 +1,11 @@
 # Plan: Harness Execution-Layer Redesign (2026-08)
-Status: ACTIVE
+Status: SUPERSEDED
+<!-- Superseded 2026-08-03 by docs/plans/gated-pipeline-master-2026-08.md (REQ-A6 honest closure):
+     T1 verified PASS + flipped; T2 FAIL / T3 INCOMPLETE with exact gaps in the closure-verification
+     section of the evidence file; T4-T6 scope re-sequenced into the successor (Stage 2 admission-
+     triggered via its REQ-C6, drain at its T21, closure at its T22). Five unowned carry-forwards
+     registered in docs/backlog.md as PREDECESSOR-CLOSURE-CARRYFORWARDS-2026-08-03-01. -->
+
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -96,7 +102,7 @@ tasks in an emergency.
 
 ## Tasks
 
-- [ ] 1. Stage 0a — Stop the bleeding: invariants in the lib, not the wiring — Verification: full — Docs impact: schedule-manifest format + HALT runbook section added to `adapters/claude-code/doctrine/harness-dev.md`; manifest.json entries for the new checks
+- [x] 1. Stage 0a — Stop the bleeding: invariants in the lib, not the wiring — Verification: full — Docs impact: schedule-manifest format + HALT runbook section added to `adapters/claude-code/doctrine/harness-dev.md`; manifest.json entries for the new checks
       Build `adapters/claude-code/hooks/lib/single-flight-lib.sh` (universal single-flight +
       recursion guard, sourced unconditionally at top of heavy entry points: doctor, digest,
       coord-sync, supervisor/health ticks — invariant 4, kills the nested-chain class including
