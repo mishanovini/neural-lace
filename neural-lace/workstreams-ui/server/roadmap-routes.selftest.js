@@ -231,6 +231,41 @@ async function main() {
     '- [ ] 1. a task dispatched once, hours ago, never revisited',
     '',
   ].join('\n'));
+  // UNBINDABLE-DISPATCH FIXTURES (2026-08-02). Two DEDICATED plans, neither
+  // of which has any bound running task — so every assertion about the new
+  // deriveUnbindableDispatchLeaves path is proved by that path alone. (The
+  // first draft hung this off rich-plan, which already had a bound running
+  // task, so `running_now === true` there was satisfied by the pre-existing
+  // path and proved nothing — harness-reviewer Major 3.)
+  //   unbindable-plan       : dispatch ts RECENT  -> leaf 'running'
+  //   unbindable-stale-plan : dispatch ts 2h old  -> leaf 'stalled', AND its
+  //                           session must STILL be counted by the
+  //                           unattributed node (the Critical: binding a
+  //                           non-running leaf hid live sessions from the one
+  //                           surface that says "N running").
+  // Both sessions' heartbeats are written fresh at suite start, so the ONLY
+  // variable between them is the dispatch timestamp.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'unbindable-plan.md'), [
+    '# Plan: Unbindable Dispatch', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task nobody dispatched by its real id',
+    '',
+  ].join('\n'));
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'unbindable-stale-plan.md'), [
+    '# Plan: Unbindable Stale Dispatch', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task whose only dispatch named a bogus id, hours ago',
+    '',
+  ].join('\n'));
+  // corrupt-ts-plan (MALFORMED-IS-NOT-ABSENT fix, 2026-07-30): ONE task
+  // whose task_started event is PRESENT but carries an unparseable `ts`
+  // (a truncated/corrupt write). Attached to sess-op-1, the same
+  // genuinely-live heartbeat session — so before the fix the unparseable
+  // timestamp collapsed to null, the idle gate silently switched OFF, and
+  // the task rendered a green in-progress from evidence nobody could read.
+  fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'corrupt-ts-plan.md'), [
+    '# Plan: Corrupt Timestamp', '', 'Status: ACTIVE', '', '## Tasks', '',
+    '- [ ] 1. a task whose task_started timestamp cannot be parsed',
+    '',
+  ].join('\n'));
   // waiting-plan (ROADMAP-WAITING-ON-YOU-SIGNAL-01, round 14): ONE task,
   // started (task_started event below, unlinked lane) by a session with NO
   // heartbeat file at all -- reaches deriveItemStatus's stalled branch via
@@ -467,7 +502,41 @@ async function main() {
     // The "alive dispatcher, abandoned task" shape the real deployed
     // roadmap showed for hours (operator report, 2026-07-30).
     JSON.stringify({ type: 'task_started', ts: STALE_TASK_STARTED_TS, plan_slug: 'stale-dispatch-plan', task_id: '1', session_id: 'sess-op-1' }),
+    // corrupt-ts-plan/1 (MALFORMED-IS-NOT-ABSENT fix): the event EXISTS and
+    // names a real live session, but its ts is unparseable — Date.parse ->
+    // NaN. The pre-fix code mapped that NaN to null (== "no evidence"),
+    // which disabled the idle gate and rendered green. It must render
+    // 'unknown' instead: we cannot read this task's own start evidence.
+    JSON.stringify({ type: 'task_started', ts: 'not-a-timestamp', plan_slug: 'corrupt-ts-plan', task_id: '1', session_id: 'sess-op-1' }),
+    // UNBINDABLE ATTRIBUTED DISPATCH (2026-08-01) — the real shape observed
+    // on this machine: an NL-ATTRIBUTION header named a REAL plan but a
+    // task= id that is not a task id in it ("cockpit-running-representation"
+    // against a plan whose ids are T1..T14; plan-parse's TASK_ID_TOKEN_RE
+    // requires digits, so a pure slug can never be one). Pre-fix this event
+    // was dropped in BOTH directions: no task matched it, and the session
+    // was excluded from the unattributed node too — a genuinely running,
+    // genuinely attributed agent, invisible everywhere.
+    // ts is RECENT and the session is the LIVE-heartbeat sess-op-1, so the
+    // running case is the one under test (the stale case is covered by
+    // rich-plan/stale-dispatch-plan above and asserted below).
+    JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'unbindable-plan', task_id: 'a-slug-not-a-task-id', session_id: 'sess-unbindable' }),
+    // The NEGATIVE case, and the Critical's regression guard: same shape,
+    // same fresh heartbeat, dispatch ts 2h old (past taskStartedIdleMs).
+    JSON.stringify({ type: 'task_started', ts: STALE_TASK_STARTED_TS, plan_slug: 'unbindable-stale-plan', task_id: 'another-slug-not-a-task-id', session_id: 'sess-unbindable-stale' }),
   ].join('\n') + '\n');
+  // Both sessions' heartbeats are FRESH, so the only thing that can stop
+  // either rendering "running" is the dispatch timestamp / the task-id join.
+  fs.writeFileSync(path.join(heartbeatDir, 'sess-unbindable.json'), JSON.stringify({
+    schema: 1, session_id: 'sess-unbindable', pid: 7, cwd: repoDir, repo_root: repoDir,
+    worktree_root: repoDir, branch: 'fixture-unbindable', model: 'fixture',
+    last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
+  }));
+  // sess-unbindable-stale's heartbeat is deliberately NOT written here. It is
+  // written LATE (in the R9-7b section) precisely because a fresh heartbeat
+  // for it makes it a genuinely live, genuinely unattributed session — which
+  // is the whole point of the Critical's regression guard, but would also
+  // change the population every pre-existing R9-7b assertion pins. Writing it
+  // after those keeps their coverage exactly as strong as it was.
 
   // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (round 14): the needs-you ledger
   // sandbox buildWaitingOnYouMap's lazy require('./inbox-routes.js') reads.
@@ -549,8 +618,8 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
-    ok('S1e exactly 23 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture] + stale-dispatch-plan [false-eternal-running fix, 2026-07-30]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
-      items.length === 23, topIds.join(','));
+    ok('S1e exactly 26 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture] + stale-dispatch-plan [false-eternal-running fix, 2026-07-30] + corrupt-ts-plan [malformed-is-not-absent fix, 2026-07-30] + unbindable-plan and unbindable-stale-plan [unbindable-attributed-dispatch fix, 2026-08-02]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
+      items.length === 26, topIds.join(','));
     ok('R11 child-a-fixture no longer appears in the TOP-LEVEL list (it renders once, nested under its master)',
       topIds.indexOf('child-a-fixture') === -1, topIds.join(','));
 
@@ -891,7 +960,19 @@ async function main() {
     // "sess-op-1 is somehow different." ----
     const staleTask = findItem(items, 'stale-dispatch-plan/1');
     ok('S20c a task whose ONLY attached session has a LIVE heartbeat, but whose own task_started is 2h stale (past the 60min default idle window), renders status.value=stalled — NOT in-progress (the exact operator-reported defect: dispatching session alive, task itself abandoned)',
-      staleTask && staleTask.status && staleTask.status.value === 'stalled' && staleTask.status.reason_class === 'crashed',
+      staleTask && staleTask.status && staleTask.status.value === 'stalled' && staleTask.status.reason_class === 'idle-dispatch',
+      staleTask && JSON.stringify(staleTask.status));
+    // S20c-reason (2026-07-30 reason-code split): the badge must not claim
+    // a crash. sess-op-1's heartbeat is written FRESH at suite start (this
+    // fixture's own premise, shared with S18/S20), so "stalled — crashed"
+    // was a demonstrably false statement that pointed the operator at a
+    // dead-session investigation which does not exist. Asserting the
+    // negative explicitly: the previous code produced exactly 'crashed'
+    // here, so this line is what fails if the fold ever returns.
+    ok('S20c-reason the stale task\'s reason_class is "idle-dispatch" and NEVER "crashed" — its session heartbeat is fresh by construction, so a crash claim would be false (constitution §1)',
+      staleTask && staleTask.status.reason_class !== 'crashed' &&
+      staleTask.status.reason_class === 'idle-dispatch' &&
+      /still alive/.test(staleTask.status.label),
       staleTask && JSON.stringify(staleTask.status));
     ok('S20d that same task\'s live_sessions leaf for sess-op-1 ALSO renders stalled (not "running") despite the session\'s heartbeat genuinely being live — the leaf and the task-level badge must agree',
       staleTask && Array.isArray(staleTask.live_sessions) && staleTask.live_sessions.length === 1 &&
@@ -901,11 +982,160 @@ async function main() {
     ok('S20e the OWNING PLAN carries NO running roll-up entry for the stale-dispatched task (this is the actual rollup-gate fix: a merely non-empty live_sessions array no longer counts as "running" by itself — line 1314\'s original bug)',
       staleDispatchPlan && (!staleDispatchPlan.roll_up || !staleDispatchPlan.roll_up.running),
       staleDispatchPlan && JSON.stringify(staleDispatchPlan.roll_up));
+    // S20e-reason: the roll-up badge the operator actually SEES on the plan
+    // row must carry the honest class too. The leaf, the task badge and the
+    // plan roll-up previously DISAGREED — the leaf said "still alive", the
+    // task badge and this roll-up both said "crashed".
+    ok('S20e-reason the owning plan rolls up an "idle-dispatch" attention badge, NOT a "crashed" one — the plan row, the task badge and the session leaf now tell the operator the same story',
+      staleDispatchPlan && staleDispatchPlan.roll_up &&
+      staleDispatchPlan.roll_up['idle-dispatch'] && staleDispatchPlan.roll_up['idle-dispatch'].count === 1 &&
+      !staleDispatchPlan.roll_up.crashed,
+      staleDispatchPlan && JSON.stringify(staleDispatchPlan.roll_up));
+
+    // ---- S20g: MALFORMED IS NOT ABSENT, proven end-to-end through the
+    // real route (not just the derive unit). corrupt-ts-plan/1's
+    // task_started exists and names the LIVE sess-op-1, but its ts cannot
+    // be parsed — pre-fix this rendered a green in-progress.
+    const corruptTask = findItem(items, 'corrupt-ts-plan/1');
+    ok('S20g a task whose task_started event is PRESENT but carries an unparseable ts renders status.value=unknown through the real /api/roadmap route — never the pre-fix green in-progress derived from evidence that could not be read',
+      corruptTask && corruptTask.status && corruptTask.status.value === 'unknown' &&
+      corruptTask.status.value !== 'in-progress' &&
+      /unparseable/.test(corruptTask.status.label),
+      corruptTask && JSON.stringify(corruptTask.status));
+    ok('S20h that same task contributes an "unknown" attention badge to its owning plan (an unreadable input surfaces to the operator instead of vanishing into a confident green)',
+      (function () {
+        const p = findItem(items, 'corrupt-ts-plan');
+        return p && p.roll_up && p.roll_up.unknown && p.roll_up.unknown.count === 1 && !p.roll_up.running;
+      })(),
+      JSON.stringify((findItem(items, 'corrupt-ts-plan') || {}).roll_up));
 
     ok('S20b a merely-partial plan (redesign-plan: 1/2 done, task 2 never started, no live session anywhere) carries NO running roll-up entry — status.value can be "in-progress" from done>0 alone, which must NOT be confused with a REAL live session',
       redesign && redesign.status && redesign.status.value === 'in-progress' &&
       redesign.roll_up && !redesign.roll_up.running,
       redesign && JSON.stringify({ status: redesign.status, roll_up: redesign.roll_up }));
+
+    // ---- S21: running_now — the API's own answer to "is anyone working on
+    // this RIGHT NOW", added 2026-08-01 (operator, repeated: the coloured
+    // plan titles "are supposed to represent items that are currently being
+    // worked on ... I actually do not see any items in the cockpit that
+    // state that they are actively running"). The whole point is that this
+    // field DISAGREES with status.value: every fixture below is derived
+    // 'in-progress', and they split on live evidence alone. Asserted on the
+    // real HTTP payload, so a client reading `running_now` gets exactly
+    // what these lines pin. ----
+    ok('S21 running_now is TRUE for a task with a genuinely running live session (rich-plan/1 — the SAME fixture S18 proves renders a running leaf)',
+      richTask && richTask.running_now === true,
+      richTask && JSON.stringify({ status: richTask.status.value, running_now: richTask.running_now }));
+    ok('S21b running_now propagates to the OWNING PLAN (rich-plan) — the operator scans plan titles, so an ancestor of live work must answer yes too',
+      richPlan && richPlan.running_now === true,
+      richPlan && JSON.stringify({ status: richPlan.status.value, running_now: richPlan.running_now }));
+    ok('S21c THE DISTINCTION: redesign-plan is derived status.value "in-progress" (1/2 done) with NO live session anywhere, and running_now is FALSE — derived-from-artifacts progress is not a liveness claim, which is the entire defect this field fixes',
+      redesign && redesign.status.value === 'in-progress' && redesign.running_now === false,
+      redesign && JSON.stringify({ status: redesign.status.value, running_now: redesign.running_now }));
+    ok('S21d HONEST ABSENCE: the stale-dispatch task (live_sessions NON-EMPTY, but its only member is stalled — a live dispatching session that abandoned this task) is running_now FALSE, and so is its owning plan. A non-empty array is never a running claim',
+      staleTask && staleTask.running_now === false &&
+      staleDispatchPlan && staleDispatchPlan.running_now === false,
+      JSON.stringify({ task: staleTask && staleTask.running_now, plan: staleDispatchPlan && staleDispatchPlan.running_now }));
+    ok('S21e a DONE task is never running_now (finished work has no live claim), and neither is a not-started one',
+      demoT1 && demoT1.running_now === false,
+      demoT1 && JSON.stringify({ status: demoT1.status.value, running_now: demoT1.running_now }));
+    ok('S21f EVERY node in the payload carries the field — a client can read it uniformly and never has to fall back to guessing from live_sessions.length (the predicate that caused the original false-green)',
+      (function () {
+        let missing = [];
+        const walk = (n) => {
+          if (typeof n.running_now !== 'boolean') missing.push(n.id);
+          (n.children || []).forEach(walk);
+          (n.child_plans || []).forEach(walk);
+        };
+        items.forEach(walk);
+        return missing.length === 0;
+      })());
+    // ---- S22: the UNBINDABLE ATTRIBUTED DISPATCH (2026-08-01). Observed
+    // live: a dispatch header named plan=accountable-estate-program-2026-07
+    // task=cockpit-running-representation; the plan resolved, the task id
+    // did not (real ids T1..T14). Pre-fix the event vanished from BOTH
+    // surfaces — no task claimed it, and the unattributed node excludes it
+    // too. R9-7 forbids exactly that ("running work is NEVER invisible").
+    // Every dereference below is guarded to a default rather than chained off
+    // a bare truthiness check (harness-reviewer Major 2): under a mutant that
+    // makes deriveUnbindableDispatchLeaves return [], the old S22b/S22c threw
+    // `TypeError: reading 'title'` and the suite died with NO summary, taking
+    // S22c-f, S21g, every R9-7b-* and R9-8 down silently. A mutant must make
+    // ONE assertion fail loudly, never erase the run.
+    const unbPlan = findItem(items, 'unbindable-plan');
+    const unbLeaf = (unbPlan && (unbPlan.live_sessions || [])[0]) || {};
+    ok('S22 an attributed dispatch whose task= id matches NO task in the named plan surfaces on the PLAN row as a live session — not silently dropped (the invisible-running defect). Asserted on a plan with NO bound running task, so this path alone can satisfy it',
+      unbPlan && Array.isArray(unbPlan.live_sessions) && unbPlan.live_sessions.length === 1,
+      unbPlan && JSON.stringify(unbPlan.live_sessions));
+    ok('S22b the leaf names the id the dispatch ACTUALLY sent, verbatim and quoted, and says plainly that it is not a task id in this plan — the operator can see what was mis-sent without reading a log',
+      /dispatched for task "a-slug-not-a-task-id", which is not a task id in this plan/.test(unbLeaf.title || ''),
+      JSON.stringify(unbLeaf.title || null));
+    ok('S22c it is a REAL running claim, gated exactly like a task-bound one (fresh heartbeat + task_started inside the idle window), so the plan is running_now and renders green — and unbindable-plan has no bound running task, so nothing else could have set it',
+      (unbLeaf.status || {}).value === 'running' && unbPlan && unbPlan.running_now === true,
+      JSON.stringify({ leaf: unbLeaf.status || null, running_now: unbPlan && unbPlan.running_now }));
+    ok('S22d NEVER promoted to a task row: no task node anywhere claims either unbindable session — the fix surfaces the dispatch at the level it could honestly be attributed to (the plan), and does not guess which task was meant',
+      (function () {
+        let claimed = [];
+        const walk = (n) => {
+          if (n.kind === 'task' && (n.live_sessions || []).some((s) => /sess-unbindable/.test(s.id || ''))) claimed.push(n.id);
+          (n.children || []).forEach(walk);
+          (n.child_plans || []).forEach(walk);
+        };
+        items.forEach(walk);
+        return claimed.length === 0;
+      })());
+    ok('S22e a RUNNING unbindable leaf marks its session bound, so it is not ALSO listed as unattributed — exactly one surface claims a session the tree already shows as running',
+      (function () {
+        const ub = r1.json.unbound_sessions;
+        return !ub || !(ub.live_sessions || []).some((a) => /sess-unbindable$/.test(a.id || ''));
+      })());
+    ok('S22f a plan with NO unbindable dispatch carries an EMPTY live_sessions array, not a fabricated node — and the field exists on every plan so the shape is uniform',
+      redesign && Array.isArray(redesign.live_sessions) && redesign.live_sessions.length === 0 &&
+      staleDispatchPlan && Array.isArray(staleDispatchPlan.live_sessions) && staleDispatchPlan.live_sessions.length === 0,
+      JSON.stringify({ redesign: redesign && redesign.live_sessions, stale: staleDispatchPlan && staleDispatchPlan.live_sessions }));
+
+    // S22g-j (the negative case) + S23d live in the R9-7b section below —
+    // they need sess-unbindable-stale's heartbeat, which is written late on
+    // purpose (see its note in setup).
+
+    // ---- S23: MAJOR 1 — the roll-up must see a node's OWN live sessions,
+    // or the plan row goes green with no "running" WORD anywhere on it
+    // (colour-only, which app.css's WCAG 1.4.1 note promises never happens).
+    ok('S23 a plan whose ONLY running evidence is its own unbindable-dispatch leaf gets a running ROLL-UP — before this, computeRollUps aggregated only children, so roll_up was {} and the client printed "<id> next" beside a green title',
+      unbPlan && unbPlan.roll_up && unbPlan.roll_up.running && unbPlan.roll_up.running.count === 1 &&
+      unbPlan.roll_up.running.exemplar === 'unbindable-plan',
+      unbPlan && JSON.stringify(unbPlan.roll_up));
+    ok('S23b COUNTED EXACTLY ONCE: rich-plan has one bound running task and no unbindable dispatch, so its running roll-up is still count 1 with the TASK as exemplar — the self-stamp must not double-count what the parent already counts',
+      richPlan && richPlan.roll_up.running && richPlan.roll_up.running.count === 1 &&
+      richPlan.roll_up.running.exemplar === 'rich-plan/1',
+      richPlan && JSON.stringify(richPlan.roll_up));
+    ok('S23c a TASK row never self-stamps a running roll-up — its own green "running" chip already carries the claim, and a "1 running" badge beside it would be the same fact twice',
+      (function () {
+        let selfStamped = [];
+        const walk = (n) => {
+          if (n.kind === 'task' && n.roll_up && n.roll_up.running) selfStamped.push(n.id);
+          (n.children || []).forEach(walk);
+          (n.child_plans || []).forEach(walk);
+        };
+        items.forEach(walk);
+        return selfStamped.length === 0;
+      })());
+
+    ok('S21g running_now is NEVER true without a running leaf beneath it — swept across the WHOLE payload, not just the fixtures named above (a class assertion: any node claiming running must have live evidence somewhere in its subtree)',
+      (function () {
+        let liars = [];
+        const hasRunningLeaf = (n) => {
+          if ((n.live_sessions || []).some((s) => s && s.status && s.status.value === 'running')) return true;
+          return (n.children || []).some(hasRunningLeaf) || (n.child_plans || []).some(hasRunningLeaf);
+        };
+        const walk = (n) => {
+          if (n.running_now && !hasRunningLeaf(n)) liars.push(n.id);
+          (n.children || []).forEach(walk);
+          (n.child_plans || []).forEach(walk);
+        };
+        items.forEach(walk);
+        return liars.length === 0;
+      })());
 
     // ---- Round 15: plan_doc {project,path} — the plan-link fix (the old
     // client-side `file:///` href was a DEAD link, live-verified; plan_doc
@@ -996,6 +1226,74 @@ async function main() {
     ok('R9-7b-4 the CRASHED unbound heartbeat (30 days stale) never counts as "running, unattributed" — crashed is excluded, not just unbound',
       unbound && !unbound.live_sessions.some((a) => a.id.indexOf('sess-unbound-crashed') !== -1),
       unbound && JSON.stringify(unbound.live_sessions));
+    // SPLIT-BRAIN FIX (2026-08-01): these members were stamped
+    // status.value 'in-progress' while their own label said "running" — the
+    // one node in the tree that is a pure live-heartbeat truth claim was
+    // the one whose machine-readable value denied it. The client's
+    // AGENT_STATUS_GLYPH has no 'in-progress' key, so every live session
+    // rendered with the UNKNOWN glyph, and the summary chip was hard-coded
+    // to the in-progress (violet) class — literally the operator's "the
+    // purple items ... are supposed to be green".
+    ok('R9-7b-5 the unattributed node AND each of its session members carry status.value "running" — the value agrees with the label it has always printed (a client keying colour/glyph off .value now gets the running treatment, not the unknown fallback)',
+      unbound && unbound.status.value === 'running' &&
+      unbound.live_sessions.every((a) => a.status && a.status.value === 'running'),
+      unbound && JSON.stringify({ node: unbound.status, members: unbound.live_sessions.map((a) => a.status.value) }));
+    ok('R9-7b-6 the unattributed node is running_now — the tree\'s ONE live-work surface answers the same question every plan/task node now answers',
+      unbound && unbound.running_now === true,
+      unbound && JSON.stringify(unbound.running_now));
+    // R9-7b-7: sess-unbound-running's heartbeat is written with
+    // `new Date().toISOString()` above, i.e. seconds old — classifyHeartbeatAge
+    // returns 'live' for it. The label branch compared against 'active', a
+    // token that function NEVER returns ('live' | 'quiet' | 'crashed'), so the
+    // freshest possible session was labelled "running (live)". The old
+    // /running/ regex in R9-7b-2 passed either way; this pins the actual word.
+    ok('R9-7b-7 a heartbeat that is seconds old is labelled plain "running", NOT "running (live)" — the label branch compared against "active", which classifyHeartbeatAge can never return, so the freshest session carried a spurious parenthetical on the one surface that says "running" out loud',
+      unbound && ((unbound.live_sessions || [])[0] || {}).status &&
+      unbound.live_sessions[0].status.label === 'running',
+      unbound && JSON.stringify((unbound.live_sessions || []).map((a) => a.status && a.status.label)));
+
+    // ---- S22g-j + S23d: THE NEGATIVE CASE for the new unbindable path, and
+    // the Critical's regression guard. Until this round the new function had
+    // NO negative test at all — its header promised "a quiet dispatch is
+    // still stalled, not green" and nothing checked it (harness-reviewer
+    // Major 3). unbindable-stale-plan is the same fixture shape as
+    // unbindable-plan with the SAME freshness of heartbeat; ONLY the dispatch
+    // timestamp differs (2h vs 10min), so the idle gate is isolated.
+    // The heartbeat is written HERE, after every assertion above that pins
+    // the unattributed population, so none of their coverage is diluted.
+    fs.writeFileSync(path.join(heartbeatDir, 'sess-unbindable-stale.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-unbindable-stale', pid: 8, cwd: repoDir, repo_root: repoDir,
+      worktree_root: repoDir, branch: 'fixture-unbindable-stale', model: 'fixture',
+      last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
+    }));
+    const rStale = await httpGet(PORT, '/api/roadmap');
+    const unbStale = findItem(rStale.json.items, 'unbindable-stale-plan');
+    const unbStaleLeaf = (unbStale && (unbStale.live_sessions || [])[0]) || {};
+    ok('S22g an unbindable dispatch older than the 60min idle window renders STALLED, not running — the new path inherits the same task-level idle gate, it is not a colour shortcut around it',
+      (unbStaleLeaf.status || {}).value === 'stalled',
+      JSON.stringify(unbStaleLeaf.status || null));
+    ok('S22h ...and its plan is therefore NOT running_now and NOT green — the whole distinction this change exists to draw, proved on the new path rather than assumed from it',
+      unbStale && unbStale.running_now === false,
+      JSON.stringify(unbStale && unbStale.running_now));
+    ok('S22i THE CRITICAL REGRESSION GUARD: this session\'s heartbeat is SECONDS old, so it is genuinely live — it must STILL be counted by the unattributed node. Binding every session the function touches (not just the running ones) silently removed live sessions from the ONE surface that says "N running"',
+      (function () {
+        const ub = rStale.json.unbound_sessions;
+        return !!ub && (ub.live_sessions || []).some((a) => /sess-unbindable-stale/.test(a.id || ''));
+      })(),
+      JSON.stringify(((rStale.json.unbound_sessions || {}).live_sessions || []).map((a) => a.id)));
+    ok('S22j ...and the two surfaces do not contradict each other: the plan row says the DISPATCH went quiet, the unattributed node says the SESSION is alive. Both true, and the leaf text says which is which',
+      /dispatched for task "another-slug-not-a-task-id", which is not a task id in this plan/.test(unbStaleLeaf.title || '') &&
+      /still alive/.test((unbStaleLeaf.status || {}).label || ''),
+      JSON.stringify({ title: unbStaleLeaf.title || null, label: (unbStaleLeaf.status || {}).label || null }));
+    ok('S23d the stale unbindable plan gets NO running roll-up — the roll-up follows the leaf value, so it cannot manufacture a "running" word the colour is not entitled to either',
+      unbStale && (!unbStale.roll_up || !unbStale.roll_up.running),
+      unbStale && JSON.stringify(unbStale.roll_up));
+    ok('S22k a RUNNING unbindable leaf still binds its session — sess-unbindable (fresh heartbeat, recent dispatch) is claimed by unbindable-plan and stays OUT of the unattributed node, so the scoping is a scoping and not a blanket removal',
+      (function () {
+        const ub = rStale.json.unbound_sessions;
+        return !!ub && !(ub.live_sessions || []).some((a) => /sess-unbindable$/.test(a.id || ''));
+      })(),
+      JSON.stringify(((rStale.json.unbound_sessions || {}).live_sessions || []).map((a) => a.id)));
 
     // ---- R9-8: multi-repo roots -----------------------------------------
     ok('R9-8 zero-config default: with no projects config, a second repo\'s plan never appears (single-repo behavior unchanged)',

@@ -45,11 +45,10 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
 - CLEARED 2026-07-29: T7 remainder — full 163-plan mine completed on the DESKTOP post-purge
   (the purge collapsed the fork tax that killed it 3x); docs/loe/loe-calibration.json/.md
   committed. T7 awaits task-verifier only.
-- CLAIM: T6 prerequisites (a) occupancy TTL cache + (b) env-bypass closure/acceptance —
-  desktop — 2026-07-29 — adapters/claude-code/hooks/lib/admission-lib.sh (NOTE for the other
-  machine: T4's closure-gates-new-work splice also touches this file — pull and rebase small;
-  the TTL cache is confined to the occupancy read path) + (d) Loop-2 pressure tick —
-  surface per docs/designs/estate-performance-governor-2026-07-27.md (tick writer + pressure_src)
+- CLEARED 2026-07-29: T6 prerequisites (a)(b)(d) — landed on desktop master as 5ee67c2 (TTL
+  cache) + 1cdef7f (bypass closure, decision 065) + 4fdfc83 (Loop-2 pressure tick); suites
+  55/55 + 26/26 re-run by the orchestrator post-cherry-pick. T6 flip still gated on the 7-day
+  clock + operator thresholds + criterion (c) darwin janitor schedule (darwin-machine work).
 
 ## Scope / Tasks (LOE: plan-level reference classes per review F11; 1 bs = one builder-session ≈ 80–150k tokens; bands are P50–P90 priors, calibrated as T7 lands)
 
@@ -68,7 +67,13 @@ Format: `CLAIM: <task> — <machine> — <UTC date> — <surface files>`
       LOE: SMALL-MEDIUM, 2 bs, medium variance (multi-callsite wiring). Verification: full.
 - [x] T4 — Deterministic closers: generalize close-plan.sh pattern per work-item type + the
       closure-gates-new-work WIP rule in the admission lib + no-orphan registration at
-      spawn-worktree. Outcome metric: zero unattributable worktrees/branches older than 48 h.
+      spawn-worktree. ALSO OWNS (T7 verifier residual #1, 2026-07-29): the LOE
+      actuals-append-at-close seam — T7's outcome-metric clause 2 ("actuals append at close")
+      has a documented-but-unbuilt splice (loe-backfill.sh header lines ~96–114 names the exact
+      site: close-plan.sh cmd_close, before emit_plan_completed_progress_log_event ~:1293);
+      wire it here so every closure appends the plan's actuals and docs/loe/ stays fresh —
+      without this the calibration table silently goes stale until a manual re-mine.
+      Outcome metric: zero unattributable worktrees/branches older than 48 h.
       LOE: MEDIUM, 2–3 bs, medium-high variance (lifecycle semantics). Verification: full.
 - [x] T5 — Estate merge lock + single deterministic merge script (coord-sync single-writer idiom);
       closers call it; nothing else merges. Outcome metric: zero master divergence events while
@@ -243,9 +248,15 @@ observe).
 - 2026-07-29: adapters/claude-code/scripts/session-resumer.sh — T3 admission splice at the storm-cap commit point (the hookless dispatcher, review F2)
 - 2026-07-29: adapters/claude-code/scripts/spawn-worktree.sh — T3 admission splice after a successful worktree create; otherwise this dispatch path emits nothing into the ledger, the review's named NEEDS-RESHAPING condition
 - 2026-07-29: docs/plans/accountable-estate-program-2026-07-evidence.md — T3 builder-claim evidence block (task-verifier has NOT run; checkbox left unchecked for the desktop machine)
+- 2026-07-30: `docs/reviews/records/grandfather-manifest.json` — deploy-gate cutover re-bootstrap at 6ffe534 (operator-authorized GRANDFATHER; unblocks the T3-lib live install → starts the T6 observe clock)
 - 2026-07-29: `adapters/claude-code/hooks/lib/estate-registration-lib.sh` — NEW, T4 no-orphan registration store (reg_register/reg_close/reg_is_open/reg_open_count/reg_has_any_record), same HARNESS_SELFTEST sandboxing convention as admission-lib.sh
 - 2026-07-29: `adapters/claude-code/scripts/spawn-worktree.sh` — T4 additions on top of the T3 admission splice: `--plan`/`--task`/`--who` attribution flags, a no-orphan REGISTRATION splice on `--apply` create, `--disposition` on `--remove`, and a DE-REGISTRATION splice in `remove_worktree()`
 - 2026-07-29: `adapters/claude-code/hooks/lib/admission-lib.sh` — T4 addition on top of T3: a fifth ladder rung, `would-block:wip-exceeded` (design §6c "closure gates new work"), scoped to `source=worktree` only, reading `estate-registration-lib.sh`'s open-registration count; still OBSERVE ONLY
+- 2026-08-02: `docs/reviews/2026-08-02-estate-entropy-triage.md` — read-only triage of the four
+  saturated queues this program exists to address (nl-issues, monitor alerts, stale plans,
+  stranded worktrees) into ranked, cited dispositions; direct evidence base for the T15-T18
+  backlog candidates named in `~/.claude/state/nl-issues.jsonl` (2026-07-28/29/30) and not yet
+  promoted into this plan's own task list
 - 2026-07-29: `adapters/claude-code/scripts/close-worktree.sh` — NEW, T4's generalized closer for the "worktree/builder" work-item type (close-plan.sh's pattern generalized to a second type): verify → integration-check (merge, or explicit `--keep-branch --reason`) → remove → de-registration
 - 2026-07-29: `adapters/claude-code/scripts/estate-attribution-check.sh` — NEW, T4's outcome-metric tool: derives "zero unattributable worktrees/branches older than 48h" from the registration store + `git worktree list`
 - 2026-07-29: `adapters/claude-code/manifest.json` — T4 entry (estate-registration-lib) + T4 additions to the existing admission-lib entry (golden_scenario, jit_triggers.paths)
@@ -263,6 +274,16 @@ observe).
   loe-backfill.sh's own header (exact close-plan.sh function + call site named), not built, per
   the operator's WIP-1 directive keeping this slice out of admission/dispatch/closer files while
   the other machine owns T3.
+- 2026-07-29: `docs/decisions/065-admission-lib-env-bypass-closure.md` (NEW) — T6-PREREQUISITES (b)
+  written acceptance for the one of four T6-named env bypasses (NL_PROTECTED_ORCHESTRATOR) that
+  stays open by design; the other three (ADM_ABSURD_SESSION_CAP, ADM_ESTATE_SNAPSHOT,
+  ADM_STATE_DIR) are closed mechanically in admission-lib.sh itself (already in scope, T3/T4/T6 row
+  above). Desktop machine, per the CLAIM line in Machine claims above.
+- 2026-07-29: `adapters/claude-code/hooks/lib/perf-tick-snapshot.sh` — T6-PREREQUISITES (d) Loop-2
+  pressure tick (pts_write_pressure_tick, wired into pts_run_tick, therefore into health-tick.sh's
+  existing hourly cadence — no new scheduled task; NL-estate-janitor is not installed on this
+  machine per Get-ScheduledTask, so health-tick's already-active cadence is the honest carrier).
+  Desktop machine, per the CLAIM line in Machine claims above.
 - 2026-07-29: `adapters/claude-code/hooks/workstreams-emit.sh` — attribution-pipeline task (operator directive: "how do we ensure we don't keep running into this same damn issue of you reporting something that's complete false"): NL-ATTRIBUTION header convention + `_extract_nl_attribution`/`_stop_extract_nl_attribution` parsers, wired into `--on-builder-dispatch` (START, threaded into the existing T3 admission-lib splice's ledger row + `_emit_dispatch_provenance`) and `--on-stop` (END, `spawn-concluded` detail enrichment) — this is the natural next increment on T3's emit-feed registration point, closing the "attribution" half T3/T4 left as governor-only
 - 2026-07-29: `adapters/claude-code/hooks/lib/admission-lib.sh` — `_adm_key_allowed` extended with `role`/`attributed` labels for the attribution-pipeline task, alongside T3/T4's existing `plan`/`task` keys
 - 2026-07-29: `adapters/claude-code/scripts/dispatch-provenance.sh` — attribution-pipeline task: additive `--role` field on the dispatch-provenance marker (backward compatible)

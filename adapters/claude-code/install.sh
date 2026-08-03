@@ -2015,8 +2015,18 @@ if [ "$VERIFY_AFTER_INSTALL" -eq 1 ]; then
     DOCTOR_EXIT=$?
     set -e
     echo ""
+    # gated-pipeline-master-2026-08 Task 4 (REQ-A2, fixing HR-F2+F5+F8):
+    # exit 3 means the doctor itself was SKIPPED (single-flight guard held
+    # by a concurrent run, or an active HALT drain) with no cached verdict
+    # to serve -- it is NOT evidence the install is broken, so it must not
+    # be conflated with a real FAILED (exit 1). Treated as a pass for the
+    # install's own exit code (re-run --verify moments later to get a real
+    # verdict); only exit 1 fails the install.
     if [ "$DOCTOR_EXIT" -eq 0 ]; then
       echo "  --verify: harness-doctor.sh --quick passed."
+    elif [ "$DOCTOR_EXIT" -eq 3 ]; then
+      echo "  --verify: harness-doctor.sh --quick SKIPPED (single-flight/HALT in effect, exit 3) -- not an install failure; re-run --verify for a real verdict." >&2
+      DOCTOR_EXIT=0
     else
       echo "  --verify: harness-doctor.sh --quick FAILED (exit $DOCTOR_EXIT). See RED lines above." >&2
     fi

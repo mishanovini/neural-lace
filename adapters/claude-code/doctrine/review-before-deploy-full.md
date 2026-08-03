@@ -17,18 +17,66 @@ proven misses.
 
 ## Trigger surface — recursive-walk rationale (harness-review REFORMULATE fixup, 2026-07-16)
 
-**Enforced set == admitted-and-deployed set.** Both carriers walk
-`hooks/**/*.sh` and `scripts/**/*.sh` RECURSIVELY (a `find`, not a flat
-top-level glob) — a flat `scripts/*.sh` glob previously missed
-`scripts/lib/*.sh` (e.g. `imperative-classifier.sh`) entirely, and would
-silently miss any future `scripts/host-setup/*.sh` too, even though
-`sync_directory`/`git ls-tree -r` deploy those files just the same as
-top-level ones. `rules/**` is walked recursively for the same reason (no
-nested `rules/*.md` exists today, but the surface glob is recursive and a
-flat glob would silently miss one added later). `settings.json.template`
-is gated at BOTH its real call sites — the `--replace-settings` mode
-(which always applies it) and the normal flow's missing-`settings.json`
-copy — not just the one a narrower fix might touch.
+**Enforced set == admitted-and-deployed set.** Both carriers walk the
+carrier-chain trees RECURSIVELY (a `find`, not a flat top-level glob) — a flat
+`scripts/*.sh` glob previously missed `scripts/lib/*.sh` (e.g.
+`imperative-classifier.sh`) entirely, and would silently miss any future
+`scripts/host-setup/*.sh` too, even though `sync_directory`/`git ls-tree -r`
+deploy those files just the same as top-level ones. `rules/**` is walked
+recursively for the same reason (no nested `rules/*.md` exists today, but the
+surface glob is recursive and a flat glob would silently miss one added
+later). `settings.json.template` is gated at BOTH its real call sites — the
+`--replace-settings` mode (which always applies it) and the normal flow's
+missing-`settings.json` copy — not just the one a narrower fix might touch.
+
+> **SUPERSEDED IN PART, 2026-07-30 (Amendment H).** This section used to say
+> the carriers walk `hooks/**/*.sh` and `scripts/**/*.sh` — an
+> EXTENSION-SCOPED surface that Amendment H retired. The recursion rationale
+> above still holds and is why the surface is recursive; the extension
+> allowlist does not. The four carrier-chain trees (`hooks/`, `scripts/`,
+> `git-hooks/`, `schemas/`) are now matched **WHOLESALE**, with an exact-path
+> exemption list, because an extension allowlist is itself a hand-written list
+> that drifts silently: `hooks/lib/evil.mjs`, `hooks/evil.rb`,
+> `schemas/x.yaml` were each PROBED and confirmed NOT-COVERED under the old
+> arms. `git-hooks/` additionally cannot be extension-filtered at all — its
+> load-bearing members (`pre-push`, `pre-commit`, `post-commit`,
+> `pre-merge-commit`) are extensionless. Canonical statement:
+> `doctrine/review-before-deploy.md` "Amendment H surface shape"; implementation:
+> `hooks/lib/review-record-gate-lib.sh` `rrg_in_surface`.
+>
+> **Why this correction is filed here and not silently rewritten:** the
+> compact and the full drifted apart in OPPOSITE directions twice in two
+> rounds — first a retraction landed in the full and missed the JIT-delivered
+> compact, then this fix landed in the compact and missed the full. The pair
+> is now swept mechanically; see "Compact/full drift sweep" below.
+
+## Compact/full drift sweep (harness-reviewer MAJOR 3, 2026-07-30)
+
+Every `<name>-full.md` and its `<name>.md` compact must agree on the PATH
+GLOBS they quote — that is the specific thing that has now drifted twice.
+Run this before landing any doctrine edit that touches a surface definition:
+
+```sh
+for f in adapters/claude-code/doctrine/*-full.md; do
+  b="${f%-full.md}.md"; [ -f "$b" ] || continue
+  d=$(diff <(grep -oE '[a-z-]+/\*\*?/?\*?\.[a-z]+' "$f" | sort -u) \
+           <(grep -oE '[a-z-]+/\*\*?/?\*?\.[a-z]+' "$b" | sort -u))
+  [ -n "$d" ] && { echo "=== $f vs $b ==="; echo "$d"; }
+done
+```
+
+`grep -oE`, not `rg`: on this machine `rg` is a SHELL FUNCTION supplied by the
+Claude Code shell snapshot, so it resolves inside an agent's tool shell and
+vanishes in a plain `bash script.sh` subprocess — a documented command that
+silently does not run is the same theatre class this doctrine exists to
+prevent. Verified: `command -v rg` reports a function, and the loop above
+using `rg` failed with `rg: command not found` on every file.
+
+A non-empty diff is not automatically a defect (a full may legitimately
+discuss a glob the compact omits), but it IS the list a doctrine edit must
+walk before claiming the pair is consistent. Current state of that walk
+(2026-07-30, re-executed at this commit): see the sweep result recorded in
+`docs/plans/review-gate-identity-anchor-2026-07-30.md`.
 
 ## Amendment G — the cockpit product surface (2026-07-30)
 
@@ -83,8 +131,9 @@ that trusts "self-test PASS" as evidence. Reviewing selftest files at the
 same bar as product code is the only position consistent with that
 finding.
 
-**Enforcement — commit-time only, honestly (harness-review REFORMULATE
-fixup, finding 1).** All three consumers of `rrg_in_surface` source the ONE
+**Enforcement — commit-time at Amendment G, push-time as of Amendment H
+(harness-review REFORMULATE fixup, finding 1; superseded 2026-07-30, see
+Amendment H below).** All three consumers of `rrg_in_surface` source the ONE
 shared `hooks/lib/review-record-gate-lib.sh` — that part is true, and means
 there is only one surface definition to keep in sync — but sharing the
 function is NOT the same as sharing the enforcement, and the first draft of
@@ -99,17 +148,23 @@ hardcodes the `adapters/claude-code/$full_rel` prefix) — same story. Both
 carriers exist to sync `adapters/claude-code/` into `~/.claude/`; the
 cockpit is not part of that sync surface and never has been, because the
 cockpit runs live from the git checkout with no separate deploy step to
-sync at all. So Amendment G's two new case arms are **live at exactly one
-place: `review-record-commit-gate.sh`'s commit-time PreToolUse block**
-(plus its sibling `review-queue-auto-enqueue-lib.sh`, which files an
-auto-enqueue remedy item off the same staged-path list). That is not a
-weaker guarantee than the harness side's — for a target with no deploy
-step, the commit gate blocking an uncovered change IS the complete
-enforcement, not a backstop for a deploy-time carrier that will also catch
-it. Naming this precisely matters: claiming carrier parity that cannot
+sync at all. So Amendment G's two new case arms were, at the time Amendment
+G landed, **live at exactly one place: `review-record-commit-gate.sh`'s
+commit-time PreToolUse block** (plus its sibling `review-queue-auto-enqueue-
+lib.sh`, which files an auto-enqueue remedy item off the same staged-path
+list). AMENDMENT H (2026-07-30) SUPERSEDES THE ENFORCEMENT CLAIM, NOT THE
+SURFACE DEFINITION: the commit gate was demoted to advisory-only (see
+review-before-deploy.md's own Amendment H note) because its block was
+unsatisfiable from a builder session with no Task/Agent-dispatch tool.
+`hooks/review-record-push-gate.sh` — wired at `git push` via `git-hooks/
+pre-push` — now enforces the SAME `rrg_in_surface` surface (it sources the
+identical `hooks/lib/review-record-gate-lib.sh`, unmodified by Amendment H)
+for cockpit content too, since the cockpit still has no separate deploy
+step. Naming this precisely matters: claiming carrier parity that cannot
 fire is exactly the "documented enforcement that does not fire" defect
 this doctrine's own constitution treats as cardinal (harness-reviewer
-caught this in the amendment's first draft).
+caught the ORIGINAL version of this gap in Amendment G's first draft, and
+caught THIS doc going stale relative to Amendment H in review).
 
 **Named residual (Amendment G).** The two case arms cover
 `{server,web}/**/*.js` only, per the operator dispatch that motivated this

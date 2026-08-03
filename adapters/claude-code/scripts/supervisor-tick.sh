@@ -87,8 +87,8 @@
 #       explicitly UNARMED (the `~/.claude/local/resumer-armed.txt` marker
 #       is absent by design — arming requires its own multi-day Phase-2
 #       checklist: >=5 days shadow metrics, a live kill-drill, and an
-#       explicit operator-created marker; see docs/reviews/2026-07-17-
-#       circuit-continuous-building-design-sketch.md §4.4), and even once
+#       explicit operator-created marker; see the 2026-07-17 continuous-
+#       building design review in docs/reviews/ §4.4), and even once
 #       armed it resumes a SESSION, not a bare orphaned WORKTREE (which may
 #       have no still-resolvable owning session id at all once its
 #       heartbeat file has aged out). No orphaned-worktree-specific respawn
@@ -145,6 +145,11 @@ HOOKS_DIR="$SCRIPT_DIR/../hooks"
 
 # shellcheck disable=SC1091
 [[ -f "$HOOKS_DIR/lib/nl-paths.sh" ]] && source "$HOOKS_DIR/lib/nl-paths.sh" 2>/dev/null || true
+# harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 11): the
+# HALT/drain flag, sourced UNCONDITIONALLY — see
+# hooks/lib/single-flight-lib.sh header.
+# shellcheck disable=SC1091
+[[ -f "$HOOKS_DIR/lib/single-flight-lib.sh" ]] && source "$HOOKS_DIR/lib/single-flight-lib.sh" 2>/dev/null || true
 
 # --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
 # shellcheck disable=SC1091
@@ -253,8 +258,8 @@ _st_run() {
 
 # ----------------------------------------------------------------------
 # _st_resolve_repos — sets global array ST_REPOS. Paths may contain
-# spaces (e.g. this very machine's "Pocket Technician" segment) — read
-# line-by-line into an array, never naive word-splitting.
+# spaces (e.g. a downstream-product checkout segment on this machine) —
+# read line-by-line into an array, never naive word-splitting.
 # ----------------------------------------------------------------------
 ST_REPOS=()
 _st_resolve_repos() {
@@ -317,6 +322,17 @@ _st_flush_alert() {
 # ----------------------------------------------------------------------
 run_tick() {
   SECONDS=0
+  # harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 11):
+  # HALT/drain — checked first; an operator's one-gesture stop always wins.
+  # _st_log alone is insufficient here (it only appends to the durable
+  # per-tick log FILE, never stdout/stderr — see its header); this mirrors
+  # the existing "detector missing" arm's convention of ALSO echoing to
+  # stdout so a drain is visible to whoever/whatever invoked this tick.
+  if declare -F sf_halt_active >/dev/null 2>&1 && sf_halt_active; then
+    _st_log "HALT flag set ($(sf_halt_reason 2>/dev/null)) — draining: exiting without running this tick"
+    echo "[supervisor-tick] HALT flag set ($(sf_halt_reason 2>/dev/null)) — draining: exiting without running this tick"
+    return 0
+  fi
   local budget="${SUPERVISOR_TICK_BUDGET_SECS:-120}"
   local sweep_bin="${SUPERVISOR_TICK_SWEEP_BIN:-$SCRIPT_DIR/worktree-hygiene-sweep.sh}"
   local state_dir orphans_dir
@@ -703,6 +719,30 @@ EOF
   else
     fail "perf-tick-snapshot.sh lib not found at $pts_lib"
   fi
+
+  echo "Scenario 6 (harness-execution-redesign-2026-08 Task 1, invariant 11): HALT/drain -- set the flag, confirm the next tick exits immediately with a drain notice and touches no alert dir; clear it, confirm normal resumption"
+  # Reuses Scenario 3's fast, deterministic "detector missing" fixture
+  # (SUPERVISOR_TICK_SWEEP_BIN pointed at a nonexistent path) so the
+  # non-halted arm returns quickly via its own honest-skip path instead of
+  # running a real (slow, machine-state-dependent) worktree sweep -- this
+  # scenario only needs to prove the HALT branch is/isn't taken, not
+  # re-exercise the sweep itself.
+  local sf6="$T/s6-sf"; mkdir -p "$sf6"
+  printf '%s %s\n' "$(date +%s 2>/dev/null || echo 0)" "s6-test-halt" > "$sf6/HALT"
+  local before6 after6
+  before6="$(ls "$SUPERVISOR_ALERT_DIR" 2>/dev/null | wc -l | tr -d ' ')"
+  local out6a
+  out6a="$(SF_STATE_DIR="$sf6" SUPERVISOR_TICK_SWEEP_BIN="$T/does-not-exist-sweep.sh" bash "$SELF" 2>&1)"
+  case "$out6a" in *"HALT"*) pass "Scenario 6a: HALT flag set -> tick drains with a notice naming HALT" ;; \
+    *) fail "Scenario 6a: expected a HALT notice, got: $out6a" ;; esac
+  after6="$(ls "$SUPERVISOR_ALERT_DIR" 2>/dev/null | wc -l | tr -d ' ')"
+  [[ "$before6" == "$after6" ]] && pass "Scenario 6b: HALT drain touched no alert file (never ran the tick body)" \
+    || fail "Scenario 6b: alert dir contents changed during a HALT drain (before=$before6 after=$after6)"
+  rm -f "$sf6/HALT"
+  local out6c
+  out6c="$(SF_STATE_DIR="$sf6" SUPERVISOR_TICK_SWEEP_BIN="$T/does-not-exist-sweep.sh" bash "$SELF" 2>&1)"
+  case "$out6c" in *"detector missing"*) pass "Scenario 6c: HALT cleared -> next tick runs normally (reaches the tick body, not the HALT arm)" ;; \
+    *) fail "Scenario 6c: expected the tick body to run (detector-missing arm) after HALT was cleared, got: $out6c" ;; esac
 
   rm -rf "$T" 2>/dev/null || true
   echo ""

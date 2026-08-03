@@ -456,6 +456,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .ask-artifact-ts { color: var(--muted); font-size: 11px; }
 
 .ask-link-resolved a { color: var(--info); }
+/* COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — a repo-file reference in the ask
+   tree is now a <button> opening the in-page docs viewer instead of a dead
+   `file://` anchor. Same UA-chrome reset + link appearance as
+   .todo-pointer-link-btn / .rm-plan-link-btn. */
+.ask-link-doc-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer; color: var(--info);
+}
+.ask-link-doc-btn:hover { text-decoration: underline; }
 .ask-copy-btn { margin-left: 2px; }
 
 .ask-lifecycle-row { margin-top: 8px; }
@@ -678,6 +687,17 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .backlog-header-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
 .backlog-counts-summary { color: var(--muted); }
 .backlog-open-file-link { color: var(--info); }
+/* COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — "open backlog.md" is now a <button>
+   opening the in-page docs viewer (the old `file://` href was dead: a
+   browser loading this page over http silently refuses it — PROVEN live at
+   :7733, it was the only file:// anchor in the whole DOM). Reset UA button
+   chrome so it still READS as the same link it always was, matching
+   .todo-pointer-link-btn / .rm-plan-link-btn above. */
+.backlog-open-file-btn {
+  background: none; border: none; padding: 0; margin: 0; font: inherit;
+  text-align: left; cursor: pointer; color: var(--info);
+}
+.backlog-open-file-btn:hover { text-decoration: underline; }
 .backlog-toggle-btn { margin-left: auto; }
 
 .backlog-tier-group { margin-bottom: 8px; }
@@ -1262,7 +1282,13 @@ button, a, [role="button"] { min-height: 24px; }
    that stays the ONE dim state (var(--done), unchanged from Round 12,
    4.55:1). in-progress/stalled/merged-unverified/unknown are the loud
    exceptions and are UNCHANGED by this fix. ---- */
-/* Round 15 (operator, TWICE now — Round 12 asked for this exact thing and
+/* SUPERSEDED 2026-08-01 — history only; the live rules are in the block
+   directly below. Rounds 15/16 kept trying to make IN-PROGRESS the loud
+   state; the 2026-08-01 walkthrough established that in-progress is not a
+   liveness claim at all, so it gets no hue and the loud state moved to the
+   new .rm-title-running. Kept verbatim because it records WHY a "just make
+   in-progress bright again" change would be a regression, not a fix.
+   Round 15 (operator, TWICE now — Round 12 asked for this exact thing and
    it did not land): in-progress titles get one loud colour, not merely
    brighter white — the same hue every other "active right now" signal in
    this view uses (leaf running chip, taskspan token, roll-up badge), so a
@@ -1274,11 +1300,46 @@ button, a, [role="button"] { min-height: 24px; }
    above the 4.5:1 body-text floor, let alone the 3:1 large/bold-text floor
    this is set at (600 weight). --info is now reserved EXCLUSIVELY for real
    interactive links across this view (the operator's own stated reason). */
+/* ---- THE TWO STATES THE OPERATOR KEPT SEEING CONFLATED (2026-08-01) ----
+   Read these two rules as a pair; each is defined by what the OTHER is not.
+
+   .rm-title-running    = A LIVE CLAIM. A heartbeat-backed session is
+                          attending this item (or a descendant) RIGHT NOW —
+                          server-verified `running_now` (roadmap-routes.js
+                          stampRunningNow), never plan-file text. GREEN
+                          (--running #4ade80, 8.42:1 on --panel), the same
+                          green the leaf "running" chip, the "<id> running"
+                          task-span token and the "N running" roll-up badge
+                          already speak. This is the ONLY green in the
+                          roadmap and the ONLY hue that means "someone is
+                          on it".
+   .rm-title-in-progress = A DERIVED-FROM-ARTIFACTS state. Started and not
+                          finished — commits/partial work exist; NOBODY is
+                          necessarily on it. It fires on done>0 alone. It
+                          therefore gets NO hue at all — it separates from
+                          not-started by WEIGHT (600 vs 400) on the SAME
+                          --text colour, which is the strictest reading of
+                          this file's own stated discipline above ("...for
+                          the two common/normal-traffic states ... HUE
+                          reserved for the exceptions"). Note it is weight,
+                          not luminance: both states measure 11.86:1, and
+                          the n/m progress fraction is the non-colour, non-
+                          weight carrier that tells them apart outright.
+                          It was --accent violet until now,
+                          and violet-vs-white was still read as "this one is
+                          active" — operator, 2026-08-01: "All the plan
+                          items in here that are purple are not
+                          representing what they're supposed to be
+                          representing ... it's supposed to represent items
+                          that are currently being worked on." Spending ANY
+                          hue on the most common state re-creates that
+                          misread; the fix is to stop spending one.
+   Colour is reinforcement only (WCAG 1.4.1): the running row always also
+   carries the WORD "running" (leaf chip / task-span token / roll-up badge).
+   ---- */
 .rm-title.rm-title-not-started { color: var(--text); font-weight: 400; }                /* 11.86:1 */
-/* Operator 2026-07-30: GREEN means ACTIVELY RUNNING, nothing else — an
-   in-progress-but-idle plan title must not read as live. Accent (violet)
-   keeps row 69's "distinct from white" requirement without lying green. */
-.rm-title.rm-title-in-progress { color: var(--accent); font-weight: 600; }
+.rm-title.rm-title-in-progress { color: var(--text); font-weight: 600; }                /* 11.86:1 — weight-only, deliberately hue-free */
+.rm-title.rm-title-running { color: var(--running); font-weight: 700; }                 /* 8.42:1 — the one live-claim hue */
 .rm-title.rm-title-complete { color: var(--done); font-weight: 400; }                   /* 4.55:1 — see --done's own note; the ONLY dim state now */
 .rm-title.rm-title-stalled { color: var(--interrupt); font-weight: 600; }               /* 5.45:1 */
 .rm-title.rm-title-merged-unverified { color: var(--warn); font-weight: 600; }          /* 8.79:1 */
@@ -1322,7 +1383,10 @@ button, a, [role="button"] { min-height: 24px; }
 .rm-subtask-body { font-size: 11px; color: var(--muted); }
 .rm-agent { display: flex; align-items: baseline; gap: 6px; list-style: none; margin-left: -18px; }
 .rm-agent-glyph { font-size: 10px; }
-.rm-agent-running .rm-agent-glyph { color: var(--ok); }
+/* 2026-08-01: was var(--ok) — the RETIRED green (see --done's note). A live
+   session's glyph must speak the same --running green as every other
+   running signal, not a second, dimmer green nothing else uses. */
+.rm-agent-running .rm-agent-glyph { color: var(--running); }
 .rm-agent-stalled .rm-agent-glyph { color: var(--interrupt); }
 .rm-agent-unknown .rm-agent-glyph { color: var(--warn); }
 .rm-agent-text { font-size: 12px; }
@@ -1418,9 +1482,19 @@ button, a, [role="button"] { min-height: 24px; }
    though this rule never renders live today. ---- */
 .chip.rm-status { white-space: nowrap; }
 .chip.rm-status-not-started { color: var(--muted); border-color: var(--border2); }
-/* Operator 2026-07-30: green = ACTIVELY RUNNING only — an idle in-progress
-   plan's status chip must not read live. Accent, matching the title ladder. */
-.chip.rm-status-in-progress { color: var(--accent); border-color: var(--accent); }
+/* Hue-free, matching the title ladder above: "in-progress" is derived from
+   artifacts and is NOT a liveness claim. (Dead in the tree today — see the
+   block comment above — but kept consistent so a future caller cannot
+   resurrect the violet-means-active misread.) */
+.chip.rm-status-in-progress { color: var(--text); border-color: var(--border2); }
+/* The LIVE claim, and the one chip that is NOT dead: renderUnboundSessions
+   paints the top-of-tree "N running, unattributed to a task" summary with
+   it. Same green + tint as .chip.rm-task-running so "running" looks
+   identical everywhere it is claimed. */
+.chip.rm-status-running {
+  color: var(--running); border-color: var(--running); font-weight: 700;
+  background: color-mix(in srgb, var(--running) 18%, transparent);
+}
 .chip.rm-status-merged-unverified { color: var(--warn); border-color: var(--warn); }
 .chip.rm-status-complete { color: var(--done); border-color: var(--done); } /* retired --ok (green) — see --done's note */
 .chip.rm-status-stalled { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; cursor: pointer; }
@@ -1470,6 +1544,11 @@ details[open] > summary .rm-rollups { display: none; }
 .chip.rm-rollup-running { color: var(--running); border-color: var(--running); font-weight: 600; }
 .chip.rm-rollup-waiting-on-you, .chip.rm-rollup-crashed { color: var(--interrupt); border-color: var(--interrupt); font-weight: 600; }
 .chip.rm-rollup-blocked-on, .chip.rm-rollup-limit-parked { color: var(--warn); border-color: var(--warn); }
+/* 2026-07-30: 'idle-dispatch' is deliberately --warn, NOT the --interrupt
+   that 'crashed' uses. It is the softer claim ("this task went quiet; its
+   session is still alive"), and colouring it like a crash would re-create
+   in CSS exactly the false-urgency the reason-code split removed. */
+.chip.rm-rollup-idle-dispatch { color: var(--warn); border-color: var(--warn); }
 .chip.rm-rollup-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; }
 
 /* ---- markers (I1/I2): text markers, never color-only ---- */
@@ -1705,6 +1784,31 @@ details[open] > summary .rm-rollups { display: none; }
 .ib-options-table th { color: var(--muted); font-weight: 600; }
 .ib-my-pick { margin: 4px 0; font-weight: 600; color: var(--text); }
 .ib-context-more { margin: 2px 0; color: var(--muted); font-style: italic; }
+
+/* ---- "Run this" — the actual ask, hoisted above the explanation
+   (Round 18, operator: "it's not very easy to find exactly what it is
+   that's actually needed"). Deliberately the loudest thing in the card:
+   accent rule + raised panel, so the eye lands here before the prose. --- */
+.ib-needed {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel2, rgba(127, 127, 127, 0.08));
+}
+.ib-needed-head {
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.ib-needed-line { margin: 4px 0; }
+/* Inside this block a command is the point, so let it use the full width
+   rather than sharing a line with its step label. */
+.ib-needed-line .cmd-fence { display: flex; width: 100%; margin-top: 2px; }
+.ib-needed-line .cmd-fence-code { flex: 1 1 auto; }
 
 /* ---- links (INBOX-MULTILINE-ASK-TRUNCATED-AT-RENDER-01) ---- */
 .ib-links { margin: 6px 0; }

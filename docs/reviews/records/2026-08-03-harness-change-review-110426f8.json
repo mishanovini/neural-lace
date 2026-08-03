@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260803-110426f8",
+  "created_at": "2026-08-03T03:08:56Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer(cockpit-r3+heartbeat-r2 consolidated)",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/plans/cockpit-roadmap-redesign.md",
+  "change_ref": {
+    "commit_sha": "bdf4247",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/session-heartbeat.sh",
+      "blob_sha": "f92b32e60b9e132621017c2acf30ef8d84bdfac5"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/session-heartbeat-lib.sh",
+      "blob_sha": "fd1f40a6bdae1b5bf21ce5d1ea09f49ae7a25151"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "6e4d5714960c9e9fb67f3ff45dae85601faa5701"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/roadmap-routes.js",
+      "blob_sha": "ea934ff07b391e72f5d93767098ec3914d7da6a8"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/derive-lib.js",
+      "blob_sha": "097e2f7c7a574face6d30ee64576c83ba28f40f0"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/roadmap.js",
+      "blob_sha": "0896409beea370bddd93f88b13aa2b1aa35bcdb5"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/app.css",
+      "blob_sha": "579d3e8000fa420523401382292caeae330ced30"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "agents a45f9254e23255a42 / aa209340c009b5ca3 / a8daaca572084c49e / a5b32e22c08479290 / afd10c1d82c1d2032 (session d3059d78)",
+    "verdict_quote": "No behaviour defect exists in Delta A at all — the code is right, and I proved every headline claim by mutation. [Delta B] one latent code defect (word-splitting) and two claim-accuracy defects. Both are narrow. Round 4 on each should be small. [All four findings closed in bdf4247.]",
+    "findings_summary": "Consolidated review of the two halves of the operator's thrice-reported 'nothing shows as running' defect, after 3 prior review rounds. Delta A (cockpit render): REFORMULATE on 1 Major + 1 Minor, ZERO behaviour defects — reviewer proved the scoped-binding guard discriminates (mutant 143/1), the no-double-count trace, and that the late-heartbeat-write deviation preserves rather than weakens coverage (mutant 141/3, all 3 fixture-population not code). Delta B (heartbeat data): REFORMULATE on 3 Majors — B2 a REAL latent bug (unquoted for-over-find word-splits; repo lives under a spaced path; self-test structurally could not catch it since mktemp -d yields space-free paths), B1 the claim-stake invalidated the adjacent mtime invariant, B3 manifest collapse-claim missing its first-write precondition. All four closed in bdf4247. Suites verified on the landed tree: session-heartbeat 40/0, cockpit 560/0, roadmap-routes 144/0, derive-lib 78/0. Six mutants run across both deltas; all discriminated."
+  },
+  "written_by": "integration session d3059d78 (Misha-Laptop takeover)",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}

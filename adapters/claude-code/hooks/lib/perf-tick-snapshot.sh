@@ -443,6 +443,99 @@ pts_append_tick_line() {
   printf '%s' "$file"
 }
 
+# ---------------------------------------------------------------------------
+# Loop-2 pressure tick (T6-PREREQUISITES (d), 2026-07-29 — see
+# docs/designs/estate-performance-governor-2026-07-27.md "Loop 2 — MEDIUM:
+# pressure snapshot tick", and admission-lib.sh's own header: "the Loop-2
+# pressure tick that writes pressure.json is NOT part of T3 ... adm_pressure_
+# color returns unknown ... pressure_src=absent on those lines").
+# ---------------------------------------------------------------------------
+# This is the missing writer: it turns admission ledger lines from
+# permanently pressure_src=absent into pressure_src=tick, using data this
+# tick ALREADY collects (pts_collect_processes / pts_collect_defender_cpu),
+# wired into health-tick.sh's existing hourly cadence via pts_run_tick below
+# — no new scheduled task (installers are operator-gated on this machine;
+# NL-health-tick is the only estate-related task actually "Ready"/active
+# here, confirmed via Get-ScheduledTask at build time — NL-estate-janitor is
+# NOT installed on this machine, so health-tick's cadence is the honest
+# choice of carrier, not estate-janitor's).
+#
+# HONESTY NOTE — this is a PARTIAL ladder, not the full design. The design's
+# ladder is "CPU>75%/90% OR bash>60/90 OR RAM<15%/unspecified-red". This tick
+# implements ONLY the bash-count leg (bash_count is already collected here
+# for the existing ticks.jsonl line) using the design's OWN named thresholds
+# (60 yellow, 90 red). CPU%/free-RAM% sampling is NOT built: no existing
+# primitive in this repo measures either, and adding a wmic/typeperf-based
+# sampler is real new infra, out of scope for a 0.5-bs T6 prerequisite. color
+# is therefore a genuine but PARTIAL signal — never a fabricated CPU/RAM
+# number standing in for a measurement that was never taken. BLACK (design:
+# "sustained RED >10 min") needs persistence tracking ACROSS ticks, which is
+# also not built; this writer never emits "black". Both gaps are named here
+# rather than silently claimed as done — a future tick can extend this
+# function without touching its callers (admission-lib.sh only ever reads
+# "color", never the fields feeding it).
+#
+# STALENESS: written once per pts_run_tick call (hourly, via health-tick.sh).
+# THE READER OWNS THE AGE BOUND (review REJECT C2, 2026-07-30):
+# admission-lib.sh's adm_pressure_color enforces ADM_PRESSURE_MAX_AGE_SECS
+# (default 7200s = 2x this carrier's cadence) and reads 'unknown' past it;
+# its ledger field is tick | tick-stale | absent. File EXISTENCE alone was
+# never a staleness signal — the earlier claim here that pressure_src
+# (tick|absent) was "the honest staleness signal" was wrong: it carried no
+# age information, and a stopped tick would have frozen the last color into
+# authority forever. CADENCE CAVEAT (same review, Major): the governor
+# design (estate-performance-governor-2026-07-27.md:57) specifies a 2-5 min
+# Loop-2 cadence; this carrier is HOURLY — 12-30x coarser. T6 calibration
+# must treat the pressure axis as hourly-sampled (standing caveat beside
+# the CPU/RAM partial-ladder caveat) until a faster carrier exists.
+
+pts_pressure_file() {
+  if [[ -n "${PERF_TICK_PRESSURE_FILE:-}" ]]; then
+    printf '%s' "$PERF_TICK_PRESSURE_FILE"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/perf-tick-selftest/%s/pressure.json' "${TMPDIR:-/tmp}" "$$"
+    return 0
+  fi
+  # Same default path admission-lib.sh's adm_pressure_color() resolves via
+  # ADM_PRESSURE_FILE/adm_state_dir (default $HOME/.claude/state/governor/
+  # pressure.json) — the two files intentionally do NOT share a sourced path
+  # constant (this lib does not source admission-lib.sh); changing one
+  # default without the other is a silent break, tracked here AND in
+  # admission-lib.sh's own header.
+  printf '%s/.claude/state/governor/pressure.json' "$HOME"
+}
+
+# pts_write_pressure_tick — writes the ONE small pressure.json
+# admission-lib.sh's adm_pressure_color() consumes. Requires
+# pts_collect_processes (and, for the defender_cpu_ms field,
+# pts_collect_defender_cpu) to have already populated their globals this
+# tick; called from pts_run_tick below in the right order.
+pts_write_pressure_tick() {
+  local f; f="$(pts_pressure_file)"
+  local d; d="$(dirname "$f")"
+  mkdir -p "$d" 2>/dev/null || return 0
+
+  local bash_n="${PTS_BASH_COUNT:-0}"
+  local color="green"
+  if   (( bash_n >= 90 )); then color="red"
+  elif (( bash_n >= 60 )); then color="yellow"
+  fi
+
+  local defender_field="null"
+  [[ -n "${PTS_DEFENDER_CPU_MS:-}" ]] && defender_field="$PTS_DEFENDER_CPU_MS"
+
+  local ts=""
+  printf -v ts '%(%Y-%m-%dT%H:%M:%S)T' -1 2>/dev/null || ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+
+  local tmp; tmp="$(mktemp "${f}.XXXXXX" 2>/dev/null || printf '%s.tmp' "$f")"
+  printf '{"schema":1,"generated_at":"%s","color":"%s","color_basis":"bash_count_only_partial_ladder","bash_count":%d,"claude_count":%d,"defender_cpu_ms":%s,"src":"loop2-health-tick"}\n' \
+    "$(_pts_json_escape "$ts")" "$color" "$bash_n" "${PTS_CLAUDE_COUNT:-0}" "$defender_field" \
+    > "$tmp" 2>/dev/null && mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  return 0
+}
+
 # pts_run_tick — convenience one-call entry point: collect everything,
 # reap, write the line. Prints the ledger file path (empty on total
 # failure — never errors the caller).
@@ -450,6 +543,7 @@ pts_run_tick() {
   pts_collect_processes
   pts_collect_worktree_count
   pts_collect_defender_cpu
+  pts_write_pressure_tick
   pts_reap_orphans
   pts_append_tick_line
 }
@@ -720,7 +814,61 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" && "${1:-}" == "--self-test" ]]; then
     _pts_fail "ledger line fields mismatch: $(cat "$_pts_ledger_file" 2>/dev/null)"
   fi
 
-  echo "Scenario 8: bash-3.2 floor — no bash-4-only construct, and a CLEAN stderr under the running interpreter"
+  echo "Scenario 11: Loop-2 pressure tick writes pressure.json with the bash-count ladder (T6-PREREQUISITES (d))"
+  export PERF_TICK_PRESSURE_FILE="$_PTS_T/pressure.json"
+  _pts_mk_bash_csv() { # $1 = number of bash.exe rows
+    local n="$1" i
+    printf 'Node,CreationDate,Name,ParentProcessId,ProcessId\n'
+    for (( i=0; i<n; i++ )); do
+      printf 'OFFICE_PC,%s.000000-420,bash.exe,1,%s\n' "$_pts_old_ts" "$((2000+i))"
+    done
+  }
+  export PERF_TICK_DEFENDER_CMD="true"
+
+  _pts_mk_bash_csv 3 > "$_PTS_T/fixture-green.csv"
+  export PERF_TICK_PROCESS_LIST_CMD="cat '$_PTS_T/fixture-green.csv'"
+  pts_collect_processes
+  pts_collect_defender_cpu
+  pts_write_pressure_tick
+  if [[ -r "$PERF_TICK_PRESSURE_FILE" ]] && grep -q '"color":"green"' "$PERF_TICK_PRESSURE_FILE"; then
+    _pts_pass "bash_count=3 (below 60) writes color:green"
+  else
+    _pts_fail "expected color:green for bash_count=3, got: $(cat "$PERF_TICK_PRESSURE_FILE" 2>/dev/null)"
+  fi
+
+  _pts_mk_bash_csv 65 > "$_PTS_T/fixture-yellow.csv"
+  export PERF_TICK_PROCESS_LIST_CMD="cat '$_PTS_T/fixture-yellow.csv'"
+  pts_collect_processes
+  pts_write_pressure_tick
+  if [[ -r "$PERF_TICK_PRESSURE_FILE" ]] && grep -q '"color":"yellow"' "$PERF_TICK_PRESSURE_FILE"; then
+    _pts_pass "bash_count=65 (design threshold: bash>60) writes color:yellow"
+  else
+    _pts_fail "expected color:yellow for bash_count=65, got: $(cat "$PERF_TICK_PRESSURE_FILE" 2>/dev/null)"
+  fi
+
+  _pts_mk_bash_csv 95 > "$_PTS_T/fixture-red.csv"
+  export PERF_TICK_PROCESS_LIST_CMD="cat '$_PTS_T/fixture-red.csv'"
+  pts_collect_processes
+  pts_write_pressure_tick
+  if [[ -r "$PERF_TICK_PRESSURE_FILE" ]] && grep -q '"color":"red"' "$PERF_TICK_PRESSURE_FILE"; then
+    _pts_pass "bash_count=95 (design threshold: bash>90) writes color:red"
+  else
+    _pts_fail "expected color:red for bash_count=95, got: $(cat "$PERF_TICK_PRESSURE_FILE" 2>/dev/null)"
+  fi
+
+  if grep -q '"schema":1' "$PERF_TICK_PRESSURE_FILE" && grep -q '"src":"loop2-health-tick"' "$PERF_TICK_PRESSURE_FILE"; then
+    _pts_pass "pressure.json carries schema+src fields admission-lib.sh's adm_pressure_color() can read (color bounded at the terminator, same parser class as its own Scenario 9b)"
+  else
+    _pts_fail "pressure.json missing expected fields: $(cat "$PERF_TICK_PRESSURE_FILE" 2>/dev/null)"
+  fi
+
+  rm -f "$PERF_TICK_PRESSURE_FILE"
+  pts_write_pressure_tick
+  [[ -r "$PERF_TICK_PRESSURE_FILE" ]] && _pts_pass "pts_write_pressure_tick recreates the file from scratch (mkdir -p + tmp-then-mv, no dependency on a prior file existing)" \
+    || _pts_fail "pressure.json not (re)written on a fresh call"
+  unset PERF_TICK_PRESSURE_FILE
+
+  echo "Scenario 12: bash-3.2 floor — no bash-4-only construct, and a CLEAN stderr under the running interpreter"
   # REGRESSION GUARD (2026-07-29). `pts_reap_orphans` used `local -A
   # live_pids`. Under macOS's stock /bin/bash 3.2.57 that is a hard error
   # ("declare: -A: invalid option") on EVERY tick. The behavioral damage

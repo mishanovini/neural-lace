@@ -1913,7 +1913,7 @@ run_self_test() {
   # two drifted apart as scenarios were added over time). Both prints
   # below read this ONE variable, so they can no longer say two different
   # numbers — bump this once, in one place, whenever a scenario is added.
-  local TOTAL_SCENARIOS=29
+  local TOTAL_SCENARIOS=30
   local saved_pwd="$PWD"
 
   printf 'close-plan.sh self-test (%d scenarios)\n\n' "$TOTAL_SCENARIOS" >&2
@@ -3352,6 +3352,45 @@ EOF
     FAILED=$((FAILED+1))
   fi
   rm -rf "$D29"
+  # ----- S30 (ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01, site-local none-
+  # sentinel regression): a plan header carrying the SPELLED-OUT no-ask
+  # value (`ask-id: none — no linked ask`, the template's documented
+  # substitution) must resolve extract_ask_id_cp to EMPTY, routing the
+  # plan_completed event to the unlinked orphan lane -- never a literal
+  # none.jsonl. Real-id preservation through this SAME extractor is already
+  # covered by S20/S21 above; this closes the missing sentinel-guard half. -----
+  local D22; D22=$(setup_synthetic_repo "S30" "p-none-sentinel")
+  (
+    cd "$D22" || exit 1
+    cat > docs/plans/p-none-sentinel.md <<'EOF'
+# Plan: P None Sentinel
+Status: ACTIVE
+ask-id: none — no linked ask
+EOF
+    git add . && git commit -q -m "init"
+  )
+  local S30_UNLINKED
+  S30_UNLINKED="$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+  rm -f "$S30_UNLINKED" "$PROGRESS_LOG_STATE_DIR/none.jsonl"
+  (
+    cd "$D22" || exit 1
+    emit_plan_completed_progress_log_event "docs/plans/p-none-sentinel.md" "p-none-sentinel" "2026-03-03T00:00:00Z"
+  )
+  if [[ -f "$S30_UNLINKED" ]] && grep -q '"plan_slug":"p-none-sentinel"' "$S30_UNLINKED" && grep -q '"type":"plan_completed"' "$S30_UNLINKED"; then
+    printf 'self-test (S30) none-sentinel-header-resolves-to-unlinked-lane: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  else
+    printf 'self-test (S30) none-sentinel-header-resolves-to-unlinked-lane: FAIL\n' >&2
+    FAILED=$((FAILED+1))
+  fi
+  if [[ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]]; then
+    printf 'self-test (S30) no-none-jsonl-created: FAIL (extract_ask_id_cp handed the literal none sentinel to pl_emit unresolved)\n' >&2
+    FAILED=$((FAILED+1))
+  else
+    printf 'self-test (S30) no-none-jsonl-created: PASS\n' >&2
+    PASSED=$((PASSED+1))
+  fi
+  rm -rf "$D22"
 
   cd "$saved_pwd"
   rm -rf "$CP_ST_PL_DIR" 2>/dev/null || true

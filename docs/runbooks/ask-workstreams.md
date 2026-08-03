@@ -126,17 +126,22 @@ were violating it in the REAL caller, and both are fixed:**
   passes a **per-dispatch replay token** as `--dedup-extra`
   (`_dispatch_replay_token`), and `_pl_natural_key` includes it. That token
   is a DEBOUNCE anchored at the FIRST fire of a given (session, plan, task):
-  a re-fire within `DISPATCH_REPLAY_DEBOUNCE_SECONDS` (default **30**) reuses
+  a re-fire within `DISPATCH_REPLAY_DEBOUNCE_SECONDS` (default **120**) reuses
   the same token (hook double-fire → still deduped), while a dispatch after
-  that window mints a new one (genuine re-dispatch → a new event). Two
-  sizing notes learned the hard way, both caught by the regression tests:
+  that window mints a new one (genuine re-dispatch → a new event). Three
+  sizing notes learned the hard way, all caught by the regression tests:
   (a) a naive `floor(now/N)` wall-clock bucket is NOT safe — two fires
   milliseconds apart can straddle a bucket boundary and DUPLICATE the event;
   a first-fire debounce has no boundary to straddle. (b) The window's lower
   bound is NOT sub-second: each fire forks a whole hook process (bash + git +
   sha1sum), which costs SECONDS on the Windows/Git-Bash target — a 5s window
-  was measurably too tight. 30s clears a double-fire with margin and stays far
-  below any real re-dispatch cycle (dispatch → build → verify = minutes).
+  was measurably too tight. (c) 2026-07-29: 30s was ALSO too tight on this
+  machine under load — PROVEN, not theorized: the full self-test suite
+  failed PL1b (got 2 want 1) and PL1c (got 3 want 2) twice in a row, and the
+  T3 verifier independently measured a 32-wall-second gap between two
+  back-to-back stamp writes the same day. 120s clears that measured cost
+  with large margin and stays far below any real re-dispatch cycle
+  (dispatch → build → verify = minutes).
 - **`plan_amended` (was Minor).** The key hashed the **full resulting
   scope**, not the delta, so returning the scope to a previously-seen exact
   state (`A → A,B` / `A,B → A` / `A → A,B`) made the 3rd amendment collide

@@ -20,11 +20,23 @@
 # =====
 #   --quick (default): checks 1-7 against the LIVE mirror ($HOME/.claude)
 #                       and the repo. Never runs self-tests. Fast (<2s
-#                       typical). Exit 0 iff zero RED lines.
+#                       typical). Exit 0 iff zero RED lines; exit 1 if any
+#                       RED; exit 3 (gated-pipeline-master-2026-08 Task 4,
+#                       REQ-A2/HR-F2+F5+F8) when the invocation itself was
+#                       SKIPPED (single-flight guard held, or HALT draining)
+#                       and no valid cached verdict existed to serve honestly
+#                       instead -- NEVER a bare "exit 0" for a skip (that was
+#                       indistinguishable from GREEN to every caller). See
+#                       "DOCTOR VERDICT CACHE" below for the single-writer
+#                       contract and the sf-skip serve-or-3 behavior.
 #   --full            : quick + check 8 (self-test sweep across every live
 #                       hook that declares --self-test) + check 9 (the
 #                       portability sweep vs its committed baseline).
-#                       Exit 0 iff zero RED.
+#                       Exit 0 iff zero RED. Subject to the SAME sf_guard
+#                       serve-or-3 skip behavior as --quick (one lock covers
+#                       every mode), but only --quick reads/writes the
+#                       verdict cache -- a skipped --full/--portability call
+#                       with no cache to serve exits 3 with no fast-path.
 #   --portability     : check 9 ONLY — run scripts/portability-sweep.sh
 #                       against the repo under the stock system interpreter
 #                       and RED when the failing set grew relative to
@@ -180,6 +192,12 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck disable=SC1091
 { source "$SCRIPT_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
+# harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 4): the
+# universal single-flight/recursion guard, sourced UNCONDITIONALLY here
+# (not gated on any wiring marker) so it protects this entry point
+# regardless of how it was invoked -- see lib/single-flight-lib.sh header.
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/lib/single-flight-lib.sh" 2>/dev/null; } || true
 
 # --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
 # The self-test sweep below bounds every child `--self-test` with a wall-clock
@@ -239,6 +257,179 @@ resolve_live_home() {
   printf '%s\n' "${HOME:-}/.claude"
 }
 
+# ------------------------------------------------------------
+# Doctor verdict cache (harness-execution-redesign-2026-08 Task 3, invariant
+# 3 + 7 + 8). REUSES the exact file/schema session-start-digest.sh's
+# `refresh_doctor_cache`/`feed_doctor` already read/write
+# (~/.claude/state/digest/doctor-cache.json: {"ts","verdict_line",
+# "exit_code"}) -- this is a second READER (and, on a real cache-miss run,
+# a second WRITER) of the SAME materialized snapshot, not a parallel cache
+# (anti-bloat R3.3: one source of truth for "what did doctor last say").
+# What digest's existing mechanism did NOT do: `harness-doctor.sh --quick`
+# invoked DIRECTLY (an operator/scheduled task calling this file, not going
+# through session-start-digest.sh) always recomputed -- this is the real
+# gap Task 3 closes (**Prove it works** #4: "doctor --quick serves the
+# cached verdict in <2s"). nl-maintenance.sh's `doctor-verdict-refresh` job
+# (schedule-manifest.json) is what keeps this fresh on a dedicated 30-min
+# (D5) cadence, in addition to health-tick.sh's pre-existing hourly refresh
+# via session-start-digest.sh --refresh-doctor-cache.
+#
+# Path resolution mirrors session-start-digest.sh's own _doctor_cache_path
+# EXACTLY (same DOCTOR_CACHE_PATH override) but scopes the real-machine
+# default to $LIVE_HOME (== $HOME/.claude on a real run, identical to
+# digest's literal $HOME/.claude/state/digest/... path) instead of a bare
+# $HOME, so every doctor self-test scenario (which sandboxes LIVE_HOME via
+# HARNESS_DOCTOR_HOME) gets automatic per-scenario isolation the same way
+# SF_STATE_DIR already does two lines below in the normal-invocation
+# section -- no self-test scenario can ever read/write the REAL machine's
+# cache file.
+#
+# SINGLE-WRITER CONTRACT (gated-pipeline-master-2026-08 Task 4, REQ-A2,
+# fixing HR-F2+F5+F8): this doctor's own quick-mode write path (below,
+# "Doctor verdict cache -- WRITE path") is the cache file's ONLY writer,
+# full stop. session-start-digest.sh's `refresh_doctor_cache` is
+# invoke-and-read-only -- it forces a real recompute here (via
+# SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1) and then reads back
+# whatever THIS script just wrote; it never printfs the file itself.
+# Before this fix, digest's refresher was a SECOND writer with a
+# different (3-field, no fingerprint) schema, which composed with the old
+# sf-skip's bare `exit 0` to corrupt the cache (F2): a skip produced no
+# verdict line, so the refresher overwrote a valid fingerprinted entry
+# with "verdict unavailable (exit 0)", and every digest-side write
+# stripped the fingerprint outright. The fix is structural, not a
+# discipline promise: there is exactly one `>`/`printf ... >` to this
+# file in the whole codebase now (see the WRITE path below); grep
+# `doctor-cache.json|DOCTOR_CACHE_PATH` to re-verify.
+# ------------------------------------------------------------
+_doctor_verdict_cache_path() {
+  if [[ -n "${DOCTOR_CACHE_PATH:-}" ]]; then
+    printf '%s' "$DOCTOR_CACHE_PATH"
+    return 0
+  fi
+  printf '%s/state/digest/doctor-cache.json' "${1:-${HOME:-$PWD}/.claude}"
+}
+
+# _doctor_serve_cache_or_skip <reason> — gated-pipeline-master-2026-08 Task 4
+# (REQ-A2, fixing HR-F8): called ONLY from the sf_guard skip path below
+# (single-flight lock held, or HALT draining). NEVER a bare `exit 0` -- that
+# was indistinguishable from a real GREEN to every exit-code consumer
+# (`rg -n "harness-doctor.sh --quick"` is the sweep query; F8's proven
+# casualty was F2's cache corruption). Read-only: this function NEVER writes
+# doctor-cache.json (the quick-mode WRITE path far below is the cache's
+# ONLY writer -- the single-writer contract this task establishes).
+#   - A VALID cached record exists (non-empty verdict_line + numeric
+#     exit_code -- the doctor's own 5-field writer always produces both) ->
+#     serve it verbatim (honest AND fast; the cache mostly makes the skip
+#     redundant) and exit ITS exit_code, so a caller that only checks
+#     "0 == pass" still gets the right answer on a skip immediately after a
+#     real run.
+#   - No cache, or an unreadable/incomplete one (e.g. a stale 3-field record
+#     from before this fix) -> exit a DISTINCT documented code, 3, with a
+#     machine-parseable "[doctor] SKIPPED (<reason>)" line. 3 is chosen to
+#     be neither 0 (GREEN) nor 1 (FAILED) -- every exit-code consumer swept
+#     in this task's commit treats 3 as "inconclusive," never as either.
+_doctor_serve_cache_or_skip() {
+  local reason="${1:-single-flight guard active}"
+  local cache; cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"
+  if [[ -f "$cache" ]]; then
+    local verdict exit_code
+    verdict="$(sed -nE 's/.*"verdict_line":"([^"]*)".*/\1/p' "$cache" 2>/dev/null | head -1)"
+    exit_code="$(sed -nE 's/.*"exit_code":([0-9]+).*/\1/p' "$cache" 2>/dev/null | head -1)"
+    if [[ -n "$verdict" && "$exit_code" =~ ^[0-9]+$ ]]; then
+      echo "$verdict"
+      exit "$exit_code"
+    fi
+  fi
+  echo "[doctor] SKIPPED (${reason})"
+  exit 3
+}
+
+# _doctor_compute_fingerprint <live_home> <repo_root> — invariant 8
+# ("derived, never authored"): a coarse fingerprint of the inputs
+# run_quick_checks actually reads from disk -- the live settings.json, the
+# committed settings template, manifest.json, and schedule-manifest.json
+# (mtimes), plus the repo's current commit (if resolvable), plus (gated-
+# pipeline-master-2026-08 Task 4, REQ-A2, fixing HR-F5) the newest mtime
+# anywhere under the LIVE hooks mirror ($live_home/hooks -- the doctor's
+# primary claimed-vs-actual drift surface: wiring-resolves/lib-deps/legacy-
+# paths all read live hook files the original 4-file list never covered)
+# and a working-tree-dirty bit (`git -C repo_root diff --quiet`, unstaged
+# changes vs the index -- covers a repo file edited but not yet committed,
+# the other half of D5's "wiring changes bust the cache immediately"
+# promise the original 4-file list only kept for 2 of the ~40 checks'
+# config inputs). Documented as a FIRST-APPROXIMATION fingerprint, not true
+# per-check declared-input tracking (that would need every one of the ~40
+# check_* functions to declare its own inputs individually -- real scope
+# beyond this task; see the plan's In-flight scope updates / this task's
+# build report for the named follow-up). It is still a REAL derived value:
+# any edit to the files/dirs it covers busts the cache on the next read,
+# which is what invariant 8 is actually guarding against (a cache that
+# lies while the world burns) for the highest-traffic input classes.
+_doctor_compute_fingerprint() {
+  local live_home="$1" repo_root="$2" parts=""
+  local f
+  for f in "${live_home}/settings.json" \
+           "${repo_root}/adapters/claude-code/settings.json.template" \
+           "${repo_root}/adapters/claude-code/manifest.json" \
+           "${repo_root}/adapters/claude-code/config/schedule-manifest.json"; do
+    if [[ -f "$f" ]]; then
+      parts="${parts}|$(date -r "$f" +%s 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)"
+    else
+      parts="${parts}|absent"
+    fi
+  done
+  # Live-hooks-dir newest-mtime (HR-F5): a portable (GNU+BSD) newest-file
+  # scan -- `find -printf` is GNU-only (portability-sweep's own baseline
+  # would RED it), so this loops `find <dir> -type f` (portable) and reuses
+  # the exact date -r/stat -c fallback the 4-file loop above already uses,
+  # rather than a second mtime-reading idiom.
+  local hooks_dir="${live_home}/hooks" hooks_newest=0
+  if [[ -d "$hooks_dir" ]]; then
+    local hf hf_mtime
+    while IFS= read -r hf; do
+      hf_mtime="$(date -r "$hf" +%s 2>/dev/null || stat -c %Y "$hf" 2>/dev/null || echo 0)"
+      [[ "$hf_mtime" =~ ^[0-9]+$ && "$hf_mtime" -gt "$hooks_newest" ]] && hooks_newest="$hf_mtime"
+    done < <(find "$hooks_dir" -type f 2>/dev/null)
+  fi
+  parts="${parts}|hooksnewest:${hooks_newest}"
+  local head=""
+  if [[ -n "$repo_root" ]]; then
+    head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")"
+  fi
+  parts="${parts}|${head}"
+  # Working-tree-dirty bit (HR-F5): an uncommitted edit to a checked-in
+  # repo file (e.g. a hook mid-edit) busts the cache immediately instead of
+  # serving a stale-but-plausible verdict for up to DOCTOR_VERDICT_CACHE_TTL_
+  # SECONDS. Unstaged only (`git diff`, not `--cached`), matching REQ-A2's
+  # literal contract; correct honest-recompute is preferred over cheap here
+  # (Edge Cases: "dirty bit changes the fingerprint -> cache miss -> honest
+  # recompute, slightly slower -- never stale-serve").
+  local dirty="clean"
+  if [[ -n "$repo_root" ]]; then
+    git -C "$repo_root" diff --quiet 2>/dev/null || dirty="dirty"
+  fi
+  parts="${parts}|${dirty}"
+  if command -v cksum >/dev/null 2>&1; then
+    printf '%s' "$parts" | cksum | awk '{print $1}'
+  else
+    # No cksum -> the concatenated mtimes/HEAD string IS the fingerprint
+    # (still deterministic and comparable, just longer).
+    printf '%s' "$parts"
+  fi
+}
+
+# _doctor_ledger_bypass <reason> — invariant 7 (escape hatches are
+# ledgered). Appends a JSONL row to the SAME state area the verdict cache
+# lives under; best-effort, never blocks.
+_doctor_ledger_bypass() {
+  local live_home="$1" reason="$2" dir file ts
+  dir="${live_home}/state/digest"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  file="${dir}/doctor-cache-bypass-ledger.jsonl"
+  ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
+  printf '{"ts":"%s","reason":"%s"}\n' "$ts" "${reason//\"/\\\"}" >> "$file" 2>/dev/null || true
+}
+
 RED_COUNT=0
 WARN_COUNT=0
 CHECKS_RUN=0
@@ -253,6 +444,20 @@ _warn() {
   local id="$1" detail="$2"
   echo "[doctor] WARN ${id}: ${detail}"
   WARN_COUNT=$((WARN_COUNT + 1))
+}
+
+# _note <id> <detail> -- HR-F7 (2026-08-03 harness review, gated-pipeline
+# T7/REQ-A5): an informational, non-counting annotation. Used for
+# "satisfied-by-construction" states (e.g. a cadence violation whose
+# prescribed remedy is already active) that are worth surfacing to the
+# operator but are neither a defect (RED) nor a thing-to-watch (WARN) --
+# printing nothing here would silently hide the fact the check even
+# considered the entry; a WARN would misclassify an already-fixed state as
+# still-open. Never increments RED_COUNT/WARN_COUNT, so it never affects
+# the doctor's exit code or its GREEN/FAILED summary line.
+_note() {
+  local id="$1" detail="$2"
+  echo "[doctor] NOTE ${id}: ${detail}"
 }
 
 # ------------------------------------------------------------
@@ -2199,6 +2404,322 @@ check_budget_worktrees_branches() {
 }
 
 # ------------------------------------------------------------
+# resolve_schedule_manifest <live_home> <repo_root>
+# Echoes the schedule-manifest.json path (live-first, repo fallback,
+# mirrors resolve_manifest's own order) or nothing.
+# ------------------------------------------------------------
+resolve_schedule_manifest() {
+  local live_home="$1" repo_root="$2"
+  if [[ -f "${live_home}/config/schedule-manifest.json" ]]; then
+    printf '%s\n' "${live_home}/config/schedule-manifest.json"
+    return 0
+  fi
+  if [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/config/schedule-manifest.json" ]]; then
+    printf '%s\n' "${repo_root}/adapters/claude-code/config/schedule-manifest.json"
+    return 0
+  fi
+  return 1
+}
+
+# ------------------------------------------------------------
+# Check: schedule-manifest-cadence (harness-execution-redesign-2026-08
+# Task 1, invariant 2: "Cadence >= 2x measured cycle time for every
+# scheduled task, from a central schedule manifest; doctor-enforced.")
+#
+# WARN-only at this stage (task 1 spec: "WARN for 1 calibration week, then
+# RED" -- the RED flip is explicitly a LATER task, not this one). For every
+# mechanisms[] entry that carries a non-null measured_cycle_seconds, RED-
+# grade the SEVERITY down to WARN and flag when
+# declared_cadence_seconds < ratio_floor * measured_cycle_seconds. Entries
+# with measured_cycle_seconds == null are calibration-pending and are
+# silently skipped (their absence of a measurement is not itself flagged --
+# adding a measurement is exactly the calibration week's job).
+# ------------------------------------------------------------
+check_schedule_manifest_cadence() {
+  local live_home="$1" repo_root="$2"
+  local manifest
+  if ! manifest="$(resolve_schedule_manifest "$live_home" "$repo_root")"; then
+    _warn "schedule-manifest-cadence" "no adapters/claude-code/config/schedule-manifest.json found (live mirror or repo) -- skipped (pre-Task-1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "schedule-manifest-cadence" "neither node nor jq available -- cadence check skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  # HR-F7 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): the WARN
+  # -> RED flip lives in DATA (cadence_check.red_after in schedule-
+  # manifest.json), never prose-only -- "WARN for 1 calibration week, then
+  # RED" with no stored date is constitution paragraph-1's exact
+  # prohibited shape. An absent/unparseable red_after means stay-WARN-
+  # forever (never a fabricated RED from a missing field).
+  local red_after="" now_epoch red_epoch is_red=0
+  if command -v jq >/dev/null 2>&1; then
+    red_after="$(jq -r '.cadence_check.red_after // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+  elif command -v node >/dev/null 2>&1; then
+    red_after="$(node -e 'try{const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write((m.cadence_check&&m.cadence_check.red_after)||"")}catch(e){}' "$manifest" 2>/dev/null)"
+  fi
+  if [[ -n "$red_after" ]]; then
+    now_epoch="$(date +%s 2>/dev/null || echo 0)"
+    red_epoch="$(date -d "$red_after" +%s 2>/dev/null || echo 0)"
+    [[ "$red_epoch" -gt 0 && "$now_epoch" -ge "$red_epoch" ]] && is_red=1
+  fi
+
+  # HR-F7's own PROVEN false positive: a managed_by=nl-maintenance entry's
+  # prescribed remedy (completion-anchored scheduling, per this file's own
+  # schema note) is satisfied THE MOMENT nl-maintenance is active -- the
+  # old check never read managed_by, so the remedy never cleared the WARN.
+  # Exempt those entries from the clock entirely once the activation
+  # marker exists (same marker check_maintenance_both_substrates_alive
+  # uses) -- annotated (_note), never warned or redded.
+  local activation="${live_home}/state/nl-maintenance/activation-marker"
+  local activated=0
+  [[ -f "$activation" ]] && activated=1
+
+  local out
+  if command -v node >/dev/null 2>&1; then
+    out="$(node -e '
+const fs = require("fs");
+let m;
+try { m = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) { process.exit(0); }
+const floor = (m.cadence_check && m.cadence_check.ratio_floor) || 2;
+for (const e of m.mechanisms || []) {
+  if (e == null || e.measured_cycle_seconds == null) continue;
+  const declared = e.declared_cadence_seconds;
+  const measured = e.measured_cycle_seconds;
+  if (typeof declared !== "number" || typeof measured !== "number") continue;
+  const required = floor * measured;
+  if (declared < required) {
+    console.log([e.id, declared, measured, required, e.managed_by || ""].join("|"));
+  }
+}' "$manifest" 2>/dev/null)"
+  else
+    out="$(jq -r --argjson floor "$(jq -r '.cadence_check.ratio_floor // 2' "$manifest" 2>/dev/null)" '
+      (.mechanisms // [])[]
+      | select(.measured_cycle_seconds != null)
+      | select(.declared_cadence_seconds < ($floor * .measured_cycle_seconds))
+      | [.id, .declared_cadence_seconds, .measured_cycle_seconds, ($floor * .measured_cycle_seconds), (.managed_by // "")] | join("|")
+    ' "$manifest" 2>/dev/null)"
+  fi
+
+  if [[ -n "$out" ]]; then
+    local id declared measured required managed_by
+    while IFS='|' read -r id declared measured required managed_by; do
+      [[ -z "$id" ]] && continue
+      if [[ "$managed_by" == "nl-maintenance" && "$activated" -eq 1 ]]; then
+        _note "schedule-manifest-cadence" "'${id}' declared cadence ${declared}s < 2x measured ${measured}s -- satisfied-by-construction: managed_by=nl-maintenance and its activation marker is present, so its completion-anchored scheduling already enforces this by construction (not warned)"
+        continue
+      fi
+      if [[ "$is_red" -eq 1 ]]; then
+        _red "schedule-manifest-cadence" "'${id}' declared cadence ${declared}s < 2x its measured cycle ${measured}s (needs >= ${required}s) since ${red_after} -- it can never fully drain between fires (structural overlap); fix: raise declared_cadence_seconds in ${manifest}, OR move it to completion-anchored scheduling (Stage 1)"
+      else
+        _warn "schedule-manifest-cadence" "'${id}' declared cadence ${declared}s < 2x its measured cycle ${measured}s (needs >= ${required}s) -- it can never fully drain between fires (structural overlap); fix: raise declared_cadence_seconds in ${manifest}, OR move it to completion-anchored scheduling (Stage 1) -- WARN until ${red_after:-an undated flip}, RED after"
+      fi
+    done <<< "$out"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: budget-bash-hooks (harness-execution-redesign-2026-08 Task 1,
+# R3.3 inventory target: "Hooks per Bash call: 25 -> ~5 per-category
+# stubs"). WARN-only at this stage (task 1 spec: "per-Bash hook-count
+# budget doctor check (WARN at this stage)" -- Stage 2 is what actually
+# shrinks the count; this check only makes the number VISIBLE and
+# doctor-tracked, which is the missing aggregate artifact invariant 1
+# names). Counts total hook entries across every PreToolUse matcher block
+# whose matcher STRING CONTAINS "Bash" (covers both the bare "Bash"
+# matcher and the "Bash|PowerShell" combined matcher) -- checked against
+# BOTH the live settings.json and the committed template, same two-source
+# pattern as check_budget_chains.
+# ------------------------------------------------------------
+_count_bash_hooks() {
+  # $1 = settings.json path -> prints total hook count across every
+  # PreToolUse matcher block containing "Bash" (or empty on parse failure)
+  local settings="$1"
+  [[ -f "$settings" ]] || { printf ''; return 0; }
+  if command -v node >/dev/null 2>&1; then
+    cat "$settings" 2>/dev/null | node -e "
+      const fs = require('fs');
+      let cfg;
+      try { cfg = JSON.parse(fs.readFileSync(0, 'utf8')); } catch (e) { process.exit(0); }
+      const arr = (cfg.hooks && cfg.hooks['PreToolUse']) || [];
+      let total = 0;
+      for (const block of arr) {
+        if (typeof block.matcher === 'string' && block.matcher.includes('Bash')) {
+          total += (block.hooks || []).length;
+        }
+      }
+      console.log(total);
+    " 2>/dev/null
+  elif command -v jq >/dev/null 2>&1; then
+    jq -r '[(.hooks.PreToolUse // [])[] | select(.matcher // "" | contains("Bash")) | (.hooks // []) | length] | add // 0' "$settings" 2>/dev/null
+  else
+    printf ''
+  fi
+}
+
+check_budget_bash_hooks() {
+  local live_home="$1" repo_root="$2"
+  local live_settings="${live_home}/settings.json"
+  local template_settings="${repo_root}/adapters/claude-code/settings.json.template"
+  local max=6
+
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "budget-bash-hooks" "neither node nor jq available -- per-Bash hook-count budget skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  # HR-F7 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): same
+  # data-driven flip as schedule-manifest-cadence -- "Stage 2 is the
+  # actual fix" was prose-only with no stored date; budget_check.red_after
+  # in schedule-manifest.json is the mechanized flip. Manifest resolution
+  # failure (pre-Task-1 machine, or neither node/jq usable for the manifest
+  # read) leaves this WARN-forever, the same fail-open-to-WARN posture the
+  # cadence check takes on a missing manifest.
+  local manifest="" red_after="" is_red=0
+  manifest="$(resolve_schedule_manifest "$live_home" "$repo_root" 2>/dev/null)"
+  if [[ -n "$manifest" ]] && command -v jq >/dev/null 2>&1; then
+    red_after="$(jq -r '.budget_check.red_after // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+  elif [[ -n "$manifest" ]] && command -v node >/dev/null 2>&1; then
+    red_after="$(node -e 'try{const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write((m.budget_check&&m.budget_check.red_after)||"")}catch(e){}' "$manifest" 2>/dev/null)"
+  fi
+  if [[ -n "$red_after" ]]; then
+    local now_epoch red_epoch
+    now_epoch="$(date +%s 2>/dev/null || echo 0)"
+    red_epoch="$(date -d "$red_after" +%s 2>/dev/null || echo 0)"
+    [[ "$red_epoch" -gt 0 && "$now_epoch" -ge "$red_epoch" ]] && is_red=1
+  fi
+
+  local src path count
+  for src in live template; do
+    if [[ "$src" == "live" ]]; then path="$live_settings"; else path="$template_settings"; fi
+    if [[ ! -f "$path" ]]; then
+      _warn "budget-bash-hooks" "${src} settings.json not found at ${path} -- skipped for ${src}"
+      continue
+    fi
+    count="$(_count_bash_hooks "$path")"
+    if [[ -z "$count" ]]; then
+      _warn "budget-bash-hooks" "could not parse per-Bash hook count from ${src} settings (${path})"
+      continue
+    fi
+    if [[ "$count" -gt "$max" ]]; then
+      if [[ "$is_red" -eq 1 ]]; then
+        _red "budget-bash-hooks" "${count} hook entries fire on every Bash call in ${src} settings (target <= ${max} per R3.3 -- harness-execution-redesign-2026-08) -- ${path}; flipped to RED since ${red_after} per schedule-manifest.json budget_check -- Stage 2 (per-category stubs) is the actual fix"
+      else
+        _warn "budget-bash-hooks" "${count} hook entries fire on every Bash call in ${src} settings (target <= ${max} per R3.3 -- harness-execution-redesign-2026-08) -- ${path}; WARN until ${red_after:-an undated flip}, Stage 2 (per-category stubs) is the actual fix"
+      fi
+    fi
+  done
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: maintenance-both-substrates-alive (harness-execution-redesign-2026-08
+# Task 3, invariant 9: "doctor REDs both-substrates-alive > 14 days"). RED
+# when nl-maintenance.sh's daemon has been alive (fresh heartbeat observed
+# at least once, per its own activation marker) for > 14 days AND any of
+# the legacy per-mechanism scheduled tasks (schedule-manifest.json's
+# legacy_task_name entries) is STILL Enabled -- the stall-at-stage-2 trap
+# the platform pre-mortem names (both substrates running forever). Non-
+# Windows / schtasks-absent / nl-maintenance never activated -> WARN-free
+# skip (nothing to compare yet), never a fabricated RED.
+# ------------------------------------------------------------
+check_maintenance_both_substrates_alive() {
+  local live_home="$1" repo_root="$2"
+  local manifest="${repo_root}/adapters/claude-code/config/schedule-manifest.json"
+  local activation="${live_home}/state/nl-maintenance/activation-marker"
+
+  if [[ ! -f "$activation" ]]; then
+    # HR-F4 inverse direction (gated-pipeline T6, REQ-A4): the original check
+    # covered both-alive only and returned SILENTLY here — which is the
+    # estate's actual failure state (legacy Disabled, replacement never
+    # registered, NO recurring maintenance at all, doctor GREEN-capable
+    # throughout). Zero-substrate detection, data-driven per the HR-F7 rule:
+    # the clock and threshold live in schedule-manifest.json .zero_substrate
+    # {legacy_disabled_since: YYYY-MM-DD, red_after_days: N}; absent data =
+    # absent check (never a prose-only flip).
+    if [[ -f "$manifest" ]] && command -v jq >/dev/null 2>&1; then
+      local zs_since zs_days zs_managed
+      zs_since="$(jq -r '.zero_substrate.legacy_disabled_since // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+      zs_days="$(jq -r '.zero_substrate.red_after_days // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+      zs_managed="$(jq -r '[.mechanisms[] | select(.managed_by == "nl-maintenance")] | length' "$manifest" 2>/dev/null | tr -d '\r')"
+      if [[ -n "$zs_since" && "$zs_days" =~ ^[0-9]+$ && "$zs_managed" =~ ^[0-9]+$ && "$zs_managed" -gt 0 ]]; then
+        # A fresh daemon heartbeat (<2h) counts as a live substrate even
+        # pre-marker (tick-mode trials); only marker-absent AND heartbeat-
+        # stale AND no legacy task Enabled is truly zero-substrate.
+        local zs_hb="${live_home}/state/nl-maintenance/daemon.heartbeat.json"
+        local zs_hb_fresh=0 zs_now zs_hb_m
+        zs_now="$(date +%s 2>/dev/null || echo 0)"
+        if [[ -f "$zs_hb" ]]; then
+          zs_hb_m="$(date -r "$zs_hb" +%s 2>/dev/null || stat -c %Y "$zs_hb" 2>/dev/null || echo 0)"
+          [[ "$zs_hb_m" =~ ^[0-9]+$ && $(( zs_now - zs_hb_m )) -lt 7200 ]] && zs_hb_fresh=1
+        fi
+        local zs_legacy_enabled=""
+        if [[ "$zs_hb_fresh" -eq 0 ]] && command -v schtasks >/dev/null 2>&1; then
+          local zs_names zs_name zs_state
+          zs_names="$(jq -r '.mechanisms[] | select(.legacy_task_name != null) | .legacy_task_name' "$manifest" 2>/dev/null | tr -d '\r')"
+          while IFS= read -r zs_name; do
+            [[ -z "$zs_name" ]] && continue
+            zs_state="$(MSYS_NO_PATHCONV=1 schtasks /Query /TN "$zs_name" /FO LIST /V 2>/dev/null | tr -d '\r' | sed -nE 's/^Scheduled Task State:[[:space:]]*//p' | head -1)"
+            [[ "$zs_state" == "Enabled" ]] && zs_legacy_enabled="yes" && break
+          done <<< "$zs_names"
+          if [[ -z "$zs_legacy_enabled" ]]; then
+            local zs_since_epoch zs_age_days
+            zs_since_epoch="$(date -d "$zs_since" +%s 2>/dev/null || echo 0)"
+            zs_age_days=$(( (zs_now - zs_since_epoch) / 86400 ))
+            if [[ "$zs_age_days" -ge "$zs_days" ]]; then
+              _red "maintenance-zero-substrates" "ZERO maintenance substrates alive for ${zs_age_days}d (legacy tasks Disabled since ${zs_since}, NL-Maintenance never registered, no fresh heartbeat) -- ${zs_managed} managed_by=nl-maintenance mechanisms are running NOWHERE. Fix: complete DEC-4 ratification + register (docs/plans/gated-pipeline-master-2026-08.md T10), or re-enable a legacy task as a stopgap"
+            else
+              _warn "maintenance-zero-substrates" "zero maintenance substrates alive (legacy Disabled since ${zs_since}, replacement unregistered; RED at ${zs_days}d, now ${zs_age_days}d) -- T10 registration pending"
+            fi
+          fi
+        fi
+      fi
+    fi
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v schtasks >/dev/null 2>&1; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  [[ -f "$manifest" ]] || { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  local activated_epoch now age_days
+  activated_epoch="$(cat "$activation" 2>/dev/null | tr -d '\r\n')"
+  [[ "$activated_epoch" =~ ^[0-9]+$ ]] || { CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+  now="$(date +%s 2>/dev/null || echo 0)"
+  age_days=$(( (now - activated_epoch) / 86400 ))
+  if [[ "$age_days" -lt 14 ]]; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local names name state still_enabled=""
+  if command -v jq >/dev/null 2>&1; then
+    names="$(jq -r '.mechanisms[] | select(.legacy_task_name != null) | .legacy_task_name' "$manifest" 2>/dev/null | tr -d '\r')"
+  else
+    names=""
+  fi
+  while IFS= read -r name; do
+    [[ -z "$name" ]] && continue
+    state="$(MSYS_NO_PATHCONV=1 schtasks /Query /TN "$name" /FO LIST /V 2>/dev/null | tr -d '\r' | sed -nE 's/^Scheduled Task State:[[:space:]]*//p' | head -1)"
+    if [[ "$state" == "Enabled" ]]; then
+      still_enabled="${still_enabled}${still_enabled:+, }${name}"
+    fi
+  done <<< "$names"
+
+  if [[ -n "$still_enabled" ]]; then
+    _red "maintenance-both-substrates-alive" "nl-maintenance.sh core has been active ${age_days} days but legacy scheduled task(s) still Enabled: ${still_enabled} -- disable them (schtasks /Change /TN \"<name>\" /Disable) now that the core covers this mechanism, or delete via the +30-day Stage 4 pass if already past due"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: orphaned-worktree-work — the OUT-OF-SESSION complement to
 # session-start-digest.sh's feed_stranded_work (same shared detector, two
 # surfaces; constitution §5 "persist in the same response" + the
@@ -2391,6 +2912,214 @@ for (const p of problems) console.log(p);
       else
         _red "new-gate-evidence-bar" "${line} (added_after >= 2026-07 requires the full evidence bar per ADR 059 D4)"
       fi
+    done <<< "$out"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: deterministic-process-proof (adapters/claude-code/doctrine/
+# deterministic-process.md, operator directive 2026-07-30: "We should never
+# need to review whether the reviewers fired. Make them a deterministic part
+# of the process."). The proof obligation: every `blocking:true` manifest
+# entry declares BOTH `chokepoint` (the firing event, in verifiable form)
+# and `bypass_paths` (every known route around it, each CLOSED or
+# NAMED-AND-ACCEPTED). An entry declaring NEITHER is exactly the golden case
+# the doctrine names: review-record-commit-gate.sh was `blocking:true` at a
+# convenient PreToolUse layer with an unauthenticated env-var override and a
+# cherry-pick exemption — four live bypass paths that were never enumerated
+# anywhere in the manifest, because nothing required it. This check is the
+# mechanized version of that enumeration requirement, same shape as
+# check_new_gate_evidence_bar immediately above (which this file mirrors
+# deliberately — one generator pattern, not two that could drift). That
+# "cannot drift" claim was FALSE as written and is now MECHANIZED instead of
+# asserted: the two implementations DID drift. The jq fallback bound `.id`
+# against the grandfather ARRAY rather than the entry, so jq errored, the
+# `2>/dev/null` ate the message, `$out` came back empty, and the check was a
+# SILENT NO-OP on every machine without `node` (harness-reviewer C1,
+# 2026-07-30 — PROVEN end-to-end: `--quick` with node masked out of PATH
+# emitted ZERO deterministic-process-proof lines while the node path RED'd).
+# Both branches now fail LOUD on a parser error, and the self-test scenarios
+# `dpp-jq-*` re-run the RED/GREEN/grandfather fixtures with `node` masked out
+# of PATH so the fallback is EXERCISED on every run, never trusted to match
+# by inspection.
+#
+# WHAT REDS — BOTH fields required (harness-reviewer M7, 2026-07-30). The
+# original check fired only on "declares NEITHER", so a new blocking gate
+# could discharge the whole obligation by writing `chokepoint: "pre-push"`
+# and never enumerating a single bypass — while `bypass_paths` is the
+# load-bearing half (C2 proved four unenumerated live routes around the one
+# entry that DID populate it in good faith). New entries are authored
+# deliberately, so the FP cost of requiring both is nil: measured 2026-07-30,
+# exactly two non-grandfathered blocking:true entries exist and one already
+# carries both fields.
+#
+# GRANDFATHER EXEMPT-LIST (dated, closed enumeration — same convention as
+# check_new_gate_evidence_bar's PRE_BAR_GRANDFATHERED, NOT a date-range
+# pattern): every `blocking:true` id that existed BEFORE this check landed
+# and had neither field yet. RE-DERIVE THE COUNTS MECHANICALLY rather than
+# quoting the constant a past reader measured — the previous version of this
+# comment said "39 blocking:true entries" and was ALREADY STALE at landing
+# (the true count was 40; the 40th, `intended-functionality-if-statement`,
+# landed one commit earlier, appeared in NEITHER grandfather list, and RED'd
+# the live doctor from the moment this check shipped — harness-reviewer M1):
+#   jq '[.entries[]|select(.blocking==true)]|length' adapters/claude-code/manifest.json
+#   jq -r '.entries[]|select(.blocking==true)|select((((.chokepoint//"")|length)==0) or (((.bypass_paths//[])|length)==0))|.id' adapters/claude-code/manifest.json
+# review-record-commit-gate was demoted to blocking:false in the SAME commit
+# that added this check, so it needs no grandfathering at all. Of the two
+# entries that commit added: `review-record-push-gate` carries real
+# chokepoint + bypass_paths; `authorize-review-record-push-override` is
+# blocking:false and therefore OUT OF SCOPE for this check entirely — it
+# declares NEITHER field and no added_after, and an earlier draft of this
+# comment wrongly claimed both new entries "carry real chokepoint/
+# bypass_paths" (harness-reviewer M4).
+# RETIREMENT: shrink this list as each id gains real fields;
+# it must reach empty. A NEW blocking:true entry landing after this check
+# exists gets ZERO ID-BASED grandfather (harness-reviewer follow-up pass,
+# 2026-07-30: an earlier draft of this comment claimed "ZERO grandfather...
+# must declare both fields or RED" WITHOUT qualifying which mechanism —
+# FALSE as written, since the added_after < '2026-07' exemption immediately
+# below is a SECOND, independent escape a backdated field still claims).
+# The id-list alone would require both fields; the date threshold does not.
+#
+# added_after < '2026-07' ALSO SKIPS (same threshold check_new_gate_
+# evidence_bar already uses, reused deliberately rather than inventing a
+# second cutover convention): this file's OWN self-test builds dozens of
+# throwaway fixture manifests for OTHER checks (budget-blocking-gates,
+# wave-f-f2-docs, manifest-check, claim-honesty, orphaned-worktree, ...),
+# each declaring its own synthetic `blocking:true` entry under a made-up id
+# ("wired-gate", "fixture-gate-N", "a", ...) that is obviously not in this
+# check's id-based grandfather list. Every one of those pre-existing
+# fixtures already sets `added_after: "2026-04"` specifically to predate the
+# evidence-bar's own 2026-07 cutover; reusing that exact field+threshold
+# means this NEW check inherits the same exemption for free instead of
+# false-positiving across a huge swath of this file's unrelated self-test
+# scenarios (PROVEN: without this threshold, 8+ unrelated pre-existing
+# scenarios flipped RED the moment this check was wired in). An entry with
+# added_after missing entirely is NOT exempted by this rule (only a present,
+# pre-2026-07 value is) -- it still needs the id-based grandfather or the
+# fields.
+check_deterministic_process_proof() {
+  local live_home="$1" repo_root="$2"
+  local manifest
+  if ! manifest="$(resolve_manifest "$live_home" "$repo_root")"; then
+    _warn "deterministic-process-proof" "no manifest.json found — skipped (pre-C.1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "deterministic-process-proof" "neither node nor jq available — skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  # Parser errors are LOUD (harness-reviewer C1): the previous version sent
+  # BOTH branches' stderr to /dev/null, so a broken expression was
+  # indistinguishable from a clean manifest -- the exact silent-no-op shape
+  # deterministic-process.md calls theatre. stderr is captured and surfaced
+  # as a WARN that names, in plain words, that the check did NOT run.
+  local out parse_rc parse_err
+  parse_err="$(mktemp 2>/dev/null || printf '%s' "${TMPDIR:-/tmp}/dpp-parse-err.$$")"
+  if command -v node >/dev/null 2>&1; then
+    out="$(node -e '
+const fs = require("fs");
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+
+// DETERMINISTIC_PROCESS_GRANDFATHERED: see the check header comment above.
+// Closed enumeration, dated 2026-07-30 — shrink as each id gains real
+// chokepoint/bypass_paths fields; never grow it by pattern-matching a date.
+const DETERMINISTIC_PROCESS_GRANDFATHERED = [
+  "agent-teams", "backlog-plan-atomicity", "bug-persistence",
+  "claude-md-hygiene", "closure-outcome-declared", "concurrent-ownership-gate",
+  "decisions-index", "deploy-automation-mode", "docs-freshness",
+  "env-local-protection", "find-disk-scan-gate", "findings-ledger",
+  "gh-merge-canonical", "harness-hygiene-scan", "local-edit-authorization",
+  "migration-claude-md", "model-availability", "model-pin", "no-test-skip",
+  "parallel-dev-migration-naming", "plan-deletion-protection",
+  "plan-edit-validator", "plan-reviewer", "pre-commit-chain",
+  "pre-push-divergence", "pre-push-test", "review-before-deploy",
+  "review-finding-fix", "runtime-verification", "secret-hygiene-prepush",
+  "secret-scan-ci-backstop", "session-honesty", "spec-freeze",
+  "stop-verdict-dispatcher", "synthetic-runner-ci", "tdd-gate", "wire-check",
+  "work-integrity",
+  // "new-gate-complete" below is a SELF-TEST FIXTURE id (the new-gate-
+  // evidence-bar-green scenario, elsewhere in this file), not a real
+  // manifest id -- it deliberately sets added_after to 2026-07 to exercise
+  // THAT other bar and predates chokepoint/bypass_paths entirely. Listed
+  // here, not via date exemption, so the date-threshold logic above stays
+  // meaningful for everything else (see the added_after < 2026-07 note).
+  "new-gate-complete",
+];
+
+const problems = [];
+for (const e of m.entries || []) {
+  if (e.blocking !== true) continue;
+  if (DETERMINISTIC_PROCESS_GRANDFATHERED.includes(e.id)) continue;
+  // Same 2026-07 threshold check_new_gate_evidence_bar uses -- see header
+  // comment above for why (the pre-existing self-test fixtures in this file
+  // conventionally set added_after to 2026-04 for exactly this reason).
+  const addedAfter = e.added_after;
+  if (typeof addedAfter === "string" && addedAfter.trim().length > 0 && addedAfter < "2026-07") continue;
+  const hasChoke = typeof e.chokepoint === "string" && e.chokepoint.trim().length > 0;
+  const hasBypass = Array.isArray(e.bypass_paths) && e.bypass_paths.length > 0;
+  // BOTH required (harness-reviewer M7): chokepoint alone discharges nothing
+  // -- bypass_paths is the load-bearing half. Name WHICH half is missing so
+  // the message is actionable rather than a generic re-statement.
+  const missing = [];
+  if (!hasChoke) missing.push("chokepoint");
+  if (!hasBypass) missing.push("bypass_paths");
+  if (missing.length) {
+    problems.push(e.id + ": blocking:true does not declare " + missing.join(" or ") + " (deterministic-process.md proof obligation — name the firing event AND enumerate every known bypass, each CLOSED with how or NAMED-AND-ACCEPTED with why; an empty enumeration claims none exist and is a lie unless someone looked)");
+  }
+}
+for (const p of problems) console.log(p);
+' "$manifest" 2>"$parse_err")"
+    parse_rc=$?
+  else
+    out="$(jq -r '
+[
+  "agent-teams","backlog-plan-atomicity","bug-persistence","claude-md-hygiene",
+  "closure-outcome-declared","concurrent-ownership-gate","decisions-index",
+  "deploy-automation-mode","docs-freshness","env-local-protection",
+  "find-disk-scan-gate","findings-ledger","gh-merge-canonical",
+  "harness-hygiene-scan","local-edit-authorization","migration-claude-md",
+  "model-availability","model-pin","no-test-skip",
+  "parallel-dev-migration-naming","plan-deletion-protection",
+  "plan-edit-validator","plan-reviewer","pre-commit-chain",
+  "pre-push-divergence","pre-push-test","review-before-deploy",
+  "review-finding-fix","runtime-verification","secret-hygiene-prepush",
+  "secret-scan-ci-backstop","session-honesty","spec-freeze",
+  "stop-verdict-dispatcher","synthetic-runner-ci","tdd-gate","wire-check",
+  "work-integrity","new-gate-complete"
+] as $gf |
+(.entries[] | select(.blocking == true) as $e |
+  select(($gf | index($e.id)) == null) |
+  select(((($e.added_after // "") | length) == 0) or (($e.added_after // "") >= "2026-07")) |
+  ([ (if (($e.chokepoint // "") | length) > 0 then empty else "chokepoint" end),
+     (if (($e.bypass_paths // []) | length) > 0 then empty else "bypass_paths" end)
+   ] | select(length > 0)) as $missing |
+  "\($e.id): blocking:true does not declare \($missing | join(" or ")) (deterministic-process.md proof obligation — name the firing event AND enumerate every known bypass, each CLOSED with how or NAMED-AND-ACCEPTED with why; an empty enumeration claims none exist and is a lie unless someone looked)")
+' "$manifest" 2>"$parse_err")"
+    parse_rc=$?
+  fi
+
+  # A parser failure is NOT "nothing to report" (harness-reviewer C1). Surface
+  # it, name that the check did not run, and keep going -- a broken expression
+  # must never masquerade as a clean manifest.
+  if [[ "${parse_rc:-0}" -ne 0 ]]; then
+    local perr; perr="$(tr '\n' ' ' < "$parse_err" 2>/dev/null | cut -c1-300)"
+    _warn "deterministic-process-proof" "the manifest parser FAILED (rc=${parse_rc}) — this check did NOT run, so a missing chokepoint/bypass_paths declaration would go unreported: ${perr:-no stderr captured}"
+    rm -f "$parse_err" 2>/dev/null
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  rm -f "$parse_err" 2>/dev/null
+
+  if [[ -n "$out" ]]; then
+    local line
+    while IFS= read -r line; do
+      [[ -z "$line" ]] && continue
+      _red "deterministic-process-proof" "${line}"
     done <<< "$out"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
@@ -3379,6 +4108,7 @@ run_quick_checks() {
   check_budget_worktrees_branches "$live_home" "$repo_root"
   check_orphaned_worktree_work "$live_home" "$repo_root"
   check_new_gate_evidence_bar "$live_home" "$repo_root"
+  check_deterministic_process_proof "$live_home" "$repo_root"
   check_master_drift_autocorrect "$live_home" "$repo_root"
   check_selftest_exclusions_wiring "$repo_root"
   check_model_pins "$live_home" "$repo_root"
@@ -3386,6 +4116,11 @@ run_quick_checks() {
   check_review_index_consistency "$live_home" "$repo_root"
   check_review_grandfather_integrity "$live_home" "$repo_root"
   check_review_reviewer_independence "$live_home" "$repo_root"
+  # harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariants 1/2)
+  check_schedule_manifest_cadence "$live_home" "$repo_root"
+  check_budget_bash_hooks "$live_home" "$repo_root"
+  # harness-execution-redesign-2026-08 Task 3 (Stage 1, invariant 9)
+  check_maintenance_both_substrates_alive "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -3504,6 +4239,89 @@ if [[ "${1:-}" == "--self-test" ]]; then
   _run_quick() {
     local dir="$1"
     HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
+  }
+
+  # ------------------------------------------------------------
+  # NODE-MASKED EXECUTION (harness-reviewer C1, 2026-07-30).
+  #
+  # Four checks in this file are dual-path: node preferred, jq fallback
+  # (extract_manifest_gates -> claim-honesty; _count_chain_entries ->
+  # budget-chains; new-gate-evidence-bar; deterministic-process-proof). Every
+  # one of them ran ONLY its node branch in the self-test, because the machine
+  # that runs the suite has node. The jq branches were therefore asserted to
+  # match by INSPECTION -- and one of them did not: deterministic-process-
+  # proof's jq expression indexed the grandfather ARRAY with `.id`, so jq
+  # errored, `2>/dev/null` swallowed it, and the check was a silent no-op on
+  # every node-less machine. The comment claiming "one generator pattern, not
+  # two that could drift" was the only thing holding the two in sync.
+  #
+  # This helper makes the fallback EXECUTE: a PATH containing every tool the
+  # doctor needs EXCEPT node. Built once, reused by every parity scenario.
+  # ------------------------------------------------------------
+  _NONODE_DIR=""
+  _nonode_path() {
+    if [[ -z "$_NONODE_DIR" ]]; then
+      _NONODE_DIR="$(mktemp -d 2>/dev/null)" || return 1
+      local _t _p
+      for _t in jq git grep sed awk bash sh find sort uniq head tail cat wc tr \
+                date mkdir rm cp mv chmod ls dirname basename realpath stat env \
+                xargs comm diff touch tee cut expr mktemp readlink od printf \
+                which id whoami uname; do
+        _p="$(command -v "$_t" 2>/dev/null)"
+        [[ -n "$_p" ]] && ln -sf "$_p" "$_NONODE_DIR/$_t" 2>/dev/null
+      done
+    fi
+    printf '%s' "$_NONODE_DIR"
+  }
+
+  _run_quick_nonode() {
+    local dir="$1" shim
+    shim="$(_nonode_path)" || { printf 'NONODE-SHIM-UNAVAILABLE'; return 0; }
+    HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" PATH="$shim" \
+      bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
+  }
+
+  # _assert_node_jq_parity <label> <scenario-dir> <check-id> <want-nonempty:0|1>
+  # Runs the SAME fixture through both branches and requires byte-identical
+  # output for that check. want_nonempty=1 additionally requires the jq branch
+  # to have produced SOMETHING -- without it, two silently-broken branches
+  # would agree on emptiness and the parity assertion would pass vacuously,
+  # which is exactly the failure being regression-tested.
+  #
+  # THE TWO FAILURE MODES ARE DISTINCT, AND THE ORDER BELOW DECIDES WHICH ONE
+  # YOU SEE (recorded 2026-07-30 because a commit message got this wrong and
+  # nothing in the tree contradicted it -- harness-reviewer MINOR):
+  #   "branches DIVERGE"  -- the two branches BOTH reported, but differently.
+  #                          This is what a reverted grandfather cutover_ref
+  #                          binding produces: the check still emits a verdict,
+  #                          just the wrong one.
+  #   "produced NOTHING"  -- the jq branch emitted no line at all. This needs
+  #                          the check to go SILENT, which for the fail-open
+  #                          arms means reverting the loud-WARN too, not only
+  #                          the binding.
+  # The DIVERGE test runs first and want_nonempty only OVERWRITES `why` when
+  # jq_out is genuinely empty, so a non-empty-but-different jq branch can never
+  # report "produced NOTHING". Do not quote one failure mode as evidence for a
+  # mutation that actually triggers the other.
+  _assert_node_jq_parity() {
+    local label="$1" dir="$2" check_id="$3" want_nonempty="${4:-0}"
+    local node_out jq_out
+    node_out="$(_run_quick "$dir" | grep -- "$check_id" | LC_ALL=C sort)"
+    jq_out="$(_run_quick_nonode "$dir" | grep -- "$check_id" | LC_ALL=C sort)"
+    local ok=1 why=""
+    if [[ "$node_out" != "$jq_out" ]]; then ok=0; why="branches DIVERGE"; fi
+    if [[ "$want_nonempty" == "1" && -z "$jq_out" ]]; then
+      ok=0; why="jq branch produced NOTHING on a fixture that must report (silent no-op)"
+    fi
+    if [[ "$ok" -eq 1 ]]; then
+      echo "self-test (${label}): PASS" >&2
+      PASSED=$((PASSED + 1))
+    else
+      echo "self-test (${label}): FAIL (${why}) for check '${check_id}'" >&2
+      echo "--- node branch ---" >&2; printf '%s\n' "$node_out" >&2
+      echo "--- jq branch (node masked) ---" >&2; printf '%s\n' "$jq_out" >&2
+      FAILED=$((FAILED + 1))
+    fi
   }
 
   _assert() {
@@ -3965,6 +4783,178 @@ EOF
   _write_chain_settings "$D" "SessionStart" 9 "ss-dummy"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-chains-sessionstart-red" 1 "$RC" "RED budget-chains.*SessionStart chain has 9" "$OUT"
+
+  # ---- Check: budget-bash-hooks (harness-execution-redesign-2026-08 Task
+  # 1, R3.3). WARN fixture — 7 hooks wired to the "Bash" matcher (budget
+  # <= 6); WARN-only at this stage, exit code stays 0. ----
+  D=$(_scenario_dir bbh-warn)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json" bbh-a.sh bbh-b.sh bbh-c.sh bbh-d.sh bbh-e.sh bbh-f.sh bbh-g.sh
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  for _n in a b c d e f g; do
+    echo '#!/bin/bash' > "$D/live/hooks/bbh-${_n}.sh"
+    echo '#!/bin/bash' > "$D/repo/adapters/claude-code/hooks/bbh-${_n}.sh"
+  done
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-bash-hooks-warn" 0 "$RC" "WARN budget-bash-hooks.*7 hook entries" "$OUT"
+
+  # ---- Check: budget-bash-hooks GREEN fixture — 3 hooks (within budget),
+  # silent on this check. ----
+  D=$(_scenario_dir bbh-green)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json" bbh-a.sh bbh-b.sh bbh-c.sh
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  for _n in a b c; do
+    echo '#!/bin/bash' > "$D/live/hooks/bbh-${_n}.sh"
+    echo '#!/bin/bash' > "$D/repo/adapters/claude-code/hooks/bbh-${_n}.sh"
+  done
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "budget-bash-hooks"; then
+    echo "self-test (budget-bash-hooks-green-silent): FAIL (unexpected budget-bash-hooks line): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (budget-bash-hooks-green-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Check: budget-bash-hooks RED fixture (HR-F7, gated-pipeline
+  # T7/REQ-A5): red_after in the past -> the same over-budget count flips
+  # from WARN to RED, exit code 1. ----
+  D=$(_scenario_dir bbh-red-after-flip)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json" bbh-a.sh bbh-b.sh bbh-c.sh bbh-d.sh bbh-e.sh bbh-f.sh bbh-g.sh
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  for _n in a b c d e f g; do
+    echo '#!/bin/bash' > "$D/live/hooks/bbh-${_n}.sh"
+    echo '#!/bin/bash' > "$D/repo/adapters/claude-code/hooks/bbh-${_n}.sh"
+  done
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '{"schema_version":3,"budget_check":{"red_after":"2020-01-01"},"mechanisms":[]}' \
+    > "$D/repo/adapters/claude-code/config/schedule-manifest.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-bash-hooks-red-after-flip" 1 "$RC" "RED budget-bash-hooks.*7 hook entries" "$OUT"
+
+  # ---- Check: budget-bash-hooks stays WARN fixture — red_after in the
+  # future -> still WARN, exit code 0. ----
+  D=$(_scenario_dir bbh-warn-future-red-after)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json" bbh-a.sh bbh-b.sh bbh-c.sh bbh-d.sh bbh-e.sh bbh-f.sh bbh-g.sh
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  for _n in a b c d e f g; do
+    echo '#!/bin/bash' > "$D/live/hooks/bbh-${_n}.sh"
+    echo '#!/bin/bash' > "$D/repo/adapters/claude-code/hooks/bbh-${_n}.sh"
+  done
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '{"schema_version":3,"budget_check":{"red_after":"2099-01-01"},"mechanisms":[]}' \
+    > "$D/repo/adapters/claude-code/config/schedule-manifest.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-bash-hooks-red-after-future-stays-warn" 0 "$RC" "WARN budget-bash-hooks.*7 hook entries" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence (harness-execution-redesign-
+  # 2026-08 Task 1, invariant 2). WARN fixture — declared cadence (60s) is
+  # under 2x the recorded cycle time (110s, needs >= 220s), naming the
+  # entry; WARN-only at this stage (calibration week), exit code stays 0.
+  # Mirrors this task's own real coord-sync entry in the shipped manifest,
+  # so this fixture is representative, not synthetic-only. ----
+  D=$(_scenario_dir smc-warn)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":1,"cadence_check":{"ratio_floor":2},"mechanisms":[
+  {"id":"fixture-coord-sync","declared_cadence_seconds":60,"measured_cycle_seconds":110}
+]}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-warn" 0 "$RC" "WARN schedule-manifest-cadence.*'fixture-coord-sync'" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence GREEN fixture — cadence comfortably
+  # >= 2x cycle time, silent on this check. ----
+  D=$(_scenario_dir smc-green)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":1,"cadence_check":{"ratio_floor":2},"mechanisms":[
+  {"id":"fixture-healthy","declared_cadence_seconds":600,"measured_cycle_seconds":110}
+]}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "schedule-manifest-cadence"; then
+    echo "self-test (schedule-manifest-cadence-green-silent): FAIL (unexpected schedule-manifest-cadence line): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (schedule-manifest-cadence-green-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Check: schedule-manifest-cadence — missing manifest -> graceful
+  # WARN (pre-Task-1 machine), never a crash. ----
+  D=$(_scenario_dir smc-missing)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-missing-warn" 0 "$RC" "WARN schedule-manifest-cadence.*no adapters/claude-code/config/schedule-manifest.json found" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence RED fixture (HR-F7, gated-
+  # pipeline T7/REQ-A5): red_after in the past -> the same violation flips
+  # from WARN to RED, exit code 1. ----
+  D=$(_scenario_dir smc-red-after-flip)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"cadence_check":{"ratio_floor":2,"red_after":"2020-01-01"},"mechanisms":[
+  {"id":"fixture-coord-sync-red","declared_cadence_seconds":60,"measured_cycle_seconds":110}
+]}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-red-after-flip" 1 "$RC" "RED schedule-manifest-cadence.*'fixture-coord-sync-red'" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence stays WARN fixture — red_after in
+  # the future -> still WARN, exit code 0. ----
+  D=$(_scenario_dir smc-warn-future-red-after)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"cadence_check":{"ratio_floor":2,"red_after":"2099-01-01"},"mechanisms":[
+  {"id":"fixture-coord-sync-future","declared_cadence_seconds":60,"measured_cycle_seconds":110}
+]}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-red-after-future-stays-warn" 0 "$RC" "WARN schedule-manifest-cadence.*'fixture-coord-sync-future'" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence managed_by=nl-maintenance +
+  # activation marker present -> satisfied-by-construction, annotated
+  # (NOTE), never warned/redded even with a past red_after (HR-F7's own
+  # proven false positive: the prescribed remedy IS this state). ----
+  D=$(_scenario_dir smc-managed-satisfied)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"cadence_check":{"ratio_floor":2,"red_after":"2020-01-01"},"mechanisms":[
+  {"id":"fixture-managed","declared_cadence_seconds":60,"measured_cycle_seconds":110,"managed_by":"nl-maintenance"}
+]}
+EOF
+  mkdir -p "$D/live/state/nl-maintenance"
+  { date +%s 2>/dev/null || echo 0; } > "$D/live/state/nl-maintenance/activation-marker"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-managed-satisfied-by-construction" 0 "$RC" "NOTE schedule-manifest-cadence.*'fixture-managed'.*satisfied-by-construction" "$OUT"
+  if printf '%s' "$OUT" | grep -qE "(WARN|RED) schedule-manifest-cadence.*'fixture-managed'"; then
+    echo "self-test (schedule-manifest-cadence-managed-never-warns-or-reds): FAIL (expected NO WARN/RED line for the managed_by=nl-maintenance entry): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (schedule-manifest-cadence-managed-never-warns-or-reds): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
 
   # ---- Check: limit-resume-watchdog. No state dir at all -> silent
   # (WARN-free), RC 0. ----
@@ -4649,6 +5639,264 @@ MANIFEST_EOF
     echo "self-test (new-gate-evidence-bar-grandfather-leak-no-false-red): PASS" >&2
     PASSED=$((PASSED + 1))
   fi
+
+  # ---- Check: deterministic-process-proof (adapters/claude-code/doctrine/
+  # deterministic-process.md). RED fixture — a NON-grandfathered blocking:true
+  # entry declaring NEITHER chokepoint nor bypass_paths ----
+  D=$(_scenario_dir dpp-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-red" 1 "$RC" "RED deterministic-process-proof.*new-blocking-gate-no-proof" "$OUT"
+
+  # ---- GREEN fixture — the SAME shape, but with real chokepoint AND
+  # bypass_paths declared. Proves this check does not blanket-RED every
+  # blocking:true entry, only ones missing BOTH fields ----
+  D=$(_scenario_dir dpp-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-with-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "chokepoint": "pre-push", "bypass_paths": ["git push --no-verify -- NAMED-AND-ACCEPTED"], "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-green" 0 "$RC" "" "$OUT"
+
+  # ---- GRANDFATHER exempt-list GREEN fixture — a legacy blocking:true id
+  # (from the closed DETERMINISTIC_PROCESS_GRANDFATHERED list) with NEITHER
+  # field is exempt, not RED ----
+  D=$(_scenario_dir dpp-grandfather-green)
+  _stamp_claim_honesty_green "$D"
+  # added_after:"2026-07" on both -- present (avoids new-gate-evidence-bar's
+  # unconditional missing-added_after RED) and these two ids are ALSO in
+  # THAT check's own PRE_BAR_GRANDFATHERED list, so its full-bar fields
+  # (golden_scenario et al.) are not required either.
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07" },
+    { "id": "work-integrity", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-grandfather-green" 0 "$RC" "" "$OUT"
+
+  # ---- GRANDFATHER exempt-list is CLOSED, not a blanket allowance for every
+  # blocking:true entry: grandfathered ids alongside ONE non-grandfathered id
+  # missing both fields — only the non-grandfathered one REDs ----
+  D=$(_scenario_dir dpp-grandfather-leak-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "work-integrity", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "new-blocking-gate-not-grandfathered", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-grandfather-leak-red" 1 "$RC" "RED deterministic-process-proof.*new-blocking-gate-not-grandfathered" "$OUT"
+  if printf '%s' "$OUT" | grep -qE "deterministic-process-proof: (session-honesty|work-integrity):"; then
+    echo "self-test (deterministic-process-proof-grandfather-leak-no-false-red): FAIL (a grandfathered id RED'd — exempt-list leaked)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (deterministic-process-proof-grandfather-leak-no-false-red): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- (RETIRED 2026-07-30, harness-reviewer M7) The scenario that used to
+  # sit here asserted that declaring ONLY `chokepoint` stays GREEN, on the
+  # reasoning that the doctrine's RED condition was "declaring neither". That
+  # reasoning mechanized only half the obligation: a new blocking gate could
+  # discharge it by naming a firing event and never enumerating one bypass,
+  # while `bypass_paths` is the load-bearing half. Both halves are now
+  # required, and the inverted scenarios live below as
+  # `deterministic-process-proof-chokepoint-only-red` and its bypass-only
+  # mirror. ----
+
+  # ---- blocking:false entries are never checked, regardless of fields ----
+  D=$(_scenario_dir dpp-nonblocking-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "advisory-only-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": false, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-nonblocking-not-checked" 0 "$RC" "" "$OUT"
+
+  # ---- ESCAPE-CLAUSE FIXTURES (harness-reviewer M6): the
+  # `added_after < "2026-07"` exemption had ZERO coverage, so a BACKDATED
+  # field silently exempted a brand-new blocking gate and nothing would have
+  # noticed. Both sides of the boundary are now pinned. ----
+
+  # A pre-cutover date with NEITHER field stays GREEN. This DOCUMENTS the
+  # escape rather than endorsing it: the exemption exists so this file's own
+  # dozens of throwaway fixtures (which conventionally set added_after
+  # "2026-04") do not all flip RED. If this scenario ever fails, the exemption
+  # was removed and those fixtures need revisiting.
+  D=$(_scenario_dir dpp-backdated-green)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "backdated-blocking-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-04" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-backdated-exempt-green" 0 "$RC" "" "$OUT"
+
+  # The BOUNDARY: exactly "2026-07" (the cutover month itself) is NOT exempt
+  # and must RED. The comparison is a string `<`, so this pins the off-by-one
+  # that would otherwise let the whole cutover month through.
+  D=$(_scenario_dir dpp-boundary-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "boundary-blocking-gate", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-boundary-2026-07-red" 1 "$RC" "RED deterministic-process-proof.*boundary-blocking-gate" "$OUT"
+
+  # ---- BOTH-FIELDS-REQUIRED (harness-reviewer M7): declaring only
+  # `chokepoint` and never enumerating a bypass no longer discharges the
+  # obligation. This scenario was previously asserted GREEN
+  # ("deterministic-process-proof-partial-fields-still-green"); the inversion
+  # IS the fix. ----
+  D=$(_scenario_dir dpp-chokepoint-only-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-chokepoint-only", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "chokepoint": "pre-push", "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-chokepoint-only-red" 1 "$RC" "RED deterministic-process-proof.*chokepoint-only.*bypass_paths" "$OUT"
+
+  # And the mirror: bypass_paths with no chokepoint also REDs, naming the
+  # missing half. Without this the "both required" claim would only be half
+  # tested, which is the same class of gap M7 itself reported.
+  D=$(_scenario_dir dpp-bypass-only-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-bypass-only", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "bypass_paths": ["git push --no-verify -- NAMED-AND-ACCEPTED"], "added_after": "2026-07", "golden_scenario": "fixture", "fp_expectation": "fixture", "retirement_condition": "fixture", "honesty_rationale": "fixture" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "deterministic-process-proof-bypass-only-red" 1 "$RC" "RED deterministic-process-proof.*bypass-only.*chokepoint" "$OUT"
+
+  # ---- NODE/JQ PARITY (harness-reviewer C1 generalization): every dual-path
+  # check in this file is re-run with `node` masked out of PATH and required
+  # to produce byte-identical output. This is the regression test for the
+  # ACTUAL defect (a jq branch that errored into silence) and, more
+  # importantly, for its CLASS -- the four checks below are the complete set
+  # of node-preferred/jq-fallback checks in this file. ----
+  D=$(_scenario_dir dpp-jq-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # want_nonempty=1: this fixture MUST report. An empty jq branch here is
+  # precisely the C1 silent no-op.
+  _assert_node_jq_parity "dpp-jq-parity-red" "$D" "deterministic-process-proof" 1
+
+  D=$(_scenario_dir dpp-jq-grandfather)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "session-honesty", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "new-blocking-gate-not-grandfathered", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # Exercises the grandfather-list lookup itself -- the exact expression that
+  # drifted (`$gf | index(.id)` vs `$gf | index($e.id)`).
+  _assert_node_jq_parity "dpp-jq-parity-grandfather" "$D" "deterministic-process-proof" 1
+
+  D=$(_scenario_dir ngeb-jq-red)
+  _stamp_claim_honesty_green "$D"
+  cat > "$D/repo/adapters/claude-code/manifest.json" <<'MANIFEST_EOF'
+{
+  "schema_version": 1,
+  "entries": [
+    { "id": "new-gate-incomplete", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "chokepoint": "pre-push", "bypass_paths": ["--no-verify -- NAMED-AND-ACCEPTED"] }
+  ]
+}
+MANIFEST_EOF
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  _assert_node_jq_parity "ngeb-jq-parity-red" "$D" "new-gate-evidence-bar" 1
+
+  D=$(_scenario_dir c5-jq-red)
+  if _copy_manifest_tooling "$D"; then :; fi
+  _write_manifest_fixture "$D" no-honest
+  # extract_manifest_gates is the dual-path helper behind claim-honesty.
+  _assert_node_jq_parity "claim-honesty-jq-parity-red" "$D" "claim-honesty" 1
+
+  D=$(_scenario_dir bc-jq-red)
+  _stamp_claim_honesty_green "$D"
+  _write_chain_settings "$D" "Stop" 7 "stop-dummy"
+  # _count_chain_entries is the dual-path helper behind budget-chains.
+  _assert_node_jq_parity "budget-chains-jq-parity-red" "$D" "budget-chains" 1
 
   # ---- Check: line-endings (NL-FINDING-038). RED fixture — a repo shell
   # surface carries CRLF bytes (the Wave-F F.1 whole-file-conversion class).
@@ -6116,9 +7364,87 @@ EOF
     PASSED=$((PASSED + 1))
   fi
   # Explicit invocation (no NL_SESSIONSTART_ORIGIN) against the SAME held
-  # lock -> runs normally (not single-flighted away).
+  # lock -> runs normally (not single-flighted away) by the OLD, marker-
+  # gated ss_singleflight mechanism this scenario exists to validate.
+  # SF_DISABLE=1: harness-execution-redesign-2026-08 Task 1 added a SECOND,
+  # independent, UNCONDITIONAL guard (sf_guard, invariant 4) that
+  # deliberately single-flights explicit reruns too (see its call site
+  # comment a few lines above the SESSIONSTART-SINGLEFLIGHT-01 block) -- a
+  # real, intentional, DIFFERENT behavior change from this pre-existing
+  # scenario's assertion. Disabling it here isolates what THIS scenario
+  # validates (the old mechanism, in isolation); the new guard's own
+  # contract is exercised by the dedicated sf-guard-unconditional scenario
+  # below.
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" SF_DISABLE=1 bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  # HR-F10 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): renamed
+  # with the -BY-SSF suffix -- "never suppressed" is true only of SSF
+  # (sessionstart-singleflight.sh, the OLD marker-gated mechanism this
+  # scenario isolates via SF_DISABLE=1 above), not of the system as a
+  # whole: sf_guard, the NEW unconditional guard, DOES suppress explicit
+  # reruns (see the 9b-sfguard scenarios below). The un-suffixed name
+  # asserted a system-level guarantee that no longer holds.
+  _assert "9-ssf-explicit-invocation-never-suppressed-BY-SSF" 0 "$RC" "GREEN" "$OUT"
+
+  # ---- sf-guard-unconditional (harness-execution-redesign-2026-08 Task 1,
+  # invariant 4): the NEW guard fires WITHOUT any NL_SESSIONSTART_ORIGIN
+  # marker at all (the whole point -- it covers a resume-origin invocation
+  # the marker itself might miss), and it recursion-guards a nested
+  # subprocess invocation with zero filesystem I/O. Fresh scenario dir so
+  # this is unconfounded by the SSF fixture above. ----
+  D=$(_scenario_dir c9b-sfguard)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # First explicit invocation (no marker) -> runs normally and claims the
+  # new guard's lock.
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
-  _assert "9-ssf-explicit-invocation-never-suppressed" 0 "$RC" "GREEN" "$OUT"
+  _assert "9b-sfguard-first-explicit-call-runs-normally" 0 "$RC" "GREEN" "$OUT"
+  # Second explicit invocation, immediately after, SAME machine-global
+  # lock, still no marker -> the NEW unconditional guard skips it.
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "9b-sfguard-second-explicit-call-single-flighted" 0 "$RC" "single-flight" "$OUT"
+  # gated-pipeline-master-2026-08 Task 4 (REQ-A2, fixing HR-F2+F5+F8): the
+  # skip now SERVES call 1's cached GREEN verdict verbatim (single-writer
+  # contract) instead of the old bare "no checks ran" skip -- GREEN is now
+  # EXPECTED here, honestly traceable to call 1's real recompute a moment
+  # ago, never fabricated. (The old bare `exit 0` this replaces is exactly
+  # what let digest's now-removed cache writer corrupt the entry on a race
+  # -- F2's proven casualty.)
+  if printf '%s' "$OUT" | grep -q "\[doctor\] GREEN"; then
+    echo "self-test (9b-sfguard-skip-serves-cached-verdict-honestly): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (9b-sfguard-skip-serves-cached-verdict-honestly): FAIL (expected the skip to serve call 1's cached GREEN verdict): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  fi
+  # Recursion guard: a nested invocation within the SAME process (env var
+  # inherited by a subprocess) short-circuits with zero I/O, distinct
+  # message from the cross-process single-flight path above.
+  D=$(_scenario_dir c9c-sfguard-recursion)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(
+    export HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo"
+    source "$SCRIPT_DIR/lib/single-flight-lib.sh" ""
+    # TTL justification (HR-F3 comment-discipline requirement, gated-
+    # pipeline T7/REQ-A5): this call's TTL value is deliberately NOT tied
+    # to the production 1200s figure below -- it exists only to claim the
+    # recursion-guard env var + a fresh lock stamp so the NEXT line (a real
+    # subprocess of THIS same shell) hits the zero-I/O recursion branch,
+    # which is checked and returns BEFORE sf_guard ever consults the TTL
+    # at all. Any positive integer here would produce the identical
+    # recursion-path assertion below; 120 is kept only for readability
+    # continuity with the rest of this file's fixtures.
+    SF_STATE_DIR="${D}/live/state/single-flight" sf_guard "doctor-quick" 120 >/dev/null 2>&1
+    SF_STATE_DIR="${D}/live/state/single-flight" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1
+  )"; RC=$?
+  # gated-pipeline-master-2026-08 Task 4 (REQ-A2): this is a FRESH scenario
+  # dir (c9c) -- no prior real run means no cache exists yet, so the honest
+  # outcome on this skip is exit 3 + a parseable SKIPPED line (never a
+  # fabricated 0/GREEN just because there was nothing to serve).
+  _assert "9c-sfguard-recursion-nested-invocation-short-circuits" 3 "$RC" "recursion" "$OUT"
+  _assert "9c-sfguard-recursion-no-cache-exits-3-with-skipped-line" 3 "$RC" "SKIPPED" "$OUT"
 
   # ================================================================
   # Check 9 (portability-sweep) — macos-portability-2026-07 task M5
@@ -6354,6 +7680,56 @@ if [[ -z "${REPO_ROOT:-}" ]]; then
   echo "[doctor] WARN repo-root: could not resolve repo root (git unavailable and NL_REPO_ROOT unset) — repo-relative checks will warn"
 fi
 
+# harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 4):
+# universal single-flight/recursion guard, called UNCONDITIONALLY — no
+# wiring marker (NL_SESSIONSTART_ORIGIN, NL_HOOK_REENTRY) required from
+# any caller anywhere in the chain. This is intentionally BROADER than the
+# SESSIONSTART-SINGLEFLIGHT-01 block below: it also debounces/recursion-
+# guards explicit/manual invocations, which is a deliberate behavior
+# change (invariant 4: "wiring markers become belt, never braces" — this
+# lib guard is now the PRIMARY, unconditional defense; the marker-gated
+# block below stays as an additional, narrower layer, unchanged). An
+# operator re-running `harness-doctor.sh --quick` twice within the TTL
+# gets an honest one-line skip notice (SF_DISABLE=1 bypasses it).
+# SF_STATE_DIR is scoped to the RESOLVED LIVE_HOME (not a bare $HOME
+# default) for the same reason SSF_STATE_DIR is scoped below: this
+# doctor's own --self-test sandboxes LIVE_HOME via HARNESS_DOCTOR_HOME, and
+# an unscoped lock would make every fixture scenario in the self-test
+# suite single-flight against every OTHER scenario's invocation instead of
+# against the real machine's ~/.claude. See lib/single-flight-lib.sh
+# header for the full recursion-vs-single-flight contract.
+#
+# gated-pipeline-master-2026-08 Task 4 (REQ-A2, fixing HR-F2+F5+F8): a skip
+# here is NEVER a bare `exit 0` anymore -- that was indistinguishable from
+# a real GREEN to every exit-code consumer (F8), and composed with digest's
+# old cache writer to corrupt the cache on every skip (F2). sf_guard's own
+# `echo ... >&2` above (HALT vs single-flight vs recursion) still fires
+# normally on this call -- it is NOT captured/consumed here, so a caller
+# combining stdout+stderr (2>&1, as every self-test scenario below does)
+# still sees the specific reason. _doctor_serve_cache_or_skip then serves
+# the cached verdict (fast path, matches the sf-skip's own spirit: the
+# guard mostly exists because a real recompute was JUST done a moment ago)
+# or exits 3 with a parseable line when no valid cache exists yet.
+#
+# TTL = 1200s (HR-F3, 2026-08-03 harness review, gated-pipeline T7/REQ-A5):
+# the review measured a 552s cold `--quick` cycle; a fresh re-measurement
+# during this fix (2026-08-03, SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1
+# bash harness-doctor.sh --quick, timed via epoch delta) got 421s and 425s
+# on two separate runs -- the OLD 120s TTL was ~4x SHORTER than the work it
+# guards, so the guard lapsed mid-run and concurrent doctors became
+# possible again exactly when the estate is degraded and runs are longest
+# (the brief's own cadence-< cycle pathology, reproduced inside the
+# mechanism built to kill it). 1200s is >= 2x every measurement above with
+# real margin. This is now belt-and-suspenders with `_sf_is_stale`'s
+# owner-pid liveness check (single-flight-lib.sh, same finding): a live
+# owner is never reclaimed regardless of TTL, so 1200s only matters for
+# the case liveness can't cover (owner confirmed dead, or unrecorded).
+if declare -F sf_guard >/dev/null 2>&1; then
+  if ! SF_STATE_DIR="${LIVE_HOME}/state/single-flight" sf_guard "doctor-quick" 1200; then
+    _doctor_serve_cache_or_skip "single-flight guard active"
+  fi
+fi
+
 # ---- SESSIONSTART-SINGLEFLIGHT-01 (T3 extension, agent-efficiency-fixes-2026-07) ----
 # settings.json.template's SessionStart wiring marks ITS OWN call with
 # NL_SESSIONSTART_ORIGIN=1 (never set by an operator/agent typing
@@ -6376,6 +7752,47 @@ if [[ "${NL_SESSIONSTART_ORIGIN:-0}" == "1" ]]; then
     if ! SSF_STATE_DIR="${LIVE_HOME}/state/singleflight" ss_singleflight "doctor-quick" 120; then
       echo "[doctor] another SessionStart-origin session ran the quick check within ~2 min — skipping (SESSIONSTART-SINGLEFLIGHT-01)"
       exit 0
+    fi
+  fi
+fi
+
+# ------------------------------------------------------------
+# Doctor verdict cache — READ path (Task 3, invariant 3: "doctor --quick
+# serves the cached verdict in <2s on a cache hit"). Only MODE=="quick"
+# consults it (full/portability always recompute for real -- their own
+# multi-minute cost is not what this TTL is pricing). NL_FORCE=1 or a
+# literal --no-cache argument always bypasses AND is ledgered (invariant
+# 7). See _doctor_verdict_cache_path's header comment above for the schema
+# + why this reuses session-start-digest.sh's existing cache file.
+# ------------------------------------------------------------
+if [[ "$MODE" == "quick" && "${DOCTOR_VERDICT_CACHE_DISABLE:-0}" != "1" ]]; then
+  _dvc_bypass=0
+  [[ "${NL_FORCE:-0}" == "1" ]] && _dvc_bypass=1
+  for _dvc_a in "$@"; do [[ "$_dvc_a" == "--no-cache" ]] && _dvc_bypass=1; done
+  if [[ "$_dvc_bypass" == "1" ]]; then
+    _doctor_ledger_bypass "$LIVE_HOME" "NL_FORCE=1 or --no-cache requested a real recompute"
+  else
+    _dvc_cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"
+    if [[ -f "$_dvc_cache" ]]; then
+      _dvc_ts_epoch="$(sed -nE 's/.*"ts_epoch":([0-9]+).*/\1/p' "$_dvc_cache" 2>/dev/null | head -1)"
+      _dvc_fp="$(sed -nE 's/.*"fingerprint":"([^"]*)".*/\1/p' "$_dvc_cache" 2>/dev/null | head -1)"
+      _dvc_verdict="$(sed -nE 's/.*"verdict_line":"([^"]*)".*/\1/p' "$_dvc_cache" 2>/dev/null | head -1)"
+      _dvc_exit="$(sed -nE 's/.*"exit_code":([0-9]+).*/\1/p' "$_dvc_cache" 2>/dev/null | head -1)"
+      _dvc_ttl="${DOCTOR_VERDICT_CACHE_TTL_SECONDS:-1800}"
+      # An entry with no fingerprint (e.g. one written by session-start-
+      # digest.sh's own --refresh-doctor-cache, which does not compute one)
+      # is honestly untrusted for the fast path -- falls through to a real
+      # recompute below, which then writes a fully fingerprinted entry.
+      if [[ -n "$_dvc_fp" && "$_dvc_ts_epoch" =~ ^[0-9]+$ ]]; then
+        _dvc_now=$(date +%s 2>/dev/null || echo 0)
+        _dvc_age=$(( _dvc_now - _dvc_ts_epoch ))
+        _dvc_cur_fp="$(_doctor_compute_fingerprint "$LIVE_HOME" "$REPO_ROOT")"
+        if [[ "$_dvc_age" -ge 0 && "$_dvc_age" -lt "$_dvc_ttl" && "$_dvc_fp" == "$_dvc_cur_fp" ]]; then
+          echo "${_dvc_verdict} (cached verdict, ${_dvc_age}s old -- run with --no-cache or NL_FORCE=1 to force a real recompute)"
+          [[ "$_dvc_exit" =~ ^[0-9]+$ ]] && exit "$_dvc_exit"
+          exit 0
+        fi
+      fi
     fi
   fi
 fi
@@ -6404,9 +7821,39 @@ else
 fi
 
 if [[ "$RED_COUNT" -eq 0 ]]; then
-  echo "[doctor] GREEN — ${CHECKS_RUN} checks passed"
-  exit 0
+  _dvc_verdict_line="[doctor] GREEN — ${CHECKS_RUN} checks passed"
+  _dvc_exit_code=0
 else
-  echo "[doctor] FAILED — ${RED_COUNT} red, ${WARN_COUNT} warn, ${CHECKS_RUN} checks run"
-  exit 1
+  _dvc_verdict_line="[doctor] FAILED — ${RED_COUNT} red, ${WARN_COUNT} warn, ${CHECKS_RUN} checks run"
+  _dvc_exit_code=1
 fi
+echo "$_dvc_verdict_line"
+
+# ------------------------------------------------------------
+# Doctor verdict cache — WRITE path. Only after a REAL quick-mode
+# computation (never for --full/--portability, whose cost this TTL is not
+# pricing). gated-pipeline-master-2026-08 Task 4 (REQ-A2): this is now the
+# cache file's ONLY writer in the entire codebase (single-writer contract
+# fixing HR-F2). session-start-digest.sh's refresh_doctor_cache is
+# invoke-and-read-only -- it forces a real recompute (SF_DISABLE=1
+# DOCTOR_VERDICT_CACHE_DISABLE=1, which lands right here) and then reads
+# back this exact record; it never printfs the file. ts_epoch + fingerprint
+# so THIS reader (and only this reader) can serve a fast-path hit next time
+# (invariant 8: the fingerprint is derived, not authored, from the declared
+# inputs above).
+# ------------------------------------------------------------
+if [[ "$MODE" == "quick" ]]; then
+  _dvc_write_cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"
+  mkdir -p "$(dirname "$_dvc_write_cache")" 2>/dev/null || true
+  _dvc_write_ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
+  _dvc_write_epoch=$(date +%s 2>/dev/null || echo 0)
+  _dvc_write_fp="$(_doctor_compute_fingerprint "$LIVE_HOME" "$REPO_ROOT")"
+  _dvc_verdict_esc="${_dvc_verdict_line//\\/\\\\}"; _dvc_verdict_esc="${_dvc_verdict_esc//\"/\\\"}"
+  _dvc_write_tmp="${_dvc_write_cache}.tmp.$$"
+  printf '{"ts":"%s","ts_epoch":%s,"verdict_line":"%s","exit_code":%d,"fingerprint":"%s"}\n' \
+    "$_dvc_write_ts" "$_dvc_write_epoch" "$_dvc_verdict_esc" "$_dvc_exit_code" "$_dvc_write_fp" \
+    > "$_dvc_write_tmp" 2>/dev/null && mv -f "$_dvc_write_tmp" "$_dvc_write_cache" 2>/dev/null \
+    || rm -f "$_dvc_write_tmp" 2>/dev/null
+fi
+
+exit "$_dvc_exit_code"

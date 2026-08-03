@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260730-0f821897",
+  "created_at": "2026-07-30T13:22:00Z",
+  "verdict": "PASS",
+  "reviewer": "task-verifier",
+  "reviewer_model": "opus",
+  "plan_ref": "docs/plans/perf-telemetry-2026-07.md#P2 (post-hoc deploy-unblock)",
+  "change_ref": {
+    "commit_sha": "6ffe534",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/health-tick.sh",
+      "blob_sha": "85b161c298332632f907918968507d2e488366cb"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Fallback tick (health-tick), my own replay: 24/25; the P2 scenario (7) PASSED both assertions — a real ticks.jsonl line written end-to-end via the shared lib, and passivity confirmed. The single FAIL (Scenario 4, 17s vs 2s budget-cutoff test) is the same load-artifact class, not P2 surface.",
+    "findings_summary": "P2 verifier PASS conf 8 covering health-tick's pts_run_tick wiring; sole FAIL characterized as machine-load artifact"
+  },
+  "written_by": "orchestrator session d3059d78 via write-review-record.sh",
+  "payload": {}
+}

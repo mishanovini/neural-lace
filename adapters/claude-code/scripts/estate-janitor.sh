@@ -43,6 +43,22 @@
 #      writer contract).
 #   5. Ask-registry — ${ASK_REGISTRY_STATE_DIR:-~/.claude/state}/ask-registry.jsonl,
 #      folded to one row per ask_id (SIMPLIFIED fold — see ASK FOLD NOTE).
+#   6. Ask-id sentinel quarantine/unlinked lanes — ${PROGRESS_LOG_STATE_DIR:-
+#      ~/.claude/state/progress-logs}/unattributed.jsonl (quarantine — a
+#      placeholder-shaped ask-id, see progress-log-lib.sh's
+#      _pl_is_placeholder_ask_id) and .../unlinked.jsonl (legitimate no-ask
+#      lane). backlog ASK-SENTINEL-QUARANTINE-SURFACER-01: nothing surfaced
+#      either file's growth before this addition — a REGROWING quarantine
+#      file after the 2026-07-27/28 emitter fix means a pre-fix emitter is
+#      still live somewhere. This janitor reports PRESENCE + line COUNT +
+#      GROWTH-since-previous-tick for each (growth computed by diffing
+#      against THIS SAME snapshot.json's prior-tick counts, read before this
+#      run's write overwrites it — the janitor keeps no other history
+#      store). Absent files report presence:false / count:null, never a
+#      zero-conflated absence (honesty law). estate-brief.sh is where the
+#      WARN-on-any-unattributed-growth judgment is rendered; this collector
+#      stays a dumb reducer (same discipline as the ask-fold's deadline/
+#      default_action split with the brief's SLA panel above).
 #
 # ============================================================
 # REPO LIST CONFIG (mirrors pr-health-snapshot.sh's active-repos.txt
@@ -151,6 +167,7 @@
 #   HEARTBEAT_STATE_DIR           (inherited contract, session-heartbeat-lib.sh)
 #   SIGNAL_LEDGER_PATH            (inherited contract, signal-ledger.sh)
 #   ASK_REGISTRY_STATE_DIR        (inherited contract, ask-registry.sh)
+#   PROGRESS_LOG_STATE_DIR        (inherited contract, progress-log-lib.sh)
 #   ESTATE_JANITOR_REPOS_CONFIG   repo-list file override
 #
 # ============================================================
@@ -272,6 +289,40 @@ _ej_ask_registry_path() {
     dir="${HOME:-$PWD}/.claude/state"
   fi
   printf '%s/ask-registry.jsonl' "$dir"
+}
+
+# _ej_progress_log_dir — mirrors progress-log-lib.sh's own pl_state_dir()
+# resolution order exactly (env override > selftest sandbox > production
+# default). Reimplemented locally rather than sourced, matching this
+# script's existing convention for every OTHER inherited-contract path
+# (_ej_heartbeat_dir, _ej_signal_ledger_path, _ej_ask_registry_path above)
+# — a 3-line resolver formula is fine to duplicate; a classification
+# oracle (hb_classify, pts_collect_processes) is not, and those stay
+# sourced, never reimplemented (see file header).
+_ej_progress_log_dir() {
+  if [[ -n "${PROGRESS_LOG_STATE_DIR:-}" ]]; then
+    printf '%s' "$PROGRESS_LOG_STATE_DIR"
+    return 0
+  fi
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/progress-log-selftest/%s' "${TMPDIR:-/tmp}" "$$"
+    return 0
+  fi
+  printf '%s/.claude/state/progress-logs' "${HOME:-$PWD}"
+}
+
+# _ej_count_jsonl_lines <path> — non-blank line count. Not a JSON-shape
+# validator (a malformed line in a quarantine file is itself signal, not
+# noise to discard, unlike the signal-ledger tail's per-line JSON filter).
+# Captures grep's stdout unconditionally (no `||` alternative writing to
+# the same substitution — grep -c prints "0" AND exits 1 on zero matches,
+# so a naive `grep -c . "$f" || printf 0` would double-emit "00").
+_ej_count_jsonl_lines() {
+  local f="$1" n
+  [[ -f "$f" ]] || { printf '0'; return 0; }
+  n="$(grep -c . "$f" 2>/dev/null)"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s' "$n"
 }
 
 # ----------------------------------------------------------------------
@@ -668,6 +719,53 @@ _ej_collect_asks() {
   EJ_ASKS_DEGRADED="false"
 }
 
+# ---- ask-id sentinel quarantine/unlinked growth (ASK-SENTINEL-QUARANTINE-
+# SURFACER-01) — presence + count + growth-since-previous-tick for both
+# lanes. Growth is computed by reading THIS run's prior snapshot.json
+# (still on disk, not yet overwritten — collectors all run before
+# ej_write_snapshot) for the previous tick's counts; there is no other
+# history store. Honesty law: an absent file reports present:false /
+# count:null, NEVER count:0 — a lane that has never existed is a different
+# fact than a lane that emptied out, and this collector never conflates
+# them. First observation (no prior snapshot, or the prior snapshot
+# predates this field) reports growth:null, never an imputed 0.
+# ----------------------------------------------------------------------
+EJ_ASK_SENTINEL_JSON='{"unattributed":{"present":false,"count":null,"growth":null},"unlinked":{"present":false,"count":null,"growth":null}}'
+_ej_collect_ask_sentinel() {
+  local dir; dir="$(_ej_progress_log_dir)"
+  local unattr_path="$dir/unattributed.jsonl"
+  local unlink_path="$dir/unlinked.jsonl"
+
+  local prev_snap; prev_snap="$(ej_snapshot_path)"
+  local prev_unattr="" prev_unlink=""
+  if [[ -f "$prev_snap" ]] && command -v jq >/dev/null 2>&1; then
+    prev_unattr="$(jq -r '.ask_sentinel.unattributed.count // empty' "$prev_snap" 2>/dev/null)"
+    prev_unlink="$(jq -r '.ask_sentinel.unlinked.count // empty' "$prev_snap" 2>/dev/null)"
+  fi
+
+  local unattr_present="false" unattr_count="null" unattr_growth="null"
+  if [[ -f "$unattr_path" ]]; then
+    unattr_present="true"
+    unattr_count="$(_ej_count_jsonl_lines "$unattr_path")"
+    if [[ "$prev_unattr" =~ ^[0-9]+$ ]]; then
+      unattr_growth=$(( unattr_count - prev_unattr ))
+    fi
+  fi
+
+  local unlink_present="false" unlink_count="null" unlink_growth="null"
+  if [[ -f "$unlink_path" ]]; then
+    unlink_present="true"
+    unlink_count="$(_ej_count_jsonl_lines "$unlink_path")"
+    if [[ "$prev_unlink" =~ ^[0-9]+$ ]]; then
+      unlink_growth=$(( unlink_count - prev_unlink ))
+    fi
+  fi
+
+  EJ_ASK_SENTINEL_JSON="$(printf '{"unattributed":{"present":%s,"count":%s,"growth":%s},"unlinked":{"present":%s,"count":%s,"growth":%s}}' \
+    "$unattr_present" "$unattr_count" "$unattr_growth" \
+    "$unlink_present" "$unlink_count" "$unlink_growth")"
+}
+
 # ============================================================
 # WRITE SNAPSHOT
 # ============================================================
@@ -689,7 +787,7 @@ ej_write_snapshot() {
   fi
 
   tmp="$(mktemp "${file}.XXXXXX" 2>/dev/null)" || { echo "estate-janitor.sh: mktemp failed" >&2; return 1; }
-  printf '{"schema":1,"generated_at":"%s","machine":"%s","asks_fold":"simplified","repos_config_source":"%s","sessions":%s,"sessions_degraded":%s,"process_counts":{"bash_count":%s,"claude_count":%s,"degraded":%s},"worktrees":%s,"worktrees_degraded":%s,"orphaned_worktrees":%s,"orphaned_branches":%s,"repos_scanned":%s,"signal_ledger_tail":%s,"signal_ledger_degraded":%s,"asks":%s,"asks_degraded":%s}\n' \
+  printf '{"schema":1,"generated_at":"%s","machine":"%s","asks_fold":"simplified","repos_config_source":"%s","sessions":%s,"sessions_degraded":%s,"process_counts":{"bash_count":%s,"claude_count":%s,"degraded":%s},"worktrees":%s,"worktrees_degraded":%s,"orphaned_worktrees":%s,"orphaned_branches":%s,"repos_scanned":%s,"signal_ledger_tail":%s,"signal_ledger_degraded":%s,"asks":%s,"asks_degraded":%s,"ask_sentinel":%s}\n' \
     "$(_ej_json_escape "$ts")" "$(_ej_json_escape "$machine")" "$(_ej_json_escape "$repos_source")" \
     "$EJ_SESSIONS_JSON" "$EJ_SESSIONS_DEGRADED" \
     "$EJ_BASH_COUNT" "$EJ_CLAUDE_COUNT" "$EJ_PROCESS_DEGRADED" \
@@ -697,6 +795,7 @@ ej_write_snapshot() {
     "$EJ_ORPHAN_WORKTREES_JSON" "$EJ_ORPHAN_BRANCHES_JSON" "$EJ_REPOS_SCANNED_JSON" \
     "$EJ_LEDGER_TAIL_JSON" "$EJ_LEDGER_DEGRADED" \
     "$EJ_ASKS_JSON" "$EJ_ASKS_DEGRADED" \
+    "$EJ_ASK_SENTINEL_JSON" \
     > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; echo "estate-janitor.sh: write failed" >&2; return 1; }
   mv "$tmp" "$file" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; echo "estate-janitor.sh: mv failed" >&2; return 1; }
 
@@ -710,6 +809,7 @@ ej_run() {
   _ej_collect_worktrees_and_orphans
   _ej_collect_signal_ledger_tail
   _ej_collect_asks
+  _ej_collect_ask_sentinel
   ej_write_snapshot
 }
 
@@ -731,7 +831,8 @@ _ej_self_test() {
   export HEARTBEAT_STATE_DIR="$T/heartbeats"
   export SIGNAL_LEDGER_PATH="$T/signal-ledger.jsonl"
   export ASK_REGISTRY_STATE_DIR="$T"
-  mkdir -p "$HEARTBEAT_STATE_DIR"
+  export PROGRESS_LOG_STATE_DIR="$T/progress-logs"
+  mkdir -p "$HEARTBEAT_STATE_DIR" "$PROGRESS_LOG_STATE_DIR"
 
   # Fixture repo list set UP FRONT (before any ej_run call): without this,
   # _ej_resolve_repos falls back to nl_main_checkout_root(), which resolves
@@ -886,11 +987,55 @@ EOF
     [[ "$deg" == "true" ]] && pass "missing ask-registry file degrades honestly (asks_degraded=true)" || fail "expected asks_degraded=true, got $deg"
   fi
 
-  echo "Scenario 9: --self-test never touches the REAL production ~/.claude paths"
+  echo "Scenario 9 (ASK-SENTINEL-QUARANTINE-SURFACER-01): unattributed.jsonl / unlinked.jsonl both absent -> present:false, count:null, growth:null (never zero-conflated)"
+  rm -f "$PROGRESS_LOG_STATE_DIR/unattributed.jsonl" "$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+  snap="$(ej_run)"
+  if command -v jq >/dev/null 2>&1; then
+    local ua_present ua_count ua_growth
+    ua_present="$(jq -r '.ask_sentinel.unattributed.present' "$snap")"
+    ua_count="$(jq -r '.ask_sentinel.unattributed.count' "$snap")"
+    ua_growth="$(jq -r '.ask_sentinel.unattributed.growth' "$snap")"
+    [[ "$ua_present" == "false" && "$ua_count" == "null" && "$ua_growth" == "null" ]] && pass "absent unattributed.jsonl reports present:false/count:null/growth:null" || fail "expected present:false count:null growth:null, got present=$ua_present count=$ua_count growth=$ua_growth"
+    local ul_present ul_count
+    ul_present="$(jq -r '.ask_sentinel.unlinked.present' "$snap")"
+    ul_count="$(jq -r '.ask_sentinel.unlinked.count' "$snap")"
+    [[ "$ul_present" == "false" && "$ul_count" == "null" ]] && pass "absent unlinked.jsonl reports present:false/count:null" || fail "expected present:false count:null for unlinked, got present=$ul_present count=$ul_count"
+  fi
+
+  echo "Scenario 10: unattributed.jsonl appears with 3 lines on FIRST observation -> count:3, growth:null (no prior baseline to diff against — never an imputed 0)"
+  printf '{"ask_id":"<id","event":"x"}\n{"ask_id":"<id","event":"y"}\n{"ask_id":"<id","event":"z"}\n' > "$PROGRESS_LOG_STATE_DIR/unattributed.jsonl"
+  snap="$(ej_run)"
+  if command -v jq >/dev/null 2>&1; then
+    local c10 g10; c10="$(jq -r '.ask_sentinel.unattributed.count' "$snap")"; g10="$(jq -r '.ask_sentinel.unattributed.growth' "$snap")"
+    [[ "$c10" == "3" && "$g10" == "null" ]] && pass "first-observed unattributed.jsonl: count=3, growth=null (no baseline yet)" || fail "expected count=3 growth=null, got count=$c10 growth=$g10"
+  fi
+
+  echo "Scenario 11: unattributed.jsonl GROWS by 2 more lines on the next tick -> growth:2 — this is the live-emitter-bug signal estate-brief.sh WARNs on"
+  printf '{"ask_id":"<id","event":"w1"}\n{"ask_id":"<id","event":"w2"}\n' >> "$PROGRESS_LOG_STATE_DIR/unattributed.jsonl"
+  snap="$(ej_run)"
+  if command -v jq >/dev/null 2>&1; then
+    local c11 g11; c11="$(jq -r '.ask_sentinel.unattributed.count' "$snap")"; g11="$(jq -r '.ask_sentinel.unattributed.growth' "$snap")"
+    [[ "$c11" == "5" && "$g11" == "2" ]] && pass "unattributed.jsonl growth correctly measured (3 -> 5, growth=2)" || fail "expected count=5 growth=2, got count=$c11 growth=$g11"
+  fi
+
+  echo "Scenario 12: unlinked.jsonl is stable across two ticks -> growth:0 (a legitimate, non-quarantine lane; counted neutrally, no false alarm)"
+  printf '{"ask_id":"","event":"u1"}\n{"ask_id":"","event":"u2"}\n' > "$PROGRESS_LOG_STATE_DIR/unlinked.jsonl"
+  snap="$(ej_run)"
+  if command -v jq >/dev/null 2>&1; then
+    local c12a; c12a="$(jq -r '.ask_sentinel.unlinked.count' "$snap")"
+    [[ "$c12a" == "2" ]] && pass "unlinked.jsonl first observation: count=2" || fail "expected count=2, got $c12a"
+  fi
+  snap="$(ej_run)"
+  if command -v jq >/dev/null 2>&1; then
+    local c12b g12b; c12b="$(jq -r '.ask_sentinel.unlinked.count' "$snap")"; g12b="$(jq -r '.ask_sentinel.unlinked.growth' "$snap")"
+    [[ "$c12b" == "2" && "$g12b" == "0" ]] && pass "unlinked.jsonl unchanged across ticks -> growth:0, no false alarm" || fail "expected count=2 growth=0, got count=$c12b growth=$g12b"
+  fi
+
+  echo "Scenario 13: --self-test never touches the REAL production ~/.claude paths"
   [[ "$ESTATE_STATE_DIR" == "$T/estate" ]] && pass "sandboxed under tempdir, not \$HOME/.claude" || fail "ESTATE_STATE_DIR leaked outside sandbox"
 
   rm -rf "$T" 2>/dev/null || true
-  unset ESTATE_STATE_DIR HEARTBEAT_STATE_DIR SIGNAL_LEDGER_PATH ASK_REGISTRY_STATE_DIR ESTATE_JANITOR_REPOS_CONFIG PERF_TICK_PROCESS_LIST_CMD
+  unset ESTATE_STATE_DIR HEARTBEAT_STATE_DIR SIGNAL_LEDGER_PATH ASK_REGISTRY_STATE_DIR PROGRESS_LOG_STATE_DIR ESTATE_JANITOR_REPOS_CONFIG PERF_TICK_PROCESS_LIST_CMD
 
   echo ""
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed"

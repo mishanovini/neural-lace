@@ -80,10 +80,42 @@
     }).join('');
   }
 
+  // A producer-authored command almost never arrives bare: needs-you.sh
+  // writes numbered steps ("STEP 3: powershell -File ...", "2. git pull"),
+  // and the label defeated the whole-line test above -- MEASURED on the
+  // operator's own live Inbox item NY-1785425479-0d4d, where `git pull`
+  // alone is recognized but `STEP 2: git pull` renders as flat prose with
+  // no fence and no Copy button. That is the operator's complaint
+  // ("commands ... should stand out and make it easy for me to copy")
+  // surviving Round 17 because the producer and the detector disagreed
+  // about the shape of a command line.
+  //
+  // Deliberately as narrow as the whole-line list: only an explicit step
+  // label is peeled, and the REMAINDER must still satisfy the same
+  // COMMAND_LINE_RE. The label stays prose; only the runnable half is
+  // fenced, so a copy never picks up "STEP 3: ".
+  var STEP_LABEL_RE = /^(\s*(?:step\s+\d+|\d+)\s*[.:)]\s+)/i;
+  function splitStepLabel(line) {
+    var s = String(line == null ? '' : line);
+    var m = s.match(STEP_LABEL_RE);
+    if (!m) return null;
+    var rest = s.slice(m[1].length);
+    return isCommandLine(rest) ? { label: m[1], command: rest } : null;
+  }
+
   function renderLine(line) {
     var s = String(line == null ? '' : line);
     if (isCommandLine(s)) return fencedChipHtml(s.trim());
+    var split = splitStepLabel(s);
+    if (split) return escapeHtml(split.label) + fencedChipHtml(split.command.trim());
     return renderInlineLine(s);
+  }
+
+  // isActionLine(line) -- "does this line ask the operator to RUN
+  // something". The Inbox uses it to hoist the actual ask above the
+  // explanation; it is the union of the two shapes renderLine fences.
+  function isActionLine(line) {
+    return isCommandLine(line) || !!splitStepLabel(line);
   }
 
   // renderCommandAwareText(text) -> HTML string. A single-line input (the
@@ -132,6 +164,8 @@
   var api = {
     renderCommandAwareText: renderCommandAwareText,
     isCommandLine: isCommandLine,
+    isActionLine: isActionLine,
+    splitStepLabel: splitStepLabel,
     wireCommandCopyButtons: wireCommandCopyButtons,
     escapeHtml: escapeHtml,
   };

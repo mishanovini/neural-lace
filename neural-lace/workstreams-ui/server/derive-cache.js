@@ -193,6 +193,39 @@ function timeoutMsFor(sub) {
 // subcommand's child process runs in the background. Never throws: a
 // spawn failure itself (ENOENT, no bash on PATH) resolves with rc=127 and
 // the spawn error's message as stderr.
+// killTree(child) — kill a spawned child AND its descendants. Same defect
+// class and same fix as auditor.js's killTree (NL-FINDING 2026-07-14,
+// PROVEN in production there: a timeout that only kill()s the direct child
+// leaks the whole tree, forever). This module hit the identical shape on
+// 2026-08-02/03 (nl-issues.jsonl 2026-08-03T06:53Z, P-08/P-12 in the
+// 2026-08-03 issue inventory): bashBin() resolves to Git\bin\bash.exe — a
+// LAUNCHER that spawns the real usr\bin\bash.exe as a child — so the
+// timeout's bare child.kill() terminated only the launcher and orphaned
+// the entire live derivation tree. Windows never reaps orphans; each
+// 5-min anti-entropy tick whose `nl status --json` exceeded its 180s
+// timeout manufactured one ~20-minute orphan tree (measured 8:12-8:36 AM
+// 2026-08-03: one new orphan chain per tick, 1.5M syscalls/sec sustained,
+// bash->bash->bash same-cmdline chains = MSYS fork visibility of the
+// orphans' nested command substitutions). taskkill /T /F kills launcher +
+// subtree; POSIX gets process-group kill with a plain-kill fallback.
+// KNOWN RESIDUAL (measured, livetest 2026-08-03): /T walks live
+// ParentProcessId links only, and MSYS runs external binaries (jq, grep,
+// date) as fork+exec — the exec shim exits, so an in-flight external at
+// kill time is orphan-linked and survives the /T walk. Those leaves read
+// dead pipes and exit on EOF/EPIPE within ms; the immortal storm members
+// were the bash FORK chains (links stay live), which this does kill.
+function killTree(child) {
+  if (!child || child.pid == null) return;
+  try {
+    if (process.platform === 'win32') {
+      spawn('taskkill', ['/T', '/F', '/PID', String(child.pid)], { stdio: 'ignore', windowsHide: true })
+        .on('error', () => { try { child.kill('SIGKILL'); } catch (_) {} });
+    } else {
+      try { process.kill(-child.pid, 'SIGKILL'); } catch (_) { try { child.kill('SIGKILL'); } catch (_) {} }
+    }
+  } catch (_) { /* best-effort: never throw out of a reaper */ }
+}
+
 function spawnAsync(cmd, args, timeoutMs, timeoutLabel) {
   return new Promise((resolve) => {
     let child;
@@ -208,8 +241,8 @@ function spawnAsync(cmd, args, timeoutMs, timeoutLabel) {
     const timer = setTimeout(() => {
       if (settled) return;
       settled = true;
-      try { child.kill(); } catch (_) {}
-      resolve({ rc: 124, stdout: '', stderr: (timeoutLabel || cmd) + ' timed out after ' + timeoutMs + 'ms' });
+      killTree(child);
+      resolve({ rc: 124, stdout: '', stderr: (timeoutLabel || cmd) + ' timed out after ' + timeoutMs + 'ms (child tree killed)' });
     }, timeoutMs);
     if (timer.unref) timer.unref();
     child.stdout.on('data', (d) => { stdout += d; });
@@ -275,14 +308,34 @@ function nowIso() {
   return new Date().toISOString();
 }
 
-// DeriveCache — one instance per server process. `refreshIntervalMs`
-// defaults to 30s per specs-o §O.4 deliverable 1 ("batch-refreshed <= every
-// 30s"). `since` is a function returning the ISO timestamp `nl shipped
+// ANTI_ENTROPY_FLOOR_DEFAULT_MS (2026-08-02 subprocess-storm fix, operator
+// correction: push is the fast path — see server/state-watch.js). This
+// timer is NO LONGER the primary refresh trigger; it is the low-frequency
+// safety net that heals a missed fs-watch event (fs.watch is not 100%-
+// reliable cross-platform) or a state producer state-watch.js does not
+// know to watch. specs-o §O.4 deliverable 1 originally specified this as
+// the PRIMARY "batch-refreshed <= every 30s" cadence — that requirement is
+// now satisfied by state-watch.js's push path (real changes reach the
+// cache within its debounce window, single-digit seconds, not 30s), so the
+// floor itself can and should be far less frequent. 5 minutes clears every
+// per-subcommand timeout comfortably (worst case backlog at 360s) with
+// room to spare, while still being "minutes, not seconds" per the
+// operator's own framing of the anti-entropy floor. OBS_REFRESH_MS keeps
+// its established name/precedence for backward compatibility with existing
+// env wiring and self-tests (server.selftest.js pins it to 999999 so the
+// floor never refires mid-test).
+const ANTI_ENTROPY_FLOOR_DEFAULT_MS = 300000;
+
+// DeriveCache — one instance per server process. `refreshIntervalMs` is the
+// ANTI-ENTROPY FLOOR (see ANTI_ENTROPY_FLOOR_DEFAULT_MS above) — the push
+// path (state-watch.js, wired by server.js) is the fast path for real
+// changes; this timer only re-fires when nothing has pushed a refresh in a
+// while. `since` is a function returning the ISO timestamp `nl shipped
 // --since` should use; server.js supplies the Q3 last-look anchor (client-
 // persisted, defaulting to 24h per ux-review amendment 3).
 function DeriveCache(opts) {
   opts = opts || {};
-  this.refreshIntervalMs = opts.refreshIntervalMs || (Number(process.env.OBS_REFRESH_MS) || 30000);
+  this.refreshIntervalMs = opts.refreshIntervalMs || (Number(process.env.OBS_REFRESH_MS) || ANTI_ENTROPY_FLOOR_DEFAULT_MS);
   this.getShippedSince = opts.getShippedSince || function () {
     return new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   };
@@ -536,4 +589,7 @@ function runWhy(sessionId, lastBlock) {
   });
 }
 
-module.exports = { DeriveCache, runWhy, runNl, nlBin, bashBin, spawnEnv, SUBCOMMANDS, timeoutMsFor };
+module.exports = {
+  DeriveCache, runWhy, runNl, nlBin, bashBin, spawnEnv, SUBCOMMANDS, timeoutMsFor,
+  ANTI_ENTROPY_FLOOR_DEFAULT_MS, killTree,
+};

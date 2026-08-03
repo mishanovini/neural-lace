@@ -1,0 +1,441 @@
+<!-- scaffold-created: 2026-07-31T02:34:20Z by start-plan.sh slug=review-gate-identity-anchor-2026-07-30 -->
+# Plan: Anchor review-gate identity outside the pusher's write set
+Status: ACTIVE
+Execution Mode: direct
+Mode: code
+Backlog items absorbed: none
+acceptance-exempt: true
+acceptance-exempt-reason: Harness-internal enforcement change with no user-facing UI surface; the demonstration is the gate's own --self-test plus an end-to-end bare-remote attack reproduction
+tier: 3
+rung: 3
+architecture: coding-harness
+frozen: true
+lifecycle-schema: v2
+loe-class: harness-mechanism
+owner: mishanovini
+target-completion-date: 2026-07-30
+prd-ref: n/a — harness-development
+ask-id: none — no linked ask
+
+## Intended Functionality
+
+**Outcome (operator's terms):** The maintainer can no longer have unreviewed
+harness code land on master behind their back: when an agent deletes the harness
+manifest, the review gate's own library, or any in-surface gate file in the same
+push that carries unreviewed content, the maintainer sees that push REFUSED with
+the removal named — where before it succeeded silently and they were never told.
+
+**Observation:** Run the push. Before: `git push` exits 0, prints no gate
+output, and `git ls-tree -r origin/master` contains the unreviewed file. After:
+`git push` exits non-zero, prints a `PUSH BLOCKED (gate identity removal)`
+banner naming `adapters/claude-code/manifest.json`, and `git ls-tree -r
+origin/master` does NOT contain the unreviewed file.
+
+**Deterministic pass/fail:** Against a bare-remote fixture driven through the
+real `git-hooks/pre-push` dispatcher, all four attack variants (add-uncovered;
+add + `git rm` manifest; add + `git rm` manifest + gate; pure `git rm` of an
+in-surface file) must exit rc=1 with >0 bytes of gate stderr, and the pushed
+tree on the remote must not contain the attack file. Zero of the four may exit
+rc=0.
+
+**Explicitly NOT included:** Pushes that bypass local hooks entirely
+(`--no-verify`, a GitHub web-UI merge, a machine with `core.hooksPath` unset or
+repointed). Those need a server-side required-status-check, which does not
+exist and is not built here.
+
+**Human dependencies:**
+- An operator authorizes a genuinely-intended in-surface deletion via `scripts/authorize-review-record-push-override.sh` — INTENDED
+- A reviewer dispatch produces the PASS record covering the changed gate files — INTENDED
+
+## Goal
+harness-reviewer returned REJECT on `dd19a0f` with one severe finding: three
+separate controls decided "is this the harness repo?" by reading the SAME
+pusher-writable working-tree file, `adapters/claude-code/manifest.json`. A
+single `git rm -f` of that file, in the same push that added an unreviewed
+hook, disarmed all three at once — the push gate's scope test exited silently,
+the C2-B bootstrap fail-open re-opened, and the dispatcher's block arm degraded
+to a warning. The deletion itself was never reviewed because the file
+enumeration used `--diff-filter=ACMR`, which excludes `D`.
+
+This plan closes that class: gate identity is resolved from state the push
+cannot rewrite, the trigger surface is derived from the gate's carrier chain
+rather than a hand-written path list, deletions join the subject set, and three
+manifest rows that overclaimed their closure are corrected.
+
+## User-facing Outcome
+n/a — harness-internal: the user is the maintainer. The deliverable outcome is
+the three gates' `--self-test` PASS plus an end-to-end bare-remote reproduction
+showing all four attack variants refused.
+
+## Scope
+- IN: `rrg_harness_identity` + the anchor chain; `rrg_in_surface` carrier-chain
+  expansion (`git-hooks/*`, `schemas/*.json`, `install.sh`, `sync.sh`, non-`.sh`
+  code under `hooks/`+`scripts/`); `D`-filtered deletions as UNCOVERED; the
+  missing-library block; loudness of the scope test; correction of the C2-A,
+  C2-B and "not closable" manifest rows; the stale `59/59` count; the `1923`
+  byte constant; the parity-helper failure-mode note.
+- OUT: `doctrine/**` in the trigger surface (measured at 89 files, +31% on its
+  own — deferred with the measurement recorded in `docs/backlog.md`). A
+  server-side required-status-check. A deletion-aware review-record schema.
+  `core.hooksPath` tamper detection, which is not closable by a control that
+  depends on that config to run at all.
+
+## Tasks
+
+- [ ] 1. Anchor harness-repo identity on remote-side state, decomposed per control below — Verification: full — Docs impact: none — the rationale lives in the code comments and the manifest entry Task 3 updates
+  - [ ] 1a. `adapters/claude-code/hooks/lib/review-record-gate-lib.sh` — add `rrg_harness_identity` + `rrg_remote_tracking_refs`; re-anchor `_rrg_is_harness_repo` onto them
+  - [ ] 1b. `adapters/claude-code/hooks/review-record-push-gate.sh` — replace the working-tree scope test with the anchor chain; add the identity-removal block and the missing-library block
+  - [ ] 1c. `adapters/claude-code/git-hooks/pre-push` — re-anchor the M8 missing-gate arm on HEAD + remote-tracking refs before the working tree
+  **Prove it works:**
+  1. Build a harness-shaped repo with a real bare remote, `core.hooksPath` pointed at the real `adapters/claude-code/git-hooks`
+  2. Commit an uncovered in-surface hook; `git push origin master` — confirm rc=1 and a `PUSH BLOCKED` banner
+  3. Reset; commit the SAME hook plus `git rm -f adapters/claude-code/manifest.json`; `git push origin master`
+  4. Confirm rc=1, stderr names `manifest.json`, and `git ls-tree -r master` on the bare remote does NOT contain the hook
+  5. Repeat with `git rm` of the manifest AND the gate script, and with a pure `git rm` of the lib — both must also be rc=1
+  **Wire checks:**
+  - `adapters/claude-code/hooks/lib/review-record-gate-lib.sh` defines `rrg_harness_identity` → resolves `RRG_MANIFEST_RELPATH`
+  - `adapters/claude-code/hooks/review-record-push-gate.sh` calls `rrg_harness_identity` → `_rrpg_identity_removal_block`
+  - `adapters/claude-code/hooks/lib/review-record-gate-lib.sh` `_rrg_is_harness_repo` → delegates to `rrg_harness_identity`
+  - `adapters/claude-code/git-hooks/pre-push` `IS_HARNESS_REPO` → `refs/remotes` anchor lookup
+  **Integration points:**
+  - `git-hooks/pre-push` dispatcher — verify with a real `git push` against a bare remote that a non-zero gate exit aborts the push (dispatcher runs under `set -e`)
+  - `_rrg_is_harness_repo`'s consumer `rrg_is_covered` — verify the C2-B bootstrap fail-open stays scoped when the manifest is absent at the pushed ref but present at an earlier anchor
+
+- [ ] 2. Derive the trigger surface from the carrier chain, and make deletions part of the subject set — Verification: full — Docs impact: `docs/backlog.md` REVIEW-SURFACE-OMITS-ITS-OWN-DISPATCHER-01 marked resolved-except-doctrine with the measured 89-file cost
+  **Prove it works:**
+  1. Commit an unreviewed change to `adapters/claude-code/git-hooks/pre-push`; push — confirm rc=1 naming that file
+  2. Repeat for `adapters/claude-code/schemas/manifest.schema.json` and `adapters/claude-code/install.sh` — both rc=1
+  3. Commit a pure `git rm` of an in-surface gate that exists at the baseline; push — confirm rc=1 naming the deleted file
+  4. Source the lib and count `git ls-files` through `rrg_in_surface` — confirm 311, and confirm the same number on both interpreters
+  **Wire checks:**
+  - `adapters/claude-code/hooks/lib/review-record-gate-lib.sh` `git-hooks/*` → `rrg_in_surface`
+  - `adapters/claude-code/hooks/review-record-push-gate.sh` `--diff-filter=D` → `deleted`
+  **Integration points:**
+  - `rrg_in_surface`'s other consumers (`install.sh`, `session-start-auto-install.sh`, `review-record-commit-gate.sh`) — verify the widened surface does not break their self-tests, since all three source the same lib
+
+- [ ] 3. Correct the three overclaimed manifest rows, the stale count, and the two misreported constants — Verification: mechanical — Docs impact: none — the manifest IS the doc surface here
+
+## Files to Modify/Create
+- `adapters/claude-code/hooks/lib/review-record-gate-lib.sh` — `rrg_harness_identity`, `rrg_remote_tracking_refs`, carrier-chain surface arms, re-anchored `_rrg_is_harness_repo`, 24 new self-test assertions
+- `adapters/claude-code/hooks/review-record-push-gate.sh` — anchored scope test, identity-removal block, missing-library block, `D`-filtered deletion enumeration, Scenarios 16–21
+- `adapters/claude-code/git-hooks/pre-push` — M8 block arm re-anchored on HEAD + remote-tracking refs before the working tree
+- `adapters/claude-code/manifest.json` — C2-A/C2-B rows restated by OUTCOME with executed proof; "not closable" row split; `59/59` → `60/60`; new bypass row for the library-deletion vector; Amendment H narrative with measured counts
+- `adapters/claude-code/hooks/review-record-commit-gate.sh` — `1923` → measured `1937`, with the re-derivation command inline
+- `adapters/claude-code/hooks/harness-doctor.sh` — comment recording which parity failure mode corresponds to which mutation
+- `docs/backlog.md` — REVIEW-SURFACE-OMITS-ITS-OWN-DISPATCHER-01 resolved except `doctrine/**`, with the measured deferral cost
+- `docs/plans/review-gate-identity-anchor-2026-07-30.md` — this plan
+
+## In-flight scope updates
+(no in-flight changes yet)
+
+## Assumptions
+- `git` supplies `remote_sha` on stdin from the real ref negotiation, so a push
+  cannot forge it. If this were false, the strongest anchor would degrade to the
+  remote-tracking ref, which the chain already falls back to.
+- The harness repo always has at least one configured remote whose
+  `master`/`main` tracking ref carries the manifest. A clone with no remotes
+  falls back to HEAD, then the working tree — never to "not the harness repo"
+  while any anchor survives.
+- `docs/reviews/records/` remains pusher-writable repo content; this plan does
+  not change that trust boundary, it only stops the manifest from being the
+  single point of failure for deciding whether the gate applies.
+- Deleting an in-surface file is rare enough that requiring an operator override
+  is acceptable — measured at 8 of 1763 commits (0.45%) on master.
+
+## Edge Cases
+- **First push (`remote_sha` all zeros):** the zero sha is skipped as an anchor;
+  identity falls through to the remote-tracking ref, then HEAD. Scenario 13
+  still passes.
+- **Unresolvable `remote_sha` (fetch-first race, force-push after a remote
+  rewrite):** `cat-file -e` fails on that anchor and the chain continues;
+  the existing empty-tree range fallback is untouched. Scenario 13b still passes.
+- **Genuinely foreign repo:** no anchor matches anywhere, so the gate stays
+  silent at rc=0. Asserted in Scenario 11 and again in Scenario 18's second half
+  (rc=0 AND zero bytes of stderr).
+- **The gate run from a directory with no adjacent `lib/`:** blocks in the
+  harness repo. This bit the mutation-proof scenarios, which now build their
+  mutants in a sandbox carrying a `lib/` copy so the mutation under test is the
+  only variable.
+- **Manifest deleted in an earlier push, not in this range:** the per-ref
+  identity check runs before the range diff, so it fires on the anchor
+  comparison rather than depending on the `D` enumeration.
+- **Non-`.sh` files under `hooks/`/`scripts/` that are NOT code** (`*.md`,
+  `*.example`): deliberately excluded, asserted negatively so the expansion
+  cannot silently overshoot into docs.
+
+## Behavioral Contracts
+
+### Idempotency
+The gate is a pure read over the object graph and refs — it writes nothing
+except the override audit log, and re-running the same push produces the same
+verdict. A blocked push leaves no partial state to clean up.
+
+### Performance budget
+The anchor chain adds at most `1 + (remotes × 2) + 1` `git cat-file -e` calls
+per push, each O(1) against the object store; the deletion enumeration adds one
+`git diff --name-only --diff-filter=D` over a range already being diffed.
+Overhead is under the noise floor of the push itself; the full 42-scenario
+self-test completes in seconds on both interpreters.
+
+### Retry semantics
+None — a blocked push is not retried automatically. The operator either obtains
+a PASS review record or writes a sha-scoped, time-boxed override marker (900s
+TTL) and pushes again.
+
+### Failure modes
+Missing `git`/`jq` fail OPEN but LOUD (a machine problem must never brick a
+push). A missing or truncated gate library fails CLOSED in the harness repo and
+silent-open in a foreign repo (repo content, not a machine problem). An
+unresolvable diff range degrades to scanning the whole pushed tree rather than
+scanning nothing. Every bailout resolves toward block.
+
+## Acceptance Scenarios
+n/a — harness-dev plan, no product user; see acceptance-exempt-reason above.
+
+## Out-of-scope scenarios
+None — all advocate-proposed scenarios are out of scope for an
+acceptance-exempt harness plan.
+
+## Closure Contract
+- **Commands that run:** `bash adapters/claude-code/hooks/lib/review-record-gate-lib.sh --self-test`, `bash adapters/claude-code/hooks/review-record-push-gate.sh --self-test`, `bash adapters/claude-code/hooks/review-record-commit-gate.sh --self-test`, `bash adapters/claude-code/scripts/manifest-check.sh` — each on BOTH `/bin/bash` (3.2.57) and `/opt/homebrew/bin/bash` (5.3.15), sequentially, by absolute path; plus the bare-remote attack reproduction driving the real dispatcher.
+- **Expected outputs:** lib `67 passed, 0 failed`; push gate `42 passed, 0 failed` + `self-test: OK`; commit gate `60 passed, 0 failed` + `self-test: OK`; manifest-check rc=0; and all four bare-remote attack variants rc=1 with the attack file absent from the remote tree.
+- **On-disk artifact location:** `docs/plans/review-gate-identity-anchor-2026-07-30-evidence.md`, plus the self-test transcripts quoted in the implementing commit message.
+- **Done when:** this plan is DONE when all three tasks are task-verifier PASS AND the four self-tests report the counts above on both interpreters AND the bare-remote reproduction shows zero attack variants exiting rc=0.
+
+## Testing Strategy
+- Task 1: reproduced the attack FIRST against a real bare remote through the
+  real dispatcher (control rc=1 / attack rc=0 with the file landed), then fixed,
+  then re-ran the identical fixture requiring all four variants rc=1. Regression
+  scenarios 16, 18 and 20 in the push gate's `--self-test`; identity scenarios in
+  the lib's `--self-test`.
+- Task 2: per-arm push scenarios (Scenario 19) for the dispatcher, schema and
+  installer; Scenario 17 for pure deletion; a carrier-chain assertion in the lib
+  that fails if ANY link falls out of surface; negative assertions so the
+  expansion cannot overshoot into docs. Surface size measured on both
+  interpreters.
+- Task 3: `manifest-check.sh` GREEN on both interpreters; the corrected constants
+  re-derived by executing the suites rather than by reading the old text; the
+  "not closable" audit executed via `grep -oi 'not closable'` rather than
+  asserted.
+- MUTATION PROOFS (three, each isolating one control): Scenario 15 neuters the
+  block decision, Scenario 20 reverts the identity anchor, Scenario 21 drops the
+  deletion enumeration. Each must make the corresponding attack pass again; a
+  mutant that still blocks fails the scenario loudly rather than passing
+  vacuously.
+
+## Walking Skeleton
+The thinnest end-to-end slice is the bare-remote fixture itself: a harness-shaped
+repo + bare remote + `core.hooksPath` pointed at the real dispatcher, pushed
+once to prove the control blocks and once to prove the attack succeeds. That
+slice exercises every layer this plan touches (dispatcher → gate → lib → git
+object graph → remote tree) before a single line of the fix is written, which is
+how the reviewer's finding was confirmed rather than assumed.
+First task: 1.
+
+## Decisions Log
+- 2026-07-30: **Extension-based, not executable-bit, for non-`.sh` surface
+  members.** The reviewer suggested covering "executable non-`.sh` members".
+  Measured first: all 13 tracked non-`.sh` files under `hooks/`+`scripts/` are
+  mode 100644, including the live `hooks/lib/workstreams-task-bridge.js` that
+  motivated the finding. A mode-bit rule would have matched zero files and
+  shipped as theatre, so the landed rule matches `.js|.ts|.py|.ps1` and excludes
+  `.md`/`.example`. Tier 1 (one-line revert).
+  **SUPERSEDED 2026-07-30 (round 3, MAJOR 2)** — the *rejection* of the
+  executable-bit rule stands and was correct (it would have matched zero files),
+  but the *replacement* was wrong: an extension allowlist is a hand-written path
+  list, which is exactly what the lib header claimed the surface was NOT. See
+  the round-3 entry below for what shipped instead.
+
+### Round 3 — harness-reviewer REJECT on `34e69fc` (3 Critical, 2 Major, 1 Minor)
+- 2026-07-30: **Enumerate the subject set by DIFF CODE, never by verb.**
+  (Critical 1.) `git rm` was closed; `git mv` and typechange were not, and both
+  reach the identical outcome. Verified the reviewer's own git-level claims from
+  scratch before building on them: `--diff-filter=D` returns EMPTY on a rename
+  while `--diff-filter=D --no-renames` returns the vanished source, and `ACMRT`
+  reports a typechange that `ACMR` does not. Fix is two tokens. Tier 1.
+- 2026-07-30: **Report the FP bill I measured, not the one I was handed.**
+  The review cited 37 files / 6 commits (0.34%) for the rename arm. Independent
+  re-measurement over all 1763 master commits gives **38 files / 7 commits
+  (0.40%)**: the reviewer's figure counted only renames *out of* the surface and
+  omitted one rename *within* it (`rules/conversation-tree-state.md ->
+  rules/workstreams-state.md`, `e272c3e`), which `--no-renames` also flags. The
+  conclusion survives (0.40% is still cheaper than the accepted 0.45% deletion
+  arm), but the number shipped is the measured one. Typechange arm: 0/0, free.
+- 2026-07-30: **Do NOT suppress the within-surface rename FP.** Considered
+  exempting "source vanished but destination is in-surface". Rejected: it puts
+  an escape branch inside the control that exists to make vanishing hard, to
+  save one commit in 1763. The operator override is the intended route. Tier 1.
+- 2026-07-30: **Unfiltered carrier trees + exact-path exemptions, not an
+  extension allowlist.** (Major 2.) Chose the reviewer's first option over
+  merely restating the header, because the header's claim is the one worth
+  keeping true. Measured before adopting: the in-surface set is **identical
+  either way on today's tree — 311 files, zero added, zero dropped** — so this
+  is drift-resistance at zero present-day cost. Extended to `schemas/` as well,
+  which had the same latent defect and the same zero cost; fixing only the two
+  arms the review named would have repeated the Minor's own mistake. Tier 1.
+- 2026-07-30: **Exemptions are exact paths, never patterns.** A `scripts/*.md`
+  pattern would exempt a class forever; three named files must each be
+  re-justified when touched, and a new sibling defaults IN-surface. Pinned by
+  two self-test assertions that go red if an exemption is widened. Tier 1.
+- 2026-07-30: **Separate the human and machine renderings of the same list.**
+  (Major 1, class *decorated-list-element-reused-as-machine-argument*.) Parallel
+  arrays rather than stripping at the splice point, so neither consumer can
+  silently inherit the other's formatting. `bash -n` on the emitted remedy is
+  now a self-test assertion. Tier 1.
+- 2026-07-30: **A count is either present-tense with a re-derivation command,
+  or explicitly date-tagged historical.** (Minor.) Swept across all five counts
+  in the entry rather than the one reported. Applying it immediately surfaced a
+  stale figure: `scope-enforcement-gate` was recorded as 38/0 of 36 scenarios
+  but actually runs **40/0 of 38** — corrected in the same commit. Tier 1.
+- 2026-07-30: **In-surface deletions are UNCOVERED by construction.** A deleted
+  path has no blob at `local_sha`, so `rrg_is_covered` can never return true for
+  it; the operator override is the only route. Considered keying coverage on the
+  blob at `remote_sha`, but a PASS record attesting content does not authorize
+  removing it. Measured the FP bill before adopting: 0.45% of commits. A
+  deletion-aware record kind is deferred rather than half-built. Tier 2.
+- 2026-07-30: **The missing-library arm fails CLOSED in the harness repo**,
+  breaking symmetry with the `jq`/`git` arms that fail open. The distinction is
+  system binary (machine problem) vs repo content (the repo disarming its own
+  gate). Found by this builder while reproducing Critical 1, not reported by the
+  reviewer. Tier 2.
+
+---
+
+## Round 4 — evidence (harness-reviewer REJECT on `3ec297a`)
+
+Recorded HERE, in a TRACKED file, rather than in `.claude/state/observed-errors.md`
+(harness-reviewer MINOR b): that path is untracked, so citing it as an evidence
+trail resolves to nothing for any reader of the repo — a constitution §2 miss.
+
+The reviewer's closing point, which governs this round: **"four verbs" was never
+the boundary of the outcome; it was the boundary of the last test matrix.** Two
+of the three CRITICALs below reach the already-named outcome through a dimension
+no verb enumerates (a fallback's arm coverage; the enumeration's output
+encoding), and the third adds a fifth verb.
+
+### The seven-case matrix, executed end-to-end
+
+Fixture: a real bare remote, a clone with `core.hooksPath` pointing at the
+repo's own `adapters/claude-code/git-hooks`, the live gate installed as the real
+pre-push hook, and every in-surface file COVERED at the baseline (so a block is
+never attributable to unrelated uncovered content). Each row is a real
+`git push`; "remote" is `git ls-tree -r master` on the bare repo afterwards.
+
+| # | input shape | pre-fix | remote after (pre-fix) | post-fix |
+|---|---|---|---|---|
+| 1 | CONTROL: new unreviewed `hooks/plain-new.sh` | rc=1 BLOCKED | unchanged | rc=1 BLOCKED |
+| 2 | **degraded range** — remote advanced by an unfetched commit, then `git rm` of an in-surface gate + `push --force` | **rc=0, gate SILENT** | **`hooks/victim-gate.sh` GONE** | rc=1 BLOCKED |
+| 3 | **C-quoted path** — new `hooks/pré-push-gate.sh` | **rc=0, gate SILENT** | **`"hooks/pr\303\251-push-gate.sh"` PRESENT** | rc=1 BLOCKED |
+| 4 | **backslash path** — new `hooks/back\slash.sh` | **rc=0, gate SILENT** | **`"hooks/back\\slash.sh"` PRESENT** | rc=1 BLOCKED |
+| 5 | CONTROL: space path — new `hooks/two words.sh` | rc=1 BLOCKED | unchanged | rc=1 BLOCKED |
+| 6 | **`chmod -x` dispatcher** (working tree) | **rc=0, no hook ran** | **`git-hooks/pre-push` mode 100644** | **rc=0 — NOT closable, see below** |
+| 7 | **`update-index --chmod=-x` dispatcher** | **rc=0, gate SILENT** | **`git-hooks/pre-push` mode 100644** | rc=1 BLOCKED |
+
+Row 5 is the load-bearing control: a space is never C-quoted, which is exactly
+why rows 3–4 survived every previous "weird filename" probe.
+
+Row 6 is stated as NOT CLOSED, with the impossibility argument rather than an
+assertion. `core.hooksPath` names a working-tree file and git checks the
+executable bit BEFORE running it, so for that push **no hook executes at all**.
+PROVEN, not inferred: the transcript carries git's own `hook was ignored because
+it's not set as executable` hint and does NOT carry the dispatcher's own first
+line of output. What IS closed for row 6 is the DETECTION — invoking the gate
+directly on that same commit emits
+`adapters/claude-code/git-hooks/pre-push (FILE MODE 100755 → 100644 …)`.
+Enumerated as `bypass_paths[14](c2)`, inheriting `(a)`'s argument and needing
+the same missing piece: a server-side required status check.
+
+### False-positive figures, re-derived over a NAMED population
+
+MAJOR 1: the prior revision quoted **1763** while the scan that produced the
+numerators **excluded merges**, and the comparative it supported ("0.40% is
+cheaper than the accepted 0.45%") survives neither denominator.
+
+```sh
+git rev-list --no-merges master   | wc -l   # 1593  <- the scanned population
+git rev-list master               | wc -l   # 1763
+git rev-list --first-parent master| wc -l   # 1106
+# per arm, in-surface paths only:
+for c in $(git rev-list --no-merges master); do
+  git -c core.quotePath=false diff --name-only -z <FILTER> "$c^..$c"
+done   # piped through rrg_in_surface
+```
+
+| arm | commits | files | of 1593 non-merge |
+|---|---|---|---|
+| deletions `D` | 8 | 104 | 0.50% |
+| rename sources (`--no-renames` increment) | 7 | 38 | 0.44% |
+| typechange `T` | 0 | 0 | 0.00% |
+| mode transitions (`--raw`, any direction) | 5 | 116 | 0.31% |
+| — of which `100755→100644` only | 1 | 1 | 0.06% |
+
+The rename arm is cheaper than the deletion arm already accepted — 0.44% vs
+0.50% — and that comparison is now between two figures over the SAME population,
+which is the only form in which it means anything. The mode arm is taken in
+BOTH directions (0.31%, still cheaper than the accepted deletion arm) rather
+than only the disarm direction (0.06%), because a directional exemption branch
+in the control that exists to make metadata visible repeats the mistake the
+within-surface-rename exemption was refused for one round earlier.
+
+### Suite counts — both interpreters, by absolute path, sequential
+
+| suite | `/bin/bash` 3.2.57 | `/opt/homebrew/bin/bash` 5.3.15 |
+|---|---|---|
+| `hooks/review-record-push-gate.sh` | 75 passed, 0 failed | 75 passed, 0 failed |
+| `hooks/lib/review-record-gate-lib.sh` | 75 passed, 0 failed | 75 passed, 0 failed |
+| `hooks/review-record-commit-gate.sh` | 67 passed, 0 failed | 67 passed, 0 failed |
+
+Baseline at the imported `3ec297a`: 53 / 75 / 60.
+
+**These counts mean something they did not mean before.** Both suites drove the
+gate as a CHILD PROCESS via a bare `bash`, which resolves through PATH — 5.3 on
+this machine. So `/bin/bash …​ --self-test` ran the harness at the 3.2 floor
+while every gate body it exercised ran at 5.3, and a bash-4-only construct would
+have gone green on the "3.2" run. Both suites now invoke the child through
+`$BASH` and print the interpreter they are using.
+
+### Mutation proofs (each new arm, isolated)
+
+| scenario | mutation | result |
+|---|---|---|
+| 21 | deletion enumeration → empty | git-rm attack passes again |
+| 21b | drop `--no-renames` | git-mv attack passes again |
+| 21c | drop `T`; then drop `T` **and** the mode arm | ACMR-only STILL blocks (redundancy PROVEN); double mutant re-opens it |
+| 21d | neuter the `--raw` mode arm | chmod attack passes again |
+| 21e | delete one line so the degraded branch leaves the removal arm empty | CRITICAL 1 re-opens |
+| 21f | revert to line-framed C-quoted enumeration | non-ASCII passes again **while still blocking plain ASCII** (discriminating, not merely broken) |
+
+Commit-gate scenarios 24/25/26 were each confirmed RED against exactly their own
+mutant and no other — the arms had landed BLIND, with the suite staying at its
+previous count while ACMRT→ACMR and a neutered deletion arm both left it green.
+
+### Doctor — named-check delta, never a bare count
+
+MINOR a: the prior commit's "16 RED before, 16 after" is unreproducible and
+would have concealed movement in BOTH directions. At `3ec297a` vs this tree,
+both runs report **15 RED / 37 checks**, and the SETS differ:
+
+- **FIXED:** `wave-f-f2-docs` — MAJOR 2, closed by re-running
+  `scripts/gen-architecture-doc.sh` in this commit.
+- **NEW:** `obs-writers-firing` — NOT caused by this diff. It reports that
+  `~/.claude/state/signal-ledger.jsonl` "has NOT grown since the last doctor
+  check", i.e. it is machine-live state tripped by running the doctor twice in
+  quick succession to compute this very delta. Environment-scoped, like
+  `obs-heartbeats-fresh` and the `budget-worktrees-branches` family.
+
+### Compact/full doctrine sweep
+
+MAJOR 3: `review-before-deploy-full.md` still described the retired
+extension-scoped surface. Fixed as an explicit SUPERSEDED note that names what
+it retracts (rather than a silent rewrite), and the pair sweep is now documented
+in that file. The sweep command uses `grep -oE`, **not** `rg`: on this machine
+`rg` is a shell FUNCTION from the Claude Code shell snapshot, so it resolves in
+an agent's tool shell and vanishes in a plain `bash script.sh` — verified by the
+first run of the sweep failing `rg: command not found` on every file.
+
+## Definition of Done
+- [ ] All tasks checked off
+- [ ] All tests pass
+- [ ] Linting/formatting clean
+- [ ] SCRATCHPAD.md updated with final state
+- [ ] Completion report appended to this plan file

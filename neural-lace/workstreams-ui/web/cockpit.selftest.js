@@ -251,8 +251,14 @@ ok('T13-7 asks.js mirrors payload-schema.js\'s 5-shape isAbsoluteHref check (htt
   /function isAbsoluteHref/.test(asksJs) &&
   /\^https\?/.test(asksJs) && /file:\\\/\\\//.test(asksJs) && /A-Za-z\]:/.test(asksJs));
 const hrefAssignCount = (asksJs.match(/\.href\s*=/g) || []).length;
-ok('T13-8 asks.js sets .href only inside the two guarded branches of absoluteLinkNode (http(s) passthrough + best-effort file:// conversion) — never a bare/relative href',
-  hrefAssignCount === 2);
+// T13-8 FLIPS here (COCKPIT-DEAD-FILE-HREF-RESIDUAL-01). It used to pin
+// hrefAssignCount === 2 — the http(s) passthrough PLUS the "best-effort
+// file:// conversion" branch. That second branch was the operator-facing
+// bug ("the links don't work"): a file:// href is dead from an http-served
+// page. It is deleted, so the count is now 1, and a REGRESSION back to 2
+// fails this assertion.
+ok('T13-8 asks.js sets .href exactly ONCE — the http(s) passthrough branch of absoluteLinkNode. The old file:// conversion branch is gone (a repo-file path routes through the doc modal instead), so no bare, relative, or dead href can be assigned',
+  hrefAssignCount === 1);
 
 // --- plan-doc links reuse the EXISTING docModal (ux-review amendment 6:
 // "no pane grows its own link handling") — no second modal/viewer. ------
@@ -930,8 +936,12 @@ ok('T3-13 progress bars ALWAYS carry the "n/m" text and are OMITTED for zero-tra
 ok('T3-14 the tree is nested native <details>/<summary> disclosure (C9 keyboard baseline)',
   /createElement\('details'\)/.test(roadmapJs) && /createElement\('summary'\)/.test(roadmapJs));
 ok('T3-15 roll-up badges render ONE PER attention class present (R4: precedence orders, never selects) in the pinned precedence order. Round 15: "running" joins the SAME machinery (C1 applied to the running state), leading the order',
+  // 2026-07-30: 'idle-dispatch' joins the order between limit-parked and
+  // unknown, mirroring derive-lib's ATTENTION_PRECEDENCE exactly (a client
+  // order that disagrees with the server's roll-up law is a real defect —
+  // see R20-13, which pins the relationship rather than the literal list).
   /ROLLUP_ORDER/.test(roadmapJs) &&
-  /'running',\s*'waiting-on-you',\s*'crashed',\s*'blocked-on',\s*'limit-parked',\s*'unknown'/.test(roadmapJs.replace(/\n\s*/g, ' ')));
+  /'running',\s*'waiting-on-you',\s*'crashed',\s*'blocked-on',\s*'limit-parked',\s*'idle-dispatch',\s*'unknown'/.test(roadmapJs.replace(/\n\s*/g, ' ')));
 ok('T3-16 roll-up badges are counted + labeled real buttons whose click expands the path to the item',
   /rm-rollup-badge/.test(roadmapJs) && /expandPathTo/.test(roadmapJs));
 ok('T3-17 CSS shows roll-up badges on COLLAPSED ancestors (hidden when the branch is open — the attention state is never masked while collapsed)',
@@ -1542,7 +1552,11 @@ ok('R9-3 the TREE row no longer carries a per-item project chip (Round 12: redun
 ok('R9-5 "from your request(s)" gates on a non-empty link list — the "(no captured request)" filler line is gone',
   !/no captured request/.test(roadmapJsNoComments));
 // R9-7: the unbound-sessions node renders at the top of the roadmap body.
-ok('R9-7 renderUnboundSessions exists, renders rm-agents rows, and renderAll mounts it from payload.unbound_sessions',
+// 2026-08-02: scoped down to what a source regex can honestly prove — that
+// renderAll is WIRED to payload.unbound_sessions. It used to also claim it
+// "renders rm-agents rows", which a regex cannot show; that half is now
+// really executed by R21-13/R21-13c against the rendered output.
+ok('R9-7 renderAll is wired to payload.unbound_sessions and mounts the rm-unbound-sessions node (WIRING only — what the node actually renders is executed in R21-13*)',
   /function renderUnboundSessions/.test(roadmapJsNoComments) &&
   /unbound_sessions/.test(roadmapJsNoComments) && /rm-unbound-sessions/.test(roadmapJsNoComments));
 // R9-6: the landing sidebar — compact My-items + Backlog mirrors of the
@@ -2018,8 +2032,9 @@ ok('T4-7f mutation control: linkRowNode is REACHED for every entry in a non-empt
 ok('T4-7g server-side: extractAnchorsFromText + mergeLinks populate `links` from inline anchors even when the producer supplied NO --link entries at all (part b of the fix)',
   /function extractAnchorsFromText\(text\)/.test(inboxRoutesJs) && /function mergeLinks\(/.test(inboxRoutesJs) &&
   /links: mergeLinks\(/.test(inboxRoutesJs));
-ok('T4-7h context beyond 5 lines is NEVER silently dropped with no note — a "+N more" line points to the Raw verbatim details below (still the full raw_text, never truly lost)',
-  /item\.context\.length > 5/.test(inboxJs) && /more line\(s\) — see "Raw verbatim" below/.test(inboxJs));
+ok('T4-7h BACKGROUND beyond 5 lines is never silently dropped with no note — a "+N more" line points to the Raw verbatim details below. Round 18: the cap now applies to proseLines only, NEVER to the whole context, because the old cap dropped the operator\'s STEP 3 command (see R18-IB block for the executed proof)',
+  /proseLines\.length > 5/.test(inboxJs) && /more line\(s\) of background — see "Raw verbatim" below/.test(inboxJs) &&
+  !/item\.context\.slice\(0, 5\)/.test(inboxJs));
 ok('T4-7i server-side title extraction strips a redundant "Decision needed:"\/"Question:" prefix the producer already included on line 1 (the live double-label bug)',
   /replace\(\/\^\(decision needed\|question\)\\s\*:\\s\*\/i, ''\)/.test(inboxRoutesJs));
 ok('T4-7j server-side: the arrow-format options grammar ("Option NAME -> outcome") is a SECOND accepted shape alongside the markdown table, both accumulating into the same options[] array',
@@ -2270,8 +2285,18 @@ ok('R12-30 every one of the six states maps to a title CSS class (rm-title-<valu
 // that stayed green across this inversion would have been proving nothing;
 // R13-31 pins the NEW not-started rule specifically and R13-31b proves the
 // OLD rule is actually gone (not just an additional rule shadowing it).
-ok('R13-31 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--accent)/600 (2026-07-30 operator: "The green items are supposed to indicate something is actively running. I see several green plans that aren\'t running" — GREEN is reserved for live running signals only; Round 16 briefly made in-progress titles --running green, superseded same day), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
-  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--accent\);\s*font-weight:\s*600/.test(C) &&
+// R21 (2026-08-01) AMENDS R13-31's in-progress leg. Operator, verbatim:
+// "All the plan items in here that are purple are not representing what
+// they're supposed to be representing. First of all, the color is supposed
+// to be green, and second of all, it's supposed to represent items that are
+// currently being worked on." --accent (violet) was chosen 2026-07-30 to
+// stop in-progress LYING green; it still read as "this one is active"
+// because ANY hue on the most common state reads that way. in-progress is
+// now hue-free (--text/600, luminance-only); the roadmap's ONE live-claim
+// hue is --running, on the new .rm-title-running. Every OTHER leg of the
+// ladder below is unchanged and still pinned.
+ok('R13-31/R21 CSS pins the ladder: not-started var(--text)/400 (normal reading colour), in-progress var(--text)/600 (HUE-FREE — derived-from-artifacts, not a liveness claim; was --accent violet until 2026-08-01), complete var(--done)/400 unchanged (the ONLY dim state), stalled var(--interrupt)/600 unchanged, merged-unverified var(--warn)/600 unchanged, unknown var(--warn)/400+dashed unchanged',
+  /\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--text\);\s*font-weight:\s*600/.test(C) &&
   /\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--text\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-complete\s*\{\s*color:\s*var\(--done\);\s*font-weight:\s*400/.test(C) &&
   /\.rm-title\.rm-title-stalled\s*\{\s*color:\s*var\(--interrupt\);\s*font-weight:\s*600/.test(C) &&
@@ -2281,6 +2306,23 @@ ok('R13-31b mutation control: the Round 12 not-started rule (var(--muted)) is GO
   !/\.rm-title\.rm-title-not-started\s*\{\s*color:\s*var\(--muted\)/.test(C));
 ok('R16-1 ROUND 16 mutation control: the Round 15 --info (blue) in-progress-title rule is GONE, not merely shadowed — a stray leftover .rm-title-in-progress{color:var(--info)} earlier in the cascade would make the ladder non-deterministic',
   !/\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--info\)/.test(C));
+ok('R21-1 mutation control: the 2026-07-30 --accent (violet) in-progress-title rule is GONE, not merely shadowed — a stray leftover .rm-title-in-progress{color:var(--accent)} anywhere in the cascade is exactly the purple the operator reported',
+  !/\.rm-title\.rm-title-in-progress\s*\{\s*color:\s*var\(--accent\)/.test(C));
+ok('R21-2 the roadmap has a RUNNING title state and it is the --running green — the state the ladder was missing entirely (there was no green title rule at all, so genuinely-live work had no title-level signal to be seen by)',
+  /\.rm-title\.rm-title-running\s*\{\s*color:\s*var\(--running\);\s*font-weight:\s*700/.test(C));
+ok('R21-3 --running is the ONLY hue any rm-title rule spends on a liveness claim: exactly one .rm-title-* rule uses var(--running), and it is the running one (a second green title rule would re-create the "several green plans that aren\'t running" defect)',
+  (function () {
+    var rules = C.match(/\.rm-title\.rm-title-[a-z-]+\s*\{[^}]*\}/g) || [];
+    var green = rules.filter(function (r) { return /var\(--running\)/.test(r); });
+    return green.length === 1 && /rm-title-running/.test(green[0]);
+  })());
+ok('R21-4 the live-session leaf glyph speaks the SAME green as every other running signal (--running), not the retired --ok green that nothing else in the roadmap uses',
+  /\.rm-agent-running \.rm-agent-glyph\s*\{\s*color:\s*var\(--running\)/.test(C) &&
+  !/\.rm-agent-running \.rm-agent-glyph\s*\{\s*color:\s*var\(--ok\)/.test(C));
+ok('R21-5 .chip.rm-status-running exists and is green+tinted, and .chip.rm-status-in-progress no longer spends a hue — the top-of-tree "N running, unattributed to a task" chip was hard-coded to the in-progress class, so the ONE node that says "running" was painted the in-progress colour',
+  /\.chip\.rm-status-running\s*\{[^}]*color:\s*var\(--running\)/.test(C) &&
+  /\.chip\.rm-status-running\s*\{[^}]*background:\s*color-mix\(in srgb, var\(--running\)/.test(C) &&
+  !/\.chip\.rm-status-in-progress\s*\{[^}]*var\(--accent\)/.test(C));
 ok('R16-2 --running is defined and measures >= 4.5:1 against --panel (WCAG AA body-text floor) — computed here with the SAME relative-luminance formula the file\'s own --done comment already documents, not merely asserted in prose',
   (function () {
     var m = css.match(/--running:\s*#([0-9a-fA-F]{6});/);
@@ -2401,15 +2443,14 @@ ok('R13-52 mutation control: the group container survives FILTERING structurally
 // ---- fix 4: per-task done-state -----------------------------------------
 ok('R13-60 titleCell prepends a leading "✓" (rm-task-check) on a TASK row that is actually complete — text, not colour-only, and gated on BOTH item.kind===\'task\' AND status.value===\'complete\' (never shown on a complete PLAN row, which already has its own dim title + Shipped grouping)',
   /function titleCell\(item\) \{[\s\S]{0,300}item\.kind === 'task' && item\.status && item\.status\.value === 'complete'[\s\S]{0,200}rm-task-check/.test(roadmapJsNoComments));
-ok('R13-61 taskSpanCell renders "running" for a TASK row that genuinely carries item.live_sessions, and this check comes BEFORE the isNextTask branch — so a task that is BOTH next AND running truthfully says "running" (the stronger, evidenced claim), never "next" (the weaker positional guess)',
-  (function () {
-    var m = roadmapJsNoComments.match(/function taskSpanCell\(item, isNextTask\) \{([\s\S]*?)\n  \}/);
-    var body = m ? m[1] : ''; // capture group 1 excludes the signature line itself, so 'isNextTask' in the param list can't shadow the real branch check
-    if (!body) return false;
-    var liveIdx = body.indexOf('live_sessions');
-    var nextIdx = body.indexOf('isNextTask');
-    return liveIdx !== -1 && nextIdx !== -1 && liveIdx < nextIdx && /rm-task-running/.test(body) && /rm-task-next/.test(body);
-  })());
+// R13-61 MOVED (2026-07-30) to the R20 running-claim section at the end of
+// this file, and converted from a source-order regex to real execution.
+// The old form required the literal 'live_sessions' to appear inside
+// taskSpanCell before 'isNextTask'; that broke the moment the running test
+// moved behind the shared hasRunningSession() predicate, even though the
+// BEHAVIOUR it cared about was unchanged — a regex pinning how the check
+// is spelled, not what it does. It lives beside the payload fixtures it
+// needs (RUNNING_TASK_PAYLOAD), which are declared in that section.
 ok('R13-62 taskSpanCell NEVER falls through to deriveTaskSpanLabel for a task-kind item (a leaf task has no children of its own — that branch is PLAN-only) — the function returns early inside the item.kind===\'task\' branch. Round 15: deriveTaskSpanLabel now takes the whole item (not just item.children) so it can also read item.roll_up.running for the "running" token',
   /function taskSpanCell\(item, isNextTask\) \{[\s\S]*?if \(item\.kind === 'task'\) \{[\s\S]*?return cell;[\s\S]*?\}[\s\S]*?deriveTaskSpanLabel\(item\)/.test(roadmapJsNoComments));
 ok('R13-63 renderChildList computes nextId via firstOpenChildId over the FULL unpartitioned children list, but ONLY for a task list — a phase-series (child-PLAN) list gets nextId=null, since "next" is a per-TASK affordance, not a per-plan one (plans get their own "n next" one level up, via the parent\'s own task-span text)',
@@ -2719,7 +2760,11 @@ ok('R17-C11 command-render.js is served by server.js at /command-render.js (same
 // ---- wiring: every caller named in the deliverable actually calls
 // renderCat/CommandRender, not just the shared module existing in isolation.
 ok('R17-C12 inbox.js applies command-aware rendering to context lines, option outcomes, my-pick, and reply-with (audit F1\'s own enumerated surfaces)',
-  /ctxBox\.appendChild\(renderCat\(el\('div', 'ib-context-line'\), line\)\)/.test(inboxJs) &&
+  // Round 18: matched the local variable name `ctxBox`, so a pure rename
+  // (ctxBox -> deferredContext, when background was demoted below the
+  // trade-offs table) reddened it while the BEHAVIOUR was untouched. Now
+  // matches the rendering call itself, which is what the assertion is about.
+  /appendChild\(renderCat\(el\('div', 'ib-context-line'\), line\)\)/.test(inboxJs) &&
   /renderCat\(document\.createElement\('td'\), o\.option\)/.test(inboxJs) &&
   /renderCat\(document\.createElement\('td'\), o\.outcome\)/.test(inboxJs) &&
   /renderCat\(pickInline, item\.my_pick\)/.test(inboxJs) &&
@@ -2733,6 +2778,635 @@ ok('R17-C14 app.js applies it to the Q2 "what needs me" card text (.nm-text) AND
 ok('R17-C15 both renderCat wrappers (inbox.js and app.js) degrade to plain textContent when window.CommandRender failed to load — never a throw, never raw HTML injection from an absent global',
   (inboxJs.match(/node\.textContent = String\(text == null \? '' : text\)/g) || []).length >= 1 &&
   (js.match(/node\.textContent = String\(text == null \? '' : text\)/g) || []).length >= 1);
+
+// ============================================================
+// R18-IB (2026-07-31) — THE INBOX READABILITY ROUND. Operator, verbatim:
+// "it's kind of a wall of text and much of it is spent explaining it to me,
+// and it's not very easy to find exactly what it is that's actually
+// needed"; "Any commands that are needed from me should also stand out and
+// make it easy for me to copy"; "the page keeps refreshing on its own,
+// which forces the view back to the top of the page".
+//
+// These REAL-EXECUTE command-render.js (pure half, no DOM) against the
+// operator's OWN live item NY-1785425479-0d4d. The line strings below are
+// the actual rendered content from that item, not invented fixtures — this
+// is the corpus the shipped UI failed on.
+// ============================================================
+if (cmdRender) {
+  // The measured root cause: the producer writes numbered steps, and the
+  // step label defeated the whole-line command test, so the ONE line the
+  // item exists to deliver rendered as flat prose with no copy button.
+  ok('R18-IB1 a bare command is detected (pre-existing behaviour, control — proves the next assertion fails for the LABEL and not for the command)',
+    cmdRender.isCommandLine('git pull') === true &&
+    cmdRender.isCommandLine('powershell -File adapters\\claude-code\\scripts\\install-coord-sync-task.ps1') === true);
+  ok('R18-IB2 a STEP-LABELLED command is now detected as an action — the operator\'s live "STEP 2: git pull" and "STEP 3: powershell -File ..." rendered as unfenced prose before this fix',
+    cmdRender.isActionLine('STEP 2: git pull') === true &&
+    cmdRender.isActionLine('STEP 3: powershell -File adapters\\claude-code\\scripts\\install-coord-sync-task.ps1') === true &&
+    cmdRender.isActionLine('2. git pull') === true);
+  ok('R18-IB3 the copy payload is the COMMAND ONLY — pasting must never carry "STEP 3: " into a shell',
+    (function () {
+      var h = cmdRender.renderCommandAwareText('STEP 3: powershell -File install.ps1');
+      var m = h.match(/data-copy-text="([^"]*)"/);
+      return !!m && m[1] === 'powershell -File install.ps1';
+    })());
+  ok('R18-IB4 the label itself survives as visible prose outside the fence (the operator still needs to see the ordering)',
+    cmdRender.renderCommandAwareText('STEP 3: powershell -File install.ps1').indexOf('STEP 3: <span class="cmd-fence">') === 0);
+  ok('R18-IB5 narrow by construction: ordinary prose, and a step whose remainder is NOT a known command, stay prose — no false fences',
+    cmdRender.isActionLine('Reply with: done (after step 3), or DEFER.') === false &&
+    cmdRender.isActionLine('Background: coord-sync pushes each machine\'s live session state every 60s.') === false &&
+    cmdRender.isActionLine('STEP 1: cd into your neural-lace checkout.') === false);
+  ok('R18-IB6 escaping still holds through the new label path — a labelled command containing a tag renders inert, never a live element',
+    (function () {
+      var h = cmdRender.renderCommandAwareText('STEP 1: git <script>alert(1)</script>');
+      return h.indexOf('<script>') === -1 && h.indexOf('&lt;script&gt;') !== -1;
+    })());
+  // The truncation defect, stated as the operator experienced it.
+  ok('R18-IB7 the operator\'s real 6-line context yields 2 action lines and 4 prose lines — under the OLD 5-line whole-context cap the 6th line (STEP 3, the actual command) was the one dropped',
+    (function () {
+      var ctx = [
+        'Background: coord-sync pushes each machine\'s live session state to the shared coordination repo every 60s.',
+        'This Mac has published since 2026-07-30T06:47Z; the desktop never has.',
+        'What actually went wrong: your PowerShell was at C:\\Users\\misha, OUTSIDE the neural-lace repo.',
+        'Do this on the Windows desktop in PowerShell, one command at a time:',
+        'STEP 2: git pull',
+        'STEP 3: powershell -File adapters\\claude-code\\scripts\\install-coord-sync-task.ps1',
+      ];
+      var actions = ctx.filter(cmdRender.isActionLine);
+      var prose = ctx.filter(function (l) { return !cmdRender.isActionLine(l); });
+      var droppedByOldCap = ctx.slice(5);
+      return actions.length === 2 && prose.length === 4 &&
+        droppedByOldCap.length === 1 && cmdRender.isActionLine(droppedByOldCap[0]) === true;
+    })());
+}
+// The refresh-jump fix (inbox.js load()): source checks — the guard lives
+// inside a fetch .then() in a browser IIFE, so it is not requireable here.
+// Labelled as a wiring check, not a behavioural proof.
+// HONEST SCOPE: this is a source-shape check, not a behavioural proof — the
+// guard lives inside a fetch .then() in a browser IIFE and is not requireable
+// here. A first draft asserted only that `if (unchanged)` appeared in the
+// source, and a mutation (`var unchanged = false`, i.e. the guard fully
+// neutered) left it GREEN — the exact assert-on-source weakness this repo
+// keeps shipping. It now pins the guard EXPRESSION, so neutering it reddens.
+ok('R18-IB8 wiring: the 30s tick no longer re-renders unconditionally — the skip is driven by comparing the item signature to what is already rendered, and that signature EXCLUDES generated_at (which changes every tick and would defeat the guard)',
+  /var unchanged = \(sig !== null && lastPayload && sig === lastRenderSig\);/.test(inboxJs) &&
+  /if \(unchanged\)/.test(inboxJs) &&
+  /JSON\.stringify\(\{ a: j\.answerable \|\| \[\], q: j\.quarantined \|\| \[\] \}\)/.test(inboxJs) &&
+  !/generated_at[^\n]*sig/.test(inboxJs));
+ok('R18-IB9 wiring: when the item set HAS changed, scroll position is preserved across the rebuild instead of being reset to the top',
+  /var keepY = window\.scrollY/.test(inboxJs) && /if \(keepY\) window\.scrollTo\(0, keepY\)/.test(inboxJs));
+
+// ============================================================
+// R20 (2026-07-30) — THE RUNNING-CLAIM SWEEP. Operator-reported, twice:
+// "The green items are supposed to indicate something is actively running.
+// I see several green plans that aren't running."
+//
+// A first fix corrected the SERVER's roll-up gate but left the CLIENT
+// painting the green chip from the identical bad predicate
+// (`live_sessions.length` — mere membership), so the operator's symptom
+// survived untouched. These tests REALLY EXECUTE the extracted client
+// functions (the vm-sandbox technique used throughout this file) against
+// the EXACT payload the fixture server returns for stale-dispatch-plan/1 —
+// captured verbatim from a live `node server/roadmap-routes.selftest.js
+// --serve` run, GET /api/roadmap. No source regex: delete the fix and the
+// assertions below fail on the rendered output, not on a missing string.
+// ============================================================
+const elSrc = extractMarkedBlock(roadmapJs, '// EL-HELPER-BEGIN', '// EL-HELPER-END');
+const runningClaimSrc = extractMarkedBlock(roadmapJs, '// RUNNING-CLAIM-BEGIN', '// RUNNING-CLAIM-END');
+const taskSpanCellSrc = extractMarkedBlock(roadmapJs, '// TASK-SPAN-CELL-BEGIN', '// TASK-SPAN-CELL-END');
+const nodeIsActiveSrc = extractMarkedBlock(roadmapJs, '// NODE-IS-ACTIVE-BEGIN', '// NODE-IS-ACTIVE-END');
+ok('R20-0 selftest can locate the EL-HELPER/RUNNING-CLAIM/TASK-SPAN-CELL/NODE-IS-ACTIVE extraction anchors (source-execution harness precondition)',
+  !!elSrc && !!runningClaimSrc && !!taskSpanCellSrc && !!nodeIsActiveSrc);
+
+// The VERBATIM live payload for stale-dispatch-plan/1: status.value
+// 'stalled', and ONE attached session whose OWN status.value is 'stalled'
+// — the session heartbeat is genuinely fresh (that is the whole point),
+// but the task has not been re-dispatched. `live_sessions` is non-empty,
+// so every `.length` predicate evaluates TRUE against it.
+const STALE_TASK_PAYLOAD = {
+  id: 'stale-dispatch-plan/1',
+  kind: 'task',
+  title: 'a task dispatched once, hours ago, never revisited',
+  status: { value: 'stalled', reason: 'idle-dispatch', reason_class: 'idle-dispatch', label: 'stalled — no recent dispatch (the session that touched it is still alive)' },
+  roll_up: {},
+  live_sessions: [{
+    id: 'stale-dispatch-plan/1/agent/sess-op-1',
+    kind: 'agent',
+    title: 'session sess-op-1 (fixture)',
+    status: { value: 'stalled', label: 'stalled — this task has not been (re-)dispatched in a while, even though the session that touched it is still alive', reason: '', since: '2026-07-31T00:41:47.815Z' },
+  }],
+};
+// The control: identical shape, but the attached session is genuinely
+// running. Every assertion below is paired against this so the tests pin
+// "reads status.value" and not merely "always returns false".
+const RUNNING_TASK_PAYLOAD = {
+  id: 'rich-plan/1', kind: 'task', title: 'a genuinely active task',
+  status: { value: 'in-progress', reason: '', reason_class: '', label: 'in progress' },
+  roll_up: {},
+  live_sessions: [{
+    id: 'rich-plan/1/agent/sess-op-1', kind: 'agent', title: 'session sess-op-1 (fixture)',
+    status: { value: 'running', label: 'running', reason: '', since: '2026-07-31T00:41:47.815Z' },
+  }],
+};
+
+// runCell(payload, isNext) — REALLY builds the column-3 cell through the
+// real taskSpanCell in a fake DOM, and returns the rendered chip text +
+// classes. Asserting the RENDERED OUTPUT (what the operator sees), never an
+// intermediate predicate value.
+function runCell(payload, isNext) {
+  const sandbox = { document: makeFakeDom() };
+  vmMod.createContext(sandbox);
+  const code = elSrc + '\n' + runningClaimSrc + '\n' + taskSpanSrc + '\n' + taskSpanCellSrc +
+    '\nvar __cell = taskSpanCell(' + JSON.stringify(payload) + ', ' + (isNext ? 'true' : 'false') + ');' +
+    '\nvar __out = __cell.children.map(function (c) { return { cls: c.className, text: c.textContent }; });';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return sandbox.__out;
+}
+
+const staleCell = runCell(STALE_TASK_PAYLOAD, false);
+ok('R20-1 THE OPERATOR\'S DEFECT: taskSpanCell renders NO "running" chip for a task whose only attached session is itself stalled — the green chip is gone from the rendered cell, not merely from a predicate (executed against the verbatim live stale-dispatch-plan/1 payload)',
+  !staleCell.__error && staleCell.every((c) => c.text !== 'running' && !/rm-task-running/.test(c.cls)),
+  JSON.stringify(staleCell));
+const runningCell = runCell(RUNNING_TASK_PAYLOAD, false);
+ok('R20-2 ...while a task with a GENUINELY running session still renders the loud green chip — the fix reads each session\'s status.value, it does not just switch the chip off (no false negative)',
+  !runningCell.__error && runningCell.length === 1 &&
+  runningCell[0].text === 'running' && /chip rm-task-running/.test(runningCell[0].cls),
+  JSON.stringify(runningCell));
+// R13-61 relocated here (see its old site above) and converted to real
+// execution: the evidenced "running" claim outranks the positional "next"
+// guess. R20-3 below is its mirror for the STALE case, where "next" wins.
+ok('R13-61 taskSpanCell: a task that is BOTH the next open task AND genuinely running renders "running" — the evidenced claim outranks the weaker positional guess (proven by executing the real cell, not by source order)',
+  (function () {
+    const c = runCell(RUNNING_TASK_PAYLOAD, true);
+    return !c.__error && c.length === 1 && c[0].text === 'running' && /rm-task-running/.test(c[0].cls);
+  })());
+ok('R20-3 a stale-session task that IS the next open task falls through to the neutral "next" token — the row still says something true, it does not go silently blank',
+  (function () {
+    const c = runCell(STALE_TASK_PAYLOAD, true);
+    return !c.__error && c.length === 1 && c[0].text === 'next' && /rm-task-next/.test(c[0].cls);
+  })());
+ok('R20-4 an EMPTY live_sessions array still renders nothing (the pre-existing honest-absence behavior is unchanged by the predicate swap)',
+  (function () {
+    const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'not-started' }, roll_up: {}, live_sessions: [] }, false);
+    return !c.__error && c.length === 0;
+  })());
+ok('R20-5 a session leaf with a MISSING/partial status object never counts as running (defensive: the predicate reads status.value, so a malformed leaf is not a running claim)',
+  (function () {
+    const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'stalled' }, roll_up: {}, live_sessions: [{ id: 'a', title: 'x' }, { id: 'b', title: 'y', status: {} }] }, false);
+    return !c.__error && c.every((x) => x.text !== 'running');
+  })());
+
+// runPredicate(src, expr) — the two other swept sites are pure, so they run
+// without a DOM.
+function runClaim(expr) { return runPure(elSrc + '\n' + runningClaimSrc + '\n' + nodeIsActiveSrc, expr); }
+ok('R20-6 SITE 813 (the drill-down header): attachedSessionsLabel does NOT say "currently running" for a stale attached session — it names the attached count without the running claim (the old header counted stalled leaves as running)',
+  (function () {
+    const r = runClaim('attachedSessionsLabel(' + JSON.stringify(STALE_TASK_PAYLOAD) + ')');
+    return typeof r === 'string' && !/currently running/.test(r) && /none running \(1\)/.test(r);
+  })(), JSON.stringify(runClaim('attachedSessionsLabel(' + JSON.stringify(STALE_TASK_PAYLOAD) + ')')));
+ok('R20-7 ...and it DOES say "currently running (1)" for a genuinely running session — the header counts running members, not array length',
+  runClaim('attachedSessionsLabel(' + JSON.stringify(RUNNING_TASK_PAYLOAD) + ')') === 'currently running (1):');
+ok('R20-8 ...and with a MIXED list (1 running + 2 stalled) the header counts ONLY the running one, never the array length',
+  (function () {
+    const mixed = { live_sessions: [
+      { status: { value: 'stalled' } }, { status: { value: 'running' } }, { status: { value: 'unknown' } },
+    ] };
+    return runClaim('attachedSessionsLabel(' + JSON.stringify(mixed) + ')') === 'currently running (1):';
+  })());
+ok('R20-9 SITE 1333 (auto-expand): nodeIsActive is FALSE for the stale task — a dead row no longer force-expands its whole ancestor chain and spends the operator\'s default-open budget',
+  runClaim('nodeIsActive(' + JSON.stringify(STALE_TASK_PAYLOAD) + ')') === false);
+ok('R20-10 ...and TRUE for the genuinely running task, AND still true for an in-progress node with no sessions attached at all (no false negative in the auto-expand policy)',
+  runClaim('nodeIsActive(' + JSON.stringify(RUNNING_TASK_PAYLOAD) + ')') === true &&
+  runClaim('nodeIsActive({status:{value:"in-progress"}})') === true &&
+  runClaim('nodeIsActive({status:{value:"stalled",reason_class:"waiting-on-you"}})') === true);
+ok('R20-11 SITE 1979 (unbound sessions) is deliberately NOT converted: renderAll still gates on .length, because deriveUnboundSessionsNode already filtered that collection server-side — the gate can only ever fail OPEN (show the node), never hide genuinely-running unattributed work (R9-7). [2026-08-01: the old justification "its members are stamped in-progress, not running" no longer holds — that stamp WAS the split-brain defect and is fixed; the fail-open reason is the one that stands.] The audit note must stay with the code so the next sweep does not "fix" it.',
+  /AUDITED 2026-07-30 \(running-claim sweep\)/.test(roadmapJs) &&
+  /if \(ub && ub\.live_sessions && ub\.live_sessions\.length\)/.test(roadmapJsNoComments));
+ok('R20-12 no client site reads live_sessions.length as a RUNNING claim any more — the three converted sites go through the shared predicate, and the only surviving .length test is the audited unbound one',
+  (function () {
+    // Count `.length` membership tests on live_sessions in EXECUTABLE
+    // source (comments stripped). Exactly one may remain: renderAll's
+    // unbound gate. attachedSessionsLabel's own `total` is a COUNT for
+    // display, not a truth test, and reads .length on a local var.
+    const hits = roadmapJsNoComments.match(/\.live_sessions\s*&&\s*[A-Za-z_.]*\.live_sessions\.length/g) || [];
+    return hits.length === 1;
+  })(), JSON.stringify(roadmapJsNoComments.match(/\.live_sessions\s*&&\s*[A-Za-z_.]*\.live_sessions\.length/g) || []));
+ok('R20-13 the client roll-up vocabulary matches the server\'s: "idle-dispatch" is a first-class badge class ranked between limit-parked and unknown, with its own label and CSS — a plan whose task went idle must not roll up a "crashed" badge',
+  /'idle-dispatch'/.test(roadmapJs) &&
+  (function () {
+    const m = roadmapJsNoComments.match(/var ROLLUP_ORDER = \[([^\]]+)\]/);
+    if (!m) return false;
+    const order = m[1].split(',').map((s) => s.trim().replace(/'/g, ''));
+    return order.indexOf('idle-dispatch') === order.indexOf('limit-parked') + 1 &&
+      order.indexOf('unknown') === order.indexOf('idle-dispatch') + 1;
+  })() &&
+  /'idle-dispatch': 'stalled — no recent dispatch'/.test(roadmapJs) &&
+  /\.chip\.rm-rollup-idle-dispatch/.test(C));
+
+// ============================================================
+// R21 (2026-08-01) — RUNNING-NOW vs IN-PROGRESS, the two states the
+// operator kept seeing conflated:
+//   "All the plan items in here that are purple are not representing what
+//    they're supposed to be representing. First of all, the color is
+//    supposed to be green, and second of all, it's supposed to represent
+//    items that are currently being worked on. At the moment, I actually do
+//    not see any items in the cockpit that state that they are actively
+//    running."
+//
+// These assertions REALLY EXECUTE titleStateClass against payload shapes
+// the live server actually emits. Deliberately NOT source regexes: a
+// scenario in this very file once passed on a source-text match while the
+// feature was broken. Delete the fix and these fail on the returned class,
+// which is the class the operator's eye reads off the screen.
+// ============================================================
+const titleStateClassSrc = extractMarkedBlock(roadmapJs, '// TITLE-STATE-CLASS-BEGIN', '// TITLE-STATE-CLASS-END');
+ok('R21-0 selftest can locate the TITLE-STATE-CLASS extraction anchor (source-execution harness precondition)',
+  !!titleStateClassSrc);
+function titleClass(item) {
+  return runPure(runningClaimSrc + '\n' + titleStateClassSrc, 'titleStateClass(' + JSON.stringify(item) + ')');
+}
+// A plan the server stamped running_now (a real heartbeat-backed session on
+// it or a descendant) — its DERIVED status is still the ordinary
+// 'in-progress', which is exactly the pair that used to collapse into one
+// violet title.
+const RUNNING_PLAN = { id: 'p', kind: 'plan', status: { value: 'in-progress' }, running_now: true, roll_up: { running: { count: 1, exemplar: 'p/2' } } };
+const IDLE_INPROGRESS_PLAN = { id: 'q', kind: 'plan', status: { value: 'in-progress' }, running_now: false, roll_up: {} };
+ok('R21-6 THE OPERATOR\'S DEFECT, half 1 (semantics): a plan with commits/partial work but NO live dispatch does NOT get the running title — it renders the derived in-progress class, so it can never be read as "someone is on this"',
+  titleClass(IDLE_INPROGRESS_PLAN) === 'rm-title-in-progress', String(titleClass(IDLE_INPROGRESS_PLAN)));
+ok('R21-7 THE OPERATOR\'S DEFECT, half 2 (colour): a plan the server verified as running_now DOES get rm-title-running (the green class) even though its derived status is the same "in-progress" — the LIVE overlay outranks the derived ladder',
+  titleClass(RUNNING_PLAN) === 'rm-title-running', String(titleClass(RUNNING_PLAN)));
+ok('R21-8 HONEST ABSENCE: no live data at all (running_now absent from the payload entirely, e.g. an older/partial response) is NEVER a running claim — the falsy default is no-claim, never a comforting badge',
+  titleClass({ id: 'r', status: { value: 'in-progress' } }) === 'rm-title-in-progress' &&
+  titleClass({ id: 'r2', status: { value: 'not-started' } }) === 'rm-title-not-started' &&
+  titleClass({ id: 'r3', status: { value: 'complete' } }) === 'rm-title-complete');
+ok('R21-9 a genuinely running TASK row (its own live_sessions leaf is running, so the server stamped running_now) turns green too — the state is not plan-only',
+  titleClass({ id: 'p/2', kind: 'task', status: { value: 'in-progress' }, running_now: true,
+    live_sessions: [{ id: 'p/2/agent/s1', status: { value: 'running', label: 'running' } }] }) === 'rm-title-running');
+ok('R21-10 the stale-dispatch task from the R20 sweep (live_sessions non-empty, but every member stalled, so the server stamps running_now false) keeps its STALLED title — a green repaint must never swallow an attention state',
+  titleClass(Object.assign({}, STALE_TASK_PAYLOAD, { running_now: false })) === 'rm-title-stalled');
+ok('R21-11 running_now can NEVER out-shout an exception colour even if a future server bug set both: stalled/unknown/merged-unverified keep their own title classes (the attention states are the ones the operator must not lose)',
+  titleClass({ id: 'x', status: { value: 'stalled' }, running_now: true }) === 'rm-title-stalled' &&
+  titleClass({ id: 'y', status: { value: 'unknown' }, running_now: true }) === 'rm-title-unknown' &&
+  titleClass({ id: 'z', status: { value: 'merged-unverified' }, running_now: true }) === 'rm-title-merged-unverified');
+ok('R21-12 the running claim is READ from the server, never RE-DERIVED client-side (same law R13-15 pins for the task-span token): a payload carrying a live running leaf but running_now:false — the exact shape the server emits when the task-level idle gate expired — is NOT painted green by the client second-guessing it',
+  titleClass({ id: 'p/3', kind: 'task', status: { value: 'in-progress' }, running_now: false,
+    live_sessions: [{ id: 'p/3/agent/s1', status: { value: 'running', label: 'running' } }] }) === 'rm-title-in-progress');
+ok('R21-15 EXECUTED: a node arriving with status.value "running" (the UnboundSessionsNode shape) resolves through TITLE_STATE_CLASS to rm-title-running rather than falling through to a classless title — the half-swept-client-map defect class (AGENT_STATUS_GLYPH had no "in-progress" key and silently rendered live sessions as unknown for months)',
+  titleClass({ id: 'u', kind: 'unbound-sessions', status: { value: 'running' } }) === 'rm-title-running');
+ok('R21-16 STATUS_LABEL covers "running" too — it is the client\'s last-resort label for any status.value that reaches a chip, and an unmapped value falls through to printing the raw enum token',
+  (function () {
+    const m = roadmapJs.match(/var STATUS_LABEL = \{[\s\S]*?\};/);
+    if (!m) return false;
+    const box = {};
+    vmMod.createContext(box);
+    vmMod.runInContext(m[0] + '\nvar __v = STATUS_LABEL["running"];', box);
+    return box.__v === 'running';
+  })());
+ok('R21-14 DELIBERATE, PINNED: a shipped/complete master that still carries a genuinely running child plan renders GREEN, not the dim complete grey — R9-7 ("running work is NEVER invisible") outranks the tidiness of the Shipped band, and dimming it would hide live work behind a "this is finished" colour. The three ATTENTION states keep their own colours instead (asserted in R21-11); "complete" is the one non-attention state that must NOT be in RUNNING_YIELDS_TO',
+  titleClass({ id: 'm', kind: 'plan', status: { value: 'complete' }, running_now: true }) === 'rm-title-running' &&
+  titleClass({ id: 'm2', kind: 'plan', status: { value: 'complete' }, running_now: false }) === 'rm-title-complete');
+// R21-13 (2026-08-02): was THREE source regexes over roadmap.js. That is the
+// weakest possible evidence for the ONE node the operator will actually watch
+// change colour — and this file's own history includes a scenario that passed
+// on a source match while the feature was broken. Now it EXECUTES
+// renderUnboundSessions against the exact payload shape the server emits and
+// asserts the produced className list + glyph characters.
+const renderUnboundSrc = extractMarkedBlock(roadmapJs, '// RENDER-UNBOUND-SESSIONS-BEGIN', '// RENDER-UNBOUND-SESSIONS-END');
+const agentGlyphSrc = (roadmapJs.match(/var AGENT_STATUS_GLYPH = \{[^}]*\};/) || [''])[0];
+ok('R21-13a selftest can locate the RENDER-UNBOUND-SESSIONS anchor and the real AGENT_STATUS_GLYPH map (source-execution harness precondition)',
+  !!renderUnboundSrc && !!agentGlyphSrc);
+function runUnbound(node) {
+  // FakeNode + the three members renderUnboundSessions touches that the
+  // shared makeFakeDom does not model (dataset/open/addEventListener). Only
+  // formatAge is stubbed, and nothing below asserts on age text.
+  const base = makeFakeDom();
+  const sandbox = {
+    document: {
+      createElement: function (tag) {
+        const n = base.createElement(tag);
+        n.dataset = {};
+        n.open = false;
+        n.addEventListener = function () {};
+        n.setAttribute = function () {};
+        return n;
+      },
+    },
+  };
+  vmMod.createContext(sandbox);
+  const code = elSrc + '\n' + agentGlyphSrc +
+    '\nvar openSet = {};\nfunction formatAge() { return "2m"; }\n' + renderUnboundSrc +
+    '\nvar __d = renderUnboundSessions(' + JSON.stringify(node) + ');' +
+    '\nvar __sum = __d.children[0];' +
+    '\nvar __out = {' +
+    '  summaryClasses: __sum.children.map(function (c) { return c.className; }),' +
+    '  summaryTexts: __sum.children.map(function (c) { return c.textContent; }),' +
+    '  agentRows: __d.children[1].children.map(function (li) {' +
+    '    return { cls: li.className, glyph: li.children[0].textContent };' +
+    '  })' +
+    '};';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return sandbox.__out;
+}
+// The VERBATIM shape deriveUnboundSessionsNode emits (status.value 'running'
+// on the node AND every member, post-2026-08-01 split-brain fix).
+const UNBOUND_NODE_PAYLOAD = {
+  id: '(unattributed)', kind: 'unbound-sessions',
+  title: 'live sessions not yet attributed to a task (2)',
+  status: { value: 'running', label: '2 running, unattributed to a task', reason: '', since: '' },
+  running_now: true,
+  live_sessions: [
+    { id: 'unattributed/sess-a', kind: 'agent', title: 'session sess-a (br)', status: { value: 'running', label: 'running', since: '2026-08-01T00:00:00Z' } },
+    { id: 'unattributed/sess-b', kind: 'agent', title: 'session sess-b (br)', status: { value: 'running', label: 'running (quiet)', since: '2026-08-01T00:00:00Z' } },
+  ],
+};
+const unboundOut = runUnbound(UNBOUND_NODE_PAYLOAD);
+ok('R21-13 EXECUTED: the top-of-tree unattributed-live-sessions summary produces the RUNNING title class and the RUNNING chip class — not the in-progress ones it was hard-coded to. This node is the only place the cockpit says "N running" today, so it is the one the operator sees change colour',
+  !unboundOut.__error &&
+  unboundOut.summaryClasses.indexOf('rm-title rm-title-running') !== -1 &&
+  unboundOut.summaryClasses.indexOf('chip rm-status rm-status-running') !== -1 &&
+  !unboundOut.summaryClasses.some((c) => /rm-status-in-progress|rm-title-in-progress/.test(c)),
+  JSON.stringify(unboundOut));
+ok('R21-13b EXECUTED: the chip carries the server\'s own "N running, unattributed to a task" TEXT — colour is never the only carrier (WCAG 1.4.1)',
+  !unboundOut.__error && unboundOut.summaryTexts.indexOf('2 running, unattributed to a task') !== -1,
+  JSON.stringify(unboundOut.summaryTexts));
+ok('R21-13c EXECUTED: each live session row gets the rm-agent-running class and the FILLED glyph "●" — the defect was that members stamped "in-progress" hit no AGENT_STATUS_GLYPH key and fell through to the UNKNOWN glyph "○"',
+  !unboundOut.__error && unboundOut.agentRows.length === 2 &&
+  unboundOut.agentRows.every((r) => r.cls === 'rm-agent rm-agent-running' && r.glyph === '●'),
+  JSON.stringify(unboundOut.agentRows));
+ok('R21-13d MUTANT CONTROL: fed the OLD pre-fix payload (members stamped "in-progress"), the same renderer produces the unknown glyph — proving these assertions read the payload\'s status.value and are not just describing whatever the renderer does',
+  (function () {
+    const old = JSON.parse(JSON.stringify(UNBOUND_NODE_PAYLOAD));
+    old.live_sessions.forEach((s) => { s.status.value = 'in-progress'; });
+    const out = runUnbound(old);
+    return !out.__error && out.agentRows.every((r) => r.glyph === '○' && r.cls === 'rm-agent rm-agent-in-progress');
+  })());
+
+// ============================================================
+// COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 — the dead-`file://`-href CLASS SWEEP.
+//
+// Operator, live: "The links on the Inbox tab don't work." Root cause
+// (PROVEN): a client helper converted an absolute local path into a
+// `file://` href, which a browser loading this page over http silently
+// refuses to navigate — the link LOOKS clickable and does nothing. That was
+// fixed for roadmap.js (round 15) and inbox.js (R17) but the byte-identical
+// idiom survived in asks.js and backlog.js. Live probe of the running
+// cockpit at :7733 before this fix found exactly ONE anchor in the whole
+// rendered DOM whose href began `file:` — backlog.js's "open backlog.md".
+//
+// These assertions EXECUTE the real function bodies in a fake DOM (the
+// T6/T3-33 technique) and assert on the PRODUCED HREF — never on source
+// text. A source-regex assertion here would be exactly the weak check that
+// let this class survive two previous fixes: it proves a string is absent,
+// not that no code path can build one.
+// ============================================================
+function makeLinkFakeDom() {
+  function FakeNode(tag) {
+    this.tagName = tag; this.className = ''; this._text = ''; this.children = [];
+    this.attrs = {}; this.listeners = {};
+  }
+  Object.defineProperty(FakeNode.prototype, 'textContent', {
+    get: function () { return this._text; },
+    set: function (v) { this._text = v; this.children = []; },
+  });
+  FakeNode.prototype.appendChild = function (c) { this.children.push(c); return c; };
+  FakeNode.prototype.addEventListener = function (ev, fn) {
+    (this.listeners[ev] = this.listeners[ev] || []).push(fn);
+  };
+  FakeNode.prototype.setAttribute = function (k, v) { this.attrs[k] = v; };
+  return {
+    createElement: function (tag) { return new FakeNode(tag); },
+    createTextNode: function (t) { var n = new FakeNode('#text'); n._text = t; return n; },
+  };
+}
+// Walk a produced node tree and collect every href actually assigned.
+function collectHrefs(node, out) {
+  out = out || [];
+  if (!node || typeof node !== 'object') return out;
+  if (typeof node.href === 'string' && node.href) out.push(node.href);
+  (node.children || []).forEach(function (c) { collectHrefs(c, out); });
+  return out;
+}
+function collectTags(node, out) {
+  out = out || [];
+  if (!node || typeof node !== 'object') return out;
+  if (node.tagName) out.push(node.tagName);
+  (node.children || []).forEach(function (c) { collectTags(c, out); });
+  return out;
+}
+
+// ---- asks.js: absoluteLinkNode, REALLY EXECUTED ------------------------
+const askLinkSrc = extractMarkedBlock(asksJs, '// ABSOLUTE-LINK-NODE-BEGIN', '// ABSOLUTE-LINK-NODE-END');
+ok('CDFH-0 selftest can locate the ABSOLUTE-LINK-NODE extraction anchors in asks.js (source-execution harness precondition)',
+  !!askLinkSrc);
+function runAskLink(value, docRef) {
+  if (!askLinkSrc) return { __error: 'extraction anchors missing' };
+  const opened = [];
+  const sandbox = {
+    document: makeLinkFakeDom(),
+    // stubs for the two helpers the extracted block calls but does not own
+    makeCopyBtn: function (text, label) {
+      const n = makeLinkFakeDom().createElement('button');
+      n.textContent = label || 'copy'; n.copyPayload = text; return n;
+    },
+    openPlanDocModal: function (p, d) { opened.push(p + '/' + d); },
+    __opened: opened,
+  };
+  vmMod.createContext(sandbox);
+  const code = askLinkSrc + '\nvar __result = absoluteLinkNode(' +
+    JSON.stringify(value === undefined ? null : value) + ', ' +
+    JSON.stringify(docRef === undefined ? null : docRef) + ');';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return { node: sandbox.__result, opened: opened };
+}
+// The REAL values these four call sites carry (from the live server and the
+// real ask-registry.jsonl), not invented ones.
+const REAL_RAW_LINK = '/Users/misha/Claude/neural-lace/NEEDS-YOU.md';          // server.js needsYouMdPath()
+const REAL_VERBATIM = '/Users/misha/.claude/projects/-Users-misha-Claude-neural-lace/a3fcb6ea.jsonl#0'; // real registry row
+const REAL_EVIDENCE = '/Users/misha/Claude/neural-lace/docs/plans/some-plan.md';
+const REAL_WIN_PATH = 'C:/Users/misha/docs/backlog.md';                         // drive-letter branch
+
+ok('CDFH-1 asks.js absoluteLinkNode produces ZERO file:// hrefs for the REAL absolute paths its four call sites carry (raw_link, verbatim_ref, evidence_link, a Windows drive-letter path) — executed, asserting on the produced href, with NO doc_ref available',
+  (function () {
+    return [REAL_RAW_LINK, REAL_VERBATIM, REAL_EVIDENCE, REAL_WIN_PATH].every(function (v) {
+      const r = runAskLink(v, null);
+      if (r.__error) return false;
+      const hrefs = collectHrefs(r.node);
+      return hrefs.filter(function (h) { return /^file:/i.test(h); }).length === 0;
+    });
+  })());
+ok('CDFH-2 with no doc_ref, an absolute path degrades to PLAIN TEXT + a copy affordance — no <a> element at all is produced (an honest non-link, never a fabricated one)',
+  (function () {
+    const r = runAskLink(REAL_VERBATIM, null);
+    if (r.__error) return false;
+    const tags = collectTags(r.node);
+    return tags.indexOf('a') === -1 && tags.indexOf('button') !== -1 &&
+      collectHrefs(r.node).length === 0;
+  })());
+ok('CDFH-3 with a server-resolved doc_ref, the path becomes a real <button> whose click OPENS THE IN-PAGE DOC VIEWER with that {project, path} — the click handler is invoked and observed, not merely present',
+  (function () {
+    const r = runAskLink(REAL_RAW_LINK, { project: 'neural-lace', path: 'NEEDS-YOU.md' });
+    if (r.__error) return false;
+    const tags = collectTags(r.node);
+    if (tags.indexOf('button') === -1 || tags.indexOf('a') !== -1) return false;
+    if (collectHrefs(r.node).length !== 0) return false;
+    // actually fire the click handler the code registered
+    const btn = (r.node.children || []).filter(function (c) { return c.tagName === 'button'; })[0];
+    if (!btn || !btn.listeners.click || !btn.listeners.click.length) return false;
+    btn.listeners.click[0]();
+    return r.opened.length === 1 && r.opened[0] === 'neural-lace/NEEDS-YOU.md';
+  })());
+ok('CDFH-4 a genuine http(s) link is STILL an ordinary navigable anchor (the cure must not break real links) — href assigned verbatim, target/rel preserved',
+  (function () {
+    const r = runAskLink('https://github.com/x/y/pull/1', null);
+    if (r.__error) return false;
+    const hrefs = collectHrefs(r.node);
+    return hrefs.length === 1 && hrefs[0] === 'https://github.com/x/y/pull/1' &&
+      collectTags(r.node).indexOf('a') !== -1;
+  })());
+ok('CDFH-5 an http(s) link WINS over a doc_ref (the http branch is checked first) and an empty/absent value renders the literal "(none)" with no href — the two edge branches still behave',
+  (function () {
+    const withBoth = runAskLink('https://example.com/a', { project: 'p', path: 'q.md' });
+    const empty = runAskLink('', null);
+    const nul = runAskLink(null, null);
+    if (withBoth.__error || empty.__error || nul.__error) return false;
+    return collectHrefs(withBoth.node).length === 1 &&
+      collectTags(withBoth.node).indexOf('button') === -1 &&
+      empty.node.textContent === '(none)' && collectHrefs(empty.node).length === 0 &&
+      nul.node.textContent === '(none)' && collectHrefs(nul.node).length === 0;
+  })());
+ok('CDFH-6 a RELATIVE reference (the common real shape in a §3 Links: line, e.g. "docs/backlog.md") is never turned into an href, with or without a doc_ref present',
+  (function () {
+    const r = runAskLink('docs/backlog.md', null);
+    return !r.__error && collectHrefs(r.node).length === 0 && collectTags(r.node).indexOf('a') === -1;
+  })());
+
+// ---- backlog.js: absoluteLinkHref + the open-file affordance, EXECUTED --
+const backlogHrefSrc = extractMarkedBlock(backlogJs, '// ABSOLUTE-LINK-HREF-BEGIN', '// ABSOLUTE-LINK-HREF-END');
+const backlogAffordanceSrc = extractMarkedBlock(backlogJs, '// OPEN-FILE-AFFORDANCE-BEGIN', '// OPEN-FILE-AFFORDANCE-END');
+ok('CDFH-7 selftest can locate backlog.js\'s ABSOLUTE-LINK-HREF and OPEN-FILE-AFFORDANCE extraction anchors (source-execution harness precondition)',
+  !!backlogHrefSrc && !!backlogAffordanceSrc);
+function runBacklogHref(value) {
+  if (!backlogHrefSrc) return { __error: 'anchors missing' };
+  const sandbox = {};
+  vmMod.createContext(sandbox);
+  try {
+    vmMod.runInContext(backlogHrefSrc + '\nvar __r = absoluteLinkHref(' +
+      JSON.stringify(value === undefined ? null : value) + ');', sandbox);
+  } catch (err) { return { __error: String(err) }; }
+  return sandbox.__r;
+}
+// The REAL file_path the LIVE server returns from GET /api/backlog.
+const REAL_BACKLOG_PATH = '/Users/misha/Claude/neural-lace/docs/backlog.md';
+ok('CDFH-8 backlog.js absoluteLinkHref returns NULL (never a file:// URL) for the REAL absolute file_path the live server serves, and for a Windows drive-letter path — executed, asserting on the returned href',
+  runBacklogHref(REAL_BACKLOG_PATH) === null && runBacklogHref(REAL_WIN_PATH) === null &&
+  runBacklogHref('/any/absolute/path.md') === null && runBacklogHref('\\\\host\\share\\x.md') === null);
+ok('CDFH-9 backlog.js absoluteLinkHref still passes a genuine http(s) URL through unchanged (real links keep working)',
+  runBacklogHref('https://example.com/backlog.md') === 'https://example.com/backlog.md' &&
+  runBacklogHref('') === null && runBacklogHref(null) === null);
+
+function runBacklogAffordance(payload) {
+  if (!backlogAffordanceSrc) return { __error: 'anchors missing' };
+  const dom = makeLinkFakeDom();
+  const header = dom.createElement('div');
+  const opened = [];
+  const sandbox = {
+    document: dom, header: header, payload: payload,
+    absoluteLinkHref: function (v) { return runBacklogHref(v); },
+    openBacklogDocModal: function (p, d) { opened.push(p + '/' + d); },
+  };
+  vmMod.createContext(sandbox);
+  try { vmMod.runInContext(backlogAffordanceSrc, sandbox); }
+  catch (err) { return { __error: String(err) }; }
+  return { header: header, opened: opened };
+}
+ok('CDFH-10 the "open backlog.md" affordance produces ZERO file:// hrefs for the REAL live payload — executed against the exact {file_path, file_doc_ref} shape GET /api/backlog now returns',
+  (function () {
+    const r = runBacklogAffordance({
+      file_path: REAL_BACKLOG_PATH,
+      file_doc_ref: { project: 'neural-lace', path: 'docs/backlog.md' },
+    });
+    if (r.__error) return false;
+    return collectHrefs(r.header).filter(function (h) { return /^file:/i.test(h); }).length === 0;
+  })());
+ok('CDFH-11 that affordance is a real <button> that OPENS THE IN-PAGE DOC VIEWER at the resolved {project, path} — the registered click handler is fired and its effect observed, not merely asserted present',
+  (function () {
+    const r = runBacklogAffordance({
+      file_path: REAL_BACKLOG_PATH,
+      file_doc_ref: { project: 'neural-lace', path: 'docs/backlog.md' },
+    });
+    if (r.__error) return false;
+    const tags = collectTags(r.header);
+    if (tags.indexOf('button') === -1 || tags.indexOf('a') !== -1) return false;
+    const btn = r.header.children[0];
+    if (!btn.listeners.click || !btn.listeners.click.length) return false;
+    btn.listeners.click[0]();
+    return r.opened.length === 1 && r.opened[0] === 'neural-lace/docs/backlog.md' &&
+      btn.textContent === 'open backlog.md';
+  })());
+ok('CDFH-12 with an UNRESOLVABLE file_doc_ref (path outside every known project root) the affordance is OMITTED entirely rather than rendered as a link that cannot work — zero children, zero hrefs',
+  (function () {
+    const r = runBacklogAffordance({ file_path: REAL_BACKLOG_PATH, file_doc_ref: null });
+    if (r.__error) return false;
+    return r.header.children.length === 0 && collectHrefs(r.header).length === 0;
+  })());
+ok('CDFH-13 an http(s) file_path (a remotely-served backlog) still renders an ordinary navigable anchor — the cure does not remove genuine links',
+  (function () {
+    const r = runBacklogAffordance({ file_path: 'https://example.com/backlog.md', file_doc_ref: null });
+    if (r.__error) return false;
+    const hrefs = collectHrefs(r.header);
+    return hrefs.length === 1 && hrefs[0] === 'https://example.com/backlog.md' &&
+      collectTags(r.header).indexOf('a') !== -1;
+  })());
+
+// ---- the class predicate itself, asserted over the whole client tree ----
+// This is the assertion that would have caught the residual: it is not
+// scoped to the two files this round cured, so a THIRD surface reintroducing
+// the idiom fails here too. Comments/strings are stripped first, so the
+// explanatory prose above (which necessarily says "file://") does not
+// self-satisfy or self-trip the check.
+// NOTE on the stripper below: this assertion deliberately does NOT reuse the
+// shared stripJsComments(). That helper strips `//`-to-end-of-line, and the
+// `//` inside the very literal we are hunting (`'file:///' + norm`) looks
+// exactly like a comment start to it — it rewrites `'file:///' + norm` down
+// to `'file:` and the predicate then matches nothing. That was caught by
+// mutation: with the old dead-href helper restored, a stripJsComments-based
+// version of this check stayed GREEN, i.e. it was theater. The line-based
+// stripper here removes only whole comment LINES (and block comments),
+// leaving string literals on code lines intact.
+function stripCommentLinesOnly(src) {
+  return src
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .split('\n')
+    .filter(function (l) { const t = l.trim(); return t.slice(0, 2) !== '//' && t.slice(0, 1) !== '*'; })
+    .join('\n');
+}
+const cdfhOffenders = (function () {
+  const files = fs.readdirSync(D).filter(function (f) { return /\.js$/.test(f) && f !== 'cockpit.selftest.js'; });
+  const offenders = [];
+  files.forEach(function (f) {
+    const stripped = stripCommentLinesOnly(fs.readFileSync(path.join(D, f), 'utf8'));
+    // a CONSTRUCTION is a file:// opening a string literal or template
+    if (/['"`]file:\/\//.test(stripped)) offenders.push(f);
+  });
+  return offenders;
+})();
+ok('CDFH-14 CLASS PREDICATE: no client-side source file anywhere under web/ CONSTRUCTS a file:// string literal (whole comment lines stripped; the isAbsoluteHref RECOGNIZER, which only .test()s the shape and builds nothing, is exempt and asserted separately below). Not scoped to the two files this round cured — a THIRD surface reintroducing the idiom fails HERE',
+  cdfhOffenders.length === 0, 'offenders: ' + JSON.stringify(cdfhOffenders));
+ok('CDFH-15 the ONE surviving file:// mention in live client code is asks.js\'s isAbsoluteHref RECOGNIZER — it only ever returns a boolean, and executing it proves it classifies rather than constructs',
+  (function () {
+    const r = runAskLink('file:///Users/misha/x.md', null);
+    if (r.__error) return false;
+    // A value that ALREADY arrives as a file:// URL is still not turned into
+    // an anchor by this module — it degrades to text + copy like any other
+    // unopenable reference.
+    return collectHrefs(r.node).length === 0 && collectTags(r.node).indexOf('a') === -1;
+  })());
+
+ok('CDFH-16 ALL FOUR in-page doc openers render through the shared window.MdRender pipeline — asks.js was the last one still dumping raw markdown via textContent, and this round routes four more link kinds through it, so a newly-cured link would otherwise open a visibly worse view than an already-cured one',
+  ['asks.js', 'roadmap.js', 'inbox.js', 'backlog.js'].every(function (f) {
+    const s = fs.readFileSync(path.join(D, f), 'utf8');
+    return /window\.MdRender && typeof window\.MdRender\.renderMarkdown === 'function'/.test(s) &&
+      /docBody\.innerHTML = window\.MdRender\.renderMarkdown\(j\.content\)/.test(s);
+  }));
 
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');

@@ -453,19 +453,25 @@ _amendment_state_dir() {
 #
 # The first fire for a given (slug, delta_hash) records `<epoch> <token>`
 # and returns that token; any re-fire within
-# AMENDMENT_REPLAY_DEBOUNCE_SECONDS (default 30) returns the SAME token (a
+# AMENDMENT_REPLAY_DEBOUNCE_SECONDS (default 120) returns the SAME token (a
 # replay of one edit -> deduped). A later edit that happens to reproduce the
 # same delta mints a NEW token -> a genuinely distinct amendment. Never
 # blocks: an unwritable state dir or missing `date` degrades to a
 # conservative constant, never a crash.
 #
-# SIZING THE WINDOW (30s): it must exceed the wall-clock gap between two
-# fires of ONE edit -- and that gap is NOT sub-second, because each fire
-# forks progress-log.sh (bash + git + sha1sum), which costs SECONDS on the
-# Windows/Git-Bash target (a 5s window was measurably too tight and let a
-# replay mint a fresh token). Two genuinely-distinct scope edits that revert
-# and reproduce the exact same state inside 30s are implausible, so the
-# window stays far from the other bound.
+# SIZING THE WINDOW (120s, not 30 -- 2026-07-30, mirrors workstreams-emit's
+# PROVEN fix e64441d for its sibling `_dispatch_replay_token`). It must
+# exceed the wall-clock gap between two fires of ONE edit -- and that gap is
+# NOT sub-second, and, as of 2026-07-30, NOT "tens of seconds" either: each
+# fire forks progress-log.sh (bash + git + sha1sum), and on this machine's
+# Windows/Git-Bash fork-taxed target that measurably costs multiple tens of
+# seconds under load. The PREVIOUS 30s default was PROVEN too tight here,
+# not just theorized: Scenario 20d (below) reproduced the exact same class
+# of failure this mechanism's sibling hit in workstreams-emit.sh -- a
+# genuine single-edit re-fire landing outside the window and minting a
+# spurious second token. Two genuinely-distinct scope edits that revert and
+# reproduce the exact same state inside 120s are still implausible, so the
+# window keeps large real margin on both sides even after the correction.
 # NOTE: every variable below is `local`. Bash uses DYNAMIC scoping, so a
 # bare assignment here would reach up and clobber the CALLER's same-named
 # local -- and this function is called from
@@ -475,7 +481,11 @@ _amendment_replay_token() {
   local now; now=$(date -u +%s 2>/dev/null)
   [ -n "$now" ] || { printf 'noclock'; return 0; }
 
-  local debounce="${AMENDMENT_REPLAY_DEBOUNCE_SECONDS:-30}"
+  # 120 not 30 (2026-07-30, mirrors workstreams-emit's PROVEN fix e64441d):
+  # per-fire wall cost on the Windows fork-taxed target exceeds 30s under
+  # load — Scenario 20d reproduced the same class here. Genuine amendment
+  # re-submissions are minutes apart; 120s keeps margin both ways.
+  local debounce="${AMENDMENT_REPLAY_DEBOUNCE_SECONDS:-120}"
   local adir; adir="$(_amendment_state_dir)"
   mkdir -p "$adir" 2>/dev/null || { printf '%s' "$now"; return 0; }
 
@@ -1260,6 +1270,47 @@ EOP
     exit 1
   fi
 
+  # ---- Scenario 13c (ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01, site-local
+  # none-sentinel regression): a plan header carrying the literal SPELLED-
+  # OUT no-ask value (`ask-id: none — no linked ask`, the template's
+  # documented substitution when start-plan.sh is run with no --ask-id) must
+  # ALSO resolve to the unlinked lane, same as no header at all (13) and the
+  # unsubstituted `<id | ...>` placeholder (13b). This is the OTHER sentinel
+  # branch in extract_ask_id's `'<'* | none` case arm -- 13b never exercised
+  # it (its header starts with `<`, matching the first arm only). Real-id
+  # preservation through this SAME extractor is already covered by Scenario
+  # 14 below (`ask-id: ask-selftest-case14` routes to its own per-ask log,
+  # not unlinked) -- no separate fixture needed for that half. ----
+  cat > docs/plans/case13c.md <<'EOP'
+# Plan: Case 13c (spelled-out none-sentinel ask-id header)
+Status: ACTIVE
+ask-id: none — no linked ask
+
+## Tasks
+- [ ] 1. only task
+EOP
+  git add docs/plans/case13c.md
+  git commit -q -m "plan: case13c"
+  PRE13C=$(git show HEAD:docs/plans/case13c.md)
+  cat > docs/plans/case13c.md <<'EOP'
+# Plan: Case 13c (spelled-out none-sentinel ask-id header)
+Status: ACTIVE
+ask-id: none — no linked ask
+
+## Tasks
+- [x] 1. only task
+EOP
+  POST13C=$(cat docs/plans/case13c.md)
+  process_lifecycle_event "$TMP/docs/plans/case13c.md" "Edit" "$PRE13C" "$POST13C" >/dev/null 2>&1 || true
+  if [ ! -f "$F13" ] || ! grep -q '"plan_slug":"case13c"' "$F13"; then
+    echo "FAIL scenario 13c: expected the none-sentinel plan's task_done event in the SAME unlinked log as scenarios 13/13b" >&2
+    exit 1
+  fi
+  if [ -f "$PROGRESS_LOG_STATE_DIR/none.jsonl" ]; then
+    echo "FAIL scenario 13c: none.jsonl was created — extract_ask_id is still handing the literal 'none' sentinel to pl_emit unresolved" >&2
+    exit 1
+  fi
+
   # ---- Scenario 14: a newly-introduced task line on an ACTIVE plan emits a
   # plan_amended event summarizing "+task <id>" (Task 6a) ----
   cat > docs/plans/case14.md <<'EOP'
@@ -1509,7 +1560,7 @@ EOP
   # Cross _amendment_replay_token's debounce window so the 3rd transition
   # counts as a NEW amendment rather than a hook re-fire of 20a's edit.
   # AMENDMENT_REPLAY_DEBOUNCE_SECONDS=1 compresses the clock instead of
-  # sleeping past the real 30s production window (a 31s sleep in a self-test
+  # sleeping past the real 120s production window (a past-window sleep in a self-test
   # is not worth it) -- same mechanism, same boundary, only the width is
   # parameterized via the documented knob. Scenario 20d below then runs at
   # the PRODUCTION DEFAULT to assert the other side of the window (a replay

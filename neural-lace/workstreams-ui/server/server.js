@@ -28,12 +28,19 @@
 
 const http = require('http');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
 const projects = require('../config/projects.js');
 const { DeriveCache, runWhy } = require('./derive-cache.js');
 const reconciler = require('./reconciler.js');
 const payloadSchema = require('./payload-schema.js');
+// state-watch.js — 2026-08-02 subprocess-storm fix (operator correction:
+// push is the fast path, the DeriveCache timer below is now only the
+// anti-entropy floor). See state-watch.js's own header for the full
+// design; wired up in the server.listen() callback below, alongside
+// cache.start()/auditor.start().
+const stateWatch = require('./state-watch.js');
 // cockpit-v2-push-materialized-store Task 2 / amendment A4 — every
 // local-disk derivation function (plan-row computation, ask-registry fold,
 // session heartbeat classification, etc.) now lives in this requireable
@@ -119,6 +126,24 @@ function isLobotomized(cacheObj, uptimeMs) {
   });
 }
 
+// pushWatchSummary(handle) — /api/health's push_watch fields (2026-08-02
+// subprocess-storm fix): a plain, JSON-safe projection of a
+// state-watch.js handle. `handle` is null in the near-zero window before
+// the listen callback runs, or when the whole module is unavailable
+// (should not happen given state-watch.js is required unconditionally
+// above, but this stays defensive like every other /api/health field).
+function pushWatchSummary(handle) {
+  if (!handle) return { enabled: false, reason: 'not started yet' };
+  if (handle.disabled) return { enabled: false, reason: 'OBS_WATCH_DISABLED=1' };
+  return {
+    enabled: true,
+    watched_dirs: handle.watchedDirs.length,
+    watch_errors: handle.stats.watchErrors.length,
+    events_seen: handle.stats.events,
+    triggers_fired: handle.stats.triggers,
+  };
+}
+
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8' };
 var CT = 'Content-Ty' + 'pe'; // split-literal keeps the hygiene heuristic from false-positiving on a standard HTTP primitive
 
@@ -184,6 +209,62 @@ function paneResponse(sub, entry, extraArgsLabel) {
     derived_at: entry.derived_at,
     command: cmdLine,
   };
+}
+
+// buildMaintenancePane — harness-execution-redesign-2026-08 Task 3. Reads
+// the dashboard snapshot nl-maintenance.sh writes directly off disk
+// (~/.claude/state/nl-maintenance/snapshots/dashboard.json) instead of
+// going through the DeriveCache/`nl <sub> --json` machinery the six
+// sketch-question panes use: this data is ALREADY a TTL-materialized
+// snapshot (invariant 3, "sessions read O(1)") written by a completion-
+// anchored job, so a second cache layer in front of it would just be
+// caching a cache. Response shape matches paneResponse's envelope
+// (schema/pane/data/rc/derived_at/command) for client-side consistency,
+// but `command` names the real read path instead of an `nl` subcommand
+// (there is none -- this is a direct file read).
+//
+// maintenanceSnapshotDir() — SAME resolution buildMaintenancePane's
+// snapPath uses, factored out so state-watch.js's second watch group (2026-
+// 08-02 push fix) can watch the exact directory this pane reads, without
+// duplicating the path-join logic. This pane is already a pure disk read
+// (never a subprocess spawn) -- the push wiring here exists to tell the
+// BROWSER to re-fetch promptly when nl-maintenance.sh writes a fresh
+// snapshot, not to change how this function itself reads the file.
+function maintenanceSnapshotDir() {
+  return path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'nl-maintenance', 'snapshots');
+}
+
+function buildMaintenancePane() {
+  const snapPath = path.join(maintenanceSnapshotDir(), 'dashboard.json');
+  try {
+    const raw = fs.readFileSync(snapPath, 'utf8');
+    const data = JSON.parse(raw);
+    return {
+      schema: 1,
+      pane: 'maintenance-budget',
+      data: data,
+      rc: 0,
+      stderr_tail: '',
+      derived_at: data.generated_at || null,
+      command: 'cat ' + snapPath,
+    };
+  } catch (e) {
+    // Honest empty state (ux-review amendment 1 discipline, same as every
+    // other pane): rc!=0 renders a NAMED error, e.g. "nl-maintenance.sh
+    // has not run yet on this machine" -- never a silent blank pane.
+    const missing = e && e.code === 'ENOENT';
+    return {
+      schema: 1,
+      pane: 'maintenance-budget',
+      data: null,
+      rc: 1,
+      stderr_tail: missing
+        ? 'no snapshot yet at ' + snapPath + ' -- run: bash adapters/claude-code/scripts/nl-maintenance.sh --tick'
+        : String(e && e.message || e),
+      derived_at: null,
+      command: 'cat ' + snapPath,
+    };
+  }
 }
 
 // ============================================================
@@ -703,10 +784,21 @@ function buildBacklogPayload() {
   };
   const bp = backlogMdPath();
   const filePathAbs = payloadSchema.isAbsoluteHref(bp) ? bp : '';
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01 (class sweep of the operator's "the
+  // links don't work"): backlog.js used to turn `file_path` into a real
+  // `file://` anchor, which a browser loading this page over http silently
+  // refuses to navigate — PROVEN dead live at :7733 (the ONE file:// anchor
+  // in the whole rendered DOM was this pane's "open backlog.md"). Same cure
+  // as inbox.js/roadmap.js: resolve the SAME absolute path against the SAME
+  // project map (deriveLib.projectDocRefFor) so the client drills through
+  // the EXISTING /api/doc viewer instead. null when the file lies outside
+  // every configured/discovered project root — the client then degrades to
+  // plain text + copy, never a fabricated link.
   return {
     ok: true,
     generated_at: new Date().toISOString(),
     file_path: filePathAbs,
+    file_doc_ref: filePathAbs ? deriveLib.projectDocRefFor(filePathAbs) : null,
     compact_cap: BACKLOG_COMPACT_CAP,
     counts: counts,
     compact: compact,
@@ -863,13 +955,24 @@ function buildWaitingItems(events) {
     if (block && hasGenuineContext(block.body)) {
       out.push({
         needs_you_id: e.needs_you_id, defect: false, title: block.title, body: block.body,
-        links: block.links, session_id: e.session_id || block.session || '', added: block.added,
+        links: block.links,
+        // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: parallel to `links` — entry i
+        // is {project, path} when links[i] is an absolute path under a known
+        // project root (so the client opens it in the EXISTING /api/doc
+        // viewer), else null (plain text + copy). Never a `file://` href.
+        link_refs: (block.links || []).map((l) => (
+          payloadSchema.isAbsoluteHref(l) && !/^https?:\/\//i.test(l) ? deriveLib.projectDocRefFor(l) : null
+        )),
+        session_id: e.session_id || block.session || '', added: block.added,
       });
     } else {
       out.push({
         needs_you_id: e.needs_you_id, defect: true,
         message: 'context missing — session violated §3',
-        raw_link: needsYouMdPath(), session_id: e.session_id || '',
+        raw_link: needsYouMdPath(),
+        // Same cure inbox.js's pointer rows already use for this EXACT path.
+        doc_ref: deriveLib.projectDocRefFor(needsYouMdPath()),
+        session_id: e.session_id || '',
       });
     }
   });
@@ -990,7 +1093,14 @@ function buildAskDetailPayload(askId) {
   reg.ask_id = askId;
   const events = deriveLib.readAskEvents(askId).sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
   const planRows = deriveLib.computePlanRows(reg, events, auditor.getBadgesForAsk);
-  const narrative = events.map((e) => ({ ts: e.ts || '', summary: narrativeSummary(e), evidence_link: e.evidence_link || '' }));
+  // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: every absolute-path link the ask
+  // detail carries gets a doc_ref alongside it, so asks.js can route it
+  // through the EXISTING /api/doc viewer instead of a dead `file://` anchor.
+  const narrative = events.map((e) => ({
+    ts: e.ts || '', summary: narrativeSummary(e), evidence_link: e.evidence_link || '',
+    evidence_doc_ref: e.evidence_link && !/^https?:\/\//i.test(e.evidence_link)
+      ? deriveLib.projectDocRefFor(e.evidence_link) : null,
+  }));
   const waitingItems = buildWaitingItems(events);
   const artifacts = buildArtifacts(events);
   const markers = deriveLib.readDispatchProvenanceMarkers();
@@ -1004,6 +1114,14 @@ function buildAskDetailPayload(askId) {
     repo: reg.repo || '',
     status: reg.status || 'active',
     verbatim_ref: reg.verbatim_ref || '',
+    // COCKPIT-DEAD-FILE-HREF-RESIDUAL-01: a capture reference is
+    // `<abs transcript path>#<prompt offset>`; the `#…` fragment is stripped
+    // before resolution (it addresses an offset WITHIN the file, not a
+    // different file). In practice these live under ~/.claude/projects and
+    // resolve to null — the client then renders plain text + copy, which is
+    // the honest fallback, never a dead `file://` anchor.
+    verbatim_doc_ref: reg.verbatim_ref && !/^https?:\/\//i.test(reg.verbatim_ref)
+      ? deriveLib.projectDocRefFor(String(reg.verbatim_ref).replace(/#.*$/, '')) : null,
     plan_slugs: reg.plan_slugs || [],
     narrative: narrative,
     plan_rows: planRows,
@@ -1030,10 +1148,10 @@ function runAskRegistryCli(args) {
   return new Promise((resolve) => {
     const cli = askRegistryCliPath();
     if (!fs.existsSync(cli)) return resolve({ ok: false, error: 'ask-registry.sh not found at ' + cli });
-    let bashBin, spawnEnv;
+    let bashBin, spawnEnv, killTree;
     try {
       const dc = require('./derive-cache.js');
-      bashBin = dc.bashBin; spawnEnv = dc.spawnEnv;
+      bashBin = dc.bashBin; spawnEnv = dc.spawnEnv; killTree = dc.killTree;
     } catch (e) { return resolve({ ok: false, error: 'derive-cache unavailable: ' + String(e && e.message || e) }); }
     const cmd = 'bash ' + deriveLib.shQuote(cli) + ' ' + args.map(deriveLib.shQuote).join(' ');
     let settled = false;
@@ -1048,7 +1166,10 @@ function runAskRegistryCli(args) {
     child.on('close', (code) => done({ ok: code === 0, code: code, stdout: out, stderr: err }));
     // 180s — see classifySessions' identical comment: this environment's
     // login-shell bash spawns have been directly measured at 94s/119s.
-    setTimeout(() => done({ ok: false, error: 'ask-registry.sh call timed out' }), 180000);
+    // On timeout the child TREE is killed (derive-cache.js killTree — the
+    // auditor.js NL-FINDING 2026-07-14 class): resolving alone orphaned
+    // the bash launcher's whole subtree on Windows, which never reaps.
+    setTimeout(() => { killTree(child); done({ ok: false, error: 'ask-registry.sh call timed out (child tree killed)' }); }, 180000);
   });
 }
 
@@ -1465,6 +1586,18 @@ const server = http.createServer((req, res) => {
       // off `lobotomized`.
       server_uptime_ms: uptimeMs,
       lobotomized: isLobotomized(cache, uptimeMs),
+      // push_watch — 2026-08-02 subprocess-storm fix (invariant 5: health =
+      // output freshness, made visible). refresh_interval_ms above is now
+      // the ANTI-ENTROPY FLOOR only, not the primary cadence — this block
+      // names the push path so a stale cache is diagnosable as "push isn't
+      // firing" vs "nothing has changed" rather than looking identical to
+      // the pre-fix pure-poll behavior. Both handles are null for the first
+      // instant between a successful bind and the listen callback finishing
+      // (near-zero window) — rendered as enabled:false, never a crash.
+      push_watch: {
+        nl_subcommands: pushWatchSummary(stateWatchHandle),
+        maintenance_snapshot: pushWatchSummary(maintenanceWatchHandle),
+      },
     });
     return;
   }
@@ -1510,6 +1643,9 @@ const server = http.createServer((req, res) => {
   }
   if (url === '/api/pane/backlog') { // backlog oracle (not one of the six sketch questions, same discipline)
     return sendJson(res, 200, paneResponse('backlog', cache.get('backlog')));
+  }
+  if (url === '/api/pane/maintenance-budget') { // harness-execution-redesign-2026-08 Task 3 — direct file read, not cached (see buildMaintenancePane)
+    return sendJson(res, 200, buildMaintenancePane());
   }
   if (url === '/api/pane/why') { // Q6, on-demand, not part of the batch cache
     const sid = q.session;
@@ -1629,6 +1765,16 @@ server.on('error', (err) => {
   process.exit(1);
 });
 
+// stateWatchHandle / maintenanceWatchHandle — set inside the listen
+// callback below (SAME single-instance-guard timing as cache.start(); a
+// losing EADDRINUSE instance exits before ever reaching this callback, so
+// at most one pair of watchers runs against a given port). Declared here
+// (module scope) so /api/health and module.exports can read them regardless
+// of whether the callback has fired yet — both are null until then, which
+// /api/health's push_watch block below renders as an honest "not started".
+let stateWatchHandle = null;
+let maintenanceWatchHandle = null;
+
 server.listen(PORT, HOST, () => {
   process.stdout.write('[server] workstreams-ui (O.4 cockpit) listening on http://' + HOST + ':' + PORT + '\n');
   process.stdout.write('[server] nl bin: ' + require('./derive-cache.js').nlBin() + '\n');
@@ -1639,6 +1785,30 @@ server.listen(PORT, HOST, () => {
   // reaches this callback, so at most one auditor cadence loop runs against
   // a given port.
   auditor.start();
+  // 2026-08-02 subprocess-storm fix — PUSH fast path (state-watch.js).
+  // Group 1: the on-disk state feeding the six nl-subcommand panes
+  // (heartbeats, signal-ledger.jsonl, needs-you ledger, doctor-cache.json,
+  // obs-costs-cache.json, remote-ledgers, docs/backlog.md) — a real change
+  // triggers a debounced cache.refreshAll() instead of waiting for
+  // cache.start()'s own timer, which is now only the anti-entropy floor.
+  stateWatchHandle = stateWatch.startStateWatch({
+    mainRepoRoot: mainRepoRoot,
+    onTrigger: () => cache.refreshAll().catch(() => {}),
+  });
+  // Group 2: the nl-maintenance dashboard snapshot directory — a SEPARATE
+  // group (see state-watch.js's opts.dirs doc) because this pane is
+  // already a materialized-snapshot disk read (buildMaintenancePane, never
+  // a spawn); a snapshot write should push the BROWSER to re-fetch it via
+  // the existing SSE channel, but must NOT also re-trigger the six
+  // nl-subcommand spawns, which have nothing to do with this snapshot.
+  maintenanceWatchHandle = stateWatch.startStateWatch({
+    dirs: [maintenanceSnapshotDir()],
+    onTrigger: broadcastRefresh,
+  });
 });
 
-module.exports = { server, cache, isLobotomized, auditor };
+module.exports = {
+  server, cache, isLobotomized, auditor,
+  getStateWatchHandle: () => stateWatchHandle,
+  getMaintenanceWatchHandle: () => maintenanceWatchHandle,
+};

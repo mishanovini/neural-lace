@@ -83,13 +83,27 @@ rq_auto_enqueue_uncovered() {
   local queue_sh="$_RQAE_LIB_DIR/../../scripts/review-queue.sh"
   [[ -f "$queue_sh" ]] || return 0
 
-  local staged
-  staged="$(git -C "$repo_root" diff --cached --name-only --diff-filter=ACMR 2>/dev/null)" || return 0
-  [[ -n "$staged" ]] || return 0
+  # NUL-FRAMED, QUOTING DISABLED (harness-reviewer CRITICAL 2, round 4).
+  # `--name-only` without `-z` emits C-quoted paths for non-ASCII and
+  # backslash, and rrg_in_surface — the very predicate this feeds — answers
+  # OUT for the quoted rendering. PROVEN on the push gate against a bare
+  # remote with `hooks/pré-push-gate.sh`. Here the consequence is that the
+  # review-queue item is silently never filed for such a path, so the
+  # sanctioned pathway has nothing to claim and the push gate's own remedy
+  # ("if no queue item exists yet ... commit-gate's RI1b splice enqueues one
+  # automatically") quietly does not happen. BOTH tokens are required:
+  # core.quotePath=false alone still quotes a backslash.
+  # ACMRT, not ACMR: a typechange is a change to in-surface content too.
+  local _rqae_tmp
+  _rqae_tmp="$(mktemp -d "${TMPDIR:-/tmp}/rqae.XXXXXX" 2>/dev/null)" || return 0
+  local _staged_z="$_rqae_tmp/staged.z"
+  git -C "$repo_root" -c core.quotePath=false diff --cached --name-only -z \
+      --diff-filter=ACMRT > "$_staged_z" 2>/dev/null || { rm -rf "$_rqae_tmp"; return 0; }
+  [[ -s "$_staged_z" ]] || { rm -rf "$_rqae_tmp"; return 0; }
 
   local -a upaths=() ushas=()
   local path sha
-  while IFS= read -r path; do
+  while IFS= read -r -d '' path; do
     [[ -n "$path" ]] || continue
     rrg_in_surface "$path" || continue
     sha="$(git -C "$repo_root" rev-parse ":$path" 2>/dev/null)" || sha=""
@@ -97,7 +111,8 @@ rq_auto_enqueue_uncovered() {
     rrg_is_covered "$repo_root" "" "$path" "$sha" && continue
     upaths+=("$path")
     ushas+=("$sha")
-  done <<< "$staged"
+  done < "$_staged_z"
+  rm -rf "$_rqae_tmp"
 
   [[ "${#upaths[@]}" -eq 0 ]] && return 0
 
