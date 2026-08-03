@@ -205,8 +205,16 @@ _sh_in_list() {
 # file exists AND its mtime is younger than <seconds>. Backs the
 # `touch --if-older-than` cheap guard.
 #
-# WHY MTIME AND NOT last_activity_ts: hb_write is an atomic tmp+mv, so the
-# file's mtime IS the moment last_activity_ts was stamped — and reading it
+# WHY MTIME AND NOT last_activity_ts: mtime is the moment the writer
+# COMMITTED to writing (the claim-stake below touches the destination BEFORE
+# hb_write's fan-out), which is <= the moment last_activity_ts is stamped.
+# It is a WRITE-INTENT marker, which is exactly what this guard needs, and
+# deliberately NOT a liveness signal -- if hb_write dies mid-flight the two
+# diverge without bound. Nothing consumes heartbeat-file mtime for liveness
+# (cmd_reap uses last_activity_ts + transcript mtime; hb_classify and
+# roadmap-routes.js use last_activity_ts), so the divergence is contained.
+# 2026-08-02 review B1: the claim-stake invalidated this block's previous
+# "mtime IS the moment last_activity_ts was stamped" assertion. Reading it
 # costs ONE `date -r` fork, where parsing the ISO string back out would cost
 # a jq (or sed) fork PLUS a `date -d` fork. Cost, re-measured by the
 # harness-reviewer on the committed blob (3 runs, sandboxed, on a LOADED
@@ -497,7 +505,12 @@ cmd_reap() {
   # `--json`'s documented shape is an array of SESSION IDS, and a tmp
   # leftover is not one — widening that array would break its consumers.
   local tmp_reaped=0 tf_mtime tf_age_min
-  for f in $(find "$dir" -maxdepth 1 -type f -name '*.json.*' 2>/dev/null); do
+  # -print0 + read -d '', matching this file's own convention at the sweep and
+  # heartbeat loops above (2026-08-02 review B2: the previous unquoted for-over-find
+  # word-split on whitespace, so on any state dir containing a space the reap
+  # silently processed NOTHING and still reported "0 leftover(s) reaped" — a
+  # false-negative report, and this repo itself lives under a spaced path).
+  while IFS= read -r -d '' f; do
     [[ -f "$f" ]] || continue
     tf_mtime="$(date -u -r "$f" +%s 2>/dev/null || stat -c %Y "$f" 2>/dev/null || stat -f %m "$f" 2>/dev/null || echo 0)"
     if [[ "$tf_mtime" =~ ^[0-9]+$ ]] && [[ "$tf_mtime" -gt 0 ]]; then
@@ -511,7 +524,7 @@ cmd_reap() {
     [[ "$tf_age_min" -gt "$reap_min" ]] || continue
     tmp_reaped=$(( tmp_reaped + 1 ))
     [[ "$dry_run" == "1" ]] || rm -f "$f" 2>/dev/null || true
-  done
+  done < <(find "$dir" -maxdepth 1 -type f -name '*.json.*' -print0 2>/dev/null)
 
   if [[ "$as_json" == "1" ]]; then
     local out="[" first=1 r
