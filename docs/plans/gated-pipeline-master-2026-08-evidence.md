@@ -878,3 +878,27 @@ Step 4: sf-skip with no valid cache → distinct exit 3 + parseable SKIPPED line
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the digest suite re-run green by this verifier (102/102 incl. the S23 single-writer quintet); the empty-cache skip contract re-observed live by a verifier-constructed probe (SKIPPED line, exit 3, no cache file); every wire arrow traced at the merged blob; comprehension record persisted at b6e65886. Accepted with recorded rationale (not re-run): the doctor FULL self-test at 174/179 — the 5 failures are git-stash-A/B-PROVEN pre-existing (jq-parity class, T8's triage population), and the plan's own REQ-A8 done-bar rule makes targeted self-tests, never global doctor state, the done-bar for Tasks 1-7; re-running the 200-300s suite would re-measure T8's baseline, not T4's behavior.
+
+## Task 18 — G3 class review-set (REQ-B9) — Verification: full — MERGED c5ee36d6 + remediation
+
+- Build bd4a4ea4 + T16-ordered remediation ab2caf9e (F-2 non-saturation via F_CHANGED scoping +
+  CG6 proving fixture; F-3 gate globs; F-4 in-row corpus_measurement per token, re-measured with
+  the fixed mechanism, conservatism caveat load-bearing; F-5 named exemption additions).
+  Fidelity re-check: CLEAR TO MERGE (appended to the T16 record trail; CG6 independently re-run
+  by the reviewer). Orchestrator post-merge suite: 86/3/1 → after the CI round-2 stat-order fix
+  merged: **self-test: OK (1 skipped — honest NTFS guard)**.
+
+## CI triage rounds 1-2 (Task 8 remit) — MERGED 85ebd520/d6e70175 (r1), 436c5854 (r2)
+
+- r1 PROVEN roots: CI hook loop shared fd0 → one hook's bare `cat` drained stdin → every sweep
+  silently truncated to ~30/83 hooks (CI never tested the rest, even when green); GC_MODE
+  mis-resolution on direct -body.sh execution; Evals: 8 oversized compacts + INDEX rows. Post-fix:
+  Evals GREEN (first since 2026-08-02), sweep genuinely 83 hooks (79 pass, doctor allowlisted
+  w/ tracker, 3 first-exposure fails).
+- r2 PROVEN roots (all genuine bugs, none env-quirks): review-record-push-gate `_rrpg_mtime_epoch`
+  GNU/BSD stat fallback REVERSED + GNU stat's stdout leak corrupting $mtime → EVERY valid
+  override marker silently rejected on all platforms (the T18 re-check advisory's exact worry —
+  fixed before the 2026-08-10 flip arms); auto-install fixture missing cutover_ref (stale vs the
+  C2-A security fix; two-commit cutover pattern applied); digest S12 `-x` gate on a 100644 file
+  never executed directly (Windows fileMode=false masked it; `-f` now). Digest final scenario
+  slow-on-Windows — CI re-run is the authoritative confirmation (watched below).
