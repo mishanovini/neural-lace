@@ -9,7 +9,7 @@ tier: 4
 rung: 5
 architecture: hybrid
 <!-- hybrid: coding-harness (gates, libs, agents, templates) + orchestration (dispatch-time gating, dispatch ledger, orchestrator-pattern doctrine step). -->
-frozen: false
+frozen: true
 lifecycle-schema: v2
 loe-class: harness-mechanism
 owner: misha
@@ -32,9 +32,9 @@ design-reviews:
   - reviewer: harness-reviewer       verdict: PASS   record: docs/reviews/2026-08-03-gated-pipeline-design-harness-review.md  (r1 REFORMULATE → r2 delta REFORMULATE → r3 scoped confirmation PASS)
   - reviewer: architecture-reviewer  verdict: SOUND  record: docs/reviews/2026-08-03-gated-pipeline-design-architecture-review.md  (r1 SOUND-WITH-AMENDMENTS → r2 delta SOUND-WITH-AMENDMENTS → r3 scoped confirmation SOUND)
 plan-reviews:
-  - reviewer: harness-reviewer (role: plan-fidelity, bootstrap per design §8.1)  verdict: REFORMULATE→(F-1..F-5 amendment confirmation pending)  record: docs/reviews/2026-08-03-gated-pipeline-plan-fidelity-review.md
+  - reviewer: harness-reviewer (role: plan-fidelity, bootstrap per design §8.1)  verdict: PASS  record: docs/reviews/2026-08-03-gated-pipeline-plan-fidelity-review.md  (REFORMULATE → F-1..F-5 fixed in a4176686 → amendment confirmation PASS)
   <!-- replaced by plan-fidelity-reviewer for all future plans once Task 13 lands; T16 re-reviews
-       THIS plan with the real agent and re-anchors. -->>
+       THIS plan with the real agent and re-anchors. -->
 
 ## Intended Functionality
 

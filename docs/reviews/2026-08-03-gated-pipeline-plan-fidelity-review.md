@@ -90,3 +90,9 @@ pre-parsed cache or bash parse), with the number in the evidence file.
 ## Weakest mapping (anti-rubber-stamp, named even though coverage is complete)
 
 **REQ-C3 → T22.** The honest scorecard is the D-07 accountability surface for the whole program, yet T22 is a two-line contract task with no prove-it block and no stated method for computing "net-artifact delta" (counted against what baseline, by what enumeration?). It will pass task-verifier on a rendered pane whose numbers nobody can independently recompute. Recommend T22 name the counting method (e.g., `git diff --stat` file census between the two tagged SHAs + the §7 ledger rows) and assert one recomputable number in evidence. Runner-up: REQ-B1's manifest-entry leg (F-2).
+
+---
+
+**Amendment confirmation (a4176686):** All findings F-1…F-5 and the weakest-mapping fix (T22 counting method) verified resolved on disk by the reviewer — including an independent `git hash-object` check that the plan's design-ref anchors the true r3 blob (`53fd8f27…`). The plan is a faithful, complete, buildable projection of design r3. Bootstrap plan-fidelity verdict: **PASS**. This bootstrap record is superseded for future revisions by the `plan-fidelity-reviewer` agent once Task 13 lands (T16 re-reviews formally).
+
+## Verdict: PASS
