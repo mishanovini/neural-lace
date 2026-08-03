@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "note": "FIXTURE for hooks/lib/directives-register-lib.sh --self-test and the shared round-trip contract Task 20 (dispatch-directives.sh + doctrine-jit's register walk) consumes later, per docs/plans/gated-pipeline-master-2026-08.md Task 11's 'Integration points' note. This is NOT the real register -- see adapters/claude-code/config/operator-directives.json for that. Four entries, each proving a distinct matching rule: OD-901 a BINDING entry whose surface matches fixture-files.txt; OD-902 a BINDING entry whose surface does NOT match; OD-903 a SUPERSEDED entry whose surface WOULD match but must never be returned by dr_entries_for_files (status excludes it); OD-904 an operator_only BINDING entry with empty surfaces, which must never be returned regardless of input (no code surface to carry).",
+  "entries": [
+    {
+      "id": "OD-901",
+      "title": "fixture-binding-match",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/hooks/*gate*.sh"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: fixture binding entry whose surface matches a hooks/*gate*.sh file.\nGolden case: self-test round-trip (positive case).\nAnti-pattern: n/a (fixture).\nSanctioned alternative: n/a (fixture)."
+    },
+    {
+      "id": "OD-902",
+      "title": "fixture-binding-nomatch",
+      "status": "BINDING",
+      "surfaces": [
+        "docs/designs/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: fixture binding entry whose surface does not match fixture-files.txt.\nGolden case: self-test round-trip (negative case).\nAnti-pattern: n/a (fixture).\nSanctioned alternative: n/a (fixture)."
+    },
+    {
+      "id": "OD-903",
+      "title": "fixture-superseded-excluded",
+      "status": "SUPERSEDED",
+      "surfaces": [
+        "adapters/claude-code/hooks/*gate*.sh"
+      ],
+      "supersedes": [
+        "OD-901"
+      ],
+      "instruction": "Rule: fixture SUPERSEDED entry -- surface WOULD match but must never surface via dr_entries_for_files.\nGolden case: self-test round-trip (superseded-excluded case).\nAnti-pattern: n/a (fixture).\nSanctioned alternative: n/a (fixture)."
+    },
+    {
+      "id": "OD-904",
+      "title": "fixture-operator-only-empty-surfaces",
+      "status": "BINDING",
+      "operator_only": true,
+      "surfaces": [],
+      "supersedes": [],
+      "instruction": "Rule: fixture OPERATOR-ONLY entry, no file surface -- must never be returned regardless of input.\nGolden case: self-test round-trip (empty-surfaces case).\nAnti-pattern: n/a (fixture).\nSanctioned alternative: n/a (fixture)."
+    }
+  ]
+}
