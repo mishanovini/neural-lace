@@ -214,6 +214,12 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # real lines into the operator's actual ~/.claude/state/perf ledger.
   export PERF_LEDGER_DIR="$TMPROOT/perf"
 
+  # Workaround-as-sensor sandbox (gc_escape_used -> ws_record, fired on the
+  # rebase/merge-resolution full-skip): same never-touch-real-state
+  # discipline as PERF_LEDGER_DIR above and EXEMPT_LOG's own
+  # HARNESS_SELFTEST branch. HARNESS_SELFTEST=1 is already exported above.
+  export WORKAROUND_SENSOR_LEDGER_PATH="$TMPROOT/ws-ledger.jsonl"
+
   # Helper: build a fresh git repo with a plan + staged files, then
   # invoke the hook against synthesized stdin JSON. Returns hook's
   # exit code.
@@ -1600,8 +1606,59 @@ Short but entirely valid scope section.
     FAILED=$((FAILED+1))
   fi
 
+  # ---- Scenario 45: workaround-as-sensor — a rebase/merge full-skip both
+  # (a) still exempts identically (rc=0, unchanged verdict) AND (b) appends a
+  # row to the workaround-sensor ledger (gc_escape_used -> ws_record),
+  # independent of the pre-existing EXEMPT_LOG audit line scenario 17
+  # already covers. Confirms the operator's workaround-as-sensor law is
+  # wired at this gate's own exemption-honored call site.
+  S45_REPO="$TMPROOT/s45"
+  mkdir -p "$S45_REPO"
+  WS_COUNT_BEFORE=$(grep -c '"gate":"scope-enforcement-gate"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo 0)
+  (
+    cd "$S45_REPO" || exit 99
+    git init -q 2>/dev/null || true
+    git config core.hooksPath "" 2>/dev/null  # don't fire machine-global harness git hooks in fixtures
+    git config user.email "test@example.com" 2>/dev/null
+    git config user.name "Test" 2>/dev/null
+    git config commit.gpgsign false 2>/dev/null
+    mkdir -p docs/plans
+    printf '%s' "$PLAN_MERGE_BASIC" > "docs/plans/test-scope-plan.md"
+    git add docs/plans/test-scope-plan.md 2>/dev/null
+    git commit -q -m "init plan" 2>/dev/null
+    # Simulate rebase-in-progress (apply backend), same shape as scenario 17.
+    mkdir -p .git/rebase-apply
+    mkdir -p src
+    echo "stub" > "src/way-out-of-scope-ws.ts"
+    git add "src/way-out-of-scope-ws.ts" 2>/dev/null
+    s45_input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"replayed commit\""}}'
+    printf '%s' "$s45_input" | "$SELF_TEST_BASH" "$SELF_TEST_HOOK" >stdout.txt 2>stderr.txt
+    echo $? > rc.txt
+  )
+  S45_RC=$(cat "$S45_REPO/rc.txt" 2>/dev/null || echo 99)
+  WS_COUNT_AFTER=$(grep -c '"gate":"scope-enforcement-gate"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo 0)
+  S45_OK=1
+  if [[ "$S45_RC" != "0" ]]; then
+    S45_OK=0
+    echo "self-test (45) workaround-sensor-ledger-row-on-exemption: FAIL (rc=$S45_RC, expected 0)" >&2
+  fi
+  if [[ "$WS_COUNT_AFTER" -le "$WS_COUNT_BEFORE" ]]; then
+    S45_OK=0
+    echo "self-test (45) workaround-sensor-ledger-row-on-exemption: FAIL (ledger row count did not increase: $WS_COUNT_BEFORE -> $WS_COUNT_AFTER)" >&2
+  fi
+  if ! grep -q '"bypass_kind":"exemption-list"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null; then
+    S45_OK=0
+    echo "self-test (45) workaround-sensor-ledger-row-on-exemption: FAIL (no exemption-list bypass_kind row found)" >&2
+  fi
+  if [[ "$S45_OK" -eq 1 ]]; then
+    echo "self-test (45) workaround-sensor-ledger-row-on-exemption: PASS (rebase exemption still honored + ledger row appended)" >&2
+    PASSED=$((PASSED+1))
+  else
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 44 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 45 scenarios)" >&2
   echo "  interpreter exercised: ${SELF_TEST_BASH:-${BASH:-unknown}} (${BASH_VERSION:-unknown})" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
@@ -1833,6 +1890,15 @@ if [[ -n "$SKIP_REASON" ]]; then
   { mkdir -p "$(dirname "$EXEMPT_LOG")" 2>/dev/null \
       && printf '%s\treason=%s\thead=%s\tbranch=%s\trepo=%s\n' \
          "$TS" "$SKIP_REASON" "$HEAD_SHA" "$CUR_BRANCH" "$REPO_ROOT" >> "$EXEMPT_LOG"; } 2>/dev/null || true
+  # Workaround-as-sensor law (operator directive): this full-skip is a
+  # sanctioned, sessionwide EXEMPTION from scope enforcement — its use is
+  # itself a signal (a gate whose exemption fires often is either mis-tuned
+  # or being routed around). Ledger it via gc_escape_used (lazily sources
+  # workaround-sensor-lib.sh; never fails the caller, never blocks) in
+  # addition to the pre-existing EXEMPT_LOG audit line above — same event,
+  # complementary observability (see workaround-sensor-lib.sh header "why a
+  # separate ledger").
+  declare -F gc_escape_used >/dev/null 2>&1 && gc_escape_used "scope-enforcement-gate" "exemption-list" "reason=$SKIP_REASON" "head=$HEAD_SHA branch=$CUR_BRANCH repo=$REPO_ROOT"
   echo "[scope-enforcement-gate] $SKIP_REASON detected — scope-check skipped (commit stages files from git's replay/merge, not author-chosen plan scope). Logged to ~/.claude/state/scope-gate-exemptions.log" >&2
   exit 0
 fi

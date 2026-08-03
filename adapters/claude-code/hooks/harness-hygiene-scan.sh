@@ -94,6 +94,13 @@ _HHS_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 source "$_HHS_SELF_DIR/lib/waiver-purpose-clause.sh" 2>/dev/null || true
 # shellcheck source=lib/signal-ledger.sh
 source "$_HHS_SELF_DIR/lib/signal-ledger.sh" 2>/dev/null || true
+# shellcheck source=lib/workaround-sensor-lib.sh
+# Workaround-as-sensor law (operator directive, harness-execution-redesign-
+# 2026-08 Task 2 deferred remainder): this gate is not yet retrofitted onto
+# gate-contract-lib.sh (that retrofit is separately deferred), so it calls
+# ws_record directly at its waiver-honored site below rather than going
+# through gc_escape_used. Never fails the caller (see that lib's header).
+source "$_HHS_SELF_DIR/lib/workaround-sensor-lib.sh" 2>/dev/null || true
 
 # _hhs_waived_files <state-dir>
 # Prints, one per line, every repo-relative file path named in a fresh
@@ -126,7 +133,14 @@ if [ "${1:-}" = "--self-test" ]; then
   # created .claude/state/signal-ledger.jsonl without it, nothing with it.
   export HARNESS_SELFTEST=1
   TMPDIR_ST=$(mktemp -d)
-  trap 'rm -rf "$TMPDIR_ST"' EXIT
+  # Workaround-as-sensor sandbox (ws_record): an explicit path (rather than
+  # relying on HARNESS_SELFTEST's own PID-keyed default) so the W6
+  # ledger-row assertion below is deterministic — each W-scenario invokes
+  # the scan as a fresh CHILD PROCESS (a new $$), so the default sandbox
+  # path would differ per invocation and never be readable back here.
+  WS_LEDGER_DIR=$(mktemp -d)
+  export WORKAROUND_SENSOR_LEDGER_PATH="$WS_LEDGER_DIR/ledger.jsonl"
+  trap 'rm -rf "$TMPDIR_ST" "$WS_LEDGER_DIR"' EXIT
 
   # Portable fixture aging (macos-portability-2026-07 M4), sourced inside
   # the self-test branch so the scan's normal path is untouched.
@@ -608,6 +622,18 @@ if [ "${1:-}" = "--self-test" ]; then
   if [ "$ST_W2_RC" -ne 0 ]; then
     echo "self-test: FAIL (w2) — waiver-honored expected exit 0, got $ST_W2_RC" >&2
     echo "$ST_W2_OUT" >&2
+    FAIL=1
+  fi
+  # W6 (workaround-as-sensor): the SAME W2 waiver-honored run both (a) still
+  # honors the waiver identically (asserted above, unchanged) AND (b)
+  # appended a row to the workaround-sensor ledger (ws_record) — confirms
+  # the operator's workaround-as-sensor law is wired at this gate's own
+  # waiver-honored call site, not just a self-tested-in-isolation library.
+  if ! grep -q '"gate":"harness-hygiene-scan"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     || ! grep -q '"bypass_kind":"waiver-file"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     || ! grep -q '"command_fingerprint":"file=dirty.txt"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test: FAIL (w6) — expected a workaround-sensor ledger row for the W2 waiver-honored run" >&2
+    echo "  ledger content: $(cat "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo '(missing)')" >&2
     FAIL=1
   fi
   # W3: waiver-stale-rejected (>1h old) → BLOCK
@@ -1156,6 +1182,7 @@ while IFS= read -r -d '' rel_path; do
   if _hhs_is_waived "$check_path"; then
     WAIVED_COUNT=$((WAIVED_COUNT + 1))
     command -v ledger_emit >/dev/null 2>&1 && ledger_emit "harness-hygiene-scan" "waiver" "file=$check_path"
+    declare -F ws_record >/dev/null 2>&1 && ws_record "harness-hygiene-scan" "waiver-file" "file=$check_path"
     continue
   fi
 
