@@ -1,0 +1,325 @@
+{
+  "schema_version": 1,
+  "note": "THE operator-directives register (gated-pipeline-master-2026-08 Task 11, REQ-B1/REQ-B4, design docs/designs/gated-pipeline-master-2026-08-03.md SS4). Canonical store for standing BINDING operator directives (DEC-3: register = standing rules, sole citation target; nl-issues.jsonl = intake only, triaged entries carry a register_ref pointing back here; docs/decisions/ = immutable ADRs, forward-guarded by decisions-index-gate.sh's WARN lint so a new binding standing rule cannot silently re-create an eighth store; NEEDS-YOU.md = open asks only). Read-only at runtime by hooks/lib/directives-register-lib.sh, the ONE parser for all three carriage channels (plan-reviewer Check 21, scripts/dispatch-directives.sh, doctrine-jit.sh's register walk) plus the generated human view (scripts/gen-directives-view.sh -> docs/operator-directives.md). Rot control (design SS8 failure mode 3): BINDING-only, target <30 entries; this seeding landed at 20. Entry fields per the design's exact 5-field contract: id (OD-NNN), status (BINDING|SUPERSEDED), surfaces (glob patterns matched against a task's Files-to-Modify list -- semantics: bash pattern match via [[ path == $glob ]], so a bare '*' already crosses '/' boundaries -- there is no distinct '**' semantic here, a documented simplification, not full picomatch), supersedes (OD-ids or named in-repo laws this entry supersedes), instruction (<=5 lines: Rule / Golden case / Anti-pattern / Sanctioned alternative). Two ADDITIVE, non-schema-breaking traceability fields ride alongside on every entry for the D-id/nl-issue absorption map this seeding must cite (plan Task 11 instruction) and are NOT part of the 5-field validity contract directives-register-lib.sh enforces: 'title' (short slug for the generated view's heading) and 'source'/'absorbs' (which nl-issue line(s) and D-/S-id(s) this entry consolidates). 'operator_only' (bool) additionally flags the two entries (OD-019, OD-020) that are standing directives with NO code surface an agent can act on -- surfaced for visibility only, per the plan Task 11 instruction to include them 'flagged operator-only'.",
+  "entries": [
+    {
+      "id": "OD-001",
+      "title": "no-wsl-dependency",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/scripts/nl-maintenance.sh",
+        "adapters/claude-code/scripts/install-maintenance-task*.ps1",
+        "adapters/claude-code/scripts/*maintenance*",
+        "docs/designs/**",
+        "docs/plans/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: no WSL2 dependency anywhere in the harness/maintenance layer; WSL2 remains only a possible FUTURE builder-host experiment, never a dependency.\nGolden case: 2026-08-02c -- WSL2 systemd offload was under consideration for Stage-1 maintenance and was ruled out.\nAnti-pattern: a mechanism whose only viable host is WSL2 (e.g. requiring systemd unit files).\nSanctioned alternative: Windows-native central management -- portable bash + thin per-platform adapters (schtasks/launchd), IgnoreNew+single-flight+cadence>=2x-cycle timers.",
+      "absorbs": [
+        "D-08"
+      ],
+      "source": "nl-issue:153 (2026-08-02c)"
+    },
+    {
+      "id": "OD-002",
+      "title": "anti-bloat-modify-not-add",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/hooks/**",
+        "adapters/claude-code/scripts/**",
+        "adapters/claude-code/agents/**",
+        "docs/plans/**",
+        "docs/designs/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: every addition must MODIFY/REPLACE/DELETE an existing thing, not just add; success = inventory counts DOWN (hooks-per-Bash, scheduled tasks, SessionStart spawns).\nGolden case: 2026-08-02c targets (25->~5, 6->1-2, 16->1-2); honest scorecard at the time showed net +~14 artifacts, 0 deletions.\nAnti-pattern: shipping a new gate/hook/script without naming what it displaces or retires.\nSanctioned alternative: name the displaced mechanism in the same commit (anti-bloat ledger, design SS7 precedent); retire-before-extend.",
+      "absorbs": [
+        "D-07"
+      ],
+      "source": "nl-issue:153 (2026-08-02c)"
+    },
+    {
+      "id": "OD-003",
+      "title": "no-new-hardware",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/scripts/*maintenance*",
+        "adapters/claude-code/scripts/install-*",
+        "docs/designs/**",
+        "docs/plans/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: no new hardware; fix-on-Windows is the bet; every mechanism must run well on ALL current machines (2 Windows + 1 Mac).\nGolden case: 2026-08-02d round-3 GO.\nAnti-pattern: a mechanism that only works on one machine's OS/hardware profile.\nSanctioned alternative: portable bash + thin per-platform adapters (schtasks/launchd; ensure-cockpit darwin pattern is the precedent); every mechanism carries per-platform cost lines.",
+      "absorbs": [
+        "D-09"
+      ],
+      "source": "nl-issue:154 (2026-08-02d)"
+    },
+    {
+      "id": "OD-004",
+      "title": "gate-philosophy-complete-instruction",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/hooks/*gate*.sh",
+        "adapters/claude-code/hooks/lib/gate-contract-lib.sh"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: gates never block silently. Every block message is a complete instruction: WHAT fired, WHY, exact FIX command/path, sanctioned ESCAPE with cost. Gates gain --check pre-flight modes.\nGolden case: 2026-08-02d; scope-enforcement-gate's four-field message is the gold standard.\nAnti-pattern: a bare exit-nonzero with no fields, or a warning an agent must reverse-engineer.\nSanctioned alternative: gate-contract-lib.sh's {WHAT/WHY/FIX/ESCAPE} emission + --check mode (shipped Stage 0b); gate quality metric = blocks/day x workaround-rate.",
+      "absorbs": [
+        "D-03"
+      ],
+      "source": "nl-issue:154 (2026-08-02d)"
+    },
+    {
+      "id": "OD-005",
+      "title": "workaround-as-sensor",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/hooks/*gate*.sh",
+        "adapters/claude-code/hooks/lib/workaround-sensor-lib.sh"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: every bypass/workaround/escape attempt is ledgered. A gate that generates workarounds is itself a defective gate, auto-filed for redesign.\nGolden case: 2026-08-02d.\nAnti-pattern: an escape hatch (--no-verify, env override) used silently with no record.\nSanctioned alternative: workaround-sensor-lib.sh call sites (ws_record / gc_escape_used) at every escape path.",
+      "absorbs": [
+        "D-04"
+      ],
+      "source": "nl-issue:154 (2026-08-02d)"
+    },
+    {
+      "id": "OD-006",
+      "title": "push-over-pull-push-materialize",
+      "status": "BINDING",
+      "surfaces": [
+        "neural-lace/workstreams-ui/**",
+        "adapters/claude-code/scripts/nl-maintenance.sh",
+        "docs/designs/**"
+      ],
+      "supersedes": [
+        "the 2026-07-04 observability review's (docs/reviews/2026-07-04-observability-design-sketch.md) 'refreshes on a timer' reading as applied to hot paths -- named in-repo law, hot-path scope ONLY; Law 1 (derive-from-oracle, same document lines 6-11) is UNCHANGED and stays law -- deriving and pushing are orthogonal (P-42)"
+      ],
+      "instruction": "Rule: push over pull wherever practical -- push-materialize when reads >> changes; pull-on-demand only when changes >> reads (pull stays a valid anti-entropy floor, never the default on a hot path).\nGolden case: 2026-08-02e -- the cockpit rebuilt pull-based (subprocess polling) caused the 100%-CPU storm; the first FIX proposal (a TTL cache) was STILL pull, corrected mid-flight twice in one hour.\nAnti-pattern: a 'refreshes on a timer' / shorter-interval-polling fix presented as the solution to a push-vs-pull defect -- same defect, slower.\nSanctioned alternative: fs-watch + debounce (S-12 precedent) or an explicit push notification triggering a re-derive from the oracle (Law 1 unaffected).",
+      "absorbs": [
+        "D-01",
+        "D-02"
+      ],
+      "source": "nl-issue:158 (2026-08-02e)"
+    },
+    {
+      "id": "OD-007",
+      "title": "cleanup-and-prevention-as-sensor",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/scripts/nl-maintenance.sh",
+        "adapters/claude-code/hooks/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: prevention over cleanup as standing posture; when cleanup is still needed, every cleanup logs {what, why it existed, which prevention failed} -- a cleanup without a learning record is itself a defect.\nGolden case: repeated orphan/zombie cleanups (P-12/P-13) with no learning record.\nAnti-pattern: killing orphaned processes / deleting stale files with no record of why they existed or what should have prevented them.\nSanctioned alternative: cleanup-as-sensor fields at the janitor log's write site (REQ-C5 minimal form); weekly aggregation once a second measured loss class justifies it (DEC-8).",
+      "absorbs": [
+        "D-05",
+        "D-06"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-008",
+      "title": "concurrency-pressure-based-admission",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/doctrine/orchestrator-pattern.md",
+        "docs/plans/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: prefer pressure-based admission over fixed hard concurrency caps; never handicap productive work just to bound counts.\nGolden case: the 80-minute freeze (P-23) was UNBOUNDED dispatch, not parallelism itself.\nAnti-pattern: an arbitrary fixed concurrency ceiling that throttles genuinely ready, file-disjoint work.\nSanctioned alternative: capacity/pressure-based admission (headroom, ready-frontier computation) bounding rate and total concurrency, not a static per-plan cap.",
+      "absorbs": [
+        "D-10"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-009",
+      "title": "graceful-stop-drain",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/hooks/lib/single-flight-lib.sh",
+        "adapters/claude-code/scripts/nl-maintenance.sh"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: stopping/blocking/killing must be graceful and must never impede real progress: deny-new -> drain flag at safe boundaries -> force-kill only provably-orphaned processes.\nGolden case: P-21 -- no drain mode; a reboot warning still let ~20 min of new work get dispatched into it.\nAnti-pattern: hard-killing live work to satisfy a stop request, or dispatching new work after a stop signal.\nSanctioned alternative: the HALT/drain flag (S-03) checked at dispatch boundaries; force-kill reserved for the reaper's allowlisted, two-strike, provably-orphaned population.",
+      "absorbs": [
+        "D-11"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-010",
+      "title": "disposition-everything",
+      "status": "BINDING",
+      "surfaces": [
+        "docs/backlog.md",
+        "NEEDS-YOU.md",
+        "docs/plans/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: ignored != unimportant. Every backlog/issue/plan item gets an explicit disposition (fix/retire/waiver/supersede); nothing is silently discarded for age.\nGolden case: P-35 -- 56 open NEEDS-YOU, 135 untriaged nl-issues, 1,254 unacked alerts, 23 stale ACTIVE plans.\nAnti-pattern: closing a session and leaving an old item to age out unmentioned.\nSanctioned alternative: the estate-drain disposition sweep (REQ-C2); one disposition line per item, never silent removal.",
+      "absorbs": [
+        "D-12"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-011",
+      "title": "agent-world-class-standard",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/agents/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: every agent must be explicitly designed to be world-class at its ONE job; a generalist spread across multiple transitions is not acceptable.\nGolden case: D-15.2 / D-16; this design's own two new agents (design-author, plan-fidelity-reviewer) each get a single-transition remit and a GOLDEN CASE fixture.\nAnti-pattern: widening an existing reviewer's remit to cover a new transition 'since it's already there' instead of scoping a dedicated reviewer.\nSanctioned alternative: harness-reviewer is instructed, in each agent file's own header, to enforce the one-job sentence on any edit to that agent.",
+      "absorbs": [
+        "D-16"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-012",
+      "title": "standing-autonomy-reversible-work",
+      "status": "BINDING",
+      "surfaces": [
+        "docs/plans/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: standing autonomy on reversible work is granted; stop asking permission on it -- surface only genuinely irreversible or business-judgment calls.\nGolden case: D-17; already codified as ~/.claude/rules/constitution.md SS8 (Keep Going Is The Default) -- this entry is the register's pointer to that binding text, not a competing copy.\nAnti-pattern: a permission-seeking pause ('shall I continue?') on a one-revert-away decision.\nSanctioned alternative: decide-and-go with a Decisions Log trail (constitution SS8); pause only for the irreversibility bar named there.",
+      "absorbs": [
+        "D-17"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-013",
+      "title": "maximize-parallelization",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/doctrine/orchestrator-pattern.md",
+        "docs/plans/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: maximize parallelization of dispatchable work without overburdening compute; keep the pipeline full.\nGolden case: P-24 -- file-disjoint work run serially by habit because nothing computed the ready frontier.\nAnti-pattern: dispatching one task at a time 'to be safe' when multiple are file-disjoint and dispatchable now.\nSanctioned alternative: compute the ready frontier (deps-done AND file-disjoint AND headroom) and dispatch it in full, bounded by OD-008's admission posture.",
+      "absorbs": [
+        "D-18"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-014",
+      "title": "sessions-247-with-headroom",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/doctrine/automation-modes.md"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: sessions should run 24/7 with headroom preserved for interactive use.\nGolden case: D-19.\nAnti-pattern: saturating all compute with background dispatch such that an interactive session stalls.\nSanctioned alternative: headroom-aware admission (ties to OD-008); presence-aware widening overnight (S-25, not yet built, named residual).",
+      "absorbs": [
+        "D-19"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-015",
+      "title": "measure-real-loe-at-plan-time",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/templates/plan-template.md",
+        "docs/plans/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: measure real build cost (LOE) and surface it at plan time; flag tasks whose effort is disproportionate.\nGolden case: D-20; reference-class forecasting shipped (163 plans mined, prior cycle T7).\nAnti-pattern: a plan task with no LOE estimate, or an estimate never checked against the mined reference class.\nSanctioned alternative: the reference-class LOE tool at plan-authoring time; flag outliers before dispatch, not after.",
+      "absorbs": [
+        "D-20"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-016",
+      "title": "observability-equal-clarity",
+      "status": "BINDING",
+      "surfaces": [
+        "NEEDS-YOU.md",
+        "adapters/claude-code/scripts/nl-maintenance.sh"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: observability must be equally clear to human and AI; accountability transparent; nothing waits on the operator and gets silently forgotten.\nGolden case: D-21; P-35's ask-rot (56 open NEEDS-YOU items).\nAnti-pattern: a blocker visible only in an agent's private reasoning/context, never surfaced to a durable, human-readable location.\nSanctioned alternative: NEEDS-YOU.md as the awaiting-operator ledger (constitution SS2/SS3); the dashboard friction pane (REQ-A3) as the machine-observable counterpart.",
+      "absorbs": [
+        "D-21"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-017",
+      "title": "self-learning-closed-loop",
+      "status": "BINDING",
+      "surfaces": [
+        "docs/reviews/**",
+        "docs/lessons/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: identify problems as they occur, root-cause them, then design -> document -> fix -- the closed loop, not just the diff.\nGolden case: D-23; P-36 -- outcome-blind closure (closures true about artifacts, false about whether the problem was solved).\nAnti-pattern: closing a task on 'the code changed' without checking whether the originating problem is actually gone.\nSanctioned alternative: the harness-lesson / why-slipped skills; a closure names the mechanism preventing recurrence, not just the diff.",
+      "absorbs": [
+        "D-23"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 4"
+    },
+    {
+      "id": "OD-018",
+      "title": "incentive-by-design-cheapest-path",
+      "status": "BINDING",
+      "surfaces": [
+        "adapters/claude-code/hooks/**"
+      ],
+      "supersedes": [],
+      "instruction": "Rule: make the right way the cheapest way -- the compliant path must cost less than the workaround, not more.\nGolden case: 2026-08-02d; Read/Grep/Glob's zero-hook precedent (no PreToolUse cost) is the model to extend to batched commands + pre-declared scope.\nAnti-pattern: a compliant path that is slower/costlier than bypassing the gate, which manufactures the workaround OD-005 exists to catch.\nSanctioned alternative: price every new gate's compliant path against its bypass cost before shipping; --check pre-flight modes lower the compliant-path cost directly.",
+      "absorbs": [],
+      "source": "nl-issue:154 (2026-08-02d, 'INCENTIVE-BY-DESIGN' clause -- no Part-4 D-id, sourced directly from the nl-issue)"
+    },
+    {
+      "id": "OD-019",
+      "title": "branch-protection-work-org-mirror",
+      "status": "BINDING",
+      "operator_only": true,
+      "surfaces": [],
+      "supersedes": [],
+      "instruction": "Rule: server-side branch protection on the work-org mirror is an operator-only step; no agent mechanism substitutes for it.\nGolden case: S-34; Decision 064's primary mechanism was never enabled; mirrors have diverged 3+ times (P-28).\nAnti-pattern: an agent 'fixing' mirror divergence with more merge automation instead of the operator enabling protection.\nSanctioned alternative: operator enables branch protection on the work-org remote directly; this entry stands as the tracked register item until done.",
+      "absorbs": [
+        "S-34"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 5 (S-34)"
+    },
+    {
+      "id": "OD-020",
+      "title": "cowork-policy-registry-key",
+      "status": "BINDING",
+      "operator_only": true,
+      "surfaces": [],
+      "supersedes": [],
+      "instruction": "Rule: the Cowork VM policy registry key (HKLM\\SOFTWARE\\Policies\\Claude -> secureVmFeaturesEnabled=0) is an operator-only step; no agent can set HKLM policy keys.\nGolden case: S-35; CoworkVMService (P-15) holds MSIX package files and costs ~1.8GB RAM + ~10GB disk while unwanted.\nAnti-pattern: an agent attempting Set-Service/sc config on the packaged service (returns Access Denied) instead of flagging the registry-key step.\nSanctioned alternative: operator sets the policy key directly (elevated); Stop-Service remains the agent-safe interim mitigation.",
+      "absorbs": [
+        "S-35"
+      ],
+      "source": "docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md Part 5 (S-35)"
+    },
+    {
+      "id": "OD-021",
+      "title": "ci-is-read-mandatory",
+      "status": "BINDING",
+      "operator_only": false,
+      "surfaces": [
+        ".github/workflows/*",
+        "adapters/claude-code/doctrine/git*",
+        "adapters/claude-code/doctrine/orchestrator-pattern*"
+      ],
+      "supersedes": [],
+      "source": "operator directive 2026-08-03 (session 4a470c8c) + backlog CI-RESULT-CONSUMPTION-GAP-2026-08-03-01",
+      "absorbs": [],
+      "instruction": "Every push is followed by a CI-result check for the pushed SHA (gh run list / gh run watch); red CI on the default branch is stop-and-fix, never background noise. Golden case: 2026-08-03, two workflows red on ~23 consecutive master pushes while sessions kept pushing (25+ unread failure emails). Anti-pattern: logging Required-status-check output as trivia. Sanctioned alternative: a genuinely environment-bound red goes into the workflow allowlist WITH a tracking reference (KNOWN_FAILING_HOOKS convention), never a silent skip."
+    }
+  ]
+}

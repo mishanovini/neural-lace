@@ -383,7 +383,20 @@ run_self_test() {
 
   _rc() { # <expected-rc> <name> <repo-dir> <json>
     local exp="$1" name="$2" dir="$3" json="$4" got
-    CLAUDE_TOOL_INPUT="$json" GH_MERGE_GATE_REPO_DIR="$dir" bash "$SELF" >/dev/null 2>&1
+    # </dev/null (2026-08-03, CI triage): the "empty input" fixture below
+    # passes json='', which makes CLAUDE_TOOL_INPUT empty; run_gate()'s
+    # `[ -z "$input" ] && input="$(cat ...)"` fallback then reads real
+    # process stdin. Without this redirect, the child inherits whatever fd0
+    # this self-test itself was invoked with — in the hooks-selftest.yml CI
+    # loop that's the shared `/tmp/hook-list.txt` iterator, and `cat`
+    # silently drains every remaining not-yet-tested hook name from it,
+    # terminating the outer discovery loop after only ~30 of 83 hooks (the
+    # loop's own `read -r hook` sees EOF on its next iteration). Explicit
+    # `</dev/null` makes this self-test's "empty input" fixture behave
+    # identically wherever it runs — the CI loop, an interactive terminal
+    # (which would otherwise block on this line waiting for Ctrl-D), or any
+    # other caller.
+    CLAUDE_TOOL_INPUT="$json" GH_MERGE_GATE_REPO_DIR="$dir" bash "$SELF" >/dev/null 2>&1 </dev/null
     got=$?
     if [ "$got" -eq "$exp" ]; then echo "  ok   $name (rc=$got)"; pass=$((pass + 1))
     else echo "  FAIL $name (rc=$got, expected $exp)"; fail=$((fail + 1)); fi

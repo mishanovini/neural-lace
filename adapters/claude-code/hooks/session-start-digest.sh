@@ -803,7 +803,21 @@ feed_unresolved_gaps() {
 # ----------------------------------------------------------------------
 feed_harness_changelog() {
   local hcl="$HOOKS_DIR/../scripts/harness-changelog.sh"
-  [[ -x "$hcl" ]] || hcl="$HOME/.claude/scripts/harness-changelog.sh"
+  # -f, not -x: this script is ALWAYS invoked via `bash "$hcl" ...` below,
+  # never executed directly, so the executable bit is irrelevant to whether
+  # it can run -- and most scripts in adapters/claude-code/scripts/ are
+  # tracked 100644 (72 of 88; harness-changelog.sh included), not 100755.
+  # An -x gate is therefore true only by filesystem accident: MSYS2/Windows
+  # checkouts commonly run with core.fileMode=false, which reports every
+  # file as executable regardless of git's tracked mode, masking this on
+  # Windows dev machines. A real POSIX CI runner (core.fileMode=true, the
+  # default) checks out the file at its TRACKED mode -- 100644, non-
+  # executable -- so `-x` was false there, silently falling through to the
+  # $HOME/.claude/... path, which does not exist on a fresh checkout, and
+  # feed_harness_changelog() returned empty (self-test S12 PROVEN: local
+  # `git ls-files -s adapters/claude-code/scripts/harness-changelog.sh`
+  # shows `100644`; local `core.fileMode` is `false`).
+  [[ -f "$hcl" ]] || hcl="$HOME/.claude/scripts/harness-changelog.sh"
   [[ -f "$hcl" ]] || return 0
   local out
   out="$(bash "$hcl" --digest-line 2>/dev/null || true)"

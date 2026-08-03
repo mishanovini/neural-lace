@@ -24,7 +24,21 @@ source "$_COG_SELF_DIR/lib/gate-contract-lib.sh" 2>/dev/null || true
 # the entry before sourcing this body — NOT bash's own "$1", which inside a
 # later-defined function would resolve to that function's own first
 # argument, not the script's). See _block() below and gc_mode's header.
-GC_MODE="$(gc_mode "${_COG_ARGV1:-}" 2>/dev/null || echo enforce)"
+#
+# Fallback to "${1:-}" (2026-08-03, CI triage): _COG_ARGV1 is ONLY set when
+# this file is sourced by concurrent-ownership-gate.sh. The hooks-selftest.yml
+# hook-discovery loop greps for the literal "--self-test" token across every
+# hooks/*.sh file and invokes each match directly — including THIS body file,
+# contrary to its "SOURCED, never executed directly" header contract. In that
+# direct-execution path _COG_ARGV1 is unset, so GC_MODE always resolved to
+# "enforce" even when invoked as `bash concurrent-ownership-gate-body.sh
+# --check`, which broke self-test scenario 20 (check-mode-would-block-...):
+# the --check subprocess spawned by that scenario (SELF_HOOK falls back to
+# this file's own path when there is no _COG_ENTRY_PATH) actually enforced
+# (rc=2, real ledger write) instead of reporting WOULD-BLOCK (rc=1). At
+# top-level script scope (not inside a function) "$1" is the direct
+# invocation's own argv[1], so it's a safe, correct fallback here.
+GC_MODE="$(gc_mode "${_COG_ARGV1:-${1:-}}" 2>/dev/null || echo enforce)"
 
 COG_CLAIM_FRESH_SECONDS="${COG_CLAIM_FRESH_SECONDS:-7200}"
 if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then

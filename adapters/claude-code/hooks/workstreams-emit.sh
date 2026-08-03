@@ -122,15 +122,26 @@ if [[ "${HARNESS_SELFTEST:-0}" == "1" ]] || [[ "$MODE" == "--self-test" ]]; then
   export HARNESS_SELFTEST_DIR="$_WSE_SANDBOX"
   LOG_DIR="$_WSE_SANDBOX/logs"
   LEDGER_DIR="$_WSE_SANDBOX/state/conversation-tree-emit"
+  _WSE_DISPATCH_LEDGER_DEFAULT="$_WSE_SANDBOX/state/dispatch-ledger.jsonl"
 else
   LOG_DIR="$HOME/.claude/logs"
   LEDGER_DIR="$HOME/.claude/state/conversation-tree-emit"
+  _WSE_DISPATCH_LEDGER_DEFAULT="$HOME/.claude/state/dispatch-ledger.jsonl"
 fi
 LOG_FILE="$LOG_DIR/conversation-tree-emit.log"
 # Ensure both dirs exist up front: several call sites redirect directly to
 # $LOG_FILE via `2>>` rather than through _log()'s own mkdir -p, so a
 # freshly-resolved sandbox dir (self-test) must exist before first use.
 mkdir -p "$LOG_DIR" "$LEDGER_DIR" 2>/dev/null || true
+
+# Dispatch-ledger destination (REQ-B14 / Task 15 —
+# docs/plans/gated-pipeline-master-2026-08.md Task 15; consumed by
+# hooks/lib/review-chain-lib.sh rule 3, RC_LEDGER_PATH's SAME default file).
+# Same sandbox discipline as LOG_DIR/LEDGER_DIR above: an explicit override
+# (a caller/test setting DISPATCH_LEDGER_PATH itself) always wins; otherwise
+# a self-test run defaults into the PID-scoped sandbox, never the real
+# machine's ~/.claude/state/dispatch-ledger.jsonl.
+: "${DISPATCH_LEDGER_PATH:=$_WSE_DISPATCH_LEDGER_DEFAULT}"
 
 # Workstreams consolidation (Phase A, 2026-06-08): the canonical state file
 # lives at one operator-configured location (~/.claude/workstreams-state-path.txt),
@@ -1893,6 +1904,106 @@ _self_test() {
   _ck "BD10 complete-without-pre -> item created + checked" "$(_bd_item "$spB10" "$idB10" 'checked')" "true"
 
   # ================================================================
+  # DL1-DL7 (gated-pipeline-master-2026-08 Task 15 -- REQ-B14 dispatch
+  # ledger writer). --on-builder-complete's FOREGROUND branch appends one
+  # JSONL row to $DISPATCH_LEDGER_PATH per completed, subagent_type-carrying
+  # dispatch -- the writer half of hooks/lib/review-chain-lib.sh rule 3.
+  # The round-trip proof against the REAL reader (rc_rule3) lives in that
+  # file's own --self-test (Scenario 11, added same commit) -- this suite
+  # only proves the WRITER's own contract in isolation: what gets a row,
+  # what doesn't, and the row's shape.
+  # ================================================================
+  _dl_rowcount() { [[ -f "$1" ]] && wc -l < "$1" 2>/dev/null | tr -d ' ' || echo 0; }
+
+  # DL1/DL1b: a foreground completion carrying subagent_type + a
+  # docs/plans/X.md reference in its prompt -> exactly one well-formed row,
+  # artifact_ref populated with the FULL path (Prove-it-works step 1).
+  local dl1_ledger="$tmp/dl-1-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl1_ledger" CONV_TREE_STATE_PATH="$tmp/dl-1.json" CLAUDE_SESSION_ID="sess-dl-1" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 15","prompt":"Build Task 15 of the FROZEN plan docs/plans/gated-pipeline-master-2026-08.md"},"tool_response":"DONE","session_id":"sess-dl-1"}' >/dev/null 2>&1
+  _ck "DL1 foreground complete with subagent_type -> exactly 1 ledger row" "$(_dl_rowcount "$dl1_ledger")" "1"
+  if [[ -f "$dl1_ledger" ]] && \
+     jq -e '.subagent_type=="plan-phase-builder" and .session_id=="sess-dl-1" and .artifact_ref=="docs/plans/gated-pipeline-master-2026-08.md" and (.ts|type=="number")' "$dl1_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL1b row shape matches the shared fixture contract (subagent_type/session_id/artifact_ref/ts numeric)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL1b row shape ($(cat "$dl1_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DL2: malformed (non-JSON) input -> exit 0, no row, no crash (the
+  # always-exit-0 writer contract; Prove-it-works step 2).
+  local dl2_ledger="$tmp/dl-2-ledger.jsonl" dl2_rc
+  DISPATCH_LEDGER_PATH="$dl2_ledger" CONV_TREE_STATE_PATH="$tmp/dl-2.json" CLAUDE_SESSION_ID="sess-dl-2" \
+    bash "$SELF" --on-builder-complete <<<'not valid json at all {{{' >/dev/null 2>&1
+  dl2_rc=$?
+  _ck "DL2 malformed event -> exit 0" "$dl2_rc" "0"
+  if [[ -f "$dl2_ledger" ]]; then
+    echo "FAIL: DL2 malformed event must write NO ledger row"; fail=$((fail+1))
+  else
+    echo "PASS: DL2 malformed event writes no ledger row"; pass=$((pass+1))
+  fi
+
+  # DL3: the PreToolUse dispatch path (--on-builder-dispatch) NEVER writes a
+  # ledger row -- completion-side only, even for a real, well-formed,
+  # subagent_type-carrying dispatch (Prove-it-works step 2).
+  local dl3_ledger="$tmp/dl-3-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl3_ledger" CONV_TREE_STATE_PATH="$tmp/dl-3.json" CLAUDE_SESSION_ID="sess-dl-3" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 15","prompt":"Build Task 15 of docs/plans/gated-pipeline-master-2026-08.md"},"session_id":"sess-dl-3"}' >/dev/null 2>&1
+  if [[ -f "$dl3_ledger" ]]; then
+    echo "FAIL: DL3 PreToolUse dispatch must write NO ledger row (completion-side only)"; fail=$((fail+1))
+  else
+    echo "PASS: DL3 PreToolUse dispatch writes no ledger row (completion-side only)"; pass=$((pass+1))
+  fi
+
+  # DL4: a background completion (Workflow launch-ack) writes NO row --
+  # launch-ack is not completion (same ADR-054 ceiling BD5 pins for the
+  # conv-tree item), and a review record can never exist yet for
+  # not-actually-finished work.
+  local dl4_ledger="$tmp/dl-4-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl4_ledger" CONV_TREE_STATE_PATH="$tmp/dl-4.json" CLAUDE_SESSION_ID="sess-dl-4" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Workflow","tool_input":{"subagent_type":"architecture-reviewer","meta":{"name":"Nightly review"},"prompt":"review docs/plans/gated-pipeline-master-2026-08.md"},"tool_response":"launched id=wf-dl4","session_id":"sess-dl-4"}' >/dev/null 2>&1
+  if [[ -f "$dl4_ledger" ]]; then
+    echo "FAIL: DL4 background launch-ack must write NO ledger row"; fail=$((fail+1))
+  else
+    echo "PASS: DL4 background launch-ack writes no ledger row (not completion)"; pass=$((pass+1))
+  fi
+
+  # DL5: a foreground completion with NO subagent_type writes NO row -- an
+  # untyped row could never satisfy rule 3's type-match, so it is scoped
+  # out rather than logged as noise (named, scoped Task 15 decision).
+  local dl5_ledger="$tmp/dl-5-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl5_ledger" CONV_TREE_STATE_PATH="$tmp/dl-5.json" CLAUDE_SESSION_ID="sess-dl-5" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"description":"Generic task, no subagent_type"},"tool_response":"ok","session_id":"sess-dl-5"}' >/dev/null 2>&1
+  if [[ -f "$dl5_ledger" ]]; then
+    echo "FAIL: DL5 no-subagent_type completion must write NO ledger row"; fail=$((fail+1))
+  else
+    echo "PASS: DL5 no-subagent_type completion writes no ledger row (untyped rows can never satisfy rule 3)"; pass=$((pass+1))
+  fi
+
+  # DL6: a reviewer dispatch pointed at a NON-plan doc (design doc) --
+  # artifact_ref falls back to the general docs/ pattern, not just
+  # docs/plans/ (the fixture ledger row's own artifact_ref is a design doc).
+  local dl6_ledger="$tmp/dl-6-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl6_ledger" CONV_TREE_STATE_PATH="$tmp/dl-6.json" CLAUDE_SESSION_ID="sess-dl-6" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"architecture-reviewer","description":"Review the design","prompt":"Review docs/designs/gated-pipeline-master-2026-08-03.md for soundness."},"tool_response":"SOUND","session_id":"sess-dl-6"}' >/dev/null 2>&1
+  if [[ -f "$dl6_ledger" ]] && jq -e '.artifact_ref=="docs/designs/gated-pipeline-master-2026-08-03.md"' "$dl6_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL6 reviewer dispatch's artifact_ref resolves a non-plan docs/ path (design doc, not just docs/plans/)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL6 expected artifact_ref=docs/designs/gated-pipeline-master-2026-08-03.md ($(cat "$dl6_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DL7: no derivable docs/ path at all -> artifact_ref empty, NOT omitted
+  # (the documented degraded form -- rule 3 treats an empty ref as
+  # type-match-only, never guessed, never dropped).
+  local dl7_ledger="$tmp/dl-7-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl7_ledger" CONV_TREE_STATE_PATH="$tmp/dl-7.json" CLAUDE_SESSION_ID="sess-dl-7" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"architecture-reviewer","description":"Ad-hoc review","prompt":"Review the diff, no doc reference here."},"tool_response":"SOUND","session_id":"sess-dl-7"}' >/dev/null 2>&1
+  if [[ -f "$dl7_ledger" ]] && jq -e '.artifact_ref==""' "$dl7_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL7 underivable artifact_ref -> empty string (degraded form, present not omitted)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL7 expected artifact_ref='' ($(cat "$dl7_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # ================================================================
   # PL1-PL6 (ask-rooted-workstreams-p1 Task 3 -- dispatch emission splice):
   # task_started progress-log emission + dispatch-provenance marker, spliced
   # into --on-builder-dispatch / --on-spawn alongside the conv-tree emission
@@ -2316,28 +2427,34 @@ PLANEOF
   # residual can be written from the EXECUTED boundary instead of from the
   # motivating anecdote.
   #
-  # These three pin the ACCEPTED, DOCUMENTED residual -- RPL7d/RPL7f assert
-  # EMISSION deliberately. They are not aspirational: if a future change
-  # tightens the anchor they must be updated in the same commit, which is the
-  # point (the residual cannot drift silently in either direction).
+  # UPDATED 2026-08-03 (Task 15 / REQ-B14 G2 residual fix): these three used
+  # to pin the ACCEPTED, DOCUMENTED residual with RPL7d/RPL7f asserting
+  # EMISSION deliberately -- per their own standing instruction ("if a future
+  # change tightens the anchor they must be updated in the same commit, which
+  # is the point"), both are now updated to assert REJECTION: the shared
+  # parser (_extract_nl_attribution) gained a column-0-only requirement plus
+  # a fence-precedence guard, closing exactly the two shapes these two probe.
+  # RPL7i (a narrower, still-open residual — unindented, unfenced, second
+  # input field) is UNCHANGED below; see that scenario's own comment.
   #
   # RPL7f: n-1. Header on line 4, INDENTED (4 spaces, as a fenced or quoted
-  # paste indents it) -- proves the leading-whitespace tolerance is part of the
-  # residual, not just line position.
+  # paste indents it) -- the column-0-only guard now rejects ANY leading
+  # whitespace on the header line itself, closing this shape.
   local plog_rpl7f="$tmp/pl-rpl7f"
   ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7f" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7f" \
       CONV_TREE_STATE_PATH="$tmp/rpl-7f.json" CLAUDE_SESSION_ID="sess-rpl-7f" \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Handoff","prompt":"Handoff from the prior run.\n\nThe prompt it was given:\n    NL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\n    Build it.\nJust report what went wrong."},"session_id":"sess-rpl-7f"}' >/dev/null 2>&1 )
-  _ck "RPL7f (n-1, RESIDUAL) an INDENTED quoted header on line 4 still EMITS -- leading whitespace does not defeat the anchor" "$(_ts_count_dir "$plog_rpl7f")" "1"
+  _ck "RPL7f (n-1, CLOSED 2026-08-03) an INDENTED quoted header on line 4 now emits 0 -- column-0-only guard defeats the anchor" "$(_ts_count_dir "$plog_rpl7f")" "0"
 
   # RPL7d: n. Header on line 5 -- the LAST position the window admits. A
-  # three-line preamble plus a fence lands exactly here, which is why a real
-  # handoff prompt trips this and RPL7b's eight-line one does not.
+  # three-line preamble plus a fence lands exactly here -- the fence-
+  # precedence guard now rejects a header whose immediately preceding line
+  # opens/continues a code fence, closing this shape.
   local plog_rpl7d="$tmp/pl-rpl7d"
   ( cd "$plfix" && PROGRESS_LOG_STATE_DIR="$plog_rpl7d" DISPATCH_PROVENANCE_STATE_DIR="$tmp/dp-rpl7d" \
       CONV_TREE_STATE_PATH="$tmp/rpl-7d.json" CLAUDE_SESSION_ID="sess-rpl-7d" \
       bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Review","prompt":"Review the failed run.\n\nThe prompt it got:\n```\nNL-ATTRIBUTION: plan=pl-fixture-plan task=9 role=builder\nBuild it.\n```"},"session_id":"sess-rpl-7d"}' >/dev/null 2>&1 )
-  _ck "RPL7d (n, RESIDUAL) a fenced paste landing the header on line 5 -- the last admitted line -- still EMITS" "$(_ts_count_dir "$plog_rpl7d")" "1"
+  _ck "RPL7d (n, CLOSED 2026-08-03) a fenced paste landing the header on line 5 now emits 0 -- fence-precedence guard defeats the anchor" "$(_ts_count_dir "$plog_rpl7d")" "0"
 
   # RPL7e: n+1. Header on line 6 -- the FIRST position the window excludes.
   # This is the tight negative RPL7b should have been.
@@ -3333,6 +3450,34 @@ _extract_plan_slug() {
   printf '%s' "$slug"
 }
 
+# _extract_artifact_ref <text> -- the dispatch-ledger writer's artifact_ref
+# (REQ-B14 / Task 15: "the docs/... path or plan slug the agent was pointed
+# at; empty when underivable"). EXTENDS _extract_plan_slug rather than adding
+# a second parser (REQ-B14 says "extend, don't add"): a plan-scoped dispatch
+# (plan-phase-builder, test-writer -- the common case) reuses that EXACT
+# regex and reconstructs the full `docs/plans/<slug>.md` path
+# rc_validate_chain's own `$plan` argument already is, so the two agree
+# byte-for-byte with zero duplicated matching logic. A REVIEWER dispatch
+# (architecture-reviewer, plan-fidelity-reviewer, harness-reviewer, ...) is
+# typically pointed at a design/review/decision doc OUTSIDE docs/plans/ (the
+# fixture ledger row's own artifact_ref --
+# adapters/claude-code/tests/fixtures/review-chain/valid-chain-design.md --
+# is a design doc, not a plan), so the fallback generalizes the SAME
+# grep-based technique to the full docs/ subtree rather than inventing an
+# unrelated second parser. Empty when neither matches (the documented
+# degraded form rule 3 names explicitly: an empty artifact_ref satisfies
+# type-match only).
+_extract_artifact_ref() {
+  local text="$1" slug ref
+  slug=$(_extract_plan_slug "$text")
+  if [[ -n "$slug" ]]; then
+    printf 'docs/plans/%s.md' "$slug"
+    return 0
+  fi
+  ref=$(printf '%s' "$text" | grep -oE 'docs/[A-Za-z0-9_./-]+\.md' | head -n1)
+  printf '%s' "$ref"
+}
+
 # Best-effort task number: prefers the "Task N of" convention this harness's
 # orchestrator dispatch prompts use (matches this exact plan's own dispatch
 # prompt shape); falls back to the first bare "Task N" mention. N may be
@@ -3413,58 +3558,99 @@ _extract_nl_attribution() {
   # text"; that looser wording was the bug's charter and is corrected in the
   # same commit.)
   #
-  # RESIDUAL, STATED FROM THE EXECUTED BOUNDARY (restated 2026-07-30 after a
-  # harness-reviewer REFORMULATE; the previous wording here was UNDERSTATED and
-  # its doctrine counterpart was outright FALSE).
+  # RESIDUAL, PARTIALLY CLOSED 2026-08-03 (Task 15 / REQ-B14 G2 residual
+  # fix -- docs/plans/gated-pipeline-master-2026-08.md Task 15, design
+  # docs/designs/gated-pipeline-master-2026-08-03.md §4 G2 named residuals:
+  # "the known quoted-header parse quirk is fixed in a parse shared with
+  # workstreams-emit"). Full history through 2026-07-30 kept below for the
+  # record; this paragraph is the CURRENT truth.
   #
-  # THE RESIDUAL IS: any quoted header that STARTS A LINE -- with arbitrary
-  # leading whitespace, including the indentation a fenced or indented paste
-  # adds -- within the first NL_ATTRIBUTION_MAX_LINE lines of the JOINED
-  # `prompt + description + content` text still emits. It is NOT limited to
-  # "a prompt that literally begins with a quoted header".
+  # WHAT WAS TRUE THROUGH 2026-07-30: any quoted header that STARTS A LINE
+  # -- with arbitrary leading whitespace, including the indentation a fenced
+  # or indented paste adds -- within the first NL_ATTRIBUTION_MAX_LINE lines
+  # of the JOINED text still emitted. Two of the THREE concretely-measured
+  # shapes that produced (RPL7d fenced paste, RPL7f indented paste) are
+  # CLOSED by two new guards, neither of which touches NL_ATTRIBUTION_MAX_LINE
+  # itself (the 5-line WIDTH is untouched -- the 2026-07-30 backlog.md
+  # decision to defer WIDTH-tightening until a header constructor makes
+  # header position uniform still stands; these two guards are orthogonal
+  # to width):
+  #   1. COLUMN-0 ONLY. The header line itself may carry NO leading
+  #      whitespace at all (previously `^[[:space:]]*NL-ATTRIBUTION:`,
+  #      tolerant of arbitrary indentation -- RPL7f's own comment named this
+  #      indentation tolerance as "part of the residual, not just line
+  #      position"). Nothing in this file's own corpus of genuine-dispatch
+  #      fixtures opens the header indented (swept: every EMIT-asserting
+  #      dispatch test in this suite starts NL-ATTRIBUTION at column 0), so
+  #      the cost of requiring column 0 is measured as zero against this
+  #      corpus.
+  #   2. FENCE-PRECEDED REJECTION. A header whose IMMEDIATELY PRECEDING
+  #      line (within the window) opens or continues a markdown code fence
+  #      (```` ``` ```` or `~~~`, optionally indented) is quoted content, not
+  #      a live dispatch -- a real dispatch is never itself wrapped in a
+  #      fence it opens with.
+  # RPL7d and RPL7f are UPDATED in the same commit to assert the closure
+  # (rejection), per their own standing instruction: "if a future change
+  # tightens the anchor they must be updated in the same commit, which is
+  # the point (the residual cannot drift silently in either direction)."
+  #
+  # WHAT REMAINS OPEN (NAMED, NOT CLOSED): a quoted header that starts a
+  # line at COLUMN 0 with NO fence immediately before it -- e.g. prose
+  # ending in a colon on the line directly above, then the header flush
+  # left with no code-fence markup at all (RPL7i's shape, still asserted
+  # EMIT deliberately) -- still emits. Closing THAT needs either tightening
+  # NL_ATTRIBUTION_MAX_LINE (deferred, unmeasured cost per the 2026-07-30
+  # decision) or an out-of-band field the prose cannot forge (unavailable
+  # from PreToolUse tool_input today). Still filed in docs/backlog.md, not
+  # papered over.
   #
   # THE WINDOW IS OVER THE JOINED TEXT, NOT OVER THE PROMPT (corrected in
-  # round 3). _dispatch_text (see its definition above) joins the three
-  # tool_input fields with newlines BEFORE this function applies the window,
-  # so the admitted region spans a SECOND INPUT FIELD whenever the prompt is
-  # short: a 3-line prompt with the header alone in `description` puts it on
-  # JOINED line 4 and EMITS (RPL7i), while the same description behind a
-  # 10-line prompt is silent (RPL7j). Saying "the first N lines of your
-  # prompt" is therefore advice an author cannot act on.
+  # round 3, unchanged by this fix). _dispatch_text (see its definition
+  # above) joins the three tool_input fields with newlines BEFORE this
+  # function applies the window, so the admitted region spans a SECOND
+  # INPUT FIELD whenever the prompt is short: a 3-line prompt with the
+  # header alone in `description` puts it on JOINED line 4 and EMITS
+  # (RPL7i), while the same description behind a 10-line prompt is silent
+  # (RPL7j). Saying "the first N lines of your prompt" is therefore advice
+  # an author cannot act on.
   #
-  # Measured against this exact code -- EMITS: a 2-line preamble + fenced
-  # paste; a 4-space-indented paste; a TAB-indented header on line 2; a
-  # 3-line preamble + fence (header on line 5, the last admitted line); a
-  # header in `description` behind a short prompt. SILENT: header on joined
-  # line 6+, any `> ` or `- ` prefix, and a mid-sentence quote.
-  # Pinned by RPL7d/RPL7e/RPL7f (the n-1 / n / n+1 boundary triple),
-  # RPL7g/RPL7h (the documented escapes) and RPL7i/RPL7j (the joined-input
-  # scope).
+  # Measured against this exact code -- EMITS: a real header at column 0
+  # (any position in-window, fence-free); a header in `description` behind
+  # a short prompt (RPL7i, second-field residual, untouched by this fix).
+  # SILENT (post-fix): a 2-line preamble + fenced paste (RPL7d, NOW
+  # closed); a 4-space- or TAB-indented paste (RPL7f, NOW closed); header
+  # on joined line 6+; any `> ` or `- ` prefix; a mid-sentence quote.
+  # Pinned by RPL7d/RPL7e/RPL7f (the n-1 / n / n+1 boundary triple, RPL7d/
+  # RPL7f NOW asserting rejection), RPL7g/RPL7h (the documented escapes,
+  # unaffected) and RPL7i/RPL7j (the joined-input scope, unaffected).
   #
-  # WHY THE EARLIER WORDING WAS WRONG, because the mechanism generalizes:
-  # RPL7b passes with a preamble that happens to run EIGHT lines, clearing the
-  # 5-line window by a wide margin. Prose written from that single test
-  # generalized to "a quoted header below the prose that introduces it is
-  # inert" -- false for every preamble shorter than the window, which is the
-  # shape a real handoff prompt has. A positional guard exercised only
-  # comfortably beyond its threshold certifies nothing about the threshold.
-  # RULE: every threshold guard ships n-1, n AND n+1, and the prose residual
-  # is written from the executed boundary, never from the motivating anecdote.
+  # RULE (carried forward): every threshold guard ships n-1, n AND n+1, and
+  # the prose residual is written from the executed boundary, never from
+  # the motivating anecdote.
   #
-  # Closing the residual entirely needs an out-of-band channel (a dispatch
-  # field the prose cannot forge), which this hook cannot reach from
-  # PreToolUse tool_input alone -- filed in docs/backlog.md, not papered over.
-  #
-  # The window is overridable so a caller can compress or widen it without
-  # editing the parser; 5 lines allows a blank line or a short preamble ahead
-  # of the header while excluding a paste, which necessarily follows the
-  # explanatory prose that introduces it.
+  # The window WIDTH is still overridable so a caller can compress or widen
+  # it without editing the parser; 5 lines allows a blank line or a short
+  # preamble ahead of the header while excluding a paste, which necessarily
+  # follows the explanatory prose that introduces it.
   local maxln="${NL_ATTRIBUTION_MAX_LINE:-5}"
   case "$maxln" in ''|*[!0-9]*) maxln=5 ;; esac
   [[ "$maxln" -lt 1 ]] && maxln=5
-  local line
-  line=$(printf '%s' "$text" | head -n "$maxln" 2>/dev/null \
-         | grep -oE '^[[:space:]]*NL-ATTRIBUTION:.*' | head -n1)
+  # Fence-delimiter pattern for guard #2 above -- single-quoted so backticks
+  # inside the regex are literal characters, never a command substitution.
+  local fence_re='^[[:space:]]*(```|~~~)'
+  local line="" prevline="" candidate lineno=0
+  while IFS= read -r candidate; do
+    lineno=$((lineno + 1))
+    [[ "$lineno" -gt "$maxln" ]] && break
+    if [[ -z "$line" && "$candidate" =~ ^NL-ATTRIBUTION: ]]; then
+      if [[ "$prevline" =~ $fence_re ]]; then
+        : # guard #2: fence-preceded -- quoted content, not a dispatch. Keep scanning.
+      else
+        line="$candidate"
+      fi
+    fi
+    prevline="$candidate"
+  done <<< "$text"
   local plan="" task="" role=""
   if [[ -n "$line" ]]; then
     plan=$(printf '%s' "$line" | grep -oE 'plan=[A-Za-z0-9_.-]+' | head -n1)
@@ -4046,6 +4232,107 @@ _run_on_builder_dispatch() {
   exit 0
 }
 
+# ============================================================================
+# Dispatch ledger (REQ-B14 / Task 15 —
+# docs/plans/gated-pipeline-master-2026-08.md Task 15; design
+# docs/designs/gated-pipeline-master-2026-08-03.md §4 rule 3 + REQ-B14).
+#
+# WHY: hooks/lib/review-chain-lib.sh rule 3 needs mechanical proof that a
+# reviewer/builder agent of a given TYPE actually completed against a given
+# ARTIFACT before a Review Chain entry citing it is valid — this is the
+# writer half of that contract (rule 3's reader half already ships, Task 1).
+# One JSONL row per COMPLETED FOREGROUND builder dispatch, appended here at
+# --on-builder-complete's action-done point:
+#   - NEVER on the PreToolUse dispatch path (--on-builder-dispatch) — a
+#     blocked or failed dispatch never reaches PostToolUse at all, so it
+#     mints no row BY CONSTRUCTION, not by an extra check.
+#   - NEVER on the bg=="1" branch above (Workflow launch / Agent
+#     run_in_background) — that branch is a LAUNCH-ACK, not completion (the
+#     ADR-054 ceiling this file already documents); writing a row there
+#     would claim an agent finished before it had, and a REVIEW RECORD (the
+#     only thing rule 3 ever cross-checks against) cannot exist yet for
+#     work that has not completed, so a background-branch row could never
+#     be legitimately consumed anyway.
+#   - NEVER when subagent_type is absent — rule 3 always matches on a named
+#     reviewer/builder TYPE (architecture-reviewer, plan-fidelity-reviewer,
+#     plan-phase-builder, ...); a row with no type can never satisfy any
+#     chain entry's rule-3 check, so skipping it keeps the ledger meaningful
+#     instead of filling it with untyped Task/Agent dispatch noise. Named,
+#     scoped decision — not in the design's literal text, disclosed in Task
+#     15's build report.
+#
+# Row schema (the fixture contract quoted in
+# adapters/claude-code/tests/fixtures/review-chain/README.md and
+# hooks/lib/review-chain-lib.sh's own header, both citing THIS writer):
+#   {"subagent_type":"<...>","model":"<...>","ts":<epoch>,"session_id":"<...>","artifact_ref":"<path-or-empty>"}
+#
+# ALWAYS-EXIT-0 WRITER CONTRACT (same as every other emit path in this
+# file): an unwritable ledger degrades to a logged line, never a failure —
+# neither helper below ever exits the process; every internal failure is
+# swallowed (`|| true` / `2>/dev/null`) and reduces to "no row written."
+# ============================================================================
+
+# _dispatch_ledger_model <input-json> <subagent_type> -- best-effort model id
+# for the row's informational `model` field (NOT part of rule 3's validity
+# check — rc_rule3 only reads subagent_type/ts/artifact_ref — so a wrong or
+# empty value here can never cause a false PASS/FAIL). An explicit
+# tool_input.model override (the Task/Agent tool's own `model` param) wins;
+# else the target agent definition's own frontmatter `model:` pin, read with
+# the SAME fence-scoped, CRLF-safe walk model-pin-gate.sh's
+# _mpg_frontmatter_model uses (duplicated here, not sourced — this file's
+# existing convention of never depending on a sibling hook at runtime); else
+# empty (honest unknown, never guessed).
+_dispatch_ledger_model() {
+  local input="$1" subagent="$2" explicit agents_dir f line in_fm=0 v
+  explicit=$(printf '%s' "$input" | jq -r '.tool_input.model // empty' 2>/dev/null)
+  if [[ -n "$explicit" && "$explicit" != "null" ]]; then printf '%s' "$explicit"; return 0; fi
+  [[ -n "$subagent" ]] || { printf ''; return 0; }
+  agents_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../agents" 2>/dev/null && pwd)"
+  f="$agents_dir/$subagent.md"
+  [[ -n "$agents_dir" && -f "$f" ]] || { printf ''; return 0; }
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    if [[ "$line" == "---" ]]; then
+      if [[ "$in_fm" -eq 0 ]]; then in_fm=1; continue; else break; fi
+    fi
+    if [[ "$in_fm" -eq 1 ]]; then
+      case "$line" in
+        model:*)
+          v="${line#model:}"
+          v="$(printf '%s' "$v" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')"
+          printf '%s' "$v"; return 0 ;;
+      esac
+    fi
+  done < "$f" 2>/dev/null
+  printf ''
+}
+
+# _dispatch_ledger_append <input-json> <subagent_type> <session_id> --
+# appends ONE JSONL row (see schema above) to $DISPATCH_LEDGER_PATH. Never
+# blocks the caller and never itself exits the process.
+_dispatch_ledger_append() {
+  local input="$1" subagent="$2" sid="$3"
+  [[ -n "$subagent" ]] || return 0
+  _have jq || { _log "dispatch-ledger: no jq — degraded, no row written"; return 0; }
+  local model artifact_ref ts row dir
+  model="$(_dispatch_ledger_model "$input" "$subagent")"
+  artifact_ref="$(_extract_artifact_ref "$(_dispatch_text "$input")")"
+  ts=$(date +%s 2>/dev/null || echo 0)
+  row=$(jq -cn --arg st "$subagent" --arg m "$model" --argjson ts "$ts" --arg sid "$sid" --arg ar "$artifact_ref" \
+    '{subagent_type:$st, model:$m, ts:$ts, session_id:$sid, artifact_ref:$ar}' 2>/dev/null)
+  if [[ -z "$row" ]]; then
+    _log "dispatch-ledger: row build failed (jq) — degraded, no row written"
+    return 0
+  fi
+  dir="$(dirname "$DISPATCH_LEDGER_PATH")"
+  if mkdir -p "$dir" 2>/dev/null && printf '%s\n' "$row" >>"$DISPATCH_LEDGER_PATH" 2>/dev/null; then
+    _log "dispatch-ledger row appended type=$subagent artifact_ref=${artifact_ref:-<empty>} path=$DISPATCH_LEDGER_PATH"
+  else
+    _log "dispatch-ledger unwritable ($DISPATCH_LEDGER_PATH) — degraded, no row written (writer contract: never fails the hook)"
+  fi
+  return 0
+}
+
 # ----------------------------------------------------------------------------
 # --on-builder-complete  (PostToolUse on Task|Agent|Workflow)
 # Foreground: tool return == completion -> creation batch (covers a missed
@@ -4085,6 +4372,11 @@ _run_on_builder_complete() {
     events="$events,$(printf '{"event_id":"%s","type":"action-done","node_id":"%s","item_id":"%s","actor":"dispatch"}' \
       "$ev_done" "$child_id" "$item_id")]"
     _log "builder-complete item=$item_id node=$child_id tool=$tool session=$sid"
+    # Dispatch ledger (REQ-B14 / Task 15): completion-side ONLY, foreground
+    # ONLY — see the block comment above _dispatch_ledger_append for why.
+    local ledger_subagent
+    ledger_subagent=$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null)
+    _dispatch_ledger_append "$input" "$ledger_subagent" "$sid"
   fi
   local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-bdc-$$.json")
   printf '%s' "$events" >"$ef"

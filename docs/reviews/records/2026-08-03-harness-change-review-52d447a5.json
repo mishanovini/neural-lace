@@ -1,0 +1,149 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260803-52d447a5",
+  "created_at": "2026-08-03T20:08:12Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "unknown",
+  "plan_ref": "docs/plans/gated-pipeline-master-2026-08.md#task-16",
+  "change_ref": {
+    "commit_sha": "c068e0635a7c53dd680fce1df45919b3acf0449a",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/backlog-plan-atomicity.sh",
+      "blob_sha": "c11f3ee68bc26f28c38aa911d33aab1907af4984"
+    },
+    {
+      "path": "adapters/claude-code/hooks/concurrent-ownership-gate-body.sh",
+      "blob_sha": "f4aa1cc5b50e506b0ae5ca77e511287d6a7d8543"
+    },
+    {
+      "path": "adapters/claude-code/hooks/concurrent-ownership-gate.sh",
+      "blob_sha": "60f37b0f900bbcdb629c5ce897b0b96c9c4efbbb"
+    },
+    {
+      "path": "adapters/claude-code/hooks/context-watermark.sh",
+      "blob_sha": "f788f8024a398df8c9475fadb043ca56006457c8"
+    },
+    {
+      "path": "adapters/claude-code/hooks/decisions-index-gate.sh",
+      "blob_sha": "e80d15cddede33b0619201b01da28d85451e5988"
+    },
+    {
+      "path": "adapters/claude-code/hooks/dispatch-chain-gate.sh",
+      "blob_sha": "bd62ebcff79e2e803e6c2605a3fb404b41a414ff"
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "156e3b759699a8045c8af6673a6586a81dc95b01"
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
+      "blob_sha": "5008d5492a2838f6bc5e12d1275b826deade33b0"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/directives-register-lib.sh",
+      "blob_sha": "908c9083276af813f3318aefb31c1073cfe438f6"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/gate-contract-lib.sh",
+      "blob_sha": "8398e5446403e8bf5ecb71e5153fe95f76cd5b8a"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-chain-lib.sh",
+      "blob_sha": "7459f1b0c6491278ef009a6366e6134bad29e48e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/single-flight-lib.sh",
+      "blob_sha": "003abdf038c7da59d645ea67189e20389510dca9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/workaround-sensor-lib.sh",
+      "blob_sha": "a1e90e859fb88a37973bdabc3b9fe76e3dc18f2c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-edit-validator.sh",
+      "blob_sha": "228e07cddd29b553f8f03063f57f3e1578439273"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-reviewer.sh",
+      "blob_sha": "ccdd09fae1cde36f939101e113ca3573e021554e"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-commit-gate.sh",
+      "blob_sha": "5d8519ff436bd56526c03a9dd35575106f14de33"
+    },
+    {
+      "path": "adapters/claude-code/hooks/scope-enforcement-gate-body.sh",
+      "blob_sha": "70b91d1dc02824de70b80457ee7479816a2db087"
+    },
+    {
+      "path": "adapters/claude-code/hooks/scope-enforcement-gate.sh",
+      "blob_sha": "5ea90c084b6a7ab0e8e99fe62466d17a17a1f414"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-digest.sh",
+      "blob_sha": "45835446fc2686e62e136caf5e9ba848425f9a91"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit.sh",
+      "blob_sha": "78b98eefe95532928f045e870f1f9e53aed8d0da"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-sync.sh",
+      "blob_sha": "b67da1e80809211c96fdeb8075eaa0c117c0ef9c"
+    },
+    {
+      "path": "adapters/claude-code/scripts/gen-directives-view.sh",
+      "blob_sha": "e75e3828ce622fda80cefb3b2caf9d1b0f49ab06"
+    },
+    {
+      "path": "adapters/claude-code/scripts/health-tick.sh",
+      "blob_sha": "5db4d15ed00d84681d861f9885404837d3d31c41"
+    },
+    {
+      "path": "adapters/claude-code/scripts/install-maintenance-task-darwin.sh",
+      "blob_sha": "e801b47b86dcf2ea806f0dc44cc84ba66c8f7b39"
+    },
+    {
+      "path": "adapters/claude-code/scripts/manifest-check.sh",
+      "blob_sha": "c2c3eea4911da275e2a712df0a421c9b28acfac9"
+    },
+    {
+      "path": "adapters/claude-code/scripts/measure-design-ref-surface-trigger.sh",
+      "blob_sha": "07892f6c3a3c9f58af7ac3891451f74bd75747a0"
+    },
+    {
+      "path": "adapters/claude-code/scripts/nl-maintenance.sh",
+      "blob_sha": "d49c96d826962cbe94d5f086debd8c0c5be67b01"
+    },
+    {
+      "path": "adapters/claude-code/scripts/supervisor-tick.sh",
+      "blob_sha": "7d02a402b320c1545da65078a73744ab1177742b"
+    },
+    {
+      "path": "adapters/claude-code/agents/design-author.md",
+      "blob_sha": "9d5237e1f47cccff2197e37131b3255f36900e02"
+    },
+    {
+      "path": "adapters/claude-code/agents/plan-fidelity-reviewer.md",
+      "blob_sha": "7fc1c8be088c230a4581a99ad92386c6665f19cb"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "078f6fb08cb980f174d622b540b7cc4a05f19868"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "The T5–T15 batch at c068e063 is verified as-deployed: every sampled load-bearing implementation matches its audited spec",
+    "findings_summary": ""
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": null,
+  "independence": null,
+  "payload": {}
+}
