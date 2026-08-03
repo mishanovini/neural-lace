@@ -728,6 +728,48 @@ the sandbox's 4 consistent denials across distinct action classes are a structur
 a probeable permission; review-reviewer-independence's other 9 records share the same binary
 detection mechanism as the 1 individually verified.
 
+## Task 7 — Mechanized flips + targeted fixes (REQ-A5) — Verification: full
+
+- Builder: plan-phase-builder (sonnet), worktree `agent-a580ebd9a93c3a623`, commit `6c975cbb`,
+  merged at `7b5217d0`. All five sub-targets delivered (7a dates in schedule-manifest schema v3;
+  7b doctor reads them + managed_by satisfied-by-construction via _note; 7c pid-liveness in
+  `_sf_is_stale` + `SF_HALT_DIR` canonical split — closes the implementation review's note-2
+  race; 7d doctor-quick TTL 1200s justified against fresh live re-measurement (421s/425s cold
+  cycles this session) + HR-F10 renames; 7e real Get-Counter measurement appended to the perf
+  doc: 31 samples/30s/first-discarded, avg 4.98%). Fix-status table rows F3/F7/F10/F11 updated
+  in the same commit.
+- Self-tests: single-flight-lib **43/43** (9 new scenarios) — **orchestrator re-run in worktree
+  AND on merged master**; digest **102/102** (orchestrator re-run on master, backgrounded run
+  b15xgavz9); doctor full self-test skipped per the task's own allowance (90+ min) — substituted:
+  bash -n clean + two live cold `--quick` runs (421s/425s, no regression, new WARN texts firing
+  on the real coord-sync/budget entries) + 9 hand-built fixtures replicating the cadence/budget
+  scenarios (builder-run). Builder caught its own set-u unbound-var bug pre-ship.
+- **Cross-file integration regression caught by the orchestrator's post-merge suite re-run:**
+  nl-maintenance S6 planted its HALT fixture in the scoped SF_STATE_DIR; the lib now (by design)
+  consults canonical SF_HALT_DIR → 35/37. Root cause evidenced by the FAIL output
+  (halted:false heartbeat) + the design's own REQ-A5 line ("self-tests override SF_HALT_DIR
+  explicitly"). Test-env fix at `34384396` (S6 scopes SF_HALT_DIR); suite **37/37 re-run**.
+  Production drain path unchanged. Lesson: a lib semantic change must re-run CONSUMER suites,
+  not just its own — added to the completion-report lessons list.
+- Builder honest gaps: doctor full suite never run this session (allowance); the renamed doctor
+  scenario not isolated-re-run; fix-status SHA one amend-iteration behind (pre-existing table
+  convention). Builder-authored articulation in its report (audit target when T7 verifies).
+
+## Task 10 — Registration prep + DEC-4 ask (REQ-A7) — Verification: contract
+
+- Orchestrator-direct (schtasks operations are sandbox-blocked for builders — the T8 lesson).
+- **Installer end-to-end proof (contract evidence):** name-patched scratch copy (TaskName →
+  NL-MaintenanceT10Test — the ONLY delta, honoring the hard stop's letter against registering
+  the real name pre-ratification): register with `-RepoPath` → `Get-ScheduledTask` shows
+  State: Ready → `-Rollback` → verified GONE → zero stray nl-maintenance processes. The
+  legacy-task idempotence path also exercised (all "already Disabled -- no-op").
+- **DEC-4 ratification ask surfaced: `NY-1785771976-caeb`** (needs-you.sh, tier 2, §3 compact
+  format with per-option outcomes; links to the T3/T4 implementation review — the F-3
+  precondition's "fixed AND re-reviewed" record — and the plan). The cold-reader lint BLOCKED
+  two drafts before accepting the third (single-line text fails the multi-line requirement;
+  the lint working as designed) — rendered into NEEDS-YOU.md.
+- Registration itself: NOT executed — awaits operator 'ratify'/'pure-tick'/'hold' per DEC-4.
+
 ## Comprehension audit — Task 5 (comprehension-reviewer, fable, 2026-08-03T11:58Z)
 
 - **Task 5 — PASS (confidence 8).** 7/7 citations grounded (+5 corroborating fact-checks); the

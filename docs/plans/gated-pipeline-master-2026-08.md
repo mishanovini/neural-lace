@@ -431,6 +431,10 @@ Modify:
 - `~/.claude/state` ledgers/markers as specified (runtime state, not committed)
 
 ## In-flight scope updates
+- 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence.md` — the plan's own evidence
+  companion (task-verifier/comprehension/orchestrator records); omitted from the Files map at
+  authoring (an oversight — every plan has one), surfaced by scope-enforcement on the first
+  evidence-only commit after the predecessor archive.
 - 2026-08-03: `neural-lace/workstreams-ui/web/app.js` + `neural-lace/workstreams-ui/web/index.html`
   — T5's schema change (dropping the never-populated `blocks` key) would have broken the pane's
   live consumer ("undefined blocks" per gate row); the T5 builder fixed the consumer in the same
