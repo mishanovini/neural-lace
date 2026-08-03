@@ -131,7 +131,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     **Integration points:**
     - `gate-contract-lib.sh` (exists, Stage 0b) — message emission; verify via the --check output containing the four contract fields
     - dispatch-ledger fixture format must match what Task 15 writes — the fixture schema line is quoted in both files (shared fixture round-trip)
-- [ ] 2. [parallel] Estate reconcile: stash `docs/backlog.md` churn; merge `origin/master` (the two
+- [x] 2. [parallel] Estate reconcile: stash `docs/backlog.md` churn; merge `origin/master` (the two
   duplicate-content review commits) into local master via merge commit; push both mirrors; verify
   `git rev-list --left-right --count` = 0/0 against both — Verification: mechanical — Implements:
   REQ-A0 — Docs impact: none — git-state operation, no doc surface
