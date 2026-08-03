@@ -382,6 +382,8 @@ Modify:
 - `docs/backlog.md` — drain watermark note (task 6)
 
 ## In-flight scope updates
+- 2026-08-02: `docs/harness-architecture.md` — regenerated (gen-architecture-doc.sh) after the integration commit added 4 manifest entries; clears the attributable wave-f-f2-docs doctor RED the task-verifier flagged
+- 2026-08-02: `docs/plans/harness-execution-redesign-2026-08-evidence.md` — the plan Closure Contract's named evidence artifact; carries Task 1's Comprehension Articulation (rung-4 requirement, Decision 020d) + orchestrator-replayed verification
 - 2026-08-02: `adapters/claude-code/manifest.json` — orchestrator integration commit: the 4 entries (single-flight-recursion-guard, halt-drain-flag, schedule-manifest-cadence, budget-bash-hooks) that task 1's builder was constrained from adding (shared file, orchestrator-owned at merge)
 - 2026-08-02: `adapters/claude-code/doctrine/harness-dev.md` — same integration commit: the execution-layer invariants pointer section (single-flight/HALT/schedule-manifest), also builder-locked by dispatch constraint
 - 2026-08-02: `docs/handoffs/2026-08-02-stage0-pending-integration.md` — Stage-0 handoff record (live-settings reconcile procedure, per-machine rollout, verified evidence, open findings)
