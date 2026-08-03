@@ -825,8 +825,12 @@ EOF
   local s6_state="$tmp/s6"
   mkdir -p "$s6_state/single-flight"
   printf '%s test-drain\n' "$(date +%s)" > "$s6_state/single-flight/HALT"
-  SF_STATE_DIR="$s6_state/single-flight" SF_DISABLE=0 NL_MAINT_STATE_DIR="$s6_state" \
-    bash -c "source '$self_abs'; SF_STATE_DIR='$s6_state/single-flight' _nm_tick_body" >/dev/null 2>&1
+  # SF_HALT_DIR must be scoped explicitly since the HR-F11 split (gated-pipeline
+  # T7): HALT no longer resolves through SF_STATE_DIR — a scoped lock dir cannot
+  # hide the operator's canonical HALT, and equally a fixture HALT must be
+  # scoped via SF_HALT_DIR or the tick consults the real ~/.claude location.
+  SF_STATE_DIR="$s6_state/single-flight" SF_HALT_DIR="$s6_state/single-flight" SF_DISABLE=0 NL_MAINT_STATE_DIR="$s6_state" \
+    bash -c "source '$self_abs'; SF_STATE_DIR='$s6_state/single-flight' SF_HALT_DIR='$s6_state/single-flight' _nm_tick_body" >/dev/null 2>&1
   if [[ -f "$s6_state/jobs/job-a.last_completed" ]]; then
     echo "FAIL: S6 job-a should NOT have run while HALTed" >&2; fail=$((fail+1))
   else
