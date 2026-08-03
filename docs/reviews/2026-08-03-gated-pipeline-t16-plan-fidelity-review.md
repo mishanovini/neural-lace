@@ -67,3 +67,18 @@ post-edit attestation).
 Re-check only: recomputed Directives fields on 17-24 vs the register's glob matcher; revised
 review-class-table.json vs DEC-5 + §10; the G1 disposition entry's presence; T24/F-7 fixes.
 REQ coverage needs no re-derivation unless task substance changes.
+
+---
+
+# Delta re-review (post-fixes @ 7eaaa9f6)
+
+F-1 RESOLVED (8/8 tasks carry lib-computed OD lists; T24 spot-check = lib output + one harmless
+judgment superset; advisory note: T19 is a curated subset — add OD-001/003/006 if raw-lib
+carriage matching ever lands, or keep the curated-subset note). F-6 RESOLVED (stage-2-successor
+marker + two-state proof). F-7 RESOLVED (r3 labels; remaining r2 strings are chain-lineage
+history). F-8 RESOLVED (descope disposition with deferred-with-trigger conditions). F-2..F-5
+out of delta scope (T18 unmerged; re-check at its merge). Anchor: design blob unchanged.
+
+**Reviewed:** docs/plans/gated-pipeline-master-2026-08.md @ 0771581b2222e0198443bf425283bc7cf8cda400 against docs/designs/gated-pipeline-master-2026-08-03.md @ 53fd8f27bbc3fc83c19f0c1aa8021779ce0d7391
+
+## Delta Verdict: PASS
