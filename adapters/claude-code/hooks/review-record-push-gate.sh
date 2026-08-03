@@ -593,6 +593,418 @@ _rrpg_identity_removal_block() {
   } >&2
 }
 
+# ============================================================================
+# DEC-5 CLASS REVIEW-SET EXTENSION (gated-pipeline-master-2026-08 Task 18;
+# design docs/designs/gated-pipeline-master-2026-08-03.md §4 "G3", REQ-B9)
+# ============================================================================
+# ADDITIVE ONLY. Everything above this block (the per-blob {path,blob_sha}
+# coverage check against docs/reviews/records/index.json /
+# grandfather-manifest.json) is the pre-existing AUTHORITATIVE mechanism and
+# is UNTOUCHED by this section -- this extension runs ALONGSIDE it, never in
+# place of it, and reuses it outright for the 'harness' required-review
+# token (see _rrpg_harness_token_satisfied below).
+#
+# WHAT THIS ANSWERS, DIFFERENTLY FROM THE CHECK ABOVE: the per-blob check
+# answers "was THIS EXACT byte-range reviewed." DEC-5's class table answers a
+# coarser, class-level question -- "has this CLASS of change had its
+# required REVIEWER TYPES active at all" (governance floor, not per-diff
+# binding). Binding a specific review to specific bytes at this granularity
+# is explicitly named a residual in the design's NON-GOALS ("transcript-
+# anchored review proof... dispatch-ledger rows are the v1 trust root") --
+# not overclaimed here either.
+#
+# CONFIG: adapters/claude-code/config/review-class-table.json, read AS OF
+# the local sha being pushed (git show, never the working tree -- same
+# ref-based-read discipline as every other blob this gate touches, and the
+# same same-push-honoring property the design calls out for G3
+# specifically). A repo/sha pair that predates this file's existence is a
+# QUIET no-op, not a degradation -- there is nothing to gate against.
+#
+# FAILURE MODE (THIS EXTENSION'S OWN CONTRACT, per the plan's Behavioral
+# Contracts: "Lib unreadable/parse error in any gate => fail-open with a
+# WARN line naming the degradation, never silent, never fail-closed on an
+# internal error"): unlike the pre-existing coverage check above (which
+# BLOCKS on a missing/truncated review-record-gate-lib.sh, because IT is the
+# authoritative mechanism), a missing/truncated review-chain-lib.sh,
+# gate-contract-lib.sh, or a present-but-unparseable class table degrades
+# THIS extension to a loud WARN and lets the push proceed on this
+# extension's account alone (the pre-existing check's own block/allow
+# decision is completely independent and unaffected).
+# ============================================================================
+
+_RRPG_CLASS_TABLE_RELPATH="adapters/claude-code/config/review-class-table.json"
+
+# _rrpg_class_table_load <repo_root> <sha> -- populates the _RRPG_CLASS_*
+# parallel arrays (bash-3.2-safe: no associative arrays, same convention as
+# this file's own uncovered[]/uncovered_paths[] pair). ONE jq subprocess for
+# the whole table (not one per class per field) -- the plan's own
+# Performance budget for G3 is "one config read... < 1 s".
+# rc 0  -- loaded, >=1 class.
+# rc 1  -- table absent at this sha (quiet no-op for the caller).
+# rc 2  -- jq missing, or table present but unparseable/empty (degradation).
+_RRPG_CLASS_IDS=(); _RRPG_CLASS_GLOBS=(); _RRPG_CLASS_ARCHTRIGGER=()
+_RRPG_CLASS_REQUIRED=(); _RRPG_CLASS_POSTURE=(); _RRPG_CLASS_FLIP=(); _RRPG_CLASS_NOTE=()
+_rrpg_class_table_load() {
+  local repo_root="$1" sha="$2"
+  _RRPG_CLASS_IDS=(); _RRPG_CLASS_GLOBS=(); _RRPG_CLASS_ARCHTRIGGER=()
+  _RRPG_CLASS_REQUIRED=(); _RRPG_CLASS_POSTURE=(); _RRPG_CLASS_FLIP=(); _RRPG_CLASS_NOTE=()
+  command -v jq >/dev/null 2>&1 || return 2
+  git -C "$repo_root" cat-file -e "${sha}:${_RRPG_CLASS_TABLE_RELPATH}" 2>/dev/null || return 1
+
+  local raw
+  # NOTE: `| tr -d '\r'` -- the MSYS2/Windows jq binary emits CRLF line
+  # endings on this platform even though the source JSON and every git blob
+  # involved are LF-only (measured directly: `cat -A` on this pipeline's
+  # output showed `^M$` at every line before this fix). Stripping \r is a
+  # no-op on a platform where it was never present, so this is portable in
+  # both directions, not a Windows-only patch.
+  #
+  # NOTE: the ROW-level field separator below is 0x1F (unit separator), NOT
+  # a literal tab, and the `read` loop uses IFS=$'\x1f' to match -- MEASURED
+  # bash pitfall (bash 5.2.37, msys): `IFS=$'\t'` still classifies tab as
+  # "IFS whitespace" internally (space/tab/newline are ALWAYS whitespace-
+  # class IFS characters, regardless of what else IFS contains), so `read`
+  # COLLAPSES two consecutive tabs into one delimiter instead of yielding an
+  # empty field between them. Every non-harness class below has an EMPTY
+  # flip_date field, so `posture<TAB><TAB>globs` silently lost the empty
+  # `flip` field and shifted every later column left by one, corrupting
+  # posture/flip/globs/required alignment for 3 of the 4 shipped classes.
+  # PROVEN via a standalone repro before this fix (the empty flip field
+  # vanished; glob content was read into the `flip` variable instead). 0x1F
+  # is not an IFS-whitespace character, so consecutive delimiters are never
+  # collapsed and empty fields survive -- the SAME reasoning that already
+  # justifies 0x1E for the inner list-join below, one level up.
+  raw="$(git -C "$repo_root" show "${sha}:${_RRPG_CLASS_TABLE_RELPATH}" 2>/dev/null \
+    | jq -r '
+        .classes[] |
+        [
+          .id,
+          .posture,
+          (.flip_date // ""),
+          ((.path_globs // []) | join("")),
+          ((.required_reviews // []) | join("")),
+          ((.architecture_trigger_globs // []) | join("")),
+          (.baseline_note // "")
+        ] | join("")
+      ' 2>/dev/null | tr -d '\r')"
+  [[ -n "$raw" ]] || return 2
+
+  local id posture flip globs required archtrig note
+  while IFS=$'\x1f' read -r id posture flip globs required archtrig note; do
+    [[ -n "$id" ]] || continue
+    _RRPG_CLASS_IDS+=("$id")
+    _RRPG_CLASS_POSTURE+=("$posture")
+    _RRPG_CLASS_FLIP+=("$flip")
+    _RRPG_CLASS_GLOBS+=("$globs")
+    _RRPG_CLASS_REQUIRED+=("$required")
+    _RRPG_CLASS_ARCHTRIGGER+=("$archtrig")
+    _RRPG_CLASS_NOTE+=("$note")
+  done <<< "$raw"
+  [[ "${#_RRPG_CLASS_IDS[@]}" -gt 0 ]] || return 2
+  return 0
+}
+
+# _rrpg__split <delimited-string> -- echoes into the global array
+# _RRPG_SPLIT_OUT, split on \x1e (unit separator). Bash-3.2-safe: a scoped
+# IFS override + `read -a`, not a bash-4 mapfile.
+_RRPG_SPLIT_OUT=()
+_rrpg__split() {
+  _RRPG_SPLIT_OUT=()
+  local s="$1" saved_ifs="$IFS"
+  IFS=$'\x1e'
+  read -r -a _RRPG_SPLIT_OUT <<< "$s"
+  IFS="$saved_ifs"
+}
+
+# _rrpg_class_index_of_path <path> -- echoes the ARRAY INDEX of the FIRST
+# matching class (array order = precedence, per the config's own header) or
+# rc 1 if no class glob matches (UNCLASSIFIED -- this extension does not
+# touch the path at all; the pre-existing per-blob check, if in-surface,
+# still applies unchanged).
+_rrpg_class_index_of_path() {
+  local path="$1" i n g
+  n="${#_RRPG_CLASS_IDS[@]}"
+  for (( i=0; i<n; i++ )); do
+    _rrpg__split "${_RRPG_CLASS_GLOBS[$i]}"
+    for g in "${_RRPG_SPLIT_OUT[@]}"; do
+      [[ -n "$g" ]] || continue
+      # Bash case-pattern `*` already matches across `/` (verified: the
+      # config's own `**` globs behave identically to a single `*` here --
+      # POSIX fnmatch collapses consecutive `*`), the SAME property
+      # review-record-gate-lib.sh's rrg_in_surface already relies on.
+      case "$path" in
+        $g) printf '%s' "$i"; return 0 ;;
+      esac
+    done
+  done
+  return 1
+}
+
+# _rrpg_verdict_is_pass_shaped <verdict-token>
+_rrpg_verdict_is_pass_shaped() {
+  case "$1" in
+    PASS|SOUND|SOUND-WITH-AMENDMENTS) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# _rrpg_reviewer_required_satisfied <repo_root> <sha> <reviewer-token> --
+# rc 0 iff a review-record file exists under docs/reviews/** AS OF <sha>
+# (git grep pre-filter + git show materialization against the REF, never
+# the working tree -- same-push honoring: a record committed earlier in
+# THIS SAME push is visible here) whose **Reviewer:** base token
+# (review-chain-lib.sh's rc_record_reviewer/rc__base_token, reused
+# verbatim -- not re-implemented) equals <reviewer-token> and whose final
+# verdict heading (rc_record_verdict, reused verbatim) is PASS-shaped.
+# rc 1 -- no such record found (genuinely missing).
+# rc 2 -- review-chain-lib.sh's parsers are unavailable (degradation, not
+#         "missing" -- the caller must WARN about this distinctly).
+_rrpg_reviewer_required_satisfied() {
+  local repo_root="$1" sha="$2" token="$3"
+  declare -F rc_record_reviewer >/dev/null 2>&1 || return 2
+  declare -F rc_record_verdict >/dev/null 2>&1 || return 2
+  [[ -n "$_RRPG_TMPDIR" ]] || return 2
+  local f tmp v rtok
+  while IFS= read -r f; do
+    [[ -n "$f" ]] || continue
+    tmp="$_RRPG_TMPDIR/rc-rec-$$-${RANDOM}.md"
+    git -C "$repo_root" show "${sha}:${f}" > "$tmp" 2>/dev/null || continue
+    rtok="$(rc_record_reviewer "$tmp" 2>/dev/null)"
+    if [[ "$rtok" == "$token" ]]; then
+      v="$(rc_record_verdict "$tmp" 2>/dev/null)"
+      if _rrpg_verdict_is_pass_shaped "$v"; then
+        rm -f "$tmp" 2>/dev/null
+        return 0
+      fi
+    fi
+    rm -f "$tmp" 2>/dev/null
+  done < <(git -C "$repo_root" grep -l -E "^\*\*Reviewer:\*\*[[:space:]]*${token}([[:space:]]|\(|\$)" "$sha" -- docs/reviews 2>/dev/null \
+             | sed -E 's#^[^:]*:##')
+  return 1
+}
+
+# _rrpg_harness_token_satisfied <path...> -- rc 0 iff NONE of the given
+# paths appear in the pre-existing uncovered_paths[] array this gate already
+# computed earlier in the SAME per-ref loop iteration for the SAME push --
+# the 'harness' required-review token is a direct alias for the
+# authoritative per-blob coverage check, never a second implementation of
+# it (the M-3 "no second implementation" rule, applied to this token).
+_rrpg_harness_token_satisfied() {
+  local p
+  for p in "$@"; do
+    _rrpg_contains "$p" ${uncovered_paths[@]+"${uncovered_paths[@]}"} && return 1
+  done
+  return 0
+}
+
+# _rrpg_evidence_present_this_push <changed_z_file> -- rc 0 iff at least one
+# ADDED/MODIFIED path in THIS push's own commit range (the same NUL-framed
+# F_CHANGED enumeration the pre-existing coverage loop already produced)
+# looks like a plan evidence artifact -- the docs/plans/*-evidence.md /
+# docs/plans/<slug>-evidence/ Closure Contract convention already used
+# throughout docs/plans/ (see e.g. this very plan's own Closure Contract).
+_rrpg_evidence_present_this_push() {
+  local changed_z="$1" f
+  [[ -s "$changed_z" ]] || return 1
+  while IFS= read -r -d '' f; do
+    case "$f" in
+      docs/plans/*evidence*) return 0 ;;
+    esac
+  done < "$changed_z"
+  return 1
+}
+
+# _rrpg_class_lazy_source_new_libs -- best-effort; governed by THIS
+# extension's own fail-open contract (see the section header above). Must
+# NEVER alter the pre-existing review-record-gate-lib.sh sourcing/blocking
+# behavior above, which is intentionally stricter because it is the
+# authoritative mechanism.
+_RRPG_CLASS_LIBS_OK=0
+_rrpg_class_lazy_source_new_libs() {
+  [[ "$_RRPG_CLASS_LIBS_OK" == "1" ]] && return 0
+  local d="$_RRPG_SELF_DIR/lib"
+  # shellcheck source=/dev/null
+  source "$d/review-chain-lib.sh" 2>/dev/null || return 1
+  # shellcheck source=/dev/null
+  source "$d/gate-contract-lib.sh" 2>/dev/null || return 1
+  declare -F rc_record_reviewer >/dev/null 2>&1 || return 1
+  declare -F rc__date_to_epoch >/dev/null 2>&1 || return 1
+  declare -F gc_block >/dev/null 2>&1 || return 1
+  declare -F gc_header >/dev/null 2>&1 || return 1
+  _RRPG_CLASS_LIBS_OK=1
+  return 0
+}
+
+# _rrpg_class_ws_warn <gate> <bypass_kind> <fingerprint> [detail] -- lazily
+# sourced, best-effort, NEVER fails the caller (same contract as
+# gc_escape_used, which this deliberately does not reuse -- an escape being
+# USED and a class merely WARNing are different events with different
+# meanings for the friction ledger's own consumers). Records a class-gate
+# WARN/would-block event so a FUTURE would-have-blocked baseline can be
+# recomputed from real accumulated data, not only the one-time retroactive
+# git-log measurement in the Task 18 build report (M-6).
+_rrpg_class_ws_warn() {
+  local d="$_RRPG_SELF_DIR/lib"
+  { source "$d/workaround-sensor-lib.sh" 2>/dev/null; } || return 0
+  declare -F ws_record >/dev/null 2>&1 && ws_record "$@"
+  return 0
+}
+
+_rrpg_class_gate_degraded_warn() {
+  echo "review-record-push-gate: DEC-5 class-review-set check (REQ-B9) could NOT run for this push ($1). This push was NOT checked against the per-class review-set table -- this is THIS EXTENSION's own fail-open (an additive, non-authoritative mechanism never blocks a push on ITS OWN internal error), completely separate from the authoritative per-blob coverage check elsewhere in this gate." >&2
+}
+
+# _rrpg_class_gate_evaluate <repo_root> <sha> <remote_ref> <changed_z_file>
+#   <deleted_z_file> <mode: enforce|check>
+# Reads the caller's ALREADY-POPULATED uncovered_paths[] array (the
+# pre-existing per-blob check, earlier in the same loop iteration). Sets:
+#   _RRPG_CLASS_GATE_BLOCK     -- 1 iff >=1 class's verdict is BLOCK (enforce
+#                                 mode, past flip_date) or the mode is
+#                                 "check" and >=1 class has a missing review
+#                                 (check mode always treats any miss as
+#                                 would-block, regardless of posture/date --
+#                                 this is the strict counterfactual the M-6
+#                                 baseline measurement and the pre-flip
+#                                 preview both need).
+#   _RRPG_CLASS_GATE_MESSAGES  -- array of fully-rendered message blocks,
+#                                 one per non-PASS class, ready to print.
+_RRPG_CLASS_GATE_BLOCK=0
+_RRPG_CLASS_GATE_MESSAGES=()
+_rrpg_class_gate_evaluate() {
+  local repo_root="$1" sha="$2" remote_ref="$3" changed_z="$4" deleted_z="$5" mode="$6"
+  _RRPG_CLASS_GATE_BLOCK=0
+  _RRPG_CLASS_GATE_MESSAGES=()
+
+  _rrpg_class_lazy_source_new_libs || { _rrpg_class_gate_degraded_warn "review-chain-lib.sh/gate-contract-lib.sh could not be sourced"; return 0; }
+
+  local load_rc
+  _rrpg_class_table_load "$repo_root" "$sha"
+  load_rc=$?
+  [[ "$load_rc" == 1 ]] && return 0
+  if [[ "$load_rc" != 0 ]]; then
+    _rrpg_class_gate_degraded_warn "$_RRPG_CLASS_TABLE_RELPATH exists but jq could not parse it (or it defines zero classes)"
+    return 0
+  fi
+
+  local -a touched_ids=() harness_paths=()
+  local arch_triggered=0 _f idx cid posture ag
+
+  local _cz
+  for _cz in "$changed_z" "$deleted_z"; do
+    [[ -s "$_cz" ]] || continue
+    while IFS= read -r -d '' _f; do
+      [[ -n "$_f" ]] || continue
+      idx="$(_rrpg_class_index_of_path "$_f")" || continue
+      cid="${_RRPG_CLASS_IDS[$idx]}"
+      posture="${_RRPG_CLASS_POSTURE[$idx]}"
+      [[ "$posture" == "exempt" ]] && continue
+      _rrpg_contains "$cid" ${touched_ids[@]+"${touched_ids[@]}"} || touched_ids+=("$cid")
+      if [[ "$cid" == "harness" ]]; then
+        harness_paths+=("$_f")
+        _rrpg__split "${_RRPG_CLASS_ARCHTRIGGER[$idx]}"
+        for ag in "${_RRPG_SPLIT_OUT[@]}"; do
+          [[ -n "$ag" ]] || continue
+          case "$_f" in $ag) arch_triggered=1 ;; esac
+        done
+      fi
+    done < "$_cz"
+  done
+
+  [[ "${#touched_ids[@]}" -eq 0 ]] && return 0
+
+  local id
+  for id in "${touched_ids[@]}"; do
+    local ci
+    for (( ci=0; ci<${#_RRPG_CLASS_IDS[@]}; ci++ )); do
+      [[ "${_RRPG_CLASS_IDS[$ci]}" == "$id" ]] && break
+    done
+    _rrpg__split "${_RRPG_CLASS_REQUIRED[$ci]}"
+    local -a req_arr=("${_RRPG_SPLIT_OUT[@]}")
+    local -a missing=()
+    local degraded=0 tok rrc
+
+    for tok in "${req_arr[@]}"; do
+      [[ -n "$tok" ]] || continue
+      case "$tok" in
+        harness)
+          _rrpg_harness_token_satisfied ${harness_paths[@]+"${harness_paths[@]}"} || missing+=("harness")
+          ;;
+        evidence)
+          _rrpg_evidence_present_this_push "$changed_z" || missing+=("evidence")
+          ;;
+        architecture-reviewer)
+          [[ "$arch_triggered" == 1 ]] || continue
+          _rrpg_reviewer_required_satisfied "$repo_root" "$sha" "$tok"; rrc=$?
+          [[ "$rrc" == 2 ]] && { degraded=1; continue; }
+          [[ "$rrc" == 0 ]] || missing+=("$tok")
+          ;;
+        *)
+          _rrpg_reviewer_required_satisfied "$repo_root" "$sha" "$tok"; rrc=$?
+          [[ "$rrc" == 2 ]] && { degraded=1; continue; }
+          [[ "$rrc" == 0 ]] || missing+=("$tok")
+          ;;
+      esac
+    done
+
+    [[ "$degraded" == 1 ]] && _rrpg_class_gate_degraded_warn "review-chain-lib.sh's record parsers were unavailable while evaluating class '$id'"
+    [[ "${#missing[@]}" -eq 0 ]] && continue
+
+    posture="${_RRPG_CLASS_POSTURE[$ci]}"
+    local flip="${_RRPG_CLASS_FLIP[$ci]}"
+    local verdict="WARN"
+    if [[ "$mode" == "check" ]]; then
+      verdict="WOULD-BLOCK"
+    elif [[ "$posture" == "block-after-date" ]] && [[ -n "$flip" ]]; then
+      local flip_epoch now_epoch
+      flip_epoch="$(rc__date_to_epoch "$flip" 2>/dev/null)"
+      now_epoch="$(date +%s)"
+      if [[ -n "$flip_epoch" ]] && [[ "$now_epoch" -ge "$flip_epoch" ]]; then
+        verdict="BLOCK"
+      fi
+    fi
+
+    local missing_csv required_csv
+    missing_csv="$(IFS=,; echo "${missing[*]}")"
+    required_csv="$(IFS=,; echo "${req_arr[*]}")"
+
+    local what why fix escape
+    what="Pushing $remote_ref at $sha includes a '$id'-class change missing its required review(s): $missing_csv."
+    why="DEC-5 (docs/designs/gated-pipeline-master-2026-08-03.md §3, REQ-B9) requires class '$id''s review set ($required_csv) before this push is fully covered."
+    case "$posture" in
+      block-after-date)
+        if [[ "$verdict" == "BLOCK" ]]; then
+          why="$why This class flipped to BLOCK on $flip; today is on/after that date."
+        else
+          why="$why This class WARNs until $flip (calibration window per adapters/claude-code/config/review-class-table.json), then BLOCKs."
+        fi
+        ;;
+      *)
+        why="$why This class is WARN-posture -- it never blocks until an operator sets a flip_date in the config once a would-have-blocked baseline justifies it (M-6)."
+        ;;
+    esac
+    fix="Get the missing review(s) recorded under docs/reviews/ (a **Reviewer:** <agent-name> line and a PASS-shaped final ## Verdict:/## Delta Verdict: heading), or add the plan evidence artifact under docs/plans/*evidence*, then push again. For the 'harness' token specifically, use the sanctioned pathway: bash adapters/claude-code/scripts/review-queue.sh list --status queued"
+    escape="Genuine operator-authorized emergency override (SAME mechanism as the per-blob gate above, SHA-scoped): bash adapters/claude-code/scripts/authorize-review-record-push-override.sh \"why this cannot wait\" --sha $sha"
+
+    local block_text
+    block_text="$( {
+      echo "================================================================"
+      gc_header "REVIEW-RECORD PUSH GATE — DEC-5 CLASS REVIEW-SET ('$id')" "$mode"
+      echo "================================================================"
+      echo
+      gc_block "$what" "$why" "$fix" "$escape"
+      echo "================================================================"
+    } )"
+    _RRPG_CLASS_GATE_MESSAGES+=("$block_text")
+
+    if [[ "$verdict" == "BLOCK" || "$verdict" == "WOULD-BLOCK" ]]; then
+      _RRPG_CLASS_GATE_BLOCK=1
+    else
+      _rrpg_class_ws_warn "review-record-push-gate-class" "class-review-warn" "$id:$missing_csv" "sha=$sha"
+    fi
+  done
+  return 0
+}
+
 # ------------------------------------------------------------
 # Main
 # ------------------------------------------------------------
@@ -1015,6 +1427,30 @@ _rrpg_main() {
       uncovered_paths+=("$_mpath")
       uncovered+=("$_mpath (FILE MODE $_sm → $_dm — mode is OUTSIDE the {path, blob_sha} coverage key, so no review record can attest to it)")
     done < "$F_RAW"
+
+    # ------------------------------------------------------------
+    # DEC-5 CLASS REVIEW-SET EXTENSION (REQ-B9, G3) -- deliberately placed
+    # BEFORE the `[[ "${#uncovered[@]}" -eq 0 ]] && continue` below, so it
+    # still evaluates even when the pre-existing per-blob check found
+    # nothing wrong (e.g. a push whose per-blob coverage is complete but
+    # whose class review-set is missing an architecture review or an
+    # evidence artifact). uncovered_paths[] is already fully populated at
+    # this point in the loop (used by the 'harness' required-review token).
+    # ------------------------------------------------------------
+    _rrpg_class_gate_evaluate "$repo_root" "$local_sha" "$remote_ref" "$F_CHANGED" "$F_DELETED" "enforce"
+    if [[ "${#_RRPG_CLASS_GATE_MESSAGES[@]}" -gt 0 ]]; then
+      local _cls_ovr
+      if _cls_ovr="$(_rrpg_fresh_override "$local_sha")" && [[ -n "$_cls_ovr" ]]; then
+        _rrpg_log_override "$local_sha" "${_cls_ovr} (class-review-set)" "$repo_root"
+        echo "review-record-push-gate: OVERRIDDEN (class-review-set) for $local_sha — \"$_cls_ovr\" (logged for audit)" >&2
+      else
+        local _cls_msg
+        for _cls_msg in "${_RRPG_CLASS_GATE_MESSAGES[@]}"; do
+          printf '%s\n' "$_cls_msg" >&2
+        done
+        [[ "$_RRPG_CLASS_GATE_BLOCK" == "1" ]] && saw_block=1
+      fi
+    fi
 
     [[ "${#uncovered[@]}" -eq 0 ]] && continue
 
@@ -2069,6 +2505,132 @@ _rrpg_self_test() {
     fail "fixture bug: the capital-H index entry did not commit — scenario proves nothing"
   fi
 
+  # ==========================================================================
+  # DEC-5 CLASS REVIEW-SET EXTENSION (gated-pipeline-master-2026-08 Task 18;
+  # design docs/designs/gated-pipeline-master-2026-08-03.md §4 "G3", REQ-B9)
+  # ==========================================================================
+  # A SEPARATE, ISOLATED fixture repo ($R2) -- never the shared $R above --
+  # so this block cannot perturb any of the existing 40+ scenarios' careful
+  # tree-shape assumptions, and vice versa.
+  echo
+  echo "===== DEC-5 class review-set extension (Task 18, REQ-B9) ====="
+  local T2 R2
+  T2="$(mktemp -d)" || { fail "class-gate fixture: mktemp -d failed"; T2=""; }
+  if [[ -n "$T2" ]]; then
+    R2="$T2/repo"
+    mkdir -p "$R2/adapters/claude-code/hooks/lib" "$R2/adapters/claude-code/config" \
+      "$R2/docs/reviews/records" "$R2/docs/reviews"
+    printf '{"schema_version":1,"entries":[]}\n' > "$R2/adapters/claude-code/manifest.json"
+    ( cd "$R2" && git init -q . && git config user.email t2@example.com \
+        && git config user.name T2 && git config core.hooksPath "" ) >/dev/null 2>&1
+    printf '{"entries":[]}\n' > "$R2/docs/reviews/records/index.json"
+    printf '{"entries":[]}\n' > "$R2/docs/reviews/records/grandfather-manifest.json"
+    # Class table: harness requires ONLY 'harness-reviewer' (kept minimal on
+    # purpose -- this fixture proves the MECHANISM, not the shipped table's
+    # exact token list, which is exercised by the real config directly via
+    # `--check` against real history, see the Task 18 build report).
+    # flip_date starts far in the FUTURE (2099) -- still calibrating, WARN.
+    printf '{"classes":[{"id":"harness","path_globs":["adapters/claude-code/**"],"architecture_trigger_globs":[],"required_reviews":["harness-reviewer"],"posture":"block-after-date","flip_date":"2099-01-01"},{"id":"provenance-docs","path_globs":["docs/reviews/**"],"architecture_trigger_globs":[],"required_reviews":[],"posture":"exempt","flip_date":null}]}' \
+      > "$R2/adapters/claude-code/config/review-class-table.json"
+    ( cd "$R2" && git add -A && git commit -qm "base (class table, harness WARN until 2099)" ) >/dev/null 2>&1
+    local CG_BASE_SHA; CG_BASE_SHA="$(cd "$R2" && git rev-parse HEAD)"
+
+    # ---- CG1: harness-class push missing 'harness-reviewer', PRE-flip ----
+    # per-blob COVERED (so the PRE-EXISTING coverage check does not also
+    # block here -- isolates what THIS extension alone decides).
+    echo '# unreviewed-by-harness-reviewer harness change' > "$R2/adapters/claude-code/hooks/lib/newthing.sh"
+    local newthing_blob; newthing_blob="$(cd "$R2" && git hash-object adapters/claude-code/hooks/lib/newthing.sh)"
+    printf '{"entries":[{"path":"adapters/claude-code/hooks/lib/newthing.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}]}\n' \
+      "$newthing_blob" > "$R2/docs/reviews/records/index.json"
+    ( cd "$R2" && git add -A && git commit -qm "feat: newthing (per-blob covered; no harness-reviewer record anywhere)" ) >/dev/null 2>&1
+    local CG1_SHA; CG1_SHA="$(cd "$R2" && git rev-parse HEAD)"
+
+    rc="$(printf '%s\n' "refs/heads/master $CG1_SHA refs/heads/master $CG_BASE_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+    [[ "$rc" == "0" ]] && pass "CG1: harness-class push missing 'harness-reviewer', pre-flip (2099) -> NOT blocked (rc=0, refused-in-warn-form)" \
+      || fail "CG1: expected rc 0 (warn, not block) pre-flip, got $rc"
+    msg="$(printf '%s\n' "refs/heads/master $CG1_SHA refs/heads/master $CG_BASE_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) 2>&1 >/dev/null)"
+    case "$msg" in *"DEC-5 CLASS REVIEW-SET"*"'harness'"*) pass "CG1: warn-form message names the DEC-5 class review-set gate and the 'harness' class" ;; \
+      *) fail "CG1: warn-form message missing expected class-gate markers"; esac
+    case "$msg" in *"harness-reviewer"*) pass "CG1: warn-form message names the missing required-review token" ;; \
+      *) fail "CG1: warn-form message omits the missing token"; esac
+    case "$msg" in *"[GATE:WHAT]"*"[GATE:WHY]"*"[GATE:FIX]"*"[GATE:ESCAPE]"*) \
+      pass "CG1: message carries all four gate-contract-lib fields, in order" ;; \
+      *) fail "CG1: message missing one or more [GATE:*] fields"; esac
+
+    # ---- CG2: SAME miss, class table flipped to a PAST date -> BLOCK -----
+    # The flip-edit's own blob is ALSO per-blob-covered (config/* is
+    # in-surface for the pre-existing check too) so this scenario isolates
+    # to the class-gate's own BLOCK decision; the message-content assertion
+    # is the authoritative proof either way.
+    printf '{"classes":[{"id":"harness","path_globs":["adapters/claude-code/**"],"architecture_trigger_globs":[],"required_reviews":["harness-reviewer"],"posture":"block-after-date","flip_date":"2020-01-01"},{"id":"provenance-docs","path_globs":["docs/reviews/**"],"architecture_trigger_globs":[],"required_reviews":[],"posture":"exempt","flip_date":null}]}' \
+      > "$R2/adapters/claude-code/config/review-class-table.json"
+    local classtable_blob; classtable_blob="$(cd "$R2" && git hash-object adapters/claude-code/config/review-class-table.json)"
+    printf '{"entries":[{"path":"adapters/claude-code/hooks/lib/newthing.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"},{"path":"adapters/claude-code/config/review-class-table.json","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}]}\n' \
+      "$newthing_blob" "$classtable_blob" > "$R2/docs/reviews/records/index.json"
+    ( cd "$R2" && git add -A && git commit -qm "flip harness class to a past flip_date (2020) -- still no harness-reviewer record" ) >/dev/null 2>&1
+    local CG2_SHA; CG2_SHA="$(cd "$R2" && git rev-parse HEAD)"
+
+    rc="$(printf '%s\n' "refs/heads/master $CG2_SHA refs/heads/master $CG1_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+    [[ "$rc" == "1" ]] && pass "CG2: SAME missing review, post-flip (2020, past) -> BLOCKED (rc=1)" \
+      || fail "CG2: expected rc 1 (blocked) post-flip, got $rc"
+    msg="$(printf '%s\n' "refs/heads/master $CG2_SHA refs/heads/master $CG1_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) 2>&1 >/dev/null)"
+    case "$msg" in *"DEC-5 CLASS REVIEW-SET"*"flipped to BLOCK"*) \
+      pass "CG2: message attributes the block to the class flip specifically (not just any block)" ;; \
+      *) fail "CG2: message does not name the class-flip reason"; esac
+
+    # ---- CG3: provenance-docs-only push -> EXEMPT, silent -----------------
+    echo '# a review note, not code' > "$R2/docs/reviews/some-review-note.md"
+    ( cd "$R2" && git add -A && git commit -qm "docs: provenance-docs-only change" ) >/dev/null 2>&1
+    local CG3_SHA; CG3_SHA="$(cd "$R2" && git rev-parse HEAD)"
+
+    rc="$(printf '%s\n' "refs/heads/master $CG3_SHA refs/heads/master $CG2_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+    [[ "$rc" == "0" ]] && pass "CG3: provenance-docs-only push -> not blocked (rc=0)" \
+      || fail "CG3: expected rc 0, got $rc"
+    msg="$(printf '%s\n' "refs/heads/master $CG3_SHA refs/heads/master $CG2_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) 2>&1 >/dev/null)"
+    case "$msg" in *"DEC-5 CLASS REVIEW-SET"*) fail "CG3: provenance-docs-only push should be SILENT (exempt) but emitted a class-gate message" ;; \
+      *) pass "CG3: provenance-docs-only push is silent (exempt, no class-gate message)" ;; esac
+
+    # ---- CG4: harness-reviewer record committed in the SAME push --------
+    # (same-push honoring -- reads AS OF the local sha being pushed, not
+    # the remote-tracking baseline).
+    echo '# another new harness thing' > "$R2/adapters/claude-code/hooks/lib/anotherthing.sh"
+    local another_blob; another_blob="$(cd "$R2" && git hash-object adapters/claude-code/hooks/lib/anotherthing.sh)"
+    printf '{"entries":[{"path":"adapters/claude-code/hooks/lib/newthing.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"},{"path":"adapters/claude-code/config/review-class-table.json","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"},{"path":"adapters/claude-code/hooks/lib/anotherthing.sh","blob_sha":"%s","kind":"harness-change-review","verdict":"PASS"}]}\n' \
+      "$newthing_blob" "$classtable_blob" "$another_blob" > "$R2/docs/reviews/records/index.json"
+    {
+      echo "# Fixture Harness Review"
+      echo "**Reviewer:** harness-reviewer (model: fable)"
+      echo "**Reviewed:** adapters/claude-code/hooks/lib/anotherthing.sh @ $another_blob"
+      echo
+      echo "## Verdict: PASS"
+    } > "$R2/docs/reviews/2026-01-01-fixture-harness-review.md"
+    ( cd "$R2" && git add -A && git commit -qm "feat: anotherthing + its harness-reviewer record, SAME push" ) >/dev/null 2>&1
+    local CG4_SHA; CG4_SHA="$(cd "$R2" && git rev-parse HEAD)"
+
+    rc="$(printf '%s\n' "refs/heads/master $CG4_SHA refs/heads/master $CG3_SHA" \
+          | ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" origin ) >/dev/null 2>&1; echo $?)"
+    [[ "$rc" == "0" ]] && pass "CG4: harness-reviewer record committed in the SAME push as the gated change -> satisfied (rc=0, same-push honoring, past-flip class)" \
+      || fail "CG4: expected rc 0 (same-push record honored), got $rc"
+
+    # ---- CG5: --check mode always reports WOULD-BLOCK on a miss, -------
+    # regardless of the class's actual (WARN-shaped, pre-flip) posture --
+    # this is the strict counterfactual the M-6 baseline measurement needs.
+    rc="$( ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" --check "$CG1_SHA" "$CG_BASE_SHA" ) >/dev/null 2>&1; echo $?)"
+    [[ "$rc" == "1" ]] && pass "CG5: --check reports WOULD-BLOCK (rc=1) for a miss that enforce-mode only WARNed on" \
+      || fail "CG5: expected --check rc 1 for a would-block miss, got $rc"
+    msg="$( ( cd "$R2" && "$_RRPG_TEST_BASH" "$SELF" --check "$CG1_SHA" "$CG_BASE_SHA" ) 2>&1)"
+    case "$msg" in *"WOULD BLOCK"*) pass "CG5: --check output is explicitly labeled WOULD BLOCK (never confused with a real enforce-mode block)" ;; \
+      *) fail "CG5: --check output missing the WOULD BLOCK label"; esac
+
+    rm -rf "$T2"
+  fi
+
   rm -rf "$T"
   unset HARNESS_SELFTEST_DIR
   echo
@@ -2088,9 +2650,57 @@ _rrpg_self_test() {
   return 1
 }
 
+# _rrpg_check_main <local-sha> [<remote-sha>] -- standalone --check preview
+# entry point for the DEC-5 class-gate extension ONLY (Task 18's own
+# requirement; the pre-existing per-blob coverage check above has no
+# --check mode and this does not add one to it -- out of this task's
+# scope). Synthesizes the single diff range a real push of <local-sha>
+# against <remote-sha> (defaulting to "nothing on the remote yet", the
+# EMPTY_TREE) would carry, then evaluates the class-gate in "check" mode:
+# ANY missing required review, regardless of the class's actual configured
+# posture/flip_date, is reported as WOULD-BLOCK. This is the strict
+# counterfactual used both to preview a future flip ahead of time and to
+# compute the M-6 would-have-blocked baseline by replaying real historical
+# commits (see the Task 18 build report for that measurement).
+_rrpg_check_main() {
+  local local_sha="${1:-}" remote_sha="${2:-}"
+  if [[ -z "$local_sha" ]]; then
+    echo "usage: $0 --check <local-sha> [<remote-sha>]" >&2
+    return 2
+  fi
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)" || { echo "review-record-push-gate --check: not inside a git repo" >&2; return 2; }
+  if ! git -C "$repo_root" rev-parse --verify --quiet "${local_sha}^{commit}" >/dev/null 2>&1; then
+    echo "review-record-push-gate --check: '$local_sha' does not resolve to a commit in $repo_root" >&2
+    return 2
+  fi
+  _rrpg_ensure_tmpdir || { echo "review-record-push-gate --check: could not create a scratch directory" >&2; return 2; }
+  local changed="$_RRPG_TMPDIR/check-changed.z" deleted="$_RRPG_TMPDIR/check-deleted.z" range
+  if [[ -z "$remote_sha" ]] || [[ "$remote_sha" == "$ZERO_SHA" ]]; then
+    range="${EMPTY_TREE}..${local_sha}"
+  else
+    range="${remote_sha}..${local_sha}"
+  fi
+  _rrpg_diff_z "$repo_root" "$changed" --diff-filter=ACMRT "$range"
+  _rrpg_diff_z "$repo_root" "$deleted" --diff-filter=D --no-renames "$range"
+
+  _rrpg_class_gate_evaluate "$repo_root" "$local_sha" "refs/heads/master" "$changed" "$deleted" "check"
+
+  local _cm
+  for _cm in "${_RRPG_CLASS_GATE_MESSAGES[@]+"${_RRPG_CLASS_GATE_MESSAGES[@]}"}"; do
+    printf '%s\n' "$_cm"
+  done
+  if [[ "${#_RRPG_CLASS_GATE_MESSAGES[@]}" -eq 0 ]]; then
+    echo "review-record-push-gate --check: $local_sha (range $range) — no DEC-5 class review-set issues found (or the class table/libs are absent/unavailable at this sha)."
+  fi
+  [[ "$_RRPG_CLASS_GATE_BLOCK" == "1" ]] && return 1
+  return 0
+}
+
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
   case "${1:-}" in
     --self-test) export HARNESS_SELFTEST=1; _rrpg_self_test; exit $? ;;
+    --check) shift; _rrpg_check_main "$@"; exit $? ;;
     *) _rrpg_main "$@"; exit $? ;;
   esac
 fi
