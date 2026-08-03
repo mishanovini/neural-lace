@@ -422,6 +422,7 @@ Agents are specialized Claude instances spawned for specific tasks. They run in 
 | Agent | Purpose | When to Use |
 |-------|---------|-------------|
 | `code-reviewer` | Reviews git diffs for quality, type safety, security, edge cases | Before every significant commit |
+| `design-author` | The harness's only AUTHORING agent — writes/revises `docs/designs/*.md` from `templates/design-template.md` (frontmatter `model: fable`); every other agent below reviews an artifact someone else wrote, this one originates it | Authoring a new design doc, or revising an existing one IN PLACE (never as an appended Addendum/Round-N section — see `adapters/claude-code/agents/design-author.md`) |
 | `explorer` | Fast, cheap codebase lookups using the haiku model | When you need to find something without filling the main context window |
 | `research` | Read-only deep research into architecture and data flow | Understanding how systems work before making changes |
 | `security-reviewer` | Security-focused review: secrets, injection, auth/authz, data exposure | Before commits touching auth, API routes, or data access |
