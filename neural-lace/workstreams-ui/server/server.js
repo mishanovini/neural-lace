@@ -1148,10 +1148,10 @@ function runAskRegistryCli(args) {
   return new Promise((resolve) => {
     const cli = askRegistryCliPath();
     if (!fs.existsSync(cli)) return resolve({ ok: false, error: 'ask-registry.sh not found at ' + cli });
-    let bashBin, spawnEnv;
+    let bashBin, spawnEnv, killTree;
     try {
       const dc = require('./derive-cache.js');
-      bashBin = dc.bashBin; spawnEnv = dc.spawnEnv;
+      bashBin = dc.bashBin; spawnEnv = dc.spawnEnv; killTree = dc.killTree;
     } catch (e) { return resolve({ ok: false, error: 'derive-cache unavailable: ' + String(e && e.message || e) }); }
     const cmd = 'bash ' + deriveLib.shQuote(cli) + ' ' + args.map(deriveLib.shQuote).join(' ');
     let settled = false;
@@ -1166,7 +1166,10 @@ function runAskRegistryCli(args) {
     child.on('close', (code) => done({ ok: code === 0, code: code, stdout: out, stderr: err }));
     // 180s — see classifySessions' identical comment: this environment's
     // login-shell bash spawns have been directly measured at 94s/119s.
-    setTimeout(() => done({ ok: false, error: 'ask-registry.sh call timed out' }), 180000);
+    // On timeout the child TREE is killed (derive-cache.js killTree — the
+    // auditor.js NL-FINDING 2026-07-14 class): resolving alone orphaned
+    // the bash launcher's whole subtree on Windows, which never reaps.
+    setTimeout(() => { killTree(child); done({ ok: false, error: 'ask-registry.sh call timed out (child tree killed)' }); }, 180000);
   });
 }
 

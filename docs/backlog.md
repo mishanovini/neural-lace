@@ -47,6 +47,8 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 - **TASK-OUTPUT-SIZE-IS-NOT-A-LIVENESS-PROXY-01 — I killed three live agents by treating a 0-byte task-output file as "never started"** (added 2026-08-03; label: `harness-gap`, `priority:medium`; fold-in: the agent-liveness lane — this is the orchestrator-side twin of that row). **What happened:** asked whether long-running background agents were still doing anything, I ranked them by their task-output file's size and mtime. Seven read `size=0` with mtimes 6-9 hours old, so I concluded they had never started and stopped five of them. **The proxy is invalid:** the task-output file is not written incrementally — it lands when the agent finishes, so a 0-byte file means "still running OR never started" and its mtime is merely its creation time. The kill notifications proved it: those agents were mid-work ("Now the consumer side in `nl-maintenance.sh`", "S8 flaked: with ~3 s per spawn, the test sequence itself exceeds the 120 s lock TTL"). Two had uncommitted edits in their worktrees that were nearly lost. Recovered by resuming each from its transcript via SendMessage. **Two durable lessons:** (1) the ONLY sound liveness signals available to an orchestrator today are git activity on the agent's branch and the agent's own heartbeat — and the heartbeat is exactly what AGENT-LIVENESS-IS-CONVENTION-NOT-MECHANISM-01 proves does not exist, so the orchestrator is currently flying blind by construction; (2) dispatch prompts must instruct builders to commit at every milestone, because uncommitted worktree work is invisible to the orchestrator and unrecoverable if the process dies.
 
 
+- **PREDECESSOR-CLOSURE-CARRYFORWARDS-2026-08-03-01 — five items with no successor-plan owner, registered at the harness-execution-redesign SUPERSEDED flip so the archive loses nothing** (added 2026-08-03 by the gated-pipeline orchestrator from the closure verification in `docs/plans/archive/harness-execution-redesign-2026-08-evidence.md` §"Closure verification under supersession"; label: `harness-gap`, `priority:medium`; fold-in: per-item below). The predecessor's T1 closed PASS; T2 FAIL / T3 INCOMPLETE with these exact unowned gaps: (1) **Doctor gate-message lint** (T2's own outcome arbiter, "lint 5/5" unmeetable without it) — NOTE this is ALSO a design→plan fidelity slip in the successor: design r3 §9 dispositions S-29→REQ-A5 but successor T7's task text never carried it; candidate owner: fold into successor T14 (plan-reviewer Checks 20-22 work, same file family) or a dedicated small task; the fidelity re-review at T16 should catch this class going forward. (2) **Contract fields on the five retrofitted gates' manifest entries + a gate-contract convention section in harness-dev.md** (T2 Docs impact, jq-verified absent). (3) **Workaround-rate threshold → nl-issue.sh auto-file** (D-04's auto-file leg; either build at the T20 carriage work or record an explicit design-cut). (4) **harness-dev.md install/uninstall/rollback runbook section + workstreams-ui README dashboard note** (T3 Docs impact; natural owner: successor T10 registration work). (5) **T2/T3 Comprehension Articulations** if either archived task is ever to flip post-archive (Decision 020d holds; articulations must be graded against e5432f3c-era diffs). Re-derive: read the closure-verification section in the archived evidence file.
+
 - **BRANCH-SALVAGE-2026-08-01 — six unmerged branches hold work master genuinely lacks; the other 56 are proven-superseded and delete-eligible** (added 2026-08-01 from the branch-disposition sweep; label: `harness-gap`, `priority:medium`; fold-in: one lane per row below, highest-value first). Full evidence table + per-branch citations: `docs/reviews/2026-08-01-branch-disposition-sweep.md`. **Why this took a manual pass:** this repo squash-merges, so `git cherry` patch-ids and "unmerged" branch status are both near-meaningless here — 40 of 74 branches had >=90% of their added lines already verbatim on master, and 24 had a commit subject present in master's log under a different SHA. The mechanical purge (`purge-verified-20260729.sh`) correctly refused to touch any of them, which is why it exhausted at 3 removals. The six salvage rows:
   1. **SWEEP-SQUASH-MERGE-VISIBILITY-01** (`feat/sweep-squash-merge-visibility`, tip `e7e10f3`) — ~470 lines teaching `scripts/worktree-hygiene-sweep.sh` to recognise a squash-merged branch as PROVEN-MERGED via merged-PR lookup (`load_merged_prs`, `lookup_merged_pr`), plus its 2026-07-17 harness-review fixes (1 Critical, 3 Major, 2 Minor). Master's sweep has ZERO squash-merge visibility — this branch is the mechanism that makes the whole class above self-service. **Highest-value salvage in the estate; land this before the next sweep.**
   2. **RECLAMATION-PROPOSAL-AMENDMENT-01** (same branch; `docs/reclamation-proposal-amendment`'s 2 commits are its ancestors) — an unlanded 124-line amendment to `docs/proposals/2026-07-08-worktree-branch-reclamation.md`: root-cause 1 refuted, the operator decisions (keep the approval channel; expiry SURFACES, never destroys) and 7 edge cases learned from the first real sweep. Master still carries the un-amended 92-line original. Salvaging row 1 covers this; delete `docs/reclamation-proposal-amendment` only AFTER that lands.
@@ -3161,6 +3163,19 @@ the declared name, and never the absence of a declaration.**
 1. Regenerate the doctrine index + trim over-cap compacts → re-greens `Evals`.
 2. Fix the `stat -c %Y` arithmetic in `plan-edit-validator.sh:1467,1535` → re-greens
    `Server-side enforcement`.
+   **RESOLVED 2026-08-03 (gated-pipeline-master-2026-08 Task 8 triage), corrected diagnosis:**
+   the fault is NOT in production lines 1467/1535 (those `stat -c %Y ... || echo 0` call sites
+   are fine — GNU `stat -c` works correctly on both this machine and the Linux CI runner). The
+   actual break is in the self-test's OWN `F16_BINSHIM` fixture (around line 1118): a `stat`
+   shim built for the F16-F19 scenarios unconditionally translated `-c %Y` to
+   `/usr/bin/stat -f %m`, assuming `/usr/bin/stat` is BSD's. On GNU coreutils (this Windows/
+   MSYS2 checkout, and any GNU/Linux CI runner) `-f` means `--file-system` (dump filesystem
+   info, wrong shape entirely, not an error) — reproduced directly:
+   `/usr/bin/stat -f %m <file>` prints a multi-line `File: ... Block size: ... Inodes: ...`
+   block, which `age=$((now - mtime))` then chokes on exactly as this entry describes. Fixed by
+   trying the GNU form for real first (`/usr/bin/stat -c %Y "$@" 2>/dev/null || /usr/bin/stat -f %m "$@"`)
+   — verified `plan-edit-validator.sh --self-test` now 24/24 PASS (was 20/4). This should also
+   re-green CI's `Server-side enforcement` job (same self-test, same shim, same GNU runner).
 3. Only then widen `required_status_checks.contexts` to include push-produced job names
    (`Bash hooks --self-test`, `All-checks summary`, `Golden behavioral tests`,
    `Credential + hygiene-denylist scan (defense-in-depth backstop)`).
@@ -3169,3 +3184,64 @@ the declared name, and never the absence of a declaration.**
 5. Branch-push triggers are a COST decision, not a correctness one: adding `push:` for all
    branches multiplies Actions minutes by the ~20-branches/day worktree churn. Recommend
    `push: branches-ignore: [worktree-*, harness/active-sessions/*]` if adopted at all.
+
+## SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 — harness-doctor.sh's own P-14 jq-parity self-test
+cannot exercise its nonode fallback on Windows/MSYS2 (added 2026-08-03, gated-pipeline-master-
+2026-08 Task 8 doctor triage; label: `harness-gap`, `priority:medium`).
+
+**Symptom:** `harness-doctor.sh --self-test` reports 5 failing scenarios (`dpp-jq-parity-red`,
+`dpp-jq-parity-grandfather`, `ngeb-jq-parity-red`, `claim-honesty-jq-parity-red`,
+`budget-chains-jq-parity-red`) — exactly the P-14 finding
+(`docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md`). Each fails with "jq branch produced
+NOTHING on a fixture that must report."
+
+**Root cause, PROVEN, and it is NOT a doctor logic defect:** `_nonode_path()` (harness-doctor.sh
+~line 4139) builds a PATH-shim directory of symlinks to every tool the doctor needs except
+`node`, then `_run_quick_nonode` does `PATH="$shim" bash "$SELF_TEST_HOOK" --quick ...`. Because
+a bash prefix-assignment affects lookup of the command itself, this re-execs the SYMLINKED
+`bash` inside the shim. On Windows/MSYS2, `bash.exe` needs companion DLLs sitting next to the
+real binary — a bare symlink to the exe (no DLLs alongside it) fails to load at all. Reproduced
+directly: `PATH=<shim-dir> bash -c 'true'` → `error while loading shared libraries: ?: cannot
+open shared object file`. The child crashes before the doctor script (or the check being tested)
+ever runs, so grepping the check-id out of its (empty) output correctly reports "produced
+NOTHING" — the symptom is real, the cause is the shim's own launcher, not the checks'
+`node`/`jq` branching.
+
+**Independent confirmation the doctor's jq branches themselves are fine:** ran the real jq
+expressions standalone against live/fixture data outside the shim — e.g.
+`jq -r --arg ev Stop '[(.hooks[$ev] // [])[] | (.hooks // []) | length] | add // 0'
+~/.claude/settings.json` → `9`, exactly matching the live `budget-chains` RED count. No
+divergence found in any of the four checks' jq expressions by inspection either (mirrors the
+node branch logic line for line).
+
+**Fix (not done here — self-test-harness portability work, its own scoped task, same family as
+the existing macOS-portability program):** `_nonode_path()` needs a Windows-safe way to hide
+`node` from a child bash WITHOUT symlinking `bash` itself — e.g. don't put `bash` in the shim at
+all (let the child inherit the real, already-loaded interpreter via `$BASH`/`command -v bash`
+resolved BEFORE the PATH override, only restricting PATH for the grandchild `node`/`jq` lookups
+the script performs internally) or copy (not symlink) the real bash + its DLL directory into the
+shim. Until fixed, this 5-scenario failure is expected and reproducible on any Windows/MSYS2
+checkout; it does not indicate the doctor's non-node fallback is broken in production (Linux/
+macOS runners, real GNU/BSD `bash` resolves fine from a symlink — no DLL sidecar dependency).
+
+## MODEL-PIN-GATE-SELFTEST-NONHERMETIC-01 — model-pin-gate.sh's self-test intermittently reads
+live tier-exhaustion state instead of a fixed fixture (added 2026-08-03, gated-pipeline-master-
+2026-08 Task 8 doctor triage; label: `harness-gap`, `priority:low`).
+
+**Symptom:** `harness-doctor.sh --full`'s selftest-sweep (check 8) reported
+`model-pin-gate.sh --self-test exited 1: model-pin-gate self-test: 15 passed, 2 failed`. Running
+`bash adapters/claude-code/hooks/model-pin-gate.sh --self-test` directly, ~15 minutes later, gave
+**17 passed, 0 failed** — full GREEN, same commit, same file, no edits in between.
+
+**Diagnosis, HYPOTHESIZED (refuter: instrument the two "tier exhausted" scenarios to print the
+tier-state value they read at the moment of failure; if it is genuinely stable across both runs,
+this diagnosis is wrong):** the two scenario names most likely to be timing-sensitive are
+`pinned agent + tier exhausted → BLOCK naming fallback` and
+`explicit model:fable + fable exhausted → BLOCK naming fallback` — both PASSED in my direct
+run, and the sweep's own child ran under `nl_run_bounded` + `NL_SELFTEST_SWEEP=1` with a
+~15-20 minute gap in wall-clock, real machine tier-exhaustion state, from my run. A self-test
+whose outcome depends on real model-tier exhaustion (rather than an injected/mocked tier state)
+is non-hermetic by construction — it will flake whenever it happens to run near a tier
+boundary. Not chased further (would require reading model-pin-gate.sh's fixture-injection path
+in depth); flagged so a future pass hermeticizes the tier-state input for these two scenarios
+rather than reading `adapters/claude-code/config/model-policy.json`'s live state.

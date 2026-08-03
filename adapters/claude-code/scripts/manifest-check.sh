@@ -547,13 +547,37 @@ run_check() {
   done <<< "$manifest_hooks"
 
   # (b) disk -> hooks (top-level *.sh only; lib/ is a subdir, attic/ a sibling)
-  local f base
+  #
+  # EXEMPTION (gated-pipeline-master-2026-08 Task 8 triage, 2026-08-03):
+  # the fast-pass/body split (concurrent-ownership-gate.sh, scope-
+  # enforcement-gate.sh) puts the manifest-carrying wiring on a thin
+  # top-level wrapper that `source`s a same-stem `*-body.sh` sibling ONLY
+  # when the command could be relevant (perf win: the ~1000-2500 line body
+  # is parsed only on a possible hit, never on every Bash call). The body
+  # file is real disk content the manifest never claims directly -- same
+  # shape as a hooks/lib/*.sh sourced library (already exempt below via the
+  # subdirectory boundary), just not physically under lib/. Mirrored here
+  # rather than moved to lib/ (moving would change two hot-path source
+  # paths for a doc-check's convenience). MECHANICALLY VERIFIED, not
+  # trusted by inspection: the wrapper must (1) exist on disk, (2) itself
+  # be a covered manifest hook, and (3) actually `source` this exact body
+  # filename -- an orphaned `*-body.sh` with no such wrapper still REDs.
+  local f base wrapper
   for f in "$hooks_dir"/*.sh; do
     [[ -f "$f" ]] || continue
     base="$(basename "$f")"
-    if ! printf '%s\n' "$manifest_hooks" | grep -qx "$base"; then
-      _red "hooks-coverage" "disk hook '${base}' appears in no manifest entry's hooks[]"
+    if printf '%s\n' "$manifest_hooks" | grep -qx "$base"; then
+      continue
     fi
+    if [[ "$base" == *-body.sh ]]; then
+      wrapper="${base%-body.sh}.sh"
+      if [[ -f "$hooks_dir/$wrapper" ]] \
+         && printf '%s\n' "$manifest_hooks" | grep -qx "$wrapper" \
+         && grep -qE "source[[:space:]].*${base}" "$hooks_dir/$wrapper" 2>/dev/null; then
+        continue
+      fi
+    fi
+    _red "hooks-coverage" "disk hook '${base}' appears in no manifest entry's hooks[]"
   done
 
   # (c) wired_template:true entries' hooks all present in the template.
@@ -853,6 +877,26 @@ EOF
   printf '#!/bin/bash\nexit 0\n' > "$D/adapters/claude-code/hooks/stray.sh"
   OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
   _assert "s3-unlisted-disk-hook-red" 1 "$RC" "RED hooks-coverage" "$OUT"
+
+  # S3b — a "*-body.sh" sourced by a COVERED wrapper (fast-pass/body split,
+  # concurrent-ownership-gate.sh precedent): GREEN, not hooks-coverage RED.
+  D="$TMPROOT/s3b"; _fixture "$D"
+  _valid_manifest > "$D/adapters/claude-code/manifest.json"
+  printf '#!/bin/bash\nsource "$(dirname "${BASH_SOURCE[0]}")/a-gate-body.sh"\n' \
+    > "$D/adapters/claude-code/hooks/a-gate.sh"
+  printf '#!/bin/bash\necho body\n' > "$D/adapters/claude-code/hooks/a-gate-body.sh"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+  _assert "s3b-sourced-body-of-covered-wrapper-green" 0 "$RC" "GREEN" "$OUT"
+
+  # S3c — a "*-body.sh" with NO wrapper that sources it (orphaned body, or
+  # the naming coincidence without the source line): still RED. Proves the
+  # S3b exemption is mechanically verified, not a bare "*-body.sh" pattern
+  # amnesty.
+  D="$TMPROOT/s3c"; _fixture "$D"
+  _valid_manifest > "$D/adapters/claude-code/manifest.json"
+  printf '#!/bin/bash\necho "no source line here"\n' > "$D/adapters/claude-code/hooks/a-gate-body.sh"
+  OUT="$(MANIFEST_CHECK_ROOT="$D" "$SELFBASH" "$SELF" check 2>&1)"; RC=$?
+  _assert "s3c-orphaned-body-file-still-red" 1 "$RC" "RED hooks-coverage" "$OUT"
 
   # S4 — gate with wired_template false and NO honest_status: RED
   D="$TMPROOT/s4"; _fixture "$D"

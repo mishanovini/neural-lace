@@ -1,10 +1,19 @@
 {
-  "schema_version": 2,
-  "note": "Bootstrap artifact for harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 2). Stage 1 (nl-maintenance.sh, Task 3) is now the REAL reader+writer of this file: it reads `script`/`script_args`/`declared_cadence_seconds` as its job table (completion-anchored -- next run is scheduled only after the previous one's `bash <script> <script_args>` invocation returns, so `declared_cadence_seconds` becomes a MINIMUM floor between completions rather than a wall-clock fixed interval; this satisfies invariant 2 by construction for any entry whose real cycle time exceeds its declared cadence, e.g. coord-sync's proven 60s-declared/110s-measured mismatch). `managed_by` distinguishes entries nl-maintenance.sh actually schedules (`nl-maintenance`) from ones it does not touch (`external`, `standalone`). schema_version 2 adds: `script_args`, `managed_by`, `legacy_task_name` (the schtasks TaskName Stage 0 disabled, null if none/not applicable), `retired_installer_note`.",
+  "schema_version": 3,
+  "note": "Bootstrap artifact for harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 2). Stage 1 (nl-maintenance.sh, Task 3) is now the REAL reader+writer of this file: it reads `script`/`script_args`/`declared_cadence_seconds` as its job table (completion-anchored -- next run is scheduled only after the previous one's `bash <script> <script_args>` invocation returns, so `declared_cadence_seconds` becomes a MINIMUM floor between completions rather than a wall-clock fixed interval; this satisfies invariant 2 by construction for any entry whose real cycle time exceeds its declared cadence, e.g. coord-sync's proven 60s-declared/110s-measured mismatch). `managed_by` distinguishes entries nl-maintenance.sh actually schedules (`nl-maintenance`) from ones it does not touch (`external`, `standalone`). schema_version 2 adds: `script_args`, `managed_by`, `legacy_task_name` (the schtasks TaskName Stage 0 disabled, null if none/not applicable), `retired_installer_note`. schema_version 3 (HR-F7, 2026-08-03 harness review, gated-pipeline T7/REQ-A5) adds: `cadence_check.warn_since`/`.red_after` and the new top-level `budget_check` object -- both WARN checks' 'calibration week, then RED' promise was previously prose-only with no stored date (constitution paragraph-1's exact prohibited shape); the flip now lives here, in data, read by harness-doctor.sh's check_schedule_manifest_cadence and check_budget_bash_hooks. A `managed_by: nl-maintenance` entry is exempt from the cadence clock entirely once nl-maintenance's activation marker exists (state/nl-maintenance/activation-marker) -- its own completion-anchored scheduling already IS the WARN's prescribed remedy (see the schema_version-2 paragraph above), so the doctor annotates it satisfied-by-construction instead of continuing to warn on a since-fixed violation (the exact false positive HR-F7 proved: the old check never read managed_by, so the remedy never cleared the WARN).",
   "cadence_check": {
     "mode": "warn",
     "ratio_floor": 2,
-    "ratio_floor_meaning": "declared_cadence_seconds must be >= ratio_floor x measured_cycle_seconds for every entry that has a non-null measured_cycle_seconds. Entries with measured_cycle_seconds == null are calibration-pending and are skipped (not WARNed) -- absence of a measurement is not itself a violation at this stage."
+    "ratio_floor_meaning": "declared_cadence_seconds must be >= ratio_floor x measured_cycle_seconds for every entry that has a non-null measured_cycle_seconds. Entries with measured_cycle_seconds == null are calibration-pending and are skipped (not WARNed) -- absence of a measurement is not itself a violation at this stage.",
+    "warn_since": "2026-08-03",
+    "red_after": "2026-08-17",
+    "flip_meaning": "HR-F7 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): a cadence violation on an entry that is NOT satisfied-by-construction (managed_by=nl-maintenance with a live activation marker -- see the schema note) WARNs from warn_since and REDs from red_after. red_after is two weeks from warn_since, matching the zero_substrate clock's own convention below. Absent dates would mean 'stay WARN forever' (never a fabricated RED) -- this entry exists precisely so that never happens."
+  },
+  "budget_check": {
+    "mode": "warn",
+    "warn_since": "2026-08-03",
+    "red_after": "2026-08-17",
+    "flip_meaning": "HR-F7 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): the per-Bash hook-count budget (harness-doctor.sh check_budget_bash_hooks, max<=6) WARNs from warn_since and REDs from red_after. Previously 'Stage 2 is the actual fix' was prose-only with no stored date -- the exact class constitution paragraph-10 bans for a check with no retirement/flip condition."
   },
   "mechanisms": [
     {
@@ -54,7 +63,9 @@
       "id": "session-heartbeat",
       "description": "workstreams-heartbeat: per-session liveness refresh + stale-session conclude sweep (2026-08-02 brief's six-mechanism inventory)",
       "script": "adapters/claude-code/hooks/workstreams-emit.sh",
-      "script_args": ["--heartbeat"],
+      "script_args": [
+        "--heartbeat"
+      ],
       "installer": null,
       "managed_by": "nl-maintenance",
       "legacy_task_name": "NL-workstreams-heartbeat",
@@ -132,7 +143,9 @@
       "id": "doctor-verdict-refresh",
       "description": "NEW (Task 3, invariant 3 + D5): dedicated TTL-driven refresh of the doctor verdict cache (`harness-doctor.sh --quick`, which now self-writes ~/.claude/state/digest/doctor-cache.json -- see harness-doctor.sh's _doctor_verdict_cache_path). health-tick.sh's own hourly `session-start-digest.sh --refresh-doctor-cache` call already refreshes the SAME file on a coarser cadence; this entry gives it the D5-specified 30-minute TTL directly instead of waiting on health-tick's hourly slot.",
       "script": "adapters/claude-code/hooks/harness-doctor.sh",
-      "script_args": ["--quick"],
+      "script_args": [
+        "--quick"
+      ],
       "installer": null,
       "managed_by": "nl-maintenance",
       "legacy_task_name": null,
@@ -149,5 +162,10 @@
         }
       }
     }
-  ]
+  ],
+  "zero_substrate": {
+    "legacy_disabled_since": "2026-08-02",
+    "red_after_days": 14,
+    "note": "HR-F4 inverse clock (gated-pipeline T6/REQ-A4): legacy NL-* tasks Disabled at Stage 0 on this date; doctor WARNs on zero-substrate state and REDs red_after_days later. Cleared by the activation marker (T10 registration) or a fresh daemon heartbeat."
+  }
 }

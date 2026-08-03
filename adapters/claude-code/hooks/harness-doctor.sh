@@ -20,11 +20,23 @@
 # =====
 #   --quick (default): checks 1-7 against the LIVE mirror ($HOME/.claude)
 #                       and the repo. Never runs self-tests. Fast (<2s
-#                       typical). Exit 0 iff zero RED lines.
+#                       typical). Exit 0 iff zero RED lines; exit 1 if any
+#                       RED; exit 3 (gated-pipeline-master-2026-08 Task 4,
+#                       REQ-A2/HR-F2+F5+F8) when the invocation itself was
+#                       SKIPPED (single-flight guard held, or HALT draining)
+#                       and no valid cached verdict existed to serve honestly
+#                       instead -- NEVER a bare "exit 0" for a skip (that was
+#                       indistinguishable from GREEN to every caller). See
+#                       "DOCTOR VERDICT CACHE" below for the single-writer
+#                       contract and the sf-skip serve-or-3 behavior.
 #   --full            : quick + check 8 (self-test sweep across every live
 #                       hook that declares --self-test) + check 9 (the
 #                       portability sweep vs its committed baseline).
-#                       Exit 0 iff zero RED.
+#                       Exit 0 iff zero RED. Subject to the SAME sf_guard
+#                       serve-or-3 skip behavior as --quick (one lock covers
+#                       every mode), but only --quick reads/writes the
+#                       verdict cache -- a skipped --full/--portability call
+#                       with no cache to serve exits 3 with no fast-path.
 #   --portability     : check 9 ONLY — run scripts/portability-sweep.sh
 #                       against the repo under the stock system interpreter
 #                       and RED when the failing set grew relative to
@@ -271,6 +283,23 @@ resolve_live_home() {
 # SF_STATE_DIR already does two lines below in the normal-invocation
 # section -- no self-test scenario can ever read/write the REAL machine's
 # cache file.
+#
+# SINGLE-WRITER CONTRACT (gated-pipeline-master-2026-08 Task 4, REQ-A2,
+# fixing HR-F2+F5+F8): this doctor's own quick-mode write path (below,
+# "Doctor verdict cache -- WRITE path") is the cache file's ONLY writer,
+# full stop. session-start-digest.sh's `refresh_doctor_cache` is
+# invoke-and-read-only -- it forces a real recompute here (via
+# SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1) and then reads back
+# whatever THIS script just wrote; it never printfs the file itself.
+# Before this fix, digest's refresher was a SECOND writer with a
+# different (3-field, no fingerprint) schema, which composed with the old
+# sf-skip's bare `exit 0` to corrupt the cache (F2): a skip produced no
+# verdict line, so the refresher overwrote a valid fingerprinted entry
+# with "verdict unavailable (exit 0)", and every digest-side write
+# stripped the fingerprint outright. The fix is structural, not a
+# discipline promise: there is exactly one `>`/`printf ... >` to this
+# file in the whole codebase now (see the WRITE path below); grep
+# `doctor-cache.json|DOCTOR_CACHE_PATH` to re-verify.
 # ------------------------------------------------------------
 _doctor_verdict_cache_path() {
   if [[ -n "${DOCTOR_CACHE_PATH:-}" ]]; then
@@ -280,19 +309,62 @@ _doctor_verdict_cache_path() {
   printf '%s/state/digest/doctor-cache.json' "${1:-${HOME:-$PWD}/.claude}"
 }
 
+# _doctor_serve_cache_or_skip <reason> — gated-pipeline-master-2026-08 Task 4
+# (REQ-A2, fixing HR-F8): called ONLY from the sf_guard skip path below
+# (single-flight lock held, or HALT draining). NEVER a bare `exit 0` -- that
+# was indistinguishable from a real GREEN to every exit-code consumer
+# (`rg -n "harness-doctor.sh --quick"` is the sweep query; F8's proven
+# casualty was F2's cache corruption). Read-only: this function NEVER writes
+# doctor-cache.json (the quick-mode WRITE path far below is the cache's
+# ONLY writer -- the single-writer contract this task establishes).
+#   - A VALID cached record exists (non-empty verdict_line + numeric
+#     exit_code -- the doctor's own 5-field writer always produces both) ->
+#     serve it verbatim (honest AND fast; the cache mostly makes the skip
+#     redundant) and exit ITS exit_code, so a caller that only checks
+#     "0 == pass" still gets the right answer on a skip immediately after a
+#     real run.
+#   - No cache, or an unreadable/incomplete one (e.g. a stale 3-field record
+#     from before this fix) -> exit a DISTINCT documented code, 3, with a
+#     machine-parseable "[doctor] SKIPPED (<reason>)" line. 3 is chosen to
+#     be neither 0 (GREEN) nor 1 (FAILED) -- every exit-code consumer swept
+#     in this task's commit treats 3 as "inconclusive," never as either.
+_doctor_serve_cache_or_skip() {
+  local reason="${1:-single-flight guard active}"
+  local cache; cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"
+  if [[ -f "$cache" ]]; then
+    local verdict exit_code
+    verdict="$(sed -nE 's/.*"verdict_line":"([^"]*)".*/\1/p' "$cache" 2>/dev/null | head -1)"
+    exit_code="$(sed -nE 's/.*"exit_code":([0-9]+).*/\1/p' "$cache" 2>/dev/null | head -1)"
+    if [[ -n "$verdict" && "$exit_code" =~ ^[0-9]+$ ]]; then
+      echo "$verdict"
+      exit "$exit_code"
+    fi
+  fi
+  echo "[doctor] SKIPPED (${reason})"
+  exit 3
+}
+
 # _doctor_compute_fingerprint <live_home> <repo_root> — invariant 8
 # ("derived, never authored"): a coarse fingerprint of the inputs
 # run_quick_checks actually reads from disk -- the live settings.json, the
 # committed settings template, manifest.json, and schedule-manifest.json
-# (mtimes), plus the repo's current commit (if resolvable). Documented as a
-# FIRST-APPROXIMATION fingerprint, not true per-check declared-input
-# tracking (that would need every one of the ~40 check_* functions to
-# declare its own inputs individually -- real scope beyond this task; see
-# the plan's In-flight scope updates / this task's build report for the
-# named follow-up). It is still a REAL derived value: any edit to the
-# files it covers busts the cache on the next read, which is what
-# invariant 8 is actually guarding against (a cache that lies while the
-# world burns) for the highest-traffic input classes.
+# (mtimes), plus the repo's current commit (if resolvable), plus (gated-
+# pipeline-master-2026-08 Task 4, REQ-A2, fixing HR-F5) the newest mtime
+# anywhere under the LIVE hooks mirror ($live_home/hooks -- the doctor's
+# primary claimed-vs-actual drift surface: wiring-resolves/lib-deps/legacy-
+# paths all read live hook files the original 4-file list never covered)
+# and a working-tree-dirty bit (`git -C repo_root diff --quiet`, unstaged
+# changes vs the index -- covers a repo file edited but not yet committed,
+# the other half of D5's "wiring changes bust the cache immediately"
+# promise the original 4-file list only kept for 2 of the ~40 checks'
+# config inputs). Documented as a FIRST-APPROXIMATION fingerprint, not true
+# per-check declared-input tracking (that would need every one of the ~40
+# check_* functions to declare its own inputs individually -- real scope
+# beyond this task; see the plan's In-flight scope updates / this task's
+# build report for the named follow-up). It is still a REAL derived value:
+# any edit to the files/dirs it covers busts the cache on the next read,
+# which is what invariant 8 is actually guarding against (a cache that
+# lies while the world burns) for the highest-traffic input classes.
 _doctor_compute_fingerprint() {
   local live_home="$1" repo_root="$2" parts=""
   local f
@@ -306,11 +378,37 @@ _doctor_compute_fingerprint() {
       parts="${parts}|absent"
     fi
   done
+  # Live-hooks-dir newest-mtime (HR-F5): a portable (GNU+BSD) newest-file
+  # scan -- `find -printf` is GNU-only (portability-sweep's own baseline
+  # would RED it), so this loops `find <dir> -type f` (portable) and reuses
+  # the exact date -r/stat -c fallback the 4-file loop above already uses,
+  # rather than a second mtime-reading idiom.
+  local hooks_dir="${live_home}/hooks" hooks_newest=0
+  if [[ -d "$hooks_dir" ]]; then
+    local hf hf_mtime
+    while IFS= read -r hf; do
+      hf_mtime="$(date -r "$hf" +%s 2>/dev/null || stat -c %Y "$hf" 2>/dev/null || echo 0)"
+      [[ "$hf_mtime" =~ ^[0-9]+$ && "$hf_mtime" -gt "$hooks_newest" ]] && hooks_newest="$hf_mtime"
+    done < <(find "$hooks_dir" -type f 2>/dev/null)
+  fi
+  parts="${parts}|hooksnewest:${hooks_newest}"
   local head=""
   if [[ -n "$repo_root" ]]; then
     head="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo "")"
   fi
   parts="${parts}|${head}"
+  # Working-tree-dirty bit (HR-F5): an uncommitted edit to a checked-in
+  # repo file (e.g. a hook mid-edit) busts the cache immediately instead of
+  # serving a stale-but-plausible verdict for up to DOCTOR_VERDICT_CACHE_TTL_
+  # SECONDS. Unstaged only (`git diff`, not `--cached`), matching REQ-A2's
+  # literal contract; correct honest-recompute is preferred over cheap here
+  # (Edge Cases: "dirty bit changes the fingerprint -> cache miss -> honest
+  # recompute, slightly slower -- never stale-serve").
+  local dirty="clean"
+  if [[ -n "$repo_root" ]]; then
+    git -C "$repo_root" diff --quiet 2>/dev/null || dirty="dirty"
+  fi
+  parts="${parts}|${dirty}"
   if command -v cksum >/dev/null 2>&1; then
     printf '%s' "$parts" | cksum | awk '{print $1}'
   else
@@ -346,6 +444,20 @@ _warn() {
   local id="$1" detail="$2"
   echo "[doctor] WARN ${id}: ${detail}"
   WARN_COUNT=$((WARN_COUNT + 1))
+}
+
+# _note <id> <detail> -- HR-F7 (2026-08-03 harness review, gated-pipeline
+# T7/REQ-A5): an informational, non-counting annotation. Used for
+# "satisfied-by-construction" states (e.g. a cadence violation whose
+# prescribed remedy is already active) that are worth surfacing to the
+# operator but are neither a defect (RED) nor a thing-to-watch (WARN) --
+# printing nothing here would silently hide the fact the check even
+# considered the entry; a WARN would misclassify an already-fixed state as
+# still-open. Never increments RED_COUNT/WARN_COUNT, so it never affects
+# the doctor's exit code or its GREEN/FAILED summary line.
+_note() {
+  local id="$1" detail="$2"
+  echo "[doctor] NOTE ${id}: ${detail}"
 }
 
 # ------------------------------------------------------------
@@ -2337,6 +2449,35 @@ check_schedule_manifest_cadence() {
     return 0
   fi
 
+  # HR-F7 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): the WARN
+  # -> RED flip lives in DATA (cadence_check.red_after in schedule-
+  # manifest.json), never prose-only -- "WARN for 1 calibration week, then
+  # RED" with no stored date is constitution paragraph-1's exact
+  # prohibited shape. An absent/unparseable red_after means stay-WARN-
+  # forever (never a fabricated RED from a missing field).
+  local red_after="" now_epoch red_epoch is_red=0
+  if command -v jq >/dev/null 2>&1; then
+    red_after="$(jq -r '.cadence_check.red_after // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+  elif command -v node >/dev/null 2>&1; then
+    red_after="$(node -e 'try{const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write((m.cadence_check&&m.cadence_check.red_after)||"")}catch(e){}' "$manifest" 2>/dev/null)"
+  fi
+  if [[ -n "$red_after" ]]; then
+    now_epoch="$(date +%s 2>/dev/null || echo 0)"
+    red_epoch="$(date -d "$red_after" +%s 2>/dev/null || echo 0)"
+    [[ "$red_epoch" -gt 0 && "$now_epoch" -ge "$red_epoch" ]] && is_red=1
+  fi
+
+  # HR-F7's own PROVEN false positive: a managed_by=nl-maintenance entry's
+  # prescribed remedy (completion-anchored scheduling, per this file's own
+  # schema note) is satisfied THE MOMENT nl-maintenance is active -- the
+  # old check never read managed_by, so the remedy never cleared the WARN.
+  # Exempt those entries from the clock entirely once the activation
+  # marker exists (same marker check_maintenance_both_substrates_alive
+  # uses) -- annotated (_note), never warned or redded.
+  local activation="${live_home}/state/nl-maintenance/activation-marker"
+  local activated=0
+  [[ -f "$activation" ]] && activated=1
+
   local out
   if command -v node >/dev/null 2>&1; then
     out="$(node -e '
@@ -2351,7 +2492,7 @@ for (const e of m.mechanisms || []) {
   if (typeof declared !== "number" || typeof measured !== "number") continue;
   const required = floor * measured;
   if (declared < required) {
-    console.log([e.id, declared, measured, required].join("|"));
+    console.log([e.id, declared, measured, required, e.managed_by || ""].join("|"));
   }
 }' "$manifest" 2>/dev/null)"
   else
@@ -2359,15 +2500,23 @@ for (const e of m.mechanisms || []) {
       (.mechanisms // [])[]
       | select(.measured_cycle_seconds != null)
       | select(.declared_cadence_seconds < ($floor * .measured_cycle_seconds))
-      | [.id, .declared_cadence_seconds, .measured_cycle_seconds, ($floor * .measured_cycle_seconds)] | join("|")
+      | [.id, .declared_cadence_seconds, .measured_cycle_seconds, ($floor * .measured_cycle_seconds), (.managed_by // "")] | join("|")
     ' "$manifest" 2>/dev/null)"
   fi
 
   if [[ -n "$out" ]]; then
-    local line id declared measured required
-    while IFS='|' read -r id declared measured required; do
+    local id declared measured required managed_by
+    while IFS='|' read -r id declared measured required managed_by; do
       [[ -z "$id" ]] && continue
-      _warn "schedule-manifest-cadence" "'${id}' declared cadence ${declared}s < 2x its measured cycle ${measured}s (needs >= ${required}s) -- it can never fully drain between fires (structural overlap); fix: raise declared_cadence_seconds in ${manifest}, OR move it to completion-anchored scheduling (Stage 1) -- calibration-week WARN per task-1 spec, not yet RED"
+      if [[ "$managed_by" == "nl-maintenance" && "$activated" -eq 1 ]]; then
+        _note "schedule-manifest-cadence" "'${id}' declared cadence ${declared}s < 2x measured ${measured}s -- satisfied-by-construction: managed_by=nl-maintenance and its activation marker is present, so its completion-anchored scheduling already enforces this by construction (not warned)"
+        continue
+      fi
+      if [[ "$is_red" -eq 1 ]]; then
+        _red "schedule-manifest-cadence" "'${id}' declared cadence ${declared}s < 2x its measured cycle ${measured}s (needs >= ${required}s) since ${red_after} -- it can never fully drain between fires (structural overlap); fix: raise declared_cadence_seconds in ${manifest}, OR move it to completion-anchored scheduling (Stage 1)"
+      else
+        _warn "schedule-manifest-cadence" "'${id}' declared cadence ${declared}s < 2x its measured cycle ${measured}s (needs >= ${required}s) -- it can never fully drain between fires (structural overlap); fix: raise declared_cadence_seconds in ${manifest}, OR move it to completion-anchored scheduling (Stage 1) -- WARN until ${red_after:-an undated flip}, RED after"
+      fi
     done <<< "$out"
   fi
   CHECKS_RUN=$((CHECKS_RUN + 1))
@@ -2424,6 +2573,27 @@ check_budget_bash_hooks() {
     return 0
   fi
 
+  # HR-F7 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): same
+  # data-driven flip as schedule-manifest-cadence -- "Stage 2 is the
+  # actual fix" was prose-only with no stored date; budget_check.red_after
+  # in schedule-manifest.json is the mechanized flip. Manifest resolution
+  # failure (pre-Task-1 machine, or neither node/jq usable for the manifest
+  # read) leaves this WARN-forever, the same fail-open-to-WARN posture the
+  # cadence check takes on a missing manifest.
+  local manifest="" red_after="" is_red=0
+  manifest="$(resolve_schedule_manifest "$live_home" "$repo_root" 2>/dev/null)"
+  if [[ -n "$manifest" ]] && command -v jq >/dev/null 2>&1; then
+    red_after="$(jq -r '.budget_check.red_after // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+  elif [[ -n "$manifest" ]] && command -v node >/dev/null 2>&1; then
+    red_after="$(node -e 'try{const m=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));process.stdout.write((m.budget_check&&m.budget_check.red_after)||"")}catch(e){}' "$manifest" 2>/dev/null)"
+  fi
+  if [[ -n "$red_after" ]]; then
+    local now_epoch red_epoch
+    now_epoch="$(date +%s 2>/dev/null || echo 0)"
+    red_epoch="$(date -d "$red_after" +%s 2>/dev/null || echo 0)"
+    [[ "$red_epoch" -gt 0 && "$now_epoch" -ge "$red_epoch" ]] && is_red=1
+  fi
+
   local src path count
   for src in live template; do
     if [[ "$src" == "live" ]]; then path="$live_settings"; else path="$template_settings"; fi
@@ -2437,7 +2607,11 @@ check_budget_bash_hooks() {
       continue
     fi
     if [[ "$count" -gt "$max" ]]; then
-      _warn "budget-bash-hooks" "${count} hook entries fire on every Bash call in ${src} settings (target <= ${max} per R3.3 -- harness-execution-redesign-2026-08) -- ${path}; WARN-only at this stage, Stage 2 (per-category stubs) is the actual fix"
+      if [[ "$is_red" -eq 1 ]]; then
+        _red "budget-bash-hooks" "${count} hook entries fire on every Bash call in ${src} settings (target <= ${max} per R3.3 -- harness-execution-redesign-2026-08) -- ${path}; flipped to RED since ${red_after} per schedule-manifest.json budget_check -- Stage 2 (per-category stubs) is the actual fix"
+      else
+        _warn "budget-bash-hooks" "${count} hook entries fire on every Bash call in ${src} settings (target <= ${max} per R3.3 -- harness-execution-redesign-2026-08) -- ${path}; WARN until ${red_after:-an undated flip}, Stage 2 (per-category stubs) is the actual fix"
+      fi
     fi
   done
   CHECKS_RUN=$((CHECKS_RUN + 1))
@@ -2460,6 +2634,52 @@ check_maintenance_both_substrates_alive() {
   local activation="${live_home}/state/nl-maintenance/activation-marker"
 
   if [[ ! -f "$activation" ]]; then
+    # HR-F4 inverse direction (gated-pipeline T6, REQ-A4): the original check
+    # covered both-alive only and returned SILENTLY here — which is the
+    # estate's actual failure state (legacy Disabled, replacement never
+    # registered, NO recurring maintenance at all, doctor GREEN-capable
+    # throughout). Zero-substrate detection, data-driven per the HR-F7 rule:
+    # the clock and threshold live in schedule-manifest.json .zero_substrate
+    # {legacy_disabled_since: YYYY-MM-DD, red_after_days: N}; absent data =
+    # absent check (never a prose-only flip).
+    if [[ -f "$manifest" ]] && command -v jq >/dev/null 2>&1; then
+      local zs_since zs_days zs_managed
+      zs_since="$(jq -r '.zero_substrate.legacy_disabled_since // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+      zs_days="$(jq -r '.zero_substrate.red_after_days // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+      zs_managed="$(jq -r '[.mechanisms[] | select(.managed_by == "nl-maintenance")] | length' "$manifest" 2>/dev/null | tr -d '\r')"
+      if [[ -n "$zs_since" && "$zs_days" =~ ^[0-9]+$ && "$zs_managed" =~ ^[0-9]+$ && "$zs_managed" -gt 0 ]]; then
+        # A fresh daemon heartbeat (<2h) counts as a live substrate even
+        # pre-marker (tick-mode trials); only marker-absent AND heartbeat-
+        # stale AND no legacy task Enabled is truly zero-substrate.
+        local zs_hb="${live_home}/state/nl-maintenance/daemon.heartbeat.json"
+        local zs_hb_fresh=0 zs_now zs_hb_m
+        zs_now="$(date +%s 2>/dev/null || echo 0)"
+        if [[ -f "$zs_hb" ]]; then
+          zs_hb_m="$(date -r "$zs_hb" +%s 2>/dev/null || stat -c %Y "$zs_hb" 2>/dev/null || echo 0)"
+          [[ "$zs_hb_m" =~ ^[0-9]+$ && $(( zs_now - zs_hb_m )) -lt 7200 ]] && zs_hb_fresh=1
+        fi
+        local zs_legacy_enabled=""
+        if [[ "$zs_hb_fresh" -eq 0 ]] && command -v schtasks >/dev/null 2>&1; then
+          local zs_names zs_name zs_state
+          zs_names="$(jq -r '.mechanisms[] | select(.legacy_task_name != null) | .legacy_task_name' "$manifest" 2>/dev/null | tr -d '\r')"
+          while IFS= read -r zs_name; do
+            [[ -z "$zs_name" ]] && continue
+            zs_state="$(MSYS_NO_PATHCONV=1 schtasks /Query /TN "$zs_name" /FO LIST /V 2>/dev/null | tr -d '\r' | sed -nE 's/^Scheduled Task State:[[:space:]]*//p' | head -1)"
+            [[ "$zs_state" == "Enabled" ]] && zs_legacy_enabled="yes" && break
+          done <<< "$zs_names"
+          if [[ -z "$zs_legacy_enabled" ]]; then
+            local zs_since_epoch zs_age_days
+            zs_since_epoch="$(date -d "$zs_since" +%s 2>/dev/null || echo 0)"
+            zs_age_days=$(( (zs_now - zs_since_epoch) / 86400 ))
+            if [[ "$zs_age_days" -ge "$zs_days" ]]; then
+              _red "maintenance-zero-substrates" "ZERO maintenance substrates alive for ${zs_age_days}d (legacy tasks Disabled since ${zs_since}, NL-Maintenance never registered, no fresh heartbeat) -- ${zs_managed} managed_by=nl-maintenance mechanisms are running NOWHERE. Fix: complete DEC-4 ratification + register (docs/plans/gated-pipeline-master-2026-08.md T10), or re-enable a legacy task as a stopgap"
+            else
+              _warn "maintenance-zero-substrates" "zero maintenance substrates alive (legacy Disabled since ${zs_since}, replacement unregistered; RED at ${zs_days}d, now ${zs_age_days}d) -- T10 registration pending"
+            fi
+          fi
+        fi
+      fi
+    fi
     CHECKS_RUN=$((CHECKS_RUN + 1))
     return 0
   fi
@@ -4597,6 +4817,39 @@ EOF
     PASSED=$((PASSED + 1))
   fi
 
+  # ---- Check: budget-bash-hooks RED fixture (HR-F7, gated-pipeline
+  # T7/REQ-A5): red_after in the past -> the same over-budget count flips
+  # from WARN to RED, exit code 1. ----
+  D=$(_scenario_dir bbh-red-after-flip)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json" bbh-a.sh bbh-b.sh bbh-c.sh bbh-d.sh bbh-e.sh bbh-f.sh bbh-g.sh
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  for _n in a b c d e f g; do
+    echo '#!/bin/bash' > "$D/live/hooks/bbh-${_n}.sh"
+    echo '#!/bin/bash' > "$D/repo/adapters/claude-code/hooks/bbh-${_n}.sh"
+  done
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '{"schema_version":3,"budget_check":{"red_after":"2020-01-01"},"mechanisms":[]}' \
+    > "$D/repo/adapters/claude-code/config/schedule-manifest.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-bash-hooks-red-after-flip" 1 "$RC" "RED budget-bash-hooks.*7 hook entries" "$OUT"
+
+  # ---- Check: budget-bash-hooks stays WARN fixture — red_after in the
+  # future -> still WARN, exit code 0. ----
+  D=$(_scenario_dir bbh-warn-future-red-after)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json" bbh-a.sh bbh-b.sh bbh-c.sh bbh-d.sh bbh-e.sh bbh-f.sh bbh-g.sh
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  for _n in a b c d e f g; do
+    echo '#!/bin/bash' > "$D/live/hooks/bbh-${_n}.sh"
+    echo '#!/bin/bash' > "$D/repo/adapters/claude-code/hooks/bbh-${_n}.sh"
+  done
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  printf '{"schema_version":3,"budget_check":{"red_after":"2099-01-01"},"mechanisms":[]}' \
+    > "$D/repo/adapters/claude-code/config/schedule-manifest.json"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-bash-hooks-red-after-future-stays-warn" 0 "$RC" "WARN budget-bash-hooks.*7 hook entries" "$OUT"
+
   # ---- Check: schedule-manifest-cadence (harness-execution-redesign-
   # 2026-08 Task 1, invariant 2). WARN fixture — declared cadence (60s) is
   # under 2x the recorded cycle time (110s, needs >= 220s), naming the
@@ -4645,6 +4898,63 @@ EOF
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "schedule-manifest-cadence-missing-warn" 0 "$RC" "WARN schedule-manifest-cadence.*no adapters/claude-code/config/schedule-manifest.json found" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence RED fixture (HR-F7, gated-
+  # pipeline T7/REQ-A5): red_after in the past -> the same violation flips
+  # from WARN to RED, exit code 1. ----
+  D=$(_scenario_dir smc-red-after-flip)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"cadence_check":{"ratio_floor":2,"red_after":"2020-01-01"},"mechanisms":[
+  {"id":"fixture-coord-sync-red","declared_cadence_seconds":60,"measured_cycle_seconds":110}
+]}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-red-after-flip" 1 "$RC" "RED schedule-manifest-cadence.*'fixture-coord-sync-red'" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence stays WARN fixture — red_after in
+  # the future -> still WARN, exit code 0. ----
+  D=$(_scenario_dir smc-warn-future-red-after)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"cadence_check":{"ratio_floor":2,"red_after":"2099-01-01"},"mechanisms":[
+  {"id":"fixture-coord-sync-future","declared_cadence_seconds":60,"measured_cycle_seconds":110}
+]}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-red-after-future-stays-warn" 0 "$RC" "WARN schedule-manifest-cadence.*'fixture-coord-sync-future'" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence managed_by=nl-maintenance +
+  # activation marker present -> satisfied-by-construction, annotated
+  # (NOTE), never warned/redded even with a past red_after (HR-F7's own
+  # proven false positive: the prescribed remedy IS this state). ----
+  D=$(_scenario_dir smc-managed-satisfied)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"cadence_check":{"ratio_floor":2,"red_after":"2020-01-01"},"mechanisms":[
+  {"id":"fixture-managed","declared_cadence_seconds":60,"measured_cycle_seconds":110,"managed_by":"nl-maintenance"}
+]}
+EOF
+  mkdir -p "$D/live/state/nl-maintenance"
+  { date +%s 2>/dev/null || echo 0; } > "$D/live/state/nl-maintenance/activation-marker"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-managed-satisfied-by-construction" 0 "$RC" "NOTE schedule-manifest-cadence.*'fixture-managed'.*satisfied-by-construction" "$OUT"
+  if printf '%s' "$OUT" | grep -qE "(WARN|RED) schedule-manifest-cadence.*'fixture-managed'"; then
+    echo "self-test (schedule-manifest-cadence-managed-never-warns-or-reds): FAIL (expected NO WARN/RED line for the managed_by=nl-maintenance entry): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (schedule-manifest-cadence-managed-never-warns-or-reds): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
 
   # ---- Check: limit-resume-watchdog. No state dir at all -> silent
   # (WARN-free), RC 0. ----
@@ -7066,7 +7376,14 @@ EOF
   # contract is exercised by the dedicated sf-guard-unconditional scenario
   # below.
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" SF_DISABLE=1 bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
-  _assert "9-ssf-explicit-invocation-never-suppressed" 0 "$RC" "GREEN" "$OUT"
+  # HR-F10 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): renamed
+  # with the -BY-SSF suffix -- "never suppressed" is true only of SSF
+  # (sessionstart-singleflight.sh, the OLD marker-gated mechanism this
+  # scenario isolates via SF_DISABLE=1 above), not of the system as a
+  # whole: sf_guard, the NEW unconditional guard, DOES suppress explicit
+  # reruns (see the 9b-sfguard scenarios below). The un-suffixed name
+  # asserted a system-level guarantee that no longer holds.
+  _assert "9-ssf-explicit-invocation-never-suppressed-BY-SSF" 0 "$RC" "GREEN" "$OUT"
 
   # ---- sf-guard-unconditional (harness-execution-redesign-2026-08 Task 1,
   # invariant 4): the NEW guard fires WITHOUT any NL_SESSIONSTART_ORIGIN
@@ -7086,12 +7403,19 @@ EOF
   # lock, still no marker -> the NEW unconditional guard skips it.
   OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
   _assert "9b-sfguard-second-explicit-call-single-flighted" 0 "$RC" "single-flight" "$OUT"
-  if printf '%s' "$OUT" | grep -q "GREEN"; then
-    echo "self-test (9b-sfguard-skip-means-no-checks-ran): FAIL (expected a bare skip, checks appear to have run): $OUT" >&2
-    FAILED=$((FAILED + 1))
-  else
-    echo "self-test (9b-sfguard-skip-means-no-checks-ran): PASS" >&2
+  # gated-pipeline-master-2026-08 Task 4 (REQ-A2, fixing HR-F2+F5+F8): the
+  # skip now SERVES call 1's cached GREEN verdict verbatim (single-writer
+  # contract) instead of the old bare "no checks ran" skip -- GREEN is now
+  # EXPECTED here, honestly traceable to call 1's real recompute a moment
+  # ago, never fabricated. (The old bare `exit 0` this replaces is exactly
+  # what let digest's now-removed cache writer corrupt the entry on a race
+  # -- F2's proven casualty.)
+  if printf '%s' "$OUT" | grep -q "\[doctor\] GREEN"; then
+    echo "self-test (9b-sfguard-skip-serves-cached-verdict-honestly): PASS" >&2
     PASSED=$((PASSED + 1))
+  else
+    echo "self-test (9b-sfguard-skip-serves-cached-verdict-honestly): FAIL (expected the skip to serve call 1's cached GREEN verdict): $OUT" >&2
+    FAILED=$((FAILED + 1))
   fi
   # Recursion guard: a nested invocation within the SAME process (env var
   # inherited by a subprocess) short-circuits with zero I/O, distinct
@@ -7103,10 +7427,24 @@ EOF
   OUT="$(
     export HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo"
     source "$SCRIPT_DIR/lib/single-flight-lib.sh" ""
+    # TTL justification (HR-F3 comment-discipline requirement, gated-
+    # pipeline T7/REQ-A5): this call's TTL value is deliberately NOT tied
+    # to the production 1200s figure below -- it exists only to claim the
+    # recursion-guard env var + a fresh lock stamp so the NEXT line (a real
+    # subprocess of THIS same shell) hits the zero-I/O recursion branch,
+    # which is checked and returns BEFORE sf_guard ever consults the TTL
+    # at all. Any positive integer here would produce the identical
+    # recursion-path assertion below; 120 is kept only for readability
+    # continuity with the rest of this file's fixtures.
     SF_STATE_DIR="${D}/live/state/single-flight" sf_guard "doctor-quick" 120 >/dev/null 2>&1
     SF_STATE_DIR="${D}/live/state/single-flight" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1
   )"; RC=$?
-  _assert "9c-sfguard-recursion-nested-invocation-short-circuits" 0 "$RC" "recursion" "$OUT"
+  # gated-pipeline-master-2026-08 Task 4 (REQ-A2): this is a FRESH scenario
+  # dir (c9c) -- no prior real run means no cache exists yet, so the honest
+  # outcome on this skip is exit 3 + a parseable SKIPPED line (never a
+  # fabricated 0/GREEN just because there was nothing to serve).
+  _assert "9c-sfguard-recursion-nested-invocation-short-circuits" 3 "$RC" "recursion" "$OUT"
+  _assert "9c-sfguard-recursion-no-cache-exits-3-with-skipped-line" 3 "$RC" "SKIPPED" "$OUT"
 
   # ================================================================
   # Check 9 (portability-sweep) — macos-portability-2026-07 task M5
@@ -7360,9 +7698,35 @@ fi
 # suite single-flight against every OTHER scenario's invocation instead of
 # against the real machine's ~/.claude. See lib/single-flight-lib.sh
 # header for the full recursion-vs-single-flight contract.
+#
+# gated-pipeline-master-2026-08 Task 4 (REQ-A2, fixing HR-F2+F5+F8): a skip
+# here is NEVER a bare `exit 0` anymore -- that was indistinguishable from
+# a real GREEN to every exit-code consumer (F8), and composed with digest's
+# old cache writer to corrupt the cache on every skip (F2). sf_guard's own
+# `echo ... >&2` above (HALT vs single-flight vs recursion) still fires
+# normally on this call -- it is NOT captured/consumed here, so a caller
+# combining stdout+stderr (2>&1, as every self-test scenario below does)
+# still sees the specific reason. _doctor_serve_cache_or_skip then serves
+# the cached verdict (fast path, matches the sf-skip's own spirit: the
+# guard mostly exists because a real recompute was JUST done a moment ago)
+# or exits 3 with a parseable line when no valid cache exists yet.
+#
+# TTL = 1200s (HR-F3, 2026-08-03 harness review, gated-pipeline T7/REQ-A5):
+# the review measured a 552s cold `--quick` cycle; a fresh re-measurement
+# during this fix (2026-08-03, SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1
+# bash harness-doctor.sh --quick, timed via epoch delta) got 421s and 425s
+# on two separate runs -- the OLD 120s TTL was ~4x SHORTER than the work it
+# guards, so the guard lapsed mid-run and concurrent doctors became
+# possible again exactly when the estate is degraded and runs are longest
+# (the brief's own cadence-< cycle pathology, reproduced inside the
+# mechanism built to kill it). 1200s is >= 2x every measurement above with
+# real margin. This is now belt-and-suspenders with `_sf_is_stale`'s
+# owner-pid liveness check (single-flight-lib.sh, same finding): a live
+# owner is never reclaimed regardless of TTL, so 1200s only matters for
+# the case liveness can't cover (owner confirmed dead, or unrecorded).
 if declare -F sf_guard >/dev/null 2>&1; then
-  if ! SF_STATE_DIR="${LIVE_HOME}/state/single-flight" sf_guard "doctor-quick" 120; then
-    exit 0
+  if ! SF_STATE_DIR="${LIVE_HOME}/state/single-flight" sf_guard "doctor-quick" 1200; then
+    _doctor_serve_cache_or_skip "single-flight guard active"
   fi
 fi
 
@@ -7468,11 +7832,15 @@ echo "$_dvc_verdict_line"
 # ------------------------------------------------------------
 # Doctor verdict cache — WRITE path. Only after a REAL quick-mode
 # computation (never for --full/--portability, whose cost this TTL is not
-# pricing). Same file/schema session-start-digest.sh's refresh_doctor_cache
-# writes (ts/verdict_line/exit_code), extended with ts_epoch + fingerprint
-# so THIS reader (and only this reader) can serve a fast-path hit next
-# time (invariant 8: the fingerprint is derived, not authored, from the
-# declared inputs above).
+# pricing). gated-pipeline-master-2026-08 Task 4 (REQ-A2): this is now the
+# cache file's ONLY writer in the entire codebase (single-writer contract
+# fixing HR-F2). session-start-digest.sh's refresh_doctor_cache is
+# invoke-and-read-only -- it forces a real recompute (SF_DISABLE=1
+# DOCTOR_VERDICT_CACHE_DISABLE=1, which lands right here) and then reads
+# back this exact record; it never printfs the file. ts_epoch + fingerprint
+# so THIS reader (and only this reader) can serve a fast-path hit next time
+# (invariant 8: the fingerprint is derived, not authored, from the declared
+# inputs above).
 # ------------------------------------------------------------
 if [[ "$MODE" == "quick" ]]; then
   _dvc_write_cache="$(_doctor_verdict_cache_path "$LIVE_HOME")"

@@ -26,7 +26,8 @@ sf_guard <name> <ttl_seconds>
 ```
 
 1. **HALT/drain** (invariant 11) — checked first. `sf_halt_active` / `sf_halt_set [reason]` /
-   `sf_halt_clear` / `sf_halt_reason`. One file: `${SF_STATE_DIR:-$HOME/.claude/state/single-flight}/HALT`.
+   `sf_halt_clear` / `sf_halt_reason`. One file: `${SF_HALT_DIR:-$HOME/.claude/state/single-flight}/HALT`
+   — its OWN canonical directory, independent of `SF_STATE_DIR` (HR-F11, see below).
 2. **Recursion guard** (invariant 4, zero I/O) — an exported env var
    (`_SF_ACTIVE_<sanitized-name>`) that a genuine nested subprocess invocation inherits. Catches
    "this same process tree is already running this named entry point again" with no filesystem
@@ -40,6 +41,62 @@ sf_guard <name> <ttl_seconds>
 Fail-open on every internal error path (unwritable state dir, missing `find`, a lost mkdir
 race) — HALT is the only mechanism allowed to deliberately block real work. Bypass:
 `SF_DISABLE=1` (every self-test that needs to isolate itself from this guard uses it).
+
+### `sf_release` — releasing a resident-loop guard (HR-F1, 2026-08-03)
+
+`sf_guard`'s recursion guard is an exported env var that nothing clears automatically — a
+**run-to-exit assumption**. For a caller that acquires once and then runs to completion, process
+exit clears it for free. For a caller that lives inside a resident loop (the SAME process calling
+`sf_guard` for the SAME `<name>` on every pass — e.g. a `--daemon` mode), that assumption breaks:
+pass 1 acquires and exports the var; every later pass in that same process sees it already set,
+hits the recursion branch, and skips — forever. This is exactly what happened to
+`nl-maintenance.sh`'s `--daemon` mode (2026-08-03 harness review, finding HR-F1): it ticked
+exactly once, then silently wedged on its own guard for the rest of its life, while the watchdog
+kept relaunching new daemons on top of the stuck one (see "Daemon lifecycle" below).
+
+```
+sf_release <name>
+  Clears the recursion-guard env var and removes the cross-process mkdir lock for <name>.
+  Idempotent — a second call, or a call for a name this process never itself acquired, is a
+  silent no-op. Ownership-safe — it only acts when the recursion var IT set is still 1, so it
+  can never tear down a DIFFERENT process's active single-flight hold.
+```
+
+**The rule**: any `sf_guard` call site inside a resident loop MUST pair every acquire with an
+`sf_release` once that pass's guarded work is done — `guard -> work -> release`, every pass. A
+call site that runs to process exit after a single guard does not need to call `sf_release` at
+all. Get this wrong and the symptom is silent and easy to miss in review: the first pass works,
+every later pass quietly no-ops.
+
+## Daemon lifecycle: `nl-maintenance.sh --daemon` / `--watchdog` (HR-F1)
+
+`--daemon` loops `sf_guard "nl-maintenance-tick" -> tick body -> sf_release "nl-maintenance-tick"`
+once per pass (the resident-loop pattern above), so every pass writes a fresh heartbeat instead of
+only the first. `run_daemon` also writes its own pid to `daemon.pid` on startup.
+
+`--watchdog` (the one recurring OS task, fired every 300s by `install-maintenance-task.ps1`) now
+reads `daemon.pid` before relaunching on a stale heartbeat, and verifies the named pid's command
+line actually names `nl-maintenance` + `--daemon` before ever killing it:
+
+- **Verification order**: try `/proc/<pid>/cmdline` first (present under MSYS2/Git-Bash on
+  Windows and on Linux); fall back to `ps -fp <pid>` (`-f` is required — a bare `ps -p` on this
+  repo's MSYS2 `ps` prints only the executable path in `COMMAND`, never the args, which would
+  make identity verification impossible).
+- **Match**: kill the verified-stale daemon, then relaunch.
+- **Mismatch** (missing pid file, dead pid, or a live pid whose command line doesn't match —
+  e.g. Windows reused the pid for an unrelated process): **log-and-skip, never kill**, then
+  relaunch anyway. An unverified kill is unbounded harm (an innocent process dies); leaving a
+  genuine stale daemon alive for one extra relaunch cycle is bounded harm — and now self-healing,
+  because that daemon's own `sf_release`-per-pass fix means it keeps ticking correctly instead of
+  wedging, so two briefly-coexisting daemons is a transient, self-resolving condition, not
+  unbounded accumulation.
+- Under `HARNESS_SELFTEST=1`, both the kill and the relaunch are stubbed (logged, never
+  performed) — mirrors the existing relaunch-stub contract exactly.
+
+`nl-maintenance.sh --self-test`'s S11 exercises the daemon loop under the REAL guard (no
+`SF_DISABLE`) across 3 passes and asserts >= 2 distinct heartbeat writes plus the absence of any
+`recursion detected` message — the previous version of S11 ran under `SF_DISABLE=1`, which made it
+structurally incapable of catching HR-F1 at all.
 
 ## Relationship to the two guards that already existed — Chesterton's Fence
 
@@ -58,8 +115,33 @@ race) — HALT is the only mechanism allowed to deliberately block real work. By
   whole point is "don't rely on the caller to identify itself"). Any pre-existing self-test that
   specifically validates the OLD mechanism's isolated contract sets `SF_DISABLE=1` on its own
   invocation to avoid being confounded by the new, independent guard — see
-  `harness-doctor.sh`'s `9-ssf-explicit-invocation-never-suppressed` scenario and
-  `session-start-digest.sh`'s `S20c` scenario for the pattern.
+  `harness-doctor.sh`'s `9-ssf-explicit-invocation-never-suppressed-BY-SSF` scenario (HR-F10,
+  2026-08-03 harness review, renamed to say what it now actually validates — "never suppressed"
+  was false at system level once `sf_guard` joined the mix) and `session-start-digest.sh`'s `S20c`
+  scenario for the pattern.
+
+## HALT path is canonical, not scopable (HR-F11, 2026-08-03 harness review)
+
+`sf_guard`'s HALT check resolves via `SF_HALT_DIR` — its OWN directory, defaulting to
+`$HOME/.claude/state/single-flight` — **independent of `SF_STATE_DIR`**, the (optionally scoped)
+directory used for the cross-process LOCKS. Before this split, HALT shared `SF_STATE_DIR`'s
+resolution, so a caller that scopes its locks away from the default — `nl-maintenance.sh`'s
+tick/watchdog guards do exactly this (`SF_STATE_DIR="$(_nm_state_dir)/single-flight"`) — also,
+silently, moved WHERE the operator's one-gesture HALT below had to be written to reach that
+specific guard call. The "touch one file at the default path" gesture always worked in practice
+only because `nl-maintenance.sh`'s tick body ALSO carries its own separate, unscoped
+`sf_halt_active` check inside `_nm_tick_body` (a second, redundant read of the default HALT path)
+— a coincidence of two checks, not a guarantee, and any FUTURE scoped `sf_guard` call site without
+that redundant belt-and-suspenders check would have silently been unreachable by the one-gesture
+HALT.
+
+`SF_HALT_DIR` and `SF_STATE_DIR` default to the identical directory, so any caller that never sets
+either sees NO behavior change from this fix. Only a caller that scopes `SF_STATE_DIR` (moving its
+locks) without also scoping `SF_HALT_DIR` is affected — and only for the better: its `sf_guard`
+call now sees the canonical HALT directly, the very first time it checks, with no dependence on a
+second unscoped check elsewhere in the caller's own code. Self-tests that exercise HALT must now
+export `SF_HALT_DIR` explicitly (alongside the pre-existing `SF_STATE_DIR` sandbox override) —
+`single-flight-lib.sh --self-test`'s own setup does this.
 
 ## HALT/drain — the "one gesture"
 
@@ -92,13 +174,21 @@ for every recurring mechanism, doctor-enforced"). Schema:
 
 ```jsonc
 {
-  "schema_version": 1,
-  "cadence_check": { "mode": "warn", "ratio_floor": 2 },
+  "schema_version": 3,
+  "cadence_check": {
+    "mode": "warn", "ratio_floor": 2,
+    "warn_since": "2026-08-03", "red_after": "2026-08-17"
+  },
+  "budget_check": {
+    "mode": "warn",
+    "warn_since": "2026-08-03", "red_after": "2026-08-17"
+  },
   "mechanisms": [
     {
       "id": "coord-sync",
       "script": "adapters/claude-code/scripts/coord-sync.sh",
       "installer": "adapters/claude-code/scripts/install-coord-sync-task.ps1",
+      "managed_by": "nl-maintenance",
       "declared_cadence_seconds": 60,
       "measured_cycle_seconds": 110,
       "measured_source": "<citation>",
@@ -109,13 +199,24 @@ for every recurring mechanism, doctor-enforced"). Schema:
 }
 ```
 
-`harness-doctor.sh`'s `check_schedule_manifest_cadence` WARNs (never REDs, at this stage — task
-1 is explicitly the calibration week) when `declared_cadence_seconds < ratio_floor *
-measured_cycle_seconds` for any entry that HAS a `measured_cycle_seconds`. Entries with
-`measured_cycle_seconds: null` are calibration-pending and are silently skipped — an absent
-measurement is not itself a violation; Stage 1 (`nl-maintenance.sh`) is where completion-
-anchored scheduling makes the invariant true BY CONSTRUCTION and this manifest becomes that
-core's real job table instead of a hand-maintained snapshot.
+`harness-doctor.sh`'s `check_schedule_manifest_cadence` WARNs when `declared_cadence_seconds <
+ratio_floor * measured_cycle_seconds` for any entry that HAS a `measured_cycle_seconds`. Entries
+with `measured_cycle_seconds: null` are calibration-pending and are silently skipped — an absent
+measurement is not itself a violation; Stage 1 (`nl-maintenance.sh`) is where completion-anchored
+scheduling makes the invariant true BY CONSTRUCTION and this manifest becomes that core's real job
+table instead of a hand-maintained snapshot.
+
+**Mechanized flip (HR-F7, 2026-08-03 harness review, gated-pipeline T7/REQ-A5):** "WARN for a
+calibration week, then RED" used to be prose-only, with no stored date and no mechanism that ever
+flipped it — the exact class constitution paragraph-1 bans. `cadence_check.warn_since`/`.red_after`
+(and the matching pair on the new top-level `budget_check`, governing
+`check_budget_bash_hooks`) fix that: the doctor stays WARN until `red_after`, then flips to RED on
+its own, no operator action required. An entry whose `managed_by` is `"nl-maintenance"` is exempt
+from the clock entirely once `state/nl-maintenance/activation-marker` exists — its own
+completion-anchored scheduling already IS the WARN's prescribed remedy, so the doctor annotates it
+`[doctor] NOTE ...satisfied-by-construction` instead of continuing to warn on a since-fixed
+violation (the exact false positive HR-F7 proved: the pre-fix check never read `managed_by`, so
+the remedy it prescribed never actually cleared the WARN).
 
 **Real, live signal, not just a fixture**: this manifest's own `coord-sync` entry (declared 60s,
 measured 110s) already WARNs on a real machine today — that's the actual C2 pathology from the
@@ -126,10 +227,11 @@ measured 110s) already WARNs on a real machine today — that's the actual C2 pa
 `harness-doctor.sh`'s `check_budget_bash_hooks` counts total hook entries across every
 `PreToolUse` matcher block whose `matcher` string contains `"Bash"` (covers both the bare
 `"Bash"` matcher and the combined `"Bash|PowerShell"` matcher), checked against both the live
-`settings.json` and the committed template. WARNs above 6 (the R3.3 target) — WARN-only at this
-stage; the real reduction is Stage 2's per-category stub work, not this check. Today's real
-count (~25) WARNs on every machine — visibility first, enforcement later, matching invariant 2's
-own calibration-week posture.
+`settings.json` and the committed template. WARNs above 6 (the R3.3 target); the real reduction is
+Stage 2's per-category stub work, not this check. Today's real count (~25) WARNs on every machine
+— visibility first, enforcement later, matching invariant 2's own calibration-week posture. Same
+mechanized flip as the cadence check above: `schedule-manifest.json`'s top-level `budget_check.
+red_after` (HR-F7) is the stored date this WARN flips to RED at — no longer prose-only.
 
 ## SessionStart matcher narrowing
 

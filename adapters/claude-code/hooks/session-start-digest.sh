@@ -495,7 +495,23 @@ feed_stranded_work() {
 # checks" is warning against. Design: read a CACHED verdict written by a
 # prior `--refresh-doctor-cache` invocation (a manual/scheduled-task call,
 # never this hook's own default path) at
-# ~/.claude/state/digest/doctor-cache.json: {ts, verdict_line, exit_code}.
+# ~/.claude/state/digest/doctor-cache.json.
+#
+# SINGLE-WRITER CONTRACT (gated-pipeline-master-2026-08 Task 4, REQ-A2,
+# fixing HR-F2+F5+F8): harness-doctor.sh itself is this file's ONLY writer
+# -- {ts, ts_epoch, verdict_line, exit_code, fingerprint}, 5 fields. This
+# module (session-start-digest.sh) NEVER writes it; `refresh_doctor_cache`
+# below is invoke-and-read-only (it forces a real doctor recompute, then
+# reads back whatever the doctor's own writer just produced) and
+# `feed_doctor` below is read-only (it only ever consumes `ts` +
+# `verdict_line`, so it is forward-compatible with the extra ts_epoch/
+# exit_code/fingerprint fields it does not need). Before this fix,
+# `refresh_doctor_cache` was a SECOND writer with an incompatible 3-field
+# schema (no fingerprint) that re-stamped `ts` on every cache HIT
+# (laundering staleness past this very freshness check) and stomped a
+# valid fingerprinted entry with "verdict unavailable (exit 0)" whenever
+# it raced the doctor's own sf-skip (F2's proven cache-corruption path).
+#
 # Fresh (<= DOCTOR_CACHE_MAX_AGE_HOURS, default 6h) -> passthrough verbatim.
 # Stale or missing -> honest one-liner naming the gap and the exact command
 # to populate it (never silently re-runs the 30-60s check inline).
@@ -515,24 +531,49 @@ _doctor_cache_path() {
 }
 
 # refresh_doctor_cache <cwd> — runs `harness-doctor.sh --quick` for real and
-# writes the cache file. This is the ONLY code path that invokes the real
-# doctor; called via `--refresh-doctor-cache` (operator / scheduled task),
-# never from the default SessionStart entry point.
+# reads back the cache file it writes. This is the ONLY code path that
+# invokes the real doctor for a real recompute; called via
+# `--refresh-doctor-cache` (operator / scheduled task), never from the
+# default SessionStart entry point.
+#
+# INVOKE-AND-READ-ONLY (gated-pipeline-master-2026-08 Task 4, REQ-A2,
+# fixing HR-F2+F5+F8): this function NEVER writes doctor-cache.json itself
+# -- harness-doctor.sh's own quick-mode write path is the cache's ONLY
+# writer (single-writer contract; see the Feed 8 header above). Two env
+# vars force a REAL recompute every call (this function's whole job is
+# "proactive recompute", so a within-TTL cache-HIT no-op here would
+# silently change its warm-keeping semantics):
+#   SF_DISABLE=1                 bypasses the doctor's own single-flight
+#                                 skip (never let this call itself be the
+#                                 thing that gets sf-skipped)
+#   DOCTOR_VERDICT_CACHE_DISABLE=1  bypasses the doctor's cache-hit
+#                                 fast-path read (forces run_quick_checks
+#                                 to actually run, not just echo a cached
+#                                 line back)
+# Neither var disables the doctor's WRITE path (it is gated on MODE==quick
+# only) -- so this always ends with the doctor writing one fresh,
+# fingerprinted, 5-field record, which this function then reads back
+# rather than re-deriving or re-stamping any part of it itself.
 refresh_doctor_cache() {
   local cwd="${1:-$PWD}"
   local doctor="$HOOKS_DIR/harness-doctor.sh"
   local cache; cache="$(_doctor_cache_path)"
-  mkdir -p "$(dirname "$cache")" 2>/dev/null || true
   [[ -f "$doctor" ]] || { echo "refresh-doctor-cache: harness-doctor.sh not found at $doctor" >&2; return 1; }
   local out rc
-  out="$(cd "$cwd" 2>/dev/null && bash "$doctor" --quick 2>&1)"
+  out="$(cd "$cwd" 2>/dev/null && SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1 bash "$doctor" --quick 2>&1)"
   rc=$?
-  local last
-  last="$(printf '%s\n' "$out" | grep -E '^\[doctor\] (GREEN|FAILED)' | tail -n1)"
+  # Read back whatever the doctor's own writer just produced -- never
+  # re-derive the verdict line ourselves from $out (that stdout capture is
+  # kept only as the fallback below, for the rare case the doctor itself
+  # couldn't write a cache entry at all, e.g. an unwritable state dir).
+  local last=""
+  if [[ -f "$cache" ]]; then
+    last="$(sed -nE 's/.*"verdict_line":"([^"]*)".*/\1/p' "$cache" 2>/dev/null | head -1)"
+  fi
+  if [[ -z "$last" ]]; then
+    last="$(printf '%s\n' "$out" | grep -E '^\[doctor\] (GREEN|FAILED)' | tail -n1)"
+  fi
   [[ -z "$last" ]] && last="[doctor] verdict unavailable (exit ${rc})"
-  local now; now="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
-  local last_esc="${last//\\/\\\\}"; last_esc="${last_esc//\"/\\\"}"
-  printf '{"ts":"%s","verdict_line":"%s","exit_code":%d}\n' "$now" "$last_esc" "$rc" > "$cache" 2>/dev/null || true
   printf '%s\n' "$last"
   return "$rc"
 }
@@ -2461,7 +2502,14 @@ EOF
     DOCTOR_CACHE_PATH="$s20_cache" DIGEST_SEEN_PATH="$tmp/s20c-seen.jsonl" \
       bash "$s20_script" </dev/null 2>&1
   )"
-  _ck_contains "S20c explicit invocation (no NL_SESSIONSTART_ORIGIN) never suppressed by a held lock" "$out20c" "doctor:"
+  # HR-F10 (2026-08-03 harness review, gated-pipeline T7/REQ-A5): renamed
+  # with the -BY-SSF suffix -- SF_DISABLE=1 above isolates the OLD, marker-
+  # gated ss_singleflight mechanism (SSF) this scenario validates; the
+  # unqualified "never suppressed" claim is false at system level once
+  # sf_guard (the new unconditional guard, S22 above) is in the mix -- it
+  # DOES single-flight explicit reruns. Mirrors harness-doctor.sh's own
+  # 9-ssf-explicit-invocation-never-suppressed-BY-SSF rename.
+  _ck_contains "S20c explicit invocation (no NL_SESSIONSTART_ORIGIN) never-suppressed-BY-SSF (old marker-gated mechanism only)" "$out20c" "doctor:"
 
   # ---- S21: feed_plan_recheck() (T9, accountable-estate-program-2026-07)
   #          delegates to plan-recheck-sweep.sh --quick. A sandboxed fixture
@@ -2576,11 +2624,82 @@ EOF
     cd "$s22d" && \
     export HOME="$s22d_home" HARNESS_SELFTEST=1
     source "$HOOKS_DIR/lib/single-flight-lib.sh" ""
+    # TTL justification (HR-F3 comment-discipline requirement, gated-
+    # pipeline T7/REQ-A5): this call's TTL value is irrelevant to what
+    # S22d actually exercises -- it only needs to claim the recursion-
+    # guard env var so the next line's real subprocess hits sf_guard's
+    # zero-I/O recursion branch, which returns BEFORE the TTL is ever
+    # consulted. Kept at 120 for continuity with the production digest
+    # guard below, not because that value matters here.
     sf_guard "digest-$(sf_repo_key "$PWD")" 120 >/dev/null 2>&1
     DOCTOR_CACHE_PATH="$s22_cache" DIGEST_SEEN_PATH="$tmp/s22d-seen.jsonl" \
       bash "$s22_script" </dev/null 2>&1
   )"
   _ck_contains "S22d nested (recursive) invocation short-circuits via sf_guard's recursion check" "$out22d" "recursion"
+
+  # ---- S23 (gated-pipeline-master-2026-08 Task 4, REQ-A2, fixing HR-F2+
+  # F5+F8): single-writer property, exercised at RUNTIME (not just by
+  # grepping for the deleted printf) against ONE scoped cache file. Step 1
+  # runs the DIGEST path (refresh_doctor_cache, which forces a real doctor
+  # recompute via SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1) -- the
+  # resulting cache entry must carry the doctor's 5-field fingerprint/
+  # ts_epoch shape, never the old 3-field digest-authored shape, proving
+  # the doctor's own writer produced it and digest did not printf over it.
+  # Step 2 snapshots the file, then runs THE DOCTOR directly a second time
+  # against the SAME cache/home/repo with nothing changed -- a legitimate
+  # cache-HIT (fresh fingerprint match, well within TTL) that must leave
+  # the file byte-identical, because a cache hit's read path returns before
+  # ever reaching the write block. Two-writer corruption (F2) would have
+  # shown up as either an empty/3-field record after step 1, or a
+  # re-stamped ts / stripped fingerprint after step 2.
+  local s23="$tmp/s23"
+  _seed_repo "$s23"
+  local s23_home="$tmp/s23-home"
+  mkdir -p "$s23_home/.claude/state"
+  local s23_cache="$tmp/s23-doctor-cache.json"
+  rm -f "$s23_cache"
+
+  # set -e is active from here on (re-enabled at S5 above, for the rest of
+  # this function) -- refresh_doctor_cache and the direct doctor call below
+  # both LEGITIMATELY propagate a non-zero exit code (1 == FAILED is the
+  # real, correct, intended behavior whenever RED checks exist, exactly as
+  # this repo's own live state currently has). A bare `var=$(cmd)`
+  # assignment statement's own exit status IS the substitution's exit
+  # status, so under set -e an assignment capturing a rc=1 doctor verdict
+  # would abort the WHOLE self-test right here with no error message --
+  # bracket both calls with set +e/-e, matching this file's own S5
+  # precedent a few hundred lines up.
+  set +e
+  local out23a
+  out23a="$(HOME="$s23_home" HARNESS_SELFTEST=1 DOCTOR_CACHE_PATH="$s23_cache" \
+    refresh_doctor_cache "$s23" 2>&1)"
+  set -e
+  _ck_contains "S23a refresh_doctor_cache (digest path) produces a real [doctor] verdict line" "$out23a" "[doctor]"
+
+  local s23_fp1 s23_epoch1
+  s23_fp1="$(sed -nE 's/.*"fingerprint":"([^"]*)".*/\1/p' "$s23_cache" 2>/dev/null | head -1)"
+  s23_epoch1="$(sed -nE 's/.*"ts_epoch":([0-9]+).*/\1/p' "$s23_cache" 2>/dev/null | head -1)"
+  _ck_contains "S23b cache after the digest invocation carries a fingerprint (the DOCTOR's 5-field writer produced it, not digest's old 3-field one)" "${s23_fp1:+present}" "present"
+  _ck_contains "S23c cache after the digest invocation carries a numeric ts_epoch" "$([[ "$s23_epoch1" =~ ^[0-9]+$ ]] && echo isnum || echo notnum)" "isnum"
+
+  local s23_snapshot1
+  s23_snapshot1="$(cat "$s23_cache" 2>/dev/null)"
+
+  # Second call: THE DOCTOR, directly, same scoped cache/home/repo, zero
+  # elapsed real-world change -- fingerprint matches, well within the
+  # default 1800s TTL, so this MUST be a cache HIT (fast-path read, zero
+  # writes), not a fresh recompute.
+  set +e
+  local out23d
+  out23d="$(cd "$s23" && HOME="$s23_home" DOCTOR_CACHE_PATH="$s23_cache" \
+    bash "$HOOKS_DIR/harness-doctor.sh" --quick 2>&1)"
+  set -e
+  _ck_contains "S23d direct doctor re-run is a cache HIT (fast path), not a recompute" "$out23d" "cached verdict"
+
+  local s23_snapshot2
+  s23_snapshot2="$(cat "$s23_cache" 2>/dev/null)"
+  _ck_contains "S23e single-writer property: cache file byte-identical across the digest invocation and the subsequent doctor cache-HIT read" \
+    "$([[ "$s23_snapshot1" == "$s23_snapshot2" ]] && echo identical || echo DIFFERS)" "identical"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""
@@ -2684,6 +2803,19 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
       # unchanged, as an additional narrower layer — invariant 9: the
       # marker-gated guard is now belt, never braces). Repo-scoped exactly
       # like the block below (this hook's feeds are genuinely per-$PWD).
+      # TTL justification (HR-F3 comment-discipline requirement, gated-
+      # pipeline T7/REQ-A5, out-of-scope-for-value-change per REQ-A5's own
+      # text -- only doctor-quick's TTL was raised): this guard's workload
+      # (run_digest's handful of feed_* calls) is a much lighter cycle than
+      # harness-doctor.sh's full check_* sweep, and no dedicated cold-cycle
+      # measurement exists for it specifically -- 120s was the original
+      # debounce window for rapid repeated SessionStart digests in the same
+      # repo, not derived from a measured worst case. If a future
+      # measurement finds this window too short, `_sf_is_stale`'s owner-pid
+      # liveness check (single-flight-lib.sh, HR-F3, applies to every
+      # sf_guard call site including this one) already provides the
+      # backstop regardless of the TTL value: a genuinely live digest run's
+      # lock is never reclaimed out from under it.
       if declare -F sf_guard >/dev/null 2>&1; then
         if ! sf_guard "digest-$(sf_repo_key "$PWD")" 120; then
           exit 0
