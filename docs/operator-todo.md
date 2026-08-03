@@ -31,7 +31,7 @@ _(add your own free-form to-do items in this section — never overwritten)_
 - [x] AUTO: decision waiting on operator — "Action needed: register the coordination publisher on the Windows desktop (one command, one time)." (needs-you `NY-1785394095-d8ec`, tier untiered, session `a3fcb6ea`) — see NEEDS-YOU.md
 - [x] AUTO: decision waiting on operator — "Decision needed: rewire the runtime-verification Stop gate, or formally retire it to attic/?" (needs-you `NY-1785446110-33f6`, tier untiered, session `unknown`) — see NEEDS-YOU.md
 
-- [ ] AUTO: decision waiting on operator — "### Register the coordination publisher on this Windows desktop" (needs-you `NY-1785556561-aaba`, tier untiered, session `a3fcb6ea`) — see NEEDS-YOU.md
+- [x] AUTO: decision waiting on operator — "### Register the coordination publisher on this Windows desktop" (needs-you `NY-1785556561-aaba`, tier untiered, session `a3fcb6ea`) — see NEEDS-YOU.md
 - [ ] AUTO: decision waiting on operator — "### Attribution gate on subagent dispatch — keep or veto (tier 2)" (needs-you `NY-1785556662-b3bd`, tier 2, session `unknown`) — see NEEDS-YOU.md
 - [ ] AUTO: decision waiting on operator — "### Mac mini only: its ~/.claude/settings.json wires a dead hook (tier 2)" (needs-you `NY-1785556714-1055`, tier 2, session `unknown`) — see NEEDS-YOU.md
 - [ ] AUTO: decision waiting on operator — "### Add doctrine/ to the review-record surface? (tier 1)" (needs-you `NY-1785556770-1313`, tier 1, session `unknown`) — see NEEDS-YOU.md
