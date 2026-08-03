@@ -104,7 +104,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
      verified by manifest-check before push. Never deferred past the push boundary (the HR-F9
      class lives exactly there). -->
 
-- [ ] 1. Walking skeleton: `hooks/lib/review-chain-lib.sh` v1 — the three validity rules per
+- [x] 1. Walking skeleton: `hooks/lib/review-chain-lib.sh` v1 — the three validity rules per
   design r3 §4 (record parse incl. the record's own `**Reviewed:** <path> @ <blob>` attestation;
   THREE-WAY anchor match chain==record-attested==HEAD, plan-blob canonicalization +
   `inflight-blob:` WARN hash; dispatch-ledger cross-check with artifact-ref match + pre-ledger
@@ -135,7 +135,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   duplicate-content review commits) into local master via merge commit; push both mirrors; verify
   `git rev-list --left-right --count` = 0/0 against both — Verification: mechanical — Implements:
   REQ-A0 — Docs impact: none — git-state operation, no doc surface
-- [ ] 3. [parallel] HR-F1 fix: `sf_release` API in `single-flight-lib.sh` (+ header run-to-exit
+- [x] 3. [parallel] HR-F1 fix: `sf_release` API in `single-flight-lib.sh` (+ header run-to-exit
   statement); `run_daemon` releases per pass; `run_watchdog` reads `daemon.pid`, verifies the
   target cmdline contains `nl-maintenance` + `--daemon` (identity mismatch ⇒ log-and-skip, never
   kill), kills verified-stale daemon before relaunch; S11 mask (`SF_DISABLE=1` at
@@ -153,7 +153,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     **Integration points:**
     - `install-maintenance-task.ps1` watchdog cadence (300s) unchanged — verify installer self-test still passes
     - Task 7 touches `single-flight-lib.sh` too (`_sf_is_stale` pid-liveness) — serialized after this task
-- [ ] 4. [parallel] HR-F2+F5+F8 fix, single-writer form: doctor sf-skip serves cached verdict when
+- [x] 4. [parallel] HR-F2+F5+F8 fix, single-writer form: doctor sf-skip serves cached verdict when
   present else exits code 3 with `[doctor] SKIPPED (<reason>)`; `refresh_doctor_cache` becomes
   invoke-and-read-only (runs `--quick` with `SF_DISABLE=1 DOCTOR_VERDICT_CACHE_DISABLE=1` — the
   proactive-recompute semantics, per the harness delta; NEVER writes the cache file);
