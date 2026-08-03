@@ -3272,3 +3272,21 @@ rather than reading `adapters/claude-code/config/model-policy.json`'s live state
 **Trigger:** 151 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 27d old (threshold >7d).
 **Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
 **Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## AUTO-VERIFY-DISPATCH-2026-08-03 — merge→verify transition is not mechanical (operator-flagged;
+label: `harness-gap`, `stage-2-successor`)
+
+**What:** The gated pipeline (docs/designs/gated-pipeline-master-2026-08-03.md) mechanized
+design→plan (G1/Checks 20-22), plan→build-dispatch (G2 dispatch-chain-gate), review-record
+push (G3), and deploy (install review gate) — but the build→verified transition was left at
+pattern level: the design's only task-verifier mentions are the pipeline table (marked KEEP)
+and REQ-A6 (predecessor closure). Verifier dispatch after a task merge is an orchestrator
+act; enforcement is consequence-deferred (close-plan/stop gates catch unverified checkboxes
+at session end), which is exactly the "loud is not rare / present-moment friction" defect
+class. Operator flagged live on 2026-08-03 after cockpit showed merged-but-unverified chips.
+
+**Wants:** a merge-triggered mechanical verifier-dispatch obligation — e.g. a post-merge
+detector (task-ID commit pattern on the plan's branch) that registers a tracked dispatch
+obligation the Stop gate treats as unconsumed background work, so a merged task cannot age
+unverified within a session, not just at close-plan. Belongs to the Stage-2 successor plan
+(T24 admission-trigger marker). Cross-ref: nl-issue filed 2026-08-03 (same slug text).
