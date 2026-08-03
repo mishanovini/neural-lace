@@ -395,6 +395,74 @@ lib→gate wiring end-to-end on real fixtures, with no PreToolUse enforcement wi
   (consistent with HR-F3's TTL finding, Task 7's scope). docs/backlog.md was un-committable due
   to the pre-existing hygiene-gate condition (same class as the operator-todo nl-issue).
 
+### Task 4 — Comprehension Articulation (builder-authored, per Decision 020d; diff: d46beee5, merged at ec349c3f; citations re-resolved against the merged blob — AUDIT TARGET)
+
+#### Spec meaning
+
+REQ-A2 (design r3, discharging HR-F2+F5+F8) asks for the doctor's verdict cache to become
+single-writer: only `harness-doctor.sh`'s own quick-mode write path may ever put bytes in
+`doctor-cache.json`. Two consequences follow. First, the sf_guard skip path must stop doing a
+bare `exit 0` (indistinguishable from a real GREEN to any caller, and the F2 corruption's other
+half) — on skip it must either serve the existing cached verdict honestly, or exit a distinct,
+documented, non-0/1 code (3) with a parseable line. Second, `session-start-digest.sh`'s
+`refresh_doctor_cache` — previously a second writer with an incompatible 3-field schema — must
+become invoke-and-read-only: force a real doctor recompute, then read back whatever the doctor's
+own writer produced, never printf anything itself. The fingerprint (HR-F5) must widen from 4
+file mtimes + HEAD to include the live hooks mirror's newest mtime and a working-tree-dirty bit,
+since those are real inputs `run_quick_checks` reads that the original coverage silently
+excluded.
+
+#### Edge cases covered
+
+- **sf-skip, valid cache present** → serves the cached `verdict_line` verbatim and exits the
+  cache's own `exit_code`, never re-deriving or annotating (`harness-doctor.sh:331-345`
+  `_doctor_serve_cache_or_skip`; call site :7485-7489). Runtime-proven: exit matched the primed
+  cache's exit_code (1, FAILED); cache md5 identical before/after.
+- **sf-skip, no/invalid cache** → distinct code 3 with `[doctor] SKIPPED (<reason>)`
+  (:343-344). Runtime-proven: pre-claimed lock + empty cache → exit 3, no cache file created.
+- **refresh forcing a real recompute, never a no-op** → `SF_DISABLE=1
+  DOCTOR_VERDICT_CACHE_DISABLE=1` bypasses both skip and cache-hit (`session-start-digest.sh:563`),
+  then reads the fresh 5-field record off disk (:570-571); stdout capture is only the
+  wrote-nothing fallback (:573-576).
+- **Fingerprint drift classes**: live-hooks newest-mtime scan (:386-394) catches an edited LIVE
+  hook (the claimed-vs-actual drift surface previously uncovered); `git diff --quiet` dirty bit
+  (:407-411) catches uncommitted repo-file edits — the other half of D5's promise.
+- **Consumer sweep + exit-3 tolerance**: `install.sh:2019-2030` branches exit 3 distinctly as
+  non-fatal; `health-tick.sh:261` reaches the digest path where exit 3 is structurally
+  unreachable (always SF_DISABLE=1 — verified by reading, not asserted); both eval scenarios
+  pass fresh `HARNESS_DOCTOR_HOME` per call (no cross-call lock state possible), A/B-verified
+  byte-identical.
+- **Self-tests updated to the honest contract, not left stale**: 9b asserts the skip serves call
+  1's cached GREEN (:7195-7198); 9c asserts exit 3 on fresh-dir/no-cache (:7219); NEW S23
+  (`session-start-digest.sh:2626-2687`) proves single-writer end-to-end: digest path → doctor's
+  real 5-field record → second direct doctor call is a byte-identical cache HIT, never a second
+  write.
+
+#### Edge cases NOT covered
+
+- Two OTHER doctor skip paths still bare-exit-0, untouched: NL-FINDING-040 reentry guard
+  (:7423-7427, exit 0 at :7426) and SESSIONSTART-SINGLEFLIGHT-01 (:7506-7515, exit 0 at :7512).
+  HR-F2/F5/F8's grounding named only the sf_guard doctor-quick site; widening was out of
+  dispatched scope — logged as follow-up (nl-issue), not silently dropped.
+- 5 pre-existing doctor self-test failures (jq-parity class: deterministic-process-proof /
+  new-gate-evidence-bar / claim-honesty / budget-chains) confirmed pre-existing via git-stash
+  A/B: identical 5 failures with this diff stashed out.
+- Real `--quick` measures 200-300s+ wall-clock on this repo (vs the header's documented 30-60s)
+  — the known HR-F3 finding, Task 7's scope, not changed by this diff.
+
+#### Assumptions
+
+- The cache-file path contract holds across both files (`DOCTOR_CACHE_PATH` override, else the
+  two independent default path functions) — both must resolve to the SAME file for single-writer
+  to mean anything; verified by setting one shared `DOCTOR_CACHE_PATH` in S23 and the live demos
+  rather than assuming the defaults agree by construction.
+- `LIVE_HOME` scopes via `HARNESS_DOCTOR_HOME`, but `REPO_ROOT` always resolves via
+  `git rev-parse --show-toplevel` — the doctor always scans the REAL checkout even inside a
+  HOME-scoped fixture (confirmed by reading resolve_repo_root); this explains S23's real
+  repo-scan latency.
+- No `jq` dependency introduced: reader/writer on both sides use `sed`; jq present on this
+  machine but not load-bearing for this diff.
+
 - master: `298f988d` → T1 ff (`60e4a3a2`) → T3 merge (`dc9f2299`) → manifest+INDEX integration
   commit (this train's tip; SHA in the commit log).
 - All four affected self-test suites re-run green on merged master by the orchestrator:
