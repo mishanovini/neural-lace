@@ -361,6 +361,15 @@ Hooks are shell scripts that run automatically at specific lifecycle points. Con
 
 **Why:** Prevents both half-done work AND self-reported completion without verification. Every checked task must have an independent evidence block from the task-verifier agent.
 
+#### Single-flight/recursion guard + HALT (`hooks/lib/single-flight-lib.sh`)
+**When:** Sourced unconditionally at the top of every heavy, repeatedly-invoked script — `harness-doctor.sh`, `session-start-digest.sh`, `coord-sync.sh`, `supervisor-tick.sh`, `health-tick.sh`.
+**What it does:**
+1. `sf_halt_active` — an operator-set HALT flag (one file: `~/.claude/state/single-flight/HALT`) drains the whole maintenance layer with one gesture; checked first, every time.
+2. Recursion guard — an exported env var catches a nested subprocess re-invoking the same entry point, with zero filesystem I/O.
+3. Cross-process single-flight — a `mkdir`-based, TTL-aged lock debounces concurrent/rapid invocations of the same named entry point across unrelated processes.
+
+**Why:** The 2026-08-02 self-DoS incident's trigger was a wiring-marker-only debounce (`NL_SESSIONSTART_ORIGIN`) that only protects the ONE call site remembering to set it — a resume-origin invocation sailed through and 16 concurrent doctor chains followed. This lib is the unconditional, library-level fix (harness-execution-redesign-2026-08 Task 1); see `docs/plans/harness-execution-redesign-2026-08.md` and `adapters/claude-code/doctrine/single-flight-halt-runbook.md` for the full runbook.
+
 #### Safety Hooks (inline in settings.json)
 **PreToolUse hooks that block dangerous actions at the tool level:**
 - Editing `.env`, `.env.local`, `.env.production`, `credentials.json`, `secrets.yaml` → **BLOCKED**

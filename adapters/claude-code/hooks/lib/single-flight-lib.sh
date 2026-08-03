@@ -1,0 +1,391 @@
+#!/bin/bash
+# single-flight-lib.sh — universal single-flight + recursion guard, PLUS the
+# HALT/drain flag (harness-execution-redesign-2026-08, Task 1 "Stage 0a";
+# invariant 4 and invariant 11 of docs/designs/harness-execution-redesign-
+# considerations-2026-08-02.md §2).
+#
+# ============================================================
+# WHY THIS EXISTS (and why it is NOT a replacement for the two guards
+# that already exist — Chesterton's Fence)
+# ============================================================
+#
+# The 2026-08-02 self-DoS incident's trigger (per the considerations brief
+# §1.1 "Trigger" row) was a resume-origin SessionStart invocation that did
+# not reliably carry the existing wiring marker (NL_SESSIONSTART_ORIGIN=1),
+# so hooks/lib/sessionstart-singleflight.sh's debounce — which only ever
+# fires when a caller explicitly checks that marker — never engaged, and
+# harness-doctor.sh + session-start-digest.sh ran their full heavy body on
+# every concurrently-resuming session. Separately, hooks/lib/hook-reentry-
+# guard.sh only suppresses when a SPAWNER remembers to export
+# NL_HOOK_REENTRY=1 before launching a child — another wiring-dependent
+# guard.
+#
+# Both of those are correct, tested, and STAY exactly as they are (they are
+# not touched by this file) — invariant 9 (retire-before-extend) demotes
+# them from "the sole defense" to "belt", never deletes them; a second,
+# independent layer that happens to also catch the resume case is a feature,
+# not redundant. What was missing is a guard that fires UNCONDITIONALLY —
+# "in the lib, not the wiring" (invariant 4) — regardless of whether any
+# caller remembered to set any marker at all. THIS file is that guard: every
+# heavy entry point (harness-doctor.sh, session-start-digest.sh, coord-
+# sync.sh, supervisor-tick.sh, health-tick.sh) sources it unconditionally
+# and calls `sf_guard <name>` (or, for tick wrappers that already have their
+# own overlap lock, at least `sf_halt_active`) at the very top of its real
+# work — no env var required from the caller's own caller.
+#
+# ============================================================
+# THE CONTRACT
+# ============================================================
+#
+#   sf_guard <name> <ttl_seconds>
+#     rc 0 — caller SHOULD RUN (acquired, reclaimed a stale stamp, or a
+#            fail-open path was taken).
+#     rc 1 — caller SHOULD SKIP. One of three reasons, always named in a
+#            one-line stderr notice AND (best-effort) ledgered via
+#            signal-ledger.sh's ledger_emit (gate="single-flight",
+#            event="skip") so gate-friction telemetry (R3.5) starts
+#            accumulating from this task onward:
+#              1. HALT/drain flag is set (checked FIRST — an operator's
+#                 one-gesture stop always wins).
+#              2. Recursion: THIS process tree already has an active
+#                 (unreleased) sf_guard hold on the SAME <name> — detected
+#                 via an exported env var, so a nested subprocess
+#                 invocation (bash spawning bash) is caught with ZERO
+#                 filesystem I/O and with no wiring required anywhere in
+#                 the call chain between the two invocations.
+#              3. Single-flight: a DIFFERENT (unrelated, non-descendant)
+#                 process claimed the same <name> within the last
+#                 <ttl_seconds> — detected via a shared mkdir-based lock
+#                 (same atomic-mkdir + TTL-aged-owner-stamp convention as
+#                 sessionstart-singleflight.sh, generalized to any name,
+#                 any caller, unconditionally).
+#
+#   sf_halt_active            — rc 0 iff the HALT/drain flag is set.
+#   sf_halt_set [reason]      — set the flag (the "one gesture" in
+#                                invariant 11: touch/write one file).
+#   sf_halt_clear             — clear the flag.
+#   sf_halt_reason             — echo the stored reason (best-effort).
+#
+#   sf_repo_key <path>        — pure-bash (no subprocess spawn) path
+#                                sanitizer, identical contract to
+#                                sessionstart-singleflight.sh's
+#                                ss_repo_key, for callers (e.g.
+#                                session-start-digest.sh) whose heavy work
+#                                is genuinely per-$PWD and must not dedupe
+#                                a different repo's concurrent start
+#                                against this one.
+#
+# Bypass: export SF_DISABLE=1 -> sf_guard always returns 0 (used by every
+# other artifact's own --self-test so a held state file never wedges an
+# unrelated suite; sf_halt_active also treats SF_DISABLE=1 as "not halted"
+# for the same reason).
+#
+# FAIL-OPEN CONTRACT: identical to sessionstart-singleflight.sh — every
+# internal error path (unwritable state dir, missing `find`, a lost mkdir
+# race) returns 0 (run). A broken or unwritable lock must NEVER prevent
+# real work; only the three EXPLICIT reasons above ever return 1. HALT is
+# the sole deliberate exception to "never block real work" — it exists
+# specifically so a human always has a one-gesture way to stop the whole
+# maintenance layer, which is the entire point of invariant 11.
+#
+# State: ${SF_STATE_DIR:-$HOME/.claude/state/single-flight}/
+#          <name>.lock/            (mkdir-based single-flight claim)
+#          HALT                    (presence = drain; content = "<epoch> <reason>")
+#
+# Self-test: bash single-flight-lib.sh --self-test
+
+# ----------------------------------------------------------------------
+# Source-guard
+# ----------------------------------------------------------------------
+if [[ -n "${_SINGLE_FLIGHT_LIB_SOURCED:-}" ]]; then
+  return 0 2>/dev/null || true
+fi
+_SINGLE_FLIGHT_LIB_SOURCED=1
+
+_sf_state_dir() { printf '%s' "${SF_STATE_DIR:-$HOME/.claude/state/single-flight}"; }
+
+# _sf_sanitize <name> — collapse any character that cannot appear in a bash
+# variable name or a filesystem path segment to '_'. Used both for the lock
+# directory name and for the recursion-guard env var name.
+_sf_sanitize() {
+  local s="$1"
+  s="${s//[^A-Za-z0-9_]/_}"
+  printf '%s' "$s"
+}
+
+# sf_repo_key <path> — see header. Mirrors sessionstart-singleflight.sh's
+# ss_repo_key exactly (kept as a separate pure-bash copy here rather than a
+# cross-lib source, so this file has zero dependency on any other lib and
+# can be sourced standalone by any future entry point).
+sf_repo_key() {
+  local p="${1:-$PWD}"
+  p="${p//[:\\\/]/_}"
+  printf '%s' "${p:0:80}"
+}
+
+# ----------------------------------------------------------------------
+# HALT / drain (invariant 11)
+# ----------------------------------------------------------------------
+_sf_halt_flag_path() { printf '%s/HALT' "$(_sf_state_dir)"; }
+
+sf_halt_active() {
+  [[ "${SF_DISABLE:-0}" == "1" ]] && return 1
+  [[ -f "$(_sf_halt_flag_path)" ]]
+}
+
+sf_halt_set() {
+  local reason="${1:-operator halt}" dir
+  dir="$(_sf_state_dir)"
+  mkdir -p "$dir" 2>/dev/null || return 1
+  printf '%s %s\n' "$(date +%s 2>/dev/null || echo 0)" "$reason" > "$(_sf_halt_flag_path)" 2>/dev/null || return 1
+  return 0
+}
+
+sf_halt_clear() {
+  rm -f "$(_sf_halt_flag_path)" 2>/dev/null
+  return 0
+}
+
+sf_halt_reason() {
+  local f; f="$(_sf_halt_flag_path)"
+  [[ -f "$f" ]] || { printf ''; return 0; }
+  awk '{ $1=""; sub(/^ /, ""); print; exit }' "$f" 2>/dev/null
+}
+
+# ----------------------------------------------------------------------
+# Gate-friction ledger bootstrap (R3.5) — best-effort, never fails the
+# caller. Reuses the EXISTING ADR 058 D6 ledger (signal-ledger.sh) rather
+# than a new mechanism: "skip" is an already-mapped event type in
+# observability-consumer-map.json, so no map change is needed for this to
+# be consumed by digest/waiver-density immediately.
+# ----------------------------------------------------------------------
+_sf_ledger() {
+  local event="$1" detail="$2"
+  command -v ledger_emit >/dev/null 2>&1 || return 0
+  ledger_emit "single-flight" "$event" "$detail" 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------
+# Cross-process single-flight primitives (mkdir + TTL-aged owner stamp —
+# same portable mechanics as sessionstart-singleflight.sh's proven design;
+# duplicated rather than sourced so this lib has zero cross-lib dependency).
+# ----------------------------------------------------------------------
+_sf_stamp_age() {
+  local lockdir="$1" ts now
+  ts=$(awk 'NR==1{print $2}' "$lockdir/owner" 2>/dev/null)
+  now=$(date +%s 2>/dev/null || echo 0)
+  if [[ "$ts" =~ ^[0-9]+$ ]] && [[ "$ts" -gt 0 ]] && [[ "$now" =~ ^[0-9]+$ ]] && [[ "$now" -ge "$ts" ]]; then
+    echo $(( now - ts )); return 0
+  fi
+  echo -1
+}
+
+_sf_is_stale() {
+  local lockdir="$1" ttl="$2" age ttl_min
+  age=$(_sf_stamp_age "$lockdir")
+  if [[ "$age" -ge 0 ]] 2>/dev/null; then
+    [[ "$age" -ge "$ttl" ]]; return
+  fi
+  command -v find >/dev/null 2>&1 || return 0
+  ttl_min=$(( (ttl + 59) / 60 )); [[ "$ttl_min" -lt 1 ]] && ttl_min=1
+  [[ -n "$(find "$lockdir" -maxdepth 0 -mmin +"$ttl_min" 2>/dev/null)" ]]
+}
+
+_sf_write_owner() {
+  printf '%s %s\n' "$$" "$(date +%s 2>/dev/null || echo 0)" > "$1/owner" 2>/dev/null || true
+}
+
+# ----------------------------------------------------------------------
+# sf_guard <name> [ttl_seconds] — see header for the full contract.
+# ----------------------------------------------------------------------
+sf_guard() {
+  local name="$1" ttl="${2:-120}"
+  [[ -z "$name" ]] && return 0                    # misuse -> fail-open (run)
+  [[ "$ttl" =~ ^[0-9]+$ ]] || ttl=120
+  [[ "${SF_DISABLE:-0}" == "1" ]] && return 0      # explicit bypass (self-tests)
+
+  local key rvar
+  key="$(_sf_sanitize "$name")"
+  rvar="_SF_ACTIVE_${key}"
+
+  # 1) HALT/drain — checked FIRST; the operator's one-gesture stop wins
+  #    over an in-flight recursion hold or a reclaimable stale lock alike.
+  if sf_halt_active; then
+    echo "[sf-guard] ${name}: HALT flag set ($(_sf_halt_flag_path)) — draining, exiting without doing work" >&2
+    _sf_ledger "skip" "${name}: HALT drain"
+    return 1
+  fi
+
+  # 2) Recursion guard — zero I/O; catches THIS process tree re-entering
+  #    the same named entry point (bash export -> child inherits).
+  if [[ "${!rvar:-0}" == "1" ]]; then
+    echo "[sf-guard] ${name}: recursion detected (already active in this process tree) — skipping" >&2
+    _sf_ledger "skip" "${name}: recursion"
+    return 1
+  fi
+
+  # 3) Cross-process single-flight debounce.
+  local base lockdir
+  base="$(_sf_state_dir)"
+  if ! mkdir -p "$base" 2>/dev/null; then
+    export "${rvar}=1"
+    return 0                                       # can't make state dir -> fail-open (run)
+  fi
+  lockdir="${base}/${key}.lock"
+  if mkdir "$lockdir" 2>/dev/null; then
+    _sf_write_owner "$lockdir"
+    export "${rvar}=1"
+    return 0
+  fi
+  if _sf_is_stale "$lockdir" "$ttl"; then
+    rm -rf "$lockdir" 2>/dev/null || true
+    if mkdir "$lockdir" 2>/dev/null; then
+      _sf_write_owner "$lockdir"
+      export "${rvar}=1"
+      return 0
+    fi
+    export "${rvar}=1"
+    return 0                                       # lost the reclaim race -> proceed anyway
+  fi
+  echo "[sf-guard] ${name}: single-flight — another invocation ran within ${ttl}s — skipping" >&2
+  _sf_ledger "skip" "${name}: single-flight (${ttl}s)"
+  return 1
+}
+
+# ============================================================
+# Self-test
+# ============================================================
+# BASH_SOURCE[0] == $0 guard (mirrors hook-reentry-guard.sh): this file is
+# almost always SOURCED by a caller, not executed directly. `source file`
+# with no explicit arguments inherits the CALLING script's OWN positional
+# parameters — so a caller invoked as `bash caller.sh --self-test` that
+# does `source .../single-flight-lib.sh` (no args) would otherwise cause
+# THIS block to see that inherited "--self-test" and run/exit here,
+# silently truncating the caller's own execution before it ever reaches
+# ITS OWN --self-test dispatch. (This is the exact documented gotcha
+# harness-doctor.sh's self-test comments call out for
+# sessionstart-singleflight.sh — that lib lacks this guard and instead
+# requires every self-test call site to remember `source lib.sh ""`. This
+# lib fixes the class at the source instead of documenting a workaround.)
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; then
+  PASS=0; FAIL=0
+  _tmp=$(mktemp -d 2>/dev/null || mktemp -d -t sfl) || { echo "cannot mktemp" >&2; exit 1; }
+  trap 'rm -rf "$_tmp"' EXIT
+  export SF_STATE_DIR="$_tmp/sf"
+  _ok() { if [[ "$1" == "$2" ]]; then echo "self-test: PASS — $3" >&2; PASS=$((PASS+1)); else echo "self-test: FAIL — $3 (got '$1' want '$2')" >&2; FAIL=$((FAIL+1)); fi; }
+  _contains() { if [[ "$1" == *"$2"* ]]; then echo "self-test: PASS — $3" >&2; PASS=$((PASS+1)); else echo "self-test: FAIL — $3 (output did not contain '$2': $1)" >&2; FAIL=$((FAIL+1)); fi; }
+
+  # S1: clean acquire -> rc 0, lockdir created, recursion var exported.
+  # NOTE: called DIRECTLY (not via `$(...)` command substitution) because
+  # `export` inside a command-substitution subshell never persists to the
+  # caller — this is deliberately the SAME shape a real top-of-script
+  # `sf_guard <name> || exit 0` call has, and is exactly what makes the
+  # recursion check work in production (the child process that inherits
+  # the export IS a real subprocess, not a substitution subshell).
+  sf_guard s1 120 2>"$_tmp/s1.err"; rc=$?
+  _ok "$rc" 0 "S1 clean acquire returns 0"
+  [[ -d "$SF_STATE_DIR/s1.lock" ]] && _ok present present "S1 lockdir created" || _ok absent present "S1 lockdir created"
+  _ok "${_SF_ACTIVE_s1:-unset}" 1 "S1 recursion-guard env var exported after acquire"
+
+  # S2: recursion — SAME process, SAME name, called again (rvar already
+  # exported by S1 above, simulating a nested subprocess that inherited it).
+  sf_guard s1 120 2>"$_tmp/s2.err"; rc=$?
+  out2="$(cat "$_tmp/s2.err" 2>/dev/null)"
+  _ok "$rc" 1 "S2 recursion (same process tree, same name) -> skip (rc 1)"
+  _contains "$out2" "recursion" "S2 message names 'recursion'"
+
+  # S3: single-flight — a DIFFERENT (never-recursion-marked) name, pre-
+  # claimed by a fresh lock as if from an unrelated process.
+  mkdir -p "$SF_STATE_DIR/s3.lock"
+  _sf_write_owner "$SF_STATE_DIR/s3.lock"
+  out3="$(sf_guard s3 120 2>&1)"; rc=$?
+  _ok "$rc" 1 "S3 fresh lock held by another process -> skip (rc 1)"
+  _contains "$out3" "single-flight" "S3 message names 'single-flight'"
+
+  # S4: stale lock -> reclaim (rc 0). Back-date the owner epoch.
+  mkdir -p "$SF_STATE_DIR/s4.lock"; printf '%s %s\n' 99999 1 > "$SF_STATE_DIR/s4.lock/owner"
+  sf_guard s4 120; rc=$?; _ok "$rc" 0 "S4 stale stamp -> reclaim (rc 0)"
+
+  # S5: re-acquire after removal -> rc 0 (fresh name each time to avoid
+  # cross-contamination with the recursion-guard env vars set above).
+  sf_guard s5 120 >/dev/null; rm -rf "$SF_STATE_DIR/s5.lock"; unset _SF_ACTIVE_s5
+  sf_guard s5 120; rc=$?; _ok "$rc" 0 "S5 re-acquire after removal (rc 0)"
+
+  # S6: SF_DISABLE bypass -> rc 0 even with a fresh held stamp AND an
+  # active recursion var.
+  SF_DISABLE=1 sf_guard s1 120; rc=$?; _ok "$rc" 0 "S6 SF_DISABLE bypass ignores both recursion and single-flight state"
+
+  # S7: fail-open when state dir is uncreatable (base under a regular file).
+  _f="$_tmp/afile"; : > "$_f"
+  SF_STATE_DIR="$_f/cannot" sf_guard s7 120; rc=$?; _ok "$rc" 0 "S7 uncreatable state dir -> fail-open (rc 0)"
+
+  # S8: mutual exclusion — with one fresh holder (a brand-new name, never
+  # recursion-marked), N concurrent SUBPROCESS attempts all skip (each
+  # subshell inherits the CURRENT env, which has no _SF_ACTIVE_s8 set, so
+  # this genuinely exercises the mkdir path, not the recursion path).
+  ( unset _SF_ACTIVE_s8 2>/dev/null; sf_guard s8 120 ) >/dev/null
+  acq=0
+  for i in 1 2 3 4 5; do
+    ( unset _SF_ACTIVE_s8 2>/dev/null; sf_guard s8 120 ) >/dev/null 2>&1 && acq=$((acq+1))
+  done
+  _ok "$acq" 0 "S8 held stamp -> all 5 concurrent (non-descendant) attempts skip"
+
+  # S9: HALT — set, active check, guard drains, clear, guard resumes.
+  _ok "$(sf_halt_active && echo yes || echo no)" no "S9a HALT inactive by default"
+  sf_halt_set "test-drain" >/dev/null
+  _ok "$(sf_halt_active && echo yes || echo no)" yes "S9b HALT active after sf_halt_set"
+  out9="$(sf_guard s9 120 2>&1)"; rc=$?
+  _ok "$rc" 1 "S9c sf_guard drains while HALT is active (rc 1)"
+  _contains "$out9" "HALT" "S9d drain message names HALT"
+  _contains "$(sf_halt_reason)" "test-drain" "S9e sf_halt_reason echoes the stored reason"
+  sf_halt_clear
+  _ok "$(sf_halt_active && echo yes || echo no)" no "S9f HALT inactive after sf_halt_clear"
+  out9b="$(sf_guard s9 120 2>&1)"; rc=$?
+  _ok "$rc" 0 "S9g sf_guard resumes normally once HALT is cleared"
+
+  # S10: HALT wins over a fresh single-flight lock AND over an active
+  # recursion var (checked FIRST, per the header contract).
+  mkdir -p "$SF_STATE_DIR/s10.lock"; _sf_write_owner "$SF_STATE_DIR/s10.lock"
+  sf_halt_set "s10-drain" >/dev/null
+  out10="$(sf_guard s10 120 2>&1)"; rc=$?
+  _ok "$rc" 1 "S10 HALT still drains even with a fresh single-flight lock present"
+  _contains "$out10" "HALT" "S10 message names HALT, not single-flight (HALT checked first)"
+  sf_halt_clear
+
+  # S11: sf_repo_key — pure-bash path sanitization, distinct per path.
+  r11a="$(sf_repo_key '/c/Users/x/repo-a')"
+  _ok "$r11a" "_c_Users_x_repo-a" "S11a sf_repo_key sanitizes slashes/colons to underscores"
+  r11b="$(sf_repo_key '/c/Users/x/repo-b')"
+  if [[ "$r11a" != "$r11b" ]]; then
+    echo "self-test: PASS — S11b different repo paths -> different keys" >&2; PASS=$((PASS+1))
+  else
+    echo "self-test: FAIL — S11b different repo paths produced the SAME key ('$r11a')" >&2; FAIL=$((FAIL+1))
+  fi
+
+  # S12: ledger integration (R3.5 bootstrap) — a fake ledger_emit records
+  # the skip event with the gate name this lib promises ("single-flight").
+  LEDGER_CALLS_FILE="$(mktemp 2>/dev/null || printf '%s/sfl-selftest-ledger-%s' "$_tmp" "$$")"
+  ledger_emit() { printf '%s|%s|%s\n' "$1" "$2" "$3" >> "$LEDGER_CALLS_FILE"; }
+  sf_halt_set "s12-drain" >/dev/null
+  sf_guard s12 120 >/dev/null 2>&1
+  sf_halt_clear
+  if [[ -f "$LEDGER_CALLS_FILE" ]] && grep -q '^single-flight|skip|' "$LEDGER_CALLS_FILE" 2>/dev/null; then
+    echo "self-test: PASS — S12 sf_guard's skip path calls ledger_emit(single-flight, skip, ...)" >&2; PASS=$((PASS+1))
+  else
+    echo "self-test: FAIL — S12 expected a ledger_emit(single-flight, skip, ...) call; got: $(cat "$LEDGER_CALLS_FILE" 2>/dev/null)" >&2; FAIL=$((FAIL+1))
+  fi
+  unset -f ledger_emit
+  rm -f "$LEDGER_CALLS_FILE" 2>/dev/null
+
+  # S13: sf_guard with no ledger_emit defined never fails the caller
+  # (best-effort contract — mirrors hook-reentry-guard.sh's own S7).
+  unset -f ledger_emit 2>/dev/null
+  sf_halt_set "s13-drain" >/dev/null
+  sf_guard s13 120 >/dev/null 2>&1; rc=$?
+  sf_halt_clear
+  _ok "$rc" 1 "S13 sf_guard still returns the correct rc with no ledger_emit defined"
+
+  echo "" >&2
+  echo "self-test summary: $PASS passed, $FAIL failed" >&2
+  [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
+fi

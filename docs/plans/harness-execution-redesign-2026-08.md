@@ -364,13 +364,15 @@ Create:
 - `adapters/claude-code/scripts/install-maintenance-task-darwin.sh` — launchd adapter, ensure-cockpit darwin pattern (task 3)
 - per-category stub sources + shared stub template under `adapters/claude-code/hooks/` and `adapters/claude-code/templates/` — task 4 (exact names fixed by the task-4 builder from the template convention)
 - `docs/plans/harness-execution-redesign-2026-08-evidence.md` — evidence blocks per task
+- `adapters/claude-code/doctrine/single-flight-halt-runbook.md` — task 1's full runbook (`harness-dev.md` is builder-locked for this task; this file carries the content, see In-flight scope updates)
 
 Modify:
 - `adapters/claude-code/hooks/harness-doctor.sh` — verdict cache read path, cadence check, hook-count budget, gate-message lint, both-substrates RED, cleanup-learning-record check (tasks 1–5)
 - `adapters/claude-code/hooks/session-start-digest.sh` — consume snapshots instead of recomputing (tasks 1, 3)
 - `adapters/claude-code/settings.json.template` — matcher narrowing (task 1), stub rewiring + hook-wiring removals (task 4)
 - `adapters/claude-code/hooks/scope-enforcement-gate.sh`, `adapters/claude-code/hooks/pre-commit-gate.sh`, `adapters/claude-code/hooks/harness-hygiene-scan.sh`, `adapters/claude-code/hooks/plan-edit-validator.sh`, `adapters/claude-code/hooks/concurrent-ownership-gate.sh` — the five guidance-contract retrofits (task 2)
-- `adapters/claude-code/scripts/coord-sync.sh` — becomes a core job; cadence floor honored; PT1M installer path retired (task 3)
+- `adapters/claude-code/scripts/coord-sync.sh` — HALT/drain wiring (task 1); becomes a core job; cadence floor honored; PT1M installer path retired (task 3)
+- `adapters/claude-code/scripts/supervisor-tick.sh`, `adapters/claude-code/scripts/health-tick.sh` — HALT/drain wiring (task 1; see In-flight scope updates)
 - `adapters/claude-code/scripts/session-resumer.sh` — becomes a core job (task 3)
 - `adapters/claude-code/scripts/estate-janitor.sh` — cleanup-as-sensor logging fields (task 5)
 - `adapters/claude-code/hooks/workstreams-emit.sh` — lease/ack splice on the dispatch/stop pair (task 5)
@@ -386,6 +388,9 @@ Modify:
 - 2026-08-02: `adapters/claude-code/hooks/scope-enforcement-gate-body.sh` — new file, task 2 first-half build: the retrofit's relevance-pre-filter restructuring split `scope-enforcement-gate.sh` into a thin dispatcher (still the declared Modify target) + this sourced body carrying the full mechanism, so the common non-`commit` pass-path never parses/sources it
 - 2026-08-02: `adapters/claude-code/hooks/concurrent-ownership-gate-body.sh` — new file, task 2 first-half build: same thin-dispatcher split as above, off `concurrent-ownership-gate.sh`
 - 2026-08-02: `docs/harness-guide.md` — structural note for the two new hooks/lib files this task added (docs-freshness-gate.sh requires one on any A/D/R hook/lib change; see the gate's own block message for the rule)
+- 2026-08-02: `adapters/claude-code/doctrine/single-flight-halt-runbook.md` — task 1's full runbook (single-flight/recursion guard mechanism, belt-vs-braces rationale, HALT one-gesture command, schedule-manifest schema, the live-settings-reconcile gap); `doctrine/harness-dev.md` itself is not builder-editable per this task's dispatch constraints, so this file carries the full content with a short pointer section for the orchestrator to land in `harness-dev.md` at merge
+- 2026-08-02: `adapters/claude-code/scripts/supervisor-tick.sh`, `adapters/claude-code/scripts/health-tick.sh` — task 1's HALT/drain wiring (invariant 11); named in the task's own prose ("sourced unconditionally at top of heavy entry points: doctor, digest, coord-sync, supervisor/health ticks") but omitted from this plan's `## Files to Modify/Create` table — the table is amended by this bullet rather than silently left inconsistent with the task text
+- 2026-08-02: `docs/harness-guide.md` — one new subsection introducing `hooks/lib/single-flight-lib.sh` (docs-freshness-gate requires a doc note alongside any new hook-shaped file addition; `docs/harness-architecture.md` is generated-only from `manifest.json`, which this task's dispatch constraints keep builder-locked, so `harness-guide.md` is the hand-editable target)
 
 ## Assumptions
 

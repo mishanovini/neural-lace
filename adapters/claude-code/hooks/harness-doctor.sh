@@ -180,6 +180,12 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck disable=SC1091
 { source "$SCRIPT_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
+# harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 4): the
+# universal single-flight/recursion guard, sourced UNCONDITIONALLY here
+# (not gated on any wiring marker) so it protects this entry point
+# regardless of how it was invoked -- see lib/single-flight-lib.sh header.
+# shellcheck disable=SC1091
+{ source "$SCRIPT_DIR/lib/single-flight-lib.sh" 2>/dev/null; } || true
 
 # --- portable bounded subprocess (plan macos-portability-2026-07, M3) -----
 # The self-test sweep below bounds every child `--self-test` with a wall-clock
@@ -2199,6 +2205,158 @@ check_budget_worktrees_branches() {
 }
 
 # ------------------------------------------------------------
+# resolve_schedule_manifest <live_home> <repo_root>
+# Echoes the schedule-manifest.json path (live-first, repo fallback,
+# mirrors resolve_manifest's own order) or nothing.
+# ------------------------------------------------------------
+resolve_schedule_manifest() {
+  local live_home="$1" repo_root="$2"
+  if [[ -f "${live_home}/config/schedule-manifest.json" ]]; then
+    printf '%s\n' "${live_home}/config/schedule-manifest.json"
+    return 0
+  fi
+  if [[ -n "$repo_root" && -f "${repo_root}/adapters/claude-code/config/schedule-manifest.json" ]]; then
+    printf '%s\n' "${repo_root}/adapters/claude-code/config/schedule-manifest.json"
+    return 0
+  fi
+  return 1
+}
+
+# ------------------------------------------------------------
+# Check: schedule-manifest-cadence (harness-execution-redesign-2026-08
+# Task 1, invariant 2: "Cadence >= 2x measured cycle time for every
+# scheduled task, from a central schedule manifest; doctor-enforced.")
+#
+# WARN-only at this stage (task 1 spec: "WARN for 1 calibration week, then
+# RED" -- the RED flip is explicitly a LATER task, not this one). For every
+# mechanisms[] entry that carries a non-null measured_cycle_seconds, RED-
+# grade the SEVERITY down to WARN and flag when
+# declared_cadence_seconds < ratio_floor * measured_cycle_seconds. Entries
+# with measured_cycle_seconds == null are calibration-pending and are
+# silently skipped (their absence of a measurement is not itself flagged --
+# adding a measurement is exactly the calibration week's job).
+# ------------------------------------------------------------
+check_schedule_manifest_cadence() {
+  local live_home="$1" repo_root="$2"
+  local manifest
+  if ! manifest="$(resolve_schedule_manifest "$live_home" "$repo_root")"; then
+    _warn "schedule-manifest-cadence" "no adapters/claude-code/config/schedule-manifest.json found (live mirror or repo) -- skipped (pre-Task-1 machine)"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "schedule-manifest-cadence" "neither node nor jq available -- cadence check skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local out
+  if command -v node >/dev/null 2>&1; then
+    out="$(node -e '
+const fs = require("fs");
+let m;
+try { m = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) { process.exit(0); }
+const floor = (m.cadence_check && m.cadence_check.ratio_floor) || 2;
+for (const e of m.mechanisms || []) {
+  if (e == null || e.measured_cycle_seconds == null) continue;
+  const declared = e.declared_cadence_seconds;
+  const measured = e.measured_cycle_seconds;
+  if (typeof declared !== "number" || typeof measured !== "number") continue;
+  const required = floor * measured;
+  if (declared < required) {
+    console.log([e.id, declared, measured, required].join("|"));
+  }
+}' "$manifest" 2>/dev/null)"
+  else
+    out="$(jq -r --argjson floor "$(jq -r '.cadence_check.ratio_floor // 2' "$manifest" 2>/dev/null)" '
+      (.mechanisms // [])[]
+      | select(.measured_cycle_seconds != null)
+      | select(.declared_cadence_seconds < ($floor * .measured_cycle_seconds))
+      | [.id, .declared_cadence_seconds, .measured_cycle_seconds, ($floor * .measured_cycle_seconds)] | join("|")
+    ' "$manifest" 2>/dev/null)"
+  fi
+
+  if [[ -n "$out" ]]; then
+    local line id declared measured required
+    while IFS='|' read -r id declared measured required; do
+      [[ -z "$id" ]] && continue
+      _warn "schedule-manifest-cadence" "'${id}' declared cadence ${declared}s < 2x its measured cycle ${measured}s (needs >= ${required}s) -- it can never fully drain between fires (structural overlap); fix: raise declared_cadence_seconds in ${manifest}, OR move it to completion-anchored scheduling (Stage 1) -- calibration-week WARN per task-1 spec, not yet RED"
+    done <<< "$out"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
+# Check: budget-bash-hooks (harness-execution-redesign-2026-08 Task 1,
+# R3.3 inventory target: "Hooks per Bash call: 25 -> ~5 per-category
+# stubs"). WARN-only at this stage (task 1 spec: "per-Bash hook-count
+# budget doctor check (WARN at this stage)" -- Stage 2 is what actually
+# shrinks the count; this check only makes the number VISIBLE and
+# doctor-tracked, which is the missing aggregate artifact invariant 1
+# names). Counts total hook entries across every PreToolUse matcher block
+# whose matcher STRING CONTAINS "Bash" (covers both the bare "Bash"
+# matcher and the "Bash|PowerShell" combined matcher) -- checked against
+# BOTH the live settings.json and the committed template, same two-source
+# pattern as check_budget_chains.
+# ------------------------------------------------------------
+_count_bash_hooks() {
+  # $1 = settings.json path -> prints total hook count across every
+  # PreToolUse matcher block containing "Bash" (or empty on parse failure)
+  local settings="$1"
+  [[ -f "$settings" ]] || { printf ''; return 0; }
+  if command -v node >/dev/null 2>&1; then
+    cat "$settings" 2>/dev/null | node -e "
+      const fs = require('fs');
+      let cfg;
+      try { cfg = JSON.parse(fs.readFileSync(0, 'utf8')); } catch (e) { process.exit(0); }
+      const arr = (cfg.hooks && cfg.hooks['PreToolUse']) || [];
+      let total = 0;
+      for (const block of arr) {
+        if (typeof block.matcher === 'string' && block.matcher.includes('Bash')) {
+          total += (block.hooks || []).length;
+        }
+      }
+      console.log(total);
+    " 2>/dev/null
+  elif command -v jq >/dev/null 2>&1; then
+    jq -r '[(.hooks.PreToolUse // [])[] | select(.matcher // "" | contains("Bash")) | (.hooks // []) | length] | add // 0' "$settings" 2>/dev/null
+  else
+    printf ''
+  fi
+}
+
+check_budget_bash_hooks() {
+  local live_home="$1" repo_root="$2"
+  local live_settings="${live_home}/settings.json"
+  local template_settings="${repo_root}/adapters/claude-code/settings.json.template"
+  local max=6
+
+  if ! command -v node >/dev/null 2>&1 && ! command -v jq >/dev/null 2>&1; then
+    _warn "budget-bash-hooks" "neither node nor jq available -- per-Bash hook-count budget skipped"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local src path count
+  for src in live template; do
+    if [[ "$src" == "live" ]]; then path="$live_settings"; else path="$template_settings"; fi
+    if [[ ! -f "$path" ]]; then
+      _warn "budget-bash-hooks" "${src} settings.json not found at ${path} -- skipped for ${src}"
+      continue
+    fi
+    count="$(_count_bash_hooks "$path")"
+    if [[ -z "$count" ]]; then
+      _warn "budget-bash-hooks" "could not parse per-Bash hook count from ${src} settings (${path})"
+      continue
+    fi
+    if [[ "$count" -gt "$max" ]]; then
+      _warn "budget-bash-hooks" "${count} hook entries fire on every Bash call in ${src} settings (target <= ${max} per R3.3 -- harness-execution-redesign-2026-08) -- ${path}; WARN-only at this stage, Stage 2 (per-category stubs) is the actual fix"
+    fi
+  done
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: orphaned-worktree-work — the OUT-OF-SESSION complement to
 # session-start-digest.sh's feed_stranded_work (same shared detector, two
 # surfaces; constitution §5 "persist in the same response" + the
@@ -3595,6 +3753,9 @@ run_quick_checks() {
   check_review_index_consistency "$live_home" "$repo_root"
   check_review_grandfather_integrity "$live_home" "$repo_root"
   check_review_reviewer_independence "$live_home" "$repo_root"
+  # harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariants 1/2)
+  check_schedule_manifest_cadence "$live_home" "$repo_root"
+  check_budget_bash_hooks "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -4257,6 +4418,88 @@ EOF
   _write_chain_settings "$D" "SessionStart" 9 "ss-dummy"
   OUT="$(_run_quick "$D")"; RC=$?
   _assert "budget-chains-sessionstart-red" 1 "$RC" "RED budget-chains.*SessionStart chain has 9" "$OUT"
+
+  # ---- Check: budget-bash-hooks (harness-execution-redesign-2026-08 Task
+  # 1, R3.3). WARN fixture — 7 hooks wired to the "Bash" matcher (budget
+  # <= 6); WARN-only at this stage, exit code stays 0. ----
+  D=$(_scenario_dir bbh-warn)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json" bbh-a.sh bbh-b.sh bbh-c.sh bbh-d.sh bbh-e.sh bbh-f.sh bbh-g.sh
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  for _n in a b c d e f g; do
+    echo '#!/bin/bash' > "$D/live/hooks/bbh-${_n}.sh"
+    echo '#!/bin/bash' > "$D/repo/adapters/claude-code/hooks/bbh-${_n}.sh"
+  done
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "budget-bash-hooks-warn" 0 "$RC" "WARN budget-bash-hooks.*7 hook entries" "$OUT"
+
+  # ---- Check: budget-bash-hooks GREEN fixture — 3 hooks (within budget),
+  # silent on this check. ----
+  D=$(_scenario_dir bbh-green)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json" bbh-a.sh bbh-b.sh bbh-c.sh
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  for _n in a b c; do
+    echo '#!/bin/bash' > "$D/live/hooks/bbh-${_n}.sh"
+    echo '#!/bin/bash' > "$D/repo/adapters/claude-code/hooks/bbh-${_n}.sh"
+  done
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "budget-bash-hooks"; then
+    echo "self-test (budget-bash-hooks-green-silent): FAIL (unexpected budget-bash-hooks line): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (budget-bash-hooks-green-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Check: schedule-manifest-cadence (harness-execution-redesign-
+  # 2026-08 Task 1, invariant 2). WARN fixture — declared cadence (60s) is
+  # under 2x the recorded cycle time (110s, needs >= 220s), naming the
+  # entry; WARN-only at this stage (calibration week), exit code stays 0.
+  # Mirrors this task's own real coord-sync entry in the shipped manifest,
+  # so this fixture is representative, not synthetic-only. ----
+  D=$(_scenario_dir smc-warn)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":1,"cadence_check":{"ratio_floor":2},"mechanisms":[
+  {"id":"fixture-coord-sync","declared_cadence_seconds":60,"measured_cycle_seconds":110}
+]}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-warn" 0 "$RC" "WARN schedule-manifest-cadence.*'fixture-coord-sync'" "$OUT"
+
+  # ---- Check: schedule-manifest-cadence GREEN fixture — cadence comfortably
+  # >= 2x cycle time, silent on this check. ----
+  D=$(_scenario_dir smc-green)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":1,"cadence_check":{"ratio_floor":2},"mechanisms":[
+  {"id":"fixture-healthy","declared_cadence_seconds":600,"measured_cycle_seconds":110}
+]}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "schedule-manifest-cadence"; then
+    echo "self-test (schedule-manifest-cadence-green-silent): FAIL (unexpected schedule-manifest-cadence line): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (schedule-manifest-cadence-green-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Check: schedule-manifest-cadence — missing manifest -> graceful
+  # WARN (pre-Task-1 machine), never a crash. ----
+  D=$(_scenario_dir smc-missing)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "schedule-manifest-cadence-missing-warn" 0 "$RC" "WARN schedule-manifest-cadence.*no adapters/claude-code/config/schedule-manifest.json found" "$OUT"
 
   # ---- Check: limit-resume-watchdog. No state dir at all -> silent
   # (WARN-free), RC 0. ----
@@ -6666,9 +6909,59 @@ EOF
     PASSED=$((PASSED + 1))
   fi
   # Explicit invocation (no NL_SESSIONSTART_ORIGIN) against the SAME held
-  # lock -> runs normally (not single-flighted away).
-  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  # lock -> runs normally (not single-flighted away) by the OLD, marker-
+  # gated ss_singleflight mechanism this scenario exists to validate.
+  # SF_DISABLE=1: harness-execution-redesign-2026-08 Task 1 added a SECOND,
+  # independent, UNCONDITIONAL guard (sf_guard, invariant 4) that
+  # deliberately single-flights explicit reruns too (see its call site
+  # comment a few lines above the SESSIONSTART-SINGLEFLIGHT-01 block) -- a
+  # real, intentional, DIFFERENT behavior change from this pre-existing
+  # scenario's assertion. Disabling it here isolates what THIS scenario
+  # validates (the old mechanism, in isolation); the new guard's own
+  # contract is exercised by the dedicated sf-guard-unconditional scenario
+  # below.
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" SF_DISABLE=1 bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
   _assert "9-ssf-explicit-invocation-never-suppressed" 0 "$RC" "GREEN" "$OUT"
+
+  # ---- sf-guard-unconditional (harness-execution-redesign-2026-08 Task 1,
+  # invariant 4): the NEW guard fires WITHOUT any NL_SESSIONSTART_ORIGIN
+  # marker at all (the whole point -- it covers a resume-origin invocation
+  # the marker itself might miss), and it recursion-guards a nested
+  # subprocess invocation with zero filesystem I/O. Fresh scenario dir so
+  # this is unconfounded by the SSF fixture above. ----
+  D=$(_scenario_dir c9b-sfguard)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # First explicit invocation (no marker) -> runs normally and claims the
+  # new guard's lock.
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "9b-sfguard-first-explicit-call-runs-normally" 0 "$RC" "GREEN" "$OUT"
+  # Second explicit invocation, immediately after, SAME machine-global
+  # lock, still no marker -> the NEW unconditional guard skips it.
+  OUT="$(HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1)"; RC=$?
+  _assert "9b-sfguard-second-explicit-call-single-flighted" 0 "$RC" "single-flight" "$OUT"
+  if printf '%s' "$OUT" | grep -q "GREEN"; then
+    echo "self-test (9b-sfguard-skip-means-no-checks-ran): FAIL (expected a bare skip, checks appear to have run): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (9b-sfguard-skip-means-no-checks-ran): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+  # Recursion guard: a nested invocation within the SAME process (env var
+  # inherited by a subprocess) short-circuits with zero I/O, distinct
+  # message from the cross-process single-flight path above.
+  D=$(_scenario_dir c9c-sfguard-recursion)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  OUT="$(
+    export HARNESS_DOCTOR_HOME="$D/live" NL_REPO_ROOT="$D/repo"
+    source "$SCRIPT_DIR/lib/single-flight-lib.sh" ""
+    SF_STATE_DIR="${D}/live/state/single-flight" sf_guard "doctor-quick" 120 >/dev/null 2>&1
+    SF_STATE_DIR="${D}/live/state/single-flight" bash "$SELF_TEST_HOOK" --quick "$D/repo" 2>&1
+  )"; RC=$?
+  _assert "9c-sfguard-recursion-nested-invocation-short-circuits" 0 "$RC" "recursion" "$OUT"
 
   # ================================================================
   # Check 9 (portability-sweep) — macos-portability-2026-07 task M5
@@ -6902,6 +7195,30 @@ fi
 
 if [[ -z "${REPO_ROOT:-}" ]]; then
   echo "[doctor] WARN repo-root: could not resolve repo root (git unavailable and NL_REPO_ROOT unset) — repo-relative checks will warn"
+fi
+
+# harness-execution-redesign-2026-08 Task 1 (Stage 0a, invariant 4):
+# universal single-flight/recursion guard, called UNCONDITIONALLY — no
+# wiring marker (NL_SESSIONSTART_ORIGIN, NL_HOOK_REENTRY) required from
+# any caller anywhere in the chain. This is intentionally BROADER than the
+# SESSIONSTART-SINGLEFLIGHT-01 block below: it also debounces/recursion-
+# guards explicit/manual invocations, which is a deliberate behavior
+# change (invariant 4: "wiring markers become belt, never braces" — this
+# lib guard is now the PRIMARY, unconditional defense; the marker-gated
+# block below stays as an additional, narrower layer, unchanged). An
+# operator re-running `harness-doctor.sh --quick` twice within the TTL
+# gets an honest one-line skip notice (SF_DISABLE=1 bypasses it).
+# SF_STATE_DIR is scoped to the RESOLVED LIVE_HOME (not a bare $HOME
+# default) for the same reason SSF_STATE_DIR is scoped below: this
+# doctor's own --self-test sandboxes LIVE_HOME via HARNESS_DOCTOR_HOME, and
+# an unscoped lock would make every fixture scenario in the self-test
+# suite single-flight against every OTHER scenario's invocation instead of
+# against the real machine's ~/.claude. See lib/single-flight-lib.sh
+# header for the full recursion-vs-single-flight contract.
+if declare -F sf_guard >/dev/null 2>&1; then
+  if ! SF_STATE_DIR="${LIVE_HOME}/state/single-flight" sf_guard "doctor-quick" 120; then
+    exit 0
+  fi
 fi
 
 # ---- SESSIONSTART-SINGLEFLIGHT-01 (T3 extension, agent-efficiency-fixes-2026-07) ----
