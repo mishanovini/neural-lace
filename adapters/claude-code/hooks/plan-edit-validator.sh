@@ -1113,13 +1113,30 @@ Backlog items absorbed: FIXTURE-SURFACE-01 (fixture absorption); FIXTURE-REF-OPE
   # authorization + emit code exactly as it runs on a machine where GNU
   # stat (or this shim) is available, without touching any committed file.
   # ============================================================
+  # gated-pipeline-master-2026-08 Task 8 triage (2026-08-03): the shim
+  # below unconditionally translated `-c %Y` to `/usr/bin/stat -f %m`,
+  # assuming the underlying /usr/bin/stat is BSD's (macOS). On a GNU-
+  # coreutils machine (Linux, or Windows MSYS2 -- this checkout) `-f` is
+  # NOT "arbitrary flag then format string": GNU stat treats `-f` as
+  # --file-system (dump filesystem info, not file info), so `-f %m`
+  # silently "succeeds" printing a multi-line filesystem dump instead of
+  # an mtime, and downstream `$((now - mtime))` then fails with "syntax
+  # error in expression" on that garbage. PROVEN: F16/F17/F18/F19 all
+  # failed identically on this machine with that exact dump in the error
+  # text; direct `/usr/bin/stat -f %m <file>` reproduces it standalone.
+  # FIX: try the GNU form for real first (works here, and on any Linux
+  # runner); only fall back to the BSD form when `-c` genuinely errors
+  # (real BSD/macOS stat) -- this is what the shim was always meant to
+  # do ("exercising the REAL...code...without touching any committed
+  # file" -- production behavior, not a BSD-only code path), it just
+  # never ran on a GNU machine before to expose the unconditional branch.
   F16_BINSHIM="$TMPDIR_SELFTEST/binshim"
   mkdir -p "$F16_BINSHIM"
   cat > "$F16_BINSHIM/stat" <<'SHIM'
 #!/bin/bash
 if [[ "$1" == "-c" && "$2" == "%Y" ]]; then
   shift 2
-  /usr/bin/stat -f %m "$@"
+  /usr/bin/stat -c %Y "$@" 2>/dev/null || /usr/bin/stat -f %m "$@"
 else
   /usr/bin/stat "$@"
 fi
