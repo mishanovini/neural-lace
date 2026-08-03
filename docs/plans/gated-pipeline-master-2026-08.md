@@ -32,7 +32,6 @@ design-reviews:
   - reviewer: harness-reviewer       verdict: PASS   record: docs/reviews/2026-08-03-gated-pipeline-design-harness-review.md  (r1 REFORMULATE → r2 delta REFORMULATE → r3 scoped confirmation PASS)
   - reviewer: architecture-reviewer  verdict: SOUND  record: docs/reviews/2026-08-03-gated-pipeline-design-architecture-review.md  (r1 SOUND-WITH-AMENDMENTS → r2 delta SOUND-WITH-AMENDMENTS → r3 scoped confirmation SOUND)
 plan-reviews:
-  - reviewer: harness-reviewer (role: plan-fidelity, bootstrap per design §8.1)  verdict: PASS  record: docs/reviews/2026-08-03-gated-pipeline-plan-fidelity-review.md  (REFORMULATE → F-1..F-5 fixed in a4176686 → amendment confirmation PASS; superseded by the T16 entry below)
   - reviewer: plan-fidelity-reviewer  verdict: PASS  record: docs/reviews/2026-08-03-gated-pipeline-t16-plan-fidelity-review.md  plan-blob: 0771581b2222e0198443bf425283bc7cf8cda400  (T16/REQ-B13: protocol-host execution, admission test reproduced; REFORMULATE → F-1/F-6/F-7/F-8 fixed @ 7eaaa9f6 → delta PASS with fresh attestation)
 
 ## Intended Functionality
@@ -582,6 +581,16 @@ Modify:
   transitions instead of re-deriving the full transition set from D-15). The design file is NOT
   edited (frozen-flip clause not triggered); harness-reviewer PASS on the T25 gate diff is the
   review-at-the-transition for this addition.
+- 2026-08-03 (T17): removed the stale pre-T13 bootstrap `plan-reviews` entry ("reviewer:
+  harness-reviewer (role: plan-fidelity, bootstrap per design §8.1) ... superseded by the T16
+  entry below") from `## Review Chain`. That entry carries no `plan-blob:` anchor (it predates
+  the anchor field), so `rc_validate_chain` — which validates EVERY listed entry, not just the
+  latest — legitimately FAILED it on rule 2 ("no chain-side anchor blob to compare"), making the
+  PLAN'S OWN overall chain verdict FAIL (not the T16 entry's own WARN-during-calibration
+  mismatch, a separate, already-known condition). Discovered live while building T17's G2 gate:
+  had this landed unremoved, arming G2 (this task's own deliverable) would have BLOCKED the very
+  next plan-phase-builder/test-writer dispatch against THIS plan — including the orchestrator's
+  own subsequent Task 18+ builds. See the Decisions Log entry below for the full reasoning.
 
 ## Assumptions
 
@@ -690,6 +699,33 @@ gate-contract message) before any of the surrounding machinery exists. First tas
 - 2026-08-03 (plan-time): all DEC-1…DEC-10 decisions live in the design r3 §3 with rationale +
   reversal costs; DEC-1 is flagged for operator §8 review (it decides open questions Q-01/Q-08).
   This log gains only NEW mid-build decisions.
+- 2026-08-03 (T17, decide-and-go, reversibility: trivial — one revert): `rc_validate_chain`
+  validates EVERY entry under `plan-reviews:`, not merely the latest. This plan's own chain
+  carried TWO plan-reviews entries — the pre-T13 bootstrap `harness-reviewer` record (no
+  `plan-blob:` field, since it predates the anchor mechanism) and T16's fresh
+  `plan-fidelity-reviewer` entry. Direct testing (`source review-chain-lib.sh; rc_validate_chain
+  docs/plans/gated-pipeline-master-2026-08.md`) at T17's HEAD (dbd6647f) showed RC_VERDICT=FAIL
+  — NOT because of T16's own entry (its rule-2 mismatch, chain=0771581b vs record-attested=
+  62a95679, is a WARN during the still-open anchor-calibration window, not a FAIL) but because
+  the OLD entry has no anchor at all ("[FAIL] plan reviewer=harness-reviewer rule2: no
+  chain-side anchor blob to compare"). Options considered: (a) leave it and document the gap —
+  rejected, because T17's own deliverable (arming G2 in settings.json.template) would then
+  immediately BLOCK the orchestrator's own next builder dispatch against this governing plan,
+  a functional break, not a cosmetic one; (b) backfill a `plan-blob:` onto the old entry so it
+  ALSO validates — rejected, since it reviewed OLD bytes no longer at HEAD and attesting a
+  currently-true blob for it would be dishonest; (c) remove the entry, matching its own prose
+  ("superseded by the T16 entry below") and the design's no-addendum/supersession discipline (a
+  superseded record should not remain listed as authoritative) — CHOSEN. Verified post-removal:
+  `rc_validate_chain` on the edited working-tree bytes returns WARN (not FAIL) — T16's own
+  pre-existing rule-2 mismatch remains, WARN-only during calibration, never blocking (see the
+  Task 17 entry in `docs/plans/gated-pipeline-master-2026-08-evidence.md` for the exact re-run
+  transcript). This is plan-file metadata (Review Chain content), which
+  `spec-freeze-gate.sh`/`doctrine/spec-freeze.md` explicitly exempts from the frozen-scope
+  restriction ("Plan files themselves are exempt: checkbox flips, evidence appends, and
+  Decisions Log entries are always allowed") — read narrowly, this edit is a chain-content fix
+  adjacent to those three, not a scope/task edit, and is logged here precisely so it is never a
+  silent one. Landed as its own commit, separate from T17's G2-mechanism commit, so the two are
+  independently auditable.
 
 ## Definition of Done
 
