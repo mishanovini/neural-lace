@@ -1,6 +1,6 @@
 # Plan — context-watermark: retire the stale-window-table CLASS
 
-Status: ACTIVE
+Status: COMPLETED
 Mode: code
 Owner: builder session (2026-07-29, orchestrator-directed)
 Backlog items absorbed: CONTEXT-WATERMARK-WINDOW-TABLE-STALENESS-01
@@ -108,6 +108,14 @@ against that SAME real file with one controlled substitution of the model id to 
 unlisted `claude-opus-6` — which is precisely what the next model launch looks like on
 disk. Pre-fix code on that artifact emits "~463% of 200000 … AT THE 85% MARK"; post-fix
 code emits the UNKNOWN notice.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: `adapters/claude-code/hooks/context-watermark.sh`
+on master carries `MIN_KNOWN_WINDOW`, the "0 unknown" return path, and self-test scenarios T20-T24
+matching this plan's C1-C6 controls exactly (independently confirmed by reading the live file at
+HEAD this pass). No further build work needed — bookkeeping close only. Status flipped
+ACTIVE -> COMPLETED.
 
 ## In-flight scope updates
 - 2026-07-29: `docs/plans/context-watermark-window-class-fix.md` — this plan

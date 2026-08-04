@@ -1,6 +1,6 @@
 # Plan: workstreams-emit replay-debounce fix + per-site sentinel regression tests
 
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: code
 Backlog items absorbed: ASK-SENTINEL-PER-SITE-REGRESSION-TESTS-01
@@ -155,8 +155,22 @@ scenarios; no new architectural layers.
   branches" instruction rather than the minimal one-assertion reading.
 
 ## Definition of Done
-- [ ] All tasks checked off
-- [ ] All touched suites' self-tests pass (0 failed each)
-- [ ] Linting/formatting clean (bash -n clean on every touched file)
-- [ ] SCRATCHPAD.md updated with final state
-- [ ] Completion report appended to this plan file
+- [x] All tasks checked off
+- [x] All touched suites' self-tests pass (0 failed each)
+- [x] Linting/formatting clean (bash -n clean on every touched file)
+- [x] SCRATCHPAD.md updated with final state
+- [x] Completion report appended to this plan file
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain. This plan's Task 1 deliverable
+(replay-debounce default 30s -> 120s) is confirmed live on master at
+`adapters/claude-code/hooks/workstreams-emit.sh:3839` (`DISPATCH_REPLAY_DEBOUNCE_SECONDS:-120`),
+landed via `8918f4ef` "fix(workstreams-emit): raise replay-debounce default 30s -> 120s"; the
+ask-sentinel regression tests landed via `8913dfd2` "test(ask-sentinel): per-site none-sentinel
+regression tests..." (both 2026-07-29T23:24:09, both `git merge-base --is-ancestor <sha> master`
+rc=0, independently re-verified this pass). Correction: an earlier estate triage
+(docs/reviews/2026-08-02-estate-entropy-triage.md) cited `b5dfaf1e` as the landing commit for
+this plan — that SHA is unrelated (accountable-estate T7 loe-backfill work); the correct
+citation is the two SHAs above, found by tracing the actual deliverable in the file. No further
+build work needed. Status flipped ACTIVE -> COMPLETED.

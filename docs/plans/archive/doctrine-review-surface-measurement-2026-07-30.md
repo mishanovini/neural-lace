@@ -1,5 +1,5 @@
 # Plan: Measure the doctrine review-record surface question (operator decision 069)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: design
 Backlog items absorbed: none
@@ -123,3 +123,11 @@ manifest — no regex over source text stands behind any behavioural assertion.
   the 15 are cap trims / INDEX regeneration and look exempt-worthy. Inspecting them
   showed they are the commits that rewrite delivered compacts most heavily, so the
   obvious cost-saving carve-out would exempt exactly the wrong ones.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: this plan's sole deliverable
+`docs/decisions/069-doctrine-review-record-surface.md` confirmed on master via `49fba9e7`,
+indexed at `docs/DECISIONS.md` row 069. The plan's own scope was "measure and write the
+decision block," which is satisfied even though the decision itself remains open pending the
+operator. Status flipped ACTIVE -> COMPLETED.
