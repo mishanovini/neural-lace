@@ -1,0 +1,2 @@
+adapters/claude-code/hooks/dispatch-chain-gate.sh
+adapters/claude-code/scripts/nl-maintenance.sh

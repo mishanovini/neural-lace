@@ -178,6 +178,64 @@ predate this field and not every plan is asked for through a captured
 session prompt. See docs/decisions/062-ask-rooted-workstreams-p1.md.
 -->
 
+design-ref: <docs/designs/slug.md@git-blob-sha | n/a — 30+ char justification>
+<!--
+design-ref — the design doc (`docs/designs/<slug>.md`) this plan is a
+faithful, buildable projection of, anchored to that file's git BLOB sha at
+authoring time (`git hash-object docs/designs/<slug>.md`) — NOT a commit
+sha. The blob is what `hooks/lib/review-chain-lib.sh`'s three-way anchor
+match (rule 2) compares against: chain-declared blob == the blob the
+design's own review record attests == the blob at HEAD right now. Required
+when this plan matches plan-reviewer.sh Check 20's trigger — REUSES Check
+17's architecture-keyword set (source of truth / read-write-path /
+cache-derived-store / staleness language) OR the plan touches
+`adapters/claude-code/**` anywhere in its own `## Files to Modify/Create`
+section below (the REQ-B5 surface trigger; gated-pipeline-master-2026-08
+Task 14). Escape: `design-ref: n/a — <30+ char justification>` (ledgered
+via `gc_escape_used`, ~/.claude/hooks/lib/gate-contract-lib.sh) for plans
+that are genuinely not a design's downstream projection (most Contained/
+Schema-Bound single-file plans). Flip posture (observe-first, HR-F7 rule —
+no prose flips, only config data): WARN during the calibration window,
+BLOCK at the commit-time floor once
+`adapters/claude-code/config/design-ref-gate.json`'s `flip.flip_date` is
+reached; a plan predating the gate's `landing_date` with no design-ref is
+grandfathered (plan-reviewer.sh Checks 20-22 SKIP it with an INFO line,
+never a finding). See design docs/designs/gated-pipeline-master-2026-08-03.md
+§4 and plan-reviewer.sh Checks 20-22.
+-->
+
+## Review Chain
+<!--
+REQUIRED alongside a real (non-`n/a`) `design-ref:` above — plan-reviewer.sh
+Check 20 rejects a real design-ref with no `## Review Chain` block outright
+(a design-ref with no chain is review-LINKED, not review-PERFORMED — the
+P-30 defect this section exists to close). ONE validity oracle for every
+entry below: `hooks/lib/review-chain-lib.sh`'s `rc_validate_chain` (design
+§4's three rules — record parse / three-way anchor match / dispatch-ledger
+cross-check). Leave this section out entirely (not just empty) when
+`design-ref: n/a — ...` is declared above; there is nothing to chain.
+
+Format (mirrors the live worked example at
+docs/plans/gated-pipeline-master-2026-08.md:25-38 — read it for a real,
+currently-valid instance):
+
+  authored-by: <design-author (model: fable) | the authoring session, named
+    honestly, if design-author predates its own creation task>
+  design-ref: <same path@blob as the header field above — the chain's OWN
+    copy is what rc_chain_design_ref / rc_validate_chain actually consume>
+  design-reviews:
+    - reviewer: <agent-name>  verdict: <SOUND|SOUND-WITH-AMENDMENTS|PASS|...>  record: <docs/reviews/<f>.md>
+  plan-reviews:
+    - reviewer: <agent-name>  verdict: <PASS|...>  record: <docs/reviews/<f>.md>  plan-blob: <git-blob-sha of THIS plan file, canonicalized minus its own Review Chain + In-flight scope updates sections — rc_blob_of computes both comparison sides identically>
+
+Every entry needs `reviewer:`, `verdict:`, and `record:`; plan-reviews
+entries additionally need `plan-blob:` (design entries anchor via the
+shared top-level `design-ref:` field instead, not a per-entry blob). An
+optional `inflight-blob:` field (top-level, sibling to `design-ref:`) hashes
+the excluded `## In-flight scope updates` section for WARN-only visibility
+(delta-D3) — never required, never a rule-2 failure.
+-->
+
 <!--
 acceptance-exempt values:
   false   Default. The plan undergoes end-user-advocate review at plan-time
@@ -439,6 +497,30 @@ runbook change, the verifier refuses to flip the checkbox (see
 Prefer EXTENDING A GENERATOR over hand-editing a doc where one exists
 (`scripts/gen-architecture-doc.sh`, `scripts/manifest-check.sh --gen-index`)
 — generation beats maintenance.
+
+REQUIRED per-task `Implements:` and `Directives:` fields — WHEN a real
+(non-`n/a`) `design-ref:` is declared in this plan's header
+(gated-pipeline-master-2026-08 Task 14, REQ-B5+B7; enforced by
+plan-reviewer.sh Checks 20-22). `Implements:` names the design's own
+`REQ-...` id(s) this task builds (from the design's `## ... Requirements`
+REQ table); `Directives:` names the `OD-...` id(s) from
+`adapters/claude-code/config/operator-directives.json` this task's Files to
+Modify/Create surface is tagged with, or the escape
+`Directives: n/a — <justification>` when no directive applies (or, before
+the register exists, "the operator-directives register is not yet built" is
+itself an honest justification):
+
+  - [ ] 8. Add the sf_release API to single-flight-lib.sh — Verification: full — Implements: REQ-A1 — Directives: n/a — no OD- entry tags single-flight-lib.sh yet — Docs impact: single-flight-halt-runbook.md gains the sf_release contract
+
+Check 21 enforces TWO things when design-ref is real: (a) every MUST-level
+REQ in the design's REQ table is claimed by at least one task's
+`Implements:` field — an uncovered MUST-REQ is a silently-dropped design
+requirement (the exact P-39/P-30 shape this whole mechanism exists to
+close); (b) every task carries BOTH fields structurally present (the `n/a`
+escape satisfies presence, an empty/missing field does not). When
+`design-ref:` is `n/a` or absent, Checks 21/22 do not apply and these two
+fields are optional (though naming a design REQ this task happens to serve,
+even informally, is good practice for the reader).
 
 INTEGRATION VERIFICATION — REQUIRED FOR EVERY `Verification: full` TASK
 (or unmarked task, which defaults to full).

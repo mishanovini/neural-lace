@@ -540,7 +540,7 @@
         "keywords": []
       },
       "blocking": true,
-      "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template",
+      "honest_status": "invoked via pre-commit-gate.sh chain; not directly wired in settings.json.template Gained an additive WARN-only ADR forward-guard (T11, arch-L1/REQ-B1): a staged docs/decisions/ record asserting binding standing-rule language without a register_ref mention or an explicit no-standing-rule opt-out WARNs (never blocks). --self-test 9/9.",
       "budget_class": "none",
       "added_after": "2026-04",
       "honesty_rationale": "Commit-time atomicity check (Tier-2+ decision needs its DECISIONS.md index row in the same commit) — resolvable by the session that created the gap."
@@ -1853,7 +1853,7 @@
         "keywords": []
       },
       "blocking": true,
-      "honest_status": "invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template. Includes Check 17 (2026-07-14, GATE 1 of artifact-evidence-bar): blocks Status: ACTIVE plans matching an architecture-keyword set that don't link a SOUND/SOUND-WITH-AMENDMENTS architecture-review artifact — see the 'artifact-evidence-bar' entry for golden_scenario/fp_expectation/retirement_condition.",
+      "honest_status": "invoked via pre-commit-gate.sh chain and plan-edit flows; not directly wired in settings.json.template. Includes Check 17 (2026-07-14, GATE 1 of artifact-evidence-bar): blocks Status: ACTIVE plans matching an architecture-keyword set that don't link a SOUND/SOUND-WITH-AMENDMENTS architecture-review artifact — see the 'artifact-evidence-bar' entry for golden_scenario/fp_expectation/retirement_condition. Checks 20-22 (T14, REQ-B5+B7): design-ref required-when-triggered (Check-17 keywords OR adapters/claude-code/** surface, measured 49.0% corpus fire-rate) + chain rule1+rule2 via review-chain-lib granular API; MUST-REQ coverage + per-task Implements:/Directives:; rule1+rule3 per chain entry. Config: config/design-ref-gate.json (dates-in-data).",
       "budget_class": "none",
       "added_after": "2026-04",
       "honesty_rationale": "Adversarial content review of the session's own plan edit — resolvable by fixing the plan."
@@ -2845,7 +2845,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5. workstreams-extract-pending.sh split out to its own entry (id: workstreams-extract-pending) and retired at O.4 cutover; removed from workstreams-stop-writer.sh's MEMBERS array in the same commit. workstreams-read.sh (UserPromptSubmit) gained a SECOND splice 2026-07-29 (problems-persist part 3, docs/decisions/065-problems-persist-warn-consolidation.md): _problem_capture_on_prompt, same never-blocks/subshelled shape as the pre-existing ASK-CAPTURE splice, files an nl-issue.sh row (source=operator-verbatim) whenever the operator's own prompt names a problem. Zero new settings.json entries (same already-wired UserPromptSubmit hook)."
+      "honest_status": "workstreams-emit.sh wired directly (SessionStart + spawn PreToolUse); Stop-side members dispatched via workstreams-stop-writer.sh since D.5. workstreams-extract-pending.sh split out to its own entry (id: workstreams-extract-pending) and retired at O.4 cutover; removed from workstreams-stop-writer.sh's MEMBERS array in the same commit. workstreams-read.sh (UserPromptSubmit) gained a SECOND splice 2026-07-29 (problems-persist part 3, docs/decisions/065-problems-persist-warn-consolidation.md): _problem_capture_on_prompt, same never-blocks/subshelled shape as the pre-existing ASK-CAPTURE splice, files an nl-issue.sh row (source=operator-verbatim) whenever the operator's own prompt names a problem. Zero new settings.json entries (same already-wired UserPromptSubmit hook). 2026-08-03 (T15/REQ-B14): --on-builder-complete FOREGROUND branch appends one JSONL row {subagent_type, model, ts, session_id, artifact_ref} to $DISPATCH_LEDGER_PATH (default ~/.claude/state/dispatch-ledger.jsonl) per completed subagent_type-carrying dispatch; never PreToolUse, never background launch-ack, never absent-type. --self-test 140/140 (+9 DL1-DL7)."
     },
     {
       "id": "workstreams-extract-pending",
@@ -3448,13 +3448,13 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "the ONE parser/validator for Review Chain blocks (design gated-pipeline-master-2026-08-03 r3 SS4: rule 1 record parse, rule 2 three-way anchor match w/ plan-blob canonicalization + inflight-blob WARN, rule 3 dispatch-ledger cross-check w/ pre-ledger exemption). A sourced lib, no hook wiring (matching the single-flight-lib convention); proof is its --self-test (10/10 incl. all eight r3 fixtures) and the dispatch-chain-gate consumer. Consumed today by dispatch-chain-gate --check only; plan-reviewer Checks 20-22 (T14) and the PreToolUse wiring (T17) land later in the same plan."
+      "honest_status": "the ONE parser/validator for Review Chain blocks (design r3 SS4 three rules). --self-test 20/20 incl. all eight r3 fixtures + the writer round-trip against workstreams-emit real output (T15). RC_LEDGER_LANDING_DATE=2026-08-04 (the writer went live mid-day -03; same-day-earlier records exempt from rule 3 -- boundary reasoning in the lib comment, caught live by Check 22 at the T14+T15 merge). Consumers: dispatch-chain-gate --check + plan-reviewer Checks 20-22; PreToolUse wiring lands at T17."
     },
     {
       "id": "dispatch-chain-gate",
       "kind": "gate",
       "added_after": "2026-08",
-      "doctrine_file": null,
+      "doctrine_file": "doctrine/deterministic-process.md",
       "hooks": [
         "dispatch-chain-gate.sh"
       ],
@@ -3540,6 +3540,46 @@
       "blocking": false,
       "budget_class": "none",
       "honest_status": "BOTH migration directions since gated-pipeline T6: both-alive (activation marker present + legacy task still Enabled >=14d -> RED, original direction) AND zero-substrate (HR-F4 inverse: marker absent + heartbeat stale + all legacy Disabled -> WARN, RED after .zero_substrate.red_after_days from .zero_substrate.legacy_disabled_since in schedule-manifest.json — dates in data per the HR-F7 rule). Live-probed 2026-08-03: fires WARN on this machine's real zero-substrate state. selftest:false honest — no dedicated scenario yet (evidence Known gap #2 predecessor carry-over; probe evidence in the T6 evidence entry)."
+    },
+    {
+      "id": "operator-directives-register",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/config/operator-directives.json",
+          "adapters/claude-code/hooks/lib/directives-register-lib.sh"
+        ],
+        "keywords": [
+          "operator directives",
+          "OD-",
+          "register_ref",
+          "directives register"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "gated-pipeline T11 (REQ-B1/B4): canonical register (21 entries: 19 general incl. OD-021 ci-is-read-mandatory + 2 operator_only) + the ONE parser (dr_* API). --self-test 22/22 incl. the shared round-trip fixture Task 20/14 consume. NOT yet wired to the three carriage consumers (Check 21 consumes via plan-reviewer since T14; dispatch-directives.sh + doctrine-jit walk land at T20); a sourced lib with no hook wiring of its own."
+    },
+    {
+      "id": "gen-directives-view",
+      "kind": "writer",
+      "doctrine_file": null,
+      "hooks": [],
+      "events": [],
+      "wired_template": false,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "scripts/gen-directives-view.sh (T11) -- regenerates docs/operator-directives.md from the register (manifest->INDEX precedent); --check is the drift predicate; --self-test 6/6; manual + doctor-invokable, no doctor predicate wired yet."
     }
   ]
 }

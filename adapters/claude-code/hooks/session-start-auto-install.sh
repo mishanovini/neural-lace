@@ -889,17 +889,31 @@ LIVE
   printf '#!/bin/bash\necho uncovered-v1\n' > "$CANON2/adapters/claude-code/hooks/uncovered.sh"
   mkdir -p "$CANON2/docs/reviews/records"
   ( cd "$CANON2" && git init --quiet && git config core.hooksPath "" && git config user.email t@example.com && git config user.name T )
+  # Two-commit cutover pattern (harness-reviewer C2-A -- see
+  # lib/review-record-gate-lib.sh's rrg_is_covered grandfather arm and its own
+  # self-test around "cutover_ref-less grandfather manifest is not honored").
+  # The grandfather arm verifies each row against the manifest's OWN
+  # cutover_ref by re-reading that ref's tree, so a row cannot cite a commit
+  # that does not exist yet -- the content commit must land FIRST and the
+  # manifest that cites it SECOND. This fixture previously wrote a
+  # grandfather-manifest.json with NO cutover_ref at all, which
+  # rrg_is_covered's own self-test pins as honoring NOTHING: covered.sh could
+  # never verify, so a "fresh install" run treated the genuinely-grandfathered
+  # covered.sh the same as the genuinely-unreviewed uncovered.sh (self-test
+  # PROVEN: both were skipped, "covered exists: n" in the failure output).
+  ( cd "$CANON2" && git add -A && git commit --quiet -m "pre-cutover: v1 content" )
+  local CUTOVER_SHA; CUTOVER_SHA=$(cd "$CANON2" && git rev-parse HEAD)
   local covered_v1_sha uncovered_v1_sha
-  covered_v1_sha=$(git -C "$CANON2" hash-object "$CANON2/adapters/claude-code/hooks/covered.sh")
-  uncovered_v1_sha=$(git -C "$CANON2" hash-object "$CANON2/adapters/claude-code/hooks/uncovered.sh")
+  covered_v1_sha=$(git -C "$CANON2" rev-parse "HEAD:adapters/claude-code/hooks/covered.sh")
+  uncovered_v1_sha=$(git -C "$CANON2" rev-parse "HEAD:adapters/claude-code/hooks/uncovered.sh")
   cat > "$CANON2/docs/reviews/records/grandfather-manifest.json" <<EOF
-{"entries":[
+{"cutover_ref":"$CUTOVER_SHA","entries":[
   {"path":"adapters/claude-code/hooks/covered.sh","blob_sha":"$covered_v1_sha"},
   {"path":"adapters/claude-code/hooks/uncovered.sh","blob_sha":"$uncovered_v1_sha"}
 ]}
 EOF
   printf '{"entries":[]}\n' > "$CANON2/docs/reviews/records/index.json"
-  ( cd "$CANON2" && git add -A && git commit --quiet -m "v1 (grandfathered)" && git branch -M master )
+  ( cd "$CANON2" && git add -A && git commit --quiet -m "bootstrap grandfather at cutover" && git branch -M master )
 
   # ---- Scenario 16: fresh install -- covered file installs, unreviewed file is skipped+warned ----
   # First bump uncovered.sh to v2 with NO new review record (simulating an

@@ -67,13 +67,25 @@
 # ============================================================
 #   RC_LEDGER_PATH                  dispatch-ledger.jsonl location.
 #                                    default: ~/.claude/state/dispatch-ledger.jsonl
-#   RC_LEDGER_LANDING_DATE           ISO YYYY-MM-DD. Empty (the shipped default,
-#                                    since Task 15 has not landed the ledger yet)
-#                                    means the boundary is unset — treated as "in
-#                                    the far future", so EVERY existing record is
-#                                    pre-ledger and exempt from rule 3 until
-#                                    Task 15 sets this (same flip-in-data pattern
-#                                    as G2's own gate-landing date).
+#   RC_LEDGER_LANDING_DATE           ISO YYYY-MM-DD. SET to 2026-08-03 as of the
+#                                    commit that lands Task 15 (REQ-B14 —
+#                                    workstreams-emit.sh's `--on-builder-complete`
+#                                    ledger writer; this is that boundary, named
+#                                    per this file's own rule-3 comment above:
+#                                    "records whose... first-commit time...
+#                                    predates RC_LEDGER_LANDING_DATE are EXEMPT").
+#                                    Every review record whose OWN first-commit
+#                                    predates this date (including every
+#                                    gated-pipeline bootstrap record written
+#                                    before the ledger existed) stays exempt from
+#                                    rule 3 forever; every record first-committed
+#                                    ON or AFTER this date must clear rule 3 in
+#                                    full. Empty would mean "unset — treated as
+#                                    in the far future, every record exempt" (the
+#                                    same flip-in-data pattern as G2's own
+#                                    gate-landing date) — that was the correct
+#                                    shipped default before this commit, when no
+#                                    writer existed yet to produce real rows.
 #   RC_ANCHOR_CALIBRATION_END_DATE   ISO YYYY-MM-DD. Empty (shipped default) means
 #                                    "still calibrating" — rule-2 mismatches WARN,
 #                                    never hard-FAIL, until an operator sets this
@@ -112,7 +124,16 @@
 # explicitly tolerating their nonzero returns.
 
 : "${RC_LEDGER_PATH:=$HOME/.claude/state/dispatch-ledger.jsonl}"
-: "${RC_LEDGER_LANDING_DATE:=}"
+# 2026-08-03: Task 15 (REQ-B14) lands the ledger WRITER
+# (workstreams-emit.sh --on-builder-complete) in this same commit — this date
+# is the rule-3 pre-ledger exemption boundary the comment above documents.
+# 2026-08-04, not -03: the ledger WRITER went live on master mid-day 2026-08-03
+# (T15 merge). The exemption is day-granular, so a -03 boundary would subject
+# that same day's EARLIER records (the design/plan reviews, committed hours
+# before the writer existed) to a rule-3 check no honest row can satisfy —
+# caught live by Check 22 FAILing on the gated-pipeline plan's own chain at the
+# T14+T15 merge. Records first-committed 2026-08-04+ are fully enforced.
+: "${RC_LEDGER_LANDING_DATE:=2026-08-04}"
 : "${RC_ANCHOR_CALIBRATION_END_DATE:=}"
 
 # ============================================================
@@ -620,6 +641,10 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # explicitly instead.
   T=$(mktemp -d) || { echo "self-test: mktemp failed" >&2; exit 3; }
   trap 'rm -rf "$T" 2>/dev/null || true' EXIT
+  # Resolved BEFORE the `cd "$R"` below (Scenario 11 needs it, and this
+  # file's own directory is meaningless once cwd moves into the throwaway
+  # repo) -- mirrors workstreams-emit.sh's own $SELF self-resolution.
+  WSE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd)/workstreams-emit.sh"
   R="$T/repo"
   git init -q -b master "$R" || { echo "self-test: git init failed" >&2; exit 3; }
   cd "$R" || { echo "self-test: cd to temp repo failed" >&2; exit 3; }
@@ -896,6 +921,76 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   _st "s10-malformed-plus-valid-warn-text-present" "1" "$MW"
 
   RC_LEDGER_PATH="$SAVED_LEDGER"
+
+  # ── Scenario 11 (Task 15 round-trip, REQ-B14 H1): the REAL writer's row
+  # validates through rc_rule3, and a chain that only sees THAT row still
+  # REJECTS when it names a DIFFERENT artifact -- binds Task 1's reader
+  # (this file) to Task 15's writer (workstreams-emit.sh
+  # --on-builder-complete) via the ONE shared JSONL contract quoted in this
+  # file's own header above and in
+  # adapters/claude-code/tests/fixtures/review-chain/README.md.
+  #
+  # ORDER MATTERS: the artifact commits, THEN the writer fires (a real
+  # completion row lands BEFORE its record is ever written -- the record
+  # documents a COMPLETED dispatch, so it can only be authored afterward),
+  # THEN the record commits -- mirroring the sequence rule 3's window
+  # assumes (design §4 rule 3 / the FM-023 comment above rc_rule3: "a
+  # realistic completion row... fires BEFORE the record documenting it gets
+  # committed").
+  if [[ -f "$WSE" ]] && command -v jq >/dev/null 2>&1; then
+    P=docs/plans/f11.md
+    _write_plan "$P" "architecture-reviewer" "SOUND" "docs/reviews/f11-record.md" "PENDING" ""
+    git add "$P" >/dev/null
+    _commit "f11 plan"
+    BLOB="$(rc_blob_of "$P" plan)"
+    sed -i "s/PENDING/$BLOB/" "$P"
+    git add "$P" >/dev/null
+    _commit "f11 plan anchored"
+
+    F11_LEDGER="$T/f11-ledger.jsonl"
+    DISPATCH_LEDGER_PATH="$F11_LEDGER" CONV_TREE_STATE_PATH="$T/f11-conv-tree.json" HARNESS_SELFTEST=1 \
+      bash "$WSE" --on-builder-complete <<EOF2 >/dev/null 2>&1
+{"tool_name":"Task","tool_input":{"subagent_type":"architecture-reviewer","description":"Review","prompt":"Review $P"},"tool_response":"SOUND","session_id":"rc-rt-1"}
+EOF2
+
+    _write_record docs/reviews/f11-record.md "architecture-reviewer (model: fable)" "$P" "$BLOB" "SOUND"
+    git add docs/reviews/f11-record.md >/dev/null
+    _commit "f11 record"
+
+    RC_LEDGER_PATH="$F11_LEDGER"
+    rc_validate_chain "$P"
+    _st "s11-writer-roundtrip-passes" "PASS" "$RC_VERDICT"
+
+    if [[ -s "$F11_LEDGER" ]] && jq -e --arg p "$P" '.subagent_type=="architecture-reviewer" and .artifact_ref==$p and (.ts|type=="number")' "$F11_LEDGER" >/dev/null 2>&1; then
+      echo "self-test (s11-writer-row-shape): PASS" >&2; PASSED=$((PASSED + 1))
+    else
+      echo "self-test (s11-writer-row-shape): FAIL (row: $(cat "$F11_LEDGER" 2>/dev/null))" >&2; FAILED=$((FAILED + 1))
+    fi
+
+    # Wrong-artifact_ref: the ledger's only row names f11.md (from the
+    # writer call above). Validate a DIFFERENT plan (f11c, its own valid
+    # chain otherwise) against that SAME ledger -- rule 3 must find no row
+    # whose artifact_ref matches f11c's path and FAIL.
+    P3=docs/plans/f11c.md
+    _write_plan "$P3" "architecture-reviewer" "SOUND" "docs/reviews/f11c-record.md" "PENDING" ""
+    git add "$P3" >/dev/null
+    _commit "f11c plan"
+    BLOB3="$(rc_blob_of "$P3" plan)"
+    sed -i "s/PENDING/$BLOB3/" "$P3"
+    git add "$P3" >/dev/null
+    _commit "f11c plan anchored"
+    _write_record docs/reviews/f11c-record.md "architecture-reviewer (model: fable)" "$P3" "$BLOB3" "SOUND"
+    git add docs/reviews/f11c-record.md >/dev/null
+    _commit "f11c record"
+
+    RC_LEDGER_PATH="$F11_LEDGER"
+    rc_validate_chain "$P3"
+    _st "s11c-writer-wrong-artifact-ref-rejected" "FAIL" "$RC_VERDICT"
+
+    RC_LEDGER_PATH="$SAVED_LEDGER"
+  else
+    echo "self-test (s11-writer-roundtrip-passes): SKIP (workstreams-emit.sh or jq not found)" >&2
+  fi
 
   # ── Extra: rc_chain_present / rc_validate_chain on a chain-less plan ────────
   P=docs/plans/chainless.md

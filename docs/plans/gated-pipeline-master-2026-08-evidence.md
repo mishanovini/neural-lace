@@ -728,6 +728,67 @@ the sandbox's 4 consistent denials across distinct action classes are a structur
 a probeable permission; review-reviewer-independence's other 9 records share the same binary
 detection mechanism as the 1 individually verified.
 
+## Task 7 — Mechanized flips + targeted fixes (REQ-A5) — Verification: full
+
+- Builder: plan-phase-builder (sonnet), worktree `agent-a580ebd9a93c3a623`, commit `6c975cbb`,
+  merged at `7b5217d0`. All five sub-targets delivered (7a dates in schedule-manifest schema v3;
+  7b doctor reads them + managed_by satisfied-by-construction via _note; 7c pid-liveness in
+  `_sf_is_stale` + `SF_HALT_DIR` canonical split — closes the implementation review's note-2
+  race; 7d doctor-quick TTL 1200s justified against fresh live re-measurement (421s/425s cold
+  cycles this session) + HR-F10 renames; 7e real Get-Counter measurement appended to the perf
+  doc: 31 samples/30s/first-discarded, avg 4.98%). Fix-status table rows F3/F7/F10/F11 updated
+  in the same commit.
+- Self-tests: single-flight-lib **43/43** (9 new scenarios) — **orchestrator re-run in worktree
+  AND on merged master**; digest **102/102** (orchestrator re-run on master, backgrounded run
+  b15xgavz9); doctor full self-test skipped per the task's own allowance (90+ min) — substituted:
+  bash -n clean + two live cold `--quick` runs (421s/425s, no regression, new WARN texts firing
+  on the real coord-sync/budget entries) + 9 hand-built fixtures replicating the cadence/budget
+  scenarios (builder-run). Builder caught its own set-u unbound-var bug pre-ship.
+- **Cross-file integration regression caught by the orchestrator's post-merge suite re-run:**
+  nl-maintenance S6 planted its HALT fixture in the scoped SF_STATE_DIR; the lib now (by design)
+  consults canonical SF_HALT_DIR → 35/37. Root cause evidenced by the FAIL output
+  (halted:false heartbeat) + the design's own REQ-A5 line ("self-tests override SF_HALT_DIR
+  explicitly"). Test-env fix at `34384396` (S6 scopes SF_HALT_DIR); suite **37/37 re-run**.
+  Production drain path unchanged. Lesson: a lib semantic change must re-run CONSUMER suites,
+  not just its own — added to the completion-report lessons list.
+- Builder honest gaps: doctor full suite never run this session (allowance); the renamed doctor
+  scenario not isolated-re-run; fix-status SHA one amend-iteration behind (pre-existing table
+  convention). Builder-authored articulation in its report (audit target when T7 verifies).
+
+### Task 7 — Comprehension Articulation (recovered verbatim from the builder's own subagent session transcript after builder output-file loss; builder a580ebd9a93c3a623; diff: 6c975cbb)
+
+RECOVERY NOTE: this task's Comprehension Articulation was never committed to this evidence file
+before the builder's task output-file was truncated to 0 bytes. It has been recovered VERBATIM
+from `~/.claude/projects/<this-project>/4a470c8c-e5e4-49bb-a8f8-131206e35b58/subagents/agent-a580ebd9a93c3a623.jsonl`
+(the builder's own per-agent session transcript, stored under the main session 4a470c8c's
+`subagents/` directory) — the main session's top-level transcript JSONL was checked first and
+contains only a final summary line ("Comprehension Articulation: included above...") without the
+actual sub-sections; the subagent's own transcript carries the full text. The four sub-headings
+below use the builder's own wording verbatim, including its own bolded lead-ins.
+
+**Spec meaning (own words):** Task 7 mechanizes four review findings the harness review flagged as "prose-only WARN with no flip mechanism" or "stale test-name/HALT-path assumptions" — the class constitution paragraph-1 explicitly bans ("no mechanism = say there is no mechanism"). HR-F7 needed the cadence and budget WARN checks to carry actual stored dates that flip them to RED, not just comments promising a future flip; I implemented this as `warn_since`/`red_after` fields on `schedule-manifest.json`'s `cadence_check` (`adapters/claude-code/config/schedule-manifest.json:8`) and a new `budget_check` object (`:12,14`), read by `check_schedule_manifest_cadence` (`adapters/claude-code/hooks/harness-doctor.sh:2438`) and `check_budget_bash_hooks` (`:2564`). HR-F3 needed the single-flight guard's staleness check to stop being pure-TTL (which lapses mid-run once guarded work outlives the TTL) — I added owner-pid liveness via `_sf_owner_pid`/`_sf_owner_alive` (`adapters/claude-code/hooks/lib/single-flight-lib.sh:264,275`) consulted first inside `_sf_is_stale` (`:299`), plus raised doctor-quick's TTL 120s→1200s (`harness-doctor.sh:7728`) with a comment citing my own fresh 421s/425s re-measurement. HR-F10 needed two test-scenario labels renamed to say what they now actually validate (`harness-doctor.sh:7386`, `session-start-digest.sh:2512`). HR-F11 needed HALT's resolution split from the (scopable) lock directory into its own canonical `SF_HALT_DIR` (`single-flight-lib.sh:204`, consumed by `sf_halt_set` at `:213`).
+
+**Edge cases covered:** owner-alive-at-stale-TTL (S17, lock survives regardless of age); owner-confirmed-dead (S18, reclaimed via a real forked-and-reaped pid); owner-file-with-no-recorded-pid (S19, falls back to pure TTL, the pre-fix behavior preserved for that case); HALT-in-canonical-dir-while-locks-scoped-elsewhere (S20, drains correctly); HALT-dropped-only-in-a-scoped-dir (S21, correctly does NOT drain — proves the split is real, not default-coincidence); cadence/budget red_after-in-the-past (RED) vs red_after-in-the-future (stays WARN) vs absent (WARN forever, never fabricates RED); managed_by=nl-maintenance + live activation marker (satisfied-by-construction NOTE, never warns even past red_after) — the exact HR-F7 false positive the finding named. All verified either via the real self-test suites (single-flight-lib.sh 43/43, session-start-digest.sh 102/102) or hand-built fixtures replicating the doctor's own `_scenario_dir`/`_run_quick` harness against the real script.
+
+**Edge cases NOT covered:** the ONE renamed doctor scenario (`9-ssf-explicit-invocation-never-suppressed-BY-SSF`) was not re-run in isolation — it depends on prior scenario state (a held SESSIONSTART-SINGLEFLIGHT-01 lock) not cheaply reconstructable outside the full 90+ min `--self-test`; I verified only that the rename is a pure string change with no logic touched. PID-reuse-at-liveness-check-time (a dead pid recycled by the OS to an unrelated live process between staleness-check and reclaim) is a known, accepted, pre-existing race class in this codebase (same shape as nl-maintenance.sh's watchdog identity check) — not newly introduced, not specifically tested here. The digest's own "digest-<repo>" TTL (120s) was NOT raised or re-measured — task scope was explicitly doctor-quick only; I added a justification comment explaining why (lighter workload, no dedicated measurement exists) rather than fabricating a number.
+
+**Assumptions:** `kill -0 <pid>` reliably signals liveness/deadness under MSYS2 bash on Windows for both self-spawned test pids and real cross-process owners (consistent with existing `kill -0`-based identity checks elsewhere in this codebase; not independently re-verified beyond my own self-test's fork/reap pattern). `red_after`/`warn_since` as bare `YYYY-MM-DD` strings parse correctly via `date -d` on this platform (verified live). The review-finding-fix-gate's token regex requires a hyphenated ID and never matches this review file's bare `F3`/`F7`/`F10`/`F11` labels — confirmed empirically (gate allows regardless of staging); filed as `nl-issue`. The "FIXED @ &lt;sha&gt;" self-citation in the fix-status table cites `7dc1b2f7`, one amend-iteration behind the true final SHA `6c975cbb` — an unavoidable regress (amending to fix a self-citation changes the hash again); this matches this same table's own pre-existing convention (F2's row cites a non-final SHA with a parenthetical).
+
+## Task 10 — Registration prep + DEC-4 ask (REQ-A7) — Verification: contract
+
+- Orchestrator-direct (schtasks operations are sandbox-blocked for builders — the T8 lesson).
+- **Installer end-to-end proof (contract evidence):** name-patched scratch copy (TaskName →
+  NL-MaintenanceT10Test — the ONLY delta, honoring the hard stop's letter against registering
+  the real name pre-ratification): register with `-RepoPath` → `Get-ScheduledTask` shows
+  State: Ready → `-Rollback` → verified GONE → zero stray nl-maintenance processes. The
+  legacy-task idempotence path also exercised (all "already Disabled -- no-op").
+- **DEC-4 ratification ask surfaced: `NY-1785771976-caeb`** (needs-you.sh, tier 2, §3 compact
+  format with per-option outcomes; links to the T3/T4 implementation review — the F-3
+  precondition's "fixed AND re-reviewed" record — and the plan). The cold-reader lint BLOCKED
+  two drafts before accepting the third (single-line text fails the multi-line requirement;
+  the lint working as designed) — rendered into NEEDS-YOU.md.
+- Registration itself: NOT executed — awaits operator 'ratify'/'pure-tick'/'hold' per DEC-4.
+
 ## Comprehension audit — Task 5 (comprehension-reviewer, fable, 2026-08-03T11:58Z)
 
 - **Task 5 — PASS (confidence 8).** 7/7 citations grounded (+5 corroborating fact-checks); the
@@ -836,3 +897,343 @@ Step 4: sf-skip with no valid cache → distinct exit 3 + parseable SKIPPED line
 Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the digest suite re-run green by this verifier (102/102 incl. the S23 single-writer quintet); the empty-cache skip contract re-observed live by a verifier-constructed probe (SKIPPED line, exit 3, no cache file); every wire arrow traced at the merged blob; comprehension record persisted at b6e65886. Accepted with recorded rationale (not re-run): the doctor FULL self-test at 174/179 — the 5 failures are git-stash-A/B-PROVEN pre-existing (jq-parity class, T8's triage population), and the plan's own REQ-A8 done-bar rule makes targeted self-tests, never global doctor state, the done-bar for Tasks 1-7; re-running the 200-300s suite would re-measure T8's baseline, not T4's behavior.
+
+## Task 18 — G3 class review-set (REQ-B9) — Verification: full — MERGED c5ee36d6 + remediation
+
+- Build bd4a4ea4 + T16-ordered remediation ab2caf9e (F-2 non-saturation via F_CHANGED scoping +
+  CG6 proving fixture; F-3 gate globs; F-4 in-row corpus_measurement per token, re-measured with
+  the fixed mechanism, conservatism caveat load-bearing; F-5 named exemption additions).
+  Fidelity re-check: CLEAR TO MERGE (appended to the T16 record trail; CG6 independently re-run
+  by the reviewer). Orchestrator post-merge suite: 86/3/1 → after the CI round-2 stat-order fix
+  merged: **self-test: OK (1 skipped — honest NTFS guard)**.
+
+### Task 18 — Comprehension Articulation (builder-authored, per Decision 020d; diff: bd4a4ea4; builder agent a614ebf430ad7cea2 — AUDIT TARGET; NOTE: this is the only articulation in the builder's transcript — the T16-ordered remediation round, commit ab2caf9e, did not produce a second/updated one)
+
+## Comprehension Articulation
+
+**Spec meaning (re-resolved citations):** REQ-B9 (design `docs/designs/gated-pipeline-master-2026-08-03.md:304`) and G3 (design `:237-244`) require extending `review-record-push-gate.sh` with the DEC-5 (design `:134`) class table: per-class required review sets, per-class posture, provenance-docs exemption, same-push honoring "reading records AS OF the local SHA being pushed." I mapped `required_reviews` tokens to three verification mechanisms: `harness` reuses the pre-existing `rrg_is_covered` per-blob check outright (no reimplementation, per the M-3 rule cited in `review-chain-lib.sh:16`); `evidence` checks for a `docs/plans/*evidence*` touch in the push's own diff; any other token is a reviewer-agent type verified by `git grep` + `git show <sha>:<path>` against `docs/reviews/**`, reusing `rc_record_reviewer`/`rc_record_verdict` from `review-chain-lib.sh:126-166` verbatim (as instructed: "reuse existing rrg record-parsing + review-chain-lib where cleaner"). Messages use `gate-contract-lib.sh`'s `gc_block`/`gc_header` (`gate-contract-lib.sh:37-69`).
+
+**Edge cases covered:** empty `flip_date` (treated as "still calibrating," WARN forever, matching the HR-F7 no-prose-flips convention already used by `RC_ANCHOR_CALIBRATION_END_DATE`); a class table absent at the pushed sha (quiet no-op, not a degradation — the file predates its own existence for old commits); a present-but-unparseable table (loud WARN, per this extension's own fail-open contract, distinct from the authoritative check's block-on-missing-lib); an operator override marker (checked and logged once per push, suppressing this extension's block the same way it suppresses the per-blob check's); the `architecture-reviewer` token's "if-triggered" qualifier (only evaluated when a pushed harness-class path also matches `architecture_trigger_globs`); multiple touched classes in one push (each evaluated independently, closest to a logical OR on blocking).
+
+**Edge cases NOT covered:** transcript-anchored binding of a specific review to specific bytes at the class-gate level (named residual in the design's NON-GOALS, `:325`) — the class-gate is a coarser "has this class had its required reviewer types active at all" check, not a per-diff binding; a record materialized via `git show` whose parse depends on `git log --follow` history walking from the checked-out HEAD rather than the pushed sha (a pre-existing limitation in the reused `rc_file_first_commit_epoch`, not newly introduced — I deliberately did not wire rule-3's ledger cross-check into this extension since RC_LEDGER_LANDING_DATE is unset by default and would be a no-op today; noted as a fast-follow once Task 15 lands).
+
+**Assumptions:** `required_reviews` tokens map to the four mechanisms above (harness/evidence/reviewer-type) — the "evidence" and "architecture_trigger_globs" mechanisms are my own concretization of the design's prose, not literally spelled out in the design table, and should be revisited by `plan-fidelity-reviewer`/`harness-reviewer` at review time; the "product"/"other-docs" required-review tokens (`code-reviewer`, `plan-fidelity-reviewer`) are my own reasonable defaults, not explicitly named in the task dispatch.
+
+## CI triage rounds 1-2 (Task 8 remit) — MERGED 85ebd520/d6e70175 (r1), 436c5854 (r2)
+
+- r1 PROVEN roots: CI hook loop shared fd0 → one hook's bare `cat` drained stdin → every sweep
+  silently truncated to ~30/83 hooks (CI never tested the rest, even when green); GC_MODE
+  mis-resolution on direct -body.sh execution; Evals: 8 oversized compacts + INDEX rows. Post-fix:
+  Evals GREEN (first since 2026-08-02), sweep genuinely 83 hooks (79 pass, doctor allowlisted
+  w/ tracker, 3 first-exposure fails).
+- r2 PROVEN roots (all genuine bugs, none env-quirks): review-record-push-gate `_rrpg_mtime_epoch`
+  GNU/BSD stat fallback REVERSED + GNU stat's stdout leak corrupting $mtime → EVERY valid
+  override marker silently rejected on all platforms (the T18 re-check advisory's exact worry —
+  fixed before the 2026-08-10 flip arms); auto-install fixture missing cutover_ref (stale vs the
+  C2-A security fix; two-commit cutover pattern applied); digest S12 `-x` gate on a 100644 file
+  never executed directly (Windows fileMode=false masked it; `-f` now). Digest final scenario
+  slow-on-Windows — CI re-run is the authoritative confirmation (watched below).
+
+## Task 6 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 6
+Task description: HR-F9+F4 fix (orchestrator-integrated; after Tasks 3-5): manifest.json entries for nl-maintenance, doctor-verdict-cache, both-substrates-alive; zero-substrate WARN (RED after 14 days, dates in schedule-manifest.json data); manifest-check.sh --gen-index regenerated — Verification: contract — Implements: REQ-A4
+Verified at: 2026-08-03T22:36:00Z
+Verifier: task-verifier agent (Verification: contract — locked-shape checks re-observed directly; evidence file's word not taken for anything re-observable)
+
+Oracle: contract — the manifest/schedule-manifest locked shapes + the doctor's own live WARN emission on this machine's real zero-substrate state (implicit-oracle floor exceeded: the check FIRED, re-observed by this verifier's own full doctor run, not the builder's probe record).
+
+Comprehension-gate: not applicable (Verification: contract — Step-0 per-level early-return semantics per Decision 020, same routing as the Task 2 verdict above)
+Operator invariants: none registered (exit 3) — `ask-registry.sh invariant-check --plan-slug gated-pipeline-master-2026-08`, re-run 2026-08-03T22:04Z
+
+Checks run (all re-executed by this verifier on master @ 851adbbd, working tree clean for all cited paths):
+1. Three manifest entries present: `grep -n` manifest.json → nl-maintenance-core (:3479), doctor-verdict-cache (:3503), maintenance-both-substrates-alive (:3524); each honest_status substantive — names the NOT-REGISTERED activation gap (DEC-4 pending), the single-writer provenance (d46beee5), and selftest:false honestly on the inverse branch. PASS
+2. `.zero_substrate` data block in schedule-manifest.json (:166-170): legacy_disabled_since=2026-08-02, red_after_days=14, HR-F7 dates-in-data note. PASS
+3. Doctor consumes the data (wired AND behaving): harness-doctor.sh:2642-2677 reads `.zero_substrate.legacy_disabled_since`/`.red_after_days` via jq and emits WARN before red_after, RED after. PASS
+4. LIVE RE-OBSERVATION (this verifier's own full `--quick` run, 2026-08-03, exit captured, log in session scratchpad): `[doctor] WARN maintenance-zero-substrates: zero maintenance substrates alive (legacy Disabled since 2026-08-02, replacement unregistered; RED at 14d, now 1d) -- T10 registration pending` — the check fired on this machine's REAL state (run completed; not cache-served — per-check lines streamed live). PASS
+5. `manifest-check.sh` re-run live: 164 entries, exactly 1 RED — session-heartbeat wired-template, pre-existing and T8-dispositioned (T8 open, PARTIAL); zero REDs introduced by T6's entries. PASS
+6. Git: commit 422257c2 (feat gated-pipeline T6) touches manifest.json (+66), schedule-manifest.json (+15), harness-doctor.sh (+46), doctrine/INDEX.md (+3 — the --gen-index regen); `git merge-base --is-ancestor 422257c2 851adbbd` → yes. PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/harness-doctor.sh --quick 2>&1 | grep zero-substrate   # → the WARN line above (verifier's own run, ~9 min, exit 0 at run end)
+Runtime verification: command bash adapters/claude-code/scripts/manifest-check.sh   # → 1 red (pre-existing session-heartbeat, T8-owned), 164 entries
+Runtime verification: file adapters/claude-code/manifest.json::"maintenance-both-substrates-alive"
+Runtime verification: file adapters/claude-code/config/schedule-manifest.json::"zero_substrate"
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: all three contract shapes present at the cited lines on master @ 851adbbd, and the zero-substrate WARN re-observed FIRING on this machine's real state by this verifier's own doctor run (not the evidence file's probe record); manifest-check re-run shows T6 introduced zero REDs. The disclosed honest gap (no dedicated self-test scenario for the inverse branch; selftest:false stated in the entry) is honestly declared in the manifest itself and carried by the predecessor Known-gap follow-up — a disclosed residual, not a contract breach.
+
+## Task 9 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 9
+Task description: REQ-A6 predecessor closure (after Task 8): task-verifier on harness-execution-redesign-2026-08.md T1/T2/T3 evidence; flip checkboxes where PASS; flip plan → Status: SUPERSEDED with pointer to this plan; verify plan-lifecycle archives it — Verification: mechanical — Implements: REQ-A6
+Verified at: 2026-08-03T22:38:00Z
+Verifier: task-verifier agent (Verification: mechanical — deterministic on-disk/git facts re-observed directly)
+
+Oracle: mechanical — the archived plan file, its evidence companion, docs/backlog.md, and git history on master @ 851adbbd; every claim re-read from disk, nothing taken from this evidence file's narrative.
+
+Comprehension-gate: not applicable (Verification: mechanical — Step-0 per-level early-return semantics per Decision 020)
+Operator invariants: none registered (exit 3) — `ask-registry.sh invariant-check --plan-slug gated-pipeline-master-2026-08`, re-run 2026-08-03T22:04Z
+
+Checks run (all re-executed by this verifier):
+1. `docs/plans/archive/harness-execution-redesign-2026-08.md` exists, `Status: SUPERSEDED` (:2) with a pointer comment (:3-8) naming this plan, the T1-PASS/T2-FAIL/T3-INCOMPLETE outcomes, the T4-T6 re-sequencing, and the carry-forwards backlog id. Committed 3bd5d6ea, ancestor of 851adbbd. PASS
+2. Honest closure verdicts in the archived evidence file §"Closure verification under supersession (gated-pipeline T9 / REQ-A6)" (:242): T1 `Verdict: PASS` (:327), T2 `Verdict: FAIL — do not flip` (:387), T3 `Verdict: INCOMPLETE — do not flip` (:447), each with a task-verifier block. PASS
+3. Checkbox states match the verdicts exactly: archived plan T1 `[x]`; T2/T3/T4/T5/T6 all `[ ]` — flip-where-PASS honored, no over-flipping. PASS
+4. Plan-lifecycle archived: the plan + its evidence file both live under `docs/plans/archive/` (not `docs/plans/`). PASS
+5. Carry-forwards registered: `docs/backlog.md:54` — PREDECESSOR-CLOSURE-CARRYFORWARDS-2026-08-03-01, five enumerated unowned items each with a candidate owner + re-derive pointer. PASS
+6. Docs impact (SCRATCHPAD pointer line): SCRATCHPAD.md:18-19 carries "predecessor SUPERSEDED+archived". PASS
+
+Runtime verification: file docs/plans/archive/harness-execution-redesign-2026-08.md::Status: SUPERSEDED
+Runtime verification: file docs/plans/archive/harness-execution-redesign-2026-08-evidence.md::Closure verification under supersession
+Runtime verification: file docs/backlog.md::PREDECESSOR-CLOSURE-CARRYFORWARDS-2026-08-03-01
+Runtime verification: command git log --oneline -1 -- docs/plans/archive/harness-execution-redesign-2026-08.md   # → 3bd5d6ea close predecessor plan: SUPERSEDED... (ancestor of 851adbbd, verified)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: every deliverable of the closure re-observed on disk and in git — SUPERSEDED status with a complete pointer, per-task closure verdicts whose checkbox states match them exactly (the honest-closure property: FAIL/INCOMPLETE tasks NOT flipped), the archive move landed, the five carry-forwards registered so the archive loses nothing, and the SCRATCHPAD pointer present.
+
+## Task 10 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 10
+Task description: REQ-A7 registration prep: installer + -Rollback self-tested end-to-end on this machine (register→verify→rollback→verify-gone, under a test task name); DEC-4 ratification ask surfaced via needs-you.sh with the §3 compact block — PRECONDITION (fidelity F-3, hard-stop letter): the ask is surfaced only after the T3 and T4 review-record SHAs exist and are cited inside the ask block; registration itself executes ONLY on operator YES — Verification: contract — Implements: REQ-A7
+Verified at: 2026-08-03T22:39:00Z
+Verifier: task-verifier agent (Verification: contract)
+
+Oracle: contract — the machine's real scheduled-task state (Get-ScheduledTask, re-queried by this verifier), the rendered NEEDS-YOU.md ask block, and the cited review record on disk; the installer register→rollback cycle itself is the one item accepted from the committed evidence record (re-executing it would re-mutate this machine's scheduled-task registry to prove an already-GONE state; the present state — zero NL-Maintenance* tasks — is exactly the cycle's documented end state and was re-observed).
+
+Comprehension-gate: not applicable (Verification: contract — Step-0 per-level early-return semantics per Decision 020)
+Operator invariants: none registered (exit 3) — `ask-registry.sh invariant-check --plan-slug gated-pipeline-master-2026-08`, re-run 2026-08-03T22:04Z
+
+Checks run (re-executed by this verifier):
+1. Registration NOT executed (the hard-stop letter): `Get-ScheduledTask -TaskName 'NL-Maintenance*'` → NOTHING registered — covers both the real name AND the NL-MaintenanceT10Test test name (rollback end-state consistent: test task GONE). PASS
+2. DEC-4 ask exists and is rendered: NEEDS-YOU.md:101-110, id `NY-1785771976-caeb` — §3 compact block (decision sentence, background, PRECONDITIONS MET, three options ratify/pure-tick/hold each with plain outcomes, "My pick: ratify", links). PASS
+3. F-3 precondition (fixed AND re-reviewed, cited INSIDE the ask): the block cites fix SHAs 6f5d1b22 (HR-F1) / d46beee5 (HR-F2) / 6c975cbb (T7 TTL race) AND the re-review record `docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md` — which exists on disk (7,137 bytes, verified). PASS
+4. Installer surface: install-maintenance-task.ps1 carries the -Rollback path (5 references incl. the header's register/rollback contract and the Get-ScheduledTask verify line). PASS
+5. Installer end-to-end proof record: this file's T10 entry (committed 1456cdd1, ancestor of 851adbbd) records register→State:Ready→-Rollback→GONE under TaskName NL-MaintenanceT10Test (name-patch the ONLY delta) + legacy-idempotence no-ops. Accepted as the contract's recorded execution; end-state independently re-observed in check 1. PASS
+6. Consistency: the zero-substrate WARN re-observed live in the T6 verdict above says "replacement unregistered … T10 registration pending" — the doctor's independent sensor agrees registration has NOT happened. PASS
+
+Runtime verification: command powershell -NoProfile -Command "Get-ScheduledTask -TaskName 'NL-Maintenance*' -ErrorAction SilentlyContinue"   # → empty; NO NL-Maintenance* task registered (verifier re-run)
+Runtime verification: file NEEDS-YOU.md::NY-1785771976-caeb
+Runtime verification: file docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md::implementation-review
+Runtime verification: file adapters/claude-code/scripts/install-maintenance-task.ps1::Rollback
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN: the ask exists in §3 form with the F-3 precondition citations verified against on-disk artifacts, and the machine's real state re-observed on both sides of the contract — zero NL-Maintenance* tasks (registration correctly withheld pending operator DEC-4) with the doctor's independent zero-substrate WARN corroborating. HYPOTHESIZED (accepted, not re-run): the register→rollback cycle behaved exactly as the committed record describes (REFUTED if a future real registration attempt fails at register or rollback); not re-executed because re-proving a GONE end-state requires re-mutating the live scheduled-task registry — the recorded run + consistent end-state is the contract evidence.
+
+## Task 12 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 12
+Task description: [parallel] REQ-B2 design-author agent + templates/design-template.md (rationale-per-decision, non-goals, supersedes, machine-parsable REQ table, Directives-honored, Review Chain stub with authored-by; frontmatter model: fable) — Verification: contract — Implements: REQ-B2
+Verified at: 2026-08-03T22:40:00Z
+Verifier: task-verifier agent (Verification: contract)
+
+Oracle: contract — the locked artifact shapes the task names (frontmatter fields, template sections, model-policy entry), re-read directly from master @ 851adbbd AND the live ~/.claude mirror.
+
+Comprehension-gate: not applicable (Verification: contract — Step-0 per-level early-return semantics per Decision 020)
+Operator invariants: none registered (exit 3) — `ask-registry.sh invariant-check --plan-slug gated-pipeline-master-2026-08`, re-run 2026-08-03T22:04Z
+
+Checks run (re-executed by this verifier):
+1. `adapters/claude-code/agents/design-author.md` exists on master (commit b65bef7a, ancestor of 851adbbd; 20,025 bytes) AND live at ~/.claude/agents/design-author.md — `diff` → byte-identical. PASS
+2. Frontmatter: `model: fable` SINGLE value (fallback chain correctly NOT in the file); tools declared; description names the P-31/P-32 defect classes and the six-phase protocol. PASS
+3. `adapters/claude-code/templates/design-template.md` (12,900 bytes, same commit) carries every required section: **Supersedes** (:48), `## 3. Decisions (each with rationale + reversal cost)` (:91, table :102), machine-parsable `## Requirements` REQ table with the literal-heading parse contract for plan-reviewer Check 21 (:121-132), `## Non-goals` (:140), `## Directives honored` (:196, exact-heading convention), `## Review Chain` stub with `authored-by:` incl. the honest-fallback wording (:211, :221-224). PASS
+4. model-policy.json agents block: `"design-author": {category: "design", chain: ["fable","opus"]}` (:203-207) — category design per the task's Docs-impact line. PASS
+5. Docs-impact claim ("model-policy.json agents block gains the entry") — delta confirmed present at :203; landed with the T12/T13 train. PASS
+
+Runtime verification: file adapters/claude-code/agents/design-author.md::model: fable
+Runtime verification: file adapters/claude-code/templates/design-template.md::## Directives honored
+Runtime verification: file adapters/claude-code/config/model-policy.json::"design-author"
+Runtime verification: command diff adapters/claude-code/agents/design-author.md ~/.claude/agents/design-author.md   # → no output, byte-identical (verifier re-run)
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN: every contract shape re-observed at the cited line on master and confirmed byte-identical live; the template's parse-contract headings match what plan-reviewer Check 21 and the plan-template's Review Chain conventions consume (the cross-artifact contract the template exists to serve). The agent's authoring protocol has not yet originated a real design doc this session (design-author's first live exercise is a future design cycle) — for a contract-level agent+template task the locked shapes ARE the bar; the sibling protocol (T13's reviewer) was proven executable live in the T16 record, and design-author's own self-audit phase is structurally the same host-executable protocol form.
+
+## Task 13 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 13
+Task description: [parallel] REQ-B3 plan-fidelity-reviewer agent (frontmatter model: fable, category review; protocol per design §5; anti-rubber-stamp step; GOLDEN CASE fixture = the P-32 push-directive drop replayed as a design+plan pair in the agent's eval block) — Verification: contract — Implements: REQ-B3
+Verified at: 2026-08-03T22:41:00Z
+Verifier: task-verifier agent (Verification: contract)
+
+Oracle: contract + derived (golden case) — the locked artifact shapes re-read from master @ 851adbbd and the live mirror, PLUS the strongest available functional oracle for an agent definition: the protocol was EXECUTED live twice this session (the T16 record's full round → REFORMULATE with 8 class-tagged findings, then the delta round → PASS), and the record's own header shows the GOLDEN-CASE admission test reproduced (fixture pair → CONTRADICTORY, Critical, REFORMULATE) before the real verdict was trusted.
+
+Comprehension-gate: not applicable (Verification: contract — Step-0 per-level early-return semantics per Decision 020)
+Operator invariants: none registered (exit 3) — `ask-registry.sh invariant-check --plan-slug gated-pipeline-master-2026-08`, re-run 2026-08-03T22:04Z
+
+Checks run (re-executed by this verifier):
+1. `adapters/claude-code/agents/plan-fidelity-reviewer.md` on master (commit 88a6a1d5, ancestor of 851adbbd; 29,792 bytes) AND live — `diff` → byte-identical. Frontmatter `model: fable` single value, tools read-only (Read/Grep/Glob/Bash). PASS
+2. model-policy.json: `"plan-fidelity-reviewer": {category: "review", chain: ["fable","opus"]}` (:210-214). PASS
+3. GOLDEN CASE fixture pair exists at `adapters/claude-code/tests/fixtures/plan-fidelity/` — mini-design.md (3,107 B) + mini-plan.md (2,925 B), same commit; substantive P-32 replay (push-materialize MUST + hard-stop vs the plan's TTL-poll contradiction), not stubs; agent's GOLDEN CASE section (:327-358) names the pair, the required REFORMULATE output, and the "no PASS on a real plan until the fixture reproduces REFORMULATE" eval note. PASS
+4. Anti-rubber-stamp step present: the "Weakest mapping" requirement (agent :220 region; exercised for real in the T16 record's §"Weakest mapping" naming REQ-C6→T24). PASS
+5. FUNCTIONAL PROOF (protocol executed live, twice): docs/reviews/2026-08-03-gated-pipeline-t16-plan-fidelity-review.md — (a) header line 7: admission test executed THIS RUN against the fixture pair, REQ-D1 → CONTRADICTORY, Critical, REFORMULATE reproduced exactly as the eval note demands; (b) full round Verdict: REFORMULATE with findings F-1..F-8 incl. the F-1 P-32-shape catch (stale "no OD- id exists" backfills vs the landed register) — the agent catching in production the precise defect class its golden case encodes; (c) delta round → Delta Verdict: PASS with fresh attestation. Protocol-host execution (general-purpose host running the agent file's protocol on model fable, registry hot-reload limitation) disclosed honestly in the record AND the plan's chain entry, nl-issue filed. PASS
+6. Docs-impact claim (model-policy entry) — confirmed at :210. PASS
+
+Runtime verification: file adapters/claude-code/agents/plan-fidelity-reviewer.md::model: fable
+Runtime verification: file adapters/claude-code/tests/fixtures/plan-fidelity/mini-design.md::FIXTURE
+Runtime verification: file adapters/claude-code/config/model-policy.json::"plan-fidelity-reviewer"
+Runtime verification: file docs/reviews/2026-08-03-gated-pipeline-t16-plan-fidelity-review.md::Admission test
+Runtime verification: command diff adapters/claude-code/agents/plan-fidelity-reviewer.md ~/.claude/agents/plan-fidelity-reviewer.md   # → no output, byte-identical (verifier re-run)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: all contract shapes re-observed at cited lines on master + live, AND — beyond the contract bar — the agent's protocol demonstrably WORKS: the T16 record shows the golden-case admission test reproducing REFORMULATE on the fixture pair and the full protocol catching a live P-32-shape defect (F-1) on the real plan, then passing the delta honestly. That is the functionality-over-components axis satisfied for an agent artifact: not "the file exists" but "the protocol, executed, produced the discriminating verdicts."
+
+## Task 16 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 16
+Task description: REQ-B13 bootstrap self-review (after Tasks 13,14,15): dispatch plan-fidelity-reviewer on THIS plan against design r3; commit its record; append the plan-reviews chain entry with CANONICALIZED plan-blob anchor (re-anchoring the bootstrap record); only then is Task 17 dispatchable — Verification: mechanical — Implements: REQ-B13
+Verified at: 2026-08-03T22:43:00Z
+Verifier: task-verifier agent (Verification: mechanical)
+
+Oracle: mechanical + derived (the lib itself) — the committed record, the plan's chain entry, and the canonicalized blob INDEPENDENTLY RECOMPUTED by this verifier via the production parser (`source review-chain-lib.sh; rc_blob_of <plan> plan`), not read from any record.
+
+Comprehension-gate: not applicable (Verification: mechanical — Step-0 per-level early-return semantics per Decision 020)
+Operator invariants: none registered (exit 3) — `ask-registry.sh invariant-check --plan-slug gated-pipeline-master-2026-08`, re-run 2026-08-03T22:04Z
+
+Checks run (re-executed by this verifier on master @ 851adbbd, BEFORE this session's checkbox flips):
+1. Record exists and is substantive: docs/reviews/2026-08-03-gated-pipeline-t16-plan-fidelity-review.md — `## Verdict: REFORMULATE` (:9) with 8 findings + 2 adjudications + weakest-mapping + directive-carriage enumeration + anchor check; `# Delta re-review (post-fixes @ 7eaaa9f6)` → `## Delta Verdict: PASS` (:84) with F-1/F-6/F-7/F-8 RESOLVED and F-2..F-5 explicitly scoped to the T18 merge (subsequently discharged — see the T18 entry above: remediation ab2caf9e, fidelity re-check CLEAR TO MERGE appended to this record's trail). Committed dbd6647f; fixes 7eaaa9f6; both ancestors of 851adbbd. PASS
+2. Fresh attestation in the record: `**Reviewed:** docs/plans/gated-pipeline-master-2026-08.md @ 0771581b2222e0198443bf425283bc7cf8cda400` (:82). PASS
+3. Chain entry appended: the plan's `## Review Chain` plan-reviews carries `reviewer: plan-fidelity-reviewer  verdict: PASS  record: docs/reviews/2026-08-03-gated-pipeline-t16-plan-fidelity-review.md  plan-blob: 0771581b2222e0198443bf425283bc7cf8cda400` (plan :36), superseding the bootstrap harness-reviewer entry (:35) exactly as the bootstrap design intended. PASS
+4. THREE-WAY ANCHOR INDEPENDENTLY VERIFIED: `source adapters/claude-code/hooks/lib/review-chain-lib.sh && rc_blob_of docs/plans/gated-pipeline-master-2026-08.md plan` → `0771581b2222e0198443bf425283bc7cf8cda400` — EXACT match: chain-entry blob == record-attested blob == HEAD canonicalized blob, computed by this verifier with the production lib (verified pre-flip; this session's sanctioned checkbox flips move the canonical blob afterward — inherent to the post-review lifecycle, chain/In-flight sections excluded but task lines included per the lib's canonicalization). PASS
+5. Sequencing honored ("only then is Task 17 dispatchable"): T17 remains unbuilt/unflipped; the T16 chain entry landed before any T17 dispatch. PASS
+6. Admission test + protocol-host disclosure verified in the record header (:3, :7) — same facts underwriting the T13 verdict above. PASS
+
+Runtime verification: command bash -c 'source adapters/claude-code/hooks/lib/review-chain-lib.sh && rc_blob_of docs/plans/gated-pipeline-master-2026-08.md plan'   # → 0771581b2222e0198443bf425283bc7cf8cda400 (verifier re-run, exact match, pre-flip)
+Runtime verification: file docs/reviews/2026-08-03-gated-pipeline-t16-plan-fidelity-review.md::Delta Verdict: PASS
+Runtime verification: file docs/plans/gated-pipeline-master-2026-08.md::plan-blob: 0771581b2222e0198443bf425283bc7cf8cda400
+Runtime verification: command git merge-base --is-ancestor dbd6647f 851adbbd   # → exit 0 (and 7eaaa9f6 likewise)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the bootstrap self-review's full mechanical contract re-observed — committed substantive record (REFORMULATE → fixes → delta PASS with fresh attestation), chain entry appended with the canonicalized anchor, and the three-way blob equality recomputed independently by this verifier through the production lib rather than trusted from any artifact. The one deviation (protocol-host execution instead of registry dispatch) is disclosed in the record, the chain entry, and an nl-issue — honest, not silent.
+
+## Forensic recovery — Tasks 7, 11, 14, 15 Comprehension Articulations (2026-08-03)
+
+Four builder agents' task output-files (`...\tasks\<agent-id>.output`) were found truncated to
+0 bytes, losing their Comprehension Articulation blocks before they were transcribed into this
+file. This section (plus the Task 7 subsection inserted above, in its natural position after the
+existing Task 7 evidence entry) recovers all four VERBATIM from a surviving source and records
+provenance honestly per constitution §1.
+
+Two candidate sources were checked for each of the four builders:
+1. The main session's top-level transcript, `4a470c8c-e5e4-49bb-a8f8-131206e35b58.jsonl` — for
+   all four agents this file's `<task-notification>` result block contains only a closing summary
+   line ("Comprehension Articulation: included above, four sub-sections...") and does NOT contain
+   the actual sub-section text. Confirmed by direct extraction (`jq -r '.message.content'` on the
+   matched line) for the Task 7 notification (line 1568) — the full unescaped result was read and
+   the articulation text is genuinely absent from it, not just hard to find.
+2. Each builder's own worktree (`.claude\worktrees\agent-<id>`) — checked via read-only grep for
+   "Spec meaning" / "Comprehension Articulation" across the whole tree. Every match in all four
+   worktrees resolves to pre-existing, unrelated repository files (other plans' historical
+   evidence files, `templates/comprehension-template.md`, `doctrine/comprehension-gate*.md`,
+   agent definitions) — none is the builder's own Task 7/11/14/15 articulation. Grepping each
+   worktree's own copy of `docs/plans/gated-pipeline-master-2026-08-evidence.md` for
+   `^## Task 11 —` / `^## Task 14 —` / `^## Task 15 —` / `^## Task 7 —` (Comprehension subsection
+   form) returned **no matches** in any of the four worktrees — the articulations were never
+   written to disk there.
+3. A third source, not named in the original two-source hypothesis, was discovered and used: each
+   background builder's OWN per-agent session transcript, stored by the harness at
+   `~/.claude/projects/<this-project>/4a470c8c-e5e4-49bb-a8f8-131206e35b58/subagents/agent-<id>.jsonl`
+   (part of the main session's own storage tree, distinct from the top-level session JSONL).
+   These files contain the builder's full assistant-turn text, including the `## Comprehension
+   Articulation` heading and all four sub-sections in the builder's own words, extracted via
+   `jq -r '.message.content[]? | select(.type=="text") | .text'` and located by grepping the
+   extracted text for `Comprehension Articulation`/`Spec meaning`. This is the source used below
+   for all four recoveries — genuinely verbatim, not reconstructed.
+
+Task 7's recovery is inserted in its natural position above (after the existing "Task 7 —
+Mechanized flips + targeted fixes" evidence block, before "## Task 10"). Tasks 11, 14, and 15 have
+no existing parent evidence sections in this file (no builder evidence narrative or verifier
+verdict for these three tasks has landed yet) — the blocks below are ONLY the recovered
+Comprehension Articulations, not full task evidence entries; a complete evidence write-up for
+Tasks 11/14/15 (builder narrative, self-test totals, verifier verdict) remains outstanding and is
+NOT fabricated here.
+
+### Task 11 — Comprehension Articulation (recovered verbatim from the builder's own subagent session transcript after builder output-file loss; builder a9710b88fde9bab38; diff: bca1c3adfe2c942898842b6f502338d76c229dfd; worktree `agent-a9710b88fde9bab38`)
+
+Recovered from `...\subagents\agent-a9710b88fde9bab38.jsonl`. Task 11 = "REQ-B1+B4 register:
+`config/operator-directives.json` (canonical) + generator for `docs/operator-directives.md` view +
+`hooks/lib/directives-register-lib.sh`..." per the plan (`docs/plans/gated-pipeline-master-2026-08.md:248-254`).
+The builder's own report gave this section as "Spec meaning:" (not "Spec meaning (own words):")
+and included two extra trailing subsections ("Honest gaps" and "Blockers") beyond the four
+required ones — reproduced here as the builder wrote them, verbatim, in full:
+
+**Spec meaning:** Build the canonical operator-directives JSON register, a generator for its markdown view, ONE parser lib for three future carriage consumers, seeded from the three named nl-issues plus curated/deduped D-01..D-23 (skip plan-machinery items), two operator-only entries, an ADR forward-guard WARN lint on decisions-index-gate.sh, and a same-commit `derive-cache.js` supersession annotation — under a <30-entry rot bar, with manifest/INDEX/model-policy edits forbidden (report deltas) and nl-issues.jsonl edits reported not applied.
+
+**Edge cases covered:** SUPERSEDED entries never surface via `dr_entries_for_files` (fixture-tested); `operator_only` entries with empty `surfaces` never surface for any input; malformed JSON, duplicate ids, bad id format, bad status, and >5-line instructions all fail `dr_validate` with named errors; the generator is idempotent and drift-detecting; the ADR WARN never flips the gate's existing BLOCK/ALLOW exit code across 4 scenarios; glob semantics (`*` crosses `/`) documented and unit-tested both directions.
+
+**Edge cases NOT covered:** no retroactive `register_ref` sweep of existing `docs/decisions/` files (lint is prospective/staged-only, by design); surfaces globs are hand-authored heuristics spot-checked against one real file (`dispatch-chain-gate.sh` → 5 correct matches), not exhaustively validated; Task 20's <50ms per-event latency budget (fidelity F-5) is NOT validated here — `dr__stream`'s node/jq backend is almost certainly too slow for that walk (jq alone ~174ms per the design's own measurement); flagged in the lib header as Task 20's problem to solve (pure-bash parse or a pre-parsed cache), not solved by this task.
+
+**Assumptions:** node/jq both available (verified: node v24.13.1, jq 1.8.1); both lib and generator fail-open to empty/ERROR if neither present, never crash. `register_ref` detection is a bare case-insensitive substring match, not a strict grammar — acceptable because the lint is WARN-only advisory. The two additive JSON fields beyond the design's exact 5-field entry contract (`title`, `source`/`absorbs` for traceability; `operator_only` bool) are non-breaking, explicitly documented as additive-and-unvalidated in both the register's own `note` and the lib header, and `dr_validate` deliberately never checks them.
+
+*(Builder's own trailing subsections, reproduced verbatim for completeness though not part of the required four:)*
+
+**Honest gaps** (builder's heading): Carriage channels 2+3 (`dispatch-directives.sh`, doctrine-jit walk) and plan-reviewer Check 21 are Task 14/20 scope — the lib is built to their agreed shared-fixture contract but nothing consumes it yet. ADR lint is prospective only; docs/decisions/064 and similar pre-existing binding ADRs still lack `register_ref` (out of this task's scope, not silently swept). manifest.json / INDEX.md / model-policy.json untouched per builder constraint — delta above is ready but not applied.
+
+**Blockers** (builder's heading): none.
+
+Builder-reported commit: `bca1c3adfe2c942898842b6f502338d76c229dfd` (worktree `agent-a9710b88fde9bab38`, not yet merged to master at time of report). Builder-reported verdict: DONE (proven at runtime) — all four self-tests re-run clean against the committed state (22/22, 6/6, 9/9, `node --check` OK).
+
+### Task 14 — Comprehension Articulation (recovered verbatim from the builder's own subagent session transcript after builder output-file loss; builder af614aa5e90013731; diff: e58e480e; worktree `agent-af614aa5e90013731`)
+
+Recovered from `...\subagents\agent-af614aa5e90013731.jsonl`. Task 14 = "REQ-B5+B7 template +
+checks: plan-template gains `design-ref:` header + per-task `Implements:`/`Directives:` + Review
+Chain section; plan-reviewer Checks 20-22..." per the plan
+(`docs/plans/gated-pipeline-master-2026-08.md:275-292`).
+
+**Spec meaning:** Task 14 (REQ-B5+B7) asks me to extend `plan-template.md` with a `design-ref:` header, per-task `Implements:`/`Directives:` fields, and a `## Review Chain` section stub; add `plan-reviewer.sh` Checks 20-22 implementing REQ-B7's three requirements, delegating ALL chain/record parsing to `review-chain-lib.sh` (Task 1's ONE parser, M-3 rule); measure the G1 surface-trigger's real fire-rate over the full plan corpus before any flip date is honored; and prove all of it via self-tests including the live gated-pipeline plan itself as the load-bearing fixture.
+
+**Edge cases covered:** multi-line hand-wrapped task text (Implements:/Directives: land on a different physical line than the task's own `- [ ] N.` start — silently dropped by a naive single-line regex, caught via the live-plan fixture); Windows bare-drive-letter infinite loop (`dirname "C:" == "C:"` forever) in the repo-root fallback probe-walk; rule2 anchor WARNs (not blocks) on the live plan's pre-r3-format historical review records; the live plan's missing `plan-blob:` field (Task 16's job) — avoided by using review-chain-lib's granular per-rule functions instead of the monolithic `rc_validate_chain`; a same-day grandfather-date epoch-comparison bug; REQ-id substring collisions (REQ-B1 is a literal prefix of REQ-B13/B14) — avoided via tokenized exact-match; a relative-`$SCRIPT`-path break when a sandboxed self-test scenario `cd`s before invoking bash.
+
+**Edge cases NOT covered (honest gaps):** the design's "G1 thin advisory PreToolUse gate file" (`hooks/design-ref-gate.sh`, named in design §7's anti-bloat ledger) is not built by this task — no task in the plan's 24-task list appears to own it; I did not invent scope to fill that gap. Cross-consistency between the plan's header `design-ref:` and the chain-section's own `design-ref:` is not enforced. The `demotion`/`recalibration` thresholds in `design-ref-gate.json` are data only — no code auto-acts on them (a human must read the ledger, matching G2/G3's own precedent). Check 21's REQ-table parser assumes a standard markdown table under a `## ...Requirements...` heading.
+
+**Assumptions:** `jq` is available (already a Check 18/rc_rule3 dependency); the design's "Requirements" heading text is a unique, unambiguous section boundary; rule-2 anchor mismatches stay WARN until an operator sets `RC_ANCHOR_CALIBRATION_END_DATE` (owned by Task 1, not re-litigated here); backfilling `Directives: n/a` onto the live plan's 24 tasks (5 already task-verifier PASS) is legitimate trailing-metadata addition, not a reopening of verified substance — logged via `## In-flight scope updates`.
+
+Builder-reported commit: `e58e480e` (worktree `agent-af614aa5e90013731`, "not yet on main branch"
+per the builder's own report). Builder-reported verdict: DONE (proven at runtime). Builder noted
+the scope-enforcement-gate flagged that it touched `planning.md`/`planning-full.md`, not declared
+under Task 14 in the Files-to-Modify table, and logged an in-flight scope-update entry for it.
+Builder-reported task-verifier verdict: N/A ("orchestrator runs task-verifier; explicit constraint
+'No task-verifier/checkbox/push'").
+
+### Task 15 — Comprehension Articulation (recovered verbatim from the builder's own subagent session transcript after builder output-file loss; builder a7eacf8dcf6548b11; diff: 2b8e07b607e8931652c8f8f3cc88d8036c225160; worktree `agent-a7eacf8dcf6548b11`)
+
+Recovered from `...\subagents\agent-a7eacf8dcf6548b11.jsonl`. Task 15 = "REQ-B14 dispatch ledger
+(delta-D2 form): `workstreams-emit.sh` `--on-builder-complete` PostToolUse path appends
+`{subagent_type, model, ts, session_id, artifact_ref}`..." per the plan
+(`docs/plans/gated-pipeline-master-2026-08.md:293-300`).
+
+**Spec meaning:** Task 15 builds the writer half of REQ-B14's dispatch-ledger cross-check. `workstreams-emit.sh`'s `--on-builder-complete` FOREGROUND branch (`adapters/claude-code/hooks/workstreams-emit.sh:4342` `_run_on_builder_complete`, ledger call site inside the `else` branch) now appends one `{subagent_type, model, ts, session_id, artifact_ref}` row via `_dispatch_ledger_append` (`:4313`) to `$DISPATCH_LEDGER_PATH` (default resolution `:144`, mirroring `RC_LEDGER_PATH`'s default file). `artifact_ref` comes from `_extract_artifact_ref` (`:3470`), which reuses `_extract_plan_slug` for the common plan-scoped case and falls back to a generalized `docs/**/*.md` regex for reviewer dispatches — satisfying "extend, don't add." `review-chain-lib.sh:130` now sets `RC_LEDGER_LANDING_DATE=2026-08-03`, ending the blanket pre-ledger exemption for records first-committed today or later. `_extract_nl_attribution` (`workstreams-emit.sh:3533`) gained column-0-only + fence-precedence guards, closing the two concretely-measured false-green shapes without touching `NL_ATTRIBUTION_MAX_LINE`.
+
+**Edge cases covered:** malformed JSON input (DL2, exit 0/no row); PreToolUse never writes (DL3); background launch-ack never writes (DL4, honest-completion reasoning); no-subagent_type never writes (DL5, scoped decision); non-plan docs/ paths resolve via fallback (DL6); underivable ref → empty string, not omitted (DL7); wrong-artifact_ref row correctly rejected by rule 3 (review-chain-lib Scenario 11c); the existing real fixture ledger (dated today, previously blanket-exempt) still validates under the new non-empty landing date (verified via `dispatch-chain-gate.sh --self-test` 6/6, unchanged) — its `ts` happens to equal the record's own commit epoch, satisfying the full window independent of exemption.
+
+**Edge cases NOT covered:** ledger-row idempotency — a replayed PostToolUse fire will append a duplicate row (harmless to rule 3's boolean match, but unbounded growth on retries is not deduped, unlike the conv-tree emission's idempotent event_ids). The narrower quoted-header residual (flush-left, fence-free quote directly below colon-terminated prose — RPL7i's shape) remains open, named, not closed.
+
+**Assumptions:** that "extend, don't add" for `artifact_ref` permits a new function built on top of `_extract_plan_slug` rather than literally reusing zero new code; that skipping ledger rows for background/untyped/PreToolUse dispatches is within REQ-B14's intent even though not explicitly stated (rule 3 can never use such rows); that the "fix" instruction for the quoted-header quirk meant closing the concretely-measured, testable shapes without overriding the separately-reasoned, evidence-based width-tightening deferral.
+
+Builder-reported commit: `2b8e07b607e8931652c8f8f3cc88d8036c225160` (worktree
+`agent-a7eacf8dcf6548b11`). Builder-reported verdict: DONE (proven at runtime) — round-trip
+`review-chain-lib.sh --self-test` 20/20 (was 17/17); `workstreams-emit.sh --self-test` 140/140
+(was 131/131, +9 DL1-DL7); `dispatch-chain-gate.sh --self-test` unchanged 6/6.
+
+### Recovery verdict summary
+
+All four articulations are RECOVERED-FULL (all four required sub-sections present, verbatim,
+sourced from the builder's own subagent transcript, not reconstructed or paraphrased). Task 11's
+recovery additionally carries two extra builder-authored subsections ("Honest gaps", "Blockers")
+beyond the required four, reproduced for completeness and clearly marked as such. None of these
+four blocks have yet been through a comprehension-reviewer audit or task-verifier pass — that
+remains outstanding, separate work from this forensic-recovery pass.

@@ -65,7 +65,12 @@
 #   daemon.pid                   the running --daemon's pid (best-effort)
 #   snapshots/dashboard.json     inventory + cost-budget + gate-friction
 #                                 (TTL-materialized, atomic tmp+rename)
-#   logs/tick.jsonl               one line per job run/skip (size-capped)
+#   logs/tick.jsonl               one line per job run/skip (size-capped);
+#                                 watchdog-kill/watchdog-kill-skip lines also
+#                                 carry death_outcome/death_cause (REQ-C5
+#                                 minimal death-certificate fields, gated-
+#                                 pipeline-master-2026-08 Task 23 -- see
+#                                 run_watchdog for field semantics + consumer)
 #   bypass-ledger.jsonl           NL_FORCE/--no-cache ledger rows this core
 #                                 itself triggers (invariant 7) -- doctor's
 #                                 OWN bypass ledger (harness-doctor.sh) is
@@ -653,10 +658,37 @@ run_watchdog() {
   # is ALWAYS log-and-skip, never kill: an unverified kill is unbounded
   # harm (an innocent process dies); leaving a genuine stale daemon alive
   # one extra relaunch cycle is bounded harm.
+  # ----------------------------------------------------------------------
+  # REQ-C5 minimal death-certificate fields (DEC-8, gated-pipeline-master-
+  # 2026-08 Task 23): death_outcome + death_cause describe how THIS
+  # waited-on handle (the old daemon.pid process the watchdog polls for
+  # heartbeat staleness -- nl-maintenance's only existing "wait on a
+  # handle, learn why it ended" site; a real kernel process-handle wait
+  # with captured exit code is S-21, explicitly NOT BUILT this cycle) came
+  # to an end. death_outcome is honesty-bounded to what this mechanism can
+  # actually confirm: it never waits on the pid or reads an exit code, so
+  # it can only ever claim a TERM signal was SENT, never that the process
+  # actually died (see design section 4.2 "Liveness lies" -- never
+  # overclaim past what was measured); under HARNESS_SELFTEST no signal is
+  # sent at all, and the field says so rather than reusing the real-kill
+  # value. death_cause maps onto the design's ranked death-cause taxonomy
+  # (docs/designs/gated-pipeline-master-2026-08-03.md section 4.2): this
+  # code path is always either the "watchdog TERM-kills" rank (verified
+  # identity) or an identity-mismatch fail-closed non-kill (unverified).
+  # Consumer: no automated reader exists yet for either field -- the
+  # PLANNED consumer is the weekly aggregation / top-killer synthesis OD-
+  # 007 names as the sanctioned next step once a second measured loss
+  # class justifies it (DEC-8; explicitly NOT built this cycle); the
+  # INTERIM real consumer is an operator/triage session grepping
+  # logs/tick.jsonl directly, the same manual-review convention
+  # docs/reviews/2026-08-02-estate-entropy-triage.md already uses.
+  # ----------------------------------------------------------------------
   local old_pid; old_pid="$(cat "$(_nm_pid_path)" 2>/dev/null | tr -d '[:space:]')"
   if [[ "$old_pid" =~ ^[0-9]+$ ]]; then
     if _nm_pid_is_daemon "$old_pid"; then
-      _nm_log "\"action\":\"watchdog-kill\",\"pid\":\"${old_pid}\",\"reason\":\"stale heartbeat, verified nl-maintenance --daemon cmdline\""
+      local death_outcome="term_signal_sent"
+      [[ "${HARNESS_SELFTEST:-0}" == "1" ]] && death_outcome="would_signal_selftest_stub"
+      _nm_log "\"action\":\"watchdog-kill\",\"pid\":\"${old_pid}\",\"reason\":\"stale heartbeat, verified nl-maintenance --daemon cmdline\",\"death_outcome\":\"${death_outcome}\",\"death_cause\":\"watchdog-term-kill\""
       if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
         echo "[nl-maintenance-watchdog self-test stub] would kill verified-stale daemon pid ${old_pid} — never signaled" >&2
       else
@@ -664,7 +696,7 @@ run_watchdog() {
         kill "$old_pid" 2>/dev/null || true
       fi
     else
-      _nm_log "\"action\":\"watchdog-kill-skip\",\"pid\":\"${old_pid}\",\"reason\":\"cmdline identity mismatch\""
+      _nm_log "\"action\":\"watchdog-kill-skip\",\"pid\":\"${old_pid}\",\"reason\":\"cmdline identity mismatch\",\"death_outcome\":\"kill_skipped_unverified_identity\",\"death_cause\":\"identity_mismatch_fail_closed\""
       echo "[nl-maintenance-watchdog] daemon.pid names ${old_pid} but its command line does not confirm nl-maintenance --daemon — NOT killing (log-and-skip; PIDs are reused)" >&2
     fi
   fi
@@ -825,8 +857,12 @@ EOF
   local s6_state="$tmp/s6"
   mkdir -p "$s6_state/single-flight"
   printf '%s test-drain\n' "$(date +%s)" > "$s6_state/single-flight/HALT"
-  SF_STATE_DIR="$s6_state/single-flight" SF_DISABLE=0 NL_MAINT_STATE_DIR="$s6_state" \
-    bash -c "source '$self_abs'; SF_STATE_DIR='$s6_state/single-flight' _nm_tick_body" >/dev/null 2>&1
+  # SF_HALT_DIR must be scoped explicitly since the HR-F11 split (gated-pipeline
+  # T7): HALT no longer resolves through SF_STATE_DIR — a scoped lock dir cannot
+  # hide the operator's canonical HALT, and equally a fixture HALT must be
+  # scoped via SF_HALT_DIR or the tick consults the real ~/.claude location.
+  SF_STATE_DIR="$s6_state/single-flight" SF_HALT_DIR="$s6_state/single-flight" SF_DISABLE=0 NL_MAINT_STATE_DIR="$s6_state" \
+    bash -c "source '$self_abs'; SF_STATE_DIR='$s6_state/single-flight' SF_HALT_DIR='$s6_state/single-flight' _nm_tick_body" >/dev/null 2>&1
   if [[ -f "$s6_state/jobs/job-a.last_completed" ]]; then
     echo "FAIL: S6 job-a should NOT have run while HALTed" >&2; fail=$((fail+1))
   else
@@ -990,6 +1026,69 @@ EOF
   else
     echo "FAIL: S14 gate-contract-lib.sh not found at $gc_lib" >&2; fail=$((fail+1))
   fi
+
+  echo "Scenario 15: REQ-C5 death-certificate fields (Task 23) -- death_outcome/death_cause are REAL, code-path-driven values (not a hardcoded placeholder repeated regardless of input) on BOTH branches of the watchdog's kill decision"
+  local s15_state="$tmp/s15"
+  mkdir -p "$s15_state"
+
+  # 15a: identity MISMATCH -- daemon.pid names a real, live pid (THIS
+  # self-test process's own $$) whose actual command line does NOT contain
+  # "--daemon", so _nm_pid_is_daemon fails closed. Exercises the
+  # watchdog-kill-skip branch, which the self-test suite never exercised
+  # before this task (no scenario previously wrote a daemon.pid file at
+  # all).
+  printf '%s' "$$" > "$s15_state/daemon.pid"
+  printf '{"schema":1,"generated_at":"2000-01-01T00:00:00Z","generated_at_epoch":1,"pid":1,"halted":false}' > "$s15_state/daemon.heartbeat.json"
+  NL_MAINT_STATE_DIR="$s15_state" SF_DISABLE=1 HARNESS_SELFTEST=1 \
+    bash -c "source '$self_abs'; run_watchdog" >/dev/null 2>&1
+  local s15a_log; s15a_log="$(cat "$s15_state/logs/tick.jsonl" 2>/dev/null)"
+  _contains "$s15a_log" '"action":"watchdog-kill-skip"' "S15a identity-mismatch branch actually fired"
+  _contains "$s15a_log" '"death_outcome":"kill_skipped_unverified_identity"' "S15a death_outcome real value for the skip branch (not a kill-branch placeholder)"
+  _contains "$s15a_log" '"death_cause":"identity_mismatch_fail_closed"' "S15a death_cause real value for the skip branch"
+  _not_contains "$s15a_log" '"death_outcome":"term_signal_sent"' "S15a skip branch never carries the kill branch's death_outcome value"
+
+  # 15b: identity VERIFIED -- spawn a REAL daemon subprocess (same
+  # technique Scenario 11 uses) so its actual OS command line genuinely
+  # contains "nl-maintenance" + "--daemon"; _nm_pid_is_daemon verifies it
+  # for real, not a fixture. interval=30/max-iterations=2 is deliberately
+  # long, not short like S11's -- this scenario needs the process to still
+  # be ALIVE (sleeping between passes) when run_watchdog's identity check
+  # runs a moment later, unlike S11 which wants it to finish quickly.
+  # HARNESS_SELFTEST=1 on the run_watchdog CALL (not the spawned daemon)
+  # keeps the kill signal a stub (never sent) so this scenario cannot leak
+  # a live kill against the self-test's own machine -- the spawned process
+  # is instead reaped by an explicit `kill` in this scenario's own cleanup.
+  local s15b_state="$tmp/s15b"
+  mkdir -p "$s15b_state"
+  local s15b_cmd=()
+  if command -v timeout >/dev/null 2>&1; then
+    s15b_cmd=(timeout 30)
+  fi
+  s15b_cmd+=(bash "$self_abs" --daemon --interval 30 --max-iterations 2)
+  SF_DISABLE=1 NL_MAINT_STATE_DIR="$s15b_state" "${s15b_cmd[@]}" >/dev/null 2>&1 &
+  local s15b_bg=$!
+  local s15b_i=0
+  while [[ $s15b_i -lt 40 ]]; do
+    [[ -f "$s15b_state/daemon.pid" ]] && break
+    sleep 0.25 2>/dev/null || sleep 1
+    s15b_i=$((s15b_i + 1))
+  done
+  local s15b_pid; s15b_pid="$(cat "$s15b_state/daemon.pid" 2>/dev/null | tr -d '[:space:]')"
+  if [[ "$s15b_pid" =~ ^[0-9]+$ ]] && kill -0 "$s15b_pid" 2>/dev/null; then
+    printf '{"schema":1,"generated_at":"2000-01-01T00:00:00Z","generated_at_epoch":1,"pid":1,"halted":false}' > "$s15b_state/daemon.heartbeat.json"
+    NL_MAINT_STATE_DIR="$s15b_state" SF_DISABLE=1 HARNESS_SELFTEST=1 \
+      bash -c "source '$self_abs'; run_watchdog" >/dev/null 2>&1
+    local s15b_log; s15b_log="$(cat "$s15b_state/logs/tick.jsonl" 2>/dev/null)"
+    _contains "$s15b_log" '"action":"watchdog-kill"' "S15b verified-identity branch actually fired (real spawned process's real cmdline matched)"
+    _contains "$s15b_log" '"death_outcome":"would_signal_selftest_stub"' "S15b death_outcome reflects HARNESS_SELFTEST honestly (no real signal was sent)"
+    _contains "$s15b_log" '"death_cause":"watchdog-term-kill"' "S15b death_cause matches the design's ranked taxonomy rank for this path"
+  else
+    echo "FAIL: S15b could not resolve a live spawned daemon pid within the wait window" >&2; fail=$((fail+1))
+  fi
+  [[ "$s15b_pid" =~ ^[0-9]+$ ]] && kill "$s15b_pid" 2>/dev/null
+  kill "$s15b_bg" 2>/dev/null
+  wait "$s15b_bg" 2>/dev/null
+  rm -rf "$s15b_state" 2>/dev/null || true
 
   echo ""
   echo "self-test interpreter: ${BASH_VERSION:-unknown}"
