@@ -1270,6 +1270,20 @@ EOF2
   case "$RC_WIP_REASON" in *"in flight"*) IFOUND2=1 ;; esac
   _st "obl4-reason-names-in-flight" "1" "$IFOUND2"
 
+  # ── OBL4b (harness-review remediation round, 2026-08-03, C3): the STRICT
+  # complement of OBL4 -- a role=verifier marker that is OLDER than the
+  # newest open build still BLOCKS. "In flight" means dispatched AFTER the
+  # newest unverified merge, not "a verifier was dispatched at some point
+  # in the past" -- this is the exact distinction the gate header's own
+  # FALSE-POSITIVE RATE text was corrected to state precisely (see
+  # dispatch-chain-gate.sh's C3 comment). ────────────────────────────────
+  rm -f "$OBL_DPDIR"/*.json
+  PAST_ISO="$(date -u -d '@1' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r 1 '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  _obl_marker "obl-fixture3" "verifier" "$PAST_ISO"
+  RC_LEDGER_PATH="$OBL_LEDGER" DISPATCH_PROVENANCE_STATE_DIR="$OBL_DPDIR" \
+    rc_wip_limit_decision "obl-fixture3" 3
+  _st "obl4b-stale-verifier-marker-still-blocks" "BLOCK" "$RC_WIP_VERDICT"
+
   # ── OBL5: T7-incident normalization — a build row keyed "T7" and a verify
   # row keyed "7" (or vice versa) must be recognized as the SAME task. ────
   : > "$OBL_LEDGER"

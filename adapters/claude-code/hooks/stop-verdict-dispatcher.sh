@@ -816,7 +816,15 @@ _svd_pin_d_remediation() {
     stop-verdict-dispatcher)
       case "$check" in
         verify-obligations)
-          echo "OD-022: dispatch task-verifier against each named open task before ending, or edit the terminal marker line to explicitly name every open task id it doesn't already name (e.g. append '(tasks 5,6,7 verification pending, tracked)'), or use a fresh --waive escape at the dispatch-chain-gate.sh WIP-limit consult for a named reason."
+          # C3 (harness-review remediation round, 2026-08-03): the third
+          # remedy this line used to cite -- "use a --waive escape at
+          # dispatch-chain-gate.sh's WIP-limit consult" -- was REMOVED.
+          # PROVEN ineffective: that waiver only affects a FUTURE builder
+          # dispatch at G2 (dispatch-chain-gate.sh); it writes nothing
+          # _svd_obligation_check reads, so running it would report success
+          # while leaving THIS Stop block completely unresolved -- citing
+          # it here was misleading, not merely redundant.
+          echo "OD-022: dispatch task-verifier against each named open task before ending, or edit the terminal marker line to explicitly name every open task id it doesn't already name (e.g. append '(tasks 5,6,7 verification pending, tracked)')."
           ;;
         *)
           echo "See adapters/claude-code/hooks/stop-verdict-dispatcher.sh's own check functions for this gap's source."

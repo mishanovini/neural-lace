@@ -608,8 +608,11 @@ Two present-moment consequences (full mechanism detail:
 `doctrine/orchestrator-pattern-full.md` "Verify-obligation tracking"):
 - `hooks/dispatch-chain-gate.sh --check-wip-limit <plan>` BLOCKS your next BUILDER
   dispatch on a plan once its open-obligation count reaches 3 with no verifier
-  dispatch in flight — verify the backlog before you grow it further, or `--waive`
-  with a named, ledgered reason.
+  dispatch in flight (strict-newer: a verifier dispatched AFTER the newest
+  unverified merge — an older/stale verifier marker still leaves this BLOCKING) —
+  verify the backlog before you grow it further, or `--waive` with a named,
+  ledgered reason (this waiver ONLY affects the next builder dispatch at this
+  gate; it does not clear the separate Stop-side check below).
 - `hooks/stop-verdict-dispatcher.sh` refuses a DONE/CONTINUING session end (once,
   same block-once-then-ledger cycle as every other Stop gap) when the plan your
   final message references has open obligations your terminal marker line doesn't

@@ -2720,6 +2720,87 @@ check_maintenance_both_substrates_alive() {
 }
 
 # ------------------------------------------------------------
+# Check: stage2-admission-open (gated-pipeline-master-2026-08 T24, REQ-C6 /
+# arch-M3): REQ-A8's completion (Task 8, doctor triage finishing at <=9
+# survivor REDs) mechanically OPENS Stage-2 admission -- this WARN converts
+# "next cycle" from a prose intention into a standing obligation that
+# persists on every doctor run until a Stage-2 plan actually goes ACTIVE.
+#
+# DATA-FILE HOME: same idiom as maintenance-zero-substrates above (HR-F4,
+# T6) -- the clock lives in schedule-manifest.json, never in this script's
+# prose (the HR-F7 rule: every WARN-flip condition is a config-data date,
+# no exceptions). Key: `.stage2_admission.opened_since` (string,
+# YYYY-MM-DD) -- documented in full, alongside this comment, in the
+# manifest's own `stage2_admission.note` field. Written ONLY by Task 8's
+# completion, never by this check. Absent key, absent object, or explicit
+# JSON null (`jq .opened_since // empty` collapses all three to the same
+# empty string) all mean "admission not yet open" -- this check is then
+# COMPLETELY SILENT: no WARN, no RED, no output line, CHECKS_RUN still
+# increments. That tolerate-absent contract is deliberate and load-bearing
+# (T24's own remit): T8 is still PARTIAL at the time this check lands, and
+# it must never mis-fire before T8 writes the date.
+#
+# DETECTION MECHANISM for "a Stage-2 plan has gone ACTIVE" (T16 fidelity
+# review finding F-6, the missing-mechanism gap this task resolves): a
+# Stage-2 plan is any `docs/plans/*.md` file whose header block (first 30
+# lines -- the same window check_budget_active_plans uses for its own
+# `Status:` scan, so both checks agree on what "header" means) carries BOTH
+#   Status: ACTIVE
+#   stage-2-successor: gated-pipeline-master-2026-08
+# -- the marker-line convention this comment is the canonical documentation
+# of. A future Stage-2 plan's author adds that one header line (mirroring
+# this plan's own `design-ref:` header field, itself a REQ-B5 precedent);
+# no separate registration step, config edit, or generator run is needed.
+#
+# WARN only, never RED (arch-M3 names this a standing-obligation surfacer,
+# not a hard-stop; the plan's own non-goals list Stage-2 as admission-
+# triggered NEXT cycle, so a RED here would punish a state the design
+# explicitly expects to persist for a while). Single-root scan (repo_root's
+# own docs/plans/) -- deliberately simpler than check_budget_active_plans'
+# multi-root/worktree-dedup machinery, since arch-M3 is a single-master-plan
+# admission gate, not a cross-repo budget.
+# ------------------------------------------------------------
+check_stage2_admission_open() {
+  local live_home="$1" repo_root="$2"
+  local manifest="${repo_root}/adapters/claude-code/config/schedule-manifest.json"
+  local marker_plan="gated-pipeline-master-2026-08"
+
+  if [[ ! -f "$manifest" ]] || ! command -v jq >/dev/null 2>&1; then
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local opened_since
+  opened_since="$(jq -r '.stage2_admission.opened_since // empty' "$manifest" 2>/dev/null | tr -d '\r')"
+  if [[ -z "$opened_since" ]]; then
+    # T8 has not written the date yet (still PARTIAL) -- silent, by design.
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  if [[ -z "$repo_root" || ! -d "${repo_root}/docs/plans" ]]; then
+    _warn "stage2-admission-open" "stage-2 admission open since ${opened_since} -- repo_root/docs/plans unresolved, cannot check for a Stage-2 successor plan"
+    CHECKS_RUN=$((CHECKS_RUN + 1))
+    return 0
+  fi
+
+  local f hdr
+  for f in "${repo_root}/docs/plans"/*.md; do
+    [[ -f "$f" ]] || continue
+    hdr="$(head -n 30 "$f" 2>/dev/null)"
+    if printf '%s\n' "$hdr" | grep -qE '^Status:[[:space:]]*ACTIVE' \
+       && printf '%s\n' "$hdr" | grep -qE "^stage-2-successor:[[:space:]]*${marker_plan}[[:space:]]*\$"; then
+      # A matching ACTIVE Stage-2 plan exists -- admission fulfilled, clear.
+      CHECKS_RUN=$((CHECKS_RUN + 1))
+      return 0
+    fi
+  done
+
+  _warn "stage2-admission-open" "stage-2 admission open since ${opened_since} -- no ACTIVE docs/plans/*.md carries 'stage-2-successor: ${marker_plan}' yet; register the Stage-2 plan (Status: ACTIVE + that header line) to clear this"
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: orphaned-worktree-work — the OUT-OF-SESSION complement to
 # session-start-digest.sh's feed_stranded_work (same shared detector, two
 # surfaces; constitution §5 "persist in the same response" + the
@@ -4121,6 +4202,8 @@ run_quick_checks() {
   check_budget_bash_hooks "$live_home" "$repo_root"
   # harness-execution-redesign-2026-08 Task 3 (Stage 1, invariant 9)
   check_maintenance_both_substrates_alive "$live_home" "$repo_root"
+  # gated-pipeline-master-2026-08 T24 (REQ-C6/arch-M3)
+  check_stage2_admission_open "$live_home" "$repo_root"
 }
 
 # ============================================================
@@ -7628,6 +7711,108 @@ EOF
     echo "self-test (m6-exclusions-green-is-silent): PASS" >&2
     PASSED=$((PASSED + 1))
   fi
+
+  # ---- stage2-admission-open (gated-pipeline-master-2026-08 T24, REQ-C6).
+  # Key absent entirely -> completely silent. T8 (REQ-A8 triage) has not
+  # landed the date yet, so this check must never fire before then. ----
+  D=$(_scenario_dir s2a-absent-silent)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config" "$D/repo/docs/plans"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"cadence_check":{"ratio_floor":2}}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "stage2-admission-open"; then
+    echo "self-test (stage2-admission-key-absent-silent): FAIL (unexpected stage2-admission-open line): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (stage2-admission-key-absent-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- stage2-admission-open. Key present but explicit JSON null -> also
+  # silent (the pre-T8 placeholder shape this task's own manifest edit
+  # ships). ----
+  D=$(_scenario_dir s2a-null-silent)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config" "$D/repo/docs/plans"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"stage2_admission":{"opened_since":null}}
+EOF
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "stage2-admission-open"; then
+    echo "self-test (stage2-admission-key-null-silent): FAIL (unexpected stage2-admission-open line): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (stage2-admission-key-null-silent): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- TWO-STATE PROOF, state A (T24's load-bearing deliverable): date
+  # set, no ACTIVE plan carries the stage-2-successor marker -> WARN
+  # present, rc=0 (WARN-only check, never RED -- arch-M3). ----
+  D=$(_scenario_dir s2a-warn-present)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config" "$D/repo/docs/plans"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"stage2_admission":{"opened_since":"2026-08-03"}}
+EOF
+  printf '# Plan: Unrelated\nStatus: ACTIVE\n' > "$D/repo/docs/plans/unrelated.md"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "stage2-admission-warn-present-no-successor-plan" 0 "$RC" "WARN stage2-admission-open.*stage-2 admission open since 2026-08-03" "$OUT"
+
+  # ---- TWO-STATE PROOF, state B: SAME opened_since, but a fixture ACTIVE
+  # plan now carries `stage-2-successor: gated-pipeline-master-2026-08` ->
+  # the WARN CLEARS (silent), proving the detection mechanism actually
+  # resolves the obligation rather than latching permanently. ----
+  D=$(_scenario_dir s2a-warn-clears)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config" "$D/repo/docs/plans"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"stage2_admission":{"opened_since":"2026-08-03"}}
+EOF
+  printf '# Plan: Unrelated\nStatus: ACTIVE\n' > "$D/repo/docs/plans/unrelated.md"
+  printf '# Plan: Stage 2 Stubs\nStatus: ACTIVE\nstage-2-successor: gated-pipeline-master-2026-08\n' \
+    > "$D/repo/docs/plans/stage2-successor.md"
+  OUT="$(_run_quick "$D")"; RC=$?
+  if printf '%s' "$OUT" | grep -q "stage2-admission-open"; then
+    echo "self-test (stage2-admission-warn-clears-with-matching-plan): FAIL (WARN still present with a matching ACTIVE Stage-2 plan): $OUT" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (stage2-admission-warn-clears-with-matching-plan): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+  if [[ "$RC" -ne 0 ]]; then
+    echo "self-test (stage2-admission-warn-clears-with-matching-plan-rc): FAIL (rc=${RC}, expected 0)" >&2
+    FAILED=$((FAILED + 1))
+  else
+    echo "self-test (stage2-admission-warn-clears-with-matching-plan-rc): PASS" >&2
+    PASSED=$((PASSED + 1))
+  fi
+
+  # ---- Edge: the marker line is present but the plan carrying it is NOT
+  # ACTIVE (e.g. COMPLETED) -> does not satisfy admission; WARN stays. Guards
+  # against matching the marker alone without also requiring Status: ACTIVE. ----
+  D=$(_scenario_dir s2a-marker-not-active)
+  _stamp_claim_honesty_green "$D"
+  _write_settings "$D/live/settings.json"
+  cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  mkdir -p "$D/repo/adapters/claude-code/config" "$D/repo/docs/plans"
+  cat > "$D/repo/adapters/claude-code/config/schedule-manifest.json" <<'EOF'
+{"schema_version":3,"stage2_admission":{"opened_since":"2026-08-03"}}
+EOF
+  printf '# Plan: Stage 2 Stubs\nStatus: COMPLETED\nstage-2-successor: gated-pipeline-master-2026-08\n' \
+    > "$D/repo/docs/plans/stage2-successor-completed.md"
+  OUT="$(_run_quick "$D")"; RC=$?
+  _assert "stage2-admission-marker-plan-not-active-still-warns" 0 "$RC" "WARN stage2-admission-open" "$OUT"
 
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2

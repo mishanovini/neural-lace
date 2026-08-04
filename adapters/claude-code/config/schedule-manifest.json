@@ -167,5 +167,9 @@
     "legacy_disabled_since": "2026-08-02",
     "red_after_days": 14,
     "note": "HR-F4 inverse clock (gated-pipeline T6/REQ-A4): legacy NL-* tasks Disabled at Stage 0 on this date; doctor WARNs on zero-substrate state and REDs red_after_days later. Cleared by the activation marker (T10 registration) or a fresh daemon heartbeat."
+  },
+  "stage2_admission": {
+    "opened_since": null,
+    "note": "REQ-C6/arch-M3 (gated-pipeline-master-2026-08 T24): opened_since is written ONLY by Task 8's completion (REQ-A8 doctor triage finishing at <=9 survivor REDs) -- the date REQ-A8 closed is the date Stage-2 admission mechanically opens, converting 'next cycle' from prose intention into a standing WARN obligation. null (or the key/object absent entirely) means admission is NOT YET open: harness-doctor.sh's check_stage2_admission_open treats that state as a fully silent pass -- no WARN, no RED, no output line at all -- by design, since T8 is still PARTIAL as of this key's creation. Once T8 sets opened_since to a YYYY-MM-DD date, the doctor WARNs 'stage-2 admission open since <date>' on every run until a docs/plans/*.md file is Status: ACTIVE AND carries a 'stage-2-successor: gated-pipeline-master-2026-08' header line (the marker convention documented in full in harness-doctor.sh's check_stage2_admission_open comment) -- at which point the WARN clears again."
   }
 }

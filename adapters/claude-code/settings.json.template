@@ -348,6 +348,15 @@
         ]
       },
       {
+        "matcher": "Task|Agent",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/dispatch-chain-gate.sh"
+          }
+        ]
+      },
+      {
         "matcher": "Task|Agent|Workflow",
         "hooks": [
           {

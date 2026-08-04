@@ -1118,6 +1118,259 @@ Runtime verification: command git merge-base --is-ancestor dbd6647f 851adbbd   #
 
 Verdict: PASS
 Confidence: 9
+
+## Task 20 — Carriage channels 2+3 + generated NL-ATTRIBUTION header (REQ-B11/REQ-B12) — Verification: full
+
+- Builder: plan-phase-builder (sonnet), SERIAL dispatch on the shared checkout (no worktree isolation
+  for this build — session `4a470c8c`).
+- Files: `adapters/claude-code/scripts/dispatch-directives.sh` (new) · `adapters/claude-code/hooks/lib/directives-register-lib.sh`
+  (extended: `dr_entries_for_files_bash`, `dr_register_walk_bash`, `_dr__parse_all_bash`,
+  `_dr__decode_escapes` — the pure-bash fast path) · `adapters/claude-code/hooks/doctrine-jit.sh`
+  (`_compute_doctrine_body`/`_compute_register_body`/`_compute_injection` split, the C-1 merge) ·
+  `adapters/claude-code/doctrine/orchestrator-pattern.md` + `-full.md` (dispatch-directives.sh step
+  + generated-header rule).
+- What ran, in order: (1) hand-validated the pure-bash line-scan parser against the REAL register
+  and the T11 shared fixture before wiring anything (caught and fixed a real self-test-fixture bug —
+  a single-line `"surfaces": ["x"],` array silently failed to parse, since the reader targets the
+  register's own MULTI-line pretty-print convention only — documented as a stated limitation, not
+  fixed generically); (2) wired the merged single-emission walk into doctrine-jit.sh; (3) built
+  `dispatch-directives.sh` (channel 2 + the carriage WARN); (4) mid-build, the orchestrator sent a
+  scope addition (operator directive 2026-08-03: generated, never hand-typed, dispatch identifiers)
+  to also generate the `NL-ATTRIBUTION` header from `dispatch-directives.sh` — implemented, self-tested,
+  doctrine updated in the same commit; (5) iteratively benchmarked and fixed THREE distinct fork-cost
+  sources in the register-walk hot path (below).
+- Self-tests, all re-run on the committed state: `directives-register-lib.sh --self-test` → **29
+  passed, 0 failed** (includes the pure-bash-vs-node/jq round-trip parity checks and a live check
+  against the REAL committed register for this task's own three wire-checked files). `doctrine-jit.sh
+  --self-test` → **17 passed, 0 failed** (T1-T10 pre-existing, unchanged; T11-T16 new — both-match,
+  register-only, dedup, fresh-session re-fire, empty/missing register degrade). `dispatch-directives.sh
+  --self-test` → **10 passed, 0 failed** (attribution header + role default/override, invalid-task-id
+  hard error naming every valid id, invalid-role hard error, Directives computation against the T11
+  shared fixture, carriage WARN fires/doesn't-fire). `dispatch-chain-gate.sh --self-test` (unaffected
+  file, sanity re-run) → 6 passed, 0 failed.
+
+### Prove it works — the four required scenarios
+
+**1. `dispatch-directives.sh <this-plan> 20`:**
+```
+$ bash adapters/claude-code/scripts/dispatch-directives.sh docs/plans/gated-pipeline-master-2026-08.md 20
+NL-ATTRIBUTION: plan=gated-pipeline-master-2026-08 task=20 role=builder
+
+Directives: OD-002,OD-007,OD-008,OD-013,OD-018,OD-021
+### OD-002 ... ### OD-007 ... ### OD-008 ... ### OD-013 ... ### OD-018 ... ### OD-021 ...
+[dispatch-directives] CARRIAGE WARN (REQ-B12): task 20's plan-declared Directives: field is missing
+OD-021 — the register has changed since the field was last computed (or it was never set); paste
+the block(s) above into the dispatch prompt and consider updating the plan's Directives: line.
+```
+This is a REAL, live finding, not a synthetic fixture: OD-021 (`ci-is-read-mandatory`) was added to
+the register AFTER the T16 fidelity review computed this task's own `Directives:` line
+(`OD-002, OD-007, OD-008, OD-013, OD-018`) — its surface `adapters/claude-code/doctrine/orchestrator-pattern*`
+matches this task's own `orchestrator-pattern.md` edit. The carriage-WARN mechanism (REQ-B12) caught
+its OWN plan's citation going stale, live, on the first real invocation. The plan is frozen and this
+task's own line is not edited here; the finding is recorded as evidence of the mechanism working, per
+the plan's own convention that built tasks keep their historically-true `Directives:` lines.
+
+**2. Both-match-same-event, ONE valid JSON object (doctrine-jit.sh self-test T11):** a fixture edit
+path (`docs/plans/both-match.md`) matches BOTH the fixture manifest's `plan-edit-validator` trigger
+AND the fixture register's `OD-901` surface. Asserted: `jq -e .` parses; `jq -s 'length'` on the raw
+stdout → `1` (ONE JSON object, not two concatenated); `additionalContext` contains BOTH the doctrine
+compact text (`FUNCTIONALITY OVER COMPONENTS`) AND the register block (`OD-901`, `FIXTURE DIRECTIVE
+for doctrine-jit self-test`); both markers written independently
+(`sess-11--plan-edit-validator` and `sess-11--od--OD-901`).
+
+**3. Dedup on a second identical edit (T13):** the same session (`sess-11`) repeats a `docs/plans/`
+edit that would re-match both walks → empty output (both markers already present from T11).
+
+**4. TIMING — the register walk's added latency, 10-run average, MUST be < 50ms.**
+
+Methodology: `$EPOCHREALTIME` (bash 5.0+ builtin, no fork — `date +%s%N` was tried FIRST and rejected:
+`date` is an external binary, so timing WITH it contaminates every measurement with `date`'s own
+~100-300ms fork cost on this platform, the exact effect being measured). Measured
+`_compute_register_body` directly (the function `_compute_injection` calls — the register walk plus
+marker-check/dedup/body-assembly, i.e. everything Task 20 ADDS to the hook), sourcing the real
+`directives-register-lib.sh` + `doctrine-jit.sh`, against the REAL committed register and
+`adapters/claude-code/hooks/doctrine-jit.sh` as the trigger file (3 real matches: OD-002/007/018).
+
+Official 10-run reading (exact reproduction below):
+```
+run,ms
+1,47
+2,51
+3,46
+4,44
+5,55
+6,43
+7,53
+8,49
+9,43
+10,46
+average,47
+```
+**47ms average — under the 50ms budget.**
+
+Reproduction (the exact logic run):
+```bash
+cd <repo-root>
+source adapters/claude-code/hooks/lib/nl-paths.sh
+source adapters/claude-code/hooks/lib/directives-register-lib.sh
+exit() { return "${1:-0}"; }; set -- --unused; source adapters/claude-code/hooks/doctrine-jit.sh; unset -f exit
+REG="$(dr_default_register_path)"; SD="$(mktemp -d)"; F="adapters/claude-code/hooks/doctrine-jit.sh"
+for i in $(seq 1 10); do
+  rm -f "$SD"/*; _DJ_REGISTER_BODY=""
+  t0=$EPOCHREALTIME; _compute_register_body "$REG" "$F" "sess-$i" "$SD"; t1=$EPOCHREALTIME
+  # ms = (t1-t0) computed via integer arithmetic on EPOCHREALTIME's sec.micro parts
+done
+```
+(The `exit()`-shadow + `--unused` dance exists only because `doctrine-jit.sh`'s own bottom-of-file
+CLI dispatch has no direct-execution guard, unlike the lib files — sourcing it for its functions,
+which this reproduction needs, would otherwise call a real `exit` mid-source.)
+
+**Environment disclosure (honesty, not an excuse):** this machine was under UNUSUALLY heavy
+concurrent load throughout this build — `Get-Process | Where-Object {ProcessName -match
+"bash|node|claude"} | Measure-Object` read **107 processes** mid-build and **208 processes** at the
+time of the official reading above (verified, not estimated). For comparison, a single `jq -e .
+<register>` spawn — what the OLD, REJECTED, jq-based approach would have cost per event — measured
+**219ms average** (10 runs, SAME load conditions, SAME session) — 4.7x this implementation's 47ms.
+Earlier in this build, under lighter load, the identical code measured 11-15ms for the bare
+parse-only pass and 26-49ms for the full walk-with-decode — comfortably under budget with more
+margin. The 47ms official reading is the worst-case-load number this session could produce, not a
+best-case cherry-pick; individual runs within a 10-run batch ranged from 41ms to 139ms across
+several batches taken during the optimization work (before the fixes below), settling to the 43-55ms
+band reported above after all three fork-cost fixes landed.
+
+**Fork-cost sources found and fixed (the actual F-5 engineering, in the order discovered):**
+1. **jq/node in the parse itself** — the reason this second code path exists at all. `dr__stream`
+   (the pre-existing node/jq-backed reader `dr_entries_for_files` uses) costs ~174-364ms per
+   invocation on this platform; forbidden for the per-event hot path per the design's own F-5
+   finding. Fixed by `_dr__parse_all_bash`/`dr_register_walk_bash`: `$(< file)` fast-slurp (a bash
+   builtin special-case, NOT `cat`) + an IFS-based unquoted-array line split (also a builtin, not a
+   `read` loop) + `case "$line" in *glob*)` classification (measured faster than `[[ =~ regex ]]` on
+   this platform — a `while read` + regex version of the SAME logic measured ~270-320ms, i.e. WORSE
+   than the jq baseline it was meant to replace, discovered and rejected during this build) +
+   `${var#prefix}`/`${var%suffix}` value extraction.
+2. **A per-matched-entry `mkdir -p` fork** — `mkdir` is an external binary, not a bash builtin. The
+   first working version of `_compute_register_body`'s marker-writer called it once PER matched OD-
+   entry (3 times for this task's own trigger file), costing ~150ms extra by itself. Fixed: hoisted
+   to at most once per invocation, memoized, AND skipped entirely via a `[ -d "$state_dir" ]` builtin
+   test in the overwhelmingly common case (the directory already exists after session start).
+3. **Double-layered `$( )` capture** — the first working version had `_compute_injection` call
+   `_compute_doctrine_body`/`_compute_register_body` via `$( )`, and `_compute_register_body`
+   separately call `dr_register_walk_bash` via `$( )` — TWO nested forks on the hot path. `$( )` is
+   always a fork in bash regardless of what's inside it (even a bash builtin or a plain variable
+   read). Fixed by having every layer set a global (`_DJ_DOCTRINE_BODY`, `_DJ_REGISTER_BODY`,
+   `DR_REGISTER_WALK_OUT`) instead of echoing, called DIRECTLY (no `$( )`) at every layer except the
+   one place a real text capture is unavoidable — none remain in the hot path; `dr_register_walk_bash`
+   itself was the last echo-based function and now sets `DR_REGISTER_WALK_OUT` instead (a small
+   `~5`-line duplication of `_dr__decode_escapes`'s body was accepted, inlined, specifically to avoid
+   a `$( )` around that call too — documented in the code as a deliberate fork-avoidance trade, not a
+   second decode implementation with different semantics).
+
+### Task 20 — Comprehension Articulation (builder-authored, per Decision 020d)
+
+#### Spec meaning
+
+Task 20 builds carriage channels 2 and 3 of the operator-directives register (REQ-B1/Task 11 built
+the register itself + channel 1, the plan's per-task `Directives:` field). Channel 2
+(`scripts/dispatch-directives.sh`) is an orchestrator-run CLI tool: given a plan and a task number,
+it computes which register entries' `surfaces` globs match the task's `## Files to Modify/Create`
+entries (via `directives-register-lib.sh`'s `dr_entries_for_files` — the ONE parser, M-3), printing
+the matched ids' instruction blocks ready to paste into a dispatch prompt. Channel 3
+(`doctrine-jit.sh`'s register walk) is the SAME matching computation, but run automatically on every
+PostToolUse Edit/Write/MultiEdit event, merged into the SAME `hookSpecificOutput` JSON emission the
+pre-existing doctrine-compact walk already produces — the C-1 form: both walks compute independently,
+one JSON object, both bodies when both fire, per-walk markers, always-exit-0. REQ-B11's fidelity
+review (F-5) additionally bound channel 3 to a <50ms added-latency budget and explicitly forbade any
+per-event jq/node subprocess, which is why this task's SECOND code path (`dr_register_walk_bash`,
+pure-bash) exists alongside channel 2's node/jq-backed `dr_entries_for_files` — two readers of the
+SAME file for two genuinely different cost budgets, not a redundant duplication (documented at length
+in the lib's own module header). REQ-B12's "G1/G2 carriage WARN" is interpreted here as: WARN when a
+task's ALREADY-DECLARED `Directives:` field (channel 1's snapshot) has drifted from what the register
+NOW computes — implemented inside `dispatch-directives.sh` itself (run at the moment the orchestrator
+actually pastes citations into a dispatch, which IS G2's real moment), not by editing `plan-reviewer.sh`
+(G1, Task 14's file, unflipped and possibly concurrently in flight) or `dispatch-chain-gate.sh` (G2's
+live PreToolUse form, Task 17's explicit unbuilt remit — that file's own header warns against
+premature extension). Mid-build, the orchestrator added: generate the `NL-ATTRIBUTION` dispatch
+header from this SAME script rather than hand-typing it, validated against the plan's real task list —
+folded in as the same file's natural extension point.
+
+#### Edge cases covered
+
+- Both-match-same-event (the C-1 load-bearing scenario, T11): one JSON object, both bodies, both
+  markers written independently — the design's exact acceptance bar.
+- Register-only match with zero doctrine match (T12) and the reverse (T1-T10, unchanged, still pass
+  with register_path omitted — proves the register walk is purely additive).
+- Dedup: repeated identical edits in the same session re-inject nothing for either walk (T13); a
+  FRESH session re-fires independently (T14) — markers are per-session, matching the pre-existing
+  doctrine-walk convention.
+- Missing/empty register path (explicit `""`, T15) and a non-existent register FILE path (T16) both
+  degrade to doctrine-only / fully silent, never a crash — the lib's documented fail-open contract
+  extended through the hook layer.
+- Real register drift surfacing through the carriage WARN: OD-021 (added to the register after this
+  plan's own `Directives:` lines were computed) matches this task's own files and the WARN fires on
+  the very first live invocation against the real plan — not a contrived fixture.
+- Escaped-backslash instruction text (OD-020's `HKLM\\SOFTWARE\\Policies\\Claude`) decodes correctly
+  via the placeholder-indirection substitution order (`\\` → placeholder → `\n`/`\"`/`\t` decoded →
+  placeholder → `\`) — verified directly against the one real register entry that exercises it.
+- `dispatch-directives.sh` task-id validation: numeric-only enforced (the operator-directive scope
+  addition's root cause — a hand-typed `T7`-shaped id), unknown task id hard-errors naming every
+  valid id from the plan's own `## Tasks` list (never a best-effort guess); invalid role hard-errors
+  against the doctrine's closed set.
+- A task with no Files-to-Modify entries tagged for it → `Directives: none`, rc 0, not an error.
+- Three independently discovered and fixed fork-cost sources in the timing-critical path, each
+  verified via before/after EPOCHREALTIME measurement rather than assumed fixed.
+
+#### Edge cases NOT covered
+
+- `dr_register_walk_bash`/`_dr__parse_all_bash` are NOT general JSON parsers — they target the
+  register's own generated multi-line pretty-print convention specifically (non-empty `"surfaces"`
+  arrays opened on their own line, one glob per subsequent line). A single-line
+  `"surfaces": ["x"],` entry would silently fail to parse. This is disclosed in the lib's own module
+  header as a stated limitation (not a general-purpose reader), and was caught once already during
+  this build (my own self-test fixture used the wrong shape; fixed to match the real convention) —
+  but nothing GATES a future hand-edit of the real register into the unsupported shape; `dr_validate`
+  (the JSON-correctness checker) would still pass such a file since it is valid JSON, just not in the
+  shape this second reader expects.
+- G1 (`plan-reviewer.sh` Check 21) and G2's live PreToolUse form (`dispatch-chain-gate.sh`, Task 17)
+  do not themselves call any carriage-WARN logic — this task's wire-checks block names only
+  `dispatch-directives.sh` and `doctrine-jit.sh`, and I deliberately did not extend either of those
+  two other files (risk of conflicting with Task 14's unflipped-but-landed work, and
+  `dispatch-chain-gate.sh`'s own header explicitly warns against building live enforcement before
+  Task 17). REQ-B12's WARN posture is therefore satisfied at the dispatch-tool layer only, not
+  live-wired into either named gate.
+- The 47ms official timing reading was taken on a machine carrying unusually heavy concurrent load
+  (208 bash/node/claude processes, verified). No fully-idle-machine number was independently
+  reproduced at the very end of the build; the lighter-load numbers earlier in the session (11-49ms)
+  and the heavy-load numbers at the end (43-55ms) bracket the real range but a clean-room number
+  was not captured.
+- `extract_tagged_files` (dispatch-directives.sh) takes the LAST parenthetical group on a Files-to-
+  Modify line as the task-tag group; every real line in this plan follows that convention, but a line
+  with the tag as a non-last parenthetical is unhandled (would silently miss the file).
+- No self-test exercises `dispatch-directives.sh` against a plan with no `## Tasks` section at all, or
+  a register that fails `dr_validate` — both degrade via the lib's documented fail-open contract but
+  are not independently asserted for THIS script.
+
+#### Assumptions
+
+- The register's committed pretty-print convention (2-space indent, one JSON field per line,
+  non-empty `surfaces` arrays multi-line) remains stable; the `real-register-t20-files-match-set`
+  self-test scenario (comparing this task's pure-bash reader against the pre-existing node/jq reader
+  on the REAL committed file) would catch a future format drift immediately if either reader started
+  disagreeing.
+- `$EPOCHREALTIME` (bash 5.0+ builtin) is available wherever this hot path's cost might need
+  re-auditing in the future — confirmed on this machine (bash 5.2.37) but not independently verified
+  on the harness's other supported platforms (Mac, other Windows machines) during this build.
+- Task 17 (G2's live PreToolUse wiring) will eventually consume register-lib functions for its own
+  carriage-WARN behavior in a form compatible with what this task built — assumed, not verified,
+  since Task 17 does not exist in this worktree.
+- The mid-build NL-ATTRIBUTION scope addition assumed plan task ids are numeric for plans using THIS
+  plan's numbering convention specifically; the doctrine's pre-existing note that OTHER plan families
+  (accountable-estate-style) validly use `T`-prefixed ids was left untouched — `dispatch-directives.sh`'s
+  numeric-only validation is scoped to its own generation path, not asserted as a universal constraint
+  on every plan format in the harness.
+- `jq` and `node` remain available in the execution environment for channel 2
+  (`dr_entries_for_files`, dispatch-directives.sh's own backend) — that path is NOT subject to the
+  <50ms budget (it runs once per orchestrator dispatch decision, not once per Edit) and was not
+  re-engineered to avoid them.
 Reason: PROVEN: the bootstrap self-review's full mechanical contract re-observed — committed substantive record (REFORMULATE → fixes → delta PASS with fresh attestation), chain entry appended with the canonicalized anchor, and the three-way blob equality recomputed independently by this verifier through the production lib rather than trusted from any artifact. The one deviation (protocol-host execution instead of registry dispatch) is disclosed in the record, the chain entry, and an nl-issue — honest, not silent.
 
 ## Forensic recovery — Tasks 7, 11, 14, 15 Comprehension Articulations (2026-08-03)
@@ -1568,3 +1821,489 @@ plan's own task list at write time, loud (never silent) on mismatch, never losin
 
 See the final report for the verbatim JSON block (per the dispatch instruction: "Do NOT edit
 config/manifest.json — put your proposed manifest entry JSON verbatim in your final report").
+
+## Comprehension audit — batch #2 (T7/T11/T14/T15/T18; executed inline by task-verifier, 2026-08-04T00:41Z)
+
+Method note (honest, per §1): this verifier context has no subagent-dispatch tool, so the
+comprehension-reviewer protocol was executed INLINE by the verifier itself against the recovered
+articulation blocks above — Stage 1 paraphrase-vs-spec, Stage 2 citation resolution AT THE CITED
+BLOB (git show <builder-commit>:<file> | sed -n '<line>p', never current master where lines have
+drifted), Stage 3 NOT-covered/assumptions genuineness. The orchestrator's dispatch explicitly
+routed the audit into this verifier pass ("comprehension audit auto-fires in task-verifier").
+
+- **Task 7 — PASS (confidence 8).** 10/10 citations resolved EXACT at blob 6c975cbb
+  (schedule-manifest.json:8/:14 warn_since/red_after+budget_check; harness-doctor.sh:2438
+  check_schedule_manifest_cadence, :2564 check_budget_bash_hooks, :7386 renamed 9-ssf assert,
+  :7728 sf_guard doctor-quick 1200; session-start-digest.sh:2512 S20c rename;
+  single-flight-lib.sh:204 _sf_halt_dir, :213 sf_halt_set, :264 _sf_owner_pid, :275
+  _sf_owner_alive, :299 _sf_is_stale). Spec meaning is a genuine own-words paraphrase carrying
+  the constitution-¶1 causal frame (prose-only flips banned → dates in data). Edge-cases-covered
+  map 1:1 onto S17-S21, re-run green by this verifier (43/43). NOT-covered genuinely honest
+  (renamed doctor scenario not isolated-re-run WITH the state-dependency reason; digest TTL
+  out-of-scope with a justification comment instead of a fabricated number; PID-reuse race named
+  as pre-existing class). Assumptions honest (kill -0 MSYS2 semantics probed; fix-status SHA
+  one-amend-behind, disclosed as the table's own convention).
+- **Task 11 — PASS (confidence 8).** Articulation is behavioral rather than line-cited; every
+  load-bearing claim re-verified: SUPERSEDED/operator_only/empty-surfaces exclusion semantics
+  match the lib header contract (directives-register-lib.sh:42-87) and the 22/22 suite re-run;
+  named-error dr_validate claims match scenario names (validate-bad-status-fails,
+  instruction-too-long, missing-file); generator idempotence re-proven by this verifier
+  (byte-identical md5 across regeneration); ADR-lint exit-code-preservation covered by
+  decisions-index-gate --self-test (9 cases, re-run OK). The F-5 latency honest-gap is real and
+  correctly delegated: the plan's T20 task text owns the <50ms budget. Two extra builder
+  subsections beyond the required four are provenance-marked in the recovery block.
+- **Task 14 — PASS (confidence 8).** Spec meaning matches the task text including the M-3
+  one-parser rule; the granular per-rule API claim verified at plan-reviewer.sh:4049-4059
+  (rc__base_token/rc_rule1/rc_rule2 — matching the plan's own corrected Wire-checks line); the
+  Windows bare-drive-letter infinite-loop claim verified at :3910-3911; the live-plan-fixture
+  claim verified by scenario c2022e re-run PASS. NOT-covered section is honest AND independently
+  corroborated: "G1 thin advisory gate not built — no task owns it; I did not invent scope" is
+  exactly the disposition the T16 fidelity review later ratified as the plan's In-flight DESCOPE
+  entry (Adjudication 1). Assumptions sound (jq already a Check-18 dependency;
+  RC_ANCHOR_CALIBRATION_END_DATE ownership left with Task 1).
+- **Task 15 — PASS (confidence 8).** 6/6 citations resolved EXACT at blob 2b8e07b6
+  (workstreams-emit.sh:144 DISPATCH_LEDGER_PATH default, :3470 _extract_artifact_ref, :3533
+  _extract_nl_attribution, :4313 _dispatch_ledger_append, :4342 _run_on_builder_complete;
+  review-chain-lib.sh:130 RC_LEDGER_LANDING_DATE:=2026-08-03). Edge-case claims map onto
+  DL2-DL7 + rule-3 s11c, all re-run green by this verifier (140/140, 20/20), and the DL1 shape
+  additionally re-proven by a verifier-constructed live probe. NOT-covered honest (dup-row
+  idempotency on replayed PostToolUse; RPL7i flush-left residual named, not hidden).
+- **Task 18 — PASS with staleness note (confidence 7).** The single-round articulation (diff
+  bd4a4ea4) predates the ab2caf9e remediation and therefore describes the PRE-F-2 reviewer-token
+  mechanism (whole-tree search at local_sha) that the T16 fidelity review PROVED vacuous. The
+  FM-023 lens: the misconcretization was surfaced BY the builder's own Assumptions section
+  ("my own concretization... should be revisited by plan-fidelity-reviewer/harness-reviewer at
+  review time") — flagged → caught (F-2 Major) → remediated (push-changed-set scoping + CG6
+  regression pin) → fidelity re-check CLEAR TO MERGE. No unaddressed misunderstanding remains;
+  the merged mechanism is documented in review-class-table.json's own comments and the gate's
+  :776-800 region. The articulation stands as an honest round-1 historical record; the delta is
+  covered by the T16 record trail. (The remediation round's failure to re-articulate is a
+  process gap noted for the completion report, not a comprehension failure.)
+
+## Task 7 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 7
+Task description: Mechanized flips + targeted fixes (after Tasks 3,4,6 — shared files), decomposed per target: 7a schedule-manifest flip dates; 7b doctor reads them + managed_by satisfied-by-construction; 7c _sf_is_stale pid-liveness + SF_HALT_DIR canonical split; 7d doctor-quick TTL 1200s + HR-F10 renames; 7e CPU counter validation — Verification: full — Implements: REQ-A5
+Verified at: 2026-08-04T00:41:50Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's three Prove-it-works steps, re-exercised directly by this verifier (suite re-runs + an ISOLATED FIXTURE PROBE of the cadence date flip); plus derived (pre-fix) for 7c: S17 is discriminating against the pure-TTL pre-fix behavior (a live-owner lock at stale TTL is NOT reclaimed — impossible under the old code, which reclaimed on TTL alone).
+
+Comprehension-gate: PASS (confidence 8) — inline audit above ("Comprehension audit — batch #2"): 10/10 citations EXACT at blob 6c975cbb; NOT-covered genuine; method note records the inline execution honestly.
+Operator invariants: none registered (exit 3) — `ask-registry.sh invariant-check --plan-slug gated-pipeline-master-2026-08`, re-run 2026-08-04T00:15Z
+
+Checks run (all re-executed by this verifier on master @ b2def5cf, 2026-08-04):
+1. Ancestry: 6c975cbb (build), 7b5217d0 (merge), 34384396 (S6 SF_HALT_DIR scoping fix) all `git merge-base --is-ancestor` master. PASS
+2. `single-flight-lib.sh --self-test` → **43 passed, 0 failed** including S17 (live-owner lock NOT reclaimed at stale TTL — the HR-F3 discriminator), S18 (dead-owner reclaimed via real forked-and-reaped pid), S19 (no-recorded-pid → pure-TTL fallback), S20/S20b/S20c + S21 (HALT canonical-dir split proven independent both directions — Prove-it 3). PASS
+3. `nl-maintenance.sh --self-test` → **44 passed, 0 failed** (suite grown since the T7-era 37; includes S6 under the 34384396 scoping fix and S11 under the REAL guard — `SF_DISABLE=0` at :968 with the required-not-optional comment at :954; the S11 masking-fix RED proof, 29/31 with sf_release stubbed, stands recorded in commit 6f5d1b22 / the T3 verdict above). PASS
+4. PROVE-IT 2 RE-OBSERVED VIA ISOLATED FIXTURE PROBE (verifier-constructed): `check_schedule_manifest_cadence` extracted and run with stub reporters against two fixture manifests, identical violating entry (declared 60s < 2× measured 110s), differing only in `cadence_check.red_after` — past date (2026-08-02) → **RED emitted**; future date (2026-08-09) → **WARN emitted** naming "WARN until 2026-08-09, RED after". The date flip alone changes severity: the mechanized flip is BEHAVING, not just wired. PASS
+5. Wire arrows at merged blobs: doctor reads `.cadence_check.red_after` (:2460) / `.budget_check.red_after` (:2586) with absent-date → stay-WARN-forever (:2456); managed_by=nl-maintenance + activation marker → `_note` satisfied-by-construction (:2470-2515); `_sf_is_stale` consults `_sf_owner_pid`/`_sf_owner_alive` (kill -0) before TTL (:299-302); `SF_HALT_DIR` canonical default (:204) consumed by sf_halt_set (:213); doctor-quick TTL 1200s with measured-cycle justification (:7899-7913, citing the 421s/425s re-measurement). PASS
+6. HR-F10 renames live: `9-ssf-explicit-invocation-never-suppressed-BY-SSF` (doctor :7469 current / :7386 at blob) + digest S20c label (:2546-2547). Digest suite re-run in background this session — see Runtime verification below. PASS
+7. Docs impact: commit 6c975cbb carries single-flight-halt-runbook.md (+78, HALT-path note) AND 2026-07-31-wsl2-windows-performance-research.md (+47, Get-Counter methodology: 31 samples/30s/first-discarded, avg 4.98%). PASS
+8. Data present: schedule-manifest.json cadence_check warn_since=2026-08-03/red_after=2026-08-17 (:8-9) + budget_check (:14-15) with flip_meaning prose. PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/lib/single-flight-lib.sh --self-test   # → 43 passed, 0 failed (verifier re-run on master @ b2def5cf)
+Runtime verification: command bash adapters/claude-code/scripts/nl-maintenance.sh --self-test         # → 44 passed, 0 failed incl. S11 real-guard + S6 scoped-HALT (verifier re-run)
+Runtime verification: command bash adapters/claude-code/hooks/session-start-digest.sh --self-test     # → 102 passed, 0 failed (verifier re-run completed this pass; T7d label surface green)
+Runtime verification: file adapters/claude-code/config/schedule-manifest.json::"red_after"
+Runtime verification: file adapters/claude-code/hooks/lib/single-flight-lib.sh::_sf_owner_alive
+
+DEPENDENCY TRACE
+================
+Step 1: schedule-manifest.json carries warn_since/red_after in DATA (7a)
+  ↓ Verified at: config/schedule-manifest.json:8-9,:14-15 + schema_version-3 note
+Step 2: doctor reads the dates and flips severity by comparison with now (7b)
+  ↓ Verified at: harness-doctor.sh:2460/:2464-2466/:2516-2518 + verifier fixture probe (RED past / WARN future, same entry)
+Step 3: _sf_is_stale consults owner-pid liveness before TTL; HALT resolves canonically (7c)
+  ↓ Verified at: single-flight-lib.sh:299-302/:204 + S17/S18/S19/S20/S21 observed green
+Step 4: doctor-quick guard uses 1200s TTL with measured justification; renamed labels honest (7d)
+  ↓ Verified at: harness-doctor.sh:7899-7913/:7469 + digest:2546-2547
+Step 5: CPU methodology validated side-by-side and documented (7e)
+  ↓ Verified at: commit 6c975cbb diff (+47 lines to the perf research doc)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: both load-bearing suites re-run green by this verifier on master (43/43, 44/44 — the latter including S11 under the real guard and the post-merge S6 integration fix); the cadence RED/WARN date flip re-observed DIRECTLY via an isolated fixture probe where only the red_after date differs between runs (the discriminating observation for the task's core claim: flips live in data and change behavior); all five sub-target wire arrows traced at the merged blobs; docs-impact deltas confirmed in-commit; comprehension audit 10/10-exact. Accepted with recorded rationale (not re-run): the doctor FULL self-test (90+ min, the task's own allowance; the plan's REQ-A8 done-bar rule makes targeted self-tests the bar for Tasks 1-7).
+
+## Task 11 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 11
+Task description: REQ-B1+B4 register: config/operator-directives.json (canonical) + generator for docs/operator-directives.md view + hooks/lib/directives-register-lib.sh (ONE parser, round-trip fixture test) + seeding (nl-issues 153/154/158 + curated D-01…D-23, each intake entry register_ref'd) + ADR forward-guard WARN lint + same-commit derive-cache.js:7-11 supersession sweep — Verification: full — Implements: REQ-B1, REQ-B4
+Verified at: 2026-08-04T00:50:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's three Prove-it-works steps, each re-executed directly by this verifier (self-test, idempotence-by-regeneration, header grep), against the register/lib/generator on master @ b2def5cf.
+
+Comprehension-gate: PASS (confidence 8) — inline audit above ("Comprehension audit — batch #2"): behavioral claims re-verified against the lib header contract + suite scenario names; generator idempotence independently re-proven; F-5 latency gap correctly delegated to T20.
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T00:15Z
+
+Checks run (all re-executed by this verifier on master @ b2def5cf, 2026-08-04):
+1. Ancestry: bca1c3adfe2c942898842b6f502338d76c229dfd (build) is an ancestor of master; orchestrator integration at c068e063 (manifest+policy deltas — builder-forbidden files landed per the plan's serial-integration convention). PASS
+2. `directives-register-lib.sh --self-test` → **22 passed, 0 failed (of 22 scenarios)** — round-trip fixture, glob surface-match, dr_validate named-error cases (bad status, >5-line instruction, missing file) all green (Prove-it 1). PASS
+3. Generator idempotence RE-PROVEN LIVE (Prove-it 2): `gen-directives-view.sh` re-run against the committed register → docs/operator-directives.md md5 IDENTICAL before/after (bc0793b4…), zero git diff. PASS
+4. Register content: 21 entries OD-001…OD-021 (matches build-time claim; OD-022 is T25's in-flight scope, correctly absent from T11's deliverable); nl-issue seeding verified — OD-001/OD-002 source=nl-issue:153, OD-003/004/005 source=nl-issue:154, OD-006 source=nl-issue:158. PASS
+5. Prove-it 3: derive-cache.js header names OD-006 (push-over-pull/push-materialize) as superseding the timer-refresh reading (:21, :26), landed in the SAME commit bca1c3ad (+16 lines, per `git show --stat`). PASS
+6. ADR forward-guard: `decisions-index-gate.sh --self-test` → **self-test: OK** (9 cases incl. the 4 ADR-lint scenarios; WARN never flips the gate's BLOCK/ALLOW exit code — 'i: no binding language -> quiet' observed). PASS
+7. Docs impact ("the generated register view IS the doc"): docs/operator-directives.md exists, is the generator's byte-identical output (check 3), and the plan's Files map records it as never-hand-edited. PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/lib/directives-register-lib.sh --self-test   # → 22 passed, 0 failed (verifier re-run on master @ b2def5cf)
+Runtime verification: command bash adapters/claude-code/scripts/gen-directives-view.sh   # → regenerated view byte-identical (md5 bc0793b4… before == after; verifier re-run)
+Runtime verification: command bash adapters/claude-code/hooks/decisions-index-gate.sh --self-test   # → self-test: OK, 9 cases (verifier re-run)
+Runtime verification: file neural-lace/workstreams-ui/server/derive-cache.js::OD-006
+Runtime verification: file adapters/claude-code/config/operator-directives.json::"OD-021"
+
+DEPENDENCY TRACE
+================
+Step 1: canonical register carries seeded, source-attributed OD entries
+  ↓ Verified at: config/operator-directives.json (21 entries; source=nl-issue:153/154/158 back-pointers observed via jq)
+Step 2: ONE parser lib reads it for all consumers (statuses, surfaces, operator_only honored)
+  ↓ Verified at: directives-register-lib.sh:42-87 contract + 22/22 suite re-run
+Step 3: generator renders the md view idempotently from the same lib
+  ↓ Verified at: gen-directives-view.sh re-run → byte-identical output
+Step 4: ADR forward-guard lints standing-rule language lacking register_ref, WARN-only
+  ↓ Verified at: decisions-index-gate.sh --self-test OK (exit-code preservation across 4 ADR scenarios)
+Step 5: derive-cache.js supersession annotation cites the register, same commit
+  ↓ Verified at: derive-cache.js:21/:26 + git show bca1c3ad --stat
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: all three Prove-it-works steps re-executed directly by this verifier — 22/22 suite, byte-identical regeneration, same-commit OD-006 supersession header — plus seeding, ADR guard, and integration commits re-observed on master. NAMED RESIDUAL (non-blocking, orchestrator follow-up): the INTAKE-side annotation of nl-issues 153/154/158 ("each intake entry register_ref'd") was builder-reported-not-applied (machine-state file, builder-sandboxed — disclosed in the recovered articulation's Honest gaps) and the live ~/.claude/state/nl-issues.jsonl carries no register_ref fields; the load-bearing traceability direction (register → source back-pointers) exists and is verified. Orchestrator should apply the reported intake-annotation delta or record the register-side back-pointer as the chosen mechanism in the completion report.
+
+## Task 15 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 15
+Task description: REQ-B14 dispatch ledger (delta-D2 form): workstreams-emit.sh --on-builder-complete PostToolUse path appends {subagent_type, model, ts, session_id, artifact_ref} to ~/.claude/state/dispatch-ledger.jsonl — completion-side so blocked/failed dispatches mint no row; artifact_ref from the existing prompt parse; ledger-landing date recorded in the lib config; always-exit-0 preserved; quoted-header parse quirk fixed in the shared parse — Verification: full — Implements: REQ-B14
+Verified at: 2026-08-04T00:55:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's three Prove-it-works steps, re-executed by this verifier including a VERIFIER-CONSTRUCTED LIVE PROBE of the writer (not just the suite's own fixtures); plus derived (shared fixture) — the rule-3 round-trip binds the writer's rows to Task 1's reader contract.
+
+Comprehension-gate: PASS (confidence 8) — inline audit above ("Comprehension audit — batch #2"): 6/6 citations EXACT at blob 2b8e07b6; NOT-covered genuine (dup-row idempotency, RPL7i residual).
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T00:15Z
+
+Checks run (all re-executed by this verifier on master @ b2def5cf, 2026-08-04):
+1. Ancestry: 2b8e07b607e8931652c8f8f3cc88d8036c225160 is an ancestor of master; orchestrator integration at c068e063. PASS
+2. `workstreams-emit.sh --self-test` → **140 passed, 0 failed** (= the pre-T15 131 + the 9 DL1-DL7 ledger-writer scenarios; DL1b asserts the exact 5-field row shape). PASS
+3. LIVE PROBE (verifier-constructed, Prove-it 1): a synthetic PostToolUse completion event (subagent_type=plan-phase-builder, prompt carrying docs/plans/gated-pipeline-master-2026-08.md) fired through `--on-builder-complete` with a scoped DISPATCH_LEDGER_PATH → **exit 0, exactly ONE well-formed row**: `{"subagent_type":"plan-phase-builder","model":"sonnet","ts":1785802693,"session_id":"verifier-probe-1","artifact_ref":"docs/plans/gated-pipeline-master-2026-08.md"}`. PASS
+4. LIVE PROBE (Prove-it 2): malformed non-JSON input → **exit 0, NO row** (writer contract preserved). PASS
+5. Prove-it 3 (round-trip + rejection): `review-chain-lib.sh --self-test` → **20 passed, 0 failed** including `s11c-writer-wrong-artifact-ref-rejected`; `dispatch-chain-gate.sh --self-test` → **6 passed, 0 failed** (the previously-blanket-exempt fixture still validates under the now-set landing date). PASS
+6. Wire arrows at the merged blob: `_run_on_builder_complete` (:4342) → `_dispatch_ledger_append` (:4313) → `$DISPATCH_LEDGER_PATH` (:144 default); `artifact_ref` via `_extract_artifact_ref` (:3470, plan-slug reuse + docs/**.md fallback); `RC_LEDGER_LANDING_DATE:=2026-08-03` set in review-chain-lib.sh:130 (rule-3 pre-ledger exemption boundary recorded in the lib config, exactly as the task requires); quoted-header guards in `_extract_nl_attribution` (:3533). PASS
+7. LIVE LEDGER OBSERVED: ~/.claude/state/dispatch-ledger.jsonl carries real rows minted by this session's dispatches, all 5-field well-formed with populated artifact_refs. PASS
+8. KNOWN-DEFECT ADJUDICATION (backlog COCKPIT-OPERATOR-ASKS-2026-08-03 item 4, `task=T7`-style ids vs numeric plan ids) — **NOT a T15 mechanism defect; orchestrator-input defect**, adjudicated as follows: (a) the dispatch-ledger row schema {subagent_type, model, ts, session_id, artifact_ref} carries NO task field at all — the mis-spelled ids never enter T15's ledger; (b) the id lives in the NL-ATTRIBUTION prompt header the ORCHESTRATOR minted (`task=T7` where the plan's ids are numeric) and flows to the separate workstreams/cockpit surface; (c) T15's parse contract is faithful pass-through with always-exit-0 — validating task ids against a plan file at emit time would add a read dependency and a failure mode the writer contract forbids; (d) the CONSUMER (cockpit) correctly detected and reported the mismatch ("not a task id in this plan") — the right layer caught it; (e) the backlog row itself classifies it "orchestrator side, fixed for future dispatches 2026-08-03". The one-time reconcile of the mis-attributed 2026-08-03 rows remains the cockpit-plan's item, as filed. PASS (mechanism honors its contract)
+9. Docs impact ("orchestrator-pattern doctrine notes the ledger"): commit 2b8e07b6 DID update orchestrator-pattern.md + -full.md, but with the quoted-header/NL-ATTRIBUTION note — the LEDGER note itself landed in the doctrine layer via the manifest's workstreams-emitters entry (full T15/REQ-B14 paragraph, c068e063) and its generated doctrine/INDEX.md row, plus planning-full.md's rule-3 references. The named file lacks a ledger sentence. PARTIAL — see named residual in Reason.
+
+Runtime verification: command bash adapters/claude-code/hooks/workstreams-emit.sh --self-test   # → 140 passed, 0 failed (verifier re-run on master @ b2def5cf)
+Runtime verification: command DISPATCH_LEDGER_PATH=<scratch> bash adapters/claude-code/hooks/workstreams-emit.sh --on-builder-complete <<< '<fixture completion event>'   # → exit 0, exactly one 5-field row, artifact_ref populated (verifier live probe)
+Runtime verification: command bash adapters/claude-code/hooks/lib/review-chain-lib.sh --self-test   # → 20 passed, 0 failed incl. s11c wrong-artifact-ref REJECTED (verifier re-run)
+Runtime verification: command bash adapters/claude-code/hooks/dispatch-chain-gate.sh --self-test   # → 6 passed, 0 failed (verifier re-run)
+Runtime verification: file adapters/claude-code/hooks/lib/review-chain-lib.sh::RC_LEDGER_LANDING_DATE
+
+DEPENDENCY TRACE
+================
+Step 1: a foreground Task completion with subagent_type fires --on-builder-complete
+  ↓ Verified at: workstreams-emit.sh:4342 (_run_on_builder_complete) + verifier live probe
+Step 2: artifact_ref derived from the prompt's docs/ path via the shared parse
+  ↓ Verified at: :3470 (_extract_artifact_ref) + probe row's populated artifact_ref
+Step 3: exactly one JSONL row appended to the ledger; malformed/PreToolUse/background mint nothing
+  ↓ Verified at: :4313 (_dispatch_ledger_append) + DL1-DL7 green + malformed live probe (exit 0, no row)
+Step 4: rule 3 reads the rows by subagent_type+artifact_ref+ts window; wrong-ref rejected; landing date bounds the exemption
+  ↓ Verified at: review-chain-lib.sh:130 + s11c observed green + dispatch-chain-gate 6/6
+
+<!-- T15 verdict continues above; T18 verdict below appended same pass -->
+
+## Task 18 — Verifier verdict (task-verifier) — FAIL, checkbox NOT flipped
+
+EVIDENCE BLOCK
+==============
+Task ID: 18
+Task description: REQ-B9 G3 extension: review-record-push-gate.sh consumes the DEC-5 class-table config (harness class → BLOCK by config date; provenance-docs EXEMPT; product/other → WARN with per-class baselines measured from the calibration week's real push history); same-push record-honoring stated + tested — Verification: full — Implements: REQ-B9
+Verified at: 2026-08-04T01:00:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's three Prove-it-works steps via the gate's own self-test (re-run by this verifier), the locked class-table shape, and the manifest.json enforcement inventory (the harness's claimed-vs-actual truth surface, constitution §10) — which is where the verdict turns.
+
+Comprehension-gate: PASS with staleness note (confidence 7) — inline audit above ("Comprehension audit — batch #2"): the single-round articulation predates the ab2caf9e remediation and describes the PRE-F-2 token mechanism; the misconcretization was flagged by the builder's own Assumptions, caught by the T16 fidelity review (F-2 Major, PROVEN vacuous), remediated (push-changed-set scoping + CG6 pin), and re-checked CLEAR TO MERGE — no unaddressed misunderstanding remains.
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T00:15Z
+
+Checks run (all re-executed by this verifier on master @ b2def5cf, 2026-08-04):
+1. Ancestry: bd4a4ea4 (build), ab2caf9e (F-2/F-3/F-4/F-5 remediation), c5ee36d6 (merge) all ancestors of master. PASS
+2. `review-record-push-gate.sh --self-test` → **self-test: OK (1 skipped)** — the one non-executed assertion (17f backslash-path gating) is an HONEST platform guard (NTFS cannot host the fixture filename), loudly declared not-a-pass by the suite itself; the CG scenarios (incl. CG6, the F-2 push-scoping regression pin, referenced at gate :800) ran green. PASS
+3. Class table complete at adapters/claude-code/config/review-class-table.json: harness (block-after-date, flip_date=2026-08-10, in-row corpus_measurement with the SAME-COMMIT-vs-PUSH conservatism caveat load-bearing — F-4 discharged), provenance-docs (exempt, named F-4 widening for operator-todo/SCRATCHPAD), other-docs + product (warn, flip_date null, in-row baselines), architecture_trigger_globs including hooks/*gate*.sh (F-3 discharged). PASS
+4. Wire arrows: gate reads the table AS OF the pushed sha via `git show` (:635-636, :654-666 — same-push honoring in the config read itself); first-match-wins classifier (:738-743); reviewer tokens verified via review-chain-lib's rc_record_reviewer/rc_record_verdict reused verbatim (:804-819); gc_block wired (:876). PASS
+5. Fidelity trail: T16-ordered remediation ab2caf9e landed all four findings; the fidelity re-check "CLEAR TO MERGE" is appended to the T16 record trail; the CI round-2 stat-order fix (_rrpg_mtime_epoch GNU/BSD reversal) landed BEFORE the 2026-08-10 flip arms — the override-marker path is exercised green in the current suite. PASS
+6. ARMING ADJUDICATION (dispatch-directed): SCRATCHPAD.md HARD STOPS line, verbatim: "T18 flip 2026-08-10 armed" (elsewhere "T18 flip 2026-08-10 armed (baselines in-row)"). Determination: the armed flip is the GATE'S ENFORCEMENT posture transition — review-class-table.json harness class `"flip_date": "2026-08-10"`, WARN→BLOCK per the block-after-date posture — NOT the task checkbox. The task's own Prove-it 1 anticipates verification DURING the calibration window ("refused (WARN text during calibration window per config date)"), and nothing in the plan or evidence conditions task closure on the calendar. The checkbox therefore follows the NORMAL protocol — and under the normal protocol it stays OPEN for the independent reason below. NOT-TIME-ARMED
+7. **Docs impact ("manifest entry updated; gate header contract") — FAIL.** Gate header contract: updated (:635-666 CONFIG block) ✓. Manifest entry: **NOT updated anywhere** — the review-record-push-gate entry's honest_status (7,605 chars) contains NO mention of the class-table extension (searched: class-table/T18/DEC-5/REQ-B9/review-class-table/2026-08-03 — zero hits; the sole "class" hit is unrelated prose), `grep -c "review-class\|class-table\|REQ-B9" manifest.json` → 0, and git history shows integration commits for T1+T3 (c3dae56c), T6 (422257c2), T11-T15 (c068e063) but NONE for T18. The mechanism was MERGED (c5ee36d6) and PUSHED (ancestor of the pushed 5eebe6e0) with no manifest delta — violating the plan's own dispatch-batching rule ("each mechanism's manifest delta lands in the SAME MERGE TRAIN as its mechanism… Never deferred past the push boundary (the HR-F9 class lives exactly there)"). The enforcement inventory currently UNDERSTATES the live gate's behavior — the exact claimed-vs-actual drift class manifest.json exists to prevent. FAIL
+
+Runtime verification: command bash adapters/claude-code/hooks/review-record-push-gate.sh --self-test   # → self-test: OK (1 skipped — honest NTFS guard) (verifier re-run on master @ b2def5cf)
+Runtime verification: file adapters/claude-code/config/review-class-table.json::"flip_date": "2026-08-10"
+Runtime verification: command grep -c "review-class\|class-table\|REQ-B9" adapters/claude-code/manifest.json   # → 0 (the FAIL's mechanical basis; re-runnable)
+Runtime verification: command git log --oneline --since=2026-08-02 -- adapters/claude-code/manifest.json   # → no T18 integration commit (ccfed944/c068e063/422257c2/c3dae56c only)
+
+Verdict: FAIL
+Confidence: 9
+Reason: PROVEN (mechanism): the G3 class extension itself is built and verified — self-test OK re-run by this verifier (1 honestly-skipped NTFS assertion), class table complete with the F-2/F-3/F-4/F-5 remediation discharged and in-row conservative baselines, same-push honoring implemented in the config read itself, fidelity re-check CLEAR TO MERGE. PROVEN (gap): the task's Docs-impact obligation "manifest entry updated" is entirely unmet — zero class-extension trace in manifest.json, no T18 integration commit exists, and the mechanism is already pushed, which is the plan's own named HR-F9 failure class ("never deferred past the push boundary"). A mechanism whose enforcement-inventory entry understates its live behavior is the cardinal harness drift (constitution §10); the checkbox cannot flip until the inventory is true.
+Gaps:
+  - Manifest entry for review-record-push-gate not updated for the DEC-5 class-table extension (Class: HR-F9 manifest-deferred-past-push; Sweep query: `grep -c "review-class\|class-table\|REQ-B9" adapters/claude-code/manifest.json` → must become ≥1; Required generalization: orchestrator lands ONE commit updating the entry's honest_status — naming the class-table consumption, T18/REQ-B9, the flip_date=2026-08-10 arming, and the current self-test shape "OK (1 skipped)" with its re-derive command per the entry's own stated rule — then re-runs `manifest-check.sh` + `--gen-index`, then re-invokes this verifier for the one-check re-verification; every other check above already PASSES and will not be re-litigated)
+  - Process note for the completion report (not blocking re-verification): the remediation round (ab2caf9e) never re-articulated its comprehension — batch-2 audit covered it via the T16 record trail; future remediation dispatches should re-articulate per Decision 020e.
+
+## Task 14 — Verifier verdict (task-verifier)
+
+EVIDENCE BLOCK
+==============
+Task ID: 14
+Task description: REQ-B5+B7 template + checks: plan-template gains design-ref: header + per-task Implements:/Directives: + Review Chain section; plan-reviewer Checks 20-22 (20: design-ref required-when-triggered + design-reviews valid incl. anchor-at-HEAD; 21: every design MUST-REQ claimed by ≥1 task + Directives fields present; 22: chain records name agent+verdict+ledger-row) with G1 surface-trigger fire-rate measured over the plan corpus and recorded before any flip — Verification: full — Implements: REQ-B5, REQ-B7
+Verified at: 2026-08-04T01:35:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's two Prove-it-works steps re-executed by this verifier (full suite run observing the five new-scenario verdicts; corpus measurement script re-run live); plus derived (pre-T14 blob) for the failure-attribution A/B below.
+
+Comprehension-gate: PASS (confidence 8) — inline audit above ("Comprehension audit — batch #2"): granular per-rule API, drive-letter loop, live-fixture, and DESCOPE-honesty claims all re-verified; the NOT-covered "no task owns the G1 advisory gate" claim independently corroborated by the plan's own T16 Adjudication-1 In-flight entry.
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T00:15Z
+
+Checks run (all re-executed by this verifier on master @ b2def5cf, 2026-08-04):
+1. Ancestry: e58e480e (build) is an ancestor of master. PASS
+2. Prove-it 1 — ALL FIVE new scenarios observed PASS in this verifier's own full suite run (twice — first run tail + full logged re-run): `(c20a) chainless-triggering-plan-fails-20: PASS` · `(c21b) missing-must-req-fails-21: PASS` (naming REQ-X1) · `(c22c) derived-record-fails-22: PASS` · `(c2022d) grandfathered-plan-skips-with-info: PASS` · `(c2022e) live-gated-pipeline-plan-passes-20-21-22: PASS` — the load-bearing live fixture: THIS plan, post-T25-edit, clears Checks 20-22 with zero blocking findings from the real repo root (rule-2 anchor movement since the T16 attestation rides the intentionally-non-blocking calibration window — expected lifecycle staleness, exactly as the check's own comment states). PASS
+3. SUITE-GLOBAL EXIT ADJUDICATED — the full suite exits 1 via THREE scenarios, ALL Check 19 (ee3 no-WARN-emitted, ee4 grandfather-bypass, ee7 no-UNDECIDABLE-warn), NONE of them T14's: (a) T14's diff touches Check 19 only in comments and a `_if_root` perf reuse (verified via `git show e58e480e`); (b) A/B PROVEN pre-existing — this verifier reconstructed the ee3 fixture standalone and ran BOTH the pre-T14 blob (`git show e58e480e~1:…plan-reviewer.sh`) and current master against it: BYTE-IDENTICAL outcome (Check 3 Scope IN/OUT findings fire; no Check-19 WARN emitted) on both sides — the same git-stash-A/B attribution method the T4 verdict used; (c) the failures match T8's recorded observation ("plan-reviewer… failures observed, not root-caused") — root cause now isolated (ee fixture's Scope lacks IN:/OUT: so Check 3 pollutes the Check-19 scenarios) and filed as an nl-issue this pass, owner: the T8/T21 triage population. PASS (not T14's defect)
+4. Prove-it 2 — corpus measurement RECORDED WITH THE NUMBER: config/design-ref-gate.json `corpus_measurement` (in-data, HR-F7 style): measured_date 2026-08-03, surface-trigger 146/298 = **49.0%** (+ keyword-trigger 27.0% reused from the Check-17 study); re-run LIVE by this verifier via `measure-design-ref-surface-trigger.sh` → **148 fired / 304 files = 48.7%** (corpus grew by 6 plans since measurement — consistent). Both numbers now also recorded here, in the evidence file, per the Prove-it letter. Measurement precedes any flip: landing_date 2026-08-04, flip_date 2026-08-11 (future). PASS
+5. Template fields: plan-template.md carries `design-ref:` (:181 with n/a-escape), `## Review Chain` (:207 with per-entry contract), per-task `Implements:`/`Directives:` (:501); live sync `~/.claude/templates/plan-template.md` → **byte-identical** (diff empty). PASS
+6. Wire arrows: Checks 20/22 call the granular review-chain-lib API — `rc__base_token` (:4049), `rc_rule1` (:4054), `rc_rule2` (:4059) — exactly the plan's corrected Wire-checks line (M-3 one-parser rule honored, no second implementation); Check 21 parses the `## Requirements` REQ table from the design-ref'd file; Check 17 marked superseded-for-keyword-triggering in the same commit. PASS
+7. Docs impact: planning.md compact gains the fields bullet (:9); planning-full.md gains "The Review-Chain fields" subsection (:141) — the pre-existing Files-map gap disclosed and closed via the plan's In-flight entry. PASS
+
+Runtime verification: command bash adapters/claude-code/hooks/plan-reviewer.sh --self-test   # → c20a/c21b/c22c/c2022d/c2022e ALL PASS; suite exit 1 attributable solely to pre-existing Check-19 ee3/ee4/ee7 (A/B-proven vs e58e480e~1; nl-issue filed)
+Runtime verification: command bash adapters/claude-code/scripts/measure-design-ref-surface-trigger.sh   # → corpus 304 files, 148 fired, 48.7% (verifier live re-run; config records 146/298=49.0% @ 2026-08-03)
+Runtime verification: command diff adapters/claude-code/templates/plan-template.md ~/.claude/templates/plan-template.md   # → empty, byte-identical (verifier re-run)
+Runtime verification: file adapters/claude-code/config/design-ref-gate.json::"surface_trigger_fire_rate_pct"
+Runtime verification: file adapters/claude-code/templates/plan-template.md::design-ref:
+
+DEPENDENCY TRACE
+================
+Step 1: plan-template carries design-ref/Review Chain/Implements/Directives fields
+  ↓ Verified at: templates/plan-template.md:181/:207/:501 + live-sync diff empty
+Step 2: plan-reviewer Checks 20-22 parse those fields via Task 1's ONE lib (granular API)
+  ↓ Verified at: plan-reviewer.sh:4049-4059 (rc__base_token/rc_rule1/rc_rule2) + c20a/c21b/c22c green
+Step 3: flip/grandfather dates live in data, measurement recorded before flip
+  ↓ Verified at: config/design-ref-gate.json (landing 2026-08-04, flip 2026-08-11, corpus_measurement in-row) + live re-measurement 48.7%
+Step 4: the real plan (this file's plan) clears the checks as the load-bearing fixture
+  ↓ Verified at: c2022e PASS observed in this verifier's own run from the real repo root
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN: all five new scenarios observed green in this verifier's own full suite runs (twice), the live-plan fixture passing post-T25 with the anchor-staleness riding the intended calibration window; the corpus measurement re-derived live (48.7% vs the recorded 49.0% on a corpus 6 files smaller) and recorded here per the Prove-it letter; template fields verified in-file and byte-identical live; wire arrows traced to the granular lib API. The suite-global exit-1 is PROVEN not-T14 by a pre/post-blob A/B on a reconstructed fixture (identical failure both sides — pre-existing Check-19/Check-3 fixture drift, filed as nl-issue, owned by the T8/T21 triage population, same accepted-attribution method as the T4 verdict). Confidence 8 not 9: the builder's own evidence narrative was capture-lost (recovered articulation only), and the named suite's global exit remains red for reasons outside this task — flagged, filed, and attributed rather than ignored.
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the writer's full contract re-observed directly — 140/140 suite plus a verifier-constructed live probe producing exactly one well-formed 5-field row (and zero rows on malformed input, exit 0), the rule-3 round-trip and wrong-ref rejection re-run green, the landing-date boundary confirmed in the lib config, and the live ledger's real rows inspected. The task=T7 spelling defect is adjudicated an orchestrator-input defect (check 8): the mechanism's ledger schema never carries task ids and the writer's faithful-pass-through contract is honored; the consumer caught the bad input at the right layer. NAMED RESIDUAL (non-blocking, orchestrator follow-up): the Docs-impact letter — a one-line dispatch-ledger note in orchestrator-pattern.md itself — is unmet in that specific file (the note lives in the manifest entry, the generated doctrine/INDEX.md row, and planning-full.md); T17/T20 are about to touch the same doctrine file — fold the one-liner into that train and record it in the completion report.
+## Task 17 — G2 live: PreToolUse gate + THE THREE-VARIANT DEMO (REQ-B8) — Verification: full
+
+- Builder: plan-phase-builder (sonnet), SERIAL dispatch on the live branch (no worktree isolation
+  for this build), after Task 16's substantive landing (commit dbd6647f — plan-reviews entry with
+  plan-blob 0771581b — though T16's own checkbox remained unflipped at dispatch time; see the
+  "Honest gaps" and Decisions Log entry below for what that turned out to mean in practice).
+- What landed: `hooks/dispatch-chain-gate.sh` gains a no-args PreToolUse enforce mode
+  (`_dcg_gate`, :296) alongside the unchanged Task-1 `--check` mode: reads a Task|Agent dispatch
+  event (CLAUDE_TOOL_INPUT or stdin, model-pin-gate.sh:156-167's extraction pattern reused
+  verbatim); classifies `subagent_type` against `config/model-policy.json`'s `category:"build"`
+  agents (`_dcg_is_build_type`, :123 — dynamic, not a hardcoded pair); derives a plan slug from
+  an NL-ATTRIBUTION `plan=` field (`_dcg_attributed_slug`, :193 — a REIMPLEMENTATION of
+  workstreams-emit.sh's `_extract_nl_attribution` anchor rule, not a `source`, because that file
+  has no direct-execution guard and killed the sourcing shell when tested live — see the function's
+  own header comment for the verification command) with a same-regex prompt-text fallback
+  (`_dcg_extract_plan_slug`, :162); resolves the plan against the session cwd's git toplevel,
+  `cd`s into it, and validates the chain via `rc_validate_chain "docs/plans/$slug.md"` — a
+  REPO-ROOT-RELATIVE path, not absolute (this exact bug, and the fix, are in "Honest gaps" below);
+  applies the F-4 gate-ordering rule (`_dcg_chain_unparsed`, :228 — grandfather consulted ONLY
+  when no chain parses at all, never when a chain parses but fails a rule) against the
+  install-generated `config/g2-grandfather-slugs.txt` (300 slugs: every top-level
+  `docs/plans/*.md` + `docs/plans/archive/*.md` at generation time, `_dcg_grandfathered`, :138);
+  and implements the M-7 evasion heuristic (non-build subagent_type referencing a `docs/plans/`
+  path → workaround-sensor row, never a block).
+- Wiring: `settings.json.template` gains its own `"matcher": "Task|Agent"` block calling
+  `bash ~/.claude/hooks/dispatch-chain-gate.sh` with no args, placed AFTER model-pin-gate.sh's
+  block and BEFORE workstreams-emit.sh's `--on-builder-dispatch` block — order-safety rationale
+  (both gates read-only on tool_input) stated inline in dispatch-chain-gate.sh's own header
+  (the "WIRING" section) since JSON cannot carry a comment.
+- `--self-test` extended: 40 passed, 0 failed (was 6/6 at Task 1) — the two original --check
+  scenarios (chainless/valid-chain, unchanged) plus 34 new PreToolUse scenarios covering: THE
+  THREE DEMO VARIANTS as executable fixtures (a throwaway git repo, mktemp+git init, mirroring
+  review-chain-lib.sh's own self-test convention); grandfathered-slug ledgered-WARN-and-proceed;
+  valid-chain silent pass; research-type dispatch fully untouched; the M-7 heuristic; test-writer
+  vs. plan-phase-builder underivable-slug divergence (WARN+ledger vs. BLOCK); the Mi-5 no-repo
+  WARN-pass; and non-spawn-tool no-op. Every `gc_escape_used` call in the self-test is sandboxed
+  via `HARNESS_SELFTEST=1` + `WORKAROUND_SENSOR_LEDGER_PATH` (never touches the real machine's
+  workaround-sensor ledger); every ledger-dependent scenario pins `RC_LEDGER_LANDING_DATE`/
+  `RC_LEDGER_PATH` so real wall-clock time can never flip a scenario's exemption state.
+- **THE LIVE TRANSCRIPTS (the D-15 acceptance-bar artifacts):** generated by running the gate
+  binary directly from the real repo root (this checkout, not a throwaway one) against three
+  real (temporary, NEVER `git add`ed, deleted immediately after capture — `git status --porcelain`
+  confirmed clean post-run) fixture files under `docs/plans/`/`docs/reviews/`, captured verbatim
+  (command line + full stdout/stderr + exit code) into
+  `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-{1,2,3}.txt`:
+  - **Variant (i)** — plan-phase-builder, chain-less new plan, WITH an NL-ATTRIBUTION header →
+    exit 2, all four `[GATE:*]` fields, `[FAIL] chain-presence: no ## Review Chain section`.
+  - **Variant (ii)** — SAME plan, prompt carries NO NL-ATTRIBUTION line anywhere → exit 2,
+    IDENTICAL block shape (subagent_type keying proven independent of attribution presence, H1).
+  - **Variant (iii)** — a chain entry naming `harness-reviewer`, well-formed on rules 1+2, with
+    RC_LEDGER_PATH pointed at an empty scratch ledger (zero rows of that type) → exit 2, message
+    reads "...'s Review Chain fails validity: ... rule3: FAIL: no dispatch-ledger row..." —
+    textually distinct from variants (i)/(ii)'s "has no ## Review Chain block" framing, proving
+    the gate distinguishes "no chain" from "chain present but invalid" (the exact distinction
+    F-4's grandfather-ordering rule depends on).
+  - All three: exit code 2 (BLOCK), zero variants passed through — the plan's own Intended
+    Functionality pass/fail item 1 ("All three REQ-B8 demo variants produce a block ...  zero
+    variants pass through") holds.
+- **Performance — MEASURED, and the design's <300ms budget is MISSED on this machine (PROVEN, not
+  modeled)**: `date +%s%N`-bracketed real invocations, 3 runs each, this checkout
+  (Windows/MSYS2 Git Bash):
+  - Fully untouched (non-build subagent_type, no docs/plans/ reference): **567-586 ms**.
+  - Underivable-slug plan-phase-builder (BLOCK, no chain touched at all): **743-952 ms**.
+  - Chain-less real plan (the P-39/demo-variant shape, one `git rev-parse` + `rc_chain_present`
+    short-circuit): **787-935 ms**.
+  - **The live `gated-pipeline-master-2026-08.md` plan itself (3 chain entries: 2 design-reviews +
+    1 plan-reviews) via a real `plan-phase-builder` dispatch event: 5.7-9.6 SECONDS** — roughly
+    20-30x the stated budget. Isolated: `rc_validate_chain` alone on this plan measured 4.9s;
+    `rc_rule3` alone (one entry, EXEMPT short-circuit, the REAL machine ledger at 340 rows) measured
+    ~466ms.
+  - Root cause (traced, not guessed): review-chain-lib.sh's rc_rule2/rc_rule3 spawn a `git`
+    subprocess PER RULE PER ENTRY (rule 2: one `git hash-object`; rule 3: one `git log --follow
+    --find-renames=100%` for the pre-ledger-exemption check, even when the exemption short-circuits
+    before any ledger scan) — isolated single-call baselines on this machine: bare `bash -c true`
+    121ms, one `jq` call 158ms, one `git rev-parse` 141ms, one `git hash-object` 184ms, one `git log
+    --follow` **554ms**. A 3-entry chain therefore pays roughly 6-9 subprocess spawns minimum
+    (2-3 per entry), and Windows/MSYS2 process-spawn overhead (already documented elsewhere in this
+    estate as materially higher than Linux/macOS) compounds linearly with entry count — this is
+    Task 1's existing per-rule design (review-chain-lib.sh, already task-verifier PASS), not
+    anything Task 17 introduces; T17 only calls the SAME `rc_validate_chain` the --check mode
+    already called. NOT independently re-timed by a verifier or on a second (non-Windows) machine —
+    flagged, not fixed, in Honest gaps: this is very plausibly a Windows-specific number, and the
+    fix (if one is warranted) is a review-chain-lib.sh change, out of T17's file scope.
+- Manifest delta (report-only, per this task's constraints — no manifest.json edit performed):
+  `dispatch-chain-gate` entry: `events: []` → `["PreToolUse"]`; `wired_template: false` → `true`;
+  `selftest` stays `true` (count 6→40); `honest_status` should read (paraphrase, not the literal
+  final string): "LIVE: PreToolUse Task|Agent, wired in settings.json.template. subagent_type-keyed
+  per model-policy.json build category (dynamic, not hardcoded). Grandfather list
+  config/g2-grandfather-slugs.txt (300 slugs, generated 2026-08-03 from extant docs/plans/*.md +
+  docs/plans/archive/*.md). Self-test 40/40 incl. the three D-15 demo variants as executable
+  fixtures. Live transcripts: docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-
+  {1,2,3}.txt."; consider adding `"adapters/claude-code/config/g2-grandfather-slugs.txt"` and
+  `"adapters/claude-code/config/model-policy.json"` to `jit_triggers.paths` (both are now real
+  runtime dependencies of this gate, not just the lib).
+
+### Task 17 — Comprehension Articulation (builder-authored, per Decision 020d; diff: <this build's
+commit(s), cited by SHA in the builder's session report>)
+
+#### Spec meaning
+
+Task 17 (REQ-B8) lands G2's FULL form on top of Task 1's proven skeleton: a PreToolUse `Task|Agent`
+gate that keys on `subagent_type` against model-policy.json's build category, "regardless of
+prose" (design H1) — an NL-ATTRIBUTION `plan=` field only REFINES the derived slug, it never gates.
+For a build-category dispatch, the plan slug (from attribution or a `docs/plans/<slug>.md` prompt
+scrape) is resolved against the session cwd's git toplevel; the chain VALIDATES FIRST
+(fidelity-review F-4, binding: `rc_validate_chain` runs unconditionally before any grandfather
+check); the grandfather list (install-generated, a static slug file) is consulted ONLY when no
+chain parses at all, never when a chain parses but fails a rule; a plan-phase-builder with an
+underivable slug BLOCKS (the agent exists only for plan work) while a test-writer WARNs+ledgers
+(ad-hoc use is legitimate); and the whole thing is proven via THREE adversarial demo variants
+(chain-less BLOCKED, chain-less-without-attribution STILL BLOCKED, never-dispatched-reviewer chain
+FAILS validity) captured as live transcripts — the plan's own D-15 acceptance bar.
+
+#### Edge cases covered
+
+- **The H1 variant, executed twice with one variable changed**: variants (i) and (ii) are the
+  IDENTICAL chain-less plan dispatched by the IDENTICAL subagent_type, differing ONLY in whether
+  the prompt carries an NL-ATTRIBUTION header — both produce byte-identical BLOCK framing
+  (`t17-demo-variant-1.txt` vs `t17-demo-variant-2.txt`, both "has no ## Review Chain block"),
+  directly proving subagent_type keying is independent of attribution presence, not merely
+  asserted.
+- **F-4 gate-ordering, both directions**: a chain-less plan on the grandfather list proceeds with
+  a ledgered WARN (`_dcg_grandfathered` reached); a chain-PRESENT-but-invalid plan (variant iii)
+  is NEVER even offered to `_dcg_grandfathered` — `_dcg_chain_unparsed` (dispatch-chain-gate.sh:228)
+  gates entry to that branch, and the self-test's "demo-iii-message-is-not-the-chain-less-framing"
+  scenario asserts the two failure classes produce textually distinct messages, not just distinct
+  exit codes.
+- **Role-divergence on underivable slug**: plan-phase-builder BLOCKS (self-test
+  "plan-phase-builder-underivable-slug-blocked-rc2"), test-writer WARNs+ledgers
+  ("test-writer-underivable-slug-warns-rc0" + a real `bypass_kind:"underivable-slug"` row) — same
+  input shape, deliberately different verdicts per the design's stated asymmetry.
+- **Mi-5 no-repo**: a session cwd outside any git repository (self-test's `$NOGIT` scenario) WARNs
+  and proceeds rather than erroring or blocking — `git rev-parse --show-toplevel` failure is the
+  trigger, verified via a real non-git tmp directory, not mocked.
+- **The M-7 evasion heuristic, both branches**: a non-build subagent_type WITH a `docs/plans/`
+  reference in its prompt writes a workaround-sensor row and still proceeds (never blocks — the
+  design states this is measurement, not enforcement); a non-build subagent_type with NO such
+  reference (the "research-dispatch-untouched" scenario) writes ZERO ledger rows, asserted via a
+  before/after line-count diff on the sandboxed ledger file, not merely an exit-code check.
+- **CRLF on Windows, caught live, not theoretical**: `config/model-policy.json`'s `jq -r` output
+  carries `\r\n` line endings on this checkout; an un-stripped `read -r` loop variable
+  ("plan-phase-builder\r") silently mis-classified every build-category dispatch as non-build,
+  making variants (i)–(iii) all fall through to the M-7 branch instead of blocking — caught by the
+  self-test itself (3 scenarios FAILing with the exact wrong-branch symptom) before any commit,
+  fixed with the same `${bt%$'\r'}` strip model-pin-gate.sh's own frontmatter readers already use
+  for the identical platform reason (dispatch-chain-gate.sh:123-137, comment cites the discovery).
+- **artifact_ref path-form mismatch, caught live, not theoretical**: the first working version
+  passed an ABSOLUTE plan path to `rc_validate_chain`, so rule 3's `artifact_ref` never matched a
+  real ledger row's repo-root-relative `docs/plans/<slug>.md` form — every genuinely valid chain
+  spuriously failed rule 3. Caught by the "valid-chain-plan-silent-pass" self-test scenario
+  (BLOCKED instead of PASS); fixed by `cd`ing into the resolved toplevel and passing a relative
+  path from there on (dispatch-chain-gate.sh:354-381), matching workstreams-emit.sh's real writer
+  convention exactly.
+
+#### Edge cases NOT covered
+
+- **Two simultaneous build-category dispatches racing on the SAME plan** — not exercised; G2 is a
+  stateless per-invocation decider (Behavioral Contracts: "Retry semantics... no gate holds
+  locks"), so this is presumed safe by that contract, not independently proven under concurrency.
+- **A plan slug that collides between a real `docs/plans/` file and a grandfather-list entry whose
+  underlying file has since been DELETED** (not merely archived) — the grandfather check is a pure
+  string-membership test against the slug list; it does not re-verify the listed file still
+  exists. Practically harmless (a deleted plan can never be dispatched against — `rc_validate_chain`
+  would hit the same "no such file" → chain-less path regardless of grandfather status), but not a
+  scenario this self-test constructs explicitly.
+- **The `--check` mode's OWN behavior against a plan whose slug happens to collide with a
+  PreToolUse-mode fixture** — the two modes are independently self-tested but never invoked
+  back-to-back against the identical file in one scenario (no evidence of cross-mode interference,
+  but also no assertion against it).
+- **A `docs/plans/<slug>.md` reference inside a code fence in the dispatch prompt** (the same
+  fence-guard the NL-ATTRIBUTION anchor applies) is NOT applied to `_dcg_extract_plan_ref`'s
+  bare-scrape fallback — only the attributed-slug path is fence-guarded. A quoted
+  `docs/plans/foo.md` mention inside a fenced code block in a prompt would still be scraped as a
+  real reference by the fallback path. Not exercised by any self-test scenario; a real but
+  narrower residual than the already-named M-7 evasion class (this one could cause an
+  OVER-cautious BLOCK/WARN on a prompt merely discussing a plan path, not an evasion).
+- **Timing budget is MISSED, not merely under-measured**: the design's Behavioral Contracts state
+  "<300ms budget, measured in T17 evidence"; this task's own measurement (see the build-log entry
+  above) shows every path exceeds it on this machine, and the multi-entry live-plan path misses it
+  by roughly 20-30x. This is NOT re-timed on a second (non-Windows) machine, so "is this a
+  Windows-only artifact of MSYS2 process-spawn cost, or a real cross-platform budget miss in
+  review-chain-lib.sh's per-rule-per-entry git-subprocess pattern" is unresolved — named, not
+  fixed, and not silently downgraded to "honored qualitatively" (the phrasing this entry originally
+  carried before the real measurement was taken — corrected in place, not left standing).
+
+#### Assumptions
+
+- `git rev-parse --show-toplevel` run with the hook's INHERITED cwd (no explicit `-C` flag)
+  correctly reflects "the session's cwd" at dispatch time — true for every interactive/orchestrator
+  session observed on this machine; unverified for any execution context where a hook's cwd might
+  differ from the dispatching session's actual working directory (not identified as a real gap,
+  just not independently confirmed).
+- The grandfather list, generated ONCE at this commit from `docs/plans/*.md` + `docs/plans/archive/
+  *.md` (top-level only, no recursion), is treated as static for this cycle — REQ-C2's estate drain
+  is the ONLY sanctioned shrink mechanism; nothing in this task adds a re-generation trigger, so a
+  plan slug removed from `docs/plans/` after this commit (e.g. archived properly) stays
+  grandfathered until someone re-runs the documented regeneration command by hand.
+- `config/model-policy.json`'s two build-category agents (plan-phase-builder, test-writer) are the
+  complete build-category population for this cycle; `_dcg_build_types` reads it dynamically so a
+  THIRD build-category agent added later is covered without a code change — assumed, not tested
+  (no fixture constructs a third build-category type).
+- The live-plan chain-validity finding (see the Decisions Log entry above and "Honest gaps" in the
+  builder's session report) — that this plan's OWN Review Chain currently FAILs (not merely WARNs)
+  due to a stale unanchored bootstrap entry T16 left in place — is assumed to be a genuine,
+  previously-undiscovered defect surfaced by this task's own direct testing, not a
+  misunderstanding of the lib's semantics; the fix (removing the entry) is verified to flip the
+  verdict to WARN (never-blocking) via direct `rc_validate_chain` re-invocation, not merely
+  asserted.

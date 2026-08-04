@@ -246,6 +246,8 @@ Same `plan=`/`task=` vocabulary `admission-lib.sh`'s `adm_admit` labels and `est
 
 **Self-attribution note:** this convention's OWN rollout dispatch (the attribution-pipeline harness task, 2026-07-29) carried no header — the transition case the WARN counter exists to surface. Every `plan-phase-builder`/`task-verifier`/reviewer dispatch from this point forward is expected to carry the header; the WARN count is how adoption lag becomes visible instead of silently persisting.
 
+**GENERATE THE HEADER — NEVER HAND-TYPE IT (operator directive 2026-08-03).** Root cause of the day's motivating incident: an orchestrator hand-typed a `task=T7`-style id into an NL-ATTRIBUTION header for a plan whose own task list is numeric (`- [ ] 7.`, not `- [ ] T7.`) — the header parsed structurally (the parser is format-tolerant per the "free token" note above) but the id did not correspond to any real task, so `roadmap-routes.js`'s `deriveLiveAgentLeaves` bound the dispatch to nothing and cockpit attribution broke silently. The general rule: **`bash adapters/claude-code/scripts/dispatch-directives.sh <plan> <task-N> [role]` is the sole generator of this header for any plan built under the orchestrator pattern.** It computes `plan=` from the plan file's own basename (never typed), VALIDATES `task=<N>` against the plan's actual `## Tasks` list before printing anything (a mismatched id is a hard error naming every valid id — never a best-effort guess, never silently emitted), and defaults `role=builder` with the same closed set (`builder|verifier|reviewer|advocate`) enforced above. The script's first line of output IS the header, ready to paste verbatim as the first line of the dispatch prompt; its remaining output is the register-computed `Directives:` citation block for that task (carriage channel 2, `directives-register-lib.sh` — REQ-B11), so one command produces both pieces of generated, never-hand-typed dispatch-prompt content. This does not change the header's PARSED shape (`workstreams-emit.sh`'s `_extract_nl_attribution` is unchanged) — it changes how the AUTHOR produces the value that goes into it.
+
 ## Scenarios-shared, assertions-private
 
 **The discipline:** when a plan has a `## Acceptance Scenarios` section authored by the `end-user-advocate` (see `rules/acceptance-scenarios.md`), the orchestrator's dispatch prompt to each builder MUST include those scenarios verbatim — but MUST NOT include the advocate's internal runtime assertion list. Scenarios are shared with the builder so the builder is aligned on the user-observable outcome the build must produce. Assertions are private to the advocate so the builder cannot teach to the test.
@@ -415,8 +417,12 @@ OBLIGATION. Golden case this mechanism exists for: this plan's own build accumul
   block (kept deliberately separate from the file's `_dcg_check`/CLI body to avoid
   conflicting with Task 17's concurrent G2 PreToolUse work) BLOCKS a new BUILDER
   dispatch when the plan's open-obligation count is ≥3 AND no verifier dispatch is
-  in flight (`rc_verifier_in_flight`, via dispatch-provenance markers — a role
-  in-flight verifier relaxes the block, since the backlog is already being worked).
+  in flight — STRICT-NEWER semantics (`rc_verifier_in_flight`, via dispatch-
+  provenance markers): "in flight" means dispatched AFTER the newest unverified
+  merge, not merely dispatched at some point in the past (a stale verifier marker
+  older than the newest open build still leaves the gate BLOCKING — self-tested,
+  OBL4b). A genuinely fresh role=verifier dispatch relaxes the block, since the
+  backlog is already being worked.
   `--waive '<reason>'` proceeds anyway, ledgered via `gc_escape_used` (same
   workaround-sensor ledger the dashboard friction pane already reads).
 - `hooks/stop-verdict-dispatcher.sh`'s `_svd_obligation_check` refuses a session
