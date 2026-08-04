@@ -50,8 +50,22 @@
 #         sweep root=<dir> total_checked=<N> has_event=<H> no_event=<M>
 #       Exit 0 always (a report, not a gate).
 #
+#   verify-event-audit.sh --recent-silence [<root-dir>] [<since>] [<min-flips>]
+#       THE SILENCE DETECTOR (HARNESS-GAP-62 class fix, 2026-08-04):
+#       compares RECENT authorized flips (read from `git log -p` over
+#       <root-dir>, default docs/plans) against RECENT `flip-verdict`
+#       ledger events in the same window (default: 7 days ago). WARNs
+#       ("SILENCE_DETECTED ...", exit 1) only on TOTAL silence -- at least
+#       <min-flips> (default 3) recent flips AND zero matching events.
+#       Below the min-flips floor, or any matching event present, exits 0
+#       silently -- a handful of idiosyncratic per-task misses is not
+#       alarming; the mechanism going systemically quiet is. See the
+#       function-header comment above _vea_cmd_recent_silence for the
+#       full method + false-positive-tolerance reasoning.
+#
 #   verify-event-audit.sh --self-test
-#       Sandboxed (own SIGNAL_LEDGER_PATH + temp plan fixtures). Exit 0/1.
+#       Sandboxed (own SIGNAL_LEDGER_PATH + temp plan fixtures + scratch
+#       git repos for --recent-silence). Exit 0/1.
 #
 # ============================================================
 # CONFIGURATION
@@ -229,6 +243,98 @@ _vea_cmd_sweep() {
 }
 
 # ============================================================
+# --recent-silence — THE SILENCE DETECTOR (HARNESS-GAP-62, amended
+# 2026-08-04; the class fix, not just the id-shape regex instance fix)
+# ============================================================
+#
+# WHY THIS EXISTS: the 926-checked/0-events measurement that grounded the
+# HARNESS-GAP-62 amendment was found by a ONE-OFF manual `--sweep` run.
+# Nothing made that discovery repeatable or standing -- if the emit
+# mechanism goes silent again (a future id-shape gap, a regression in
+# emit_flip_ledger_event, a broken signal-ledger.sh source) nothing would
+# notice until someone thinks to run `--sweep` by hand again. This command
+# is the standing detector: it compares RECENT authorized flips (read from
+# git history, independent of the ledger) against RECENT ledger events,
+# and WARNs the moment the mechanism goes quiet -- the class fix the
+# HARNESS-GAP-62 dispatch asked for, not just the regex widening.
+#
+# METHOD (heuristic, read-only, never blocks -- same tolerance-for-
+# approximation stance as this script's own HEURISTIC DISCLOSURE above):
+# `git log -p --since=<window>` over the plan root, tracking `+++ b/<path>`
+# to know which file each hunk belongs to, and counting every `+`-added
+# line that opens with `- [x]`/`- [X]` as a candidate recent flip. This
+# over-approximates slightly (a line reformatted/moved by an unrelated
+# commit still counts) -- acceptable for a WARN-only signal whose false-
+# positive cost is "check the sweep," not a block. De-duplicated by
+# (plan-slug, task-id) so a task touched by multiple commits in the window
+# counts once.
+#
+# WARN CONDITION (deliberately total-silence, not partial-miss): fires
+# only when recent_flips >= min_flips (default 3 -- a genuinely systemic
+# signal, not one idiosyncratic miss) AND has_event == 0 (COMPLETE
+# silence). A handful of individual flips missing an event for unrelated
+# reasons (a --check-mode dry run, a hand-authored fixture, a flip that
+# predates the ledger lib existing) is not alarming and must not WARN --
+# only "the mechanism has recorded nothing at all for a real burst of
+# recent activity" is the HARNESS-GAP-62 shape this exists to catch.
+#
+# _vea_recent_flips <root> <since> — one "<file>\t<added-checked-line>"
+# pair per candidate flip line, newest-commit-first order (git log's own
+# order; de-dup happens in the caller). Empty output (never an error) if
+# git is unavailable or the root has no history in the window.
+_vea_recent_flips() {
+  local root="$1" since="$2"
+  command -v git >/dev/null 2>&1 || return 0
+  git log -p --no-color --since="$since" -- "$root" 2>/dev/null | awk '
+    /^\+\+\+ b\// { file = $0; sub(/^\+\+\+ b\//, "", file); next }
+    /^\+- \[[xX]\][[:space:]]/ {
+      if (file !~ /\.md$/) next
+      if (file ~ /-evidence\.md$/) next
+      line = $0
+      sub(/^\+/, "", line)
+      print file "\t" line
+    }
+  '
+}
+
+_vea_cmd_recent_silence() {
+  local root="${1:-docs/plans}" since="${2:-7 days ago}" min_flips="${3:-3}"
+  if [[ ! -d "$root" ]]; then
+    echo "verify-event-audit: no such directory: $root" >&2
+    return 2
+  fi
+  local details; details="$(_vea_fetch_details)"
+  local total=0 has=0 missing=0
+  local seen=$'\n'
+  while IFS=$'\t' read -r file line; do
+    [[ -z "$file" ]] && continue
+    local slug tid key
+    slug="$(basename "$file" .md)"
+    tid="$(printf '%s' "$line" | grep -oE '^- \[[xX]\][[:space:]]+[A-Za-z0-9]+(\.[A-Za-z0-9]+)*' 2>/dev/null | sed -E 's/^- \[[xX]\][[:space:]]+//')"
+    [[ -z "$tid" ]] && continue
+    key="${slug}|${tid}"
+    case "$seen" in
+      *$'\n'"$key"$'\n'*) continue ;;
+    esac
+    seen="${seen}${key}"$'\n'
+    total=$((total+1))
+    if _vea_ledger_has_event "$slug" "$tid" "$details"; then
+      has=$((has+1))
+    else
+      missing=$((missing+1))
+    fi
+  done < <(_vea_recent_flips "$root" "$since")
+
+  if [[ "$total" -ge "$min_flips" ]] && [[ "$has" -eq 0 ]]; then
+    echo "SILENCE_DETECTED window='${since}' root=${root} recent_flips=${total} events=0 -- the flip-verdict ledger-emit mechanism (plan-edit-validator.sh's emit_flip_ledger_event) has recorded ZERO matching events for ${total} recently-authorized checkbox flips. This is the exact HARNESS-GAP-62 silence shape: either TASK_ID extraction rejects the id shape these flips use, or the emit mechanism itself stopped firing. Cross-check: verify-event-audit.sh --sweep ${root}" >&2
+    echo "recent_flips=${total} has_event=${has} no_event=${missing}" >&2
+    return 1
+  fi
+  echo "recent_flips=${total} has_event=${has} no_event=${missing} (window='${since}', min_flips_threshold=${min_flips})" >&2
+  return 0
+}
+
+# ============================================================
 # --self-test
 # ============================================================
 if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; then
@@ -336,6 +442,61 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
     fail "expected extracted id '7' and rc=0, got extracted=[$EXTRACTED7] rc=$RC7 out=[$OUT7]"
   fi
 
+  echo "Scenario 8: --recent-silence, recent flips WITH matching ledger events -> silent, rc 0"
+  GITROOT8="$TMP/silence8"
+  PLANDIR8="$GITROOT8/docs/plans"
+  mkdir -p "$PLANDIR8"
+  ( cd "$GITROOT8" \
+      && git init -q \
+      && git config user.email "selftest@example.com" \
+      && git config user.name "selftest" \
+      && printf '# S8 Plan\n\n## Tasks\n\n- [ ] 1. First task\n- [ ] 2. Second task\n- [ ] 3. Third task\n' > docs/plans/s8-plan.md \
+      && git add docs/plans/s8-plan.md \
+      && git commit -q -m "s8: add plan" \
+      && printf '# S8 Plan\n\n## Tasks\n\n- [x] 1. First task\n- [x] 2. Second task\n- [x] 3. Third task\n' > docs/plans/s8-plan.md \
+      && git add docs/plans/s8-plan.md \
+      && git commit -q -m "s8: flip all three" ) >/dev/null 2>&1
+  rm -f "$LEDGER"
+  _emit_row "s8-plan" "1" "PASS"
+  _emit_row "s8-plan" "2" "PASS"
+  _emit_row "s8-plan" "3" "PASS"
+  OUT8="$( cd "$GITROOT8" && _vea_cmd_recent_silence "docs/plans" "30 days ago" 2 2>&1 1>/dev/null )"; RC8=$?
+  if [[ "$RC8" -eq 0 ]] && [[ "$OUT8" == *"has_event=3"* ]] && [[ "$OUT8" != *"SILENCE_DETECTED"* ]]; then
+    pass "recent flips all matched by ledger events -> silent, rc 0 ($OUT8)"
+  else
+    fail "expected rc=0, has_event=3, no SILENCE_DETECTED, got rc=$RC8 out=[$OUT8]"
+  fi
+
+  echo "Scenario 9: --recent-silence, recent flips with ZERO matching events at/above the min-flips floor -> SILENCE_DETECTED, rc 1"
+  GITROOT9="$TMP/silence9"
+  PLANDIR9="$GITROOT9/docs/plans"
+  mkdir -p "$PLANDIR9"
+  ( cd "$GITROOT9" \
+      && git init -q \
+      && git config user.email "selftest@example.com" \
+      && git config user.name "selftest" \
+      && printf '# S9 Plan\n\n## Tasks\n\n- [ ] 1. First task\n- [ ] 2. Second task\n- [ ] 3. Third task\n' > docs/plans/s9-plan.md \
+      && git add docs/plans/s9-plan.md \
+      && git commit -q -m "s9: add plan" \
+      && printf '# S9 Plan\n\n## Tasks\n\n- [x] 1. First task\n- [x] 2. Second task\n- [x] 3. Third task\n' > docs/plans/s9-plan.md \
+      && git add docs/plans/s9-plan.md \
+      && git commit -q -m "s9: flip all three (no ledger events -- the silence)" ) >/dev/null 2>&1
+  rm -f "$LEDGER"
+  OUT9="$( cd "$GITROOT9" && _vea_cmd_recent_silence "docs/plans" "30 days ago" 2 2>&1 1>/dev/null )"; RC9=$?
+  if [[ "$RC9" -eq 1 ]] && [[ "$OUT9" == *"SILENCE_DETECTED"* ]] && [[ "$OUT9" == *"recent_flips=3"* ]] && [[ "$OUT9" == *"events=0"* ]]; then
+    pass "3 recent flips, 0 events, threshold 2 -> SILENCE_DETECTED fires, rc 1 ($OUT9)"
+  else
+    fail "expected rc=1 + SILENCE_DETECTED + recent_flips=3 + events=0, got rc=$RC9 out=[$OUT9]"
+  fi
+
+  echo "Scenario 10: --recent-silence, BELOW the min-flips floor with zero events -> stays silent (avoids single-flip noise), rc 0"
+  OUT10="$( cd "$GITROOT9" && _vea_cmd_recent_silence "docs/plans" "30 days ago" 5 2>&1 1>/dev/null )"; RC10=$?
+  if [[ "$RC10" -eq 0 ]] && [[ "$OUT10" != *"SILENCE_DETECTED"* ]] && [[ "$OUT10" == *"recent_flips=3"* ]]; then
+    pass "3 recent flips below threshold=5 -> no WARN despite 0 events, rc 0 ($OUT10)"
+  else
+    fail "expected rc=0, no SILENCE_DETECTED (below threshold), got rc=$RC10 out=[$OUT10]"
+  fi
+
   echo ""
   echo "self-test summary: $PASSED passed, $FAILED failed"
   if [[ "$FAILED" == "0" ]]; then
@@ -363,8 +524,12 @@ case "${1:-}" in
     _vea_cmd_sweep "${2:-docs/plans}"
     exit $?
     ;;
+  --recent-silence)
+    _vea_cmd_recent_silence "${2:-docs/plans}" "${3:-7 days ago}" "${4:-3}"
+    exit $?
+    ;;
   *)
-    echo "usage: verify-event-audit.sh --task <plan-file> <task-id> | --plan <plan-file> | --sweep [<root-dir>] | --self-test" >&2
+    echo "usage: verify-event-audit.sh --task <plan-file> <task-id> | --plan <plan-file> | --sweep [<root-dir>] | --recent-silence [<root-dir>] [<since>] [<min-flips>] | --self-test" >&2
     exit 2
     ;;
 esac
