@@ -1,6 +1,6 @@
 # Plan — Performance telemetry: passive metering, biting budgets, loop-liveness
 
-Status: ACTIVE
+Status: DEFERRED
 Mode: code
 Owner: session 29f2930a (orchestrator) — opened 2026-07-23 on the operator's directive:
 "keep tabs on performance without dragging it down; continuously improve; ACTUALLY DO IT,
@@ -197,3 +197,14 @@ Carried from PERF-ESTATE-PROGRAM-01 (absorbed row, 2026-07-23):
   standing agent process — a new always-on agent would itself be load; mechanisms that bite at
   existing choke points honor the ask without the drag. If the operator wants the dedicated
   agent anyway after seeing P1-P5 run, that's the follow-on conversation.
+
+## Drain disposition (gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+DEFERRED, not closed: P1/P2 confirmed landed and checked (`adapters/claude-code/hooks/lib/
+perf-tick-snapshot.sh` on master, 994 lines, re-verified this pass). P3/P4 (the doctor
+`perf-budgets`/loop-liveness consumers this plan's own Notes above name as the writer-without-
+consumer gap) are confirmed ABSENT from master's `harness-doctor.sh` (0 matches, re-verified
+this pass). No commits to this plan or its P3-P7 files since 2026-07-29 (5 days stale at drain
+time), no current session working it. Real, honestly-scoped remaining work — not abandoned.
+Status flipped ACTIVE -> DEFERRED. Resume trigger: next dispatch of P3+P4 (this plan's own
+"very next dispatch" sequencing note applies).

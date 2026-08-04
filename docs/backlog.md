@@ -2,7 +2,14 @@ Last updated: 2026-08-03
 
 # Neural Lace — Harness Backlog
 
-**Last updated:** 2026-07-31 v73 — integration merge (desktop stack + wip/harness-hardening
+**Last updated:** 2026-08-03 v74 — REQ-C2 estate drain (gated-pipeline-master-2026-08 Task 21):
+23 stale ACTIVE plans dispositioned down to 3 honest ACTIVEs (16 COMPLETED, 4 DEFERRED with a
+named resume trigger each, 1 already-DEPRIORITIZED note formalized to DEFERRED — full evidence
+in docs/reviews/2026-08-03-estate-drain-record.md); nl-issues untriaged 170->5 via the mechanized
+supersession sweep; 738 dead/root-caused monitor alerts bulk-acked (doctor-red + sweep-timeout
+classes, both confirmed stopped/tracked-elsewhere); worktree prune EXECUTE list (38 verified-safe
+agent-* worktrees) handed to the orchestrator, not run from this worktree-isolated session. Prior
+— 2026-07-31 v73 — integration merge (desktop stack + wip/harness-hardening
 takeover wave); both prior v72 notes preserved. Desktop v72 — ROADMAP-R11 rows 01-03 (ACTIVE-PATH-EXPANSION,
 L0-FOUR-BUCKET-STRIP, KANBAN-MASTER-CHIPS) found ALREADY BUILT on master @18e8f65 (the
 orchestrator's gap-closures landed in the SAME commit as the R11 hierarchy-renderer build,
