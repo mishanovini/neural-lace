@@ -270,6 +270,13 @@ jobs:
           KNOWN_FAILING_TESTS=(
             "acceptance-loop-self-test.sh"
             "agent-teams-self-test.sh"
+            # Machine-relative latency benchmark (asserts a 5ms/dispatch hot-path
+            # budget; its own header records 19-70ms baselines) — flakes on shared
+            # CI runners by construction. Owner: accountable-estate stream (it
+            # landed the file 2026-08-03). Tracked: nl-issue BENCH-ADMISSION-CI
+            # 2026-08-04. Remove when the bench gains a CI-aware mode or moves
+            # out of the CI-run tests/ set.
+            "bench-admission-hotpath.sh"
           )
 
           is_known_failing_test() {
