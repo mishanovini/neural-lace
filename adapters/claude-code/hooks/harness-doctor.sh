@@ -663,12 +663,23 @@ for (const e of m.entries || []) {
   for (const h of e.hooks || []) console.log(["GH", e.id, h].join("|"));
 }' "$manifest" 2>/dev/null
   elif command -v jq >/dev/null 2>&1; then
+    # Windows-native jq (winget jq 1.8.x) emits CRLF in raw (-r) mode, and
+    # $(...) on Git-for-Windows bash strips only the FINAL trailing CR — so
+    # every interior line of a MULTI-line stream keeps \r glued to its last
+    # field. Here that made the GH hook field read as "wired-gate.sh\r" and
+    # grep -qF miss it in live settings.json — one of the TWO causes behind
+    # claim-honesty-jq-parity-red DIVERGE, 2026-08-04 (the other, the
+    # nonode shim's copied tools failing DLL load, is fixed at
+    # _nonode_path). Single-line jq -r consumers elsewhere in this file are
+    # safe by that same trailing-strip; every multi-line one must normalize
+    # to LF like this (or strip on the captured variable where the jq exit
+    # code is load-bearing — see deterministic-process-proof).
     jq -r '
 .entries[] | select(.kind == "gate") as $e |
 (["GATE", $e.id,
   (if $e.wired_template then "1" else "0" end),
   (if (($e.honest_status // "") | length) > 0 then "1" else "0" end)] | join("|")),
-((($e.hooks // [])[]) | "GH|\($e.id)|\(.)")' "$manifest" 2>/dev/null
+((($e.hooks // [])[]) | "GH|\($e.id)|\(.)")' "$manifest" 2>/dev/null | tr -d '\r'
   fi
 }
 
@@ -1483,7 +1494,7 @@ check_obs_consumer_map() {
 
   # (c) every map entry has >=1 consumer
   local empty_entries
-  empty_entries="$(jq -r '.event_types | to_entries[] | select((.value.consumers // []) | length == 0) | .key' "$map" 2>/dev/null)"
+  empty_entries="$(jq -r '.event_types | to_entries[] | select((.value.consumers // []) | length == 0) | .key' "$map" 2>/dev/null | tr -d '\r')"
   if [[ -n "$empty_entries" ]]; then
     _red "obs-consumer-map" "event type(s) with zero consumers in ${map}: $(printf '%s' "$empty_entries" | tr '\n' ',' | sed 's/,$//')"
   fi
@@ -2501,7 +2512,7 @@ for (const e of m.mechanisms || []) {
       | select(.measured_cycle_seconds != null)
       | select(.declared_cadence_seconds < ($floor * .measured_cycle_seconds))
       | [.id, .declared_cadence_seconds, .measured_cycle_seconds, ($floor * .measured_cycle_seconds), (.managed_by // "")] | join("|")
-    ' "$manifest" 2>/dev/null)"
+    ' "$manifest" 2>/dev/null | tr -d '\r')"
   fi
 
   if [[ -n "$out" ]]; then
@@ -3022,7 +3033,7 @@ for (const p of problems) console.log(p);
     (if ((($e.waiver_path // "") | length) > 0) or ((($e.honesty_rationale // "") | length) > 0) then empty else "waiver_path-or-honesty_rationale" end)
   ] | select(length > 0)
 ) as $missing | select(($missing | length) > 0) | "\($e.id): missing \($missing | join(", "))")
-' "$manifest" 2>/dev/null)"
+' "$manifest" 2>/dev/null | tr -d '\r')"
   fi
 
   if [[ -n "$out" ]]; then
@@ -3223,6 +3234,10 @@ for (const p of problems) console.log(p);
   "\($e.id): blocking:true does not declare \($missing | join(" or ")) (deterministic-process.md proof obligation — name the firing event AND enumerate every known bypass, each CLOSED with how or NAMED-AND-ACCEPTED with why; an empty enumeration claims none exist and is a lie unless someone looked)")
 ' "$manifest" 2>"$parse_err")"
     parse_rc=$?
+    # CRLF strip on the VARIABLE, not via a pipe: parse_rc must stay jq's own
+    # exit code (a trailing `| tr` would report tr's rc and re-open the C1
+    # masked-parser-failure hole). See extract_manifest_gates for the class.
+    out="${out//$'\r'/}"
   fi
 
   # A parser failure is NOT "nothing to report" (harness-reviewer C1). Surface
@@ -4405,9 +4420,22 @@ if [[ "${1:-}" == "--self-test" ]]; then
     :
   }
 
+  # SF_DISABLE=1 (2026-08-04, claim-honesty-jq-parity-red triage): every
+  # scenario invocation must be a REAL recompute, per single-flight-lib.sh's
+  # own self-test convention. Without it, the SECOND doctor run on the same
+  # fixture dir (the jq-parity branch) lands inside sf_guard's 1200s
+  # debounce of the first (node) run's stamp under $dir/live/state and gets
+  # served the one-line cached verdict instead of running any checks — so
+  # the parity grep sees NOTHING from the jq branch. This coupling was
+  # INVISIBLE while the nonode shim's tools were broken (sf_guard's
+  # internal error paths fail open, so the guard never held in the shimmed
+  # run); fixing the shim (wrapper scripts, _nonode_path) surfaced it. The
+  # sf-guard scenarios (9-ssf / 9b / 9c) are unaffected: they invoke the
+  # doctor inline, not through these helpers, precisely so they can pin
+  # their own SF_DISABLE / lock state.
   _run_quick() {
     local dir="$1"
-    HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
+    HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" SF_DISABLE=1 bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
   }
 
   # ------------------------------------------------------------
@@ -4428,34 +4456,45 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # doctor needs EXCEPT node. Built once, reused by every parity scenario.
   # ------------------------------------------------------------
   # WINDOWS FIX (backlog SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01, gated-
-  # pipeline-master-2026-08 Task 8 doctor triage, fixed per that row's own
-  # proposed direction): `bash` is deliberately NOT in this shim's tool
-  # list. On Windows/MSYS2, `bash.exe` needs companion DLLs sitting next to
-  # the real binary -- a bare symlink to the exe (no DLLs alongside it)
-  # fails to load at all ("error while loading shared libraries"). This
-  # shim used to include a symlinked `bash`, and `_run_quick_nonode` below
-  # invoked the grandchild as a bare `bash "$SELF_TEST_HOOK" ...` AFTER
-  # setting `PATH="$shim"` -- a bash prefix-assignment affects lookup of
-  # the command itself, so that bare `bash` resolved to the broken
-  # symlink and the child crashed before the doctor script it was trying
-  # to run ever executed. The 5 P-14 jq-parity self-test scenarios then
-  # reported "jq branch produced NOTHING on a fixture that must report" --
-  # a real symptom, wrong cause (reproduced directly:
-  # `PATH=<shim-dir> bash -c 'true'` -> DLL load error). Omitting `bash`
-  # from the shim closes the hole for any OTHER PATH-based `bash` lookup a
-  # grandchild might perform; `_run_quick_nonode` closes it for its own
-  # top-level invocation by resolving the interpreter BEFORE the override.
+  # pipeline-master-2026-08 Task 8 doctor triage; extended 2026-08-04 by the
+  # claim-honesty-jq-parity-red triage): the shim's tools are WRAPPER
+  # SCRIPTS (`#!<abs-real-bash>` + `exec <abs-tool-path> "$@"`), never
+  # symlinks or copies. Two proven instances of the same DLL-load class:
+  #   1. `bash` is deliberately NOT in this shim's tool list. On Windows/
+  #      MSYS2 a bare symlink to bash.exe (no companion DLLs alongside it)
+  #      fails to load at all ("error while loading shared libraries") --
+  #      the shim used to include one, `_run_quick_nonode` looked `bash` up
+  #      AFTER the PATH override, and the grandchild crashed before the
+  #      doctor ever ran, making the 5 P-14 jq-parity scenarios report
+  #      "produced NOTHING" for the wrong reason. `_run_quick_nonode`
+  #      resolves its interpreter BEFORE the override instead.
+  #   2. The same failure applies to EVERY MSYS-linked tool whenever
+  #      `ln -s` falls back to COPYING (the MSYS2 default without
+  #      winsymlinks=native*): PROVEN 2026-08-04 -- under PATH=<shim>,
+  #      copied grep/sed/tr/mktemp/cat/sort all exit 127 on DLL load while
+  #      the self-contained native jq works. That broke check_claim_honesty
+  #      in the jq-parity branch (`grep -qF` "failed", spurious wired-gate
+  #      RED) -- one of the TWO causes behind claim-honesty-jq-parity-red
+  #      DIVERGE; the other was Windows jq's CRLF raw output, fixed at
+  #      extract_manifest_gates. A wrapper script execs the tool at its
+  #      REAL path, so Windows resolves DLLs from the tool's own directory
+  #      and the shim finally satisfies its stated contract: every tool the
+  #      doctor needs, actually WORKING, except node.
   _NONODE_DIR=""
   _nonode_path() {
     if [[ -z "$_NONODE_DIR" ]]; then
+      local _t _p _rb
+      _rb="${BASH:-$(command -v bash 2>/dev/null)}"
+      [[ -n "$_rb" ]] || return 1
       _NONODE_DIR="$(mktemp -d 2>/dev/null)" || return 1
-      local _t _p
       for _t in jq git grep sed awk sh find sort uniq head tail cat wc tr \
                 date mkdir rm cp mv chmod ls dirname basename realpath stat env \
                 xargs comm diff touch tee cut expr mktemp readlink od printf \
                 which id whoami uname; do
         _p="$(command -v "$_t" 2>/dev/null)"
-        [[ -n "$_p" ]] && ln -sf "$_p" "$_NONODE_DIR/$_t" 2>/dev/null
+        [[ -n "$_p" ]] || continue
+        printf '#!%s\nexec %q "$@"\n' "$_rb" "$_p" > "$_NONODE_DIR/$_t" 2>/dev/null
+        chmod +x "$_NONODE_DIR/$_t" 2>/dev/null
       done
     fi
     printf '%s' "$_NONODE_DIR"
@@ -4474,7 +4513,9 @@ if [[ "${1:-}" == "--self-test" ]]; then
     # the GRANDCHILD (the --quick run's own node/jq lookups) can see.
     real_bash="${BASH:-$(command -v bash 2>/dev/null)}"
     [[ -x "$real_bash" ]] || real_bash="bash"
-    HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" PATH="$shim" \
+    # SF_DISABLE=1: same reason as _run_quick above, and MORE load-bearing
+    # here — this is always the second invocation on its fixture dir.
+    HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" PATH="$shim" SF_DISABLE=1 \
       "$real_bash" "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
   }
 
@@ -6042,14 +6083,18 @@ MANIFEST_EOF
 {
   "schema_version": 1,
   "entries": [
-    { "id": "new-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
+    { "id": "new-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" },
+    { "id": "second-blocking-gate-no-proof", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none" }
   ]
 }
 MANIFEST_EOF
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
   # want_nonempty=1: this fixture MUST report. An empty jq branch here is
-  # precisely the C1 silent no-op.
+  # precisely the C1 silent no-op. TWO failing entries, deliberately: a
+  # single-line jq -r output is CR-immune by the Git-for-Windows trailing
+  # strip (see extract_manifest_gates), so only a MULTI-line fixture can
+  # catch a dropped CRLF normalization on this branch.
   _assert_node_jq_parity "dpp-jq-parity-red" "$D" "deterministic-process-proof" 1
 
   D=$(_scenario_dir dpp-jq-grandfather)
@@ -6075,12 +6120,15 @@ MANIFEST_EOF
 {
   "schema_version": 1,
   "entries": [
-    { "id": "new-gate-incomplete", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "chokepoint": "pre-push", "bypass_paths": ["--no-verify -- NAMED-AND-ACCEPTED"] }
+    { "id": "new-gate-incomplete", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "chokepoint": "pre-push", "bypass_paths": ["--no-verify -- NAMED-AND-ACCEPTED"] },
+    { "id": "second-gate-incomplete", "kind": "gate", "doctrine_file": null, "hooks": [], "events": [], "wired_template": false, "selftest": false, "jit_triggers": { "paths": [], "keywords": [] }, "blocking": true, "honest_status": "fixture stub", "budget_class": "none", "added_after": "2026-07", "chokepoint": "pre-push", "bypass_paths": ["--no-verify -- NAMED-AND-ACCEPTED"] }
   ]
 }
 MANIFEST_EOF
   _write_settings "$D/live/settings.json"
   cp "$D/live/settings.json" "$D/repo/adapters/claude-code/settings.json.template"
+  # Two incomplete entries for the same reason as dpp-jq-parity-red above:
+  # only a multi-line jq output exercises interior-CR normalization.
   _assert_node_jq_parity "ngeb-jq-parity-red" "$D" "new-gate-evidence-bar" 1
 
   D=$(_scenario_dir c5-jq-red)
