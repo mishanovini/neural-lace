@@ -788,8 +788,12 @@ function deriveLiveAgentLeaves(taskId, sessionIds, heartbeats, nowMs, startedIdl
         status: { value: 'unknown', label: 'status unknown — no heartbeat evidence', reason: 'no heartbeat file found for this session', since: '' },
       };
     }
-    const ageMs = nowMs - Date.parse(hb.last_activity_ts);
-    const ageCls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
+    // PHANTOM-RUNNING FIX (2026-08-04, operator-flagged Defect A):
+    // classifyHeartbeatLiveness (derive-lib.js), not the raw age-only
+    // classifyHeartbeatAge — a dead-pid session must never render 'running'
+    // just because its last-written heartbeat sits inside the quiet grace
+    // window. See that function's own header for the full rule.
+    const ageCls = deriveLib.classifyHeartbeatLiveness(hb, nowMs, th);
     // The task's own status could not be established at all — say so on the
     // leaf rather than upgrading a live heartbeat into a running claim the
     // task badge itself does not make.
@@ -853,16 +857,26 @@ function deriveUnboundSessionsNode(hbCtx) {
   const heartbeats = hbCtx.heartbeats || [];
   const bound = hbCtx.boundSessionIds || {};
   const th = deriveLib.activityThresholdsMs();
-  const running = heartbeats.filter((h) => {
-    if (!h || !h.session_id || bound[h.session_id]) return false;
-    const ageMs = hbCtx.nowMs - Date.parse(h.last_activity_ts);
-    const cls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
-    return cls !== 'crashed'; // throttled/stale are NOT crashed (A6 disjunct) — still "running" for this purpose
-  });
+  // PHANTOM-RUNNING FIX (2026-08-04, operator-flagged Defect A — this is
+  // THE exact node the operator reported: "13 running, unattributed to a
+  // task" for 13 sessions whose PID was verifiably dead). classifyHeartbeatAge
+  // alone cannot see this — a heartbeat written once at SessionStart and
+  // never refreshed again sits inside the quiet grace window for HOURS
+  // (measured against this machine's real ~/.claude/state/heartbeats,
+  // 2026-08-04: 14 of 16 real heartbeat files classified non-crashed by age
+  // alone despite EVERY one of their pids being provably dead via
+  // process.kill(pid, 0)). classifyHeartbeatLiveness (derive-lib.js) adds
+  // the missing pid-liveness check on top of the same age/staleness bound —
+  // see its own header for the full rule and the platform-reliability
+  // evidence (Node's in-process pid check, not the MSYS-unreliable bash
+  // kill -0 this repo already documented elsewhere).
+  const classified = heartbeats
+    .filter((h) => h && h.session_id && !bound[h.session_id])
+    .map((h) => ({ h: h, cls: deriveLib.classifyHeartbeatLiveness(h, hbCtx.nowMs, th) }));
+  const running = classified.filter((r) => r.cls !== 'crashed'); // throttled/stale/proven-dead-pid are excluded — 'crashed' is the one verdict that means "not running" for this purpose
   if (!running.length) return null;
-  const children = running.map((h) => {
-    const ageMs = hbCtx.nowMs - Date.parse(h.last_activity_ts);
-    const cls = deriveLib.classifyHeartbeatAge(isNaN(ageMs) ? NaN : ageMs, th);
+  const children = running.map((r) => {
+    const h = r.h, cls = r.cls;
     const shortId = String(h.session_id).slice(0, 8);
     // 2026-08-01 (harness-reviewer finding 4): was `cls === 'active'`, a
     // comparison that could NEVER match — classifyHeartbeatAge's whole

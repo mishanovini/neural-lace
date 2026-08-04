@@ -23,6 +23,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const { spawnSync } = require('child_process');
 
 process.env.HARNESS_SELFTEST = '1';
 
@@ -96,8 +97,17 @@ async function main() {
   // Round 8: the plan-file DISCOVERY scan root is now independently
   // sandboxable — never the real checkout's docs/plans/.
   process.env.ROADMAP_PLAN_SCAN_ROOT = repoDir;
+  // pid: process.pid (2026-08-04 phantom-running fix) — every fixture
+  // heartbeat meant to render 'running'/'live' now needs a pid that is
+  // GENUINELY alive at test time, since roadmap-routes.js's classification
+  // path is now pid-aware (classifyHeartbeatLiveness). This self-test
+  // process's own pid is alive for the test's entire duration — the
+  // realistic stand-in for "a real dispatcher session's heartbeat carries
+  // its own real, live pid". A small fixed integer (the pre-fix fixture
+  // value) is essentially never a real running process and would now
+  // (correctly) classify crashed.
   fs.writeFileSync(path.join(heartbeatDir, 'sess-op-1.json'), JSON.stringify({
-    schema: 1, session_id: 'sess-op-1', pid: 1, cwd: repoDir, repo_root: repoDir,
+    schema: 1, session_id: 'sess-op-1', pid: process.pid, cwd: repoDir, repo_root: repoDir,
     worktree_root: repoDir, branch: 'fixture', model: 'fixture',
     last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'active',
   }));
@@ -527,7 +537,7 @@ async function main() {
   // Both sessions' heartbeats are FRESH, so the only thing that can stop
   // either rendering "running" is the dispatch timestamp / the task-id join.
   fs.writeFileSync(path.join(heartbeatDir, 'sess-unbindable.json'), JSON.stringify({
-    schema: 1, session_id: 'sess-unbindable', pid: 7, cwd: repoDir, repo_root: repoDir,
+    schema: 1, session_id: 'sess-unbindable', pid: process.pid, cwd: repoDir, repo_root: repoDir,
     worktree_root: repoDir, branch: 'fixture-unbindable', model: 'fixture',
     last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
   }));
@@ -1224,7 +1234,7 @@ async function main() {
     // the real-world shape this fix targets (a live heartbeat the tree
     // cannot attribute to any task).
     fs.writeFileSync(path.join(heartbeatDir, 'sess-unbound-running.json'), JSON.stringify({
-      schema: 1, session_id: 'sess-unbound-running', pid: 3, cwd: repoDir, repo_root: repoDir,
+      schema: 1, session_id: 'sess-unbound-running', pid: process.pid, cwd: repoDir, repo_root: repoDir,
       worktree_root: repoDir, branch: 'fixture-branch', model: 'fixture',
       last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
     }));
@@ -1270,6 +1280,41 @@ async function main() {
       unbound.live_sessions[0].status.label === 'running',
       unbound && JSON.stringify((unbound.live_sessions || []).map((a) => a.status && a.status.label)));
 
+    // ---- R9-7b-8..10: THE PHANTOM-RUNNING FIX (2026-08-04, operator-flagged
+    // Defect A) — a heartbeat whose PID IS VERIFIABLY DEAD but whose
+    // last_activity_ts is only 2h old (well within the quiet grace window,
+    // the EXACT "running (quiet), 2h/17h/22h ago" shape the operator's own
+    // sampled evidence showed for 5 real sessions, all with dead pids). The
+    // pid is a REAL just-exited child process (spawnSync blocks until it has
+    // fully exited), not a guessed-nonexistent integer — the same "just-
+    // exited subshell" proof idiom session-heartbeat-lib.sh's own self-test
+    // uses. Pre-fix (classifyHeartbeatAge, age-only) this heartbeat renders
+    // 'quiet' -> counted as "running, unattributed". Post-fix
+    // (classifyHeartbeatLiveness) the dead pid overrides that verdict to
+    // 'crashed' -> excluded, exactly like the already-covered 30-day-old
+    // sess-unbound-crashed fixture (R9-7b-4), but proven here via a FRESH-
+    // LOOKING timestamp + a dead pid rather than an old timestamp alone —
+    // the one shape R9-7b-4 does NOT cover.
+    const deadChildRt = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+    fs.writeFileSync(path.join(heartbeatDir, 'sess-unbound-phantom.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-unbound-phantom', pid: deadChildRt.pid, cwd: repoDir, repo_root: repoDir,
+      worktree_root: repoDir, branch: 'fixture-phantom', model: 'fixture',
+      last_activity_ts: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2h ago
+      last_event: 'fixture', marker_state: 'none',
+    }));
+    const rPhantom = await httpGet(PORT, '/api/roadmap');
+    const unboundPhantom = rPhantom.json.unbound_sessions;
+    ok('R9-7b-8 THE PHANTOM-RUNNING FIX: a heartbeat 2h old (quiet-window-fresh, age-only would say "running (quiet)") with a PROVEN-DEAD pid is EXCLUDED from the unattributed node — never rendered running',
+      unboundPhantom && !unboundPhantom.live_sessions.some((a) => a.id.indexOf('sess-unbound-phantom') !== -1),
+      unboundPhantom && JSON.stringify(unboundPhantom.live_sessions));
+    ok('R9-7b-9 ...the genuinely-alive sess-unbound-running is UNAFFECTED by the new dead-pid exclusion — still counted, still exactly 1',
+      unboundPhantom && unboundPhantom.live_sessions.length === 1 &&
+      unboundPhantom.live_sessions[0].id.indexOf('sess-unbound-running') !== -1,
+      unboundPhantom && JSON.stringify(unboundPhantom.live_sessions));
+    ok('R9-7b-10 ...and the node title\'s count stays "(1)", not "(2)" — the dead-pid session never inflates the "N running, unattributed" figure the operator reads',
+      unboundPhantom && /\(1\)$/.test(unboundPhantom.title),
+      unboundPhantom && unboundPhantom.title);
+
     // ---- S22g-j + S23d: THE NEGATIVE CASE for the new unbindable path, and
     // the Critical's regression guard. Until this round the new function had
     // NO negative test at all — its header promised "a quiet dispatch is
@@ -1280,7 +1325,7 @@ async function main() {
     // The heartbeat is written HERE, after every assertion above that pins
     // the unattributed population, so none of their coverage is diluted.
     fs.writeFileSync(path.join(heartbeatDir, 'sess-unbindable-stale.json'), JSON.stringify({
-      schema: 1, session_id: 'sess-unbindable-stale', pid: 8, cwd: repoDir, repo_root: repoDir,
+      schema: 1, session_id: 'sess-unbindable-stale', pid: process.pid, cwd: repoDir, repo_root: repoDir,
       worktree_root: repoDir, branch: 'fixture-unbindable-stale', model: 'fixture',
       last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
     }));
