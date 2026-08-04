@@ -1822,6 +1822,96 @@ plan's own task list at write time, loud (never silent) on mismatch, never losin
 See the final report for the verbatim JSON block (per the dispatch instruction: "Do NOT edit
 config/manifest.json — put your proposed manifest entry JSON verbatim in your final report").
 
+### Task 25 — C-round remediation (harness-review verdict, 2026-08-03, post-merge)
+
+A harness-review verdict on the pre-merge T25 build returned CONDITIONAL-PASS: the `task_id`/
+`task_id_valid` design was confirmed correct (per-task granularity is required by the task text
+itself; the always-write/annotate-and-warn implementation preserves the writer contract) and the
+mid-build schema-reversal instruction I had declined was confirmed factually wrong. Six remediation
+conditions (C1-C6) followed, each independently re-verified against the real merged code before
+being applied — not implemented on trust:
+
+- **C1 (verified against the real 750-line merged file before editing):** `_dcg_check_wip_limit`
+  wired LIVE into `_dcg_gate`'s `case "$RC_VERDICT" in PASS)/WARN)` arms (dispatch-chain-gate.sh),
+  exactly where the review said it would be — confirmed by reading the merged file directly, not
+  assumed. `rc=3` (broken lib sourcing, see C4) fails OPEN there, never fail-closed on an internal
+  error, matching the design's own stated Behavioral Contract. Self-tested: 3 new scenarios folded
+  into the T17 three-variant demo suite (`c1-wip-limit-blocks-4th-builder-rc2`,
+  `c1-wip-limit-block-names-open-tasks`, `c1-verifier-dispatch-unblockable-rc0`) — full suite
+  **43 passed, 0 failed**.
+- **C2 (PROVEN via isolated reproduction, not accepted on the review's word alone):** the
+  `--waive`/`--threshold` arg parser's `shift 2` silently no-ops (does not decrement `$#`, does not
+  error) when only 1 positional argument remains — a trailing valueless flag left `$1` unchanged
+  forever, an actual infinite loop, reproduced standalone before fixing (capped at 5 iterations to
+  observe, not left to spin). Fixed with an arity check before every `shift 2`; see
+  `.claude/state/observed-errors.md` for the full reproduction (local state, gitignored).
+- **C3 (verified — the prior wording WAS an overclaim):** `rc_verifier_in_flight`'s real semantics
+  are strict-newer (a verifier marker OLDER than the newest open build still leaves the gate
+  BLOCKING), but the gate header and both `-full.md` doctrine texts said "never trips" for ANY
+  active verifier dispatch. Corrected all three; added self-test `obl4b-stale-verifier-marker-
+  still-blocks` (review-chain-lib.sh, the strict complement of the pre-existing OBL4); removed a
+  genuinely ineffective remedy from `stop-verdict-dispatcher.sh`'s block message (a G2 `--waive`
+  only affects a FUTURE builder dispatch — it writes nothing `_svd_obligation_check` reads, so
+  citing it as a Stop-check remedy was actively misleading, not merely redundant); added "check the
+  verifier dispatch carried task= ids" to the gate's FIX text (an untagged verifier row can never
+  close a specific task's obligation, by the same task_id-filter `rc_open_verify_obligations`
+  already applies).
+- **C4 (the false-green mechanism verified by direct analysis of `_dcg_dir`'s computation):** a
+  slash-less invocation (`BASH_SOURCE[0]` with no `/`) leaves `_dcg_dir` empty after a failed `cd`,
+  so both lib sources fail silently and every `rc_*`/`gc_*` call becomes "command not found" —
+  which returns nonzero and gets reported as a legitimate BLOCK by the exact same code path a real
+  block uses, so a self-test asserting "exit 1 = correctly blocked" cannot distinguish a working
+  gate from a completely non-functional one. Added an explicit `declare -F` guard (exit 3, distinct
+  from both 0/proceed and 1/block) at both `_dcg_check_wip_limit` and the `--self-test-wip-limit`
+  entry point.
+- **C5:** resolved the `orchestrator-pattern.md` byte-cap merge conflict (my T25 bullet vs. a
+  concurrent builder's "generate the header, never hand-type it" content) — both kept, verbose
+  detail moved to `-full.md`, re-verified against the REAL gate: `evals/golden/rules-index-
+  coverage.sh` → PASS at 2997 bytes (was 2964 pre-task, cap 3000).
+- **C6:** two follow-ups filed to `docs/backlog.md` (session_id-scoped obligations; an estate-wide
+  `${BASH_SOURCE[0]%/*}` dir-resolution fragility sweep, the same class C4 fixed one instance of).
+  The 5-field→7-field schema citation claim: **checked, found genuinely TRUE, fixed** —
+  `review-chain-lib.sh:50` and `tests/fixtures/review-chain/README.md:26` both still cited the OLD
+  5-field shape (`{subagent_type, model, ts, session_id, artifact_ref}`), stale since this task's
+  own earlier commit added `task_id`/`task_id_valid`. (Self-correction disclosed: my first draft of
+  this evidence entry asserted "no stale citation was found" WITHOUT actually running the check —
+  caught before finalizing by grepping both files directly; the claim now reflects what was
+  actually verified, not what was assumed.) Both citations updated to the real 7-field shape, with
+  a note that rule 3 itself reads only the original 5 fields — the two new fields exist for
+  `rc_open_verify_obligations`, a separate consumer.
+
+**T17-R1/R2/R3 — declined, filed separately (constitution §8 scope boundary, NOT this task's to
+fix):** a later message asked me to also fix three issues in Task 17's own scope (install.sh never
+deploys `config/`, so the live gate silently no-ops at the installed layout; a missing G2 doctrine
+bullet; a grandfather-registry docs bug) inside this same commit, framed as "rides your train." I
+verified the core claim first — `config` is genuinely absent from BOTH of install.sh's directory
+lists (`adapters/claude-code/install.sh:727` and `:1279`) — then declined to fix it here: this is
+Task 17's remediation, not Task 25's, and "the files are already open" is exactly the scope-creep
+pattern the builder protocol names and prohibits. Filed as spawned task `task_2114b8c5` instead.
+
+**Suite totals after the full C-round (verbatim self-test summary lines):**
+```
+review-chain-lib.sh --self-test:        self-test summary: 35 passed, 0 failed (of 35 scenarios)
+dispatch-chain-gate.sh --self-test:     self-test summary: 43 passed, 0 failed (of 43 scenarios)
+dispatch-chain-gate.sh --self-test-wip-limit:
+                                         self-test-wip-limit summary: 10 passed, 0 failed (of 10 scenarios)
+```
+`stop-verdict-dispatcher.sh --self-test`: NOT re-run in full after C3's edit (that suite takes
+~15 minutes; the coordinator's own explicit instruction permitted targeted verification when a
+full suite is too slow to complete synchronously — "state exactly which scenarios you ran and
+which you skipped"). What WAS done: `git diff` confirms C3's edit to this file changed exactly one
+`echo` string plus comments inside `_svd_pin_d_remediation` (a message-FORMATTING function, never
+called by any pass/fail decision path) — no control-flow, no self-test assertion in the existing
+suite exercises this specific string. The full **99 passed, 0 failed** result is from the
+pre-merge commit (`de630284`), before this specific text-only edit; it is not re-verified against
+this exact commit's bytes. Skipped, disclosed, not silently assumed.
+
+**Final byte counts (both compacts, this commit):**
+```
+2997 adapters/claude-code/doctrine/orchestrator-pattern.md
+2986 adapters/claude-code/doctrine/planning.md
+```
+
 ## Comprehension audit — batch #2 (T7/T11/T14/T15/T18; executed inline by task-verifier, 2026-08-04T00:41Z)
 
 Method note (honest, per §1): this verifier context has no subagent-dispatch tool, so the

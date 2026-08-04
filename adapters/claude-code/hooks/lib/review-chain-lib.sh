@@ -47,9 +47,13 @@
 #     section is deliberately excluded from the anchor so appending scope updates
 #     never self-invalidates it (the P-32 side door stays visible, never silent).
 #   RULE 3 — dispatch-ledger cross-check: a completion row in the ledger
-#     (RC_LEDGER_PATH, schema {subagent_type, model, ts, session_id, artifact_ref}
-#     — the SAME schema Task 15's workstreams-emit.sh writer produces, quoted here
-#     as the shared fixture contract) matches the entry's reviewer TYPE, and (when
+#     (RC_LEDGER_PATH, schema {subagent_type, model, ts, session_id, artifact_ref,
+#     task_id, task_id_valid} — the SAME schema Task 15's workstreams-emit.sh
+#     writer produces (task_id/task_id_valid added by Task 25 / OD-023), quoted
+#     here as the shared fixture contract; rule 3 itself reads only
+#     subagent_type/ts/artifact_ref — the two Task 25 fields exist for
+#     rc_open_verify_obligations, a separate consumer, see below) matches the
+#     entry's reviewer TYPE, and (when
 #     the row's artifact_ref is non-empty) the reviewed artifact's path, and `ts`
 #     falls in the window [artifact's first commit, record's HEAD commit time]. An
 #     empty artifact_ref satisfies type-match only — the DEGRADED form, always
