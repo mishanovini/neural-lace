@@ -36,7 +36,7 @@ unknown(reason)) + `<PlanKey><TaskId>` tokens; chat reports use EXACTLY these to
 | 4 | handoff complete (builder commit landed) | estate-merge.sh + the orchestrator's cherry-pick → emit at the merge primitive (T5's single merge path IS the chokepoint) | **BUILT** 4a2ca13 — SE1 (`_em_log_merge`, the single funnel every terminal `cmd_merge` outcome already passes through, now calls `_em_emit_ledger_event`; two new progress-log-lib.sh types, `merge_completed`/`merge_failed`, field-reuse per the plan_outcome_recorded/plan_reopened idiom; `estate-merge` registered in `_PL_KNOWN_EMITTERS`. estate-merge.sh --self-test 52/0 → 82/0 both /bin/bash 3.2.57 and /opt/homebrew/bin/bash 5.3.15, mutation-proven. **REFORMULATE round 2026-07-30** (harness-reviewer F1-F7, see evidence file): F1 the lock-busy refusal now logs+emits too (was the one terminal outcome bypassing `_em_log_merge` entirely); F2 renamed `merge-completed`/`merge-failed` → `merge_completed`/`merge_failed` (underscore convention, matching every other type); F3 the dedup table synced across all three sites (`progress-log-lib.sh`, `docs/runbooks/ask-workstreams.md`, `schemas/progress-log-event.schema.json`), backfilling T9's own two rows too; F4 softened an overclaiming static-guard comment; F5 dropped a dead `dedup_extra` value for `merge_completed`; F7 a new `--acknowledge <sha> --reason <text>` subcommand resolves a legitimate out-of-band-merge RED finding to CLEAN, named by both the RED finding and `--help`. RESIDUAL, named not hidden: today only close-worktree.sh routes through estate-merge.sh (per its own manifest entry: "NOT yet the estate's ONLY merge path"); the orchestrator's own PARALLEL-mode cherry-pick is a direct `git cherry-pick` an agent performs, not a call into this script, so that path stays uninstrumented until it too is routed through estate-merge.sh or gets its own emit) |
 | 5 | suite run pass/fail counts | the sweep runner + a per-suite emit wrapper at the --self-test entry | **UNBUILT** — SE2 |
 | 6 | review verdict INCLUDING non-PASS | write-review-record.sh emits every verdict; records index gains non-PASS entries (REVIEW-INDEX-FAILURE-BLIND-01) | **BUILT** — SE3 (cmd_capture emits a `review-verdict` ledger event on EVERY verdict, unconditionally; index already folded non-PASS rows, now proven by self-test S21/S22, 22/22 both interpreters. RESIDUAL: nothing forces capture to be CALLED for a non-queue-pathway review — an uncaptured verdict still emits nothing, honestly unchanged) |
-| 7 | verification verdict + checkbox flip | plan-edit-validator already gates the flip; add emit at validation | **BUILT** — SE4 (emit_flip_ledger_event fires a `flip-verdict` ledger event {plan, task, verdict, confidence, verifier} on every AUTHORIZED flip; self-test F16/F17, 12/17 both interpreters — the 5 pre-existing F5-F9 failures are an unrelated, pre-existing `stat -c %Y` portability bug, PROVEN unchanged on the unmodified file, docs/backlog.md HARNESS-GAP-62) |
+| 7 | verification verdict + checkbox flip | plan-edit-validator already gates the flip; add emit at validation | **BUILT** — SE4 (emit_flip_ledger_event fires a `flip-verdict` ledger event {plan, task, verdict, confidence, verifier} on every AUTHORIZED flip; self-test F16/F17, 12/17 both interpreters — the 5 pre-existing F5-F9 failures are an unrelated, pre-existing `stat -c %Y` portability bug, PROVEN unchanged on the unmodified file, docs/backlog.md HARNESS-GAP-62). **EXTENDED 2026-08-04**: detail gains `evidence=<file>#task=<id>`, `plan=` is now the bare slug; new consumer `verify-event-audit.sh`; PROVEN 0/926 real production rows exist (HARNESS-GAP-62's TASK_ID regex also blocks bare-numeric ids, not just fused ones — see the 2026-08-04 backlog amendment) |
 | 8 | blocked (gate/classifier) | stop-verdict-dispatcher + each blocking gate's block path emits | **PARTIAL** — ledger-24h counts exist; per-event rows unbuilt — SE5 |
 | 9 | killed (limit/API death) + resumed | the wake/notification consumer + session-resumer emit kill/resume pairs | **UNBUILT** — SE6 (the 7-agent kill on 2026-07-30 is the golden scenario) |
 | 10 | deploy (auto-install sync / LaunchAgent restart) | auto-install summary line → emit; ensure-* kickstart → emit (merged≠deployed bit twice on 2026-07-29) | **UNBUILT** — SE7 |
@@ -76,6 +76,26 @@ unknown(reason)) + `<PlanKey><TaskId>` tokens; chat reports use EXACTLY these to
       Verification: full.
       **BUILT 2026-07-30** — see taxonomy row 7. Suite 12/17 both interpreters (the 5
       failures are pre-existing and unrelated, docs/backlog.md HARNESS-GAP-62).
+      **EXTENDED 2026-08-04** (operator directive, this session — "check off the check
+      boxes in two places (plan file and ledger)"; not a new SE task number, an additive
+      field-contract change to the same mechanism): `flip_ledger_fields`/
+      `emit_flip_ledger_event` now also emit `plan=<bare slug, no .md>` (was the filename
+      with extension) and `evidence=<file>#task=<id>` (a pointer to whichever evidence
+      source authorized the flip). New self-test scenarios F25-F27 (27/0, both mutation-
+      proven: reverting the evidence-pointer append turns F25/F26 red with the exact
+      expected-vs-actual diff; reverting the bare-slug fix turns F27 red the same way).
+      New read-only consumer: `adapters/claude-code/scripts/verify-event-audit.sh`
+      (self-tested 7/7, mutation-proven on 3 independent fix points) cross-checks a
+      plan's checked boxes against the ledger's flip-verdict events and reports the
+      honest "no verification event on record" state — never fabricated. **Also found
+      while extending this (see docs/backlog.md HARNESS-GAP-62's 2026-08-04 amendment):**
+      the pre-existing TASK_ID regex gap is WORSE than previously scoped — it also blocks
+      bare-numeric ids (this repo's dominant real convention), so the flip-verdict
+      mechanism has fired ZERO times in production despite being BUILT since 2026-07-30.
+      Measured via the new sweep tool: 926 currently-checked tasks across
+      docs/plans/**/*.md, 0 with a matching event. Not fixed here (authorization-path
+      surgery, deliberately not bundled with this additive change) — filed, not silently
+      worked around.
 - [ ] SE5 — Per-block emit rows (gate id, command shape) from the dispatcher's combined
       verdict. Verification: full.
 - [ ] SE6 — Kill/resume pairing: the notification consumer emits agent-killed(cause) and
