@@ -515,6 +515,202 @@ rc_rule3() {
 }
 
 # ============================================================
+# Verify-obligation tracking (gated-pipeline-master-2026-08 Task 25;
+# operator directive 2026-08-03 / OD-022; design r3 is NOT amended for this
+# — the frozen-flip clause was not triggered, per the plan's own In-flight
+# scope-updates entry for Task 25).
+#
+# WHY THIS LIVES HERE, NOT IN A NEW FILE: this lib already owns the ONE
+# dispatch-ledger reader (rule 3, above) — "no second implementation" (M-3).
+# Both consumers (workstreams-emit.sh's --open-verify-obligations query mode
+# and dispatch-chain-gate.sh's appended WIP-limit consult block) call
+# rc_open_verify_obligations / rc_wip_limit_decision directly rather than
+# re-parsing $RC_LEDGER_PATH themselves.
+#
+# ROW SHAPE EXTENSION: Task 15's writer (workstreams-emit.sh
+# _dispatch_ledger_append) now ALSO writes a `task_id` field (best-effort:
+# the dispatch's NL-ATTRIBUTION `task=` value, falling back to the free-text
+# "Task N" scrape) alongside the pre-existing {subagent_type, model, ts,
+# session_id, artifact_ref} shape from Task 15 — additive, so every rule-3
+# consumer (which reads subagent_type/ts/artifact_ref only) is unaffected,
+# and every OLDER row on disk (written before this change) simply has no
+# task_id key, which reads back as empty via `// empty` and is correctly
+# excluded from obligation tracking below (a row that cannot be attributed
+# to a task can never open OR close an obligation).
+#
+# BUILDER vs VERIFIER: doctrine/session-end-protocol.md's own rule —
+# "task-verifier is the only checkbox-flipper" — is the classifier: a row
+# with subagent_type=="task-verifier" is a VERIFY-complete signal; every
+# other typed row is a BUILD-complete signal. This is deliberately NOT a
+# model-policy.json `category:"review"` lookup (task-verifier shares that
+# category with code-reviewer, architecture-reviewer, etc., which are NOT
+# the checkbox-flipper) — subagent_type name match is the correct, narrower
+# oracle here.
+#
+# THE T7 INCIDENT (2026-08-03, this plan's own build): a dispatch prompt's
+# NL-ATTRIBUTION header was authored as `task=T7` instead of the documented
+# numeric convention `task=7` — workstreams-emit.sh's writer stores whatever
+# the header says, VERBATIM, so a "T7" can land in a real row. Rather than
+# trust every writer to always be clean, every comparison below normalizes
+# BOTH sides through _rc_norm_task_id (a leading T/t immediately followed by
+# a digit is stripped) before matching — a defensive READ, not a retroactive
+# rewrite of ledger data already on disk.
+# ============================================================
+
+# _rc_norm_task_id <task-id> — strips ONE leading T/t when immediately
+# followed by a digit (the T7-incident normalization; see block comment
+# above). "T7" -> "7", "7" -> "7", "3.2" -> "3.2", "Trial" -> "Trial"
+# (no digit after the T, left alone — never mangles a genuinely non-numeric
+# id, though this plan's own ids are always numeric/dotted).
+_rc_norm_task_id() {
+  local t="$1"
+  [[ "$t" =~ ^[Tt][0-9] ]] && t="${t:1}"
+  printf '%s' "$t"
+}
+
+# rc_open_verify_obligations <plan-slug> — scans $RC_LEDGER_PATH for rows
+# whose artifact_ref == "docs/plans/<plan-slug>.md" and whose task_id is
+# non-empty. For each NORMALIZED task_id, keeps the LATEST ts among
+# BUILD-complete rows and the LATEST ts among VERIFY-complete rows
+# (subagent_type=="task-verifier"). A task is OPEN iff it has a build ts AND
+# (no verify ts at all, OR the verify ts is OLDER than the build ts — a
+# re-build after a verify reopens the obligation; this also means a task
+# verified BEFORE its most recent build is correctly still open, not
+# spuriously closed by a stale verify row).
+#
+# Sets globals (NOT via $() — same convention as rc_validate_chain, a
+# subshell would lose them):
+#   RC_OPEN_OBLIGATIONS               bash array, normalized task ids, sorted
+#   RC_OPEN_OBLIGATIONS_COUNT         its length
+#   RC_OPEN_OBLIGATIONS_NEWEST_BUILD_TS  max build-ts among the OPEN set only
+#                                      (0 if the open set is empty) — this is
+#                                      "the newest unverified merge" the
+#                                      in-flight check below compares against
+# Also echoes one open task id per line to stdout (for a CLI caller such as
+# workstreams-emit.sh's --open-verify-obligations mode). rc 0 always (a
+# read-only query, never a pass/fail oracle by itself — rc_wip_limit_decision
+# below is the pass/fail layer).
+rc_open_verify_obligations() {
+  local slug="$1" artifact_ref
+  artifact_ref="docs/plans/${slug}.md"
+  RC_OPEN_OBLIGATIONS=()
+  RC_OPEN_OBLIGATIONS_COUNT=0
+  RC_OPEN_OBLIGATIONS_NEWEST_BUILD_TS=0
+  [[ -f "$RC_LEDGER_PATH" ]] || return 0
+  _have_jq_rc() { command -v jq >/dev/null 2>&1; }
+  _have_jq_rc || return 0
+
+  local tsv
+  tsv="$(jq -r --arg ar "$artifact_ref" '
+    select(.artifact_ref==$ar) | select((.task_id // "")!="") | select((.ts|type)=="number") |
+    [(.task_id), (.ts|tostring), (if .subagent_type=="task-verifier" then "verify" else "build" end)] | @tsv
+  ' "$RC_LEDGER_PATH" 2>/dev/null)"
+  [[ -n "$tsv" ]] || return 0
+
+  # awk owns the per-task max-by-kind aggregation (associative arrays are an
+  # awk builtin, unlike bash — this codebase's own convention, see
+  # hooks/lib/observability-derive.sh's "NOT declare -A" precedent, avoids
+  # bash 3.2-incompatible associative arrays). The T/t-strip rule is
+  # necessarily DUPLICATED here (awk cannot call a bash function) — kept as
+  # the single `norm()` one-liner, same rule as _rc_norm_task_id above; any
+  # future change to the normalization rule must update BOTH.
+  local open_list
+  open_list="$(printf '%s\n' "$tsv" | awk -F'\t' '
+    function norm(t) { if (t ~ /^[Tt][0-9]/) { return substr(t,2) } return t }
+    {
+      tid = norm($1); ts = $2 + 0; kind = $3
+      if (kind == "build") { if (!(tid in build) || ts > build[tid]) build[tid] = ts }
+      else                  { if (!(tid in verify) || ts > verify[tid]) verify[tid] = ts }
+    }
+    END {
+      for (tid in build) {
+        if (!(tid in verify) || verify[tid] < build[tid]) {
+          print tid "\t" build[tid]
+        }
+      }
+    }
+  ' | LC_ALL=C sort -t $'\t' -k1,1)"
+  [[ -n "$open_list" ]] || return 0
+
+  local tid bts
+  while IFS=$'\t' read -r tid bts; do
+    [[ -n "$tid" ]] || continue
+    RC_OPEN_OBLIGATIONS+=("$tid")
+    [[ "$bts" -gt "$RC_OPEN_OBLIGATIONS_NEWEST_BUILD_TS" ]] && RC_OPEN_OBLIGATIONS_NEWEST_BUILD_TS="$bts"
+    printf '%s\n' "$tid"
+  done <<< "$open_list"
+  RC_OPEN_OBLIGATIONS_COUNT="${#RC_OPEN_OBLIGATIONS[@]}"
+  return 0
+}
+
+# rc_verifier_in_flight <plan-slug> <since-epoch> — true (rc 0) iff a
+# dispatch-PROVENANCE marker (scripts/dispatch-provenance.sh; a DISPATCH-TIME
+# record written BEFORE completion — the only existing signal for "a
+# verifier was DISPATCHED", since $RC_LEDGER_PATH/dispatch-ledger.jsonl is
+# COMPLETION-only by Task 15's own design) names plan_slug==<slug>,
+# role=="verifier", and its own `ts` (ISO-8601) is STRICTLY NEWER than
+# <since-epoch>. Markers are self-pruning (dispatch-provenance.sh's own
+# _dp_prune: 14-day TTL, 200-marker cap), so this directory scan is always
+# bounded regardless of estate age.
+#
+# NAMED DESIGN DECISION (disclosed per constitution §8 — this fills a
+# genuine ambiguity in the task text, not a mechanically-derivable value):
+# "in flight" means DISPATCHED, not merely completed — a currently-running
+# verifier produces no dispatch-ledger completion row yet, so the ledger
+# alone cannot express "in progress". The dispatch-provenance marker system
+# is the ONE existing mechanism that records a role at dispatch time (Task
+# 15/attribution-pipeline's NL-ATTRIBUTION `role=verifier` carriage), so it
+# is reused here rather than inventing a new state file.
+rc_verifier_in_flight() {
+  local slug="$1" since="${2:-0}"
+  command -v jq >/dev/null 2>&1 || return 1
+  local dir="${DISPATCH_PROVENANCE_STATE_DIR:-$HOME/.claude/state/dispatch-provenance}"
+  [[ -d "$dir" ]] || return 1
+  local f v_slug v_role v_ts v_epoch
+  for f in "$dir"/*.json; do
+    [[ -f "$f" ]] || continue
+    v_slug="$(jq -r '.plan_slug // empty' "$f" 2>/dev/null)"
+    [[ "$v_slug" == "$slug" ]] || continue
+    v_role="$(jq -r '.role // empty' "$f" 2>/dev/null)"
+    [[ "$v_role" == "verifier" ]] || continue
+    v_ts="$(jq -r '.ts // empty' "$f" 2>/dev/null)"
+    [[ -n "$v_ts" ]] || continue
+    v_epoch="$(date -d "$v_ts" +%s 2>/dev/null || date -j -f '%Y-%m-%dT%H:%M:%SZ' "$v_ts" +%s 2>/dev/null)"
+    [[ -n "$v_epoch" ]] || continue
+    if [[ "$v_epoch" -gt "$since" ]]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+# rc_wip_limit_decision <plan-slug> [threshold=3] — THE decision oracle
+# dispatch-chain-gate.sh's appended WIP-limit consult block calls. Sets
+# RC_WIP_VERDICT (PROCEED|BLOCK) and RC_WIP_REASON (one-line human summary);
+# RC_OPEN_OBLIGATIONS[*]/RC_OPEN_OBLIGATIONS_COUNT are left set by the
+# rc_open_verify_obligations call inside (inspect them for the task-id list
+# in a block message). rc 0 PROCEED, 1 BLOCK — same convention as
+# rc_validate_chain.
+rc_wip_limit_decision() {
+  local slug="$1" threshold="${2:-3}"
+  rc_open_verify_obligations "$slug" >/dev/null
+  RC_WIP_VERDICT="PROCEED"
+  if [[ "$RC_OPEN_OBLIGATIONS_COUNT" -lt "$threshold" ]]; then
+    RC_WIP_REASON="plan '$slug' has $RC_OPEN_OBLIGATIONS_COUNT open verify obligation(s), below the threshold ($threshold)"
+    return 0
+  fi
+  if rc_verifier_in_flight "$slug" "$RC_OPEN_OBLIGATIONS_NEWEST_BUILD_TS"; then
+    RC_WIP_REASON="plan '$slug' has $RC_OPEN_OBLIGATIONS_COUNT open verify obligation(s) (>= threshold $threshold) but a verifier dispatch is in flight (dispatch-provenance marker newer than the newest unverified merge) -- proceeding"
+    return 0
+  fi
+  RC_WIP_VERDICT="BLOCK"
+  local tasks_csv=""
+  [[ "${#RC_OPEN_OBLIGATIONS[@]}" -gt 0 ]] && tasks_csv="$(IFS=,; echo "${RC_OPEN_OBLIGATIONS[*]}")"
+  RC_WIP_REASON="plan '$slug' has $RC_OPEN_OBLIGATIONS_COUNT open verify obligations (tasks: $tasks_csv) >= threshold ($threshold) and no verifier dispatch is in flight"
+  return 1
+}
+
+# ============================================================
 # Top-level: validate an entire plan's Review Chain block
 # ============================================================
 
@@ -999,6 +1195,108 @@ EOF2
   _commit "chainless plan"
   rc_validate_chain "$P"
   _st "chainless-plan-fails" "FAIL" "$RC_VERDICT"
+
+  # ============================================================
+  # Verify-obligation tracking (Task 25 / OD-022) — own throwaway ledger +
+  # dispatch-provenance dir, never the real machine state.
+  # ============================================================
+  OBL_LEDGER="$T/obl-ledger.jsonl"
+  OBL_DPDIR="$T/obl-dispatch-provenance"
+  mkdir -p "$OBL_DPDIR"
+  _obl_row() { # <subagent_type> <ts> <artifact_ref> <task_id>
+    printf '{"subagent_type":"%s","model":"claude-fable-5","ts":%s,"session_id":"selftest","artifact_ref":"%s","task_id":"%s"}\n' \
+      "$1" "$2" "$3" "$4" >> "$OBL_LEDGER"
+  }
+  _obl_marker() { # <plan_slug> <role> <iso-ts>
+    printf '{"v":1,"ts":"%s","ask_id":"a","plan_slug":"%s","task_id":"","session_id":"s","child_id":"c","worktree_path":"","role":"%s"}\n' \
+      "$3" "$1" "$2" > "$OBL_DPDIR/marker-$RANDOM-$RANDOM.json"
+  }
+
+  _st "norm-task-id-strips-T" "7" "$(_rc_norm_task_id "T7")"
+  _st "norm-task-id-strips-lowercase-t" "20" "$(_rc_norm_task_id "t20")"
+  _st "norm-task-id-numeric-unchanged" "3.2" "$(_rc_norm_task_id "3.2")"
+
+  # ── OBL1: golden scenario — 3 builder-complete rows, no verifier rows, no
+  # in-flight marker -> BLOCK naming all 3 open tasks (this session's own
+  # accumulation incident: 11 builder-complete rows, 0 verifier rows, over
+  # several hours -- a threshold of 3 fires long before that). ────────────
+  : > "$OBL_LEDGER"
+  _obl_row "plan-phase-builder" 1000 "docs/plans/obl-fixture.md" "5"
+  _obl_row "plan-phase-builder" 1001 "docs/plans/obl-fixture.md" "6"
+  _obl_row "plan-phase-builder" 1002 "docs/plans/obl-fixture.md" "7"
+  RC_LEDGER_PATH="$OBL_LEDGER" DISPATCH_PROVENANCE_STATE_DIR="$OBL_DPDIR" \
+    rc_wip_limit_decision "obl-fixture" 3
+  _st "obl1-open-count-3" "3" "$RC_OPEN_OBLIGATIONS_COUNT"
+  _st "obl1-verdict-block" "BLOCK" "$RC_WIP_VERDICT"
+  FOUND567=1
+  for tid in 5 6 7; do
+    case " ${RC_OPEN_OBLIGATIONS[*]} " in *" $tid "*) ;; *) FOUND567=0 ;; esac
+  done
+  _st "obl1-block-names-all-three-tasks" "1" "$FOUND567"
+
+  # ── OBL2: same 3 rows, PLUS a verifier row per task -> obligations close,
+  # PROCEED. ───────────────────────────────────────────────────────────────
+  _obl_row "task-verifier" 2000 "docs/plans/obl-fixture.md" "5"
+  _obl_row "task-verifier" 2001 "docs/plans/obl-fixture.md" "6"
+  _obl_row "task-verifier" 2002 "docs/plans/obl-fixture.md" "7"
+  RC_LEDGER_PATH="$OBL_LEDGER" DISPATCH_PROVENANCE_STATE_DIR="$OBL_DPDIR" \
+    rc_wip_limit_decision "obl-fixture" 3
+  _st "obl2-verify-rows-close-all" "0" "$RC_OPEN_OBLIGATIONS_COUNT"
+  _st "obl2-verdict-proceed" "PROCEED" "$RC_WIP_VERDICT"
+
+  # ── OBL3: below threshold (2 open, threshold 3) -> PROCEED even with no
+  # verifier at all. ───────────────────────────────────────────────────────
+  : > "$OBL_LEDGER"
+  _obl_row "plan-phase-builder" 1000 "docs/plans/obl-fixture2.md" "1"
+  _obl_row "plan-phase-builder" 1001 "docs/plans/obl-fixture2.md" "2"
+  RC_LEDGER_PATH="$OBL_LEDGER" DISPATCH_PROVENANCE_STATE_DIR="$OBL_DPDIR" \
+    rc_wip_limit_decision "obl-fixture2" 3
+  _st "obl3-below-threshold-proceeds" "PROCEED" "$RC_WIP_VERDICT"
+
+  # ── OBL4: >= threshold, no verifier-complete rows, but a role=verifier
+  # dispatch-provenance marker newer than the newest open build -> PROCEED
+  # (in-flight relaxation — a legitimate wave already catching up). ───────
+  : > "$OBL_LEDGER"
+  _obl_row "plan-phase-builder" 1000 "docs/plans/obl-fixture3.md" "1"
+  _obl_row "plan-phase-builder" 1001 "docs/plans/obl-fixture3.md" "2"
+  _obl_row "plan-phase-builder" 1002 "docs/plans/obl-fixture3.md" "3"
+  rm -f "$OBL_DPDIR"/*.json
+  FUTURE_ISO="$(date -u -d '@9999999999' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -r 9999999999 '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+  _obl_marker "obl-fixture3" "verifier" "$FUTURE_ISO"
+  RC_LEDGER_PATH="$OBL_LEDGER" DISPATCH_PROVENANCE_STATE_DIR="$OBL_DPDIR" \
+    rc_wip_limit_decision "obl-fixture3" 3
+  _st "obl4-verifier-in-flight-proceeds" "PROCEED" "$RC_WIP_VERDICT"
+  IFOUND2=0
+  case "$RC_WIP_REASON" in *"in flight"*) IFOUND2=1 ;; esac
+  _st "obl4-reason-names-in-flight" "1" "$IFOUND2"
+
+  # ── OBL5: T7-incident normalization — a build row keyed "T7" and a verify
+  # row keyed "7" (or vice versa) must be recognized as the SAME task. ────
+  : > "$OBL_LEDGER"
+  _obl_row "plan-phase-builder" 1000 "docs/plans/obl-fixture4.md" "T9"
+  _obl_row "task-verifier" 2000 "docs/plans/obl-fixture4.md" "9"
+  RC_LEDGER_PATH="$OBL_LEDGER" DISPATCH_PROVENANCE_STATE_DIR="$OBL_DPDIR" \
+    rc_wip_limit_decision "obl-fixture4" 1
+  _st "obl5-T-prefix-normalizes-across-rows" "PROCEED" "$RC_WIP_VERDICT"
+
+  # ── OBL6: a re-build AFTER a verify reopens the obligation (verify ts <
+  # the NEW build ts). ─────────────────────────────────────────────────────
+  : > "$OBL_LEDGER"
+  _obl_row "plan-phase-builder" 1000 "docs/plans/obl-fixture5.md" "1"
+  _obl_row "task-verifier" 2000 "docs/plans/obl-fixture5.md" "1"
+  _obl_row "plan-phase-builder" 3000 "docs/plans/obl-fixture5.md" "1"
+  RC_LEDGER_PATH="$OBL_LEDGER" DISPATCH_PROVENANCE_STATE_DIR="$OBL_DPDIR" \
+    rc_wip_limit_decision "obl-fixture5" 1
+  _st "obl6-rebuild-after-verify-reopens" "BLOCK" "$RC_WIP_VERDICT"
+
+  # ── OBL7: rows with no task_id (or a different plan's artifact_ref) never
+  # open or close an obligation. ───────────────────────────────────────────
+  : > "$OBL_LEDGER"
+  _obl_row "plan-phase-builder" 1000 "docs/plans/obl-fixture6.md" ""
+  _obl_row "plan-phase-builder" 1000 "docs/plans/some-other-plan.md" "1"
+  RC_LEDGER_PATH="$OBL_LEDGER" DISPATCH_PROVENANCE_STATE_DIR="$OBL_DPDIR" \
+    rc_open_verify_obligations "obl-fixture6" >/dev/null
+  _st "obl7-untyped-and-cross-plan-rows-excluded" "0" "$RC_OPEN_OBLIGATIONS_COUNT"
 
   echo "self-test summary: $PASSED passed, $FAILED failed (of $((PASSED + FAILED)) scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then

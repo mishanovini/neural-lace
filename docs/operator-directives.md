@@ -17,8 +17,8 @@ this view is regenerated, not edited.
 
 | Metric | Count |
 |---|---|
-| Total entries | 21 |
-| BINDING | 21 |
+| Total entries | 23 |
+| BINDING | 23 |
 | SUPERSEDED | 0 |
 | Operator-only (no code surface) | 2 |
 
@@ -383,4 +383,43 @@ this view is regenerated, not edited.
 > Every push is followed by a CI-result check for the pushed SHA (gh run list / gh run watch); red CI on the default branch is stop-and-fix, never background noise. Golden case: 2026-08-03, two workflows red on ~23 consecutive master pushes while sessions kept pushing (25+ unread failure emails). Anti-pattern: logging Required-status-check output as trivia. Sanctioned alternative: a genuinely environment-bound red goes into the workflow allowlist WITH a tracking reference (KNOWN_FAILING_HOOKS convention), never a silent skip.
 
 *Source: operator directive 2026-08-03 (session 4a470c8c) + backlog CI-RESULT-CONSUMPTION-GAP-2026-08-03-01*
+
+### OD-022 — merge-verify-mechanization
+
+**Status:** BINDING
+
+**Surfaces:**
+- `adapters/claude-code/hooks/dispatch-chain-gate.sh`
+- `adapters/claude-code/hooks/workstreams-emit.sh`
+- `adapters/claude-code/hooks/stop-verdict-dispatcher.sh`
+- `adapters/claude-code/hooks/lib/review-chain-lib.sh`
+- `docs/plans/*.md`
+
+**Instruction:**
+
+> Rule: operator, verbatim (2026-08-03): "You were given explicit direction to mechanize verification of every build. ... I do not want you deciding that it's OK to tolerate so many build processes just sitting unverified. We need to clean up the mess as we go. We want the system to be continuously getting cleaner as it builds, not messier." The build->verified transition is mechanical and present-moment: an obligation is open when a builder-complete ledger row has no matching verifier-complete row for that task.
+> Golden case: this plan's own build -- 11 tasks merged, 0 verified for hours, operator flagged the accumulation twice (cockpit chips) before issuing this directive.
+> Anti-pattern: an orchestrator or builder session treating "I'll verify later" or "the queue will clear eventually" as an acceptable steady state instead of a temporary backlog that must actively shrink.
+> Sanctioned alternative: dispatch task-verifier for each open obligation before dispatching more builders on the same plan, or name every open obligation explicitly in the session's terminal marker; a ledgered waiver with a named reason is the only other escape.
+
+*Source: docs/plans/gated-pipeline-master-2026-08.md Task 25 (operator directive 2026-08-03, session 4a470c8c) + backlog AUTO-VERIFY-DISPATCH-2026-08-03 (absorbed, row deleted same commit)*
+
+### OD-023 — task-id-determinism
+
+**Status:** BINDING
+
+**Surfaces:**
+- `adapters/claude-code/hooks/workstreams-emit.sh`
+- `adapters/claude-code/hooks/lib/review-chain-lib.sh`
+- `adapters/claude-code/hooks/lib/directives-register-lib.sh`
+- `docs/plans/*.md`
+
+**Instruction:**
+
+> Rule: operator, verbatim (2026-08-03): "Management of task IDs and everything here regarding standard processes that are supposed to be practiced all the time need to be deterministic as much as reasonably possible. We do not want to provide any more opportunity than is absolutely necessary for any Claude agent to either make mistakes or not follow the process. Claude should never have to wonder what the right thing to call something is or have any difficulty identifying something."
+> Golden case: the 2026-08-03 attribution incident -- an orchestrator hand-typed task=T7-style ids into an NL-ATTRIBUTION header while the plan's own task ids are numeric, so the cockpit could not attribute the live work.
+> Anti-pattern: a naming/id convention documented only in prose, left for each dispatching session to reconstruct from memory or free-text scraping.
+> Sanctioned alternative: a mechanical check that validates the id against the one real source of truth (the plan's own task list) at the moment it is recorded, loud on mismatch, never silently guessing or normalizing away the mistake at the write site (normalization is a READER-side defense, per rc_open_verify_obligations -- the WRITE site's job is to say so, not to fix it quietly).
+
+*Source: operator directive 2026-08-03 (session 4a470c8c, mid-build on docs/plans/gated-pipeline-master-2026-08.md Task 25)*
 

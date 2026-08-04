@@ -594,6 +594,33 @@ If you need to stop early without completing the plan, set `Status: ABANDONED` o
 
 Previous plans have had tasks marked complete that weren't actually done — up to 9 of 41 in one case — because the builder (self-report) was trusted to be honest about their own work. The verifier agent is a second set of eyes that doesn't trust the builder's claims without checking them. This protects the end user from shipping something half-built.
 
+### Verify-obligation tracking (OD-022, gated-pipeline-master-2026-08 Task 25)
+
+The Verifier Mandate above says checkboxes must be flipped by `task-verifier`; it
+does not, by itself, stop a session from merging task after task and never getting
+around to dispatching the verifier at all — "done = plan closed" is a closing-time
+check, not a present-moment one. OD-022 closes that gap: a builder-complete
+dispatch-ledger row with no matching task-verifier row for that task is an OPEN
+OBLIGATION, tracked mechanically (not by memory) via `hooks/lib/review-chain-
+lib.sh`'s `rc_open_verify_obligations`/`rc_wip_limit_decision`.
+
+Two present-moment consequences (full mechanism detail:
+`doctrine/orchestrator-pattern-full.md` "Verify-obligation tracking"):
+- `hooks/dispatch-chain-gate.sh --check-wip-limit <plan>` BLOCKS your next BUILDER
+  dispatch on a plan once its open-obligation count reaches 3 with no verifier
+  dispatch in flight — verify the backlog before you grow it further, or `--waive`
+  with a named, ledgered reason.
+- `hooks/stop-verdict-dispatcher.sh` refuses a DONE/CONTINUING session end (once,
+  same block-once-then-ledger cycle as every other Stop gap) when the plan your
+  final message references has open obligations your terminal marker line doesn't
+  name.
+
+Golden case this exists for: this very plan's build accumulated 11 merged tasks
+with 0 verified for hours before the operator flagged the accumulation twice.
+OD-023 (same directive) makes the underlying `task_id` deterministic too — the
+ledger writer validates it against the plan's own task list at write time rather
+than trusting free-text scraping to always get it right.
+
 ## Mid-Build Decisions
 
 > SUPERSEDED (2026-07-02, operator directive): the Tier 1/2/3 model below is replaced by the two-tier reversibility model in constitution.md §8.

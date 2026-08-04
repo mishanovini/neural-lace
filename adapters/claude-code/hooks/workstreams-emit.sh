@@ -2003,6 +2003,118 @@ _self_test() {
     echo "FAIL: DL7 expected artifact_ref='' ($(cat "$dl7_ledger" 2>/dev/null))"; fail=$((fail+1))
   fi
 
+  # DL8-DL10 (gated-pipeline-master-2026-08 Task 25 / OD-022 -- task_id
+  # extraction for verify-obligation tracking). DL8: NL-ATTRIBUTION header
+  # wins over free-text.
+  local dl8_ledger="$tmp/dl-8-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl8_ledger" CONV_TREE_STATE_PATH="$tmp/dl-8.json" CLAUDE_SESSION_ID="sess-dl-8" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 25","prompt":"NL-ATTRIBUTION: plan=gated-pipeline-master-2026-08 task=25 role=builder\nBuild Task 25 of docs/plans/gated-pipeline-master-2026-08.md (also mentions Task 99 in passing)."},"tool_response":"DONE","session_id":"sess-dl-8"}' >/dev/null 2>&1
+  if [[ -f "$dl8_ledger" ]] && jq -e '.task_id=="25"' "$dl8_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL8 NL-ATTRIBUTION task= wins over a free-text 'Task 99' mention elsewhere in the prompt"; pass=$((pass+1))
+  else
+    echo "FAIL: DL8 expected task_id=25 ($(cat "$dl8_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DL9: no header -> free-text "Task N" fallback.
+  local dl9_ledger="$tmp/dl-9-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl9_ledger" CONV_TREE_STATE_PATH="$tmp/dl-9.json" CLAUDE_SESSION_ID="sess-dl-9" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"Build Task 15 of docs/plans/gated-pipeline-master-2026-08.md, no attribution header here."},"tool_response":"DONE","session_id":"sess-dl-9"}' >/dev/null 2>&1
+  if [[ -f "$dl9_ledger" ]] && jq -e '.task_id=="15"' "$dl9_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL9 free-text 'Task N' fallback used when no NL-ATTRIBUTION header is present"; pass=$((pass+1))
+  else
+    echo "FAIL: DL9 expected task_id=15 ($(cat "$dl9_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DL10: a mis-authored header (task=T7, the 2026-08-03 incident shape)
+  # lands VERBATIM -- the writer does NOT normalize; normalization is a
+  # reader-side defense (rc_open_verify_obligations).
+  local dl10_ledger="$tmp/dl-10-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl10_ledger" CONV_TREE_STATE_PATH="$tmp/dl-10.json" CLAUDE_SESSION_ID="sess-dl-10" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=gated-pipeline-master-2026-08 task=T7 role=builder\nBuild it."},"tool_response":"DONE","session_id":"sess-dl-10"}' >/dev/null 2>&1
+  if [[ -f "$dl10_ledger" ]] && jq -e '.task_id=="T7"' "$dl10_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL10 a mis-authored task=T7 header lands verbatim (writer never normalizes -- reader does)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL10 expected task_id=T7 ($(cat "$dl10_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DL11: --open-verify-obligations CLI mode round-trips against a row this
+  # SAME writer just produced (shared fixture/contract, same convention as
+  # review-chain-lib.sh's own Scenario 11).
+  local dl11_ledger="$tmp/dl-11-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl11_ledger" CONV_TREE_STATE_PATH="$tmp/dl-11.json" CLAUDE_SESSION_ID="sess-dl-11" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=dl11-fixture task=4 role=builder\nBuild Task 4 of docs/plans/dl11-fixture.md."},"tool_response":"DONE","session_id":"sess-dl-11"}' >/dev/null 2>&1
+  local dl11_out
+  dl11_out="$(DISPATCH_LEDGER_PATH="$dl11_ledger" bash "$SELF" --open-verify-obligations dl11-fixture 2>&1)"
+  if printf '%s' "$dl11_out" | grep -q '^4$' && printf '%s' "$dl11_out" | grep -q 'open_verify_obligations=1 plan=dl11-fixture'; then
+    echo "PASS: DL11 --open-verify-obligations round-trips against the writer's own row (task 4 open, count=1)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL11 expected task 4 open + count=1 ($dl11_out)"; fail=$((fail+1))
+  fi
+
+  # DL12-DL14 (OD-023, operator directive 2026-08-03: task ids must be
+  # deterministic, never guessed -- emit-time validation against the
+  # referenced plan's own task list).
+  local dl_taskval_dir="$tmp/dl-taskval"
+  mkdir -p "$dl_taskval_dir/docs/plans"
+  cat >"$dl_taskval_dir/docs/plans/dl-taskval-fixture.md" <<'TVEOF'
+# Plan: task-id validation fixture
+Status: ACTIVE
+
+## Tasks
+
+- [x] 1. First task
+- [ ] 7. Seventh task
+- [ ] 25. Twenty-fifth task
+TVEOF
+
+  # DL12: a T-prefixed id (T7) normalizes to a KNOWN id -> task_id_valid=true,
+  # verbatim task_id stored, no WARN.
+  local dl12_ledger="$tmp/dl-12-ledger.jsonl" dl12_err
+  dl12_err=$( cd "$dl_taskval_dir" && DISPATCH_LEDGER_PATH="$dl12_ledger" CONV_TREE_STATE_PATH="$tmp/dl-12.json" CLAUDE_SESSION_ID="sess-dl-12" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=dl-taskval-fixture task=T7 role=builder\nBuild Task 7 of docs/plans/dl-taskval-fixture.md."},"tool_response":"DONE","session_id":"sess-dl-12"}' 2>&1 >/dev/null )
+  if [[ -f "$dl12_ledger" ]] && jq -e '.task_id=="T7" and .task_id_valid=="true"' "$dl12_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL12 T-prefixed id (T7) normalizes against the plan's task list and validates true"; pass=$((pass+1))
+  else
+    echo "FAIL: DL12 expected task_id=T7 task_id_valid=true ($(cat "$dl12_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  if printf '%s' "$dl12_err" | grep -q "WARN"; then
+    echo "FAIL: DL12 a KNOWN (post-normalization) task id must NOT emit a WARN"; fail=$((fail+1))
+  else
+    echo "PASS: DL12 no spurious WARN for a known, T-prefixed id"; pass=$((pass+1))
+  fi
+
+  # DL13: an id absent from the plan's task list -> row is STILL WRITTEN
+  # (writer semantics: never lose data), flagged task_id_valid=false, WARN
+  # on stderr names the plan's real id set.
+  local dl13_ledger="$tmp/dl-13-ledger.jsonl" dl13_err
+  dl13_err=$( cd "$dl_taskval_dir" && DISPATCH_LEDGER_PATH="$dl13_ledger" CONV_TREE_STATE_PATH="$tmp/dl-13.json" CLAUDE_SESSION_ID="sess-dl-13" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=dl-taskval-fixture task=999 role=builder\nBuild Task 999 of docs/plans/dl-taskval-fixture.md."},"tool_response":"DONE","session_id":"sess-dl-13"}' 2>&1 >/dev/null )
+  if [[ -f "$dl13_ledger" ]] && jq -e '.task_id=="999" and .task_id_valid=="false"' "$dl13_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL13 unknown id 999 -> row written anyway (never lose data), flagged task_id_valid=false"; pass=$((pass+1))
+  else
+    echo "FAIL: DL13 expected task_id=999 task_id_valid=false ($(cat "$dl13_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  if printf '%s' "$dl13_err" | grep -q "WARN" && printf '%s' "$dl13_err" | grep -q "1,7,25"; then
+    echo "PASS: DL13 WARN names the plan's real id set (1,7,25)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL13 expected a WARN naming known ids 1,7,25 (stderr: $dl13_err)"; fail=$((fail+1))
+  fi
+
+  # DL14: a valid numeric id, no T prefix -> clean (valid=true, no WARN).
+  local dl14_ledger="$tmp/dl-14-ledger.jsonl" dl14_err
+  dl14_err=$( cd "$dl_taskval_dir" && DISPATCH_LEDGER_PATH="$dl14_ledger" CONV_TREE_STATE_PATH="$tmp/dl-14.json" CLAUDE_SESSION_ID="sess-dl-14" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=dl-taskval-fixture task=25 role=builder\nBuild Task 25 of docs/plans/dl-taskval-fixture.md."},"tool_response":"DONE","session_id":"sess-dl-14"}' 2>&1 >/dev/null )
+  if [[ -f "$dl14_ledger" ]] && jq -e '.task_id=="25" and .task_id_valid=="true"' "$dl14_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL14 valid numeric id 25 -> clean row, task_id_valid=true"; pass=$((pass+1))
+  else
+    echo "FAIL: DL14 expected task_id=25 task_id_valid=true ($(cat "$dl14_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  if printf '%s' "$dl14_err" | grep -q "WARN"; then
+    echo "FAIL: DL14 a valid numeric id must NOT emit a WARN"; fail=$((fail+1))
+  else
+    echo "PASS: DL14 no WARN for a clean valid numeric id"; pass=$((pass+1))
+  fi
+
   # ================================================================
   # PL1-PL6 (ask-rooted-workstreams-p1 Task 3 -- dispatch emission splice):
   # task_started progress-log emission + dispatch-provenance marker, spliced
@@ -4264,7 +4376,21 @@ _run_on_builder_dispatch() {
 # Row schema (the fixture contract quoted in
 # adapters/claude-code/tests/fixtures/review-chain/README.md and
 # hooks/lib/review-chain-lib.sh's own header, both citing THIS writer):
-#   {"subagent_type":"<...>","model":"<...>","ts":<epoch>,"session_id":"<...>","artifact_ref":"<path-or-empty>"}
+#   {"subagent_type":"<...>","model":"<...>","ts":<epoch>,"session_id":"<...>","artifact_ref":"<path-or-empty>","task_id":"<id-or-empty>"}
+#
+# `task_id` (ADDITIVE field, gated-pipeline-master-2026-08 Task 25 / OD-022
+# — verify-obligation tracking): best-effort, SAME resolution order as the
+# dispatch-provenance marker's SINK 2 (see _emit_dispatch_provenance above):
+# the dispatch's NL-ATTRIBUTION `task=` value when the header is present,
+# else the free-text "Task N" scrape (_extract_task_id). Backward-compatible
+# — every row written before this change simply lacks the key, which reads
+# back as "" via `// empty` and is correctly excluded from obligation
+# tracking (hooks/lib/review-chain-lib.sh's rc_open_verify_obligations: a
+# row that cannot be attributed to a task can never open OR close an
+# obligation). Stored VERBATIM, never normalized here — a mis-authored
+# header (`task=T7` instead of `task=7`, the 2026-08-03 incident) lands
+# as-is; every READER normalizes a leading T/t defensively instead
+# (rc_open_verify_obligations' own header comment has the full rationale).
 #
 # ALWAYS-EXIT-0 WRITER CONTRACT (same as every other emit path in this
 # file): an unwritable ledger degrades to a logged line, never a failure —
@@ -4307,26 +4433,91 @@ _dispatch_ledger_model() {
   printf ''
 }
 
-# _dispatch_ledger_append <input-json> <subagent_type> <session_id> --
-# appends ONE JSONL row (see schema above) to $DISPATCH_LEDGER_PATH. Never
-# blocks the caller and never itself exits the process.
+# _ledger_known_task_ids <plan-path> -- prints every top-level task id from
+# a plan's own `## Tasks` checkbox list ("- [ ] N. ..." / "- [x] N. ..." --
+# the exact convention every plan in docs/plans/ uses, incl. this plan's own
+# Task 25 line), one per line. Empty output (never an error) when the plan
+# cannot be read -- a caller degrades to "cannot validate", never a false
+# WARN against a file it could not open.
+_ledger_known_task_ids() {
+  local plan_path="$1"
+  [[ -n "$plan_path" && -f "$plan_path" ]] || return 0
+  grep -oE '^- \[[ xX]\][[:space:]]+[0-9]+(\.[0-9]+)?\.' "$plan_path" 2>/dev/null \
+    | sed -E 's/^- \[[ xX]\][[:space:]]+//; s/\.$//'
+}
+
+# _ledger_task_id_known <plan-path> <task-id> -- rc 0 iff task-id (after the
+# SAME T/t-normalization rule as review-chain-lib.sh's _rc_norm_task_id --
+# duplicated as a one-liner here, not sourced: this writer's established
+# convention is never depending on a sibling hook/lib at its hot PostToolUse
+# call site) appears in the plan's own task list.
+_ledger_task_id_known() {
+  local plan_path="$1" tid="$2" norm known
+  [[ -n "$tid" ]] || return 1
+  norm="$tid"
+  [[ "$norm" =~ ^[Tt][0-9] ]] && norm="${norm:1}"
+  known="$(_ledger_known_task_ids "$plan_path")"
+  [[ -n "$known" ]] || return 1
+  printf '%s\n' "$known" | grep -qxF "$norm"
+}
+
+# _dispatch_ledger_append <input-json> <subagent_type> <session_id>
+#   [<task_id>] -- appends ONE JSONL row (see schema above) to
+# $DISPATCH_LEDGER_PATH. Never blocks the caller and never itself exits the
+# process.
+#
+# task_id VALIDATION (OD-023, operator directive 2026-08-03: "Claude should
+# never have to wonder what the right thing to call something is" —
+# triggered by the same T7-authoring incident OD-022's own header cites).
+# When task_id is non-empty and artifact_ref resolves to a real plan file
+# (relative to cwd, else the repo root — this hook's documented invocation
+# convention is cwd==repo-root, same assumption dispatch-chain-gate.sh's
+# --check already makes), the id is checked against that plan's OWN task
+# list. An id NOT found there NEVER loses the row (writer semantics: data
+# first) — it is written with `task_id_valid:"false"` PLUS a stderr WARN
+# naming the plan's real id set, so the mistake is loud at the moment it
+# happens rather than silently corrupting obligation tracking later.
+# task_id_valid is "true" (found), "false" (plan resolved, id not in its
+# list), or "unknown" (task_id empty, or the plan file could not be
+# resolved — never guessed either way).
 _dispatch_ledger_append() {
-  local input="$1" subagent="$2" sid="$3"
+  local input="$1" subagent="$2" sid="$3" task_id="${4:-}"
   [[ -n "$subagent" ]] || return 0
   _have jq || { _log "dispatch-ledger: no jq — degraded, no row written"; return 0; }
   local model artifact_ref ts row dir
   model="$(_dispatch_ledger_model "$input" "$subagent")"
   artifact_ref="$(_extract_artifact_ref "$(_dispatch_text "$input")")"
   ts=$(date +%s 2>/dev/null || echo 0)
-  row=$(jq -cn --arg st "$subagent" --arg m "$model" --argjson ts "$ts" --arg sid "$sid" --arg ar "$artifact_ref" \
-    '{subagent_type:$st, model:$m, ts:$ts, session_id:$sid, artifact_ref:$ar}' 2>/dev/null)
+
+  local task_id_valid="unknown"
+  if [[ -n "$task_id" && -n "$artifact_ref" ]]; then
+    local plan_path="$artifact_ref" repo_root
+    if [[ ! -f "$plan_path" ]]; then
+      repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+      [[ -n "$repo_root" ]] && plan_path="$repo_root/$artifact_ref"
+    fi
+    if [[ -f "$plan_path" ]]; then
+      if _ledger_task_id_known "$plan_path" "$task_id"; then
+        task_id_valid="true"
+      else
+        task_id_valid="false"
+        local known_ids
+        known_ids="$(_ledger_known_task_ids "$plan_path" | tr '\n' ',' | sed 's/,$//')"
+        _log "dispatch-ledger: task_id='$task_id' not found in ${plan_path}'s task list (known ids: ${known_ids:-<none>}) -- row written anyway (writer semantics: never lose data), flagged task_id_valid=false"
+        echo "[dispatch-ledger] WARN: task_id='$task_id' is not one of ${plan_path}'s real task ids (known: ${known_ids:-<none>}) -- OD-023 (2026-08-03): task ids must be deterministic, never guessed" >&2
+      fi
+    fi
+  fi
+
+  row=$(jq -cn --arg st "$subagent" --arg m "$model" --argjson ts "$ts" --arg sid "$sid" --arg ar "$artifact_ref" --arg tid "$task_id" --arg tidv "$task_id_valid" \
+    '{subagent_type:$st, model:$m, ts:$ts, session_id:$sid, artifact_ref:$ar, task_id:$tid, task_id_valid:$tidv}' 2>/dev/null)
   if [[ -z "$row" ]]; then
     _log "dispatch-ledger: row build failed (jq) — degraded, no row written"
     return 0
   fi
   dir="$(dirname "$DISPATCH_LEDGER_PATH")"
   if mkdir -p "$dir" 2>/dev/null && printf '%s\n' "$row" >>"$DISPATCH_LEDGER_PATH" 2>/dev/null; then
-    _log "dispatch-ledger row appended type=$subagent artifact_ref=${artifact_ref:-<empty>} path=$DISPATCH_LEDGER_PATH"
+    _log "dispatch-ledger row appended type=$subagent artifact_ref=${artifact_ref:-<empty>} task_id_valid=$task_id_valid path=$DISPATCH_LEDGER_PATH"
   else
     _log "dispatch-ledger unwritable ($DISPATCH_LEDGER_PATH) — degraded, no row written (writer contract: never fails the hook)"
   fi
@@ -4376,12 +4567,62 @@ _run_on_builder_complete() {
     # ONLY — see the block comment above _dispatch_ledger_append for why.
     local ledger_subagent
     ledger_subagent=$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null)
-    _dispatch_ledger_append "$input" "$ledger_subagent" "$sid"
+    # task_id (Task 25 / OD-022 addition): NL-ATTRIBUTION header first (same
+    # parse SINK 2 already computes for the dispatch-provenance marker),
+    # free-text "Task N" scrape as fallback -- same two-tier resolution, not
+    # a third parser (M-3).
+    local ledger_h_task ledger_task_id
+    IFS='|' read -r _ ledger_h_task _ _ <<<"$(_extract_nl_attribution "$(_dispatch_text "$input")")"
+    ledger_task_id="$ledger_h_task"
+    [[ -z "$ledger_task_id" ]] && ledger_task_id=$(_extract_task_id "$(_dispatch_text "$input")")
+    _dispatch_ledger_append "$input" "$ledger_subagent" "$sid" "$ledger_task_id"
   fi
   local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-bdc-$$.json")
   printf '%s' "$events" >"$ef"
   _emit_dual "$lib" "$ef"
   rm -f "$ef" 2>/dev/null || true
+  exit 0
+}
+
+# ----------------------------------------------------------------------------
+# --open-verify-obligations <plan-slug>  (Task 25 / OD-022 query mode)
+#   Read-only: prints one open task id per line, then a summary line to
+#   stderr. Sources hooks/lib/review-chain-lib.sh's rc_open_verify_obligations
+#   (the ONE dispatch-ledger reader — M-3) rather than re-parsing
+#   $DISPATCH_LEDGER_PATH here. DELIBERATE, DISCLOSED exception to this
+#   file's own "never depend on a sibling hook at runtime" convention (see
+#   _dispatch_ledger_model's header comment): that convention protects the
+#   WRITER's PostToolUse reliability contract from a sibling hook's own
+#   failure mode; this is a read-only CLI query mode invoked on demand, not
+#   a hot hook body, and the ledger-reading logic already canonically lives
+#   in review-chain-lib.sh (rule 3) — sourcing it here keeps ONE
+#   implementation instead of a second, silently-driftable parser.
+#   Always exits 0 (a query, never a gate) — a caller (dispatch-chain-gate.sh
+#   calls rc_wip_limit_decision directly, already sourcing the same lib; this
+#   CLI mode is for anything OUTSIDE that process, e.g. a human or a script)
+#   parses the printed `open_verify_obligations=<N>` line or task-id list.
+# ----------------------------------------------------------------------------
+_run_open_verify_obligations() {
+  local slug="${1:-}"
+  if [[ -z "$slug" ]]; then
+    echo "usage: workstreams-emit.sh --open-verify-obligations <plan-slug>" >&2
+    exit 0
+  fi
+  local lib_dir; lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" 2>/dev/null && pwd)"
+  local lib="$lib_dir/review-chain-lib.sh"
+  if [[ ! -f "$lib" ]]; then
+    echo "workstreams-emit.sh --open-verify-obligations: review-chain-lib.sh not found at $lib -- degraded, cannot query" >&2
+    exit 0
+  fi
+  # RC_LEDGER_PATH and DISPATCH_LEDGER_PATH are two names for the SAME file
+  # (Task 15's writer / Task 1's reader, resolved to the same default
+  # independently) — force agreement so a caller that overrides ONE (e.g. a
+  # self-test sandbox) is honored on both sides.
+  export RC_LEDGER_PATH="$DISPATCH_LEDGER_PATH"
+  # shellcheck source=./lib/review-chain-lib.sh
+  source "$lib"
+  rc_open_verify_obligations "$slug"
+  echo "open_verify_obligations=${RC_OPEN_OBLIGATIONS_COUNT} plan=${slug}" >&2
   exit 0
 }
 
@@ -4406,6 +4647,8 @@ case "$MODE" in
   # worktree→main-checkout sink resolution without a live GUI server.
   --resolve-gui-sink)  trap - ERR; _resolve_gui_state_path; printf '\n'; exit 0 ;;
   --resolve-gate-sink) trap - ERR; _resolve_gate_state_path; printf '\n'; exit 0 ;;
+  # Verify-obligation query (Task 25 / OD-022):
+  --open-verify-obligations) _run_open_verify_obligations "${2:-}" ;;
   *)
     # Unknown / no mode: never block. (A misconfigured wiring must not break
     # the orchestrator — writer, not gate.)
