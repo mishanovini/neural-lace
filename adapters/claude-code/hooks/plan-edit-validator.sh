@@ -87,6 +87,48 @@ GC_MODE="$(declare -F gc_mode >/dev/null 2>&1 && gc_mode "${1:-}" 2>/dev/null ||
 _PEV_ANY_WARN=0
 
 # ============================================================
+# TASK_ID id-shape grammar (HARNESS-GAP-62, amended 2026-08-04) — the
+# SINGLE canonical definition, consulted at every site in this file that
+# must recognize a checkbox line's task-id token: the checkbox-flip
+# AUTHORIZATION extraction (the real chokepoint, below), the WARN-only
+# new-task Docs-impact detector (check_docs_impact_warn), and that
+# function's --self-test replica (selftest_check_docs_impact_warn). Widen
+# THIS constant and all three stay consistent by construction.
+#
+# Measured, not assumed: grounded in a direct sweep of docs/plans/ (active
+# + archive/ + deferred/) plus a sibling project's docs/plans/ elsewhere on
+# this machine (this same global hook also gates that repo's plan files) —
+# see docs/backlog.md HARNESS-GAP-62 for the full census. Four REAL,
+# observed shapes, no `.*`:
+#   1. classic dotted-letter   A.1 / B.2.3          (pre-existing, unchanged)
+#   2. fused letter+digit      T1 / SE3 / RI1 / ORG6 (capped 1-3 letters so
+#      a 4+-letter acronym like WCAG can never false-match)
+#   3. bare numeric            7 / 3.2 / 12.4.1      (THE dominant convention
+#      estate-wide — gated-pipeline-master-2026-08.md and most active plans
+#      in this repo use this and only this)
+#   4. digit+letter sub-id     0a / 10e / 0a.1       (the sibling project's
+#      real, currently-ACTIVE sub-task numbering convention, tasks 0a-0i)
+# Deliberately EXCLUDED (measured, present, but not covered — see the
+# HARNESS-GAP-62 backlog entry for the full reasoning): bold-wrapped bare
+# numeric ("**1.", archive-only, 9 files, none ACTIVE); a bare digit+
+# UPPERCASE-letter reversal ("20R", one archived occurrence); a bare single
+# letter with no digit ("A" alone, one deferred occurrence). None of these
+# recur in any ACTIVE or DEFERRED plan's real task-id position; a future
+# recurrence is a new backlog entry, not a silent regex expansion here.
+PEV_TASK_ID_ALT='[A-Z]+\.[0-9]+(\.[0-9]+)*|[A-Z]{1,3}[0-9]+(\.[0-9]+)*|[0-9]+[a-z](\.[0-9]+)*|[0-9]+(\.[0-9]+)*'
+# Trailing-boundary requirement: whatever follows a candidate id must be a
+# non-alnum char, or end of line — otherwise the "id" is really a prefix of
+# a longer word/number and must NOT match. Without this, alternatives 3/4
+# spuriously extract a prefix of an ordinal word in task prose ("1st" ->
+# "1s", "3rd" -> "3r") — confirmed by direct test before this guard was
+# added. Consumers wrap PEV_TASK_ID_ALT in `(...)` and append this suffix
+# to anchor the id at a real token boundary, then re-run a plain
+# PEV_TASK_ID_ALT extraction against the already-boundary-validated
+# substring to recover just the id (mirrors the pre-existing two-stage
+# grep -oE | grep -oE idiom already used at every call site).
+PEV_TASK_ID_BOUNDARY='[^A-Za-z0-9]|$'
+
+# ============================================================
 # Lock helpers (plan-edit-validator concurrency protection)
 # ============================================================
 #
@@ -962,13 +1004,17 @@ JSON
     # `|| true` mirrors the fixed production check_docs_impact_warn (nl-issue
     # [24]): unguarded grep-no-match here is only survivable via bash's
     # no-inherit_errexit quirk in $() calls — keep the replica truly a replica.
-    new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null || true)"
+    # Shape + boundary per PEV_TASK_ID_ALT/PEV_TASK_ID_BOUNDARY (HARNESS-
+    # GAP-62, defined near the top of this file — already in scope here,
+    # same process) — keep this replica a byte-for-byte mirror of the real
+    # check_docs_impact_warn's own extraction, same convention as always.
+    new_task_lines="$(echo "$new_content" | grep -E "^[[:space:]]*-[[:space:]]*\\[[[:space:]]*\\][[:space:]]+(${PEV_TASK_ID_ALT})(${PEV_TASK_ID_BOUNDARY})" 2>/dev/null || true)"
     [[ -z "$new_task_lines" ]] && { echo "NONE"; return 0; }
     local any_warned=0
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue
       local tid
-      tid="$(echo "$line" | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)"
+      tid="$(echo "$line" | grep -oE "${PEV_TASK_ID_ALT}" | head -1)"
       [[ -z "$tid" ]] && continue
       if echo "$old_content" | grep -qF "$tid"; then continue; fi
       if ! echo "$line" | grep -qiE 'Docs impact:'; then
@@ -1548,8 +1594,180 @@ JSON
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F28-F32 (HARNESS-GAP-62, amended 2026-08-04) — the widened
+  # PEV_TASK_ID_ALT grammar, exercised end-to-end (real subprocess, real
+  # authorization + real ledger emit) across the id-shape census. F28-F30
+  # are the fixture-per-shape proof the task asked for: bare-numeric (the
+  # dominant real convention), fused letter+digit (a non-SE-prefixed id,
+  # proving the fix generalizes beyond the SE.* series already covered by
+  # F16-F19), and digit+letter sub-id (a sibling project's real "0a"-"0i"
+  # convention, also gated by this same global hook). F31 is the negative
+  # control proving the widening did NOT over-broaden: an ordinal word in
+  # task prose must still BLOCK, never authorize. F32 proves the WARN-only
+  # docs-impact detector was widened consistently, not just the
+  # authorization site.
+  # ============================================================
+
+  # ---- F28: e2e bare-numeric flip authorizes + emits task=9 ----
+  F28_DIR="$TMPDIR_SELFTEST/f28/docs/plans"
+  mkdir -p "$F28_DIR"
+  printf '# F28 Plan\n\n## Tasks\n\n- [ ] 9. Do the bare-numeric flip thing\n' > "$F28_DIR/f28-plan.md"
+  cat > "$F28_DIR/f28-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: 9
+Verified at: 2026-08-04T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 9
+EVID
+  F28_LEDGER="$TMPDIR_SELFTEST/f28-ledger.jsonl"
+  rm -f "$F28_LEDGER"
+  F28_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f28-plan.md","old_string":"- [ ] 9. Do the bare-numeric flip thing","new_string":"- [x] 9. Do the bare-numeric flip thing"}}' "$F28_DIR")"
+  set +e
+  F28_OUT="$(printf '%s' "$F28_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F28_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F28=$?
+  set -e
+  if [[ "$RC_F28" -eq 0 ]] \
+     && [[ -f "$F28_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=9 ' "$F28_LEDGER" \
+     && grep -q 'verdict=PASS' "$F28_LEDGER"; then
+    echo "self-test (F28) e2e-bare-numeric-flip-authorizes-and-emits: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F28) e2e-bare-numeric-flip-authorizes-and-emits: FAIL (rc=$RC_F28 out=$F28_OUT ledger=$(cat "$F28_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F29: e2e fused letter+digit flip (non-SE id) authorizes + emits
+  # task=T5 -- proves the fix generalizes beyond the SE.* series F16-F19
+  # already exercised (those use dotted "SE.4.N", a DIFFERENT shape from
+  # fused "T5"). ----
+  F29_DIR="$TMPDIR_SELFTEST/f29/docs/plans"
+  mkdir -p "$F29_DIR"
+  printf '# F29 Plan\n\n## Tasks\n\n- [ ] T5 Do the fused-letter-digit flip thing\n' > "$F29_DIR/f29-plan.md"
+  cat > "$F29_DIR/f29-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: T5
+Verified at: 2026-08-04T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 7
+EVID
+  F29_LEDGER="$TMPDIR_SELFTEST/f29-ledger.jsonl"
+  rm -f "$F29_LEDGER"
+  F29_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f29-plan.md","old_string":"- [ ] T5 Do the fused-letter-digit flip thing","new_string":"- [x] T5 Do the fused-letter-digit flip thing"}}' "$F29_DIR")"
+  set +e
+  F29_OUT="$(printf '%s' "$F29_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F29_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F29=$?
+  set -e
+  if [[ "$RC_F29" -eq 0 ]] \
+     && [[ -f "$F29_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=T5 ' "$F29_LEDGER" \
+     && grep -q 'verdict=PASS' "$F29_LEDGER"; then
+    echo "self-test (F29) e2e-fused-letter-digit-flip-authorizes-and-emits: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F29) e2e-fused-letter-digit-flip-authorizes-and-emits: FAIL (rc=$RC_F29 out=$F29_OUT ledger=$(cat "$F29_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F30: e2e digit+letter sub-id flip (a sibling project's real
+  # "0a"-"0i" convention) authorizes + emits task=0a. This global hook
+  # also gates that repo's plan files -- see HARNESS-GAP-62's census. ----
+  F30_DIR="$TMPDIR_SELFTEST/f30/docs/plans"
+  mkdir -p "$F30_DIR"
+  printf '# F30 Plan\n\n## Tasks\n\n- [ ] 0a. Do the digit-letter sub-id flip thing\n' > "$F30_DIR/f30-plan.md"
+  cat > "$F30_DIR/f30-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: 0a
+Verified at: 2026-08-04T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 6
+EVID
+  F30_LEDGER="$TMPDIR_SELFTEST/f30-ledger.jsonl"
+  rm -f "$F30_LEDGER"
+  F30_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f30-plan.md","old_string":"- [ ] 0a. Do the digit-letter sub-id flip thing","new_string":"- [x] 0a. Do the digit-letter sub-id flip thing"}}' "$F30_DIR")"
+  set +e
+  F30_OUT="$(printf '%s' "$F30_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F30_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F30=$?
+  set -e
+  if [[ "$RC_F30" -eq 0 ]] \
+     && [[ -f "$F30_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=0a ' "$F30_LEDGER" \
+     && grep -q 'verdict=PASS' "$F30_LEDGER"; then
+    echo "self-test (F30) e2e-digit-letter-subid-flip-authorizes-and-emits: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F30) e2e-digit-letter-subid-flip-authorizes-and-emits: FAIL (rc=$RC_F30 out=$F30_OUT ledger=$(cat "$F30_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F31 (negative control): an ordinal word ("1st") opening a NEW
+  # task line's description must NOT be mistaken for a task id -- the
+  # widened grammar must still BLOCK this flip (no evidence exists for
+  # a task literally named "1st" anyway, but the point is TASK_ID must
+  # resolve to something that does NOT spuriously match "1st"'s prefix
+  # "1s", which would risk authorizing against an unrelated task's
+  # evidence). Proves PEV_TASK_ID_BOUNDARY, not just PEV_TASK_ID_ALT. ----
+  F31_DIR="$TMPDIR_SELFTEST/f31/docs/plans"
+  mkdir -p "$F31_DIR"
+  printf '# F31 Plan\n\n## Tasks\n\n- [ ] 1st pass: sanity check the schema\n' > "$F31_DIR/f31-plan.md"
+  F31_LEDGER="$TMPDIR_SELFTEST/f31-ledger.jsonl"
+  rm -f "$F31_LEDGER"
+  F31_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f31-plan.md","old_string":"- [ ] 1st pass: sanity check the schema","new_string":"- [x] 1st pass: sanity check the schema"}}' "$F31_DIR")"
+  set +e
+  F31_OUT="$(printf '%s' "$F31_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F31_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F31=$?
+  set -e
+  if [[ "$RC_F31" -ne 0 ]] \
+     && [[ ! -s "$F31_LEDGER" ]] \
+     && printf '%s' "$F31_OUT" | grep -q 'PLAN EDIT BLOCKED'; then
+    echo "self-test (F31) ordinal-word-new-task-line-still-blocks-no-over-broadening: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F31) ordinal-word-new-task-line-still-blocks-no-over-broadening: FAIL (rc=$RC_F31 out=$F31_OUT ledger=$(cat "$F31_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F32: check_docs_impact_warn widened consistently -- a NEW
+  # bare-numeric task line with no 'Docs impact:' now WARNs (before this
+  # fix, the old [A-Z]+\.[0-9]+ -only regex never recognized a bare-numeric
+  # line as a task line at all, so this WARN silently never fired for the
+  # estate's dominant convention). Real e2e subprocess, enforce mode
+  # (never blocks) -- asserts the WARN text names the bare-numeric id. ----
+  F32_DIR="$TMPDIR_SELFTEST/f32/docs/plans"
+  mkdir -p "$F32_DIR"
+  printf '# F32 Plan\n\nStatus: DRAFT\n' > "$F32_DIR/f32-plan.md"
+  F32_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f32-plan.md","old_string":"Status: DRAFT","new_string":"- [ ] 42. New bare-numeric task with no docs field."}}' "$F32_DIR")"
+  set +e
+  F32_OUT="$(printf '%s' "$F32_JSON" | BACKLOG_MD_PATH="$TMPDIR_SELFTEST/empty-backlog-f32.md" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F32=$?
+  set -e
+  if [[ "$RC_F32" -eq 0 ]] \
+     && printf '%s' "$F32_OUT" | grep -qE "new task '42' has no 'Docs impact:'"; then
+    echo "self-test (F32) docs-impact-warn-widened-for-bare-numeric-new-task: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F32) docs-impact-warn-widened-for-bare-numeric-new-task: FAIL (rc=$RC_F32 out=$F32_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 27 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 32 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1937,15 +2155,19 @@ check_docs_impact_warn() {
   # whose new fragment contained no task line — the `[[ -z ]] && return`
   # guard below never ran (latent since §F.2b; caught by BACKLOG-LOOP-01's
   # F15 end-to-end scenario, 2026-07-06).
+  # Shape + boundary per PEV_TASK_ID_ALT/PEV_TASK_ID_BOUNDARY (HARNESS-
+  # GAP-62) -- same grammar the checkbox-flip authorization site consults,
+  # so a bare-numeric or digit-letter new task line now gets the same
+  # Docs-impact nudge a classic dotted-letter one always did.
   local new_task_lines
-  new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null || true)"
+  new_task_lines="$(echo "$new_content" | grep -E "^[[:space:]]*-[[:space:]]*\\[[[:space:]]*\\][[:space:]]+(${PEV_TASK_ID_ALT})(${PEV_TASK_ID_BOUNDARY})" 2>/dev/null || true)"
   [[ -z "$new_task_lines" ]] && return 0
 
   local warned=0
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     local tid
-    tid="$(echo "$line" | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)"
+    tid="$(echo "$line" | grep -oE "${PEV_TASK_ID_ALT}" | head -1)"
     [[ -z "$tid" ]] && continue
     # Skip if this task ID already existed anywhere in the old content
     # (i.e., this is an edit to existing task text, not a brand-new task).
@@ -2321,8 +2543,13 @@ if [[ "$TOOL_NAME" == "Edit" ]]; then
   # a checked box? If yes, this is a checkbox flip.
   if echo "$OLD_STR" | grep -qE '^\s*-\s*\[\s*\]'; then
     if echo "$NEW_STR" | grep -qE '^\s*-\s*\[\s*[xX]\s*\]'; then
-      # Extract the task ID from the new_string (format: - [x] A.1 ...)
-      TASK_ID=$(echo "$NEW_STR" | grep -oE '\[[xX]\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)
+      # Extract the task ID from the new_string (format: - [x] A.1 ..., or
+      # any of the other three PEV_TASK_ID_ALT shapes -- HARNESS-GAP-62).
+      # Stage 1 anchors on the checkbox marker AND the trailing token
+      # boundary (PEV_TASK_ID_BOUNDARY) so a bare-numeric/digit-letter id
+      # never spuriously eats a prefix of following prose ("1st" -> "1s");
+      # stage 2 re-extracts just the id from that already-validated match.
+      TASK_ID=$(echo "$NEW_STR" | grep -oE "\\[[xX]\\][[:space:]]+(${PEV_TASK_ID_ALT})(${PEV_TASK_ID_BOUNDARY})" | grep -oE "${PEV_TASK_ID_ALT}" | head -1)
 
       # Acquire the per-plan lock so two parallel verifiers serialize on
       # evidence-mtime + checkbox-flip decisions. If the lock cannot be

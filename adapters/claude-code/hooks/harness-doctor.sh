@@ -2801,6 +2801,47 @@ check_stage2_admission_open() {
 }
 
 # ------------------------------------------------------------
+# Check: verify-event-silence (HARNESS-GAP-62 class fix, 2026-08-04) --
+# thin WARN-only wrapper around `verify-event-audit.sh --recent-silence`,
+# making the SILENCE DETECTOR standing (fires on every doctor run) instead
+# of something a maintainer has to remember to invoke by hand. All the
+# actual method (git-log-vs-ledger comparison, total-silence-only WARN
+# condition, false-positive-tolerance reasoning) lives in that script's
+# own header comment above `_vea_cmd_recent_silence` -- this wrapper does
+# not duplicate it, it shells out to the one place it lives (single
+# responsibility: verify-event-audit.sh already owns "read the ledger and
+# report"; this check just makes that report run automatically).
+#
+# NOT the stage2-admission-open data-key idiom (T6/T24), deliberately.
+# That idiom persists a config-data DATE because the condition it gates
+# ("has REQ-A8 completed yet") is external, one-shot state nothing else
+# computes. This check's condition ("were there >=N flips with 0 events in
+# the last 7 days") is fully re-derivable every run from git history + the
+# ledger -- there is no state to persist, and inventing one would just be
+# a second, driftable copy of what git log + the ledger already know.
+#
+# Degrades to completely silent (never WARNs, never crashes the doctor) if
+# git is unavailable, the script is missing, or docs/plans/ doesn't exist
+# -- a broken detector must never take the doctor down with it.
+# ------------------------------------------------------------
+check_verify_event_silence() {
+  local live_home="$1" repo_root="$2"
+  local script="${repo_root}/adapters/claude-code/scripts/verify-event-audit.sh"
+  [[ -f "$script" ]] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  [[ -n "$repo_root" && -d "${repo_root}/docs/plans" ]] || return 0
+
+  local out rc
+  out="$(cd "$repo_root" 2>/dev/null && bash "$script" --recent-silence "docs/plans" "7 days ago" 3 2>&1 1>/dev/null)"
+  rc=$?
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+  if [[ "$rc" -eq 1 ]] && [[ "$out" == *"SILENCE_DETECTED"* ]]; then
+    _warn "verify-event-silence" "$out"
+  fi
+  return 0
+}
+
+# ------------------------------------------------------------
 # Check: orphaned-worktree-work — the OUT-OF-SESSION complement to
 # session-start-digest.sh's feed_stranded_work (same shared detector, two
 # surfaces; constitution §5 "persist in the same response" + the
@@ -4247,6 +4288,8 @@ run_quick_checks() {
   check_maintenance_both_substrates_alive "$live_home" "$repo_root"
   # gated-pipeline-master-2026-08 T24 (REQ-C6/arch-M3)
   check_stage2_admission_open "$live_home" "$repo_root"
+  # HARNESS-GAP-62 class fix (2026-08-04) -- standing silence detector
+  check_verify_event_silence "$live_home" "$repo_root"
 }
 
 # ============================================================
