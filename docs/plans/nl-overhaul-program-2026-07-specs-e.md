@@ -1,5 +1,6 @@
 # Wave E specs — signal loop + telemetry: exact per-task build specs (appendix to nl-overhaul-program-2026-07.md)
-Status: REFERENCE (spec appendix, not an independent plan — task E.0 deliverable)
+Status: REFERENCE
+Status-note: spec appendix, not an independent plan — task E.0 deliverable
 prd-ref: n/a — harness-development
 rung: 1
 architecture: coding-harness

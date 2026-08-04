@@ -1,5 +1,6 @@
 # Wave F — mechanical specs (strong-model refinement, authored 2026-07-03 by the program-origin Fable session)
-Status: REFERENCE (spec appendix, not an independent plan — task F.0 deliverable)
+Status: REFERENCE
+Status-note: spec appendix, not an independent plan — task F.0 deliverable
 prd-ref: n/a — harness-development
 rung: 1
 architecture: coding-harness

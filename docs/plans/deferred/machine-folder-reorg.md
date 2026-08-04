@@ -1,8 +1,7 @@
 # Plan — Machine folder reorganization: three roots, every project home
 
-Status: DEFERRED (operator 2026-07-30: "the folder cleanup is not a
-priority at all"; no tasks dispatched until the operator raises it. Recorded, not
-dropped — see Decisions Log D4.)
+Status: DEFERRED
+Status-note: operator 2026-07-30: "the folder cleanup is not a priority at all"; no tasks dispatched until the operator raises it. Recorded, not dropped — see Decisions Log D4.
 Key: ORG
 Mode: code
 rung: 1

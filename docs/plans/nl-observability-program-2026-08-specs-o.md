@@ -1,12 +1,7 @@
 # Wave O mechanical specs (specs-o) — NL Observability Program
 
-Status: NORMATIVE for Wave O builders (O.0 output, authored 2026-07-06, strongest
-available model per D9). Parent plan: `docs/plans/nl-observability-program-2026-08.md`
-(Status: ACTIVE, operator early-activation 2026-07-06 "Let's do the full redesign on
-the Workstreams UI"). Normative design: `docs/reviews/2026-07-04-observability-design-sketch.md`
-— the two laws (DERIVE-DON'T-MAINTAIN; EVERY-SIGNAL-HAS-A-CONSUMER), the six operator
-questions, three surfaces, non-goals, pre-registered success metrics. Where this spec
-and the sketch conflict, the sketch wins.
+Status: REFERENCE
+Status-note: NORMATIVE for Wave O builders (O.0 output, authored 2026-07-06, strongest available model per D9). Parent plan: `docs/plans/nl-observability-program-2026-08.md` (Status: ACTIVE, operator early-activation 2026-07-06 "Let's do the full redesign on the Workstreams UI"). Normative design: `docs/reviews/2026-07-04-observability-design-sketch.md` — the two laws (DERIVE-DON'T-MAINTAIN; EVERY-SIGNAL-HAS-A-CONSUMER), the six operator questions, three surfaces, non-goals, pre-registered success metrics. Where this spec and the sketch conflict, the sketch wins.
 
 Evidence base folded in at O.0 (per activation directive):
 - Backlog rows ABSORBED by this wave (marked in `docs/backlog.md` in the O.0 commit):
