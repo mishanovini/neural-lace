@@ -3249,3 +3249,29 @@ Verdict: PASS
 Confidence: 9
 Reason: PROVEN: the sole batch #4 FAIL basis is discharged — both follow-up rows are real, substantive, and on master at the SHA the correction section cites (grep -c → 2; git show 96814749 adds both), and the evidence file now carries an honest correction of the original false filing claim including how the rows landed. All other proof stands from batch #4's own re-runs (five suites green, C1-C5, live probes, comprehension-gate PASS): the four deliverables (a)-(d) were never in doubt; only the evidence overstatement was, and it is now corrected on the record.
 ---
+
+## Task 8 — session triage record (2026-08-04, orchestrator; T8 REMAINS OPEN)
+
+Full-doctor census this session: 40 RED / 83 WARN (raw run in session transcript). Triage state:
+- **Selftest-sweep class (≈14 REDs): FIXED at cd02f6f9** — three PROVEN sweep-layer root causes
+  (dr__resolve_root now delegates to nl_repo_root; live-vs-repo divergence now cmp-disclosed,
+  downgrading stale-live failures to named WARNs while byte-identical failures stay RED; nonode
+  shim launches the real bash). Doctor own-suite 190/1 (was 47/138 under the shim crash).
+  Six byte-identical suite REDs individually dispositioned (backlog
+  SELFTEST-SWEEP-NOT-STALENESS-2026-08-04): 2 transient, 1 NTFS-honest, 1 contention-confounded,
+  2 open.
+- **review-independence class (10 REDs): pathway = review-queue.sh enqueue + second-principal
+  runner (Decision 067).** Enqueue is mechanical (dispatched this session); the REDs clear only
+  when a genuinely different principal completes the re-reviews — cannot be closed from this
+  session by definition.
+- **Budget classes:** Stop-chain 9>6 and blocking-units 15/14 are Stage-2 consolidation scope
+  (the design's own non-goals defer hook-stub consolidation to the admission-triggered next
+  cycle); budget-worktrees REDs on the 4 held trees are honest signal until their content
+  reconciliation (drain record, salvage pass 2).
+- **Environmental:** portability-sweep budget exhaustion; limit-resume stale-armed markers
+  (other machines' sessions).
+**Honest position:** the 8e ≤9-REDs bar is NOT met and is not reachable this session without
+waivering real signal. T8 stays [ ]; .stage2_admission.opened_since stays null (T24's check
+correctly silent). Projected next-session path: complete the record enqueues → run the
+second-principal runner (laptop/Mac mini) → re-measure; Stage-2 admission opens at T8's true
+completion.
