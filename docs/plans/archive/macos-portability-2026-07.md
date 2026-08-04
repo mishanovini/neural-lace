@@ -1,6 +1,6 @@
 # Plan — macOS portability (this Mac is a first-class harness-dev machine)
 
-Status: ACTIVE
+Status: COMPLETED
 Mode: code
 Owner: interactive session (2026-07-28, operator-directed)
 Backlog items absorbed: none
@@ -226,4 +226,10 @@ doctor check so it cannot silently rot.
 - 2026-07-29: `adapters/claude-code/hooks/scope-enforcement-gate.sh` — M6: `declare -A FINAL_OOS` -> parallel indexed arrays. SEVERE: on bash 3.2 this BLOCKING PreToolUse gate emitted `declare: -A: invalid option` and then exited 0 — it authorized every out-of-scope commit while appearing to run. Its `--self-test` hid this by re-invoking children through a PATH-resolved bare `bash` (Homebrew 5.3), so it reported 35/0 for an interpreter it never exercised; all 14 re-invocations now use `"$BASH"`. Two new regression scenarios (35 static bash-4-construct scan, 36 interpreter fidelity).
 - 2026-07-29: `adapters/claude-code/hooks/lib/perf-tick-snapshot.sh` — M6: `local -A live_pids` -> pipe-delimited set + `case`. Behaviorally benign on 3.2 by accident (PIDs are integers, so the failed associative declaration degraded into a working INDEXED-array lookup) but it wrote 2 error lines to stderr per tick and would have collapsed to index 0 the moment a key stopped being a plain integer. New scenario 8 asserts both a clean stderr and the absence of bash-4 constructs.
 - 2026-07-29: `adapters/claude-code/hooks/lib/observability-derive.sh` — M6: `declare -A _od_waiting_set` (membership set -> pipe-delimited string + `case`) and `declare -A gate_block gate_waiver gate_downgrade` (-> four parallel indexed arrays keyed by a shared index, which also deletes the O(n^2) `all_gates` dedupe). Self-test scenario 10's bare-`bash` re-invocation now uses `"$BASH"`. New scenario 5b closes a proven oracle gap: the old single-gate fixture stayed GREEN under a mutation that collapsed every gate onto one bucket.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: all 6 tasks confirmed checked in-plan;
+spot-checked M2/M3/M5 all confirmed present on master (`3e1da4ff`, `9eb14b1c`, `e5a453de`). No
+further build work needed — bookkeeping close only. Status flipped ACTIVE -> COMPLETED.
 - 2026-07-29: NOT changed here, deliberately — the 9 `declare -gA` sites remaining in `adapters/claude-code/hooks/lib/observability-derive.sh` (`_OD_TRANSCRIPT_INDEX`, the 7 `_OD_HB_*` heartbeat field maps, `_OD_COSTS_CACHE`, `_OD_BLOCK_EPOCH_BY_SID`, `_OD_THROTTLE_EPOCH_BY_SID`) and the GNU-only `find -printf` at the same file's transcript-index build. Left out to keep this commit's before/after failure comparison clean; see the M6 follow-up list in `docs/backlog.md`.

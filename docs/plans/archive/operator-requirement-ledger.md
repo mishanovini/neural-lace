@@ -1,5 +1,5 @@
 # Plan: Operator-requirement ledger — make the operator's words a checkable artifact
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -285,3 +285,12 @@ because it did not actually run.
   retirement condition names the adoption evidence that would justify promotion.
 - **D4 — `holds` requires `--evidence`.** An unevidenced pass is the failure being
   prevented, so the mechanism refuses to record one rather than trusting the caller.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: all 5 tasks (T1-T5) fully built and
+confirmed on master via `8d53410e` (`ask-registry.sh` +696 lines, `cmd_record_requirement`/
+invariant verbs present, `task-verifier.md` Step 1.6, manifest entry, doctrine file). That
+commit's own message states task-verifier was not invoked, so the plan's checkboxes remained
+correctly unflipped even though the work is done. Target date (2026-08-05) not yet due, but
+the work is already complete. Status flipped ACTIVE -> COMPLETED.
