@@ -3936,7 +3936,7 @@ check_review_reviewer_independence() {
 }
 
 check_selftest_sweep() {
-  local live_home="$1"
+  local live_home="$1" repo_root="${2:-}"
   # T2 origin guard (agent-efficiency-fixes-2026-07, docs/lessons/2026-07-20-
   # efficiency-recurrence-live-diagnosis.md): this is the CHOKE POINT that
   # fans a single `--full` invocation out into "every live hook's own
@@ -3954,6 +3954,28 @@ check_selftest_sweep() {
   fi
   local hooks_dir="${live_home}/hooks"
   [[ -d "$hooks_dir" ]] || { _warn "selftest-sweep" "no live hooks directory — nothing to check"; CHECKS_RUN=$((CHECKS_RUN + 1)); return 0; }
+
+  # TARGET DISCLOSURE (gated-pipeline-master-2026-08 Task 8 doctor triage —
+  # sweep-layer root-cause pass). This sweep tests LIVE BYTES at
+  # ${hooks_dir}: the post-install ~/.claude mirror, refreshed from
+  # origin/master by session-start-auto-install.sh, NOT this invocation's own
+  # repo checkout. On an in-flight branch/worktree whose commits have not
+  # reached origin/master, the live copy of a hook can legitimately lag the
+  # repo copy by hundreds of lines (measured: dispatch-chain-gate.sh 182
+  # live-mirror lines vs 1121 repo lines on this exact checkout) — a RED from
+  # that lag is a real "the installed copy is stale" signal, but it is NOT a
+  # suite regression, and reporting it as a bare "--self-test exited N" is
+  # misleading (the doctor's own claimed-vs-actual arbiter role, applied to
+  # itself). Below, a failing hook whose live bytes DIFFER from the repo
+  # copy at the same relative path is downgraded from RED to a WARN that
+  # names the divergence explicitly; a failing hook that is BYTE-IDENTICAL
+  # to its repo copy stays RED (staleness cannot explain it) and the message
+  # says so, so "identical, still fails" is never mistaken for lag.
+  if [[ -n "$repo_root" ]]; then
+    _warn "selftest-sweep" "target: LIVE bytes at ${hooks_dir} (post-install mirror; refreshed from origin/master, may lag this checkout's in-flight/unmerged commits until the next install) — compared per-failure against the repo copy under ${repo_root}/adapters/claude-code/hooks/ to distinguish live-mirror staleness from a real suite regression"
+  else
+    _warn "selftest-sweep" "target: LIVE bytes at ${hooks_dir} (post-install mirror) — repo root unresolved, so failures below CANNOT be checked against repo HEAD for staleness; treat every RED as unclassified until repo root resolves"
+  fi
 
   # SCOPE FIX (plan docs/plans/macos-portability-2026-07.md, task M5): this
   # loop used to glob ONLY "$hooks_dir"/*.sh. A top-level glob never matches a
@@ -3985,7 +4007,28 @@ check_selftest_sweep() {
     elif [[ "$rc" -ne 0 ]]; then
       local last_line
       last_line="$(printf '%s\n' "$out" | tail -n 1)"
-      _red "selftest-sweep" "${label} --self-test exited ${rc}: ${last_line}"
+      # Live-vs-repo divergence check (this task's second root-cause finding):
+      # only downgrade to WARN when the repo copy at the SAME relative path
+      # both exists and differs byte-for-byte from the live copy that just
+      # failed — an honest "this may be staleness, not a regression" claim,
+      # never a blanket suppression of the whole sweep.
+      local repo_hook="" diverged=0
+      if [[ -n "$repo_root" ]]; then
+        repo_hook="${repo_root}/adapters/claude-code/hooks/${label}"
+        if [[ -f "$repo_hook" ]] && ! cmp -s "$hook" "$repo_hook" 2>/dev/null; then
+          diverged=1
+        fi
+      fi
+      if [[ "$diverged" -eq 1 ]]; then
+        local live_lines repo_lines
+        live_lines="$(wc -l < "$hook" 2>/dev/null | tr -d ' ')"
+        repo_lines="$(wc -l < "$repo_hook" 2>/dev/null | tr -d ' ')"
+        _warn "selftest-sweep" "${label} --self-test exited ${rc} under the LIVE mirror copy (${live_lines:-?} lines), but the repo copy at ${repo_hook} DIFFERS (${repo_lines:-?} lines) — likely live-mirror staleness (session-start-auto-install.sh syncs from origin/master, not this in-flight checkout), NOT a suite regression. Verify directly: bash \"${repo_hook}\" --self-test. Last live-run line: ${last_line}"
+      elif [[ -n "$repo_root" && -f "$repo_hook" ]]; then
+        _red "selftest-sweep" "${label} --self-test exited ${rc}: ${last_line} (live mirror copy is BYTE-IDENTICAL to the repo copy at ${repo_hook} — staleness cannot explain this, treat as a genuine failure)"
+      else
+        _red "selftest-sweep" "${label} --self-test exited ${rc}: ${last_line}"
+      fi
     fi
   done
   CHECKS_RUN=$((CHECKS_RUN + 1))
@@ -4341,12 +4384,30 @@ if [[ "${1:-}" == "--self-test" ]]; then
   # This helper makes the fallback EXECUTE: a PATH containing every tool the
   # doctor needs EXCEPT node. Built once, reused by every parity scenario.
   # ------------------------------------------------------------
+  # WINDOWS FIX (backlog SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01, gated-
+  # pipeline-master-2026-08 Task 8 doctor triage, fixed per that row's own
+  # proposed direction): `bash` is deliberately NOT in this shim's tool
+  # list. On Windows/MSYS2, `bash.exe` needs companion DLLs sitting next to
+  # the real binary -- a bare symlink to the exe (no DLLs alongside it)
+  # fails to load at all ("error while loading shared libraries"). This
+  # shim used to include a symlinked `bash`, and `_run_quick_nonode` below
+  # invoked the grandchild as a bare `bash "$SELF_TEST_HOOK" ...` AFTER
+  # setting `PATH="$shim"` -- a bash prefix-assignment affects lookup of
+  # the command itself, so that bare `bash` resolved to the broken
+  # symlink and the child crashed before the doctor script it was trying
+  # to run ever executed. The 5 P-14 jq-parity self-test scenarios then
+  # reported "jq branch produced NOTHING on a fixture that must report" --
+  # a real symptom, wrong cause (reproduced directly:
+  # `PATH=<shim-dir> bash -c 'true'` -> DLL load error). Omitting `bash`
+  # from the shim closes the hole for any OTHER PATH-based `bash` lookup a
+  # grandchild might perform; `_run_quick_nonode` closes it for its own
+  # top-level invocation by resolving the interpreter BEFORE the override.
   _NONODE_DIR=""
   _nonode_path() {
     if [[ -z "$_NONODE_DIR" ]]; then
       _NONODE_DIR="$(mktemp -d 2>/dev/null)" || return 1
       local _t _p
-      for _t in jq git grep sed awk bash sh find sort uniq head tail cat wc tr \
+      for _t in jq git grep sed awk sh find sort uniq head tail cat wc tr \
                 date mkdir rm cp mv chmod ls dirname basename realpath stat env \
                 xargs comm diff touch tee cut expr mktemp readlink od printf \
                 which id whoami uname; do
@@ -4358,10 +4419,20 @@ if [[ "${1:-}" == "--self-test" ]]; then
   }
 
   _run_quick_nonode() {
-    local dir="$1" shim
+    local dir="$1" shim real_bash
     shim="$(_nonode_path)" || { printf 'NONODE-SHIM-UNAVAILABLE'; return 0; }
+    # Resolve the REAL, already-loaded interpreter BEFORE the PATH override
+    # takes effect (this is the fix itself -- see the comment on
+    # _nonode_path above). $BASH is this running interpreter's own path,
+    # set by bash itself and never affected by a later PATH change;
+    # `command -v bash` on the UNSHIMMED PATH is the fallback if $BASH is
+    # somehow unset. Invoking that absolute path bypasses command-name
+    # lookup for this call entirely, so PATH="$shim" only restricts what
+    # the GRANDCHILD (the --quick run's own node/jq lookups) can see.
+    real_bash="${BASH:-$(command -v bash 2>/dev/null)}"
+    [[ -x "$real_bash" ]] || real_bash="bash"
     HARNESS_DOCTOR_HOME="$dir/live" NL_REPO_ROOT="$dir/repo" PATH="$shim" \
-      bash "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
+      "$real_bash" "$SELF_TEST_HOOK" --quick "$dir/repo" 2>&1
   }
 
   # _assert_node_jq_parity <label> <scenario-dir> <check-id> <want-nonempty:0|1>
@@ -7998,7 +8069,7 @@ else
   # fixture hook produces (must be exactly 1) so a future regression of
   # this exact shape fails loudly instead of merely costing time.
   if [[ "$MODE" == "full" ]]; then
-    check_selftest_sweep "$LIVE_HOME"
+    check_selftest_sweep "$LIVE_HOME" "$REPO_ROOT"
     check_master_drift_selftest "$LIVE_HOME" "$REPO_ROOT"
     check_portability_sweep "$LIVE_HOME" "$REPO_ROOT"
     check_selftest_exclusions_selftest "$REPO_ROOT"
