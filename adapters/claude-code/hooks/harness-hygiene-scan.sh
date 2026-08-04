@@ -122,7 +122,8 @@
 # it, and the `/harness-review` skill that wraps it is operator-invoked,
 # never cron'd; (2) the ACTUAL catcher — `.github/workflows/
 # secret-backstop.yml` and `.github/workflows/server-side-enforcement.yml`,
-# both REQUIRED checks on every `push`/`pull_request` — do NOT call
+# both run on every `push`/`pull_request` and go RED (red CI is stop-and-fix
+# here; NOT branch-protection-required — only pr-template-check's validate is) — do NOT call
 # `--full-tree` either; they call this script with the diff-range's
 # changed files as EXPLICIT ARGS (`bash harness-hygiene-scan.sh
 # "${changed[@]}"`), which is mode-3 explicit-file-arg scanning: WHOLE-FILE,
@@ -2123,7 +2124,7 @@ while IFS= read -r -d '' rel_path; do
   # on disk still has one, pre-existing hygiene debt exists that this
   # commit does not touch. Not blocking here — but PROVEN not silently
   # absorbed elsewhere either (C1 fix, harness-review 2026-08-04): the two
-  # REQUIRED push-time CI checks (.github/workflows/secret-backstop.yml,
+  # push-time CI checks that go RED (NOT branch-protection-required; .github/workflows/secret-backstop.yml,
   # .github/workflows/server-side-enforcement.yml) scan every changed
   # file's WHOLE CONTENT on every push with no waiver channel, so this
   # exact debt goes RED at push time the next time the file is touched at
@@ -2149,7 +2150,7 @@ if [ "$WARN_COUNT" -gt 0 ]; then
     echo "(Not blocking here: the staged delta for the file(s) above does not"
     echo " touch the flagged line(s). This is NOT the end of it, though --"
     echo " push-time CI (.github/workflows/secret-backstop.yml and"
-    echo " server-side-enforcement.yml, both REQUIRED checks, both WHOLE-FILE,"
+    echo " server-side-enforcement.yml, run per push/PR and go RED — not branch-protection-required — both WHOLE-FILE,"
     echo " with NO waiver channel) will re-scan this file's full content on"
     echo " the next push that touches it at all, and will go RED. Fix it now:"
     echo " remove/scrub the flagged content, or -- if it is a known-legitimate"

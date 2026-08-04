@@ -4,8 +4,9 @@ name: Server-side enforcement
 # biggest security gap. The hook chain is only as strong as its non-
 # bypassability." This workflow runs the same local hooks server-side
 # so a `git commit --no-verify` or `git push --no-verify` can no longer
-# slip past the perimeter — branch-protection requires this check to
-# pass before merge.
+# slip past the perimeter — the run goes RED on failure (red CI is
+# stop-and-fix in this harness; NOT branch-protection-required as of
+# 2026-08-04 — only pr-template-check's validate is a required check).
 
 on:
   push:

@@ -150,7 +150,7 @@ or API surface is introduced.
   schedule; the CI workflows do whole-file scanning via explicit changed-file args, a
   different, ALREADY-existing mechanism, not `--full-tree`). The corrected assumption:
   push-time CI (`.github/workflows/secret-backstop.yml`,
-  `.github/workflows/server-side-enforcement.yml`, both REQUIRED, both whole-file, no
+  `.github/workflows/server-side-enforcement.yml`, both per-push/PR RED-on-fail (not branch-protection-required), both whole-file, no
   waiver channel) is the real backstop for pre-existing content a delta-scoped local
   commit does not touch; `--full-tree` remains available ONLY as an operator-invoked,
   on-demand audit.
@@ -259,7 +259,7 @@ all six land. Status: all six addressed in this same worktree, same plan.
   `--full-tree` on any schedule (`/harness-review` is operator-invoked only, absent from
   `adapters/claude-code/config/schedule-manifest.json`), and the REAL catcher
   (`.github/workflows/secret-backstop.yml:133`, `server-side-enforcement.yml:118`, both
-  REQUIRED push-time checks) does whole-file scanning via explicit changed-file args
+  push-time RED-on-fail checks, not branch-protection-required) does whole-file scanning via explicit changed-file args
   (`bash harness-hygiene-scan.sh "${changed[@]}"`), not `--full-tree`, with NO waiver
   channel. Fixed in the header (Defect 1 section), the per-file WARN comment, the
   WARN stderr message, and this plan's own Assumptions section — all now state the true
