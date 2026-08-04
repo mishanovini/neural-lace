@@ -376,3 +376,25 @@ protection until closed or given an earned Review Chain. Commit `8e4073b2`.
   `SWEEP_TIMEOUT` alerts as the worktree count grows (42 now vs 10 when last measured); tracked
   as pre-existing, out of this task's scope.
 - `/api/webhooks/retell` auth fix — re-owned to the operator as the downstream product's owner, not fixed here.
+
+## Execution log (orchestrator, 2026-08-04)
+
+EXECUTE list run with fresh per-entry re-verification (ancestry re-checked for
+Tiers 1/3; `git worktree remove` without --force everywhere, so git's own
+dirty/locked refusal backstopped every entry):
+
+- **33 removed** (of 38 listed) + `git worktree prune` cleared the flagged stray;
+  branches of removed worktrees deleted. Worktree census: 42 → 9 remaining
+  (main + live-session trees + the holds below).
+- **Held back, 5 — kept, nothing forced:**
+  - `a60cd9f14ad2034df`, `aa680cc77830d361b`, `afcf419ea529b1ca0` (all Tier 3):
+    the record's "re-confirmed ancestor-of-master rc=0 today" claim did NOT
+    reproduce at execute time — their TIP SHAs (7afffe07/390dc65e/4c940b7b) are
+    not ancestors; the landed-via mapping is subject-level only. Stay pending a
+    content-level diff check before any removal.
+  - `a87622c2020ce66a5` (Tier 1), `a411c11a6438d7354` (Tier 2): dirty or locked
+    at execute time — refused by git, kept for a future sweep after inspection.
+- Do-not-touch trio honored (`a8cce9bcdef232363` — since merged via train
+  346646c3; `aa43558579db80e88` — since merged via 1cb3d2bb; `a05a34c3229e0a919`
+  — this drain's own tree, merged via d0aeb643). All three now eligible for the
+  NEXT sweep, not this one.
