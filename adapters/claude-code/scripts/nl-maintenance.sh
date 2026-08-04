@@ -301,6 +301,11 @@ _nm_run_job() {
 # friction read from lib/workaround-sensor-lib.sh's ws_record ledger (HR-F6
 # fix, gated-pipeline-master-2026-08 Task 5 -- this reader degrades to an
 # honest empty state, never fakes data, when the ledger file is absent).
+# Also computes (gated-pipeline-master-2026-08 Task 22, REQ-C3): the
+# machine-census scheduled-task count (HR-F12 fix -- honest total, not
+# the manifest subset) and the net-artifact delta under
+# adapters/claude-code/** since the program's start commit (D-07
+# anti-bloat scorecard).
 # ----------------------------------------------------------------------
 _nm_dashboard_ttl_seconds() { printf '%s' "${NL_MAINT_DASHBOARD_TTL_SECONDS:-300}"; }
 
@@ -338,6 +343,61 @@ _nm_count_scheduled_tasks_enabled() {
   printf '%s' "$n"
 }
 
+# HR-F12 fix (2026-08-03 stage0/1 harness review; gated-pipeline-master-
+# 2026-08 Task 22 / REQ-C3): the function above counts only the manifest
+# SUBSET (mechanisms with a non-null legacy_task_name) -- it silently
+# excludes any harness-managed schtasks entry registered outside that
+# subset. This was PROVEN wrong on this machine: downstream-product-
+# health-monitor carries legacy_task_name:null in schedule-manifest.json,
+# yet a live, Enabled "NL-product-health-monitor" schtasks entry exists
+# and _nm_count_scheduled_tasks_enabled never sees it. This function is
+# the honest machine census instead -- every schtasks entry whose name
+# starts with "NL-" (the harness's own registration convention, not a
+# filter over manifest content), counted Enabled. Non-Windows / schtasks-
+# absent -> empty (honest "not applicable here"), never a fabricated 0.
+# `grep -F '"\NL-'` (fixed string, not a regex) is deliberate: schtasks'
+# CSV TaskName column prints root-folder tasks as `"\NL-...` (a literal
+# backslash between the opening quote and the name -- PROVEN via `od -c`
+# against this machine's real output) -- an earlier `grep -i '"NL-'`
+# draft silently matched ZERO rows because it required the quote to be
+# immediately followed by "NL-" with no backslash, which never occurs.
+# -F also sidesteps `-i` aborting this machine's grep in combination
+# (PROVEN: `grep -iF` here exits 134/SIGABRT) -- task names are always
+# upper-case "NL-" by this harness's own convention, so case-sensitivity
+# costs nothing.
+_nm_count_scheduled_tasks_census() {
+  command -v schtasks >/dev/null 2>&1 || { printf ''; return 0; }
+  local n
+  n="$(MSYS_NO_PATHCONV=1 schtasks /Query /FO CSV 2>/dev/null | tr -d '\r' | grep -F '"\NL-' | grep -c '"Ready"$')"
+  [[ "$n" =~ ^[0-9]+$ ]] || n=0
+  printf '%s' "$n"
+}
+
+# REQ-C3 (gated-pipeline-master-2026-08 Task 22): net files added minus
+# deleted under adapters/claude-code/** since the PROGRAM's start tag --
+# the predecessor plan's first commit (found via `git log --follow` on
+# its now-archived path, which survives the later archive-move rename;
+# same command a human re-derives with, recorded in the Task 22 evidence
+# entry). Restricted to adapters/claude-code/** per the task's own
+# counting-method text; cross-checked by that evidence entry against the
+# design's own §7 anti-bloat ledger (which scopes to THIS design's own
+# incremental additions, a subset of this program-wide total -- the two
+# are expected to differ, not match, and the evidence entry says why).
+# Degrades to empty (never a fabricated 0) when git, the repo, or the
+# start commit are unavailable -- e.g. a fixture repo in self-test.
+_nm_count_net_artifact_delta() {
+  local repo="$1" start added deleted
+  command -v git >/dev/null 2>&1 || { printf ''; return 0; }
+  [[ -d "$repo/.git" ]] || { printf ''; return 0; }
+  start="$(git -C "$repo" log --follow --format=%h -- docs/plans/archive/harness-execution-redesign-2026-08.md 2>/dev/null | tail -1)"
+  [[ -z "$start" ]] && { printf ''; return 0; }
+  added="$(git -C "$repo" diff --name-status -M "$start" HEAD -- adapters/claude-code/ 2>/dev/null | grep -c '^A')"
+  deleted="$(git -C "$repo" diff --name-status -M "$start" HEAD -- adapters/claude-code/ 2>/dev/null | grep -c '^D')"
+  [[ "$added" =~ ^[0-9]+$ ]] || added=0
+  [[ "$deleted" =~ ^[0-9]+$ ]] || deleted=0
+  printf '%s' "$(( added - deleted ))"
+}
+
 _nm_refresh_dashboard_snapshot() {
   local force="${1:-0}" snap ttl now age gen
   snap="$(_nm_dashboard_path)"
@@ -358,17 +418,21 @@ _nm_refresh_dashboard_snapshot() {
   template_settings="${repo}/adapters/claude-code/settings.json.template"
   live_settings="${live_home}/settings.json"
 
-  local hooks_template hooks_live sstart_template sstart_live tasks_enabled
+  local hooks_template hooks_live sstart_template sstart_live tasks_enabled tasks_census net_delta
   hooks_template="$(_nm_count_bash_hooks "$template_settings")"
   hooks_live="$(_nm_count_bash_hooks "$live_settings")"
   sstart_template="$(_nm_count_sessionstart_spawns "$template_settings")"
   sstart_live="$(_nm_count_sessionstart_spawns "$live_settings")"
   [[ -f "$manifest" ]] && tasks_enabled="$(_nm_count_scheduled_tasks_enabled "$manifest")" || tasks_enabled=""
+  tasks_census="$(_nm_count_scheduled_tasks_census)"
+  net_delta="$(_nm_count_net_artifact_delta "$repo")"
   [[ -z "$hooks_template" ]] && hooks_template=null
   [[ -z "$hooks_live" ]] && hooks_live=null
   [[ -z "$sstart_template" ]] && sstart_template=null
   [[ -z "$sstart_live" ]] && sstart_live=null
   [[ -z "$tasks_enabled" ]] && tasks_enabled=null
+  [[ -z "$tasks_census" ]] && tasks_census=null
+  [[ -z "$net_delta" ]] && net_delta=null
 
   # Cost-budget rows: cost_per_day_ms = (86400 / declared_cadence_seconds)
   # * windows spawn_cost_ms -- a rough, DOCUMENTED-as-rough per-mechanism
@@ -436,6 +500,8 @@ _nm_refresh_dashboard_snapshot() {
     --argjson sstart_template "$sstart_template" \
     --argjson sstart_live "$sstart_live" \
     --argjson tasks_enabled "$tasks_enabled" \
+    --argjson tasks_census "$tasks_census" \
+    --argjson net_delta "$net_delta" \
     --argjson cost_rows "$cost_rows" \
     --argjson friction_rows "$friction_rows" \
     --argjson friction_available "$friction_available" \
@@ -446,7 +512,8 @@ _nm_refresh_dashboard_snapshot() {
       inventory: {
         hooks_per_bash: { template: $hooks_template, live: $hooks_live, target: 6 },
         sessionstart_spawns: { template: $sstart_template, live: $sstart_live, target: 2 },
-        legacy_scheduled_tasks_enabled: { count: $tasks_enabled, target_max: 2 }
+        legacy_scheduled_tasks_enabled: { count: $tasks_enabled, target_max: 2, machine_census_enabled: $tasks_census },
+        net_artifact_delta: { value: $net_delta, restricted_to: "adapters/claude-code/**", target: "<=0 (anti-bloat, D-07)" }
       },
       cost_budget: $cost_rows,
       gate_friction: { available: $friction_available, rows: $friction_rows }
@@ -896,6 +963,8 @@ EOF
   _file_exists "$s8_state/snapshots/dashboard.json" "S8 dashboard snapshot written"
   _contains "$(cat "$s8_state/snapshots/dashboard.json" 2>/dev/null)" '"hooks_per_bash"' "S8 snapshot carries hooks_per_bash inventory"
   _contains "$(cat "$s8_state/snapshots/dashboard.json" 2>/dev/null)" '"available":false' "S8 gate_friction honestly reports available:false when no ledger exists yet"
+  _contains "$(cat "$s8_state/snapshots/dashboard.json" 2>/dev/null)" '"machine_census_enabled"' "S8 snapshot carries the REQ-C3/HR-F12 machine-census field alongside the manifest-subset count"
+  _contains "$(cat "$s8_state/snapshots/dashboard.json" 2>/dev/null)" '"net_artifact_delta":{"value":null' "S8 net_artifact_delta honestly degrades to null when NL_REPO_ROOT (still the S1-S7 fixture repo here, no .git) has no start-commit anchor -- never a fabricated 0"
   local s8_before s8_after
   s8_before="$(cat "$s8_state/snapshots/dashboard.json" 2>/dev/null)"
   sleep 1
@@ -1089,6 +1158,52 @@ EOF
   kill "$s15b_bg" 2>/dev/null
   wait "$s15b_bg" 2>/dev/null
   rm -rf "$s15b_state" 2>/dev/null || true
+
+  echo "Scenario 16: REQ-C3 net-artifact-delta arithmetic (Task 22) -- a REAL git fixture repo with a known start commit and a known set of adds/deletes under adapters/claude-code/** proves the counting logic itself, not just that it degrades honestly"
+  if command -v git >/dev/null 2>&1; then
+    local s16_repo="$tmp/s16-repo"
+    mkdir -p "$s16_repo/docs/plans/archive" "$s16_repo/adapters/claude-code" "$s16_repo/outside-scope"
+    (
+      cd "$s16_repo" || exit 1
+      git init -q
+      git config user.email "t@t" && git config user.name "t"
+      echo start > docs/plans/archive/harness-execution-redesign-2026-08.md
+      echo keep-a > adapters/claude-code/keep-a.txt
+      echo keep-b > adapters/claude-code/keep-b.txt
+      echo out > outside-scope/irrelevant.txt
+      git add -A && git commit -q -m start
+      # HEAD state: delete keep-a (adapters/claude-code, in scope), add two
+      # new files (adapters/claude-code, in scope), modify keep-b (in
+      # scope but a modify is NOT a net add/delete), and add one file
+      # OUTSIDE adapters/claude-code/** which must NOT count.
+      rm -f adapters/claude-code/keep-a.txt
+      echo new-1 > adapters/claude-code/new-1.txt
+      echo new-2 > adapters/claude-code/new-2.txt
+      echo modified >> adapters/claude-code/keep-b.txt
+      echo out2 > outside-scope/also-irrelevant.txt
+      git add -A && git commit -q -m head
+    ) >/dev/null 2>&1
+    local s16_delta
+    s16_delta="$(NL_REPO_ROOT="" bash -c "source '$self_abs'; _nm_count_net_artifact_delta '$s16_repo'")"
+    _ok "$s16_delta" "1" "S16a net delta = 2 added - 1 deleted = 1, restricted to adapters/claude-code/** (the outside-scope add/modify never counted)"
+
+    local s16_nogit="$tmp/s16-nogit"
+    mkdir -p "$s16_nogit"
+    local s16_empty
+    s16_empty="$(NL_REPO_ROOT="" bash -c "source '$self_abs'; _nm_count_net_artifact_delta '$s16_nogit'")"
+    _ok "$s16_empty" "" "S16b a directory with no .git degrades to empty (never a fabricated 0)"
+  else
+    echo "SKIP: S16 requires git on PATH" >&2
+  fi
+
+  echo "Scenario 17: REQ-C3 machine-census scheduled-task count (HR-F12, Task 22) never crashes and always returns numeric-or-empty, independent of any fixture manifest"
+  local s17_census
+  s17_census="$(bash -c "source '$self_abs'; _nm_count_scheduled_tasks_census")"
+  if [[ -z "$s17_census" || "$s17_census" =~ ^[0-9]+$ ]]; then
+    echo "PASS: S17 machine-census returns numeric-or-empty ('$s17_census'), never a crash or non-numeric value"; pass=$((pass+1))
+  else
+    echo "FAIL: S17 expected numeric-or-empty, got '$s17_census'" >&2; fail=$((fail+1))
+  fi
 
   echo ""
   echo "self-test interpreter: ${BASH_VERSION:-unknown}"
