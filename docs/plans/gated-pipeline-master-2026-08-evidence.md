@@ -3173,3 +3173,79 @@ SESSION-SCOPED-VERIFY-OBLIGATIONS-2026-08-04 and
 BASH-SOURCE-DIR-RESOLUTION-FRAGILITY-SWEEP-2026-08-04 are now real in docs/backlog.md,
 landed in commit 96814749 (they rode the T22 evidence cherry-pick's --continue, which swept
 the staged backlog file — commit-message purity imperfect, content verified present by grep).
+
+---
+
+## Task 22 — Verifier verdict (task-verifier, batch #5) — PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: 22
+Task description: REQ-C3+C4: honest scorecard in the existing dashboard snapshot (net-artifact delta, hooks-per-Bash, SessionStart spawns, machine-census scheduled tasks) + DEC-6 invariant-8 amendment and DEC-7 cold-target re-scope recorded in the brief's body; evidence file asserts ONE recomputable number per metric with its exact command — Verification: contract — Implements: REQ-C3, REQ-C4
+Verified at: 2026-08-04T06:49:41Z
+Verifier: task-verifier agent
+
+Oracle: derived (contract) — the four recorded numbers + their exact re-derivation commands in this file's "Task 22" builder entry; recomputability IS the contract. Each command re-executed by this verifier on master @ a5ba0bb5; every output matched the recorded value byte-for-byte.
+
+Comprehension-gate: not applicable (Verification: contract — Step 0 routing; no comprehension-reviewer required for contract-level tasks)
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T06:44Z
+
+Checks run (all re-executed by this verifier, 2026-08-04):
+1. Ancestry: ec5c43e9 (code) + 96814749 (evidence) both ancestors of master HEAD a5ba0bb5. PASS
+2. Metric (a) net-artifact delta REPLAYED: `git log --follow --format=%h -- docs/plans/archive/harness-execution-redesign-2026-08.md | tail -1` → 3945d47e (start tag matches); `git diff --name-status -M 3945d47e HEAD -- adapters/claude-code/ | cut -c1 | sort | uniq -c` → 44 A / 45 M, no D/R rows — delta = +44, exactly as recorded (stable even though a5ba0bb5 later modified adapters/claude-code/manifest.json: an M row, not an A/D). PASS
+3. Metric (b) hooks-per-Bash REPLAYED: jq count on live ~/.claude/settings.json → 25; on adapters/claude-code/settings.json.template → 25. Matches 25/25, no drift. PASS
+4. Metric (c) SessionStart spawns REPLAYED: same jq method → live 8, template 8. Matches. PASS
+5. Metric (d) machine census REPLAYED: `MSYS_NO_PATHCONV=1 schtasks /Query /FO CSV | tr -d '\r' | grep -F '"\NL-' | grep -c '"Ready"$'` → 1 (NL-product-health-monitor Ready; NL-CoordSync/health-tick/session-resumer/SupervisorTick/workstreams-heartbeat all Disabled — the full six-row census matches the evidence's named list; the literal `"\NL-` backslash prefix visible in raw CSV confirms the HR-F12 grep-pattern fix rationale). PASS
+6. Dashboard end-to-end LIVE: `source nl-maintenance.sh; _nm_refresh_dashboard_snapshot 1` then jq .inventory on ~/.claude/state/nl-maintenance/snapshots/dashboard.json → hooks_per_bash {25,25,target 6}, sessionstart_spawns {8,8,target 2}, legacy_scheduled_tasks_enabled {count 0, target_max 2, machine_census_enabled 1}, net_artifact_delta {44, adapters/claude-code/**, "<=0 (anti-bloat, D-07)"} — all four metrics ship in the EXISTING artifact, both HR-F12 numbers side by side as claimed. PASS
+7. Honesty bar: +44 recorded as-is with the superseded "+≈14" prior figure named and explained (no spin); §7-ledger cross-check verified — design doc line 332 DOES name `hooks/design-ref-gate.sh` as a G1 gate file, the file does NOT exist in the repo, `grep -l "design-ref-gate\|REQ-B8" adapters/claude-code/hooks/*.sh` → dispatch-chain-gate.sh + plan-reviewer.sh only, and plan-reviewer.sh:2039-2172 carries the Checks 20-22 logic — the evidence's fidelity note is real and MATCHES the sanctioned T16 In-flight DESCOPE disposition (plan "In-flight scope updates" 2026-08-03 Adjudication 1: G1 advisory layer deliberately not built this cycle; floor = commit-time Checks 20-22 + G2), not a contradiction of it. PASS
+8. DEC-6/DEC-7 in the brief BODY: §2 invariant 8 (line 55) carries the AMENDED 2026-08-03 coarse-fingerprint note with DEC-6 rejection citing premise 7 (F4)/Q2 item 1/Q3 row 4; §5 D5 (line 227) carries the cold-target re-scoped 2026-08-03 DEC-7 paragraph with the PROVEN 9m12s measurement; Changelog line 5 extended with the dated Task 22/REQ-C4 entry; `grep -n "^## Addendum\|^## Round\|^### Addendum"` → zero matches; `harness-hygiene-scan.sh <brief>` → exit 0. PASS
+9. Self-test RE-RUN in full: `bash adapters/claude-code/scripts/nl-maintenance.sh --self-test` → 49 passed, 0 failed (incl. S16a/S16b net-delta fixture arithmetic, S17 census numeric-or-empty, S8 extended dashboard-field assertions). PASS
+10. Docs impact ("brief body edits ARE the doc change"): ec5c43e9 diff-stat → nl-maintenance.sh (+119/-2) AND harness-execution-redesign-considerations-2026-08-02.md (6 lines) — the brief edit is in the same commit as claimed. PASS
+
+Runtime verification: command git diff --name-status -M 3945d47e HEAD -- adapters/claude-code/ | cut -c1 | sort | uniq -c   # → 44 A / 45 M (verifier replay, matches recorded +44)
+Runtime verification: command jq -r '[(.hooks.PreToolUse // [])[] | select(.matcher // "" | contains("Bash")) | (.hooks // []) | length] | add // 0' ~/.claude/settings.json   # → 25 (verifier replay; template also 25)
+Runtime verification: command jq -r '[(.hooks.SessionStart // [])[] | (.hooks // []) | length] | add // 0' ~/.claude/settings.json   # → 8 (verifier replay; template also 8)
+Runtime verification: command MSYS_NO_PATHCONV=1 schtasks /Query /FO CSV | tr -d '\r' | grep -F '"\NL-' | grep -c '"Ready"$'   # → 1 (verifier replay)
+Runtime verification: command bash -c "source adapters/claude-code/scripts/nl-maintenance.sh; _nm_refresh_dashboard_snapshot 1; cat \"\$(_nm_dashboard_path)\"" | jq '.inventory'   # → all four metrics as recorded (verifier live run)
+Runtime verification: command bash adapters/claude-code/scripts/nl-maintenance.sh --self-test   # → 49 passed, 0 failed (verifier re-run)
+Runtime verification: command bash adapters/claude-code/hooks/harness-hygiene-scan.sh docs/designs/harness-execution-redesign-considerations-2026-08-02.md   # → exit 0 (no-addendum lint, verifier re-run)
+
+Git evidence:
+  Files modified: adapters/claude-code/scripts/nl-maintenance.sh (ec5c43e9) · docs/designs/harness-execution-redesign-considerations-2026-08-02.md (ec5c43e9) · evidence entry (96814749)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: every one of the four contract numbers re-derived by this verifier with the evidence file's own recorded commands and matched exactly (44 / 25-25 / 8-8 / 1), the live dashboard emits them from the existing snapshot artifact, the self-test is 49/0 on re-run, DEC-6/DEC-7 sit in the brief's body with zero addendum headings and a passing lint, and the honesty bar holds — the unflattering +44 is recorded without spin and the §7-ledger cross-check's G1-file fidelity note is independently confirmed real and consistent with the sanctioned T16 DESCOPE disposition.
+---
+
+## Task 25 — Verifier verdict (task-verifier, batch #5 SCOPED RE-CHECK — supersedes the batch #4 FAIL; re-litigates ONLY the C6-part-2 basis per that FAIL block's own Gaps re-verify spec; checks 1-7 and 9-11, the comprehension-gate PASS, and all five suite re-runs stand from batch #4) — PASS
+
+EVIDENCE BLOCK
+==============
+Task ID: 25
+Task description: OPERATOR DIRECTIVE 2026-08-03 (merge→verify mechanization): (a) OD-022 registered + regenerated view; (b) verify-obligation tracking on T15's dispatch ledger; (c) G2 WIP-limit BLOCK at ≥3 open obligations with no verifier in flight, ledgered waiver; (d) stop-side refusal of DONE/CONTINUING with open unnamed obligations — Verification: full — Implements: operator directive 2026-08-03 / OD-022
+Verified at: 2026-08-04T06:49:41Z
+Verifier: task-verifier agent
+
+Oracle: specified — the batch #4 FAIL block's own re-verification spec (its sole FAIL basis was C6 part 2: two claimed backlog follow-ups never filed). Everything else was PROVEN in batch #4 by this verifier's own re-runs on master @ 819dbb6-adjacent HEAD 819cb1d6 (five suites green incl. stop-verdict 99/99 on current bytes; C1-C5 confirmed; live C2/C4 probes) and is NOT re-litigated here.
+
+Comprehension-gate: PASS (confidence 9) — stands from batch #4 (inline audit of the committed articulation at de630284); the scoped re-check introduces no new diff to comprehend.
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T06:44Z
+
+Checks run (scoped, 2026-08-04):
+1. The two backlog rows EXIST: `grep -c "SESSION-SCOPED-VERIFY-OBLIGATIONS-2026-08-04\|BASH-SOURCE-DIR-RESOLUTION-FRAGILITY-SWEEP-2026-08-04" docs/backlog.md` → 2 (≥2 required). Both rows read in full (backlog.md:3362-3379): substantive, labeled, attributed to harness-reviewer F5/F4 on T25, and semantically exact matches for the remedy's specified content — session-scoping of stop-side obligations (rows already carry session_id; removes over- and under-inclusion in one move) and the estate-wide `${BASH_SOURCE[0]%/*}` dir-resolution sweep with its rg sweep query. Not placeholders. PASS
+2. Rows landed where claimed: `git show 96814749 -- docs/backlog.md` adds exactly these 2 row headings; 96814749 is an ancestor of master HEAD a5ba0bb5. PASS
+3. Correction disclosure exists: this file's "### Task 25 — C6 correction (2026-08-04, orchestrator)" section names the FALSE original claim, the FM-006 class, the real landing SHA 96814749, and the honest mechanism (rows rode the T22 evidence cherry-pick's --continue; commit-message purity imperfect, disclosed) — satisfying the batch #4 remedy's "correction line noting the rows were filed at <new SHA>, not at ca0fa1da". PASS
+4. Literal-grep note, recorded for honesty: batch #4's sweep query `grep -n "session_id-scoped\|BASH_SOURCE" docs/backlog.md` now matches the BASH_SOURCE row (3 lines) but not the literal token "session_id-scoped" — the session row uses "session_id matches" phrasing (backlog.md:3368-3369). The dispatch's re-verify spec (row-ID grep ≥2) and the remedy's SUBSTANCE (both follow-ups filed as real rows with the specified content) are fully met; the mismatch is a grep-pattern artifact, not a content gap. NOTED, non-blocking.
+
+Runtime verification: command grep -c "SESSION-SCOPED-VERIFY-OBLIGATIONS-2026-08-04\|BASH-SOURCE-DIR-RESOLUTION-FRAGILITY-SWEEP-2026-08-04" docs/backlog.md   # → 2 (the batch #4 FAIL basis, now discharged)
+Runtime verification: command git show 96814749 -- docs/backlog.md | grep -c "SESSION-SCOPED-VERIFY-OBLIGATIONS-2026-08-04\|BASH-SOURCE-DIR-RESOLUTION-FRAGILITY-SWEEP-2026-08-04"   # → 2 (rows landed at the cited SHA)
+Runtime verification: command bash adapters/claude-code/hooks/stop-verdict-dispatcher.sh --self-test   # → 99 passed, 0 failed (batch #4 verifier full re-run on post-C3 bytes; stands — no code changed since)
+
+Git evidence:
+  docs/backlog.md rows: commit 96814749 (ancestor of a5ba0bb5)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: the sole batch #4 FAIL basis is discharged — both follow-up rows are real, substantive, and on master at the SHA the correction section cites (grep -c → 2; git show 96814749 adds both), and the evidence file now carries an honest correction of the original false filing claim including how the rows landed. All other proof stands from batch #4's own re-runs (five suites green, C1-C5, live probes, comprehension-gate PASS): the four deliverables (a)-(d) were never in doubt; only the evidence overstatement was, and it is now corrected on the record.
+---

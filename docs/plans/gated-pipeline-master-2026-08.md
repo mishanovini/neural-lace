@@ -395,7 +395,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - n/a — drain task: the products are dispositions and removals verified by the counts above, not a new code chain (justification ≥30 chars)
     **Integration points:**
     - Concurrent-ownership gate will challenge Status flips on session-owned plans — follow its guidance per flip; never bypass
-- [ ] 22. REQ-C3+C4: honest scorecard in the existing dashboard snapshot (net-artifact delta,
+- [x] 22. REQ-C3+C4: honest scorecard in the existing dashboard snapshot (net-artifact delta,
   hooks-per-Bash, SessionStart spawns, machine-census scheduled tasks) + DEC-6 invariant-8
   amendment and DEC-7 cold-target re-scope recorded in the brief's body. Counting method (fidelity
   weakest-mapping fix): net-artifact delta = `git diff --stat` file census between the program's
@@ -416,7 +416,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   fixture with marker set + no such plan → WARN present; fixture with a matching ACTIVE plan →
   WARN clears — Verification: contract — Implements: REQ-C6 — Directives: OD-002, OD-007,
   OD-016, OD-018 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs impact: manifest entry
-- [ ] 25. OPERATOR DIRECTIVE 2026-08-03 (merge→verify mechanization; scope expanded per
+- [x] 25. OPERATOR DIRECTIVE 2026-08-03 (merge→verify mechanization; scope expanded per
   constitution §8 — correct scope > planned scope; absorbs backlog row AUTO-VERIFY-DISPATCH-
   2026-08-03, deleted same commit; NOT the T16 record's descoped "Task 25" G1-advisory spec —
   that disposition stands unchanged): the build→verified transition becomes mechanical and
