@@ -3358,3 +3358,22 @@ rubric the renderer ignores. Fix lands in `adapters/claude-code/scripts/needs-yo
 itself is generator-owned, never hand-edited). Audit agent: Audience Content Reviewer →
 docs/reviews/2026-08-03-needs-you-readability-review.md + a same-day triaged digest the operator
 can actually read.
+
+## SESSION-SCOPED-VERIFY-OBLIGATIONS-2026-08-04 — scope stop-side obligations to the stopping session
+(label: `harness-gap`, `stage-2-successor`; from harness-reviewer F5 on gated-pipeline T25)
+
+The verify-obligation stop check scopes by plan references in the final message — simultaneously
+over-inclusive (any session linking a plan with open machine-wide obligations gets gapped once;
+the ledger is $HOME-global and artifact_ref carries no repo qualifier) and under-inclusive (no
+link → no check). The rows ALREADY carry session_id: scoping obligations to rows whose
+session_id matches the stopping session removes both directions in one move. Non-blocking today
+(block-once + cheap marker remedy bound the erosion; disclosed in the gate artifacts).
+
+## BASH-SOURCE-DIR-RESOLUTION-FRAGILITY-SWEEP-2026-08-04 — estate-wide `${BASH_SOURCE[0]%/*}` audit
+(label: `harness-gap`; from harness-reviewer F4 on gated-pipeline T25)
+
+`dispatch-chain-gate.sh:42`'s `_dcg_dir` resolution breaks under slash-less/backslash invocation
+(lib sourcing fails; pre-T25 the suite false-greened vacuously — now guarded loud, exit 3). The
+same `${BASH_SOURCE[0]%/*}` idiom exists across the estate; sweep query:
+`rg -n 'BASH_SOURCE\[0\]%/\*' adapters/claude-code/` — triage each hit for a sourcing-failure
+guard or `cd`-based resolution. T25 guarded its own entry points only.

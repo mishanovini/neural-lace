@@ -2976,3 +2976,192 @@ Confidence: 9
 Reason: PROVEN (the build): all four deliverables (a)-(d) are real, wired, and re-observed — five suites re-run green by this verifier (35/35, 49/49, 10/10, 99/99 on current bytes, 150/150), both live probes (C2 arity, C4 slash-less) behave exactly as specified, the register/view/manifest/Decisions-Log train landed, and the previously-disclosed stop-suite skip is now discharged by a full re-run. PROVEN (the gap): condition C6 of the harness-reviewer's CONDITIONAL-PASS is only half-executed — the two follow-up backlog rows the evidence claims were "filed to docs/backlog.md" do not exist there, in the nl-issues ledger, or anywhere in git history (git -S proves the string only ever entered the evidence file). A false filing claim in evidence is itself the defect this pipeline exists to catch; the checkbox cannot flip while a review condition is unmet and its evidence overstates.
 Gaps:
   - C6 follow-up rows never filed (Class: FM-006 self-reported-completion-without-evidence / unmet review condition; Sweep query: grep -n "session_id-scoped\|BASH_SOURCE" docs/backlog.md → currently 0 rows, must become 2; Required generalization: an evidence sentence of the form "filed to <ledger>" must only be written AFTER the row exists — same rule the adjacent C6 self-correction already articulates for checks. Remedy, one commit: (1) add the two rows to docs/backlog.md — "session_id-scoped obligations" (obligations currently count across all sessions of a plan; a second session's builder dispatch can be blocked by another session's open obligations — evaluate per-session scoping) and "estate-wide ${BASH_SOURCE[0]%/*} dir-resolution fragility sweep" (the class C4 fixed one instance of; sweep every hook/lib for slash-less-invocation dir-resolution breakage); (2) append a one-line correction to the C-round evidence entry noting the rows were filed at <new SHA>, not at ca0fa1da as originally claimed. Re-verification: the grep above returns both rows + the correction line exists.)
+---
+
+## Task 22 — REQ-C3+C4: honest scorecard in the dashboard snapshot + DEC-6/DEC-7 recorded in the brief — Verification: contract
+
+- Builder: plan-phase-builder (sonnet), PARALLEL worktree dispatch (`.claude/worktrees/agent-a80a36dcccb913089`, HEAD 819cb1d6).
+- Files: `adapters/claude-code/scripts/nl-maintenance.sh` (extended — two new counting functions
+  `_nm_count_scheduled_tasks_census` + `_nm_count_net_artifact_delta`, wired into
+  `_nm_refresh_dashboard_snapshot`'s existing payload; self-test Scenarios 8, 16, 17) ·
+  `docs/designs/harness-execution-redesign-considerations-2026-08-02.md` (§2 invariant 8 amended
+  in place — DEC-6; §5 D5 amended in place — DEC-7; changelog line added) · this file.
+- HONESTY BAR (task's own text): these numbers are unflattering by design and are recorded as-is,
+  no spin. The dashboard is the EXISTING artifact `nl-maintenance.sh` already emits
+  (`snapshots/dashboard.json`, `_nm_refresh_dashboard_snapshot`) — extended in place, not duplicated.
+
+### The four metrics — each ONE recomputable number, exact command, verbatim output
+
+**(a) Net-artifact delta** — `git diff --stat` file census restricted to `adapters/claude-code/**`,
+between the program's start tag (predecessor plan's first commit) and HEAD.
+
+Start-tag re-derivation:
+```
+$ git log --follow --format=%h -- docs/plans/archive/harness-execution-redesign-2026-08.md | tail -1
+3945d47e
+```
+(Confirmed via `git show --stat 3945d47e` — commit message: "plan(execution-redesign): round-3
+revamp folded into the brief + staged build plan (operator GO 2026-08-02d)", the predecessor
+plan's own creation commit, later moved to `docs/plans/archive/` — `--follow` traces the rename.)
+
+Census (added/modified/deleted, rename-detected):
+```
+$ git diff --name-status -M 3945d47e HEAD -- adapters/claude-code/ | cut -c1 | sort | uniq -c
+     44 A
+     45 M
+```
+No `D` rows and no `R` rows (rename detection `-M` produces the identical 44/45 split — nothing
+was actually renamed). **Net-artifact delta = 44 added − 0 deleted = +44** under
+`adapters/claude-code/**` since program start. This is materially larger than the "net +≈14
+artifacts" figure recorded earlier in
+`docs/handoffs/2026-08-03-EXHAUSTIVE-issue-inventory.md:262` — that figure was an approximate,
+undated-command snapshot taken before Tasks 15/18/20 (dispatch-ledger, review-record gate class
+config, directives carriage) landed; +44 supersedes it as the exact, recomputable number, per this
+task's own honesty bar ("these numbers will be unflattering").
+
+**(b) Hooks-per-Bash (live)** — counted exactly the way `budget-bash-hooks`
+(`harness-doctor.sh:_count_bash_hooks`) counts it: total hook entries across every `PreToolUse`
+matcher block whose `matcher` string contains `"Bash"`.
+```
+$ jq -r '[(.hooks.PreToolUse // [])[] | select(.matcher // "" | contains("Bash")) | (.hooks // []) | length] | add // 0' ~/.claude/settings.json
+25
+```
+Template (`adapters/claude-code/settings.json.template`) is also 25 — no live/template drift.
+Target per R3.3: ~5 per-category stubs (Stage 2, admission-triggered by Task 24/REQ-C6 — not yet
+open). Unflattering as expected: unchanged from the redesign program's own start (25 → 25, cited
+in the REAL architecture review Q2 table).
+
+**(c) SessionStart spawns (live)** — same source, same method (total hook entries across every
+`SessionStart` matcher block):
+```
+$ jq -r '[(.hooks.SessionStart // [])[] | (.hooks // []) | length] | add // 0' ~/.claude/settings.json
+8
+```
+Template also 8. Target per R3.3: 1–2. Down from the program's original 16 (Stage 1's
+consolidation), still 4-6× the target.
+
+**(d) Machine-census scheduled tasks (enabled)** — HR-F12 fix: the dashboard's PRE-EXISTING
+`legacy_scheduled_tasks_enabled.count` field counts only `schedule-manifest.json` mechanisms with
+a non-null `legacy_task_name` (currently 0 of 5 enabled — all five legacy `NL-*` tasks stay
+disabled per rollback policy). HR-F12 (`docs/reviews/2026-08-03-stage0-stage1-harness-review.md`
+F12) proved that undercounts the real machine footprint: `downstream-product-health-monitor`
+carries `legacy_task_name: null` yet has a live, Enabled `NL-product-health-monitor` schtasks
+entry the old count never saw. The honest census enumerates every schtasks entry whose name starts
+with `NL-` (the harness's own registration convention), independent of manifest content:
+```
+$ schtasks /Query /FO CSV | tr -d '\r' | grep -F '"\NL-' | grep -c '"Ready"$'
+1
+```
+(Only `NL-product-health-monitor` is Enabled; `NL-CoordSync`, `NL-health-tick`,
+`NL-session-resumer`, `NL-SupervisorTick`, `NL-workstreams-heartbeat` are all Disabled —
+confirmed via `schtasks /Query /FO CSV | grep -i "NL-"`.) **Machine-census count = 1**, within the
+design's ≤2 target — an improvement on HR-F12's measured-at-review count of 3
+(`downstream-product-health-monitor` + 2 others were enabled at that point in the build; the
+build's own 5 legacy tasks have since been disabled per policy, leaving only the one honestly-new
+task). Both numbers now ship side by side in the dashboard (`count` = manifest-subset,
+`machine_census_enabled` = honest total) so the HR-F12 gap stays visible, not just fixed once.
+
+### Dashboard snapshot — end-to-end, live
+
+```
+$ bash -c "source adapters/claude-code/scripts/nl-maintenance.sh; _nm_refresh_dashboard_snapshot 1; cat \"\$(_nm_dashboard_path)\"" | jq '.inventory'
+{
+  "hooks_per_bash": { "template": 25, "live": 25, "target": 6 },
+  "sessionstart_spawns": { "template": 8, "live": 8, "target": 2 },
+  "legacy_scheduled_tasks_enabled": { "count": 0, "target_max": 2, "machine_census_enabled": 1 },
+  "net_artifact_delta": { "value": 44, "restricted_to": "adapters/claude-code/**", "target": "<=0 (anti-bloat, D-07)" }
+}
+```
+Live snapshot path: `~/.claude/state/nl-maintenance/snapshots/dashboard.json` (this session's
+machine). This is the EXISTING artifact the task names — extended, not duplicated.
+
+### Cross-check against the design's §7 anti-bloat ledger
+
+`docs/designs/gated-pipeline-master-2026-08-03.md` §7's "Net" row states the gated-pipeline
+DESIGN's own incremental additions: "+2 agents, +2 thin gates, +2 libs, +1 config+generator, +1
+script, +1 template" against a named displacement list. This is a SUBSET of the +44 program-wide
+total above (program start = predecessor plan's Stage 0/1, not this design's own start), and the
+two numbers are expected to differ, not match:
+
+- **+2 agents** — confirmed: `agents/design-author.md`, `agents/plan-fidelity-reviewer.md` both
+  appear as `A` rows.
+- **+1 template** — confirmed: `templates/design-template.md`.
+- **+1 config+generator / +1 script** (directives) — confirmed: `config/operator-directives.json`,
+  `scripts/gen-directives-view.sh`, `scripts/dispatch-directives.sh` all appear as `A` rows.
+- **+2 thin gates — PARTIALLY MISMATCHED, recorded honestly:** the ledger names
+  `hooks/design-ref-gate.sh` (G1) as a new thin gate file; it does not exist in the diff or the
+  repo — G1's logic was folded into the EXISTING `plan-reviewer.sh` instead (confirmed:
+  `grep -l "design-ref-gate\|REQ-B8" adapters/claude-code/hooks/*.sh` →
+  `dispatch-chain-gate.sh plan-reviewer.sh`, not a new `design-ref-gate.sh` file — the design-ref
+  Checks 20-22 logic lives in `plan-reviewer.sh:2039-2172`).
+  Only `hooks/dispatch-chain-gate.sh` (G2) materialized as a genuinely new gate file; G3 is
+  correctly described as an extension (`review-record-push-gate.sh` + `config/review-class-table.json`,
+  the latter also an `A` row). Net: 1 new gate file shipped where the ledger's prose implies 2 — a
+  real, minor fidelity gap between the design's own ledger and what was actually built, surfaced
+  here rather than papered over.
+- **+2 libs — UNDERCOUNTED by the ledger's own scope, correctly so:** 5 new `hooks/lib/*.sh` files
+  appear in the `A` rows (`directives-register-lib.sh`, `gate-contract-lib.sh`,
+  `review-chain-lib.sh`, `single-flight-lib.sh`, `workaround-sensor-lib.sh`). The ledger names only
+  `review-chain-lib.sh` and `directives-register-lib.sh` as ITS additions — correctly, since
+  `gate-contract-lib.sh`, `single-flight-lib.sh`, and `workaround-sensor-lib.sh` are predecessor-plan
+  (Stage 0b/HR-F1/HR-F6) artifacts that predate this design cycle and are out of §7's scope by
+  construction (§7 scopes to "every addition [this design cycle] makes", not the whole program).
+- **The remaining ~30 `A` rows** (doctrine `-full.md` rewrites, `nl-maintenance.sh` itself,
+  darwin/Windows installer scripts, `measure-design-ref-surface-trigger.sh`,
+  `tests/bench-admission-hotpath.sh`, 12 test-fixture files) are predecessor-plan (Stage 0/1)
+  artifacts, correctly absent from this design's own §7 ledger for the same reason. §7 was never
+  meant to reconcile to +44 — it accounts for its own design's slice; the cross-check's honest
+  finding is the G1-file gap above, not a magnitude mismatch.
+
+### DEC-6 / DEC-7 — recorded in the considerations brief body
+
+`docs/designs/harness-execution-redesign-considerations-2026-08-02.md`:
+- §2 invariant 8 (line ~55): amended in place with an `**AMENDED 2026-08-03**` inline note citing
+  the REAL architecture review's load-bearing premise 7 (F4) + Q2 item 1 + Q3 row 4 — the shipped coarse first-approximation
+  fingerprint (`harness-doctor.sh:_doctor_compute_fingerprint`) is now the invariant's stated
+  shipped form, not a deviation from it; full per-check declared-input machinery REJECTED per
+  DEC-6, citing `docs/designs/gated-pipeline-master-2026-08-03.md` §3.
+- §5 D5 (line ~224, after the existing `My pick`/`Reply with` lines): amended in place with a
+  `**RESOLVED 2026-08-02** ... **cold-target re-scoped 2026-08-03**` paragraph citing the same
+  review's Q3 row 1 + F2b (PROVEN: 9 m 12 s clean-sandbox cold measurement) — the cached contract
+  (`ttl-30m`) stands unchanged; the previously-unstated cold-doctor target is re-scoped per DEC-7:
+  cached < 2 s remains the closure bar, no fixed cold number ships until top-N check profiling.
+- Top-of-file `**Changelog:**` line (line 5): extended (not replaced) with a dated
+  `2026-08-03 ... Task 22, REQ-C4` entry naming both amendments and their locations, matching the
+  changelog convention Task 19 established.
+- No `## Addendum` / `## Round N` heading was introduced anywhere — both amendments are inline
+  prose within existing sections. Confirmed via a direct run of the no-addendum lint against the
+  amended file:
+```
+$ bash adapters/claude-code/hooks/harness-hygiene-scan.sh "docs/designs/harness-execution-redesign-considerations-2026-08-02.md"; echo "exit=$?"
+exit=0
+```
+
+### Self-tests (verbatim, full suite re-run on the committed state)
+
+```
+$ bash adapters/claude-code/scripts/nl-maintenance.sh --self-test
+...
+Scenario 16: REQ-C3 net-artifact-delta arithmetic (Task 22) -- a REAL git fixture repo with a known start commit and a known set of adds/deletes under adapters/claude-code/** proves the counting logic itself, not just that it degrades honestly
+PASS: S16a net delta = 2 added - 1 deleted = 1, restricted to adapters/claude-code/** (the outside-scope add/modify never counted)
+PASS: S16b a directory with no .git degrades to empty (never a fabricated 0)
+Scenario 17: REQ-C3 machine-census scheduled-task count (HR-F12, Task 22) never crashes and always returns numeric-or-empty, independent of any fixture manifest
+PASS: S17 machine-census returns numeric-or-empty ('1'), never a crash or non-numeric value
+
+self-test interpreter: 5.2.37(1)-release
+self-test summary: 49 passed, 0 failed
+```
+All 49 scenarios pass (S1-S15 pre-existing/unaffected, S8 extended with two new assertions for the
+`machine_census_enabled` and `net_artifact_delta` dashboard fields, S16-S17 new). A first version of
+`_nm_count_scheduled_tasks_census` used `grep -i '"NL-'` and silently matched zero rows — PROVEN via
+`od -c`: schtasks' CSV `TaskName` column prints root-folder tasks as `"\NL-...` (a literal backslash
+between the opening quote and the name), so the quote-then-letter pattern never matched. Fixed to
+`grep -F '"\NL-'` (fixed-string, sidesteps both the escaping bug and a separate PROVEN `grep -iF`
+abort/SIGABRT on this machine's grep when `-i` and `-F` are combined).
+
+### `bash -n` syntax check
+
+```
+$ bash -n adapters/claude-code/scripts/nl-maintenance.sh && echo "SYNTAX OK"
+SYNTAX OK
+```
