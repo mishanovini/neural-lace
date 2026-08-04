@@ -527,48 +527,60 @@
   // task-verifier renders identically to one never started (plain
   // unchecked row)."
   //
-  // THE GAP THIS CLOSES: taskSpanCell (column 3) previously rendered
-  // NOTHING for a task row unless it was genuinely running or happened to
-  // be the positionally-"next" open task — i.e. for the overwhelming
-  // majority of task rows, this column was empty, and a not-started task
-  // was visually IDENTICAL to a stalled-out one. deriveTaskStage fills that
-  // same column on every task row (see taskSpanCell) with an honest,
-  // payload-derived pipeline position.
+  // REWRITE (2026-08-04, adversarial-verifier findings against the chip
+  // FIX 3c originally shipped): the first version of this function
+  // committed two overclaims — a state rendered without a mechanism behind
+  // it (constitution §1):
+  //   OVERCLAIM 1: status.value==='complete' unconditionally returned
+  //     'verified'. True ONLY by the convention that task-verifier is the
+  //     sole checkbox-flipper; nothing in the payload PROVED it, so a
+  //     hand-checked box read 'verified' too.
+  //   OVERCLAIM 2: status.value 'stalled'/'unknown' returned 'building' — an
+  //     active-work claim that directly contradicted the SAME row's own
+  //     exception chip ("stalled — no recent dispatch" / "status unknown —
+  //     ..."), measured live on three real rows.
+  // THE FIX: Task 25's dispatch ledger (roadmap-routes.js's
+  // buildTaskVerifyEvidence) now supplies item.verify_evidence
+  // {has_builder_complete, has_verifier_complete, newest_ts} — REAL,
+  // mechanically-backed per-task evidence this function was missing. Every
+  // token below is now grounded in either that evidence or a genuine
+  // live/heartbeat signal; nothing is asserted "by convention" anymore.
   //
-  // WHY ONLY 3 OF THE OPERATOR'S 4 NAMED STAGES (not-started / dispatched-
-  // building / merged-awaiting-verification / verified): the payload
-  // contract (roadmap-routes.js header, "STATUS DERIVATION") states, in its
-  // own words: "task: checkbox done -> complete, UNCONDITIONALLY. Not done
-  // -> deriveItemStatus's not-done branch (real heartbeat-backed
-  // in-progress/stalled/unknown)." Two consequences fall out of that,
-  // mechanically, not by inference:
-  //   1. A checked box is ALREADY a verified claim at task granularity —
-  //      this repo's own harness doctrine makes task-verifier the ONLY
-  //      checkbox-flipper, so status.value 'complete' on a TASK already
-  //      means "verified", not merely "done". No separate bucket needed.
-  //   2. There is NO per-task merge/deploy signal anywhere in this payload
-  //      — that signal (completion-oracle's deploy check) exists only at
-  //      the PLAN level, surfaced as status.value 'merged-unverified' on a
-  //      PLAN node (which already renders its own loud exception chip,
-  //      column 6). A checkbox is binary; "not done" is genuinely
-  //      ambiguous between "never touched" and "built + merged, awaiting
-  //      the verifier" with the fields this payload carries. Inventing a
-  //      fourth "merged — awaiting verification" bucket for an individual
-  //      TASK here would be exactly the fabricated claim C5 forbids — see
-  //      the build report for this gap, named plainly rather than papered
-  //      over with a guess.
-  // What IS honestly derivable, from fields that exist on every item:
-  //   'verified'     — status.value 'complete'.
-  //   'building'     — status.value in-progress/stalled/unknown (the
-  //                    payload's own doc: all three come from the SAME
-  //                    "real heartbeat-backed" not-done branch — genuine
-  //                    dispatch/heartbeat evidence exists, work is not
-  //                    done), OR a live session is attached / running_now
-  //                    is set even while status still reads 'not-started'
-  //                    (a session that just started, 0 progress yet —
-  //                    belt-and-braces, never misses live work).
-  //   'not-started'  — status.value 'not-started' AND no live/heartbeat
-  //                    evidence at all (never dispatched).
+  // THE FULL LADDER (checked top to bottom; verify_evidence always present,
+  // defaulting to {false,false,''} — see roadmap-routes.js's own header):
+  //   1. checkbox checked (status.value 'complete'):
+  //        has_verifier_complete -> 'verified' (NOW mechanically backed —
+  //          a real task-verifier-typed ledger row for this exact task).
+  //        else                  -> 'done-unverified' ("done (unverified)")
+  //          — the checkbox is true, but nothing proves a verifier ran;
+  //          NEVER prints 'verified' without the row to back it.
+  //   2. NOT checked, has_builder_complete: 'merged-awaiting-verification'
+  //      — the operator's actual 4th named stage, UNRENDERABLE before the
+  //      ledger existed (roadmap-routes.js's payload had no per-task
+  //      merge signal at all). Checked AHEAD of the live/heartbeat states
+  //      below on purpose: a completed build is the single strongest,
+  //      most specific, ledger-backed fact this function can report — more
+  //      informative than a stale/idle heartbeat guess, and it is exactly
+  //      the common real-world shape (builder finishes, its dispatch then
+  //      goes idle while nobody has re-dispatched the verifier yet).
+  //   3. NOT checked, no builder-complete row:
+  //        status.value 'stalled' or 'unknown' -> THAT SAME value, verbatim
+  //          — fixes overclaim 2 directly: a task the row's OWN exception
+  //          chip already calls stalled/unknown can never ALSO claim
+  //          'building' in this column. Never an active-work claim without
+  //          live evidence.
+  //        status.value 'in-progress', OR running_now/live_sessions.length
+  //          (belt-and-braces — a dispatch that just started, 0 progress
+  //          yet, before status.value has caught up) -> 'building'.
+  //        else -> 'not-started'.
+  // No-ledger-evidence degrade (explicit, not a separate branch): when the
+  // ledger is absent/unreadable, EVERY task's verify_evidence defaults to
+  // {false,false,''} (roadmap-routes.js's own honest-absence contract) —
+  // which this ladder already resolves to the WEAKER label at every step
+  // ('done-unverified' instead of 'verified'; skip straight past step 2 to
+  // step 3) without any special-casing here. Never 'verified', never a
+  // crash.
+  //
   // Pure (no DOM), self-contained (does not depend on isRunningNow/
   // hasRunningSession above) so the selftest can execute it standalone in a
   // `vm` sandbox, same technique as deriveTaskSpanLabel above.
@@ -581,12 +593,23 @@
   // item 4 already eliminated once (DERIVABLE_STATES gating statusChip).
   function deriveTaskStage(item) {
     var v = item && item.status && item.status.value;
-    if (v === 'complete') return 'verified';
-    if (v === 'in-progress' || v === 'stalled' || v === 'unknown') return 'building';
+    var ev = (item && item.verify_evidence) || {};
+    if (v === 'complete') return ev.has_verifier_complete ? 'verified' : 'done-unverified';
+    if (ev.has_builder_complete) return 'merged-awaiting-verification';
+    if (v === 'stalled' || v === 'unknown') return v;
+    if (v === 'in-progress') return 'building';
     var hasLiveEvidence = !!(item && item.running_now) || !!((item && item.live_sessions) || []).length;
     return hasLiveEvidence ? 'building' : 'not-started';
   }
-  var TASK_STAGE_LABEL = { 'not-started': 'not started', 'building': 'building', 'verified': 'verified' };
+  var TASK_STAGE_LABEL = {
+    'not-started': 'not started',
+    'building': 'building',
+    'verified': 'verified',
+    'done-unverified': 'done (unverified)',
+    'merged-awaiting-verification': 'merged — awaiting verification',
+    'stalled': 'stalled',
+    'unknown': 'status unknown',
+  };
   // TASK-STAGE-END
 
   // FILTER-MATCH-BEGIN
@@ -1043,7 +1066,7 @@
     return cell;
   }
 
-  function exceptionLabelCell(item) { // column 6 (132px): the loud exception chip + descendant roll-up badges
+  function exceptionLabelCell(item) { // column 6 (210px, widened by FIX 3b — was 132px, stale comment fixed 2026-08-04): the loud exception chip + descendant roll-up badges
     var cell = el('span', 'rm-cell rm-cell-exception');
     var chip = statusChip(item); // null for the three derivable states — an empty column 6 means "healthy"
     if (chip) cell.appendChild(chip);
@@ -1699,11 +1722,11 @@
       msCell.appendChild(masterSummaryNode(item));
       sum.appendChild(msCell);
     } else {
-      sum.appendChild(taskSpanCell(item, isNextTask));      // column 3 (190px)
+      sum.appendChild(taskSpanCell(item, isNextTask));      // column 3 (130px, R21-1 — was 190px)
       sum.appendChild(fractionCellForRow(item));            // column 4 (76px)
     }
     sum.appendChild(exceptionGlyphCell(item));              // column 5 (46px)
-    sum.appendChild(exceptionLabelCell(item));              // column 6 (132px)
+    sum.appendChild(exceptionLabelCell(item));              // column 6 (210px, R21-1 — was 132px)
     det.appendChild(sum);
 
     // Round 16 deliverable 5: drag-and-drop + Cmd/Ctrl+ArrowUp/Down

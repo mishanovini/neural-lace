@@ -139,6 +139,21 @@
 //   // ---- task-kind-only fields (round-6 gap 1 + round-7 7A/7B/7B-i) ----
 //   lead_points: [string],
 //   subtasks: [{title, body_points: [string]}],
+//   verify_evidence: { has_builder_complete, has_verifier_complete, newest_ts },
+//                                   // 2026-08-04 (cockpit stage-chip
+//                                   // mechanization) — see the
+//                                   // "TASK VERIFICATION EVIDENCE" block
+//                                   // above buildTaskVerifyEvidence below
+//                                   // for the full field contract. ALWAYS
+//                                   // present (never null/undefined) on a
+//                                   // task-kind node; defaults to
+//                                   // {false,false,''} when the dispatch
+//                                   // ledger carries no matching row —
+//                                   // this is what lets a checked-but-
+//                                   // unverified task render an honest
+//                                   // "done (unverified)" instead of the
+//                                   // unconditional 'verified' claim a
+//                                   // checked box used to earn on its own.
 // }
 // UnboundSessionsNode (R9-7b, OPTIONAL — null when no such session exists,
 // honest absence, never a fake/empty node) = {
@@ -184,6 +199,7 @@
 //             child counts.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const deriveLib = require('./derive-lib.js');
 const planParse = require('./plan-parse.js');
@@ -1109,10 +1125,160 @@ function buildWaitingOnYouMap(scanRoot) {
   return map;
 }
 
+// ----------------------------------------------------------------------
+// TASK VERIFICATION EVIDENCE (2026-08-04, cockpit stage-chip mechanization
+// — adversarial-verifier finding against the chip merged at 5310a5ec). Read
+// DIRECTLY from the dispatch ledger (adapters/claude-code/hooks/
+// workstreams-emit.sh's --on-builder-complete writer; row shape agreed in
+// hooks/lib/review-chain-lib.sh's own header) so web/roadmap.js's per-task
+// stage chip (deriveTaskStage) can render an honest, MECHANICALLY BACKED
+// claim instead of the two overclaims an adversarial verifier found:
+//   (1) status.value==='complete' rendered 'verified' UNCONDITIONALLY — true
+//       only by the convention that task-verifier is the sole checkbox-
+//       flipper; a hand-checked box read 'verified' too, with nothing in
+//       THIS payload proving it.
+//   (2) status.value 'stalled'/'unknown' rendered 'building' — an
+//       active-work claim directly contradicting the row's own exception
+//       chip ("stalled — no recent dispatch" / "status unknown — ...") in
+//       the very same row.
+//
+// dispatch-ledger.jsonl (~554KB / 3036 rows measured 2026-08-04, ~6ms to
+// parse) is read + JSON.parse'd IN-PROCESS, once per /api/roadmap request
+// (same "no subprocess spawn on a GET path" discipline as the heartbeat/
+// registry reads above — A6). This is a SEPARATE, DELIBERATE reader from
+// workstreams-emit.sh's own `--open-verify-obligations` CLI mode (that mode
+// exists for shell/hook callers, e.g. dispatch-chain-gate.sh's WIP-limit
+// consult — a subprocess spawn per request would be the wrong cost model on
+// a page a poller hits every few seconds); both read the SAME on-disk row
+// shape, independently, which is why the field-by-field contract below is
+// pinned to match review-chain-lib.sh's rc_open_verify_obligations header
+// exactly rather than inventing a parallel vocabulary.
+//
+// FIELD CONTRACT — task.verify_evidence = {
+//   has_builder_complete: bool,   // >=1 ledger row: artifact_ref ==
+//                                 // "docs/plans/<slug>.md", a non-empty
+//                                 // task_id normalizing to this task's own
+//                                 // id, subagent_type != "task-verifier"
+//                                 // (the SAME builder/verifier classifier
+//                                 // already agreed in review-chain-lib.sh's
+//                                 // rc_open_verify_obligations header: "a
+//                                 // row with subagent_type=='task-verifier'
+//                                 // is a VERIFY-complete signal; every
+//                                 // other typed row is a BUILD-complete
+//                                 // signal").
+//   has_verifier_complete: bool,  // same match, subagent_type ==
+//                                 // "task-verifier".
+//   newest_ts: string,            // ISO8601 of the newest matching row of
+//                                 // EITHER kind; '' when neither flag is
+//                                 // true.
+// } — ALWAYS present (never null) on a task-kind node (see deriveTaskNode
+// below), defaulting to {false,false,''} — EMPTY_TASK_VERIFY_EVIDENCE — so
+// a missing/unreadable ledger, or a task the ledger has simply never
+// mentioned, degrades to the honest "no evidence" shape rather than
+// crashing the request or silently upgrading to a 'verified' claim.
+//
+// NORMALIZATION (the T7 incident, review-chain-lib.sh's own _rc_norm_task_id
+// header): a leading T/t immediately followed by a digit is stripped from a
+// ledger row's task_id before matching — some historic dispatch prompts
+// wrote `task=T7` against a plan whose real ids are numeric. This task's
+// own t.id is normalized the SAME way before lookup (normLedgerTaskId is
+// applied to BOTH sides), defensively, in case a future plan's own ids ever
+// carry a letter prefix. Any future change to this rule must also update
+// review-chain-lib.sh's _rc_norm_task_id (kept independently, same
+// necessary duplication that lib's own header already discloses for its
+// bash/awk split).
+//
+// DELIBERATELY NOT GATED ON A LEDGER ROW'S OWN task_id_valid: that field
+// records whether the WRITER, at write time, found the normalized task_id
+// in the plan it resolved artifact_ref against. This reader performs its
+// OWN normalized-id-equality match against t.id — the plan's real,
+// currently-loaded task list — which is at least as strong a check and
+// never depends on trusting a historical write-time verdict against a plan
+// that may since have changed shape.
+// ----------------------------------------------------------------------
+
+// dispatchLedgerPath() — sandboxable like every other state path in this
+// codebase (ROADMAP_PLAN_SCAN_ROOT, ASK_REGISTRY_STATE_DIR, etc.): a
+// dedicated env override so tests never touch the real machine's own
+// ~/.claude/state/dispatch-ledger.jsonl. Same default path
+// workstreams-emit.sh's writer and review-chain-lib.sh's RC_LEDGER_PATH
+// both use, resolved the SAME way derive-lib.js's own state-dir helpers do
+// (process.env.HOME || os.homedir() — derive-lib.js's own header explains
+// why HOME is checked first).
+function dispatchLedgerPath() {
+  return process.env.DISPATCH_LEDGER_PATH ||
+    path.join(process.env.HOME || os.homedir(), '.claude', 'state', 'dispatch-ledger.jsonl');
+}
+
+// readDispatchLedgerRows() -> [rowObj, ...] — a plain fs read + per-line
+// JSON.parse (NOT a subprocess spawn — see this block's header for why).
+// An absent/unreadable ledger file degrades to [] (honest "no evidence",
+// never a crash); a single malformed JSONL line is skipped without losing
+// every OTHER row in the file (a partially-corrupt ledger must not blind
+// this read to the rows that ARE intact).
+function readDispatchLedgerRows() {
+  let text;
+  try { text = fs.readFileSync(dispatchLedgerPath(), 'utf8'); }
+  catch (_) { return []; }
+  const out = [];
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+    let rec;
+    try { rec = JSON.parse(line); } catch (_) { continue; }
+    if (rec && typeof rec === 'object') out.push(rec);
+  }
+  return out;
+}
+
+// normLedgerTaskId — mirrors review-chain-lib.sh's _rc_norm_task_id EXACTLY
+// (see this block's NORMALIZATION note above). "T7" -> "7", "7" -> "7",
+// "3.2" -> "3.2", "Trial" -> "Trial" (no digit after the T, left alone).
+function normLedgerTaskId(id) {
+  const s = String(id || '');
+  return /^[Tt][0-9]/.test(s) ? s.slice(1) : s;
+}
+
+const EMPTY_TASK_VERIFY_EVIDENCE = { has_builder_complete: false, has_verifier_complete: false, newest_ts: '' };
+
+// buildTaskVerifyEvidence(slug, ledgerRows) -> { <normalized task id>:
+// {has_builder_complete, has_verifier_complete, newest_ts} } for every
+// task_id this ONE plan's ledger rows reference (artifact_ref scoped —
+// see the FIELD CONTRACT note: a row for a different plan can never
+// contribute evidence here, even if it happens to share a task_id string).
+function buildTaskVerifyEvidence(slug, ledgerRows) {
+  const artifactRef = 'docs/plans/' + slug + '.md';
+  const out = {};
+  (ledgerRows || []).forEach((rec) => {
+    if (!rec || rec.artifact_ref !== artifactRef) return;
+    if (!rec.task_id) return; // a row that cannot be attributed to a task can never open/close evidence for one
+    const tid = normLedgerTaskId(rec.task_id);
+    if (!tid) return;
+    const cur = out[tid] || { has_builder_complete: false, has_verifier_complete: false, newest_ts: '' };
+    if (rec.subagent_type === 'task-verifier') cur.has_verifier_complete = true;
+    else cur.has_builder_complete = true;
+    if (typeof rec.ts === 'number' && isFinite(rec.ts)) {
+      const iso = new Date(rec.ts * 1000).toISOString(); // ledger ts is epoch SECONDS (workstreams-emit.sh: `date +%s`)
+      if (!cur.newest_ts || iso > cur.newest_ts) cur.newest_ts = iso;
+    }
+    out[tid] = cur;
+  });
+  return out;
+}
+
+// taskVerifyEvidenceFor(evidenceMap, taskId) -> the {has_builder_complete,
+// has_verifier_complete, newest_ts} object for ONE task, or the shared
+// EMPTY_TASK_VERIFY_EVIDENCE default — never null/undefined, never throws
+// on a malformed/absent map or id.
+function taskVerifyEvidenceFor(evidenceMap, taskId) {
+  return (evidenceMap && evidenceMap[normLedgerTaskId(taskId)]) || EMPTY_TASK_VERIFY_EVIDENCE;
+}
+
 // deriveTaskNode(slug, t, ...) — id scheme is now `<slug>/<task_id>` (the
 // ask_id segment is gone: plans, not asks, are the root, so a task's
 // address is relative to its plan alone).
-function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabel) {
+function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabel, verifyEvidenceMap) {
   let status;
   let completedAt = '';
   let startedIdleExpired = false;
@@ -1203,6 +1369,10 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
     from_requests: fromRequests,
     lead_points: leadPoints,
     subtasks: subtasks,
+    // TASK VERIFICATION EVIDENCE (see the block comment above
+    // buildTaskVerifyEvidence): ALWAYS present, never null — defaults to
+    // EMPTY_TASK_VERIFY_EVIDENCE when this task has no matching ledger row.
+    verify_evidence: taskVerifyEvidenceFor(verifyEvidenceMap, t.id),
     live_sessions: liveSessions,
     roll_up: {},
     children: [],
@@ -1540,7 +1710,11 @@ function derivePlanRootNode(pf, linkedAsks, hbCtx) {
 
   const tasks = loaded.tasks || [];
   const batchLabels = deriveTaskBatches(tasks); // R11 Critical 1/2
-  node.children = tasks.map((t) => deriveTaskNode(pf.slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabels[t.id]));
+  // Per-plan slice of the ledger evidence read ONCE for the whole request
+  // (hbCtx.dispatchLedgerRows — see buildRoadmapTree) — artifact_ref-scoped
+  // to THIS plan only (buildTaskVerifyEvidence's own header).
+  const verifyEvidenceMap = buildTaskVerifyEvidence(pf.slug, hbCtx.dispatchLedgerRows);
+  node.children = tasks.map((t) => deriveTaskNode(pf.slug, t, startedTs, doneTs, sessionsByTask, fromRequests, hbCtx, batchLabels[t.id], verifyEvidenceMap));
   node.live_sessions = deriveUnbindableDispatchLeaves(pf.slug, tasks, startedTs, sessionsByTask, hbCtx);
   const total = tasks.length;
   const done = tasks.filter((t) => t.done).length;
@@ -1881,6 +2055,11 @@ function buildRoadmapTree() {
   // own derivation below via hbCtx — see buildWaitingOnYouMap's header for
   // the full matching contract.
   hbCtx.waitingOnYou = buildWaitingOnYouMap(scanRoot);
+  // TASK VERIFICATION EVIDENCE (2026-08-04): the dispatch ledger is read
+  // ONCE per request, in-process (no subprocess spawn — see
+  // buildTaskVerifyEvidence's own header), and sliced per-plan by
+  // derivePlanRootNode below.
+  hbCtx.dispatchLedgerRows = readDispatchLedgerRows();
 
   let items = planFiles.map((pf) => {
     const linkedAsks = planAskLinks[pf.slug] || [];
@@ -2202,4 +2381,11 @@ module.exports = {
   applyMasterHierarchy,
   pinDanglingActiveMasters,
   repoRootFromAbsPath,
+  // task verification evidence exports (2026-08-04, test/reuse hooks)
+  dispatchLedgerPath,
+  readDispatchLedgerRows,
+  normLedgerTaskId,
+  buildTaskVerifyEvidence,
+  taskVerifyEvidenceFor,
+  EMPTY_TASK_VERIFY_EVIDENCE,
 };

@@ -558,6 +558,38 @@ async function main() {
     }],
   }));
 
+  // ---- TASK VERIFICATION EVIDENCE fixture (2026-08-04, cockpit stage-chip
+  // mechanization) — a real dispatch-ledger.jsonl, sandboxed via
+  // DISPATCH_LEDGER_PATH (same convention as every other state path above).
+  // demo-plan/1 is CHECKED (t.done) — gets BOTH a builder-complete AND a
+  // verifier-complete row, proving the honest "verified" claim is now
+  // ledger-backed. demo-plan/3 is UNCHECKED and carries no live/heartbeat
+  // evidence at all — gets ONLY a builder-complete row, using a
+  // T-PREFIXED task_id ("T3") to prove the normalization rule in the same
+  // pass as the wiring. demo-plan/2 gets NO ledger row at all, so its
+  // verify_evidence must read the honest empty default (S3b's own
+  // in-progress assertion, above, is unaffected — this is additive).
+  // ONE malformed line + ONE row for an unrelated plan (rich-plan) prove
+  // partial-corruption tolerance and artifact_ref cross-plan isolation in
+  // the SAME ledger file the full-tree read consumes.
+  const dispatchLedgerPath = path.join(tmp, 'dispatch-ledger.jsonl');
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  fs.writeFileSync(dispatchLedgerPath, [
+    JSON.stringify({ subagent_type: 'plan-phase-builder', model: 'fixture', ts: nowEpoch - 200, session_id: 'sess-tve-1', artifact_ref: 'docs/plans/demo-plan.md', task_id: '1', task_id_valid: 'true' }),
+    JSON.stringify({ subagent_type: 'task-verifier', model: 'fixture', ts: nowEpoch - 100, session_id: 'sess-tve-2', artifact_ref: 'docs/plans/demo-plan.md', task_id: '1', task_id_valid: 'true' }),
+    // T-prefixed task_id — the T7-incident normalization (review-chain-
+    // lib.sh's _rc_norm_task_id) — must still match demo-plan's real
+    // (numeric) task id "3".
+    JSON.stringify({ subagent_type: 'plan-phase-builder', model: 'fixture', ts: nowEpoch - 50, session_id: 'sess-tve-3', artifact_ref: 'docs/plans/demo-plan.md', task_id: 'T3', task_id_valid: 'true' }),
+    // Cross-plan isolation: same task_id "1" as demo-plan/1 above, but a
+    // DIFFERENT artifact_ref — must never leak into demo-plan/1's evidence.
+    JSON.stringify({ subagent_type: 'task-verifier', model: 'fixture', ts: nowEpoch - 30, session_id: 'sess-tve-4', artifact_ref: 'docs/plans/rich-plan.md', task_id: '1', task_id_valid: 'true' }),
+    // Partial corruption: one malformed line must not blind the read to
+    // the intact rows above or below it.
+    'not valid json at all {{{',
+  ].join('\n') + '\n');
+  process.env.DISPATCH_LEDGER_PATH = dispatchLedgerPath;
+
   delete require.cache[require.resolve('./roadmap-routes.js')];
   const roadmapRoutes = require('./roadmap-routes.js');
 
@@ -812,6 +844,63 @@ async function main() {
     const demoPlan = findItem(items, 'demo-plan');
     ok('S3d parent with an in-progress child renders in-progress', demoPlan && demoPlan.status.value === 'in-progress');
     ok('S3e progress carries child counts (1 done of 3)', demoPlan && demoPlan.progress && demoPlan.progress.done === 1 && demoPlan.progress.total === 3);
+
+    // ---- TVE: task verification evidence, wired end-to-end through the real
+    // tree (deriveTaskNode -> derivePlanRootNode -> the /api/roadmap payload)
+    // — proves the field is actually ATTACHED to the item the client
+    // receives, not merely correct in isolation (see the direct
+    // buildTaskVerifyEvidence unit tests further below for the isolated
+    // matching-logic proof). ------------------------------------------------
+    ok('TVE1 every task-kind node ALWAYS carries verify_evidence (never null/undefined), even with zero ledger evidence',
+      t1 && t1.verify_evidence && t2 && t2.verify_evidence && t3 && t3.verify_evidence);
+    ok('TVE2 demo-plan/1 (checked) has a builder-complete AND a verifier-complete ledger row -> both flags true',
+      t1.verify_evidence.has_builder_complete === true && t1.verify_evidence.has_verifier_complete === true,
+      JSON.stringify(t1.verify_evidence));
+    ok('TVE3 demo-plan/1\'s verify_evidence.newest_ts is a real ISO8601 timestamp (the newer of the two ledger rows)',
+      /^\d{4}-\d{2}-\d{2}T/.test(t1.verify_evidence.newest_ts || ''));
+    ok('TVE4 demo-plan/2 has NO ledger row at all -> the honest empty default, not a fabricated claim',
+      t2.verify_evidence.has_builder_complete === false && t2.verify_evidence.has_verifier_complete === false && t2.verify_evidence.newest_ts === '',
+      JSON.stringify(t2.verify_evidence));
+    ok('TVE5 demo-plan/3 (unchecked) has ONE builder-complete row written as T-PREFIXED "T3" -> normalizes and matches task id "3": has_builder_complete true, has_verifier_complete false',
+      t3.verify_evidence.has_builder_complete === true && t3.verify_evidence.has_verifier_complete === false,
+      JSON.stringify(t3.verify_evidence));
+    ok('TVE6 a ledger row for a DIFFERENT plan (rich-plan) sharing the same task_id "1" never leaks into demo-plan/1 (already proven true above) NOR does it fabricate evidence for demo-plan\'s OWN task 1 beyond what demo-plan\'s own two rows established (cross-plan artifact_ref isolation)',
+      t1.verify_evidence.has_builder_complete === true && t1.verify_evidence.has_verifier_complete === true);
+    const richT1 = findItem(items, 'rich-plan/1');
+    ok('TVE7 ...and rich-plan/1 itself correctly RECEIVES its own plan-scoped verifier-complete row (proves the isolation is scoping, not a bug that drops the row everywhere)',
+      richT1 && richT1.verify_evidence.has_verifier_complete === true && richT1.verify_evidence.has_builder_complete === false,
+      JSON.stringify(richT1 && richT1.verify_evidence));
+    ok('TVE8 a malformed JSONL line in the SAME ledger file never crashes the request (still ok:true, proven by every other TVE assertion above succeeding against a live GET)',
+      r1.json && r1.json.ok === true);
+
+    // ---- TVE-unit: buildTaskVerifyEvidence/normLedgerTaskId/
+    // readDispatchLedgerRows exercised DIRECTLY (isolated matching-logic
+    // proof, independent of the full tree derivation above) ----------------
+    ok('TVE-U1 normLedgerTaskId strips a leading T/t immediately followed by a digit',
+      roadmapRoutes.normLedgerTaskId('T7') === '7' && roadmapRoutes.normLedgerTaskId('t20') === '20');
+    ok('TVE-U2 normLedgerTaskId leaves a plain numeric/dotted id and a non-digit-prefixed string alone',
+      roadmapRoutes.normLedgerTaskId('7') === '7' && roadmapRoutes.normLedgerTaskId('3.2') === '3.2' && roadmapRoutes.normLedgerTaskId('Trial') === 'Trial');
+    ok('TVE-U3 buildTaskVerifyEvidence: a row with an empty/missing task_id is excluded (never creates a bogus "" key)',
+      Object.keys(roadmapRoutes.buildTaskVerifyEvidence('u-plan', [
+        { subagent_type: 'plan-phase-builder', ts: 100, artifact_ref: 'docs/plans/u-plan.md', task_id: '' },
+        { subagent_type: 'plan-phase-builder', ts: 100, artifact_ref: 'docs/plans/u-plan.md' },
+      ])).length === 0);
+    ok('TVE-U4 buildTaskVerifyEvidence: newest_ts picks the MAX ts among ALL matching rows of EITHER kind, not just the last one written',
+      roadmapRoutes.buildTaskVerifyEvidence('u-plan', [
+        { subagent_type: 'task-verifier', ts: 100, artifact_ref: 'docs/plans/u-plan.md', task_id: '5' },
+        { subagent_type: 'plan-phase-builder', ts: 300, artifact_ref: 'docs/plans/u-plan.md', task_id: '5' },
+        { subagent_type: 'plan-phase-builder', ts: 200, artifact_ref: 'docs/plans/u-plan.md', task_id: '5' },
+      ])['5'].newest_ts === new Date(300 * 1000).toISOString());
+    ok('TVE-U5 readDispatchLedgerRows against a NONEXISTENT file returns [] honestly, never throws',
+      (function () {
+        const saved = process.env.DISPATCH_LEDGER_PATH;
+        process.env.DISPATCH_LEDGER_PATH = path.join(tmp, 'no-such-ledger-file.jsonl');
+        let rows;
+        try { rows = roadmapRoutes.readDispatchLedgerRows(); } finally { process.env.DISPATCH_LEDGER_PATH = saved; }
+        return Array.isArray(rows) && rows.length === 0;
+      })());
+    ok('TVE-U6 taskVerifyEvidenceFor on a task with zero matching rows returns the SAME shape as EMPTY_TASK_VERIFY_EVIDENCE (never null, never throws on an undefined map)',
+      JSON.stringify(roadmapRoutes.taskVerifyEvidenceFor(undefined, '99')) === JSON.stringify(roadmapRoutes.EMPTY_TASK_VERIFY_EVIDENCE));
 
     // ---- S4: derivation-input failure -> unknown(reason), never a guess ----
     const ghostPlan = findItem(items, 'ghost-plan');

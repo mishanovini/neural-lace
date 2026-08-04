@@ -1271,6 +1271,18 @@ button, a, [role="button"] { min-height: 24px; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* FIX 3d (adversarial-verifier finding against the FIX 3c stage chip merged
+   at 5310a5ec): a TASK row can append TWO children here (the stage chip +
+   the "next" token, taskSpanCell) with zero separator between them —
+   adjacent inline children with no margin read as "buildingnext", the
+   words jammed together. .rm-cell-taskspan is deliberately kept a PLAIN
+   (non-flex) container — turning it into a flex container would put its
+   own overflow:hidden/text-overflow:ellipsis single-line truncation above
+   (written for the PLAN branch's one-child text label) on a formatting
+   context text-overflow does not reliably apply to. A margin on every
+   non-first child is the minimal fix: it fixes the two-child TASK case and
+   is a complete no-op on the PLAN branch's single child. */
+.rm-cell-taskspan > * + * { margin-left: 6px; }
 /* Round 13 fix 4: the per-task "next"/"running" affordance — text +
    weight/colour, never colour-only. "next" is a POSITIONAL claim (weight
    only, same neutral the column already uses); "running" is a claim
@@ -1310,6 +1322,22 @@ button, a, [role="button"] { min-height: 24px; }
 .chip.rm-task-stage-not-started { color: var(--muted); border-color: var(--border2); }
 .chip.rm-task-stage-building { color: var(--text); border-color: var(--border2); }
 .chip.rm-task-stage-verified { color: var(--done); border-color: var(--done); }
+/* 2026-08-04 (adversarial-verifier findings against the chip merged at
+   5310a5ec): four MORE stage tokens, deriveTaskStage's ledger-backed
+   rewrite — again, no new colour system. Each reuses the SAME token an
+   analogous PLAN-level claim already uses elsewhere in this file, because
+   each is literally the task-granularity version of that same claim:
+     - done-unverified / merged-awaiting-verification: the task-level
+       version of .chip.rm-status-merged-unverified's "done, but nothing
+       proves it shipped clean" claim -- same var(--warn).
+     - stalled: the task-level version of .chip.rm-status-stalled -- same
+       var(--interrupt).
+     - unknown: the task-level version of .chip.rm-status-unknown -- same
+       var(--warn), dashed border. */
+.chip.rm-task-stage-done-unverified { color: var(--warn); border-color: var(--warn); }
+.chip.rm-task-stage-merged-awaiting-verification { color: var(--warn); border-color: var(--warn); }
+.chip.rm-task-stage-stalled { color: var(--interrupt); border-color: var(--interrupt); }
+.chip.rm-task-stage-unknown { color: var(--warn); border-color: var(--warn); border-style: dashed; }
 .rm-cell-exglyph { font-size: 13px; text-align: center; }
 .rm-cell-exception { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 /* FIX 3b (operator, 2026-08-04): the exception chip/roll-up badges used to
