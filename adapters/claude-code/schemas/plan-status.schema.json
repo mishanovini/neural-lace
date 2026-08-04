@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/plan-status.v1.json",
+  "title": "Plan Status Enum + Status-note Contract (v1)",
+  "description": "THE canonical machine-readable source for the `Status:` header field on every `docs/plans/*.md` plan file governed by this harness, across every project it is installed into (this repo and any other checkout) -- replacing the pre-migration state where each repo freelanced its own prose (measured 2026-08-04 census: this repo had 13x DEFERRED, 3x ACTIVE, 5x 'REFERENCE (spec appendix...)', 1x 'NORMATIVE for Wave O builders (...)', 1x 'DEFERRED (operator 2026-07-30: ...)'; a sibling project on this machine had 20x ACTIVE, 6x DRAFT, 1x PROPOSED, 2x PROPOSAL variants with prose, 2x 'DRAFT -- <prose>'). CONSUMPTION CONTRACT (dual audience, read this before writing a second copy of this enum anywhere): (1) BASH HARNESS TOOLING (adapters/claude-code/hooks/plan-lifecycle.sh, adapters/claude-code/scripts/close-plan.sh, adapters/claude-code/hooks/plan-reviewer.sh, adapters/claude-code/scripts/start-plan.sh) reads this file via `jq` -- already a pervasive dependency across this codebase's hooks/scripts (dozens of existing call sites; grep `jq ` under adapters/claude-code/hooks and adapters/claude-code/scripts to confirm), so no generated bash include or staleness-check shim was added for this v1 -- see plan-lifecycle.sh's own header comment at the is_terminal_status()/dest_subdir call sites for the specific jq queries and the reasoning against the generated-include alternative. Typical query shapes: `jq -r '.statuses[].token' plan-status.schema.json` for the full valid-token set; `jq -r '.statuses[] | select(.lifecycle.triggers_archival) | .token' ...` for plan-lifecycle.sh's auto-archival trigger set; `jq -r --arg t \"$TOKEN\" '.statuses[] | select(.token==$t) | .lifecycle.archive_subdir' ...` for the archive-vs-deferred destination split (ADR 052). (2) THE COCKPIT (neural-lace/workstreams-ui/server/roadmap-routes.js) is the SECOND intended consumer but, AS OF THIS SCHEMA'S AUTHORING, does NOT yet read this file -- it still carries its own hand-maintained KNOWN_PLAN_STATUS_TOKENS map (roadmap-routes.js ~line 337: only ACTIVE/COMPLETED/DEFERRED/ABANDONED/SUPERSEDED, which is exactly why DRAFT/PROPOSED/REFERENCE-flavored plans currently render 'status unknown -- plan parse failed (unrecognized Status: ...)') and its own PLAN_STATUS_EXCLUDE_RE (~line 318, matches a REFERENCE|NORMATIVE prefix). Wiring roadmap-routes.js to read `.statuses[].token` (replacing KNOWN_PLAN_STATUS_TOKENS), `.statuses[].cockpit_render` (replacing the ad hoc special-casing at ~line 1518-1523), and a `cockpit_render === 'excluded'` predicate (replacing PLAN_STATUS_EXCLUDE_RE) is a FOLLOW-UP task against neural-lace/workstreams-ui/server/roadmap-routes.js, out of this schema-authoring task's file scope -- the `cockpit_render` field below states the INTENDED target render per status (with the current roadmap-routes.js line numbers cited so the gap is falsifiable), not a claim that the cockpit already behaves this way. (3) HUMAN PLAN-AUTHORS see the same 8 values documented inline in adapters/claude-code/templates/plan-template.md (kept in hand-sync with this file; there is no generator yet -- a future improvement, not required for v1) and the compact bullet in adapters/claude-code/doctrine/planning.md / full table in adapters/claude-code/doctrine/planning-full.md. PROPAGATION: this file lives in the harness repo under adapters/claude-code/schemas/ and syncs verbatim to ~/.claude/schemas/plan-status.schema.json via install.sh's schemas/ sync step (adapters/claude-code/install.sh ~line 1506-1507) -- durable machine-wide only once this commit lands on master (see adapters/claude-code/CLAUDE.md, 'Harness source of truth'). MIGRATION NOTE: PROPOSAL (a sibling project's freelanced token) maps to PROPOSED; NORMATIVE-prefixed prose (this repo's freelanced token) maps to REFERENCE; any other free qualifier prose that used to live inside the Status: value itself (e.g. 'DEFERRED (operator 2026-07-30: paused pending...)') moves to the sibling Status-note header line described by status_note below -- Status: itself becomes bare-token-only going forward. VERSIONING: schema_version bumps only on a backward-incompatible change (a token removed, a required field added to statusEntry) -- see evidence.schema.json for the same convention in this directory.",
+  "type": "object",
+  "required": ["schema_version", "statuses", "status_note"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version. Currently always 1. Consumers should accept current + N-1 for graceful migration, per this directory's convention."
+    },
+    "statuses": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "description": "The 8 canonical `Status:` header values, in the fixed display/lifecycle order pre-build -> building -> terminal. This array (not the $defs.statusEntry shape alone) is the literal enum: a plan file's Status: token is valid if and only if it case-sensitively matches one of this array's `token` values.",
+      "items": { "$ref": "#/$defs/statusEntry" }
+    },
+    "status_note": { "$ref": "#/$defs/statusNoteContract" }
+  },
+  "$defs": {
+    "statusEntry": {
+      "type": "object",
+      "required": ["token", "description", "phase", "cockpit_render", "lifecycle"],
+      "additionalProperties": false,
+      "properties": {
+        "token": {
+          "type": "string",
+          "enum": ["DRAFT", "PROPOSED", "ACTIVE", "COMPLETED", "SUPERSEDED", "DEFERRED", "ABANDONED", "REFERENCE"],
+          "description": "The exact, case-sensitive uppercase token written after `Status:` in a plan file header. No parenthetical prose, no trailing qualifier -- that content belongs on the sibling Status-note line (see status_note below)."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10,
+          "description": "Human-readable definition of what this status means and when a plan carries it."
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["pre-build", "building", "terminal"],
+          "description": "Coarse lifecycle bucket. pre-build = not yet a committed body of work (DRAFT, PROPOSED). building = the single active-work state (ACTIVE only). terminal = no further plan-editing is expected in the normal flow (COMPLETED, SUPERSEDED, DEFERRED, ABANDONED, REFERENCE). NOTE: 'terminal' here is a PLANNING-lifecycle concept (further edits are unusual) and is deliberately NOT identical to lifecycle.triggers_archival below -- REFERENCE is phase:terminal but never archived (see that field)."
+        },
+        "cockpit_render": {
+          "type": "string",
+          "minLength": 5,
+          "description": "How neural-lace/workstreams-ui/server/roadmap-routes.js's derivePlanRootNode SHOULD bucket a plan carrying this status, once it is wired to consume this schema (see the top-level description's consumption contract for the current, not-yet-wired state). Cites the relevant roadmap-routes.js behavior/line so the gap between intent and current code is falsifiable rather than asserted."
+        },
+        "lifecycle": {
+          "type": "object",
+          "required": ["triggers_archival", "archive_subdir"],
+          "additionalProperties": false,
+          "description": "adapters/claude-code/hooks/plan-lifecycle.sh's PostToolUse auto-move behavior on a transition INTO this status. Mirrors that hook's is_terminal_status() case statement and its `[ \"$post_status\" = \"DEFERRED\" ]` destination-subdir branch (ADR 052 / 2026-06-04) -- both of which now read this field instead of carrying their own hardcoded lists (see plan-lifecycle.sh's own header comment at those call sites).",
+          "properties": {
+            "triggers_archival": {
+              "type": "boolean",
+              "description": "True if plan-lifecycle.sh git-mv's the plan file out of docs/plans/ the instant Status transitions from a non-triggering status into this one. False for DRAFT/PROPOSED/ACTIVE (still-live plans) AND for REFERENCE (a reference/spec-appendix document that is never 'done work' to file away -- it stays in docs/plans/ permanently; see the REFERENCE entry's own description)."
+            },
+            "archive_subdir": {
+              "type": ["string", "null"],
+              "enum": ["archive", "deferred", null],
+              "description": "Destination subdirectory under docs/plans/ when triggers_archival is true: 'archive' for genuinely-done work (COMPLETED, SUPERSEDED, ABANDONED), 'deferred' for DEFERRED specifically (ADR 052 -- paused-but-still-intended work gets its own plan-level backlog, distinct from archive/). Null whenever triggers_archival is false."
+            }
+          }
+        }
+      }
+    },
+    "statusNoteContract": {
+      "type": "object",
+      "required": ["header", "position", "required", "parsed_for_state", "purpose", "example"],
+      "additionalProperties": false,
+      "description": "The optional `Status-note:` header line. Introduced by this schema's migration to absorb the free prose that used to get freelanced directly INTO the Status: value itself (e.g. the pre-migration 'DEFERRED (operator 2026-07-30: paused pending accountable-estate T7 loe-calibration backfill)' -- see the top-level description's MIGRATION NOTE). Status: becomes bare-token-only; qualifying prose moves here.",
+      "properties": {
+        "header": {
+          "const": "Status-note",
+          "description": "The literal header key, written exactly as `Status-note:` (hyphenated, title-case, matching the sibling `Status:` field's own casing convention)."
+        },
+        "position": {
+          "const": "immediately after the Status: line, before any other header field",
+          "description": "Fixed position in the plan header block. Parsers that scan header lines line-by-line (matching adapters/claude-code/hooks/plan-lifecycle.sh's own extract_status() and neural-lace/workstreams-ui/server/plan-parse.js's parsePlanStatus(), both of which take only the FIRST matching line) can therefore look at the line immediately following a matched Status: line without a full-header scan."
+        },
+        "required": {
+          "type": "boolean",
+          "const": false,
+          "description": "Optional on every status. Most plans (a plain ACTIVE or COMPLETED with no qualifying context) omit it entirely."
+        },
+        "parsed_for_state": {
+          "type": "boolean",
+          "const": false,
+          "description": "LOAD-BEARING CONTRACT, not a suggestion: no gate, hook, cockpit derivation, or state machine may EVER branch behavior on the CONTENTS of a Status-note line -- only on the bare Status: token via the `statuses` enum above. This is precisely what closes the class of bug this migration exists to fix: a freelanced qualifier living inside Status: itself (e.g. 'REFERENCE (spec appendix, not an independent plan -- task B.0 deliverable)') is unparseable by an exact-match enum, which is why plan-parse.js/roadmap-routes.js rendered it as 'status unknown -- plan parse failed'. Status-note exists so that qualifying prose has a home that is STRUCTURALLY INERT to every consumer except a human reader (and, permissibly, an advisory WARN message that surfaces it as context -- surfacing is not the same as branching)."
+        },
+        "purpose": {
+          "type": "string",
+          "minLength": 10,
+          "description": "Free-form human context for WHY the plan carries its current Status: the operator/date/reason a plan was deferred, the successor plan/decision that superseded it, the rationale a spec-appendix plan is REFERENCE rather than an independent plan, etc. Consumers (plan-reviewer.sh, the cockpit) MAY display this verbatim as a tooltip/subtitle/WARN-context string; none may parse it for state (see parsed_for_state)."
+        },
+        "example": {
+          "type": "string",
+          "description": "A worked example pairing the two header lines, for template/doctrine authors to copy."
+        }
+      }
+    }
+  },
+  "schema_version": 1,
+  "statuses": [
+    {
+      "token": "DRAFT",
+      "description": "Plan is being authored and has not yet been reviewed or committed to; scope may still change substantially. Not yet a commitment to build -- analogous to a work-in-progress branch that has not been proposed for review.",
+      "phase": "pre-build",
+      "cockpit_render": "not-started -- a DRAFT plan carries no committed task list yet in the common case, so it lands in the same 'not-started' bucket ACTIVE gets when it has zero started tasks (derivePlanRootNode's total===0 branch, roadmap-routes.js ~line 1551-1554). If a DRAFT plan does carry a `## Tasks` section already, it still renders via the normal task-count ladder like ACTIVE.",
+      "lifecycle": { "triggers_archival": false, "archive_subdir": null }
+    },
+    {
+      "token": "PROPOSED",
+      "description": "Plan is authored and considered complete, awaiting reviewer/owner sign-off before work begins. Canonical successor of the freelanced 'PROPOSAL' / 'PROPOSAL variants with prose' tokens found in a sibling project's pre-migration census.",
+      "phase": "pre-build",
+      "cockpit_render": "not-started -- same treatment as DRAFT (roadmap-routes.js ~line 1551-1554). DRAFT vs PROPOSED is a human sign-off distinction the cockpit does not currently need to render differently; both are 'not yet building'.",
+      "lifecycle": { "triggers_archival": false, "archive_subdir": null }
+    },
+    {
+      "token": "ACTIVE",
+      "description": "Plan is the current locus of work; tasks are actively being executed. The only status `plan-reviewer.sh` Check 10/14 enforces the full lifecycle-schema:v2 header (owner, target-completion-date, tier, rung, architecture, frozen) against.",
+      "phase": "building",
+      "cockpit_render": "drives the FULL task-count derivation ladder in derivePlanRootNode (roadmap-routes.js ~line 1541-1579): not-started / in-progress / complete / merged-deploy-unverified, based on checkbox state plus progress-log-event timestamps. ACTIVE is the only status where per-task event history determines the render rather than a fixed bucket.",
+      "lifecycle": { "triggers_archival": false, "archive_subdir": null }
+    },
+    {
+      "token": "COMPLETED",
+      "description": "All planned work has shipped. adapters/claude-code/scripts/close-plan.sh is the sole authorized writer of this transition (flips Status: ACTIVE -> COMPLETED as its last step, after the completion report and closure-contract checks pass).",
+      "phase": "terminal",
+      "cockpit_render": "complete -- reached via the SAME task-count ladder as ACTIVE (all boxes checked, done===total); COMPLETED carries no special-case branch in derivePlanRootNode because the ladder already lands on 'complete' on its own (roadmap-routes.js ~line 1515-1516 explicitly notes COMPLETED is 'deliberately NOT special-cased here').",
+      "lifecycle": { "triggers_archival": true, "archive_subdir": "archive" }
+    },
+    {
+      "token": "SUPERSEDED",
+      "description": "Plan is obsoleted by a newer plan or decision before it finished. Terminal -- work stops here, but distinct from COMPLETED (nothing shipped from this plan itself; a successor plan/decision carries the work forward).",
+      "phase": "terminal",
+      "cockpit_render": "complete, with terminal_label:'superseded' -- explicitly special-cased in derivePlanRootNode (roadmap-routes.js ~line 1518-1523, the ROADMAP-SUPERSEDED-RENDERS-PENDING-01 fix) so it lands in the existing Shipped grouping (status.value==='complete') with zero new client-side plumbing, while staying visually distinguishable from a real completion via terminal_label.",
+      "lifecycle": { "triggers_archival": true, "archive_subdir": "archive" }
+    },
+    {
+      "token": "DEFERRED",
+      "description": "Plan is intentionally paused -- the work is still intended, just not currently active. Terminal FOR EDITING (plan-lifecycle.sh's auto-archival splice will not re-fire on later edits once a plan reaches DEFERRED) but explicitly NOT terminal for BUILDING: per ADR 052 (2026-06-04) it routes to docs/plans/deferred/, a plan-level backlog of intended-but-not-active work, never to docs/plans/archive/ alongside genuinely-done plans.",
+      "phase": "terminal",
+      "cockpit_render": "task-count ladder, same as ACTIVE (not-started/in-progress/complete based on checkboxes) -- as of this schema's authoring, roadmap-routes.js does NOT special-case DEFERRED with a distinct terminal_label the way SUPERSEDED/ABANDONED get one, so a DEFERRED plan with unchecked boxes still renders plain 'in-progress' or 'not-started', indistinguishable in the roadmap tree from an actively-worked ACTIVE plan. Recorded here as a KNOWN GAP for a future cockpit change, not silently redefined by this schema.",
+      "lifecycle": { "triggers_archival": true, "archive_subdir": "deferred" }
+    },
+    {
+      "token": "ABANDONED",
+      "description": "Plan is deliberately dropped; no further work is intended, and nothing shipped from it. Terminal.",
+      "phase": "terminal",
+      "cockpit_render": "complete, with terminal_label:'abandoned' -- same special-case branch as SUPERSEDED (roadmap-routes.js ~line 1518-1523).",
+      "lifecycle": { "triggers_archival": true, "archive_subdir": "archive" }
+    },
+    {
+      "token": "REFERENCE",
+      "description": "Plan file is not an execution plan at all -- it is a reference or spec-appendix document that never enters the build lifecycle (canonical successor of the freelanced 'REFERENCE (spec appendix...)' and 'NORMATIVE for Wave O builders (...)' prose found in the neural-lace pre-migration census; live examples: docs/plans/nl-overhaul-program-2026-07-specs-{b,c,d,e,f}.md, docs/plans/nl-observability-program-2026-08-specs-o.md). Lives permanently under docs/plans/ -- never docs/plans/archive/ or docs/plans/deferred/ -- because it is ongoing reference material read repeatedly by builders, not completed or paused work to file away.",
+      "phase": "terminal",
+      "cockpit_render": "excluded -- filtered out of the roadmap tree entirely, matching the existing PLAN_STATUS_EXCLUDE_RE convention in roadmap-routes.js (~line 318, currently matches a `^(REFERENCE|NORMATIVE)\\b` prefix on the raw Status: text). A REFERENCE-status plan is never a roadmap node and never produces a 'status unknown' scanIssue.",
+      "lifecycle": { "triggers_archival": false, "archive_subdir": null }
+    }
+  ],
+  "status_note": {
+    "header": "Status-note",
+    "position": "immediately after the Status: line, before any other header field",
+    "required": false,
+    "parsed_for_state": false,
+    "purpose": "Free-form human context for why the plan carries its current Status -- the operator/date/reason a plan was deferred or superseded, or why a spec-appendix plan is REFERENCE rather than an independent plan. Never a second place to encode machine state; see parsed_for_state above.",
+    "example": "Status: DEFERRED\nStatus-note: operator 2026-07-30 -- paused pending accountable-estate T7 loe-calibration backfill"
+  }
+}

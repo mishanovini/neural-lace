@@ -467,6 +467,25 @@ When a new plan is created that addresses one or more items currently listed in 
 
 Plan files have a four-stage lifecycle. Each stage has a mechanical hook backing it so the lifecycle does not depend on human discipline at any point. The mechanism that holds it together is `~/.claude/hooks/plan-lifecycle.sh` (PostToolUse on Edit/Write under `docs/plans/`).
 
+### Stage 0: The Status enum + Status-note (the plan-status-schema migration)
+
+Pre-migration, every project freelanced its own `Status:` prose — a 2026-08-04 census found this repo carrying `13x DEFERRED, 3x ACTIVE, 5x "REFERENCE (spec appendix...)", 1x "NORMATIVE for Wave O builders (...)", 1x "DEFERRED (operator 2026-07-30: ...)"` and a sibling project on the same machine carrying `20x ACTIVE, 6x DRAFT, 1x PROPOSED, 2x PROPOSAL variants with prose, 2x "DRAFT -- <prose>"`. None of that free text is an exact-match enum member, so the cockpit (`neural-lace/workstreams-ui/server/roadmap-routes.js`) rendered every one of those plans as `status unknown — plan parse failed (unrecognized Status: "...")`. The parser's fail-loud behavior was correct — the fix is a real enum, not a laxer parser.
+
+**THE canonical enum is machine-readable at `adapters/claude-code/schemas/plan-status.schema.json`** — treat that file, not this table, as the source of truth if the two ever disagree; this table is a human-readable mirror kept in hand-sync (there is no generator yet). `Status:` takes the bare uppercase token only, no parenthetical prose; qualifying context moves to an optional `Status-note:` line immediately after `Status:` (free prose, NEVER parsed for machine state by any gate/hook/cockpit derivation — see the schema's `status_note` contract).
+
+| Token | Phase | Meaning | Archival (`plan-lifecycle.sh`) |
+|---|---|---|---|
+| `DRAFT` | pre-build | Being authored; not yet reviewed. Not a commitment to build. | none |
+| `PROPOSED` | pre-build | Authored + complete; awaiting reviewer/owner sign-off. Successor of a sibling project's freelanced `PROPOSAL`. | none |
+| `ACTIVE` | building | The current locus of work. Default for a new plan. | none |
+| `COMPLETED` | terminal | All planned work shipped. `close-plan.sh` is the sole authorized writer of this transition. | → `docs/plans/archive/` |
+| `SUPERSEDED` | terminal | Obsoleted by a newer plan/decision before completion. | → `docs/plans/archive/` |
+| `DEFERRED` | terminal | Intentionally paused — work still intended, just not active. | → `docs/plans/deferred/` (ADR 052 — NOT archive/) |
+| `ABANDONED` | terminal | Deliberately dropped; no further work intended. | → `docs/plans/archive/` |
+| `REFERENCE` | terminal | Not an execution plan — a reference/spec-appendix document (successor of the freelanced `REFERENCE (spec appendix...)` / `NORMATIVE for Wave O builders (...)` prose; live examples: `docs/plans/nl-overhaul-program-2026-07-specs-{b,c,d,e,f}.md`). | none — stays in `docs/plans/` permanently |
+
+`plan-lifecycle.sh` and `plan-status-archival-sweep.sh` both read the schema via `jq` (`statuses[].lifecycle.triggers_archival` / `.archive_subdir`) rather than each carrying an independent hardcoded status list, with a hardcoded fallback identical to the pre-schema behavior when `jq` or the schema file is unavailable — see either hook's own header comment for the full reasoning against a generated-bash-include alternative (jq is already a pervasive dependency across this codebase's hooks/scripts). The cockpit is the schema's second intended consumer but, as of this migration, has not yet been wired to read it — `roadmap-routes.js` still carries its own `KNOWN_PLAN_STATUS_TOKENS` map and `PLAN_STATUS_EXCLUDE_RE`; the schema's `cockpit_render` field per status states the intended target render (with current `roadmap-routes.js` line numbers cited) for whenever that wiring lands.
+
 ### Stage 1: Creation — commit immediately
 
 When you write a new plan file at `docs/plans/<slug>.md`, **commit it within the same session** — ideally within minutes of writing it. Uncommitted plan files are vulnerable to being wiped by concurrent sessions performing git operations on the same working tree.
