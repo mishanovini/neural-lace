@@ -3275,3 +3275,9 @@ waivering real signal. T8 stays [ ]; .stage2_admission.opened_since stays null (
 correctly silent). Projected next-session path: complete the record enqueues → run the
 second-principal runner (laptop/Mac mini) → re-measure; Stage-2 admission opens at T8's true
 completion.
+
+### Task 8 — review-independence enqueue COMPLETE (2026-08-04)
+All 11 flagged self-approval records enqueued for independent re-review (queue 37→48, item ids
+rq-20260804-{020f1307,2f035501,52ed09d4,3466375d,67df4328,6130119b,07bf54aa,10a57861,6549536a,
+77fe7297,44924ea2}); zero claims/completions performed — the second-principal runner (Decision
+067) now holds the entire remaining path for this RED class.
