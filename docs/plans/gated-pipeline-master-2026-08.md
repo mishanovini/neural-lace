@@ -597,6 +597,7 @@ Modify:
 
 - 2026-08-03: `docs/reviews/2026-08-03-needs-you-readability-review.md` — operator-directed (verbatim complaint: NEEDS-YOU.md "incredibly messy … not clear what you actually need from me") readability audit of the `adapters/claude-code/scripts/needs-you.sh` render pipeline; review-only, no code changed; its S1-S8 generator spec seeds a follow-up render-fix task. Same class as the CI-triage fold above: operator directive surfacing work outside the original Files map.
 - 2026-08-03: `docs/reviews/2026-08-03-needs-you-digest.md` — companion hand-triaged operator digest of the current ledger content (same operator directive as the entry above).
+- 2026-08-03: `docs/reviews/2026-08-03-estate-drain-record.md` — Task 21's own task text commits to "Docs impact: drain record in docs/reviews/", but the `## Files to Modify/Create` table was never amended to include it (same class of gap as the T17 evidence-directory entries above); flagged by scope-enforcement-gate on the commit attempt, fixed via this entry per the gate's own option 1.
 
 ## Assumptions
 

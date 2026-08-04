@@ -1,6 +1,6 @@
 # Plan — Status-event ledger: a deterministic trigger for EVERY status event
 
-Status: ACTIVE
+Status: DEFERRED
 Key: SE
 Mode: code
 rung: 2
@@ -182,3 +182,15 @@ pin these down as each SE task starts, not this fix.)
 - `adapters/claude-code/scripts/needs-you.sh` + `adapters/claude-code/scripts/nl-issue.sh` — SE9
   (decision/incident emits feeding the unified view)
 - doctrine amendment (file TBD) — SE10 (vocabulary-lock doctrine + Stop-WARN vocabulary check)
+
+## Drain disposition (gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+DEFERRED, not closed: this plan uses a custom BUILT/PARTIAL/UNBUILT taxonomy table (SE1-SE13),
+not `- [ ]` checkboxes, so the naive 0/10 checkbox count is a false-stale signal (correctly
+flagged as such by the 2026-08-02 estate-entropy triage). Re-verified this pass: SE1/SE3/SE4/
+SE10 confirmed BUILT (SHAs `4a2ca13`->`37b2a59f` reformulate); SE2, SE6, SE7 still genuinely
+UNBUILT; SE5, SE8, SE9 still PARTIAL — real, substantial remaining work (5 of 13 taxonomy rows).
+No commit to this plan since 2026-07-30 (4 days stale at drain time), no session currently
+working it. "Not stale" is not the same claim as "currently active" — DEFERRED reflects that
+distinction honestly. Status flipped ACTIVE -> DEFERRED. Resume trigger: next session building
+SE2 (per-suite emit, the simplest fully-unbuilt row).

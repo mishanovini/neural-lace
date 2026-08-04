@@ -1,6 +1,6 @@
 # Plan — Verification dispatch is standard process (harness governance)
 
-Status: ACTIVE
+Status: COMPLETED
 Mode: code
 Owner: interactive session (2026-07-28, operator-directed)
 Backlog items absorbed: none
@@ -100,3 +100,11 @@ bullet as extractable rule-body.
 
 - 2026-07-29: adapters/claude-code/hooks/lib/git-command-parse.sh — V6 round 3, CLASS fix: harness-reviewer rejected the gate three times for fixing instances while shipping the class (hand-rolled shell parsing). The reviewer named the remedy: extract scope-enforcement-gate's tokenize/analyze-git-segment/parse-cd-target primitives to a shared lib so the harness has ONE commit-target resolver instead of two that disagree. This is that lib (gcp_ API, own self-test 64/0 on bash 5.3 + 3.2).
 - 2026-07-29: adapters/claude-code/hooks/scope-enforcement-gate.sh — V6 round 3: sources the extracted lib instead of defining the six parsing primitives. Behaviour-preserving by mandate; proven by a pre/post differential over a 40-command corpus x 3 cwds (120/120 identical rc+stderr) on both interpreters, plus its unchanged 35/35 suite.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: V1-V5 all checked and independently
+confirmed on master (doctrine file, `review-record-commit-gate.sh` present via `802a9377`). V6
+is explicitly framed in this plan's own text as "DEFERRED, NOT IN THIS PLAN" (it does not ship
+in this plan) and the In-flight-scope-updates note above shows it landed anyway via a separate
+build 2026-07-29 — this plan's own actual scope is done. Status flipped ACTIVE -> COMPLETED.

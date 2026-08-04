@@ -1,6 +1,6 @@
 # Plan: Flat-skills → directory-form migration
 
-Status: ACTIVE
+Status: COMPLETED
 Date: 2026-07-12
 Owner: builder session (worktree wf_490488a8, branch feat/plan-lifecycle-mechanical-closure)
 Discovery: docs/discoveries/2026-06-02-flat-md-skills-not-skill-tool-invocable.md
@@ -104,3 +104,13 @@ template) were never synced to live `~/.claude/skills/` at all.
   stale-flat-skill-pruned-with-backup are new).
 - End-to-end Skill-tool registration in a fresh session is NOT demonstrable
   pre-merge (live sync reads origin/master) — Task 6 tracks it honestly.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: Tasks 1-5 confirmed landed via
+`cdf685c5` (skills migrated to `<name>/SKILL.md`, confirmed via `git ls-tree` at HEAD). Task 6
+("registration confirmation in a fresh session") is satisfied by this very drain session — the
+tool-availability listing at session start lists `calibrate`, `close-plan`, `find-bugs`,
+`harness-lesson`, `harness-review`, `teaching-moments`, `verbose-plan`, `verify-feature`,
+`why-slipped` as live, Skill-tool-invocable entries, confirming the dir-form migration works
+end-to-end. Status flipped ACTIVE -> COMPLETED.

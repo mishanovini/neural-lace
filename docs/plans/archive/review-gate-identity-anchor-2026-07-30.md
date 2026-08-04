@@ -1,6 +1,6 @@
 <!-- scaffold-created: 2026-07-31T02:34:20Z by start-plan.sh slug=review-gate-identity-anchor-2026-07-30 -->
 # Plan: Anchor review-gate identity outside the pusher's write set
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: code
 Backlog items absorbed: none
@@ -434,8 +434,17 @@ an agent's tool shell and vanishes in a plain `bash script.sh` — verified by t
 first run of the sweep failing `rg: command not found` on every file.
 
 ## Definition of Done
-- [ ] All tasks checked off
-- [ ] All tests pass
-- [ ] Linting/formatting clean
-- [ ] SCRATCHPAD.md updated with final state
-- [ ] Completion report appended to this plan file
+- [x] All tasks checked off
+- [x] All tests pass
+- [x] Linting/formatting clean
+- [x] SCRATCHPAD.md updated with final state
+- [x] Completion report appended to this plan file
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: three sequential harness-reviewer
+REJECT-round fix commits confirmed on master and independently re-verified this pass —
+`987bbb4b` "anchor gate identity outside the pusher's write set (closes harness-reviewer REJECT:
+3 Critical, 3 Major, 1 Minor)", `24aa91ce`, `802a9377` (all 2026-07-30T21:46, all
+`git merge-base --is-ancestor <sha> master` rc=0). No further build work needed — bookkeeping
+close only. Status flipped ACTIVE -> COMPLETED.

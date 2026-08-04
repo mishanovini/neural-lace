@@ -1,5 +1,5 @@
 # Plan: Intended-Functionality statement + anti-restatement gate (stage 0)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -274,3 +274,10 @@ non-zero verdict; acceptable, as every other harness gate already depends on `aw
 - **Additive edits to `functionality-verifier.md`.** A sibling session (`9b32b4b`) had
   already fixed the two known defects; edits were kept out of the regions it rewrote so
   the commits do not conflict.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: all 8 tasks already checked in-plan;
+`adapters/claude-code/scripts/if-statement-check.sh` confirmed on master via `76a08f5f`
+"feat(stage-0)". No further build work needed — pure bookkeeping close. Status flipped
+ACTIVE -> COMPLETED.
