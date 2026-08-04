@@ -595,6 +595,9 @@ Modify:
 - 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-2.txt` — same as the -1.txt entry immediately above (one bullet per file; scope-enforcement-gate's In-flight parser reads one physical line per bullet, not wrapped continuation lines).
 - 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-3.txt` — same as the -1.txt entry above.
 
+- 2026-08-03: `docs/reviews/2026-08-03-needs-you-readability-review.md` — operator-directed (verbatim complaint: NEEDS-YOU.md "incredibly messy … not clear what you actually need from me") readability audit of the `adapters/claude-code/scripts/needs-you.sh` render pipeline; review-only, no code changed; its S1-S8 generator spec seeds a follow-up render-fix task. Same class as the CI-triage fold above: operator directive surfacing work outside the original Files map.
+- 2026-08-03: `docs/reviews/2026-08-03-needs-you-digest.md` — companion hand-triaged operator digest of the current ledger content (same operator directive as the entry above).
+
 ## Assumptions
 
 - The design is FINAL at r3 (blob `53fd8f27…`, harness PASS + architecture SOUND, all delta
