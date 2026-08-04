@@ -1453,7 +1453,7 @@ async function main() {
     const projectsConfigPath = path.join(tmp, 'fixture-projects.json');
     fs.writeFileSync(projectsConfigPath, JSON.stringify({
       // Object form (R17): declares a top-level display group explicitly.
-      'other-project': { root: otherRepoDir, group: 'Pocket Technician' },
+      'other-project': { root: otherRepoDir, group: 'Acme Co' },
       'empty-project': emptyRepoDir,
       // Legacy flat-string form (R17): no group -> honest '(ungrouped)'.
       'flat-project': flatRepoDir,
@@ -1484,8 +1484,8 @@ async function main() {
       selfPlanForGroup && selfPlanForGroup.project_group === 'Neural Lace',
       selfPlanForGroup && selfPlanForGroup.project_group);
     const otherRepoItem = findItem(multiItems, 'other-repo-plan');
-    ok('R17-G2 a configured repo using the OBJECT config form ({root, group}) carries the DECLARED group ("Pocket Technician") on its plans — never a hardcoded default',
-      otherRepoItem && otherRepoItem.project_group === 'Pocket Technician',
+    ok('R17-G2 a configured repo using the OBJECT config form ({root, group}) carries the DECLARED group ("Acme Co") on its plans — never a hardcoded default',
+      otherRepoItem && otherRepoItem.project_group === 'Acme Co',
       otherRepoItem && otherRepoItem.project_group);
     const flatRepoItem = findItem(multiItems, 'flat-project-plan');
     ok('R17-G3 a configured repo using the LEGACY flat-string config form (no group declared) lands its plans in the honest "(ungrouped)" catch-all, never silently defaulted into one of the named groups',
