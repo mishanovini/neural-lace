@@ -1118,6 +1118,259 @@ Runtime verification: command git merge-base --is-ancestor dbd6647f 851adbbd   #
 
 Verdict: PASS
 Confidence: 9
+
+## Task 20 — Carriage channels 2+3 + generated NL-ATTRIBUTION header (REQ-B11/REQ-B12) — Verification: full
+
+- Builder: plan-phase-builder (sonnet), SERIAL dispatch on the shared checkout (no worktree isolation
+  for this build — session `4a470c8c`).
+- Files: `adapters/claude-code/scripts/dispatch-directives.sh` (new) · `adapters/claude-code/hooks/lib/directives-register-lib.sh`
+  (extended: `dr_entries_for_files_bash`, `dr_register_walk_bash`, `_dr__parse_all_bash`,
+  `_dr__decode_escapes` — the pure-bash fast path) · `adapters/claude-code/hooks/doctrine-jit.sh`
+  (`_compute_doctrine_body`/`_compute_register_body`/`_compute_injection` split, the C-1 merge) ·
+  `adapters/claude-code/doctrine/orchestrator-pattern.md` + `-full.md` (dispatch-directives.sh step
+  + generated-header rule).
+- What ran, in order: (1) hand-validated the pure-bash line-scan parser against the REAL register
+  and the T11 shared fixture before wiring anything (caught and fixed a real self-test-fixture bug —
+  a single-line `"surfaces": ["x"],` array silently failed to parse, since the reader targets the
+  register's own MULTI-line pretty-print convention only — documented as a stated limitation, not
+  fixed generically); (2) wired the merged single-emission walk into doctrine-jit.sh; (3) built
+  `dispatch-directives.sh` (channel 2 + the carriage WARN); (4) mid-build, the orchestrator sent a
+  scope addition (operator directive 2026-08-03: generated, never hand-typed, dispatch identifiers)
+  to also generate the `NL-ATTRIBUTION` header from `dispatch-directives.sh` — implemented, self-tested,
+  doctrine updated in the same commit; (5) iteratively benchmarked and fixed THREE distinct fork-cost
+  sources in the register-walk hot path (below).
+- Self-tests, all re-run on the committed state: `directives-register-lib.sh --self-test` → **29
+  passed, 0 failed** (includes the pure-bash-vs-node/jq round-trip parity checks and a live check
+  against the REAL committed register for this task's own three wire-checked files). `doctrine-jit.sh
+  --self-test` → **17 passed, 0 failed** (T1-T10 pre-existing, unchanged; T11-T16 new — both-match,
+  register-only, dedup, fresh-session re-fire, empty/missing register degrade). `dispatch-directives.sh
+  --self-test` → **10 passed, 0 failed** (attribution header + role default/override, invalid-task-id
+  hard error naming every valid id, invalid-role hard error, Directives computation against the T11
+  shared fixture, carriage WARN fires/doesn't-fire). `dispatch-chain-gate.sh --self-test` (unaffected
+  file, sanity re-run) → 6 passed, 0 failed.
+
+### Prove it works — the four required scenarios
+
+**1. `dispatch-directives.sh <this-plan> 20`:**
+```
+$ bash adapters/claude-code/scripts/dispatch-directives.sh docs/plans/gated-pipeline-master-2026-08.md 20
+NL-ATTRIBUTION: plan=gated-pipeline-master-2026-08 task=20 role=builder
+
+Directives: OD-002,OD-007,OD-008,OD-013,OD-018,OD-021
+### OD-002 ... ### OD-007 ... ### OD-008 ... ### OD-013 ... ### OD-018 ... ### OD-021 ...
+[dispatch-directives] CARRIAGE WARN (REQ-B12): task 20's plan-declared Directives: field is missing
+OD-021 — the register has changed since the field was last computed (or it was never set); paste
+the block(s) above into the dispatch prompt and consider updating the plan's Directives: line.
+```
+This is a REAL, live finding, not a synthetic fixture: OD-021 (`ci-is-read-mandatory`) was added to
+the register AFTER the T16 fidelity review computed this task's own `Directives:` line
+(`OD-002, OD-007, OD-008, OD-013, OD-018`) — its surface `adapters/claude-code/doctrine/orchestrator-pattern*`
+matches this task's own `orchestrator-pattern.md` edit. The carriage-WARN mechanism (REQ-B12) caught
+its OWN plan's citation going stale, live, on the first real invocation. The plan is frozen and this
+task's own line is not edited here; the finding is recorded as evidence of the mechanism working, per
+the plan's own convention that built tasks keep their historically-true `Directives:` lines.
+
+**2. Both-match-same-event, ONE valid JSON object (doctrine-jit.sh self-test T11):** a fixture edit
+path (`docs/plans/both-match.md`) matches BOTH the fixture manifest's `plan-edit-validator` trigger
+AND the fixture register's `OD-901` surface. Asserted: `jq -e .` parses; `jq -s 'length'` on the raw
+stdout → `1` (ONE JSON object, not two concatenated); `additionalContext` contains BOTH the doctrine
+compact text (`FUNCTIONALITY OVER COMPONENTS`) AND the register block (`OD-901`, `FIXTURE DIRECTIVE
+for doctrine-jit self-test`); both markers written independently
+(`sess-11--plan-edit-validator` and `sess-11--od--OD-901`).
+
+**3. Dedup on a second identical edit (T13):** the same session (`sess-11`) repeats a `docs/plans/`
+edit that would re-match both walks → empty output (both markers already present from T11).
+
+**4. TIMING — the register walk's added latency, 10-run average, MUST be < 50ms.**
+
+Methodology: `$EPOCHREALTIME` (bash 5.0+ builtin, no fork — `date +%s%N` was tried FIRST and rejected:
+`date` is an external binary, so timing WITH it contaminates every measurement with `date`'s own
+~100-300ms fork cost on this platform, the exact effect being measured). Measured
+`_compute_register_body` directly (the function `_compute_injection` calls — the register walk plus
+marker-check/dedup/body-assembly, i.e. everything Task 20 ADDS to the hook), sourcing the real
+`directives-register-lib.sh` + `doctrine-jit.sh`, against the REAL committed register and
+`adapters/claude-code/hooks/doctrine-jit.sh` as the trigger file (3 real matches: OD-002/007/018).
+
+Official 10-run reading (exact reproduction below):
+```
+run,ms
+1,47
+2,51
+3,46
+4,44
+5,55
+6,43
+7,53
+8,49
+9,43
+10,46
+average,47
+```
+**47ms average — under the 50ms budget.**
+
+Reproduction (the exact logic run):
+```bash
+cd <repo-root>
+source adapters/claude-code/hooks/lib/nl-paths.sh
+source adapters/claude-code/hooks/lib/directives-register-lib.sh
+exit() { return "${1:-0}"; }; set -- --unused; source adapters/claude-code/hooks/doctrine-jit.sh; unset -f exit
+REG="$(dr_default_register_path)"; SD="$(mktemp -d)"; F="adapters/claude-code/hooks/doctrine-jit.sh"
+for i in $(seq 1 10); do
+  rm -f "$SD"/*; _DJ_REGISTER_BODY=""
+  t0=$EPOCHREALTIME; _compute_register_body "$REG" "$F" "sess-$i" "$SD"; t1=$EPOCHREALTIME
+  # ms = (t1-t0) computed via integer arithmetic on EPOCHREALTIME's sec.micro parts
+done
+```
+(The `exit()`-shadow + `--unused` dance exists only because `doctrine-jit.sh`'s own bottom-of-file
+CLI dispatch has no direct-execution guard, unlike the lib files — sourcing it for its functions,
+which this reproduction needs, would otherwise call a real `exit` mid-source.)
+
+**Environment disclosure (honesty, not an excuse):** this machine was under UNUSUALLY heavy
+concurrent load throughout this build — `Get-Process | Where-Object {ProcessName -match
+"bash|node|claude"} | Measure-Object` read **107 processes** mid-build and **208 processes** at the
+time of the official reading above (verified, not estimated). For comparison, a single `jq -e .
+<register>` spawn — what the OLD, REJECTED, jq-based approach would have cost per event — measured
+**219ms average** (10 runs, SAME load conditions, SAME session) — 4.7x this implementation's 47ms.
+Earlier in this build, under lighter load, the identical code measured 11-15ms for the bare
+parse-only pass and 26-49ms for the full walk-with-decode — comfortably under budget with more
+margin. The 47ms official reading is the worst-case-load number this session could produce, not a
+best-case cherry-pick; individual runs within a 10-run batch ranged from 41ms to 139ms across
+several batches taken during the optimization work (before the fixes below), settling to the 43-55ms
+band reported above after all three fork-cost fixes landed.
+
+**Fork-cost sources found and fixed (the actual F-5 engineering, in the order discovered):**
+1. **jq/node in the parse itself** — the reason this second code path exists at all. `dr__stream`
+   (the pre-existing node/jq-backed reader `dr_entries_for_files` uses) costs ~174-364ms per
+   invocation on this platform; forbidden for the per-event hot path per the design's own F-5
+   finding. Fixed by `_dr__parse_all_bash`/`dr_register_walk_bash`: `$(< file)` fast-slurp (a bash
+   builtin special-case, NOT `cat`) + an IFS-based unquoted-array line split (also a builtin, not a
+   `read` loop) + `case "$line" in *glob*)` classification (measured faster than `[[ =~ regex ]]` on
+   this platform — a `while read` + regex version of the SAME logic measured ~270-320ms, i.e. WORSE
+   than the jq baseline it was meant to replace, discovered and rejected during this build) +
+   `${var#prefix}`/`${var%suffix}` value extraction.
+2. **A per-matched-entry `mkdir -p` fork** — `mkdir` is an external binary, not a bash builtin. The
+   first working version of `_compute_register_body`'s marker-writer called it once PER matched OD-
+   entry (3 times for this task's own trigger file), costing ~150ms extra by itself. Fixed: hoisted
+   to at most once per invocation, memoized, AND skipped entirely via a `[ -d "$state_dir" ]` builtin
+   test in the overwhelmingly common case (the directory already exists after session start).
+3. **Double-layered `$( )` capture** — the first working version had `_compute_injection` call
+   `_compute_doctrine_body`/`_compute_register_body` via `$( )`, and `_compute_register_body`
+   separately call `dr_register_walk_bash` via `$( )` — TWO nested forks on the hot path. `$( )` is
+   always a fork in bash regardless of what's inside it (even a bash builtin or a plain variable
+   read). Fixed by having every layer set a global (`_DJ_DOCTRINE_BODY`, `_DJ_REGISTER_BODY`,
+   `DR_REGISTER_WALK_OUT`) instead of echoing, called DIRECTLY (no `$( )`) at every layer except the
+   one place a real text capture is unavoidable — none remain in the hot path; `dr_register_walk_bash`
+   itself was the last echo-based function and now sets `DR_REGISTER_WALK_OUT` instead (a small
+   `~5`-line duplication of `_dr__decode_escapes`'s body was accepted, inlined, specifically to avoid
+   a `$( )` around that call too — documented in the code as a deliberate fork-avoidance trade, not a
+   second decode implementation with different semantics).
+
+### Task 20 — Comprehension Articulation (builder-authored, per Decision 020d)
+
+#### Spec meaning
+
+Task 20 builds carriage channels 2 and 3 of the operator-directives register (REQ-B1/Task 11 built
+the register itself + channel 1, the plan's per-task `Directives:` field). Channel 2
+(`scripts/dispatch-directives.sh`) is an orchestrator-run CLI tool: given a plan and a task number,
+it computes which register entries' `surfaces` globs match the task's `## Files to Modify/Create`
+entries (via `directives-register-lib.sh`'s `dr_entries_for_files` — the ONE parser, M-3), printing
+the matched ids' instruction blocks ready to paste into a dispatch prompt. Channel 3
+(`doctrine-jit.sh`'s register walk) is the SAME matching computation, but run automatically on every
+PostToolUse Edit/Write/MultiEdit event, merged into the SAME `hookSpecificOutput` JSON emission the
+pre-existing doctrine-compact walk already produces — the C-1 form: both walks compute independently,
+one JSON object, both bodies when both fire, per-walk markers, always-exit-0. REQ-B11's fidelity
+review (F-5) additionally bound channel 3 to a <50ms added-latency budget and explicitly forbade any
+per-event jq/node subprocess, which is why this task's SECOND code path (`dr_register_walk_bash`,
+pure-bash) exists alongside channel 2's node/jq-backed `dr_entries_for_files` — two readers of the
+SAME file for two genuinely different cost budgets, not a redundant duplication (documented at length
+in the lib's own module header). REQ-B12's "G1/G2 carriage WARN" is interpreted here as: WARN when a
+task's ALREADY-DECLARED `Directives:` field (channel 1's snapshot) has drifted from what the register
+NOW computes — implemented inside `dispatch-directives.sh` itself (run at the moment the orchestrator
+actually pastes citations into a dispatch, which IS G2's real moment), not by editing `plan-reviewer.sh`
+(G1, Task 14's file, unflipped and possibly concurrently in flight) or `dispatch-chain-gate.sh` (G2's
+live PreToolUse form, Task 17's explicit unbuilt remit — that file's own header warns against
+premature extension). Mid-build, the orchestrator added: generate the `NL-ATTRIBUTION` dispatch
+header from this SAME script rather than hand-typing it, validated against the plan's real task list —
+folded in as the same file's natural extension point.
+
+#### Edge cases covered
+
+- Both-match-same-event (the C-1 load-bearing scenario, T11): one JSON object, both bodies, both
+  markers written independently — the design's exact acceptance bar.
+- Register-only match with zero doctrine match (T12) and the reverse (T1-T10, unchanged, still pass
+  with register_path omitted — proves the register walk is purely additive).
+- Dedup: repeated identical edits in the same session re-inject nothing for either walk (T13); a
+  FRESH session re-fires independently (T14) — markers are per-session, matching the pre-existing
+  doctrine-walk convention.
+- Missing/empty register path (explicit `""`, T15) and a non-existent register FILE path (T16) both
+  degrade to doctrine-only / fully silent, never a crash — the lib's documented fail-open contract
+  extended through the hook layer.
+- Real register drift surfacing through the carriage WARN: OD-021 (added to the register after this
+  plan's own `Directives:` lines were computed) matches this task's own files and the WARN fires on
+  the very first live invocation against the real plan — not a contrived fixture.
+- Escaped-backslash instruction text (OD-020's `HKLM\\SOFTWARE\\Policies\\Claude`) decodes correctly
+  via the placeholder-indirection substitution order (`\\` → placeholder → `\n`/`\"`/`\t` decoded →
+  placeholder → `\`) — verified directly against the one real register entry that exercises it.
+- `dispatch-directives.sh` task-id validation: numeric-only enforced (the operator-directive scope
+  addition's root cause — a hand-typed `T7`-shaped id), unknown task id hard-errors naming every
+  valid id from the plan's own `## Tasks` list (never a best-effort guess); invalid role hard-errors
+  against the doctrine's closed set.
+- A task with no Files-to-Modify entries tagged for it → `Directives: none`, rc 0, not an error.
+- Three independently discovered and fixed fork-cost sources in the timing-critical path, each
+  verified via before/after EPOCHREALTIME measurement rather than assumed fixed.
+
+#### Edge cases NOT covered
+
+- `dr_register_walk_bash`/`_dr__parse_all_bash` are NOT general JSON parsers — they target the
+  register's own generated multi-line pretty-print convention specifically (non-empty `"surfaces"`
+  arrays opened on their own line, one glob per subsequent line). A single-line
+  `"surfaces": ["x"],` entry would silently fail to parse. This is disclosed in the lib's own module
+  header as a stated limitation (not a general-purpose reader), and was caught once already during
+  this build (my own self-test fixture used the wrong shape; fixed to match the real convention) —
+  but nothing GATES a future hand-edit of the real register into the unsupported shape; `dr_validate`
+  (the JSON-correctness checker) would still pass such a file since it is valid JSON, just not in the
+  shape this second reader expects.
+- G1 (`plan-reviewer.sh` Check 21) and G2's live PreToolUse form (`dispatch-chain-gate.sh`, Task 17)
+  do not themselves call any carriage-WARN logic — this task's wire-checks block names only
+  `dispatch-directives.sh` and `doctrine-jit.sh`, and I deliberately did not extend either of those
+  two other files (risk of conflicting with Task 14's unflipped-but-landed work, and
+  `dispatch-chain-gate.sh`'s own header explicitly warns against building live enforcement before
+  Task 17). REQ-B12's WARN posture is therefore satisfied at the dispatch-tool layer only, not
+  live-wired into either named gate.
+- The 47ms official timing reading was taken on a machine carrying unusually heavy concurrent load
+  (208 bash/node/claude processes, verified). No fully-idle-machine number was independently
+  reproduced at the very end of the build; the lighter-load numbers earlier in the session (11-49ms)
+  and the heavy-load numbers at the end (43-55ms) bracket the real range but a clean-room number
+  was not captured.
+- `extract_tagged_files` (dispatch-directives.sh) takes the LAST parenthetical group on a Files-to-
+  Modify line as the task-tag group; every real line in this plan follows that convention, but a line
+  with the tag as a non-last parenthetical is unhandled (would silently miss the file).
+- No self-test exercises `dispatch-directives.sh` against a plan with no `## Tasks` section at all, or
+  a register that fails `dr_validate` — both degrade via the lib's documented fail-open contract but
+  are not independently asserted for THIS script.
+
+#### Assumptions
+
+- The register's committed pretty-print convention (2-space indent, one JSON field per line,
+  non-empty `surfaces` arrays multi-line) remains stable; the `real-register-t20-files-match-set`
+  self-test scenario (comparing this task's pure-bash reader against the pre-existing node/jq reader
+  on the REAL committed file) would catch a future format drift immediately if either reader started
+  disagreeing.
+- `$EPOCHREALTIME` (bash 5.0+ builtin) is available wherever this hot path's cost might need
+  re-auditing in the future — confirmed on this machine (bash 5.2.37) but not independently verified
+  on the harness's other supported platforms (Mac, other Windows machines) during this build.
+- Task 17 (G2's live PreToolUse wiring) will eventually consume register-lib functions for its own
+  carriage-WARN behavior in a form compatible with what this task built — assumed, not verified,
+  since Task 17 does not exist in this worktree.
+- The mid-build NL-ATTRIBUTION scope addition assumed plan task ids are numeric for plans using THIS
+  plan's numbering convention specifically; the doctrine's pre-existing note that OTHER plan families
+  (accountable-estate-style) validly use `T`-prefixed ids was left untouched — `dispatch-directives.sh`'s
+  numeric-only validation is scoped to its own generation path, not asserted as a universal constraint
+  on every plan format in the harness.
+- `jq` and `node` remain available in the execution environment for channel 2
+  (`dr_entries_for_files`, dispatch-directives.sh's own backend) — that path is NOT subject to the
+  <50ms budget (it runs once per orchestrator dispatch decision, not once per Edit) and was not
+  re-engineered to avoid them.
 Reason: PROVEN: the bootstrap self-review's full mechanical contract re-observed — committed substantive record (REFORMULATE → fixes → delta PASS with fresh attestation), chain entry appended with the canonicalized anchor, and the three-way blob equality recomputed independently by this verifier through the production lib rather than trusted from any artifact. The one deviation (protocol-host execution instead of registry dispatch) is disclosed in the record, the chain entry, and an nl-issue — honest, not silent.
 
 ## Forensic recovery — Tasks 7, 11, 14, 15 Comprehension Articulations (2026-08-03)
