@@ -363,6 +363,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   backing the diagnosis (raw evidence).
 - 2026-07-19: docs/reviews/records/index.json — harness-change-review record registration for
   the 9 withheld blobs (unblocks the deploy leg; 5512926 precedent).
+- 2026-08-04: docs/designs/cockpit-read-through-2026-08-04.md — design-author artifact (operator directive 2026-08-04, read-through cockpit read path; forecloses the wrong-copy-reads + derive-on-read defects; input to the implementing plan, goes to architecture-reviewer + harness-reviewer next).
 - 2026-07-19: docs/plans/cockpit-roadmap-redesign-evidence.md — task-verifier canonical
   evidence companion (created by the t1 verification gate).
 - 2026-07-19: `neural-lace/workstreams-ui/server/derive-lib.js` — reconciles the
