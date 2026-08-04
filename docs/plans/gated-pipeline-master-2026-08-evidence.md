@@ -2840,3 +2840,139 @@ or Windows with Developer Mode); REFUTED if they still fail there. `install.sh` 
   +1 bullet, -6 trims)
 - `adapters/claude-code/doctrine/planning.md`: 2986/3000 (untouched, no change needed)
   - NOTE (not a gap, verification obligation): live ~/.claude settings + hook-file sync for this gate land at the next SessionStart (master fully pushed, 0/0 vs origin; hooks/templates are in the sync sets) — HYPOTHESIZED, refuted if a fresh session's live settings still lack the Task|Agent dispatch-chain block. Moot for blocking purposes until FAIL-basis-1 is fixed, since the synced gate would currently no-op.
+
+## Task 17 — Verifier verdict (task-verifier, batch #4 SCOPED RE-CHECK — supersedes the batch #3 FAIL; re-litigates ONLY the two FAIL bases per the remedy contract; checks 1-7 stand from batch #3)
+
+EVIDENCE BLOCK
+==============
+Task ID: 17
+Task description: REQ-B8 G2 gate live (after Task 16): dispatch-chain-gate.sh wired PreToolUse Task|Agent (subagent_type-keyed per design §4; grandfather list generated at install from extant plan slugs; gate-contract messages; --check; escape ledgered) + THE THREE-VARIANT DEMO with transcripts in the evidence file — Verification: full — Implements: REQ-B8
+Verified at: 2026-08-04T06:35:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the batch #3 FAIL's own remedy contract ("re-run the installed-layout A/B — the replica must BLOCK the variant-(i) event with exit 2" + "grep -c dispatch-chain-gate orchestrator-pattern.md must become ≥1"), re-exercised directly by this verifier against master @ 819cb1d6.
+
+Comprehension-gate: PASS (confidence 8) — batch #3 inline audit stands unchanged for the base build; the REMEDY ROUND narrative additionally demonstrates exactly the comprehension the gate exists to test (the builder independently discovered that ~/.claude/config/ holds machine-local files the FAIL's own suggested remedy (a) would have destroyed, and shipped the per-file variant instead — verified real below).
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T06:20Z
+
+Checks run (scoped: the two FAIL bases + remedy-round claims; all re-executed by this verifier on master @ 819cb1d6):
+1. Ancestry: remedy commit 819cb1d6 is master HEAD; master 0/0 vs origin/master (fully pushed). PASS
+2. FAIL BASIS 1 REMEDY, deploy path (R1a): install.sh's whole-dir loop still DELIBERATELY omits config (comment at install.sh:1294-1303 names the rm-rf hazard); a dedicated PER-FILE block (install.sh:1333-1339, dry-run twin at :779-783) walks only repo-side config/ files through sync_file(). SCRUTINY of the sync_file loop as dispatched: sync_file (:1134) removes/replaces exactly one named $dst path, never the parent dir, and backup_if_real_file (:1103) hash-verifies a backup BEFORE any removal; the `find . -type f` walk iterates ONLY $ADAPTER_DIR/config, so live-only files are never touched by construction. Live ~/.claude/config/ confirmed to hold exactly the machine-local files the builder named (active-repos.txt, active-repos.txt.bak-*, register-path) and NEITHER gate dependency — the hazard was real. `install.sh --dry-run` against the REAL live ~/.claude: all 11 repo config files listed individually as [WOULD CREATE]; active-repos.txt/register-path appear nowhere; "Dry run complete. No changes made." PASS
+   (Latent-only note, non-blocking: the per-file walk is recursive but only `mkdir -p $CLAUDE_DIR/config` at top level — a FUTURE subdirectory under repo config/ would need a per-file parent mkdir; current config/ is flat, 11 files.)
+3. FAIL BASIS 1 REMEDY, auto-install path (R1a): SYNC_SUBDIRS now carries config (session-start-auto-install.sh:98); _subdir_ext generalized to an extension SET. Self-test re-run by verifier: 22 passed, 3 failed — the 3 are exactly the pre-existing SELF-SYNC-01 trio (golden-scenario / settings-merge-guard / prune-guard), the Windows-symlink-environmental failures the builder A/B-proved on unmodified HEAD. Per dispatch: noted, NOT held against T17. PASS
+4. FAIL BASIS 1 REMEDY, loud fallback (R1b): _dcg_build_types (:370-382) and _dcg_grandfathered (:416-426) now emit stderr WARNs naming the missing file + "DEGRADED" + the fix path + an env-var override; 6 config-absent scenarios assert on the WARN TEXT (silent vs loud fail-open share an rc, so rc alone could not prove this). All pass in the 49/49 run below. PASS
+5. THE DECISIVE A/B, RE-RUN BY THIS VERIFIER (fresh replicas built from master @ 819cb1d6 bytes, fresh throwaway chain-less probe repo): replica A (hooks+lib+sibling config/) ← variant-(i) chain-less builder event → **exit 2 BLOCK**, all four GATE fields, chain-presence FAIL detail; replica B (identical bytes, NO config/) ← SAME event → exit 0 fail-open **but LOUD**: WARN naming config/model-policy.json's exact missing path + "DEGRADED" + the deploy fix. The pre-fix silent no-op is gone; the plan's Failure-modes contract ("never silent") now holds on the degraded path, and the deployed layout (A) is what install.sh/auto-install now produce. PASS
+6. Suite: dispatch-chain-gate.sh --self-test re-run by verifier → 49 passed, 0 failed (of 49). PASS
+7. FAIL BASIS 2 REMEDY (R2): grep -c "dispatch-chain-gate" doctrine/orchestrator-pattern.md → 1 (line 17, the G2 gate step bullet); byte count 2998 ≤ 3000 (cap holds); the T15 dispatch-ledger note ("Verify obligations (OD-022)") independently present → the twice-falsified premise is now discharged. PASS
+8. R3 (non-blocking item from batch #3): registry header's "Regenerate with" command now pipes every slug through sha256sum (g2-grandfather-slugs.txt:36-49), matching the membership-test convention; registry = 284 pure sha256 lines (T21's drain shrink), 0 non-hash non-comment lines. PASS
+9. Cleanup residual from batch #3: local branch worktree-agent-a38c63c69628eb5a9 (plaintext registry blob at 78e67de3) is DELETED — no branch contains 78e67de3 (dangling object pending gc, never pushed). PASS
+10. Live-machine convergence (honest note, non-blocking per the remedy contract's replica clause): live ~/.claude/hooks/dispatch-chain-gate.sh is still PRE-fix bytes (0 "DEGRADED" matches) and live config/ lacks both gate files — this session's SessionStart predates the merge. HYPOTHESIZED: next SessionStart syncs both (hooks + config now both in SYNC_SUBDIRS; master pushed 0/0); REFUTED if a fresh session's live gate still lacks the DEGRADED string or config/ stays undeployed. Manifest honest_status still says 40/40+43/43 vs the actual 49/49 — count staleness for the orchestrator's next manifest touch, non-blocking.
+
+DEPENDENCY TRACE (installed-form path, the FAIL-basis-1 chain)
+================
+Step 1: repo config/ (model-policy.json, g2-grandfather-slugs.txt) committed on master
+  ↓ Verified at: install.sh:1333-1339 (per-file sync) + session-start-auto-install.sh:98 (SYNC_SUBDIRS)
+Step 2: installed layout = hooks/dispatch-chain-gate.sh + sibling config/
+  ↓ Verified at: install.sh --dry-run listing all 11 config files [WOULD CREATE]; replica A construction
+Step 3: gate resolves _dcg_dir/../config and BLOCKS a chain-less build dispatch
+  ↓ Verified at: replica-A A/B run, exit 2 with GATE contract fields (this verifier, 2026-08-04)
+Step 4: degraded layout (config missing) fails open LOUDLY, never silently
+  ↓ Verified at: replica-B run (WARN + DEGRADED) + 6 config-absent self-test scenarios in the 49/49 suite
+
+Runtime verification: command bash adapters/claude-code/hooks/dispatch-chain-gate.sh --self-test   # → 49 passed, 0 failed (verifier re-run on master @ 819cb1d6)
+Runtime verification: command bash adapters/claude-code/install.sh --dry-run   # → 11× "[WOULD CREATE] ~/.claude/config/<file>"; active-repos.txt/register-path untouched; "Dry run complete."
+Runtime verification: command CLAUDE_TOOL_INPUT='<variant-i chain-less builder event>' bash <replica-A>/hooks/dispatch-chain-gate.sh   # → exit 2 BLOCK (replica WITH config/); same event vs replica WITHOUT config/ → exit 0 + "DEGRADED" WARN naming the missing file (the remedy-contract A/B, re-run by this verifier)
+Runtime verification: command grep -c "dispatch-chain-gate" adapters/claude-code/doctrine/orchestrator-pattern.md   # → 1 (was 0 at batch #3); wc -c → 2998 ≤ 3000
+Runtime verification: command bash adapters/claude-code/hooks/session-start-auto-install.sh --self-test   # → 22 passed, 3 failed — exactly the pre-existing SELF-SYNC-01 symlink trio (environmental, A/B-proven on unmodified HEAD)
+
+Verdict: PASS
+Confidence: 9
+Reason: PROVEN: both batch #3 FAIL bases are remedied and re-observed by this verifier's own falsification attempts — (1) the installed form now has a real deploy mechanism (per-file, non-destructive, dry-run-proven against the real live machine) and the residual missing-config case degrades LOUDLY (A/B re-run: exit 2 with config, exit 0 + DEGRADED WARN without — same event, same bytes); (2) orchestrator-pattern.md carries the G2 gate step at 2998/3000 bytes. 49/49 re-run, R3 fixed, plaintext-blob branch purged. Checks 1-7 of batch #3 stand. The only open items are HYPOTHESIZED-and-refutable convergence notes (next-SessionStart live sync; manifest count staleness), neither of which is a mechanism gap.
+
+## Task 21 — Verifier verdict (task-verifier, batch #4) + comprehension adjudication
+
+EVIDENCE BLOCK
+==============
+Task ID: 21
+Task description: REQ-C2 estate drain (after Task 17): 10 verified-safe worktrees pruned; 135 nl-issues triaged via the mechanized supersession sweep + dispositions; 23 stale ACTIVE plans dispositioned; the 1,254 alerts: execute the 36%-clearing route fix or explicitly re-own it, disposition the remainder — Verification: full — Implements: REQ-C2
+Verified at: 2026-08-04T06:35:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's three Prove-it-works counts, re-derived live by this verifier from the estate itself (git, the plans directory, the nl-issues ledger, the alerts store, the registry), against the drain record + execution log (docs/reviews/2026-08-03-estate-drain-record.md, commits 18872a88 + fe4e14a5).
+
+Comprehension-gate: ADJUDICATED PASS-WITH-NOTED-GAP (inline, per the orchestrator's recovery-precedent directive) — the canonical articulation is UNRECOVERABLE: this verifier scanned ALL 824 lines of the builder transcript (~/.claude/projects/C--Users-misha-claude-projects-neural-lace/4a470c8c-e5e4-49bb-a8f8-131206e35b58/subagents/agent-a05a34c3229e0a919.jsonl) — no assistant-authored "Spec meaning" block exists anywhere; every "Comprehension Articulation"/"Spec meaning" hit is the dispatch prompt's own instruction text or a quoted commit subject. The builder never wrote one (builder-discipline defect, noted for the orchestrator; same class as the T7/T11/T14/T15/T19 recovery incidents but with nothing to recover). Adjudication substance, per the gate's actual purpose (FM-023): the builder-authored drain record + final report together articulate spec meaning (REQ-C2's four piles + D-12 disposition discipline + the worktree-isolation scope split), covered edge cases (live-moving estate with re-check guidance; a corrected wrong citation inherited from the prior triage; the do-not-prune flags that saved the then-unmerged T25 build), NOT-covered items (malformed alert classes not re-swept; SLOW class not re-investigated; tier-2 subject-match limits), and assumptions — and every count re-derives (below). ONE precision defect found and already caught downstream: the EXECUTE list's Tier-3 comments claimed "re-confirmed ancestor-of-master rc=0 today" in a wording that reads as TIP-level ancestry; this verifier re-ran the checks — the three TIPS (7afffe07/390dc65e/4c940b7b) are NOT ancestors (rc=1), only the landed-via SHAs (d805a9a3/4ee18805/3ab7fa50+81e8d031) are. The orchestrator's execute-time re-verification caught exactly this, held all three, and logged it honestly — the pipeline worked; consequence safe (nothing forced, nothing lost).
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T06:20Z
+
+Checks run (all re-executed by this verifier on master @ 819cb1d6, 2026-08-04):
+1. Ancestry: 585ea4da/91c3d8a0/683cd996/8e4073b2/18872a88 (builder commits, via merge d0aeb643) + fe4e14a5 (execution log) all ancestors of master. PASS
+2. Prove-it #3 — ACTIVE plan census re-derived: grep -l "^Status: ACTIVE" docs/plans/*.md → EXACTLY 3 (gated-pipeline-master-2026-08 + accountable-estate-program-2026-07 + cockpit-roadmap-redesign — precisely the record's carve-out + 2 STAYS-ACTIVE). 3 ≤ 5. PASS
+3. Prove-it #2 — untriaged nl-issues re-derived: nl-issue.sh --list --untriaged → 8 (the drain's deliberate 5 holdbacks — lines 83/112/113/181/187, each named with a real reason — plus 3 post-drain live-session accruals incl. the drain's OWN gate-friction filing [197]). 8 < 20; 170→5 at drain end confirmed plausible against the ledger. PASS
+4. Prove-it #1 — worktree prune re-derived: current census = 11 agent-* worktrees (42 classified − 33 removed − 1 self-cleaned + 3 new post-drain dispatches + the honored holds), i.e. the count dropped by 33 (target ≥10, ~3×) with ZERO unmerged-content loss: `git worktree remove` without --force throughout; do-not-touch trio honored (all three since merged: d0aeb643 / 346646c3 / 1cb3d2bb — verified ancestors). PASS
+5. Held-back 5, honesty probe (dispatch-directed): tier-3 tips 7afffe07/390dc65e/4c940b7b re-checked — genuinely NOT ancestors (holds correct; the record's comment wording overclaimed, the exec log's correction is accurate); dirty pair re-checked — agent-a87622c2020ce66a5 and agent-a411c11a6438d7354 each carry a real uncommitted `M docs/backlog.md` (git's refusal was genuine). All 5 holds honestly documented, none forced. PASS
+6. Alerts re-derived: store = 1287 json files, 759 .acked markers (EXACTLY the record's 21 pre-existing + 738 new), 528 unacked (the record's 524 + live accrual in the still-firing class). The ~38% class (493 webhook-retell|UNEXPECTED_STATUS files) is EXPLICITLY re-owned to the operator in drain-record §4 (owner + fix location + why-left-unacked rationale) and repeated in Follow-ups — recorded, not silently dropped. Bulk-ack was marker-file-only (append-only, no data destroyed). PASS
+7. Grandfather registry: 284 sha256 entries (300 − 16, one per COMPLETED plan), 0 non-hash non-comment lines. PASS
+8. Docs impact: drain record exists at docs/reviews/2026-08-03-estate-drain-record.md with the execution log appended (fe4e14a5); the plan's own Decisions Log carries the Files-to-Modify amendment entry per the scope-gate's option 1. PASS
+9. Catalog check: no FM match on the executed work; the missing articulation is FM-023-process-adjacent (articulation discipline), adjudicated above.
+
+Runtime verification: command grep -l "^Status: ACTIVE" docs/plans/*.md | wc -l   # → 3 (Prove-it #3, re-derived by verifier)
+Runtime verification: command bash ~/.claude/scripts/nl-issue.sh --list --untriaged   # → 8 entries (< 20; 5 drain holdbacks + 3 live accruals) (Prove-it #2)
+Runtime verification: command git merge-base --is-ancestor 7afffe07 master; echo $?   # → 1 (tier-3 hold verified correct: tip NOT ancestor; d805a9a3/4ee18805/3ab7fa50/81e8d031 all ARE ancestors)
+Runtime verification: command ls ~/.claude/state/external-monitor-alerts/*.acked | wc -l   # → 759 (= 21 pre-existing + 738 bulk-acked this drain, exact match)
+Runtime verification: command grep -cE '^[0-9a-f]{64}$' adapters/claude-code/config/g2-grandfather-slugs.txt   # → 284 (registry shrink, REQ-C2's letter)
+Runtime verification: file docs/reviews/2026-08-03-estate-drain-record.md::Execution log (orchestrator, 2026-08-04)
+
+Verdict: PASS
+Confidence: 8
+Reason: PROVEN: all three Prove-it-works counts re-derived live by this verifier and hold with the drain record's own live-estate tolerance (3 ACTIVE; 8 untriaged; 33 pruned with zero loss); the five holds re-probed and confirmed honest (tier-3 tips genuinely non-ancestors, dirty pair genuinely dirty); the alert re-own is explicit and durable; the registry shrink is exact. The comprehension articulation was never authored — adjudicated inline per the orchestrator's directive with the substance audited from the builder's own artifacts; the one precision defect (tier-3 comment wording) was already caught and honestly corrected by the execution log. Confidence capped at 8 (not 9) for the adjudicated-rather-than-canonical comprehension path and live-drift tolerance on two counts.
+
+## Task 25 — Verifier verdict (task-verifier, batch #4) — FAIL, checkbox NOT flipped
+
+EVIDENCE BLOCK
+==============
+Task ID: 25
+Task description: OPERATOR DIRECTIVE 2026-08-03 (merge→verify mechanization): (a) OD-022 registered + regenerated view; (b) verify-obligation tracking on T15's dispatch ledger; (c) G2 WIP-limit BLOCK at ≥3 open obligations with no verifier in flight, ledgered waiver; (d) stop-side refusal of DONE/CONTINUING with open unnamed obligations — Verification: full — Implements: operator directive 2026-08-03 / OD-022
+Verified at: 2026-08-04T06:35:00Z
+Verifier: task-verifier agent
+
+Oracle: specified — the task's §10 evidence bar (golden-scenario fixture replay; two-state stop proof; FP rate + retirement in the gate header) PLUS the harness-reviewer's CONDITIONAL-PASS conditions C1-C6, each re-executed or re-probed directly by this verifier on master @ 819cb1d6.
+
+Comprehension-gate: PASS (confidence 9) — inline audit of the committed articulation (de630284, evidence file "Task 25 — Comprehension Articulation"): spec paraphrase faithful to the four deliverables incl. the honest pre-stop-verifier-was-a-retired-shim discovery (backlog row STALE-PRE-STOP-VERIFIER-DOC-REFERENCE-01 verified present); every cited covered-edge-case scenario EXISTS and PASSES in this verifier's own re-runs (obl5/obl6/obl7/obl4/obl4b in the 35/35; DL8-DL14 in the 150/150; golden + waive-ledgered in the 10/10); NOT-covered list genuine (cross-machine marker visibility, DONE-refusal interaction, bare-slug arg, scale perf, OD-023 role-fitness — none contradicted by the diff); assumptions sound; the DL11-DL14 vacuity-bug self-catch and the declined mid-build relay (adjudicated right by harness-reviewer, Decisions Log d1d20320) are exemplary §1 conduct.
+Operator invariants: none registered (exit 3) — re-run 2026-08-04T06:20Z
+
+Checks run (all re-executed by this verifier on master @ 819cb1d6, 2026-08-04):
+1. Ancestry: cca6c273/6bd835de/de630284 (build, via merge 346646c3) + 4c8f73aa (C-round merge) + ca0fa1da (C6 citations) + d1d20320 (manifest train) all ancestors of master. PASS
+2. C1 — WIP-limit consult WIRED live: _dcg_check_wip_limit called in BOTH _dcg_gate RC_VERDICT arms (PASS) and WARN), dispatch-chain-gate.sh ~:696/:707), rc=3 fails OPEN with a WARN (never fail-closed on internal error), rc=1 → return 2. Suite re-runs by verifier: --self-test 49/49 (incl. the three c1-* scenarios), --self-test-wip-limit 10/10 (incl. the §10 golden replay: 3-open-no-verifier BLOCKS naming tasks + all four GATE fields; verifier rows added → exit 0; --waive → exit 0 + workaround-sensor ledger row). PASS
+3. C2 — arity guard PROBED live: `timeout 20 dispatch-chain-gate.sh --check-wip-limit <this plan> --waive` (trailing, valueless) → immediate exit 2 + usage line naming "--waive requires a value"; no hang (the pre-fix infinite loop is gone). PASS
+4. C3 — all three parts verified: gate header now states the STRICT-NEWER semantics and names the prior "never trips" wording as PROVEN FALSE (dispatch-chain-gate.sh:125-137, RETIREMENT CONDITION at :145); obl4b-stale-verifier-marker-still-blocks exists and PASSES (35/35 re-run); the actively-misleading G2 --waive stop-remedy is REMOVED — stop-verdict-dispatcher's obligation remedy text (:827, :1343) now names only dispatch-verifier / name-in-marker. PASS
+5. C4 — lib-sourcing guard PROBED live: genuine slash-less invocation (`cd hooks && bash dispatch-chain-gate.sh --check-wip-limit …`) → exit 3, loud FATAL naming rc_wip_limit_decision/gc_block undefined + _dcg_dir='<empty>' + the fix; path-qualified invocation → real decision, exit 0. Distinct from both 0/proceed and 1/block, exactly as specified. PASS
+6. C5 — byte caps: orchestrator-pattern.md 2998/3000, planning.md 2986/3000; BOTH compacts carry the obligation step ("Verify obligations (OD-022): open ledger row blocks builder @3+; Stop refuses unnamed DONE") — the task's Docs-impact letter (orchestrator-pattern + planning) is satisfied. PASS
+7. C6 part 1 — schema citations: review-chain-lib.sh:50-52 and tests/fixtures/review-chain/README.md both cite the real 7-field shape ({…, task_id, task_id_valid}) with the rule-3-reads-5-fields note (ca0fa1da). PASS
+8. **C6 part 2 — FAIL BASIS: the two claimed backlog follow-ups were NEVER FILED.** The C-round evidence states "C6: two follow-ups filed to docs/backlog.md (session_id-scoped obligations; an estate-wide ${BASH_SOURCE[0]%/*} dir-resolution fragility sweep)". Verifier search: docs/backlog.md contains NEITHER row (greps for session_id-scoped / BASH_SOURCE / dir-resolution / fragility / estate-wide: zero matching rows); `git log --all -S "session_id-scoped"` shows the string only ever entered THIS evidence file (ca0fa1da) — never docs/backlog.md in any commit (so not filed-then-absorbed either); the nl-issues ledger's 3 obligation-mentioning rows are all unrelated; the T25 worktree tip (ca0fa1da) is fully merged, so no unmerged commit carries them. The filing claim is FALSE on master — FM-006 class (self-reported completion without evidence), inside the very evidence entry whose neighboring item discloses a caught instance of the same failure shape. FAIL
+9. Two-state stop proof (§10 item 2): stop-verdict-dispatcher.sh --self-test RE-RUN IN FULL by this verifier against CURRENT master bytes (post-C3) → 99 passed, 0 failed, incl. obligation-check-open-and-unnamed-blocks / gap-carries-right-check-id / block-names-all-open-tasks / closed-obligations-pass. The evidence's disclosed skip ("99/99 is from de630284, pre-C3 text edit, not re-verified") is now DISCHARGED — no skip remains. PASS
+10. Writer side: workstreams-emit.sh --self-test re-run by verifier → 150 passed, 0 failed (DL8-DL14 task-id extraction + OD-023 write-time validation + --open-verify-obligations round-trip). PASS
+11. Register + view + manifest: OD-022/OD-023 present with verbatim operator instruction, BINDING, absorbs AUTO-VERIFY-DISPATCH-2026-08-03 (row confirmed deleted from backlog); dr_validate → rc 0; docs/operator-directives.md carries both sections; d1d20320's four manifest entries all carry honest T25 annotations (incl. the pre-C3 disclosure this verifier's re-run now supersedes). PASS
+
+DEPENDENCY TRACE (user action → observable outcome)
+================
+Step 1: builder-complete dispatch lands → ledger row with task_id
+  ↓ Verified at: workstreams-emit --self-test 150/150 (DL8-DL14) + review-chain-lib s11 writer round-trip
+Step 2: 3 open obligations, no verifier in flight → next builder dispatch BLOCKED naming tasks
+  ↓ Verified at: --self-test-wip-limit 10/10 golden replay (verifier re-run) + C1 wiring in both _dcg_gate arms
+Step 3: verifier rows / --waive → dispatch proceeds (waiver ledgered)
+  ↓ Verified at: golden-after-verify-rows-passes-exit0 + waive-ledgered-to-workaround-sensor (10/10)
+Step 4: DONE/CONTINUING end with open unnamed obligations → Stop refused once, naming tasks
+  ↓ Verified at: stop-verdict-dispatcher --self-test 99/99 on current bytes (verifier re-run), scenarios 36/37
+
+Runtime verification: command bash adapters/claude-code/hooks/lib/review-chain-lib.sh --self-test   # → 35 passed, 0 failed (verifier re-run; obl1-obl7 + obl4b + norm-task-id + s11 writer round-trip)
+Runtime verification: command bash adapters/claude-code/hooks/dispatch-chain-gate.sh --self-test-wip-limit   # → 10 passed, 0 failed (verifier re-run; §10 golden scenario replay)
+Runtime verification: command bash adapters/claude-code/hooks/stop-verdict-dispatcher.sh --self-test   # → 99 passed, 0 failed (verifier FULL re-run on master @ 819cb1d6, post-C3 bytes — discharges the disclosed skip)
+Runtime verification: command bash adapters/claude-code/hooks/workstreams-emit.sh --self-test   # → 150 passed, 0 failed (verifier re-run)
+Runtime verification: command timeout 20 bash adapters/claude-code/hooks/dispatch-chain-gate.sh --check-wip-limit docs/plans/gated-pipeline-master-2026-08.md --waive; echo $?   # → usage error + exit 2, no hang (C2 probe)
+Runtime verification: command cd adapters/claude-code/hooks && timeout 20 bash dispatch-chain-gate.sh --check-wip-limit <abs-plan-path>; echo $?   # → FATAL lib-sourcing message + exit 3 (C4 probe)
+Runtime verification: command grep -n "session_id-scoped\|BASH_SOURCE" docs/backlog.md   # → NO matching rows (the C6-part-2 FAIL basis; must become 2 rows)
+
+Verdict: FAIL
+Confidence: 9
+Reason: PROVEN (the build): all four deliverables (a)-(d) are real, wired, and re-observed — five suites re-run green by this verifier (35/35, 49/49, 10/10, 99/99 on current bytes, 150/150), both live probes (C2 arity, C4 slash-less) behave exactly as specified, the register/view/manifest/Decisions-Log train landed, and the previously-disclosed stop-suite skip is now discharged by a full re-run. PROVEN (the gap): condition C6 of the harness-reviewer's CONDITIONAL-PASS is only half-executed — the two follow-up backlog rows the evidence claims were "filed to docs/backlog.md" do not exist there, in the nl-issues ledger, or anywhere in git history (git -S proves the string only ever entered the evidence file). A false filing claim in evidence is itself the defect this pipeline exists to catch; the checkbox cannot flip while a review condition is unmet and its evidence overstates.
+Gaps:
+  - C6 follow-up rows never filed (Class: FM-006 self-reported-completion-without-evidence / unmet review condition; Sweep query: grep -n "session_id-scoped\|BASH_SOURCE" docs/backlog.md → currently 0 rows, must become 2; Required generalization: an evidence sentence of the form "filed to <ledger>" must only be written AFTER the row exists — same rule the adjacent C6 self-correction already articulates for checks. Remedy, one commit: (1) add the two rows to docs/backlog.md — "session_id-scoped obligations" (obligations currently count across all sessions of a plan; a second session's builder dispatch can be blocked by another session's open obligations — evaluate per-session scoping) and "estate-wide ${BASH_SOURCE[0]%/*} dir-resolution fragility sweep" (the class C4 fixed one instance of; sweep every hook/lib for slash-less-invocation dir-resolution breakage); (2) append a one-line correction to the C-round evidence entry noting the rows were filed at <new SHA>, not at ca0fa1da as originally claimed. Re-verification: the grep above returns both rows + the correction line exists.)

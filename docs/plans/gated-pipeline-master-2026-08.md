@@ -313,7 +313,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   dispatchable — Verification: mechanical — Implements: REQ-B13 — Directives: n/a —
   operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
   impact: the review record itself
-- [ ] 17. REQ-B8 G2 gate live (after Task 16): `dispatch-chain-gate.sh` wired PreToolUse
+- [x] 17. REQ-B8 G2 gate live (after Task 16): `dispatch-chain-gate.sh` wired PreToolUse
   Task|Agent (subagent_type-keyed per design §4; grandfather list generated at install from extant
   plan slugs; gate-contract messages; `--check`; escape ledgered) + THE THREE-VARIANT DEMO with
   transcripts in the evidence file: (i) plan-phase-builder vs chain-less NEW fixture plan →
@@ -381,7 +381,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - `adapters/claude-code/hooks/doctrine-jit.sh` register walk → same lib; single `jq -n` emission site
     **Integration points:**
     - C-1's both-match scenario is the load-bearing test — asserted on raw stdout being ONE parseable JSON object
-- [ ] 21. REQ-C2 estate drain (after Task 17, so legacy-plan dispositions retire G2's grandfather
+- [x] 21. REQ-C2 estate drain (after Task 17, so legacy-plan dispositions retire G2's grandfather
   population): 10 verified-safe worktrees pruned; 135 nl-issues triaged via the mechanized
   supersession sweep + dispositions; 23 stale ACTIVE plans dispositioned (close/SUPERSEDE/DEFER,
   one line each); the 1,254 alerts: execute the 36%-clearing route fix or explicitly re-own it,
