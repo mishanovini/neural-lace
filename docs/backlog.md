@@ -3313,3 +3313,28 @@ Operator, 2026-08-03 (screenshot of 127.0.0.1:7733/#roadmap on the gated-pipelin
    marked live-dispatched tasks 'stalled — no recent dispatch'. Future dispatches use numeric
    ids; the mis-attributed ledger rows from 2026-08-03 (tasks T7/T20/T23/T24/T25 spellings) may
    need a one-time reconcile so today's history renders truthfully.
+
+## NL-ISSUES-TRIAGE-20260804 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 164 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 27d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## NEEDS-YOU-READABILITY-2026-08-03 — operator: the awaiting-operator ledger is not human-readable
+(label: `harness-ux`, `operator-directed`; owner: this session → audit dispatched, generator fix to follow)
+
+Operator, verbatim: "The NEEDS-YOU.md doc it is incredibly messy and very difficult to read. This
+is absolutely not formatted to be human-readable. It is not clear to me what it is that you
+actually need from me. … make it very straightforward and straight to the point, Give me the
+context that I need and some of the information that I need to decide on in a clear,
+consolidated, and concise format?"
+
+Diagnosis to verify in the audit: (1) entry rot — items dating to 2026-07-08 with no staleness
+triage, likely several superseded; (2) rendering defects — each entry's title is duplicated as
+its first body line; entries are single wall-of-text paragraphs; (3) no top-level "what I need
+from you FIRST" summary; (4) the §3 compact-decision format (constitution) is the already-agreed
+rubric the renderer ignores. Fix lands in `adapters/claude-code/scripts/needs-you.sh` (the file
+itself is generator-owned, never hand-edited). Audit agent: Audience Content Reviewer →
+docs/reviews/2026-08-03-needs-you-readability-review.md + a same-day triaged digest the operator
+can actually read.
