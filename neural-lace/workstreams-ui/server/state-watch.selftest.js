@@ -74,15 +74,31 @@ function waitAllAdvanced(cache, subCommandKeys, prior, timeoutMs) {
   return waitUntil(() => subCommandKeys.every((s) => cache.get(s).derived_at != null && cache.get(s).derived_at !== prior[s]), timeoutMs);
 }
 
-// writeStubs(tmp, tag) -> {stubPath, deriveLibPath, spawnLog, failSentinel}
+// writeStubs(tmp, tag) -> {stubPath, deriveLibPath, spawnLog, failSentinel,
+// snapshotPath}
 //
 // Generates a FRESH NL_BIN stub + NL_DERIVE_LIB stub, each writing to a
 // spawn-log file unique to `tag` — see the file header for why isolation
 // matters here. `sub=status` fails (rc=3) whenever failSentinel exists,
 // mirroring server.selftest.js's own FAIL_STATUS convention.
+//
+// snapshotPath (FIX2, operator directive 2026-08-04): every scenario below
+// now goes through derive-cache.js's disk-persistence path too (refreshAll()
+// persists after every settled cycle — see derive-cache.js's own header),
+// so EACH scenario needs its own isolated OBS_DERIVE_SNAPSHOT_PATH for the
+// SAME reason it already needs its own spawn-log/fail-sentinel: without
+// this, scenario B's refreshAll() would persist to the real default path
+// (unsandboxed HOME in this suite), and a LATER scenario's `new
+// dc.DeriveCache(...)` construction would silently load that leftover
+// snapshot — breaking scenario A's "still the unpopulated initial sentinel"
+// assertion on any run after the first, and weakening scenario F's
+// "generated_at ADVANCES" proof by seeding a stale non-null derived_at
+// before the real trigger fires. A per-tag tmp path (never pre-existing)
+// keeps every scenario exactly as isolated as it already is for spawns.
 function writeStubs(tmp, tag) {
   const spawnLog = path.join(tmp, 'spawn-log-' + tag + '.txt').replace(/\\/g, '/');
   const failSentinel = path.join(tmp, 'FAIL-' + tag + '.txt').replace(/\\/g, '/');
+  const snapshotPath = path.join(tmp, 'snapshot-' + tag + '.json');
   const stubPath = path.join(tmp, 'nl-stub-' + tag + '.sh');
   fs.writeFileSync(stubPath, [
     '#!/bin/bash',
@@ -114,12 +130,13 @@ function writeStubs(tmp, tag) {
   ].join('\n'));
   fs.chmodSync(deriveLibPath, 0o755);
 
-  return { stubPath: stubPath, deriveLibPath: deriveLibPath, spawnLog: spawnLog, failSentinel: failSentinel };
+  return { stubPath: stubPath, deriveLibPath: deriveLibPath, spawnLog: spawnLog, failSentinel: failSentinel, snapshotPath: snapshotPath };
 }
 
 function useStubs(fixture) {
   process.env.NL_BIN = fixture.stubPath;
   process.env.NL_DERIVE_LIB = fixture.deriveLibPath;
+  process.env.OBS_DERIVE_SNAPSHOT_PATH = fixture.snapshotPath;
 }
 
 const SPAWN_WAIT_MS = 20000; // generous: this machine's real bash -l login-shell spawn was measured well over 1s each

@@ -198,6 +198,18 @@ function sendJson(res, code, obj) {
 // (ux-review amendment 1: rc!=0 renders a named ERROR state client-side,
 // never the empty state) along with the exact failing `nl` command line so
 // the client can show it verbatim.
+//
+// `source` (FIX2, operator directive 2026-08-04 — derive-cache.js's disk
+// persistence): 'snapshot' means this value was loaded from the on-disk
+// snapshot at process start and has NOT yet been revalidated by a live
+// derivation in this process; 'live' means this process has itself
+// attempted a derivation (success or failure) for this pane; null means
+// neither has happened yet (loading placeholder, no snapshot existed). The
+// web layer can use this to show a "revalidating…" affordance on a
+// snapshot-sourced pane instead of silently treating stale-but-served data
+// as freshly current — derived_at (also carried through, and NEVER
+// re-stamped to "now" on a snapshot load — see derive-cache.js's own
+// header) gives the actual age to pair with it.
 function paneResponse(sub, entry, extraArgsLabel) {
   const cmdLine = 'nl ' + sub + (extraArgsLabel ? ' ' + extraArgsLabel : '') + ' --json';
   return {
@@ -207,6 +219,7 @@ function paneResponse(sub, entry, extraArgsLabel) {
     rc: entry.rc,
     stderr_tail: entry.stderr_tail,
     derived_at: entry.derived_at,
+    source: entry.source || (entry.derived_at ? 'live' : null),
     command: cmdLine,
   };
 }
@@ -1597,6 +1610,15 @@ const server = http.createServer((req, res) => {
       push_watch: {
         nl_subcommands: pushWatchSummary(stateWatchHandle),
         maintenance_snapshot: pushWatchSummary(maintenanceWatchHandle),
+      },
+      // snapshot — FIX2 (operator directive 2026-08-04) disk-persistence
+      // diagnostics: where the cold-start snapshot lives, and how many of
+      // the six panes are still serving a not-yet-revalidated-this-process
+      // snapshot value right now (0 once every pane has completed at least
+      // one live refresh since this process started).
+      snapshot: {
+        path: require('./derive-cache.js').snapshotPath(),
+        panes_from_snapshot: subs.filter((s) => cache.get(s).source === 'snapshot').length,
       },
     });
     return;

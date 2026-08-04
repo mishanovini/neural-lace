@@ -30,20 +30,86 @@
 // `nl <sub> --json` returns" are mechanically the same data path (the
 // acceptance bar every one of the 10 runtime scenarios checks).
 //
-// CACHE ENTRY SHAPE (ux-review amendment 1 — error-masked-as-empty):
-//   { data, rc, stderr_tail, derived_at }
+// CACHE ENTRY SHAPE (ux-review amendment 1 — error-masked-as-empty; `source`
+// added by the disk-persistence fix below):
+//   { data, rc, stderr_tail, derived_at, source }
 // rc !== 0 means the LAST refresh attempt failed; `data` still holds the
 // last-KNOWN-GOOD payload (or null if there has never been one) so a
 // transient failure doesn't erase a pane that was working a moment ago —
 // but the cache entry's rc/stderr_tail let the caller render an honest
 // ERROR state instead of silently serving a stale success. The pane layer
 // (server.js) decides how to render rc!=0; this module never lies about it.
+// `source` is 'snapshot' (this entry was loaded from the on-disk snapshot at
+// construction and THIS PROCESS has not yet attempted a live derivation for
+// it), 'live' (this process has attempted at least one live derivation for
+// it, success or failure), or null (the initial loading placeholder — no
+// snapshot existed and no attempt has settled yet). See the DISK
+// PERSISTENCE section below for the full design.
 //
 // SANDBOXING: NL_BIN overrides the `nl` binary path (tests point this at a
 // stub script); CTREE_PORT is server.js's own concern, not this module's.
+//
+// ============================================================
+// DISK PERSISTENCE (operator directive 2026-08-04 — "it still spends a few
+// seconds deriving the content ... it should already be stored"). BEFORE
+// this fix, this module's derived state lived ONLY in process memory: a
+// cold start, a restart, or a process crash made the very next page load
+// block on a full derivation while the operator watched a loading state for
+// as long as the slowest subcommand's timeout (up to 360s for backlog).
+//
+// The design decision on record (docs/plans/cockpit-roadmap-redesign.md:82,
+// "per-item status COMPUTED, never stored") is UNCHANGED and still binding —
+// that decision is about status never being HAND-EDITED into a file as a
+// second source of truth; derivation (the `nl <sub> --json` shell-out) stays
+// the ONE truth function, and nothing here reimplements it. What changes is
+// the READ PATH: the LAST-materialized result of that same derivation is now
+// also written to disk (persistEntries, below) after every refreshAll()
+// cycle — never on a new clock; this rides the SAME recompute path
+// state-watch.js's push trigger, the anti-entropy floor timer, and the
+// initial start() refresh already call — and loaded back synchronously at
+// construction (loadPersistedEntries) so a cold-started process can answer
+// its very first pane read with real, previously-derived content instead of
+// the {rc:null} loading placeholder, while a live refresh still runs in the
+// background exactly as before.
+//
+// HONESTY (requirement (c) — a stale snapshot must never be presented as
+// current): derived_at is preserved EXACTLY as it was when the entry was
+// actually derived — a snapshot load never re-stamps it to "now". Combined
+// with the new `source` field (see CACHE ENTRY SHAPE above), a caller can
+// always tell "this is a materialized-but-not-yet-revalidated-this-process
+// value, derived at <derived_at>" (source:'snapshot') apart from "this
+// process itself just derived this" (source:'live') — server.js's
+// paneResponse forwards `source` verbatim so the web layer (owned
+// separately) can render a "revalidating…" affordance instead of silently
+// treating old data as fresh.
+//
+// ERROR SEMANTICS (requirement (d) — do not regress the ERROR-not-silent-
+// stale-success discipline): a persisted entry's rc/stderr_tail are carried
+// through UNCHANGED. If the last thing this cache ever knew about a
+// subcommand was a failure, the snapshot says so, and the cold-started
+// process serves that same honest error immediately — persistence is not a
+// license to smooth a known failure into a fake success.
+//
+// SANDBOXING: OBS_DERIVE_SNAPSHOT_PATH overrides the on-disk path entirely
+// (tests point this at a per-scenario tmp file so runs never share or leak
+// state); else HOME/USERPROFILE + the fixed
+// .claude/state/workstreams-ui/derive-cache-snapshot.json suffix, matching
+// this codebase's established ~/.claude/state/<tool>/... convention (see
+// server.js's maintenanceSnapshotDir()). Deliberately NOT placed under a
+// directory state-watch.js's Group 1 already watches for OTHER reasons
+// (~/.claude/state itself, heartbeats/, needs-you/, digest/, remote-
+// ledgers/) — this snapshot is WRITTEN BY THIS SAME PROCESS, so if its
+// directory were one state-watch.js watches, our own write could re-trigger
+// our own refreshAll() (the exact subprocess-storm shape the 2026-08-02 push
+// fix exists to prevent). The snapshot directory is created eagerly at
+// DeriveCache construction (module load, well before server.js's
+// 'listening' callback starts any watcher), so even the one-time mkdir of a
+// brand-new snapshot directory never races a watcher's own setup.
+// ============================================================
 
 const { spawn } = require('child_process');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 // Resolve the real `nl` CLI location: adapters/claude-code/scripts/nl.sh.
@@ -342,6 +408,100 @@ function nowIso() {
 // floor never refires mid-test).
 const ANTI_ENTROPY_FLOOR_DEFAULT_MS = 300000;
 
+// ---- Disk persistence helpers (see the DISK PERSISTENCE header above) ----
+
+function defaultSnapshotPath() {
+  const home = process.env.HOME || String(process.env.USERPROFILE || '').replace(/\\/g, '/') || os.homedir();
+  return path.join(home, '.claude', 'state', 'workstreams-ui', 'derive-cache-snapshot.json');
+}
+
+function snapshotPath() {
+  return process.env.OBS_DERIVE_SNAPSHOT_PATH || defaultSnapshotPath();
+}
+
+// ensureSnapshotDir() — best-effort, idempotent mkdir of the snapshot's
+// parent directory, called eagerly at DeriveCache construction (module load
+// time, before server.js's 'listening' callback ever starts a
+// state-watch.js watcher) so the FIRST-EVER creation of this directory can
+// never race/trigger a watcher that happened to start first — see the
+// SANDBOXING paragraph in the header above.
+function ensureSnapshotDir() {
+  try { fs.mkdirSync(path.dirname(snapshotPath()), { recursive: true }); } catch (_) { /* best-effort */ }
+}
+
+// loadPersistedEntries(subs) -> {sub: entry}|null — best-effort synchronous
+// read of the on-disk snapshot written by persistEntries() below. Returns
+// null (never throws, never partially-crashes the caller) on: no file yet
+// (honest fresh-estate cold start, not an error), invalid JSON, or an
+// unrecognized top-level shape — "never trust, verify", matching every other
+// on-disk read in this module (see refreshOne's own JSON.parse try/catch).
+// A PARTIAL snapshot (missing one subcommand's key, e.g. from an older
+// schema) fills in only the subs it can — the caller leaves the rest at
+// their normal {rc:null} loading placeholder rather than failing the whole
+// load over one missing key.
+function loadPersistedEntries(subs) {
+  let raw;
+  try {
+    raw = fs.readFileSync(snapshotPath(), 'utf8');
+  } catch (_) {
+    return null; // no snapshot yet — nothing to load, not an error
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    process.stderr.write('[derive-cache] snapshot at ' + snapshotPath() +
+      ' is not valid JSON, ignoring (cold start proceeds with the loading state): ' +
+      String(err && err.message || err) + '\n');
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || !parsed.entries || typeof parsed.entries !== 'object') {
+    process.stderr.write('[derive-cache] snapshot at ' + snapshotPath() +
+      ' has an unrecognized shape, ignoring (cold start proceeds with the loading state)\n');
+    return null;
+  }
+  const out = {};
+  subs.forEach((sub) => {
+    const e = parsed.entries[sub];
+    // derived_at must be a real string — that is the field this whole
+    // design's honesty guarantee hinges on (never re-stamped to "now"), so
+    // an entry missing it is treated as unusable rather than silently
+    // defaulted.
+    if (!e || typeof e !== 'object' || typeof e.derived_at !== 'string') return;
+    out[sub] = {
+      data: 'data' in e ? e.data : null,
+      rc: typeof e.rc === 'number' ? e.rc : null,
+      stderr_tail: typeof e.stderr_tail === 'string' ? e.stderr_tail : '',
+      derived_at: e.derived_at, // PRESERVED verbatim — see honesty note above
+      source: 'snapshot', // not yet revalidated by a live derivation in THIS process
+    };
+  });
+  return out;
+}
+
+// persistEntries(entries) — atomic tmp-file + rename write, the SAME
+// technique server.js's writeOperatorTodoAtomic already uses for every other
+// cross-process-visible on-disk state in this codebase, so a reader (this
+// module's own loadPersistedEntries, on the NEXT process start) can never
+// observe a torn/half-written file. Best-effort: a failed persist (disk
+// full, permissions, snapshot dir removed out from under us) is logged and
+// swallowed — it must never break the live refresh cycle that is still
+// correctly serving in-memory data over HTTP right now (same discipline as
+// every other on-disk write in this codebase).
+function persistEntries(entries) {
+  const p = snapshotPath();
+  try {
+    fs.mkdirSync(path.dirname(p), { recursive: true });
+    const payload = JSON.stringify({ schema: 1, written_at: nowIso(), entries: entries });
+    const tmp = p + '.tmp-' + process.pid + '-' + Date.now();
+    fs.writeFileSync(tmp, payload);
+    fs.renameSync(tmp, p);
+  } catch (err) {
+    process.stderr.write('[derive-cache] snapshot persist to ' + p + ' failed (non-fatal, in-memory cache unaffected): ' +
+      String(err && err.message || err) + '\n');
+  }
+}
+
 // DeriveCache — one instance per server process. `refreshIntervalMs` is the
 // ANTI-ENTROPY FLOOR (see ANTI_ENTROPY_FLOOR_DEFAULT_MS above) — the push
 // path (state-watch.js, wired by server.js) is the fast path for real
@@ -355,14 +515,28 @@ function DeriveCache(opts) {
   this.getShippedSince = opts.getShippedSince || function () {
     return new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   };
-  this.entries = {}; // sub -> {data, rc, stderr_tail, derived_at}
+  this.entries = {}; // sub -> {data, rc, stderr_tail, derived_at, source}
   this.inFlight = {}; // sub -> boolean (refresh in progress)
   this._cycleInFlight = false; // whole-cycle single-flight guard ([37]) — see refreshAll
   this.skippedCycles = 0; // ticks skipped because the previous cycle was still running
   this.listeners = []; // called after every refresh cycle (for SSE push)
-  Object.keys(SUBCOMMANDS).forEach((sub) => {
-    this.entries[sub] = { data: null, rc: null, stderr_tail: '', derived_at: null };
+  const subs = Object.keys(SUBCOMMANDS);
+  subs.forEach((sub) => {
+    this.entries[sub] = { data: null, rc: null, stderr_tail: '', derived_at: null, source: null };
   });
+  // FIX2 (operator directive 2026-08-04, "it should already be stored") —
+  // overlay any on-disk snapshot NOW, synchronously, before this
+  // constructor even returns, so the very first pane read (which can happen
+  // before the first refreshAll() has settled — see start()'s header) serves
+  // real, previously-derived content instead of the loading placeholder
+  // above. See loadPersistedEntries's header for the full load contract.
+  ensureSnapshotDir(); // see its own header — must happen before any watcher starts
+  const persisted = loadPersistedEntries(subs);
+  if (persisted) {
+    subs.forEach((sub) => {
+      if (persisted[sub]) this.entries[sub] = persisted[sub];
+    });
+  }
 }
 
 DeriveCache.prototype.onRefresh = function (fn) {
@@ -418,9 +592,10 @@ DeriveCache.prototype.refreshOne = function (sub) {
           stderr_tail: tail('nl ' + sub + ' --json produced non-JSON output: ' + r.stdout +
             '\n[child rc=' + r.rc + '] child stderr: ' + (r.stderr && String(r.stderr).trim() ? r.stderr : '(empty)'), 20),
           derived_at: nowIso(),
+          source: 'live', // this process attempted (and failed) a real derivation — no longer a snapshot value
         };
       } else {
-        entry = { data: parsed, rc: 0, stderr_tail: '', derived_at: nowIso() };
+        entry = { data: parsed, rc: 0, stderr_tail: '', derived_at: nowIso(), source: 'live' };
       }
     } else {
       entry = {
@@ -428,6 +603,7 @@ DeriveCache.prototype.refreshOne = function (sub) {
         rc: r.rc,
         stderr_tail: tail(r.stderr, 20),
         derived_at: nowIso(),
+        source: 'live', // an attempt happened this process, even though it failed (rc!=0)
       };
     }
     this.entries[sub] = entry;
@@ -491,6 +667,12 @@ DeriveCache.prototype.refreshAll = function () {
   };
   return Promise.all(lanes.map(runLane)).then(() => {
     self._cycleInFlight = false;
+    // FIX2 (operator directive 2026-08-04) — persist the just-settled
+    // in-memory state to disk on THIS existing recompute path (never a new
+    // clock: refreshAll is already called by state-watch.js's push trigger,
+    // the anti-entropy floor timer, and start()'s initial refresh). See the
+    // DISK PERSISTENCE header + persistEntries's own header above.
+    persistEntries(self.entries);
     self._notify();
   }, (err) => {
     self._cycleInFlight = false; // never let a rejected cycle wedge the guard shut
@@ -499,16 +681,18 @@ DeriveCache.prototype.refreshAll = function () {
 };
 
 DeriveCache.prototype.get = function (sub) {
-  return this.entries[sub] || { data: null, rc: 1, stderr_tail: 'unknown subcommand: ' + sub, derived_at: null };
+  return this.entries[sub] || { data: null, rc: 1, stderr_tail: 'unknown subcommand: ' + sub, derived_at: null, source: null };
 };
 
 // start() — kicks off the FIRST refresh in the background (fire-and-forget;
 // deliberately NOT awaited) and returns immediately so server.listen() can
-// bind and start accepting connections right away. Every pane read before
-// the first refresh completes serves the initial {data:null, rc:null}
-// entry, which server.js's paneResponse renders as the loading state
-// client-side (rc === null, not rc !== 0 — see server.js's pane response
-// shape) rather than a false error.
+// bind and start accepting connections right away. FIX2 (operator directive
+// 2026-08-04): every pane read before the first refresh completes now serves
+// the SNAPSHOT-loaded entry (source:'snapshot') if one existed on disk at
+// construction — real, previously-derived content, not a loading spinner —
+// and only falls back to the {data:null, rc:null, source:null} placeholder
+// (which server.js's paneResponse renders as the loading state client-side)
+// on a genuinely fresh estate that has never persisted anything yet.
 DeriveCache.prototype.start = function () {
   this.refreshAll().catch(() => {}); // fire-and-forget; refreshOne already captures failures per-entry
   this._timer = setInterval(() => { this.refreshAll().catch(() => {}); }, this.refreshIntervalMs);
@@ -608,4 +792,9 @@ function runWhy(sessionId, lastBlock) {
 module.exports = {
   DeriveCache, runWhy, runNl, nlBin, bashBin, spawnEnv, SUBCOMMANDS, timeoutMsFor,
   ANTI_ENTROPY_FLOOR_DEFAULT_MS, killTree,
+  // FIX2 disk-persistence exports — snapshotPath/loadPersistedEntries/
+  // persistEntries are exported for direct unit coverage (see
+  // derive-cache-persist.selftest.js) and so server.js can surface the
+  // resolved path for operator diagnostics if needed.
+  snapshotPath, defaultSnapshotPath, loadPersistedEntries, persistEntries,
 };

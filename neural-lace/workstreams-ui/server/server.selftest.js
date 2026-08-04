@@ -199,6 +199,17 @@ async function main() {
   const PORT = 17733 + (process.pid % 1000); // deterministic-ish, avoids common collisions
   process.env.CTREE_PORT = String(PORT);
   process.env.OBS_REFRESH_MS = '999999'; // don't let the timer refire during the test
+  // FIX2 (operator directive 2026-08-04) disk-persistence sandboxing:
+  // without this, cache.start()'s first refreshAll() would persist THIS
+  // test's stub-fixture data to the REAL default path
+  // (~/.claude/state/workstreams-ui/derive-cache-snapshot.json on the host
+  // machine running the test), and — worse — a second run of this suite
+  // would then have `new DeriveCache()` load that leftover real snapshot
+  // BEFORE cache.start() ever fires, silently short-circuiting the settle-
+  // loop below (self-test-pollution, same class this file already guards
+  // against for AUDITOR_DISABLED/OBS_WATCH_DISABLED above). Pointed at this
+  // test's own tmp sandbox instead.
+  process.env.OBS_DERIVE_SNAPSHOT_PATH = path.join(tmp, 'derive-cache-snapshot.json');
   // Task 12 — the background auditor auto-starts (immediate cycle + a
   // cadence timer) the moment server.js's 'listening' callback fires, which
   // happens WELL BEFORE this test's own ask-fixture section (below) gets a
