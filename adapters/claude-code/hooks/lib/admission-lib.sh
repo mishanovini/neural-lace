@@ -1088,7 +1088,7 @@ _adm_self_test() {
   else fail "torn lines detected"; fi
 
   echo "Scenario 8: SCRUB — disallowed keys dropped, values sanitized (edge 4)"
-  adm_admit emit-feed cmdline=/Users/secret/ProductName repo=neural-lace >/dev/null
+  adm_admit emit-feed cmdline=/tmp/example-bin/ProductName repo=neural-lace >/dev/null
   local last; last="$(tail -1 "$led")"
   case "$last" in
     *cmdline*) fail "disallowed key 'cmdline' leaked into the ledger" ;;
@@ -1106,7 +1106,7 @@ _adm_self_test() {
   esac
 
   echo "Scenario 8b: attribution labels (attribution-pipeline task, 2026-07-29) — plan/task/role/attributed round-trip; a still-disallowed key beside them stays dropped"
-  adm_admit emit-feed plan=attribution-pipeline task=1 role=builder attributed=1 cmdline=/Users/secret/leak >/dev/null
+  adm_admit emit-feed plan=attribution-pipeline task=1 role=builder attributed=1 cmdline=/tmp/example-bin/leak >/dev/null
   last="$(tail -1 "$led")"
   case "$last" in
     *'"plan":"attribution-pipeline"'*'"task":"1"'*'"role":"builder"'*'"attributed":"1"'*)

@@ -524,6 +524,17 @@ Modify:
   companion (task-verifier/comprehension/orchestrator records); omitted from the Files map at
   authoring (an oversight — every plan has one), surfaced by scope-enforcement on the first
   evidence-only commit after the predecessor archive.
+- 2026-08-04: `.github/workflows/server-side-enforcement.yml` — CI-red triage (operator standing
+  directive), this plan's Task 8 continuation lineage: the `plan-edit-validator` job's
+  `actions/checkout@v5` step was the one step missing `fetch-depth: 0` (every sibling job in
+  the file already sets it); added it plus always-print-output CI diagnostics for the same job,
+  triaging a Linux-only red in `adapters/claude-code/hooks/plan-edit-validator.sh` whose F28-F32
+  id-shape-grammar scenarios this plan's Task 8 continuation added.
+- 2026-08-04: `.github/workflows/hooks-selftest.yml` — same CI-red triage: updated the stale
+  `KNOWN_FAILING_HOOKS` comment for `harness-doctor.sh` to reflect Task 8's own
+  SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 fix (4 of 5 jq-parity self-test scenarios now pass;
+  only `claim-honesty-jq-parity-red` — tracked separately as
+  CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01 — remains, owned by another in-flight session).
 - 2026-08-03: CI triage folded into Task 8's arbiter-readability remit (operator directive) —
   `.github/workflows/hooks-selftest.yml`; `adapters/claude-code/hooks/concurrent-ownership-gate-
   body.sh`, `scope-enforcement-gate-body.sh`, `gh-merge-canonical-gate.sh`; and 8 oversized
