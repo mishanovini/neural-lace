@@ -39,6 +39,27 @@
 
 set -e
 
+# CI-triage 2026-08-04 (server-side-enforcement.yml plan-edit-validator job
+# red on Linux, green on this Windows/MSYS2 checkout): PEV_TASK_ID_ALT/
+# PEV_TASK_ID_BOUNDARY below and every pre-existing task-id extraction site
+# in this file rely on `[A-Z]`/`[a-z]` ASCII bracket ranges being exactly
+# the 26-letter alphabet, nothing more. POSIX leaves bracket-range collation
+# order locale-dependent; under a non-C locale (glibc's en_US.UTF-8 and
+# similar reorder the collating sequence) `[A-Z]`/`[a-z]` can match a wider
+# or narrower set of bytes than the ASCII range the grammar's own header
+# comment documents ("capped 1-3 letters so a 4+-letter acronym like WCAG
+# can never false-match"), so a locale mismatch between this Windows
+# checkout (already C/POSIX for byte-range greps under MSYS2 bash) and the
+# GitHub-hosted Ubuntu runner's default locale is a real candidate for the
+# id-shape self-test diverging by platform alone. Pin LC_ALL=C for this
+# entire script (not just the new call sites) so every `[A-Z]`/`[a-z]`
+# range in this file -- old and new -- resolves identically on every
+# platform, matching the ASCII-only intent already documented at each call
+# site. No behavior change on this machine (already effectively C-locale
+# for byte comparisons); closes the hazard class for Linux CI regardless of
+# whether it is THIS run's actual root cause.
+export LC_ALL=C
+
 # ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
 # Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
 # O.3 (parallel; O.9 never creates/edits that file — §O.0.1 rule 2). Source it
