@@ -112,13 +112,46 @@
 # in the report stay correct. CHOICE MADE (per the task's own framing
 # of the tradeoff): rather than make pre-existing content invisible, a
 # file whose delta is clean but whose WHOLE FILE still matches Layer 1
-# emits a non-blocking "PRE-EXISTING" notice to stderr, and the existing
-# `--full-tree` mode (already run by the harness-review skill and the
-# secret-backstop CI workflow, unchanged by this fix, still whole-file)
-# remains the periodic full-scan net that catches it. `--full-tree` and
-# explicit-file-arg invocations (mode 3) are UNCHANGED — still whole-file
-# — this only touches MODE="staged" (which `--check` shares by default,
-# preserving the R3.4 --check/enforce decision-parity guarantee).
+# emits a non-blocking "PRE-EXISTING" notice to stderr.
+#
+# C1 CORRECTION (harness-review 2026-08-04): the FIRST shipped version of
+# this notice claimed pre-existing debt is "caught by the periodic
+# full-tree scan" — FALSE on two counts, PROVEN by reading the actual CI
+# workflows: (1) nothing in this repo runs `--full-tree` on any schedule —
+# `adapters/claude-code/config/schedule-manifest.json` has no entry for
+# it, and the `/harness-review` skill that wraps it is operator-invoked,
+# never cron'd; (2) the ACTUAL catcher — `.github/workflows/
+# secret-backstop.yml` and `.github/workflows/server-side-enforcement.yml`,
+# both REQUIRED checks on every `push`/`pull_request` — do NOT call
+# `--full-tree` either; they call this script with the diff-range's
+# changed files as EXPLICIT ARGS (`bash harness-hygiene-scan.sh
+# "${changed[@]}"`), which is mode-3 explicit-file-arg scanning: WHOLE-FILE,
+# not delta-scoped, and with NO waiver-marker channel at all (a fresh CI
+# runner's checkout has no `.claude/state/`, so a local waiver never
+# travels with the push). The true mechanism, stated honestly: a commit
+# whose staged delta is clean can still land locally, but if the SAME file
+# (still carrying the pre-existing hit) is ever pushed again — even for an
+# unrelated edit — push-time CI re-scans that file's WHOLE CONTENT and
+# goes RED, with no waiver escape available there. The PRE-EXISTING notice
+# and the denylist ESCAPE text both name this real mechanism now, and the
+# durable remedies (fix the content, or stage `is_exempt()` in the SAME
+# commit) accordingly — not a "something else will catch it later" claim.
+# Delta-scoping (or base-ref-diffing) the two CI jobs themselves so THEY
+# also stop whole-file-scanning on every push touching an old-debt file is
+# a named, NOT-YET-DONE follow-up — see docs/backlog.md
+# HYGIENE-GATE-ESCAPE-ACCOUNTABILITY-FOLLOWUPS-2026-08-04 (deliberately not
+# attempted in this series: it requires editing untestable-from-here GitHub
+# Actions YAML, and getting it wrong risks silently weakening the actual
+# security backstop — a worse outcome than shipping the honest messaging
+# fix alone).
+#
+# `--full-tree` (still available, still whole-file, still ONLY run
+# on-demand by an operator via the `/harness-review` skill or a direct
+# invocation — never automatically) and explicit-file-arg invocations
+# (mode 3, which is exactly what the two CI workflows above use) are
+# UNCHANGED by this fix — this only touches MODE="staged" (which `--check`
+# shares by default, preserving the R3.4 --check/enforce decision-parity
+# guarantee).
 #
 # DEFECT 2 — SELF-SERVICE BYPASS ON A SECURITY-CLASS CONTROL
 # ------------------------------------------------------------
@@ -776,6 +809,47 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_D2_RC=$?
   (cd "$TMPDIR_DELTA" && git reset -q --hard HEAD)
 
+  # D3 (C2 fix, harness-review 2026-08-04) — a PURE RENAME (git mv, no
+  # content change) of a file that already carries a pre-existing hit must
+  # NOT block. Before the fix, `git diff --cached -U0 -- <dest-only>`
+  # (pathspec-limited to the new path) could not pair the rename, so git
+  # showed it as a brand-new file with EVERY line rendered as "added" —
+  # reproducing the exact false-fire incident (the first real-world
+  # trigger for this whole fix was a plan-archive rename, i.e. a git mv).
+  printf '%s\n' 'this line has FORBIDDEN_TOKEN already' 'and another line' > "$TMPDIR_DELTA/rn-old.txt"
+  (cd "$TMPDIR_DELTA" && git add rn-old.txt && git commit -q -m "pre-existing hit for rename fixture")
+  (cd "$TMPDIR_DELTA" && git mv rn-old.txt rn-new.txt)
+  ST_D3_OUT=$(cd "$TMPDIR_DELTA" && bash "$SCRIPT_PATH" 2>&1)
+  ST_D3_RC=$?
+  (cd "$TMPDIR_DELTA" && git reset -q --hard HEAD)
+
+  # D3b — a RENAME + EDIT: the same pre-existing-hit file, renamed AND with
+  # a genuinely new denylisted line added in the same commit. Must BLOCK,
+  # and the report must show ONLY the truly-added line (proving old-blob->
+  # new-blob pairing, not a fall-back to whole-file scanning).
+  printf '%s\n' 'this line has FORBIDDEN_TOKEN already' 'and another line' > "$TMPDIR_DELTA/rn2-old.txt"
+  (cd "$TMPDIR_DELTA" && git add rn2-old.txt && git commit -q -m "pre-existing hit for rename+edit fixture")
+  (cd "$TMPDIR_DELTA" && git mv rn2-old.txt rn2-new.txt)
+  printf '%s\n' 'this line has FORBIDDEN_TOKEN already' 'and another line' 'a brand new FORBIDDEN_TOKEN line' > "$TMPDIR_DELTA/rn2-new.txt"
+  (cd "$TMPDIR_DELTA" && git add rn2-new.txt)
+  ST_D3B_OUT=$(cd "$TMPDIR_DELTA" && bash "$SCRIPT_PATH" 2>&1)
+  ST_D3B_RC=$?
+  (cd "$TMPDIR_DELTA" && git reset -q --hard HEAD)
+
+  # D4 (C3 fix, harness-review 2026-08-04) — an ADDED line whose own
+  # CONTENT starts with "+" renders as "+++<content>" in the raw diff (the
+  # diff's own "+" prefix, plus the content's literal leading "+"s), which
+  # the pre-fix awk rule `/^\+\+\+/ { next }` swallowed unconditionally as
+  # a false file-header match — silently dropping flagged content on such
+  # lines. Must still BLOCK.
+  printf '%s\n' 'clean line one' 'clean line two' > "$TMPDIR_DELTA/pp.txt"
+  (cd "$TMPDIR_DELTA" && git add pp.txt && git commit -q -m "init for ++ fixture")
+  printf '%s\n' 'clean line one' 'clean line two' '++FORBIDDEN_TOKEN' > "$TMPDIR_DELTA/pp.txt"
+  (cd "$TMPDIR_DELTA" && git add pp.txt)
+  ST_D4_OUT=$(cd "$TMPDIR_DELTA" && bash "$SCRIPT_PATH" 2>&1)
+  ST_D4_RC=$?
+  (cd "$TMPDIR_DELTA" && git reset -q --hard HEAD)
+
   # A8 — waiver escape (REQ-B10: "escape = the standard fresh-waiver shape,
   # ledgered"): a fresh waiver naming the Addendum-design fixture suppresses
   # the addendum-lint match too — same per-file waiver gate ahead of every
@@ -1092,6 +1166,22 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "$ST_SEC1_OUT" >&2
     FAIL=1
   fi
+  # C6 fix (harness-review 2026-08-04): the NEW operator-waiver marker's
+  # recipe must ALSO be absent — the prior version removed the OLD
+  # (harness-hygiene-waiver-) recipe but printed an equally-copy-pasteable
+  # NEW (harness-hygiene-operator-waiver-) one, which is the same defect in
+  # a fancier shape. Pin BOTH the literal mkdir+printf shape and the
+  # marker's own runnable filename pattern as absent from the message.
+  if printf '%s' "$ST_SEC1_OUT" | grep -qF 'harness-hygiene-operator-waiver-$(date'; then
+    echo "self-test: FAIL (sec1/C6) — block message must NOT print a copy-paste recipe for the operator-waiver marker either; it must point to the marker spec location instead" >&2
+    echo "$ST_SEC1_OUT" >&2
+    FAIL=1
+  fi
+  if printf '%s' "$ST_SEC1_OUT" | grep -qF 'mkdir -p'; then
+    echo "self-test: FAIL (sec1/C6) — block message must NOT print ANY runnable mkdir/printf recipe for a [denylist]-only match" >&2
+    echo "$ST_SEC1_OUT" >&2
+    FAIL=1
+  fi
   # SEC2: operator-authorized waiver (Purpose+Because+Files+Operator-Authorized,
   # distinct filename) DOES suppress the [denylist] match -> ALLOW
   if [ "$ST_SEC2_RC" -ne 0 ]; then
@@ -1143,6 +1233,44 @@ if [ "${1:-}" = "--self-test" ]; then
   if ! printf '%s' "$ST_D2_OUT" | grep -qi 'PRE-EXISTING'; then
     echo "self-test: FAIL (d2) — expected a PRE-EXISTING notice for the untouched pre-existing hit" >&2
     echo "$ST_D2_OUT" >&2
+    FAIL=1
+  fi
+
+  # ---- D3/D3b/D4 assertions (C2 rename fix + C3 ++-evasion fix) ----
+  # D3: a PURE RENAME of a file with a pre-existing hit must NOT block.
+  if [ "$ST_D3_RC" -ne 0 ]; then
+    echo "self-test: FAIL (d3/C2) — a pure rename (git mv, no content change) of a file with a pre-existing hit must NOT block, expected exit 0, got $ST_D3_RC" >&2
+    echo "$ST_D3_OUT" >&2
+    FAIL=1
+  fi
+  # D3b: a rename+edit must BLOCK, and the report must show ONLY the truly
+  # new line (proving old-blob->new-blob pairing, not whole-file fallback).
+  if [ "$ST_D3B_RC" -ne 1 ]; then
+    echo "self-test: FAIL (d3b/C2) — a rename PLUS a genuinely new denylist hit must BLOCK, expected exit 1, got $ST_D3B_RC" >&2
+    echo "$ST_D3B_OUT" >&2
+    FAIL=1
+  fi
+  if ! printf '%s' "$ST_D3B_OUT" | grep -q 'a brand new FORBIDDEN_TOKEN line'; then
+    echo "self-test: FAIL (d3b/C2) — block output did not mention the truly-new added line" >&2
+    echo "$ST_D3B_OUT" >&2
+    FAIL=1
+  fi
+  D3B_MATCH_COUNT=$(printf '%s' "$ST_D3B_OUT" | grep -c '^\[denylist\]')
+  if [ "$D3B_MATCH_COUNT" -ne 1 ]; then
+    echo "self-test: FAIL (d3b/C2) — expected exactly 1 [denylist] match (only the truly-new line), got $D3B_MATCH_COUNT — old-blob->new-blob pairing is not scoping correctly" >&2
+    echo "$ST_D3B_OUT" >&2
+    FAIL=1
+  fi
+  # D4: an added line whose CONTENT starts with "+" (renders as "+++..."
+  # in the raw diff) must still BLOCK — not be swallowed as a false header.
+  if [ "$ST_D4_RC" -ne 1 ]; then
+    echo "self-test: FAIL (d4/C3) — an added line starting with '++' must still BLOCK, expected exit 1, got $ST_D4_RC" >&2
+    echo "$ST_D4_OUT" >&2
+    FAIL=1
+  fi
+  if ! printf '%s' "$ST_D4_OUT" | grep -q 'FORBIDDEN_TOKEN'; then
+    echo "self-test: FAIL (d4/C3) — block output did not mention the ++-prefixed FORBIDDEN_TOKEN line (evaded by the pre-fix awk rule)" >&2
+    echo "$ST_D4_OUT" >&2
     FAIL=1
   fi
 
@@ -1289,6 +1417,38 @@ if [ ! -s "$FILE_LIST_TMP" ]; then
   exit 0
 fi
 
+# ---------- rename map (Defect C2 fix, harness-review 2026-08-04) --------
+# `git diff --cached -U0 -- <dest-only>` (the ORIGINAL delta-scoping call)
+# cannot pair a rename: pathspec-limited to just the destination, git shows
+# a pure `git mv` as a brand-new file with EVERY line rendered `+` (added)
+# — including lines the rename never touched. For a renamed file that
+# already carried a hit, the delta view then equals the WHOLE FILE again,
+# reproducing the exact false-fire incident this fix exists to close. Built
+# ONCE per run (not per file) via a single `--name-status` pass; maps a
+# rename DESTINATION path to its source so the delta-view builder can diff
+# old-blob -> new-blob directly (git DOES pair a rename correctly when both
+# the old and new pathspecs are given — verified: a pure rename then shows
+# zero hunks, a rename+edit shows only the truly-changed lines).
+HHS_RENAME_MAP_TMP=$(mktemp)
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$HHS_RENAME_MAP_TMP"' EXIT
+if [ "$MODE" = "staged" ]; then
+  git -C "$REPO_ROOT" diff --cached -M --name-status -z --diff-filter=R 2>/dev/null | awk '
+    BEGIN { RS="\0" }
+    { idx++ }
+    idx % 3 == 2 { old = $0 }
+    idx % 3 == 0 { print $0 "\t" old }
+  ' > "$HHS_RENAME_MAP_TMP"
+fi
+
+# _hhs_rename_source <dest-repo-relative-path>
+# Prints the OLD (source) path and returns 0 if <dest> is a rename
+# destination this run; returns 1 (prints nothing) otherwise.
+_hhs_rename_source() {
+  local dest="$1"
+  [ -s "$HHS_RENAME_MAP_TMP" ] || return 1
+  awk -F'\t' -v d="$dest" '$1 == d { print $2; found=1; exit } END { exit !found }' "$HHS_RENAME_MAP_TMP"
+}
+
 DENYLIST_FILE="$REPO_ROOT/adapters/claude-code/patterns/harness-denylist.txt"
 if [ ! -f "$DENYLIST_FILE" ]; then
   echo "harness-hygiene-scan: denylist not found at $DENYLIST_FILE — skipping (this is expected before Phase 2 deploy)" >&2
@@ -1298,7 +1458,7 @@ fi
 # ---------- build the regex patterns file grep will read ------------------
 # We strip comments and blank lines so grep -f only sees real patterns.
 PATTERNS_TMP=$(mktemp)
-trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP"' EXIT
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$HHS_RENAME_MAP_TMP"' EXIT
 
 awk '
   # skip blank lines and comment-only lines
@@ -1579,7 +1739,7 @@ check_addendum_lint() {
 
 # ---------- Defect 1: staged-delta view (false-fire fix) -----------------
 #
-# _hhs_build_delta_view <rel_path> <abs_path> <out_path>
+# _hhs_build_delta_view <rel_path> <abs_path> <out_path> [<rename_source>]
 #
 # Writes a "delta view" of <rel_path> to <out_path>: a file with the SAME
 # line count as <abs_path>, where every line NOT added by the currently-
@@ -1593,6 +1753,18 @@ check_addendum_lint() {
 # `--check` sibling); `--full-tree` and explicit-file-arg invocations
 # keep scanning the real file directly.
 #
+# RENAME HANDLING (C2 fix, harness-review 2026-08-04): the optional 4th
+# arg, when non-empty, is the file's rename SOURCE path (from
+# `_hhs_rename_source`). `git diff --cached -U0 -- <dest-only>` cannot pair
+# a rename — pathspec-limited to just the destination, git shows a pure
+# `git mv` as a brand-new file with EVERY line rendered as added, which
+# would make a renamed file that already carried a hit block again on its
+# ENTIRE content, reproducing the false-fire incident this fix exists to
+# close. Passing BOTH the old and new pathspecs to `git diff` lets git pair
+# the rename correctly: a pure rename (no content change) yields zero
+# hunks (an all-blank view, correctly producing zero matches); a
+# rename+edit yields only the truly-changed hunks.
+#
 # Known limitation, stated rather than hidden: a file with no trailing
 # newline can make `wc -l` undercount by one; the `maxn` tracking below
 # (driven off the diff's own hunk line numbers, not just `wc -l`) covers
@@ -1600,17 +1772,34 @@ check_addendum_lint() {
 # total, but this is not a byte-exact reconstruction — it is a
 # line-number-preserving overlay, which is all Layer 1/2/3 need.
 _hhs_build_delta_view() {
-  local rel_path="$1" abs_path="$2" out="$3"
+  local rel_path="$1" abs_path="$2" out="$3" rename_source="${4:-}"
   local total_lines
   total_lines=$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ')
   [ -z "$total_lines" ] && total_lines=0
-  git -C "$REPO_ROOT" diff --cached -U0 --no-color -- "$rel_path" 2>/dev/null | awk -v n="$total_lines" '
+  local diff_cmd
+  if [ -n "$rename_source" ]; then
+    diff_cmd=(git -C "$REPO_ROOT" diff --cached -M -U0 --no-color -- "$rename_source" "$rel_path")
+  else
+    diff_cmd=(git -C "$REPO_ROOT" diff --cached -U0 --no-color -- "$rel_path")
+  fi
+  "${diff_cmd[@]}" 2>/dev/null | awk -v n="$total_lines" '
     /^@@/ {
+      seen_hunk = 1
       match($0, /\+[0-9]+/)
       lineno = substr($0, RSTART+1, RLENGTH-1) + 0
       next
     }
-    /^\+\+\+/ { next }
+    # The `+++ b/<path>` / `--- a/<path>` FILE HEADER lines appear ONCE,
+    # BEFORE the first @@ hunk marker. Gating this on !seen_hunk (rather
+    # than matching /^\+\+\+/ unconditionally, the pre-fix shape) is the
+    # C3 fix: an ADDED line whose own CONTENT starts with "+" renders as
+    # "+++<content>" in the diff (the diff'"'"'s own "+" prefix, plus a
+    # content first-char of "+"), which the unconditional pattern used to
+    # swallow as a false file-header match — silently dropping flagged
+    # content on such lines from the delta view. After the first @@, a
+    # "+++"-looking line is always real added content, never a header.
+    !seen_hunk && /^\+\+\+/ { next }
+    !seen_hunk && /^---/ { next }
     /^\+/ {
       buf[lineno] = substr($0, 2)
       if (lineno > maxn) maxn = lineno
@@ -1801,7 +1990,7 @@ WAIVED_COUNT=0
 WARN_COUNT=0
 MATCHES_TMP=$(mktemp)
 WARN_TMP=$(mktemp)
-trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP" "$WARN_TMP"' EXIT
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$HHS_RENAME_MAP_TMP" "$MATCHES_TMP" "$WARN_TMP"' EXIT
 
 # Structured-waiver files (F.5 audit row 12 / ADR 059 D4). Computed once per
 # run; state dir resolves relative to REPO_ROOT so pre-commit invocations
@@ -1809,7 +1998,7 @@ trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP" "$WARN_TMP"' EXIT
 HHS_STATE_DIR="${CLAUDE_STATE_DIR:-$REPO_ROOT/.claude/state}"
 HHS_WAIVED_FILES_TMP=$(mktemp)
 HHS_OPERATOR_WAIVED_FILES_TMP=$(mktemp)
-trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP" "$WARN_TMP" "$HHS_WAIVED_FILES_TMP" "$HHS_OPERATOR_WAIVED_FILES_TMP"' EXIT
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$HHS_RENAME_MAP_TMP" "$MATCHES_TMP" "$WARN_TMP" "$HHS_WAIVED_FILES_TMP" "$HHS_OPERATOR_WAIVED_FILES_TMP"' EXIT
 _hhs_waived_files "$HHS_STATE_DIR" > "$HHS_WAIVED_FILES_TMP" 2>/dev/null || true
 _hhs_operator_waived_files "$HHS_STATE_DIR" > "$HHS_OPERATOR_WAIVED_FILES_TMP" 2>/dev/null || true
 
@@ -1865,7 +2054,9 @@ while IFS= read -r -d '' rel_path; do
   if [ "$MODE" = "staged" ]; then
     is_delta_scoped=1
     DELTA_VIEW_TMP=$(mktemp)
-    _hhs_build_delta_view "$check_path" "$abs_path" "$DELTA_VIEW_TMP"
+    rename_source=""
+    rename_source=$(_hhs_rename_source "$check_path" 2>/dev/null || true)
+    _hhs_build_delta_view "$check_path" "$abs_path" "$DELTA_VIEW_TMP" "$rename_source"
     scan_target="$DELTA_VIEW_TMP"
   fi
 
@@ -1930,11 +2121,14 @@ while IFS= read -r -d '' rel_path; do
   # ---- Whole-file WARN (Defect 1, delta-scoped mode only) ----
   # If this file's delta contributed NO Layer-1 match but the WHOLE FILE
   # on disk still has one, pre-existing hygiene debt exists that this
-  # commit does not touch. Not blocking — surfaced so it never becomes
-  # permanently invisible; the periodic --full-tree scan (harness-review
-  # skill, secret-backstop CI) is the net that actually catches it.
-  # Scoped to Layer 1 only (the security-relevant class this defect is
-  # about) — stated rather than silently generalized.
+  # commit does not touch. Not blocking here — but PROVEN not silently
+  # absorbed elsewhere either (C1 fix, harness-review 2026-08-04): the two
+  # REQUIRED push-time CI checks (.github/workflows/secret-backstop.yml,
+  # .github/workflows/server-side-enforcement.yml) scan every changed
+  # file's WHOLE CONTENT on every push with no waiver channel, so this
+  # exact debt goes RED at push time the next time the file is touched at
+  # all. Scoped to Layer 1 only (the security-relevant class this defect
+  # is about) — stated rather than silently generalized.
   if [ "$is_delta_scoped" -eq 1 ] && [ "$operator_waived" -ne 1 ] \
      && [ "$MATCH_COUNT" -eq "$file_match_count_before" ]; then
     if grep -qiEf "$PATTERNS_TMP" "$abs_path" 2>/dev/null; then
@@ -1952,11 +2146,18 @@ if [ "$WARN_COUNT" -gt 0 ]; then
     echo ""
     echo "---- harness-hygiene-scan: pre-existing content notice (non-blocking) ----"
     cat "$WARN_TMP"
-    echo "(Not blocking: the staged delta for the file(s) above does not touch"
-    echo " the flagged line(s). Pre-existing hygiene debt is caught by the"
-    echo " periodic full-tree scan -- 'bash adapters/claude-code/hooks/harness-"
-    echo " hygiene-scan.sh --full-tree' (also run by the harness-review skill"
-    echo " and the secret-backstop CI workflow) -- not by this per-commit gate.)"
+    echo "(Not blocking here: the staged delta for the file(s) above does not"
+    echo " touch the flagged line(s). This is NOT the end of it, though --"
+    echo " push-time CI (.github/workflows/secret-backstop.yml and"
+    echo " server-side-enforcement.yml, both REQUIRED checks, both WHOLE-FILE,"
+    echo " with NO waiver channel) will re-scan this file's full content on"
+    echo " the next push that touches it at all, and will go RED. Fix it now:"
+    echo " remove/scrub the flagged content, or -- if it is a known-legitimate"
+    echo " durable case -- add the file to is_exempt() in this script, staged"
+    echo " in the SAME commit as the change that would otherwise trip CI."
+    echo " ('bash adapters/claude-code/hooks/harness-hygiene-scan.sh"
+    echo " --full-tree' remains available for an operator-run, on-demand,"
+    echo " whole-repo audit -- it is not scheduled or automatic.)"
     echo "----------------------------------------------------------------------"
   } >&2
 fi
@@ -1968,9 +2169,16 @@ fi
 # computed by the identical scan loop above. Fields: WHAT / WHY / FIX /
 # ESCAPE (doctor-lintable). The ESCAPE field's CONTENT branches on whether
 # any [denylist] (Layer 1 / security-class) match is present (Defect 2):
-# a denylist-only or mixed batch gets the operator-escalation text (no
-# self-service recipe for the denylist matches); a heuristic/addendum-lint-
-# only batch keeps the original copy-pasteable waiver recipe unchanged.
+# a denylist-only or mixed batch gets the operator-escalation text, which
+# points at this script's own header + function comments as the marker
+# spec rather than printing ANY runnable mkdir/printf recipe (C6 fix,
+# harness-review 2026-08-04 — the first shipped version of this branch
+# removed the OLD self-service recipe but printed an equally-copy-pasteable
+# NEW one for the operator-waiver marker, which was the same defect wearing
+# an extra field; pinned by the SEC1 self-test scenario's `mkdir -p` /
+# `harness-hygiene-operator-waiver-$(date` absence checks). A heuristic/
+# addendum-lint-only batch keeps the original copy-pasteable waiver recipe
+# unchanged — that class remains genuinely self-service by design.
 
 if [ "$MATCH_COUNT" -eq 0 ]; then
   if [ "$CHECK_MODE" -eq 1 ]; then
@@ -2020,20 +2228,26 @@ _hhs_print_report() {
       echo "      operator IN THIS CONVERSATION:"
       echo "        1. Quote the matched [denylist] line(s) above verbatim."
       echo "        2. Ask: is this content safe to ship, or must it be removed?"
-      echo "        3. ONLY IF the operator explicitly authorizes it in chat,"
-      echo "           write a SEPARATE, distinctly-named marker (never the"
-      echo "           plain waiver above — that one is inert against [denylist]):"
-      echo "             mkdir -p $HHS_STATE_DIR && \\"
-      echo "             { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
-      echo "               printf 'Because: <Y>\\n'; \\"
-      echo "               printf 'Files: <repo-relative-path> [...]\\n'; \\"
-      echo "               printf 'Operator-Authorized: <what the operator said, >=20 chars, not a placeholder>\\n'; \\"
-      echo "             } > $HHS_STATE_DIR/harness-hygiene-operator-waiver-\$(date +%s).txt"
+      echo "        3. ONLY IF the operator explicitly authorizes it in chat, an"
+      echo "           operator-authorized marker MAY suppress it — but this"
+      echo "           message deliberately does NOT hand you a fill-in-the-"
+      echo "           blank command for it (C6 fix, harness-review 2026-08-04:"
+      echo "           the prior version DID, which just made the recipe fancier"
+      echo "           rather than actually removing it). Read this script's own"
+      echo "           header ('DEFECT 2' section) and the"
+      echo "           _hhs_operator_waived_files / _hhs_operator_clause_ok"
+      echo "           function comments a few hundred lines below it, in"
+      echo "           adapters/claude-code/hooks/harness-hygiene-scan.sh, for"
+      echo "           the exact required marker filename pattern and fields —"
+      echo "           that IS the spec; nothing here restates it as a runnable"
+      echo "           command."
       echo "      HONEST TRUST MODEL: nothing above is a structural barrier — an"
-      echo "      agent's own Bash/Write tools CAN author this exact file without"
-      echo "      any operator turn ever happening (same disclosure this repo's"
-      echo "      review-record-push-gate manifest entry already makes about its"
-      echo "      own override marker). The distinct filename, the extra"
+      echo "      agent's own Bash/Write tools CAN still author that marker"
+      echo "      without any operator turn ever happening (same disclosure"
+      echo "      this repo's review-record-push-gate manifest entry already"
+      echo "      makes about its own override marker). NOT printing a copy-"
+      echo "      paste recipe here does not change that — it only removes the"
+      echo "      zero-effort path. The distinct filename, the extra"
       echo "      Operator-Authorized clause, and same-session ledger surfacing"
       echo "      (session-start-digest.sh's bypass-24h feed, plus a same-session"
       echo "      Stop-time obligation naming this gate) raise the COST and AUDIT"

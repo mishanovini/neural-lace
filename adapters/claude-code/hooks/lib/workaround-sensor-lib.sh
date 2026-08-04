@@ -287,9 +287,12 @@ ws_tail() {
 #       escapes cannot be auto-verified fixed and fall through to (b).
 #   (b) ACKNOWLEDGED — a durable (no TTL — an operator sign-off is a
 #       record, not a rate-limited hatch) `escape-obligation-ack-*.txt`
-#       marker in the SAME directory the ledger lives in, naming the
-#       gate (`Acknowledged-Gate: <gate>`) plus a substantive
-#       (>=20 non-whitespace chars, not a placeholder)
+#       marker in the SAME directory the ledger lives in, naming the gate
+#       (`Acknowledged-Gate: <gate>`), the EXACT session it applies to
+#       (`Acknowledged-Session: <session_id>` — required; see C5 fix note
+#       on `_ws_escape_ack_exists`, an ack with no session binding used to
+#       close every future session's obligation for that gate, forever),
+#       plus a substantive (>=20 non-whitespace chars, not a placeholder)
 #       `Acknowledged-By-Operator:` clause. Same self-issuability
 #       disclosure as above.
 # An obligation that is neither fixed nor acknowledged stays OPEN
@@ -301,13 +304,28 @@ ws_tail() {
 # infinite nag, not a closure of the obligation itself).
 # ============================================================
 
-# _ws_escape_ack_exists <gate>
+# _ws_escape_ack_exists <gate> <session_id>
 # Returns 0 iff a fresh-or-not escape-obligation-ack marker in the
-# ledger's own directory names this gate with a non-placeholder
+# ledger's own directory names BOTH this gate AND this exact session
+# (`Acknowledged-Session:`, exact match) with a non-placeholder
 # Acknowledged-By-Operator clause. See HONESTY CONSTRAINT above.
+#
+# C5 fix (harness-review 2026-08-04, unscoped-ack): before this fix, an
+# ack marker named ONLY the gate — one ack file, once written (by anyone,
+# for any reason), closed EVERY obligation for that gate, for EVERY
+# session, FOREVER (the marker carries no expiry). A stale ack from an
+# unrelated incident weeks ago would silently neutralize a brand-new,
+# never-reviewed escape in today's session. The `Acknowledged-Session:`
+# binding makes an ack apply to exactly the session it names — an ack
+# written for session A can never close an obligation opened in session B,
+# and REUSING an old ack for a new session requires a NEW marker (i.e., a
+# fresh, visible, ledger-adjacent act — see the SAME honest self-
+# issuability disclosure as the operator-waiver marker: this is not a
+# cryptographic binding, it is a legibility/cost raise, same as every
+# other "raise the cost of self-service" mechanism in this fix).
 _ws_escape_ack_exists() {
-  local gate="$1"
-  [[ -z "$gate" ]] && return 1
+  local gate="$1" session_id="$2"
+  [[ -z "$gate" || -z "$session_id" ]] && return 1
   local dir; dir="$(dirname "$(_workaround_sensor_path)")"
   [[ -d "$dir" ]] || return 1
   local f line content stripped
@@ -315,10 +333,11 @@ _ws_escape_ack_exists() {
     [[ -f "$f" ]] || continue
     # `-i` + `-F` together SIGABRTs on this machine's grep (same pathology
     # already documented in scripts/nl-maintenance.sh) — use a plain ERE
-    # instead, case-insensitive on the label only (the gate name VALUE is
-    # always this codebase's lowercase-hyphenated convention, matched
-    # case-sensitively, same as every other gate-name comparison here).
+    # instead, case-insensitive on the label only (the gate name / session
+    # id VALUES are matched case-sensitively, same as every other
+    # gate-name/session-id comparison in this harness).
     grep -qE "^[[:space:]]*[Aa]cknowledged-[Gg]ate[[:space:]]*:[[:space:]]*${gate}[[:space:]]*\$" "$f" 2>/dev/null || continue
+    grep -qE "^[[:space:]]*[Aa]cknowledged-[Ss]ession[[:space:]]*:[[:space:]]*${session_id}[[:space:]]*\$" "$f" 2>/dev/null || continue
     line=$(grep -iE '^[[:space:]]*acknowledged-by-operator[[:space:]]*:' "$f" 2>/dev/null | head -1)
     [[ -z "$line" ]] && continue
     content=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[Aa]cknowledged-[Bb]y-[Oo]perator[[:space:]]*:[[:space:]]*//')
@@ -335,15 +354,34 @@ _ws_escape_ack_exists() {
 # whose output shape it can recognize) — any other gate returns 1
 # (cannot verify fixed), which correctly falls through to requiring an
 # ACK, never a silent auto-close for a gate this lib does not understand.
+#
+# C4 fix (harness-review 2026-08-04, fail-open on absence): harness-
+# hygiene-scan.sh's `--check` mode SKIPS a missing file entirely from its
+# scan (same as the enforce path), so `--check` on a file that no longer
+# exists reports "would-pass (0 matches)" — indistinguishable, by output
+# text alone, from a genuinely re-scanned-clean file. Without an explicit
+# existence check, DELETING the waived file would silently CLOSE the
+# obligation (the content is gone, but so is any proof it was ever fixed
+# rather than just hidden). Every named file must exist on disk BEFORE
+# `--check` is even invoked; a missing file makes the WHOLE call return
+# "not fixed" (fails closed toward requiring an ACK), never "fixed".
 _ws_escape_gate_fixed() {
   local gate="$1"; shift
   [[ "$gate" == "harness-hygiene-scan" ]] || return 1
   [[ "$#" -gt 0 ]] || return 1
   local hook="${_WS_LIB_ABS_DIR}/../harness-hygiene-scan.sh"
   [[ -f "$hook" ]] || return 1
-  local f out
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+  [[ -n "$repo_root" ]] || return 1
+  local f out abs_f
   for f in "$@"; do
     [[ -n "$f" ]] || continue
+    case "$f" in
+      /*) abs_f="$f" ;;
+      *) abs_f="$repo_root/$f" ;;
+    esac
+    [[ -f "$abs_f" ]] || return 1
     out=$(bash "$hook" --check "$f" 2>&1)
     case "$out" in
       *would-pass*) ;;
@@ -388,7 +426,7 @@ ws_open_escape_obligations() {
   local gate
   while IFS= read -r gate; do
     [[ -z "$gate" ]] && continue
-    if _ws_escape_ack_exists "$gate"; then
+    if _ws_escape_ack_exists "$gate" "$session_id"; then
       continue
     fi
 
@@ -669,30 +707,55 @@ a second line'
     fail "expected 1 open obligation 'concurrent-ownership-gate', got count=$WS_OPEN_ESCAPE_GATES_COUNT out=[$OPEN11]"
   fi
 
-  echo "Scenario 12: escape-obligation-ack-*.txt naming the gate + a"
-  echo "substantive Acknowledged-By-Operator clause -> CLOSES the obligation"
+  echo "Scenario 12: escape-obligation-ack-*.txt naming the gate + THIS"
+  echo "session + a substantive Acknowledged-By-Operator clause -> CLOSES"
+  echo "the obligation"
   rm -f "$LEDGER"
   CLAUDE_CODE_SESSION_ID="sess-12" ws_record "concurrent-ownership-gate" "waiver" "target=feat/bar"
   LEDGER_DIR="$(dirname "$LEDGER")"
   {
     echo "Acknowledged-Gate: concurrent-ownership-gate"
+    echo "Acknowledged-Session: sess-12"
     echo "Acknowledged-By-Operator: yes I reviewed this in chat and it is fine to proceed"
   } > "$LEDGER_DIR/escape-obligation-ack-s12.txt"
   ws_open_escape_obligations "sess-12" > "$TMP/open12.txt"; OPEN12="$(cat "$TMP/open12.txt")"
   rm -f "$LEDGER_DIR/escape-obligation-ack-s12.txt"
   if [[ "$WS_OPEN_ESCAPE_GATES_COUNT" == "0" ]]; then
-    pass "acknowledged gate -> 0 open obligations"
+    pass "acknowledged gate (correct session) -> 0 open obligations"
   else
     fail "expected acknowledgment to close the obligation, got count=$WS_OPEN_ESCAPE_GATES_COUNT out=[$OPEN12]"
   fi
 
+  echo "Scenario 12b (C5 fix, harness-review 2026-08-04): the SAME"
+  echo "well-formed ack (gate + substantive clause) but bound to a"
+  echo "DIFFERENT session -> does NOT close THIS session's obligation."
+  echo "Before the fix, an ack naming only the gate closed every future"
+  echo "session's obligation for that gate, forever."
+  rm -f "$LEDGER"
+  CLAUDE_CODE_SESSION_ID="sess-12c" ws_record "concurrent-ownership-gate" "waiver" "target=feat/bar2"
+  LEDGER_DIR="$(dirname "$LEDGER")"
+  {
+    echo "Acknowledged-Gate: concurrent-ownership-gate"
+    echo "Acknowledged-Session: sess-SOME-OTHER-SESSION"
+    echo "Acknowledged-By-Operator: yes I reviewed this in chat and it is fine to proceed"
+  } > "$LEDGER_DIR/escape-obligation-ack-s12c.txt"
+  ws_open_escape_obligations "sess-12c" > "$TMP/open12c.txt"; OPEN12C="$(cat "$TMP/open12c.txt")"
+  rm -f "$LEDGER_DIR/escape-obligation-ack-s12c.txt"
+  if [[ "$WS_OPEN_ESCAPE_GATES_COUNT" == "1" ]]; then
+    pass "a foreign-session ack does NOT close this session's obligation (C5 fix)"
+  else
+    fail "expected a foreign-session ack to leave the obligation OPEN, got count=$WS_OPEN_ESCAPE_GATES_COUNT out=[$OPEN12C]"
+  fi
+
   echo "Scenario 13: a placeholder Acknowledged-By-Operator clause"
-  echo "(<20 chars) does NOT close the obligation"
+  echo "(<20 chars), correct gate + correct session, does NOT close the"
+  echo "obligation"
   rm -f "$LEDGER"
   CLAUDE_CODE_SESSION_ID="sess-13" ws_record "concurrent-ownership-gate" "waiver" "target=feat/baz"
   LEDGER_DIR="$(dirname "$LEDGER")"
   {
     echo "Acknowledged-Gate: concurrent-ownership-gate"
+    echo "Acknowledged-Session: sess-13"
     echo "Acknowledged-By-Operator: yes"
   } > "$LEDGER_DIR/escape-obligation-ack-s13.txt"
   ws_open_escape_obligations "sess-13" > "$TMP/open13.txt"; OPEN13="$(cat "$TMP/open13.txt")"
@@ -725,6 +788,20 @@ a second line'
     pass "_ws_escape_gate_fixed correctly reports NOT fixed for a file that still matches"
   else
     fail "_ws_escape_gate_fixed wrongly reported a still-matching file as fixed"
+  fi
+
+  echo "Scenario 14b (C4 fix, harness-review 2026-08-04): a file that no"
+  echo "longer EXISTS must NOT be treated as fixed. --check silently skips"
+  echo "a missing path and reports would-pass (0 matches) — indistinguishable"
+  echo "from genuinely clean, so deleting the waived file used to silently"
+  echo "close the obligation."
+  rm -f "$F14_REPO/gone14.txt"
+  FIXED14B_NEG_OK=1
+  ( cd "$F14_REPO" && _ws_escape_gate_fixed "harness-hygiene-scan" "gone14.txt" ) && FIXED14B_NEG_OK=0
+  if [[ "$FIXED14B_NEG_OK" == "1" ]]; then
+    pass "_ws_escape_gate_fixed correctly reports NOT fixed for a missing file (fail-closed on absence)"
+  else
+    fail "_ws_escape_gate_fixed wrongly treated a MISSING file as fixed (C4 regression)"
   fi
 
   echo "Scenario 15: a gate OTHER than harness-hygiene-scan can never be"

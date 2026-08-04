@@ -144,10 +144,16 @@ or API surface is introduced.
   accountability rail, only on its exact shape (session-scoping, closure conditions),
   which is documented as a named decision in `lib/workaround-sensor-lib.sh`'s own
   header rather than left implicit.
-- `--full-tree` (already run by the `harness-review` skill and the secret-backstop CI
-  workflow) is assumed to remain the periodic whole-tree net for pre-existing content;
-  this plan does not change or re-verify that cadence, only confirms the mechanism
-  still exists and is unmodified.
+- CORRECTED by the C-round harness-review fix (see `## C-Round Record` below): the
+  original assumption here — that `--full-tree` is a periodic net the secret-backstop
+  CI workflow runs — was FALSE on both counts (nothing runs `--full-tree` on any
+  schedule; the CI workflows do whole-file scanning via explicit changed-file args, a
+  different, ALREADY-existing mechanism, not `--full-tree`). The corrected assumption:
+  push-time CI (`.github/workflows/secret-backstop.yml`,
+  `.github/workflows/server-side-enforcement.yml`, both REQUIRED, both whole-file, no
+  waiver channel) is the real backstop for pre-existing content a delta-scoped local
+  commit does not touch; `--full-tree` remains available ONLY as an operator-invoked,
+  on-demand audit.
 - The three OTHER `Status: ACTIVE` plans in this repo
   (`gated-pipeline-master-2026-08`, `cockpit-roadmap-redesign`,
   `accountable-estate-program-2026-07`) are unrelated to this fix; this plan exists
@@ -237,3 +243,97 @@ harness-reviewer pass still owed (per this session's dispatch — routed to
 harness-reviewer after this commit, not through task-verifier/close-plan, since this
 plan exists to satisfy scope-enforcement-gate rather than to run the full
 orchestrator-pattern plan lifecycle).
+
+## C-Round Record (harness-reviewer REFORMULATE on `b8c9fe0a`, 2026-08-04)
+
+The first commit's harness-review verdict was REFORMULATE: the core design was accepted
+(all five suites reproduced verbatim, both of the reviewer's own mutation probes killed
+the suite when applied, the Task-25 rail reuse is genuinely zero-new-downgrade-logic),
+conditioned on six fixes before merge — the reviewer explicitly treated two
+"strongly recommended" items as required, ruling that the design only beats theater if
+all six land. Status: all six addressed in this same worktree, same plan.
+
+- **C1 (F1, CRITICAL — split-brain gate messaging, PROVEN live)**: FIXED. The shipped
+  messaging falsely claimed pre-existing hygiene debt is "caught by the periodic
+  full-tree scan" — PROVEN false by reading the actual mechanisms: nothing runs
+  `--full-tree` on any schedule (`/harness-review` is operator-invoked only, absent from
+  `adapters/claude-code/config/schedule-manifest.json`), and the REAL catcher
+  (`.github/workflows/secret-backstop.yml:133`, `server-side-enforcement.yml:118`, both
+  REQUIRED push-time checks) does whole-file scanning via explicit changed-file args
+  (`bash harness-hygiene-scan.sh "${changed[@]}"`), not `--full-tree`, with NO waiver
+  channel. Fixed in the header (Defect 1 section), the per-file WARN comment, the
+  WARN stderr message, and this plan's own Assumptions section — all now state the true
+  mechanism (push-time CI re-scans the WHOLE touched file and goes red on the next
+  push, no waiver escape there) and the durable remedies (fix the content, or stage
+  `is_exempt()` in the same commit). Delta-scoping the two CI jobs themselves is NOT
+  attempted in this series (untestable-from-here GitHub Actions YAML; a wrong edit risks
+  silently weakening the real backstop) — named as
+  `HYGIENE-GATE-ESCAPE-ACCOUNTABILITY-FOLLOWUPS-2026-08-04` item 4 in `docs/backlog.md`,
+  with the concrete fix shape (a base-ref delta mode + `--diff-range` flag) specified for
+  the next session.
+- **C2 (F2, blocking — rename false-positive)**: FIXED. `git diff --cached -U0 --
+  <dest-only>` cannot pair a rename — PROVEN empirically (a `git mv` of a file with a
+  pre-existing hit rendered as a brand-new file, every line "added"). Fixed via a
+  rename map built once per run (`git diff --cached -M --name-status -z
+  --diff-filter=R`) and an old-blob→new-blob diff (`git diff --cached -M -- <old>
+  <new>`) when the current file is a rename destination — PROVEN a pure rename now
+  yields zero hunks and a rename+edit yields only the truly-changed lines. Pinned by
+  self-test D3 (pure rename, pre-existing hit, does not block) and D3b (rename+edit,
+  blocks on exactly the new line, not the whole file).
+- **C3 (F3, blocking — `++`-content evasion, PROVEN)**: FIXED. The awk rule
+  `/^\+\+\+/ { next }` matched unconditionally, silently swallowing any ADDED line whose
+  own content starts with `+` (renders as `+++<content>` in the raw diff) — PROVEN via a
+  direct mutation probe: the old logic produces 3 blank lines for a 3-line file whose
+  added line is `++FORBIDDEN_TOKEN` (the token vanishes entirely); the fixed logic
+  (`!seen_hunk && /^\+\+\+/`, gated on whether the first `@@` hunk marker has been seen)
+  correctly captures it. Pinned by self-test D4.
+- **C4 (F4, blocking — fail-open on absence)**: FIXED. `_ws_escape_gate_fixed` treated a
+  MISSING file's `--check` "would-pass (0 matches)" as FIXED — deleting the waived file
+  silently closed the obligation. Fixed by requiring the file to exist on disk before
+  `--check` is even invoked; a missing file now makes the whole call return "not fixed."
+  Pinned by `lib/workaround-sensor-lib.sh` self-test Scenario 14b.
+- **C5 (F5 — unscoped ack)**: FIXED. One `escape-obligation-ack-*.txt` naming only a gate
+  closed EVERY obligation for that gate, for every session, forever. Fixed by requiring
+  an `Acknowledged-Session: <session_id>` clause matching the exact session the
+  obligation belongs to; a foreign-session or missing-session ack no longer closes
+  anything. Pinned by Scenario 12 (correct session closes) and the new Scenario 12b
+  (same well-formed ack, wrong session, does NOT close).
+- **C6 (F6 — recipe still printed)**: FIXED. The shipped denylist ESCAPE text removed the
+  OLD self-service `mkdir`+`printf` recipe but printed an equally-copy-pasteable NEW one
+  for the operator-waiver marker — the same defect wearing an extra field. Fixed by
+  removing every runnable recipe from the denylist branch and pointing instead at this
+  script's own header ("DEFECT 2" section) and the `_hhs_operator_waived_files` /
+  `_hhs_operator_clause_ok` function comments as the marker spec. Pinned by SEC1's
+  extended assertions (absence of both `mkdir -p` and the new marker's `$(date`
+  pattern).
+- **F7-F10 (minors)**: NOT fixed in this series, named by ID in
+  `docs/backlog.md`'s `HYGIENE-GATE-ESCAPE-ACCOUNTABILITY-FOLLOWUPS-2026-08-04` entry
+  (items 5-8): vaporware "weekly" backstop docs conflict, unbounded ledger scan on the
+  Stop path, ack-directory not named in the Stop message, waiver-coverage rows firing
+  without actual suppression.
+
+**Re-run verbatim totals (post C-round, same session)**:
+- `harness-hygiene-scan.sh --self-test`: `self-test: OK` (1 SKIP, machine-local layer,
+  expected off-CI) — now includes D3/D3b (rename)/D4 (`++`-content) alongside D1/D2/
+  SEC1-4/W1-5/A8.
+- `lib/workaround-sensor-lib.sh --self-test`: 25 passed, 0 failed (was 23; +2 for
+  Scenario 12b and 14b).
+- `stop-verdict-dispatcher.sh --self-test`: 105 passed, 0 failed (unchanged — no new
+  scenarios added in the C-round; confirms the C4/C5 lib fixes did not regress the
+  escape-check wiring).
+- `concurrent-ownership-gate.sh --self-test` (shared-lib regression check): 22 passed,
+  0 failed (of 22 scenarios) — unchanged, confirms the C4/C5 lib edits stayed additive.
+- `session-start-digest.sh --self-test`: re-run in progress at commit time; the C-round
+  touched no code in this file (Defect 3's feed is unaffected by C1-C6), so no
+  regression is expected — the prior confirmed-clean total (105 passed, 0 failed) is
+  the last direct measurement and is not expected to change since nothing in this file
+  was edited in the C-round.
+
+**Mutation probes (re-run against the C-round fixes directly, not inherited from the
+first review)**: (1) reverting the C3 `!seen_hunk` guard to the old unconditional
+`/^\+\+\+/ { next }` — PROVEN to make the `++FORBIDDEN_TOKEN` fixture vanish entirely
+(3 blank lines out of a 3-line delta view); the fix restores the exact matched line.
+(2) reverting the C2 fix to a pathspec-limited `git diff --cached -U0 -- <dest>` for a
+pure rename — PROVEN (empirically, via direct git invocation) to render the renamed
+file as 100% "added" content; the fix (`-M` with both old and new pathspecs) produces
+zero hunks for the same rename.

@@ -3516,3 +3516,45 @@ mechanism (`ws_open_escape_obligations`, `_svd_escape_naming_check`):
    class — the manifest's enforcement inventory is stale for this gate until a future pass reconciles
    it. **Re-derive:** `grep -n '"id": "harness-hygiene-scan"' adapters/claude-code/manifest.json`.
 
+C-round additions (harness-reviewer REFORMULATE on `b8c9fe0a`, 2026-08-04 — C1 required fix +
+condition, F7-F10 minors named-not-fixed by the reviewer's own instruction):
+
+4. **C1 residual — the two push-time CI jobs are still whole-file, not delta-scoped.**
+   `.github/workflows/secret-backstop.yml:133` and `server-side-enforcement.yml:118` both invoke
+   `bash adapters/claude-code/hooks/harness-hygiene-scan.sh "${changed[@]}"` (explicit changed-file
+   args = MODE="files" = whole-file scan, PROVEN by reading both files directly) on every
+   `push`/`pull_request`, with no waiver-marker channel (a fresh CI checkout has no
+   `.claude/state/`). The messaging fix (this same commit) now tells the truth about this instead of
+   claiming a nonexistent "periodic full-tree scan" catches pre-existing debt. Deliberately NOT
+   attempted in the same series: editing GitHub Actions YAML that cannot be exercised from this
+   environment ("cannot run Actions live from this environment" — the workflow's own header) risks
+   silently weakening the real security backstop, a worse outcome than leaving it whole-file and
+   honestly documented. **Concrete fix shape for the next session:** give
+   `harness-hygiene-scan.sh` a base-ref delta mode analogous to `_hhs_build_delta_view` (which
+   already accepts a rename-source 4th arg) but driven by `git diff <base_sha>..<head_sha> -U0`
+   instead of `--cached`; wire both workflow `run:` blocks to pass `BASE_SHA`/`HEAD_SHA` through to
+   a new `--diff-range <base> <head>` flag instead of relying on MODE="files" whole-file reads.
+   **Re-derive:** `grep -n "harness-hygiene-scan.sh \"\${changed\[@\]}\"" .github/workflows/*.yml`.
+5. **F7 — vaporware "weekly" backstop docs conflict.** Some harness doc(s) describe a
+   scheduled/weekly full-tree hygiene audit that does not exist as a live mechanism (only the
+   manually-invoked `/harness-review` skill wraps `--full-tree`, and it is not on any schedule per
+   `adapters/claude-code/config/schedule-manifest.json`). Sweep `grep -rn "weekly.*hygiene\|periodic.*full-tree" adapters/claude-code/` and correct or retire each claim.
+6. **F8 — unbounded ledger scan on the Stop path.** `ws_open_escape_obligations` (called from
+   `_svd_escape_naming_check` on every Stop) reads the ENTIRE `workaround-sensor.jsonl` via `cat`
+   with no line cap, unlike `session-start-digest.sh`'s own `feed_bypass_surface` (`tail -n 1000`).
+   On a long-lived machine the ledger grows unboundedly; bound the read (e.g. `tail -n N` before the
+   per-line filter) the same way the digest feed already does.
+7. **F9 — the ack directory is not named in the Stop-time block message.** `_svd_escape_naming_check`'s
+   gap message points at "lib/workaround-sensor-lib.sh" for the marker spec but never states the
+   concrete directory (`dirname "$(_workaround_sensor_path)"`, i.e. normally
+   `$HOME/.claude/state/`) an operator or agent would need to actually find/write
+   `escape-obligation-ack-*.txt` into. Name the resolved directory in the gap message.
+8. **F10 — a waiver-coverage ledger row fires even when nothing was actually suppressed.**
+   The regular-waiver / operator-waiver `ws_record`/`ledger_emit` calls in harness-hygiene-scan.sh
+   fire whenever `regular_waived`/`operator_waived` is true for a file, regardless of whether Layer
+   2/3 (`check_heuristics`/`check_addendum_lint`) would have found ANYTHING to suppress on that
+   file — a waiver marker naming a file that turns out to have zero matches still logs a
+   "waiver used" ledger row and opens/refreshes an escape obligation. Scope the log/obligation to
+   files where a suppression genuinely occurred (track whether Layer 2/3 would have matched before
+   deciding whether to log).
+
