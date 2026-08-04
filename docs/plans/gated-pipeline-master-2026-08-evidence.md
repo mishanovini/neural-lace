@@ -3165,3 +3165,11 @@ abort/SIGABRT on this machine's grep when `-i` and `-F` are combined).
 $ bash -n adapters/claude-code/scripts/nl-maintenance.sh && echo "SYNTAX OK"
 SYNTAX OK
 ```
+
+### Task 25 — C6 correction (2026-08-04, orchestrator)
+Batch #4 proved the C-round claim "two follow-ups filed to docs/backlog.md" FALSE (FM-006 —
+the strings existed only in this evidence file). Corrected: rows
+SESSION-SCOPED-VERIFY-OBLIGATIONS-2026-08-04 and
+BASH-SOURCE-DIR-RESOLUTION-FRAGILITY-SWEEP-2026-08-04 are now real in docs/backlog.md,
+landed in commit 96814749 (they rode the T22 evidence cherry-pick's --continue, which swept
+the staged backlog file — commit-message purity imperfect, content verified present by grep).
