@@ -728,6 +728,78 @@ feed_waiver_density() {
 }
 
 # ----------------------------------------------------------------------
+# Feed (Defect 3, harness safety fix 2026-08-04 — hygiene-gate incident):
+# same-session gate-bypass surfacing. workaround-sensor.jsonl bypasses
+# (any gate's ws_record row with a non-empty bypass_kind) were never
+# surfaced in-session before this — the four self-authored
+# harness-hygiene-scan waiver-file rows from the 2026-08-04 incident sat
+# unnoticed for a day because the ONLY existing consumer
+# (scripts/nl-maintenance.sh's dashboard friction pane) is a periodic,
+# pull-based snapshot, not something a session sees. Reuses THIS existing
+# digest surface (session-start-digest.sh's own Feed architecture) rather
+# than inventing a new hook, per the fix's own dispatch constraint.
+#
+# Reads the SAME ledger ws_record/ws_open_escape_obligations write/read
+# (lib/workaround-sensor-lib.sh, default $HOME/.claude/state/
+# workaround-sensor.jsonl, WORKAROUND_SENSOR_LEDGER_PATH override honored
+# for self-tests). Window matches feed_ledger_summary's own 24h window.
+# Bash-3.2-portable (no associative arrays — sort|uniq -c, same idiom
+# harness-hygiene-scan.sh's own check_heuristics already uses) per this
+# repo's documented macOS-portability constraint.
+# ----------------------------------------------------------------------
+_workaround_ledger_path_for_digest() {
+  if [[ -n "${WORKAROUND_SENSOR_LEDGER_PATH:-}" ]]; then
+    printf '%s' "$WORKAROUND_SENSOR_LEDGER_PATH"
+    return 0
+  fi
+  # HARNESS_SELFTEST sandboxing (BUG FOUND 2026-08-04 during this fix's own
+  # verification, PROVEN via a baseline-vs-modified self-test diff: without
+  # this branch, S2's "all quiet" scenario read this machine's REAL
+  # $HOME/.claude/state/workaround-sensor.jsonl and surfaced live operator
+  # ledger content — 22 real harness-hygiene-scan waiver-file rows — inside
+  # a self-test assertion. Same sandboxing convention this file's own
+  # `_unresolved_gaps_path` already uses a few dozen lines up, and the same
+  # convention `_workaround_sensor_path` in lib/workaround-sensor-lib.sh
+  # uses for the WRITE side — this was the missing READ-side mirror.
+  if [[ "${HARNESS_SELFTEST:-0}" == "1" ]]; then
+    printf '%s/digest-selftest/%s/workaround-sensor.jsonl' "${TMPDIR:-/tmp}" "${$}"
+    return 0
+  fi
+  printf '%s/.claude/state/workaround-sensor.jsonl' "${HOME:-$PWD}"
+}
+
+feed_bypass_surface() {
+  local path; path="$(_workaround_ledger_path_for_digest)"
+  [[ -f "$path" ]] || return 0
+
+  local cutoff
+  cutoff="$(date -u -d '24 hours ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null \
+    || date -u -v-24H '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "")"
+
+  local lines; lines="$(tail -n 1000 "$path" 2>/dev/null || true)"
+  [[ -z "$lines" ]] && return 0
+
+  local pairs line ts gate kind
+  pairs="$(printf '%s\n' "$lines" | while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    ts="$(printf '%s' "$line" | sed -E 's/.*"ts":"([^"]*)".*/\1/')"
+    if [[ -n "$cutoff" && -n "$ts" ]] && [[ "$ts" < "$cutoff" ]]; then
+      continue
+    fi
+    gate="$(printf '%s' "$line" | sed -E 's/.*"gate":"([^"]*)".*/\1/')"
+    kind="$(printf '%s' "$line" | sed -E 's/.*"bypass_kind":"([^"]*)".*/\1/')"
+    [[ -z "$gate" || -z "$kind" ]] && continue
+    printf '%s|%s\n' "$gate" "$kind"
+  done)"
+  [[ -z "$pairs" ]] && return 0
+
+  printf '%s\n' "$pairs" | LC_ALL=C sort | uniq -c | while read -r n rest; do
+    [[ -z "$rest" ]] && continue
+    printf 'bypass-24h: %s x%s\n' "${rest/|/ }" "$n"
+  done
+}
+
+# ----------------------------------------------------------------------
 # Feed 12: unresolved-gaps entries (§E.11). Tolerate absent file.
 #
 # State path resolution mirrors _staleness_proposals_path (and lib/
@@ -1482,6 +1554,15 @@ run_digest() {
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_waiver_density "$cwd")"
   [[ -n "$body" ]] && lines+=("$body")
+  # feed_bypass_surface can emit MULTIPLE lines (one per gate+bypass_kind
+  # combo active in the last 24h) — same line-by-line pattern as
+  # feed_backlog_accountability/feed_staleness_proposals below.
+  body="$(feed_bypass_surface)"
+  if [[ -n "$body" ]]; then
+    while IFS= read -r _bypass_line; do
+      [[ -n "$_bypass_line" ]] && lines+=("$_bypass_line")
+    done <<< "$body"
+  fi
   body="$(feed_unresolved_gaps)"
   [[ -n "$body" ]] && lines+=("$body")
   body="$(feed_needs_you "$cwd")"
@@ -2735,6 +2816,32 @@ EOF
   s23_snapshot2="$(cat "$s23_cache" 2>/dev/null)"
   _ck_contains "S23e single-writer property: cache file byte-identical across the digest invocation and the subsequent doctor cache-HIT read" \
     "$([[ "$s23_snapshot1" == "$s23_snapshot2" ]] && echo identical || echo DIFFERS)" "identical"
+
+  # ---- S24 (Defect 3, harness safety fix 2026-08-04): feed_bypass_surface
+  # surfaces workaround-sensor.jsonl bypasses in-session — the incident
+  # this feed exists for (four self-authored waiver-file rows against
+  # harness-hygiene-scan, unnoticed for a day) replayed as a fixture.
+  local s24_ledger="$tmp/s24-workaround-sensor.jsonl"
+  local s24_now s24_old
+  s24_now="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo '2026-08-04T09:40:01Z')"
+  s24_old="2020-01-01T00:00:00Z"
+  {
+    printf '{"ts":"%s","gate":"harness-hygiene-scan","session":"s1","bypass_kind":"waiver-file","command_fingerprint":"file=a.md","detail":""}\n' "$s24_now"
+    printf '{"ts":"%s","gate":"harness-hygiene-scan","session":"s2","bypass_kind":"waiver-file","command_fingerprint":"file=b.md","detail":""}\n' "$s24_now"
+    printf '{"ts":"%s","gate":"harness-hygiene-scan","session":"s3","bypass_kind":"waiver-file","command_fingerprint":"file=c.md","detail":""}\n' "$s24_now"
+    printf '{"ts":"%s","gate":"harness-hygiene-scan","session":"s4","bypass_kind":"waiver-file","command_fingerprint":"file=d.md","detail":""}\n' "$s24_now"
+    printf '{"ts":"%s","gate":"harness-hygiene-scan","session":"s5","bypass_kind":"waiver-file","command_fingerprint":"file=old.md","detail":""}\n' "$s24_old"
+  } > "$s24_ledger"
+  local out24
+  out24="$(WORKAROUND_SENSOR_LEDGER_PATH="$s24_ledger" feed_bypass_surface)"
+  _ck_contains "S24a bypass-24h surfaces the fresh incident-shaped rows, grouped by gate+kind" "$out24" "bypass-24h: harness-hygiene-scan waiver-file x4"
+  _ck_not_contains "S24b a row older than the 24h window is excluded from the count" "$out24" "x5"
+
+  local s24b_ledger="$tmp/s24b-empty.jsonl"
+  : > "$s24b_ledger"
+  local out24b
+  out24b="$(WORKAROUND_SENSOR_LEDGER_PATH="$s24b_ledger" feed_bypass_surface)"
+  _ck_contains "S24c empty ledger produces no output (tolerate-absent)" "$([[ -z "$out24b" ]] && echo empty || echo "$out24b")" "empty"
 
   rm -rf "$tmp" 2>/dev/null || true
   echo ""

@@ -3490,3 +3490,29 @@ guard or `cd`-based resolution. T25 guarded its own entry points only.
 
 - **COCKPIT-SERVER-SELFTEST-FLAKY-ASK-FIXTURE-01 — `server.selftest.js` intermittently crashes mid-suite in the ask/dispatch-provenance fixture section, PRE-EXISTING and unrelated to the subprocess-storm fix** (added 2026-08-02 from the same fix's verification pass; label: `harness-gap`, `priority:medium`; fold-in: next touch of the ask-fixture setup in `server.selftest.js`). **PROVEN pre-existing:** reproduced identically on UNMODIFIED baseline code (git stash of every storm-fix change, two separate runs) — run 1 crashed `Error: ENOENT ... dispatch-provenance/fixture-marker__1.json` at the fixture-write step; run 2 crashed `TypeError: Cannot read properties of undefined (reading 'asks')` later in the same section, both around the S23+ ask-registry/dispatch-provenance scenarios. Two DIFFERENT crash points across two runs of the SAME unmodified code confirms a timing/race bug in the ask-fixture setup (likely a directory-creation race ahead of a synchronous write), not a deterministic break — and not something the storm fix touched (every scenario through S26b, including the DeriveCache-heavy S6b/S6c/S17/S22, passed cleanly both before and after this fix in every run). **Re-derive:** `node neural-lace/workstreams-ui/server/server.selftest.js` a few times in a row and compare crash points/lines.
 
+## HYGIENE-GATE-ESCAPE-ACCOUNTABILITY-FOLLOWUPS-2026-08-04 — honest residuals from the hygiene-gate self-service-escape fix
+(label: `harness-gap`; from the hygiene-gate incident fix, harness-hygiene-scan.sh Defects 1-2 + workaround-sensor-lib.sh/stop-verdict-dispatcher.sh/session-start-digest.sh Defect 3-4)
+
+Three named, disclosed-not-hidden gaps in the same-turn-visible + Stop-blocking escape-obligation
+mechanism (`ws_open_escape_obligations`, `_svd_escape_naming_check`):
+
+1. **Same-turn NOTICE (Defect 4 item c) is wired at harness-hygiene-scan.sh's own `ws_record` call
+   sites only.** The four OTHER existing `ws_record` callers (`concurrent-ownership-gate-body.sh`,
+   `dispatch-chain-gate.sh`, `review-record-push-gate.sh`, `scope-enforcement-gate-body.sh`) have
+   their escapes tracked generically by `ws_open_escape_obligations`/the Stop-side check (any
+   `bypass_kind` row opens an obligation regardless of which gate wrote it), but do NOT yet print
+   an in-turn "this opened an obligation" notice at their own waiver-honored call sites — an agent
+   using one of those gates' escapes only learns about the obligation at the NEXT Stop, not in the
+   same turn. Fold-in: one small edit per call site, same one-line `printf ... >&2` pattern
+   harness-hygiene-scan.sh now uses.
+2. **FIXED auto-close (`_ws_escape_gate_fixed`) only re-verifies `gate=="harness-hygiene-scan"`**
+   (the one caller with an honest `--check <file>` re-verification mode this lib knows how to
+   drive). Every other gate's escapes can never auto-close via re-scan — they fall through to
+   requiring an `escape-obligation-ack-*.txt` marker, or stay open indefinitely. This is a
+   deliberate fail-closed scoping choice (documented in the lib's own header), not an oversight,
+   but it means e.g. a `concurrent-ownership-gate` escape has no "the lock cleared itself" path.
+3. **`manifest.json`'s `harness-hygiene-scan` entry is not updated** with the new
+   `escape-obligations` Stop check, the `bypass-24h` digest feed, or the operator-waiver marker
+   class — the manifest's enforcement inventory is stale for this gate until a future pass reconciles
+   it. **Re-derive:** `grep -n '"id": "harness-hygiene-scan"' adapters/claude-code/manifest.json`.
+

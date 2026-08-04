@@ -86,6 +86,101 @@
 #                         insensitive. Matches are labeled `[addendum-lint]`.
 #                         See `check_addendum_lint()` below for the full
 #                         M-9-narrowed-pattern rationale.
+#
+# HYGIENE-GATE SAFETY FIX (2026-08-04, self-service-escape incident)
+# ============================================================
+# Four `bypass_kind=waiver-file` entries against this gate landed in
+# workaround-sensor.jsonl with no operator turn: a subagent got BLOCKED,
+# read this gate's own block message (which used to print the waiver
+# recipe as a fill-in-the-blank command), self-authored the waiver, and
+# committed. Both underlying deltas were in fact clean — the gate had
+# fired on PRE-EXISTING content in the same files, not on anything the
+# commit added. Two compounding defects, both fixed here; a third
+# (invisibility) fixed in session-start-digest.sh.
+#
+# DEFECT 1 — FALSE-FIRE ENGINE (delta-scoping)
+# ------------------------------------------------------------
+# Pre-commit mode (MODE="staged", the default no-arg invocation
+# pre-commit-gate.sh actually runs) used to grep each staged file's
+# WHOLE CONTENT on disk, so a commit that never touches a denylisted
+# line still blocked because the line was already there. Fixed by
+# building a "delta view" per staged file (`_hhs_build_delta_view`):
+# same line count as the real file, every line NOT added by the
+# currently-staged diff replaced with blank, every ADDED line kept at
+# its real new-file line number. Layer 1/2/3 checks run against this
+# view for the BLOCK decision — same grep -n plumbing, so line numbers
+# in the report stay correct. CHOICE MADE (per the task's own framing
+# of the tradeoff): rather than make pre-existing content invisible, a
+# file whose delta is clean but whose WHOLE FILE still matches Layer 1
+# emits a non-blocking "PRE-EXISTING" notice to stderr, and the existing
+# `--full-tree` mode (already run by the harness-review skill and the
+# secret-backstop CI workflow, unchanged by this fix, still whole-file)
+# remains the periodic full-scan net that catches it. `--full-tree` and
+# explicit-file-arg invocations (mode 3) are UNCHANGED — still whole-file
+# — this only touches MODE="staged" (which `--check` shares by default,
+# preserving the R3.4 --check/enforce decision-parity guarantee).
+#
+# DEFECT 2 — SELF-SERVICE BYPASS ON A SECURITY-CLASS CONTROL
+# ------------------------------------------------------------
+# Layer 1 (denylist) matches are personal/business/identity-bearing
+# strings — the security class. The self-service structured waiver
+# (`harness-hygiene-waiver-*.txt`, Purpose+Because+Files) NO LONGER
+# suppresses a Layer 1 match, ever — only Layer 2 (heuristic) and
+# Layer 3 (addendum-lint) matches, which genuinely do false-positive on
+# novel content and where the existing hatch is proportionate. A
+# SEPARATE marker, `harness-hygiene-operator-waiver-*.txt`, honors a
+# denylist suppression — same Purpose/Because/Files clauses PLUS a
+# required `Operator-Authorized:` clause (>=20 non-whitespace chars,
+# not a placeholder).
+#
+# HONEST TRUST MODEL (read this before treating the split above as a
+# hard guarantee): nothing here is structurally unforgeable. An agent's
+# own Bash/Write tools can author `harness-hygiene-operator-waiver-*.txt`
+# exactly as easily as the old marker — there is no cryptographic or
+# out-of-band channel distinguishing "the operator said so in chat" from
+# "the agent wrote a file that claims the operator said so". This is the
+# IDENTICAL trust model this repo's own `review-record-push-gate`
+# manifest entry (`adapters/claude-code/manifest.json`, id
+# "review-record-push-gate", `bypass_paths`) already discloses about its
+# own override marker: raising the cost and audit legibility of
+# self-issuance (a distinctly-named file, an extra required clause,
+# same-session ledger surfacing — see Defect 3) is real and worth doing;
+# it is NOT the same as making self-issuance impossible. The actual
+# guarantee is behavioral (agents are instructed never to author this
+# marker without an explicit operator instruction IN THE CURRENT
+# CONVERSATION) plus post-hoc auditability (every waiver/operator-waiver
+# use is ledgered via `ws_record`/`ledger_emit` and, as of Defect 3,
+# surfaced at the next SessionStart). Self-issuing this marker without
+# operator say-so is itself a harness-hygiene violation of the same kind
+# as writing a false Purpose/Because clause into the plain waiver.
+#
+# DEFECT 3 — INVISIBILITY (fixed in session-start-digest.sh, not here)
+# ------------------------------------------------------------
+# workaround-sensor.jsonl bypasses were never surfaced in-session, so
+# the four incident rows sat unnoticed for a day. `feed_bypass_surface`
+# in `adapters/claude-code/hooks/session-start-digest.sh` (a new feed on
+# the existing digest surface, not a new hook) reads that ledger
+# directly and prints a `bypass-24h: <gate> <bypass_kind> x<n>` line per
+# gate+kind combination active in the last 24h.
+#
+# DEFECT 4 — THE ESCAPE MUST COST MORE DOWNSTREAM THAN IT SAVES UPSTREAM
+# (fixed in lib/workaround-sensor-lib.sh + stop-verdict-dispatcher.sh,
+# not here — an operator amendment to this same fix)
+# ------------------------------------------------------------
+# An append-only ledger row is an audit log, not a deterrent — an agent
+# pays nothing for using an escape, so it rationally takes it. Every
+# `ws_record` call this gate makes (waiver OR operator-waiver) now OPENS
+# a same-session escape obligation on the SAME accountability rail
+# `lib/review-chain-lib.sh`'s verify-obligation tracking already built
+# (gated-pipeline-master-2026-08 Task 25 / OD-022): the session's own
+# Stop chain (`stop-verdict-dispatcher.sh`'s `_svd_escape_naming_check`)
+# blocks a DONE/CONTINUING end that does not name every open, unfixed,
+# unacknowledged gate escape it used. See
+# `lib/workaround-sensor-lib.sh`'s own header for the full lifecycle
+# (open / fixed / acknowledged) and its HONESTY CONSTRAINT: this makes a
+# self-served escape IMPOSSIBLE TO HIDE (same-turn notice + Stop-blocking
+# obligation), not impossible to self-serve — on a single-user machine
+# there is no cryptographic boundary between agent and operator.
 
 set -u
 
@@ -129,6 +224,52 @@ _hhs_waived_files() {
       | sed -E 's/^[[:space:]]*[Ff][Ii][Ll][Ee][Ss][[:space:]]*:[[:space:]]*//' \
       | tr ', ' '\n\n'
   done < <(find "$state_dir" -maxdepth 1 -type f -name 'harness-hygiene-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null)
+}
+
+# ---------- operator-authorized waiver (Defect 2, security-class hits) ---
+# Distinct marker (`harness-hygiene-operator-waiver-*.txt`, NOT the plain
+# `harness-hygiene-waiver-*.txt` above) that can suppress a Layer 1
+# (denylist) match. Requires the SAME Purpose/Because clauses PLUS a
+# substantive `Operator-Authorized:` clause. See the file header's HONEST
+# TRUST MODEL section — this raises the cost/legibility of self-issuance,
+# it does not make it technically unforgeable.
+
+# _hhs_operator_clause_ok <path>
+# Returns 0 iff the file carries a non-placeholder `Operator-Authorized:`
+# line (>=20 non-whitespace characters after the label). Deliberately the
+# same "raise the bar past a one-word touch" idiom as
+# waiver_has_purpose_clauses / review-record-push-gate's
+# rrg_validate_waiver_reason.
+_hhs_operator_clause_ok() {
+  local f="$1"
+  local line content stripped
+  line=$(grep -iE '^[[:space:]]*operator-authorized[[:space:]]*:' "$f" 2>/dev/null | head -1)
+  [ -z "$line" ] && return 1
+  content=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[Oo]perator-[Aa]uthorized[[:space:]]*:[[:space:]]*//')
+  stripped=$(printf '%s' "$content" | tr -d '[:space:]')
+  [ "${#stripped}" -ge 20 ]
+}
+
+# _hhs_operator_waived_files <state-dir>
+# Prints, one per line, every repo-relative file path named in a fresh
+# (<1h), purpose-clause-valid, Operator-Authorized `harness-hygiene-
+# operator-waiver-*.txt` marker's "Files:" line(s). Empty output if no
+# valid fresh marker exists (fails closed, same posture as the plain
+# waiver above).
+_hhs_operator_waived_files() {
+  local state_dir="$1"
+  [ -d "$state_dir" ] || return 0
+  local f
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    if declare -F waiver_has_purpose_clauses >/dev/null 2>&1; then
+      waiver_has_purpose_clauses "$f" || continue
+    fi
+    _hhs_operator_clause_ok "$f" || continue
+    grep -iE '^[[:space:]]*files[[:space:]]*:' "$f" 2>/dev/null \
+      | sed -E 's/^[[:space:]]*[Ff][Ii][Ll][Ee][Ss][[:space:]]*:[[:space:]]*//' \
+      | tr ', ' '\n\n'
+  done < <(find "$state_dir" -maxdepth 1 -type f -name 'harness-hygiene-operator-waiver-*.txt' -newermt '1 hour ago' 2>/dev/null)
 }
 
 # ---------- self-test ----------------------------------------------------
@@ -484,57 +625,156 @@ if [ "${1:-}" = "--self-test" ]; then
   ST_CLEAN_DESIGN_NEG_RC=$?
 
   # ---- Structured-waiver scenarios (F.5 audit row 12 / ADR 059 D4) ----
-  # Reuses dirty.txt (the FORBIDDEN_TOKEN fixture) as the "novel false
-  # positive" file the waiver covers.
+  # Reuses some-doc.md (the h1 path-shape HEURISTIC fixture — [heuristic],
+  # NOT [denylist]) as the "novel false positive" file the plain
+  # self-service waiver covers. Retargeted off dirty.txt (2026-08-04,
+  # Defect 2 fix): dirty.txt is a [denylist] (security-class) fixture and
+  # the plain waiver no longer suppresses that class at all — see SEC1/SEC2
+  # below, which replay the incident against dirty.txt directly.
   ST_WAIVER_STATE="$TMPDIR_ST/.claude/state"
   mkdir -p "$ST_WAIVER_STATE"
 
-  # W1 — waiver-absent-blocks: no waiver file → same as plain dirty (exit 1)
-  ST_W1_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  # W1 — waiver-absent-blocks: no waiver file → same as plain heuristic hit (exit 1)
+  ST_W1_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "some-doc.md" 2>&1)
   ST_W1_RC=$?
 
-  # W2 — waiver-honored: fresh waiver naming both clauses + Files: dirty.txt
+  # W2 — waiver-honored (HEURISTIC class): fresh waiver naming both clauses
+  # + Files: some-doc.md
   {
     echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
-    echo "Because: dirty.txt is a self-test fixture, not a real leak"
-    echo "Files: dirty.txt"
+    echo "Because: some-doc.md is a self-test fixture, not a real leak"
+    echo "Files: some-doc.md"
   } > "$ST_WAIVER_STATE/harness-hygiene-waiver-selftest.txt"
-  ST_W2_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W2_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "some-doc.md" 2>&1)
   ST_W2_RC=$?
   rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-selftest.txt"
 
   # W3 — waiver-stale-rejected: same valid waiver but backdated >1h → BLOCK
   {
     echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
-    echo "Because: dirty.txt is a self-test fixture, not a real leak"
-    echo "Files: dirty.txt"
+    echo "Because: some-doc.md is a self-test fixture, not a real leak"
+    echo "Files: some-doc.md"
   } > "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt"
   # No `|| true`: an un-aged waiver inverts this scenario silently.
   if ! nl_touch_age "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt" 7200; then
     echo "self-test: could not backdate the stale-waiver fixture" >&2
     exit 1
   fi
-  ST_W3_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W3_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "some-doc.md" 2>&1)
   ST_W3_RC=$?
   rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-stale.txt"
 
-  # W4 — regression: waiver naming clauses but a DIFFERENT file → dirty.txt
+  # W4 — regression: waiver naming clauses but a DIFFERENT file → some-doc.md
   # still BLOCKS (per-file scoping actually scopes, not a blanket valve)
   {
     echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
     echo "Because: some other file is a self-test fixture, not a real leak"
     echo "Files: some-other-file.txt"
   } > "$ST_WAIVER_STATE/harness-hygiene-waiver-otherfile.txt"
-  ST_W4_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_W4_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "some-doc.md" 2>&1)
   ST_W4_RC=$?
   rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-otherfile.txt"
 
   # W5 — regression (pin f): non-empty waiver WITHOUT purpose-clause pair,
   # even with a matching Files: line, does NOT open the valve → BLOCK
-  echo "Files: dirty.txt" > "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
-  ST_W5_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  echo "Files: some-doc.md" > "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
+  ST_W5_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "some-doc.md" 2>&1)
   ST_W5_RC=$?
   rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-weak.txt"
+
+  # ---- SEC1/SEC2 (Defect 2 — the incident, replayed as a fixture) ----
+  # dirty.txt is a [denylist] (FORBIDDEN_TOKEN) match — the security class.
+
+  # SEC1 — THE INCIDENT: an agent-authored PLAIN waiver (Purpose+Because+
+  # Files, exactly the shape the old block message printed as a recipe)
+  # against a denylist hit must still BLOCK. This is the exact incident
+  # shape from 2026-08-04 (workaround-sensor.jsonl bypass_kind=waiver-file
+  # rows against harness-hygiene-scan with no operator turn), replayed here
+  # so a regression cannot silently reopen it.
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: dirty.txt is a self-test fixture, not a real leak"
+    echo "Files: dirty.txt"
+  } > "$ST_WAIVER_STATE/harness-hygiene-waiver-sec1.txt"
+  ST_SEC1_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_SEC1_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-waiver-sec1.txt"
+
+  # SEC2 — operator-authorized path: the SEPARATE, distinctly-named
+  # harness-hygiene-operator-waiver-*.txt marker, carrying the SAME
+  # Purpose/Because clauses PLUS a substantive Operator-Authorized clause,
+  # DOES suppress the denylist match.
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: dirty.txt is a self-test fixture, not a real leak"
+    echo "Files: dirty.txt"
+    echo "Operator-Authorized: yes I reviewed this in chat and it is a fixture, ship it"
+  } > "$ST_WAIVER_STATE/harness-hygiene-operator-waiver-sec2.txt"
+  ST_SEC2_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_SEC2_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-operator-waiver-sec2.txt"
+
+  # SEC3 — regression: an operator-waiver marker MISSING the
+  # Operator-Authorized clause (i.e., structurally identical to the plain
+  # waiver, just under the new filename) does NOT open the valve — the
+  # extra clause is what's load-bearing, not the filename alone.
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: dirty.txt is a self-test fixture, not a real leak"
+    echo "Files: dirty.txt"
+  } > "$ST_WAIVER_STATE/harness-hygiene-operator-waiver-sec3.txt"
+  ST_SEC3_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_SEC3_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-operator-waiver-sec3.txt"
+
+  # SEC4 — regression: an Operator-Authorized clause that IS a placeholder
+  # (too short) does NOT open the valve either.
+  {
+    echo "Purpose: this gate exists to prevent identity-bearing strings shipping"
+    echo "Because: dirty.txt is a self-test fixture, not a real leak"
+    echo "Files: dirty.txt"
+    echo "Operator-Authorized: yes"
+  } > "$ST_WAIVER_STATE/harness-hygiene-operator-waiver-sec4.txt"
+  ST_SEC4_OUT=$(cd "$TMPDIR_ST" && bash "$SCRIPT_PATH" "dirty.txt" 2>&1)
+  ST_SEC4_RC=$?
+  rm -f "$ST_WAIVER_STATE/harness-hygiene-operator-waiver-sec4.txt"
+
+  # ---- Delta-scoping scenarios (Defect 1) ----
+  # A dedicated fresh repo (distinct from TMPDIR_ST, which has no commits
+  # by design up to this point in the suite — see the --check-prefilter
+  # comment above) so these staged-mode (no-args) invocations get a real
+  # git history to diff against.
+  TMPDIR_DELTA="$TMPDIR_ST/delta-repo"
+  mkdir -p "$TMPDIR_DELTA/adapters/claude-code/patterns"
+  printf '%s\n' '# test denylist' 'FORBIDDEN_TOKEN' > "$TMPDIR_DELTA/adapters/claude-code/patterns/harness-denylist.txt"
+  (
+    cd "$TMPDIR_DELTA" || exit 1
+    git init -q . >/dev/null 2>&1
+    git config user.email "selftest@example.com"
+    git config user.name "selftest"
+  )
+
+  # D1 — new hit IN the staged delta -> BLOCK. Commit a clean file, then
+  # stage a change that ADDS a denylisted line.
+  printf '%s\n' 'clean line one' 'clean line two' > "$TMPDIR_DELTA/f.txt"
+  (cd "$TMPDIR_DELTA" && git add f.txt adapters/claude-code/patterns/harness-denylist.txt && git commit -q -m init)
+  printf '%s\n' 'clean line one' 'clean line two' 'this line adds FORBIDDEN_TOKEN' > "$TMPDIR_DELTA/f.txt"
+  (cd "$TMPDIR_DELTA" && git add f.txt)
+  ST_D1_OUT=$(cd "$TMPDIR_DELTA" && bash "$SCRIPT_PATH" 2>&1)
+  ST_D1_RC=$?
+  (cd "$TMPDIR_DELTA" && git reset -q --hard HEAD)
+
+  # D2 — delta clean, but the WHOLE FILE already had a pre-existing hit ->
+  # does NOT block; a PRE-EXISTING notice is emitted. Commit a file that
+  # ALREADY contains FORBIDDEN_TOKEN, then stage an UNRELATED line change
+  # that never touches the token line.
+  printf '%s\n' 'this line has FORBIDDEN_TOKEN already' 'unrelated line' > "$TMPDIR_DELTA/g.txt"
+  (cd "$TMPDIR_DELTA" && git add g.txt && git commit -q -m "pre-existing hit")
+  printf '%s\n' 'this line has FORBIDDEN_TOKEN already' 'unrelated line CHANGED' > "$TMPDIR_DELTA/g.txt"
+  (cd "$TMPDIR_DELTA" && git add g.txt)
+  ST_D2_OUT=$(cd "$TMPDIR_DELTA" && bash "$SCRIPT_PATH" 2>&1)
+  ST_D2_RC=$?
+  (cd "$TMPDIR_DELTA" && git reset -q --hard HEAD)
 
   # A8 — waiver escape (REQ-B10: "escape = the standard fresh-waiver shape,
   # ledgered"): a fresh waiver naming the Addendum-design fixture suppresses
@@ -792,15 +1032,15 @@ if [ "${1:-}" = "--self-test" ]; then
   fi
 
   # ---- Structured-waiver assertions (F.5 audit row 12 / ADR 059 D4) ----
-  # W1: waiver-absent-blocks
+  # W1: waiver-absent-blocks (some-doc.md, HEURISTIC class)
   if [ "$ST_W1_RC" -ne 1 ]; then
     echo "self-test: FAIL (w1) — waiver-absent expected exit 1, got $ST_W1_RC" >&2
     echo "$ST_W1_OUT" >&2
     FAIL=1
   fi
-  # W2: waiver-honored (fresh, both clauses, Files: matches) → ALLOW
+  # W2: waiver-honored (fresh, both clauses, Files: matches, HEURISTIC class) → ALLOW
   if [ "$ST_W2_RC" -ne 0 ]; then
-    echo "self-test: FAIL (w2) — waiver-honored expected exit 0, got $ST_W2_RC" >&2
+    echo "self-test: FAIL (w2) — waiver-honored (heuristic class) expected exit 0, got $ST_W2_RC" >&2
     echo "$ST_W2_OUT" >&2
     FAIL=1
   fi
@@ -811,7 +1051,7 @@ if [ "${1:-}" = "--self-test" ]; then
   # waiver-honored call site, not just a self-tested-in-isolation library.
   if ! grep -q '"gate":"harness-hygiene-scan"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
      || ! grep -q '"bypass_kind":"waiver-file"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
-     || ! grep -q '"command_fingerprint":"file=dirty.txt"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null; then
+     || ! grep -q '"command_fingerprint":"file=some-doc.md"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null; then
     echo "self-test: FAIL (w6) — expected a workaround-sensor ledger row for the W2 waiver-honored run" >&2
     echo "  ledger content: $(cat "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo '(missing)')" >&2
     FAIL=1
@@ -822,9 +1062,9 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "$ST_W3_OUT" >&2
     FAIL=1
   fi
-  # W4: waiver names a DIFFERENT file → dirty.txt still BLOCKS (scoping works)
+  # W4: waiver names a DIFFERENT file → some-doc.md still BLOCKS (scoping works)
   if [ "$ST_W4_RC" -ne 1 ]; then
-    echo "self-test: FAIL (w4) — waiver for a different file must not cover dirty.txt, expected exit 1, got $ST_W4_RC" >&2
+    echo "self-test: FAIL (w4) — waiver for a different file must not cover some-doc.md, expected exit 1, got $ST_W4_RC" >&2
     echo "$ST_W4_OUT" >&2
     FAIL=1
   fi
@@ -834,6 +1074,78 @@ if [ "${1:-}" = "--self-test" ]; then
     echo "$ST_W5_OUT" >&2
     FAIL=1
   fi
+
+  # ---- SEC1-SEC4 assertions (Defect 2 — the incident, replayed) ----
+  # SEC1: agent-authored PLAIN waiver against a [denylist] hit -> still BLOCKED
+  if [ "$ST_SEC1_RC" -ne 1 ]; then
+    echo "self-test: FAIL (sec1) — INCIDENT REPLAY: a plain self-service waiver against a [denylist] match must still BLOCK, expected exit 1, got $ST_SEC1_RC" >&2
+    echo "$ST_SEC1_OUT" >&2
+    FAIL=1
+  fi
+  if ! printf '%s' "$ST_SEC1_OUT" | grep -q 'NOT SELF-WAIVABLE'; then
+    echo "self-test: FAIL (sec1) — block message for a [denylist] match must carry the operator-escalation text ('NOT SELF-WAIVABLE'), not the old bare recipe" >&2
+    echo "$ST_SEC1_OUT" >&2
+    FAIL=1
+  fi
+  if printf '%s' "$ST_SEC1_OUT" | grep -qF 'harness-hygiene-waiver-$(date'; then
+    echo "self-test: FAIL (sec1) — block message must NOT print the old self-service copy-paste recipe when the ONLY match is [denylist]" >&2
+    echo "$ST_SEC1_OUT" >&2
+    FAIL=1
+  fi
+  # SEC2: operator-authorized waiver (Purpose+Because+Files+Operator-Authorized,
+  # distinct filename) DOES suppress the [denylist] match -> ALLOW
+  if [ "$ST_SEC2_RC" -ne 0 ]; then
+    echo "self-test: FAIL (sec2) — operator-authorized waiver against a [denylist] match expected exit 0 (ALLOW), got $ST_SEC2_RC" >&2
+    echo "$ST_SEC2_OUT" >&2
+    FAIL=1
+  fi
+  if ! grep -q '"gate":"harness-hygiene-scan"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     || ! grep -q '"bypass_kind":"operator-waiver-file"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null \
+     || ! grep -q '"command_fingerprint":"file=dirty.txt"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null; then
+    echo "self-test: FAIL (sec2) — expected a workaround-sensor ledger row with bypass_kind=operator-waiver-file for the SEC2 run" >&2
+    echo "  ledger content: $(cat "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo '(missing)')" >&2
+    FAIL=1
+  fi
+  # SEC3: operator-waiver filename but MISSING the Operator-Authorized
+  # clause -> still BLOCKED (the clause is load-bearing, not the filename)
+  if [ "$ST_SEC3_RC" -ne 1 ]; then
+    echo "self-test: FAIL (sec3) — operator-waiver-named file WITHOUT an Operator-Authorized clause must still BLOCK, expected exit 1, got $ST_SEC3_RC" >&2
+    echo "$ST_SEC3_OUT" >&2
+    FAIL=1
+  fi
+  # SEC4: Operator-Authorized clause present but a placeholder (<20 chars)
+  # -> still BLOCKED
+  if [ "$ST_SEC4_RC" -ne 1 ]; then
+    echo "self-test: FAIL (sec4) — placeholder Operator-Authorized clause ('yes') must still BLOCK, expected exit 1, got $ST_SEC4_RC" >&2
+    echo "$ST_SEC4_OUT" >&2
+    FAIL=1
+  fi
+
+  # ---- D1/D2 assertions (Defect 1 — delta-scoping) ----
+  # D1: a genuinely NEW denylisted line in the staged delta -> BLOCK
+  if [ "$ST_D1_RC" -ne 1 ]; then
+    echo "self-test: FAIL (d1) — a NEW denylist hit in the staged delta must BLOCK, expected exit 1, got $ST_D1_RC" >&2
+    echo "$ST_D1_OUT" >&2
+    FAIL=1
+  fi
+  if ! printf '%s' "$ST_D1_OUT" | grep -q 'FORBIDDEN_TOKEN'; then
+    echo "self-test: FAIL (d1) — block output did not mention the newly-added FORBIDDEN_TOKEN line" >&2
+    echo "$ST_D1_OUT" >&2
+    FAIL=1
+  fi
+  # D2: delta clean, whole file has a PRE-EXISTING hit -> does NOT block,
+  # and the PRE-EXISTING notice is emitted (the false-fire fix).
+  if [ "$ST_D2_RC" -ne 0 ]; then
+    echo "self-test: FAIL (d2) — a staged delta that never touches the pre-existing denylisted line must NOT block, expected exit 0, got $ST_D2_RC" >&2
+    echo "$ST_D2_OUT" >&2
+    FAIL=1
+  fi
+  if ! printf '%s' "$ST_D2_OUT" | grep -qi 'PRE-EXISTING'; then
+    echo "self-test: FAIL (d2) — expected a PRE-EXISTING notice for the untouched pre-existing hit" >&2
+    echo "$ST_D2_OUT" >&2
+    FAIL=1
+  fi
+
   # A8 (REQ-B10 escape): waiver-honored — an addendum-lint match is
   # suppressed by the same fresh structured waiver as any other layer, AND
   # ledgered via ws_record at the existing waiver-honored call site.
@@ -1265,6 +1577,57 @@ check_addendum_lint() {
   return 0
 }
 
+# ---------- Defect 1: staged-delta view (false-fire fix) -----------------
+#
+# _hhs_build_delta_view <rel_path> <abs_path> <out_path>
+#
+# Writes a "delta view" of <rel_path> to <out_path>: a file with the SAME
+# line count as <abs_path>, where every line NOT added by the currently-
+# staged diff is blank, and every line the diff DID add carries its real
+# content at its real (new-file) line number. Layer 1/2/3 checks run
+# against this view unchanged (same `grep -n` plumbing as scanning the
+# real file), so a match can only fire on content THIS commit introduces
+# — a file with no added lines at all (a pure deletion, or a rename with
+# no content change) yields an all-blank view, correctly producing zero
+# matches. Used only for MODE="staged" (the real pre-commit path and its
+# `--check` sibling); `--full-tree` and explicit-file-arg invocations
+# keep scanning the real file directly.
+#
+# Known limitation, stated rather than hidden: a file with no trailing
+# newline can make `wc -l` undercount by one; the `maxn` tracking below
+# (driven off the diff's own hunk line numbers, not just `wc -l`) covers
+# the common case of the LAST added line landing past that undercounted
+# total, but this is not a byte-exact reconstruction — it is a
+# line-number-preserving overlay, which is all Layer 1/2/3 need.
+_hhs_build_delta_view() {
+  local rel_path="$1" abs_path="$2" out="$3"
+  local total_lines
+  total_lines=$(wc -l < "$abs_path" 2>/dev/null | tr -d ' ')
+  [ -z "$total_lines" ] && total_lines=0
+  git -C "$REPO_ROOT" diff --cached -U0 --no-color -- "$rel_path" 2>/dev/null | awk -v n="$total_lines" '
+    /^@@/ {
+      match($0, /\+[0-9]+/)
+      lineno = substr($0, RSTART+1, RLENGTH-1) + 0
+      next
+    }
+    /^\+\+\+/ { next }
+    /^\+/ {
+      buf[lineno] = substr($0, 2)
+      if (lineno > maxn) maxn = lineno
+      lineno++
+      next
+    }
+    /^-/ { next }
+    { next }
+    END {
+      total = (n > maxn) ? n : maxn
+      for (i = 1; i <= total; i++) {
+        print ((i in buf) ? buf[i] : "")
+      }
+    }
+  ' > "$out"
+}
+
 # ---------- exemption check ----------------------------------------------
 
 # Returns 0 if the path should be skipped, 1 otherwise.
@@ -1432,22 +1795,34 @@ is_exempt() {
 # MODE / FILE_LIST_TMP are set there)
 
 MATCH_COUNT=0
+DENYLIST_MATCH_COUNT=0
+OTHER_MATCH_COUNT=0
 WAIVED_COUNT=0
+WARN_COUNT=0
 MATCHES_TMP=$(mktemp)
-trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP"' EXIT
+WARN_TMP=$(mktemp)
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP" "$WARN_TMP"' EXIT
 
 # Structured-waiver files (F.5 audit row 12 / ADR 059 D4). Computed once per
 # run; state dir resolves relative to REPO_ROOT so pre-commit invocations
 # (which run with cwd=REPO_ROOT) and the self-test's own tmp repos agree.
 HHS_STATE_DIR="${CLAUDE_STATE_DIR:-$REPO_ROOT/.claude/state}"
 HHS_WAIVED_FILES_TMP=$(mktemp)
-trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP" "$HHS_WAIVED_FILES_TMP"' EXIT
+HHS_OPERATOR_WAIVED_FILES_TMP=$(mktemp)
+trap 'rm -f "$PATTERNS_TMP" "$FILE_LIST_TMP" "$MATCHES_TMP" "$WARN_TMP" "$HHS_WAIVED_FILES_TMP" "$HHS_OPERATOR_WAIVED_FILES_TMP"' EXIT
 _hhs_waived_files "$HHS_STATE_DIR" > "$HHS_WAIVED_FILES_TMP" 2>/dev/null || true
+_hhs_operator_waived_files "$HHS_STATE_DIR" > "$HHS_OPERATOR_WAIVED_FILES_TMP" 2>/dev/null || true
 
 _hhs_is_waived() {
   local path="$1"
   [ -s "$HHS_WAIVED_FILES_TMP" ] || return 1
   grep -qFx "$path" "$HHS_WAIVED_FILES_TMP" 2>/dev/null
+}
+
+_hhs_is_operator_waived() {
+  local path="$1"
+  [ -s "$HHS_OPERATOR_WAIVED_FILES_TMP" ] || return 1
+  grep -qFx "$path" "$HHS_OPERATOR_WAIVED_FILES_TMP" 2>/dev/null
 }
 
 # Read the null-delimited file list.
@@ -1475,61 +1850,127 @@ while IFS= read -r -d '' rel_path; do
     continue
   fi
 
-  # Skip files covered by a fresh, purpose-clause-valid structured waiver
-  # (F.5 audit row 12 / ADR 059 D4) — per-file, per-run, distinct from the
-  # durable exempt-list above.
-  if _hhs_is_waived "$check_path"; then
+  regular_waived=0
+  operator_waived=0
+  _hhs_is_waived "$check_path" && regular_waived=1
+  _hhs_is_operator_waived "$check_path" && operator_waived=1
+
+  # Defect 1: for MODE="staged" (the real pre-commit path and its --check
+  # sibling), build a delta view and scan THAT for the block decision.
+  # --full-tree and explicit-file-arg invocations keep scanning the real
+  # file directly (scan_target == abs_path).
+  scan_target="$abs_path"
+  is_delta_scoped=0
+  DELTA_VIEW_TMP=""
+  if [ "$MODE" = "staged" ]; then
+    is_delta_scoped=1
+    DELTA_VIEW_TMP=$(mktemp)
+    _hhs_build_delta_view "$check_path" "$abs_path" "$DELTA_VIEW_TMP"
+    scan_target="$DELTA_VIEW_TMP"
+  fi
+
+  file_match_count_before=$MATCH_COUNT
+  layer1_waiver_logged=0
+
+  # ---- Layer 1: denylist scan (delta-scoped target) ----
+  # A denylist match is the SECURITY class (Defect 2): the plain
+  # self-service waiver (regular_waived) NEVER suppresses it — only an
+  # operator-authorized waiver (operator_waived) can. Run grep with:
+  #   -i case-insensitive  -E extended regex  -n line numbers
+  #   -I skip binary files -H always print filename -f patterns from file
+  if grep_out=$(grep -iEnIHf "$PATTERNS_TMP" "$scan_target" 2>/dev/null); then
+    if [ "$operator_waived" -eq 1 ]; then
+      WAIVED_COUNT=$((WAIVED_COUNT + 1))
+      layer1_waiver_logged=1
+      command -v ledger_emit >/dev/null 2>&1 && ledger_emit "harness-hygiene-scan" "waiver" "file=$check_path"
+      declare -F ws_record >/dev/null 2>&1 && ws_record "harness-hygiene-scan" "operator-waiver-file" "file=$check_path"
+      printf '[harness-hygiene-scan] NOTICE: operator-authorized waiver used for a DENYLIST match on %s.\n      This opened (or refreshed) a same-session escape obligation (Defect 4) —\n      the next DONE/CONTINUING terminal marker must name "harness-hygiene-scan"\n      (or the underlying content must actually be fixed / operator-\n      acknowledged) or Stop will block. See stop-verdict-dispatcher.sh /\n      lib/workaround-sensor-lib.sh ws_open_escape_obligations.\n' "$check_path" >&2
+    else
+      while IFS= read -r match_line; do
+        [ -z "$match_line" ] && continue
+        rest="${match_line#$scan_target:}"
+        lineno="${rest%%:*}"
+        content="${rest#*:}"
+        if [ "${#content}" -gt 120 ]; then
+          content="${content:0:117}..."
+        fi
+        printf '[denylist] %s\n' "$check_path:$lineno: $content" >> "$MATCHES_TMP"
+        MATCH_COUNT=$((MATCH_COUNT + 1))
+        DENYLIST_MATCH_COUNT=$((DENYLIST_MATCH_COUNT + 1))
+      done <<< "$grep_out"
+    fi
+  fi
+
+  # ---- Layer 2 + 3: heuristic / addendum-lint (delta-scoped target) ----
+  # Suppressible by EITHER the plain self-service waiver or the operator
+  # waiver — these are the classes where the existing self-service hatch
+  # is proportionate (genuine novel-content false positives). Guards
+  # against double-logging a file Layer 1 already logged above
+  # (layer1_waiver_logged) — an operator-waived file with BOTH a denylist
+  # AND a heuristic match must only open/refresh ONE escape obligation.
+  if [ "$regular_waived" -eq 1 ]; then
     WAIVED_COUNT=$((WAIVED_COUNT + 1))
     command -v ledger_emit >/dev/null 2>&1 && ledger_emit "harness-hygiene-scan" "waiver" "file=$check_path"
     declare -F ws_record >/dev/null 2>&1 && ws_record "harness-hygiene-scan" "waiver-file" "file=$check_path"
-    continue
+    printf '[harness-hygiene-scan] NOTICE: self-service waiver used for %s.\n      This opened (or refreshed) a same-session escape obligation (Defect 4) —\n      the next DONE/CONTINUING terminal marker must name "harness-hygiene-scan"\n      (or the underlying content must actually be fixed / operator-\n      acknowledged) or Stop will block.\n' "$check_path" >&2
+  elif [ "$operator_waived" -eq 1 ] && [ "$layer1_waiver_logged" -ne 1 ]; then
+    WAIVED_COUNT=$((WAIVED_COUNT + 1))
+    command -v ledger_emit >/dev/null 2>&1 && ledger_emit "harness-hygiene-scan" "waiver" "file=$check_path"
+    declare -F ws_record >/dev/null 2>&1 && ws_record "harness-hygiene-scan" "operator-waiver-file" "file=$check_path"
+    printf '[harness-hygiene-scan] NOTICE: operator-authorized waiver used for %s.\n      This opened (or refreshed) a same-session escape obligation (Defect 4).\n' "$check_path" >&2
+  elif [ "$operator_waived" -eq 1 ]; then
+    :  # already logged once above (layer1_waiver_logged) — no second event
+  else
+    other_before=$MATCH_COUNT
+    check_heuristics "$check_path" "$scan_target"
+    check_addendum_lint "$check_path" "$scan_target"
+    OTHER_MATCH_COUNT=$((OTHER_MATCH_COUNT + (MATCH_COUNT - other_before)))
   fi
 
-  # ---- Layer 1: denylist scan ----
-  # Run grep with:
-  #   -i   case-insensitive
-  #   -E   extended regex
-  #   -n   line numbers
-  #   -I   skip binary files
-  #   -H   always print filename
-  #   -f   patterns from file
-  # Output: <filename>:<line>:<content>
-  if grep_out=$(grep -iEnIHf "$PATTERNS_TMP" "$abs_path" 2>/dev/null); then
-    # Replace the absolute path prefix with the repo-relative path in the output
-    # so reports are readable and stable across clones.
-    while IFS= read -r match_line; do
-      [ -z "$match_line" ] && continue
-      # match_line looks like: /abs/path:LINE:content
-      # Strip the abs path + colon, then prepend the relative path.
-      rest="${match_line#$abs_path:}"
-      # Pattern that matched is not reported by grep -f; we surface the line
-      # and let the user see which denylist entry caught it.
-      lineno="${rest%%:*}"
-      content="${rest#*:}"
-      # Truncate content to 120 chars
-      if [ "${#content}" -gt 120 ]; then
-        content="${content:0:117}..."
-      fi
-      printf '[denylist] %s\n' "$check_path:$lineno: $content" >> "$MATCHES_TMP"
-      MATCH_COUNT=$((MATCH_COUNT + 1))
-    done <<< "$grep_out"
+  # ---- Whole-file WARN (Defect 1, delta-scoped mode only) ----
+  # If this file's delta contributed NO Layer-1 match but the WHOLE FILE
+  # on disk still has one, pre-existing hygiene debt exists that this
+  # commit does not touch. Not blocking — surfaced so it never becomes
+  # permanently invisible; the periodic --full-tree scan (harness-review
+  # skill, secret-backstop CI) is the net that actually catches it.
+  # Scoped to Layer 1 only (the security-relevant class this defect is
+  # about) — stated rather than silently generalized.
+  if [ "$is_delta_scoped" -eq 1 ] && [ "$operator_waived" -ne 1 ] \
+     && [ "$MATCH_COUNT" -eq "$file_match_count_before" ]; then
+    if grep -qiEf "$PATTERNS_TMP" "$abs_path" 2>/dev/null; then
+      printf 'PRE-EXISTING hygiene match in %s not touched by this change (not blocking) -- run --full-tree to review.\n' "$check_path" >> "$WARN_TMP"
+      WARN_COUNT=$((WARN_COUNT + 1))
+    fi
   fi
 
-  # ---- Layer 2: heuristic detection ----
-  check_heuristics "$check_path" "$abs_path"
-
-  # ---- Layer 3: no-addendum lint (REQ-B10) ----
-  check_addendum_lint "$check_path" "$abs_path"
+  [ -n "$DELTA_VIEW_TMP" ] && rm -f "$DELTA_VIEW_TMP"
 done < "$FILE_LIST_TMP"
+
+# ---------- pre-existing-content notice (Defect 1, non-blocking) ---------
+if [ "$WARN_COUNT" -gt 0 ]; then
+  {
+    echo ""
+    echo "---- harness-hygiene-scan: pre-existing content notice (non-blocking) ----"
+    cat "$WARN_TMP"
+    echo "(Not blocking: the staged delta for the file(s) above does not touch"
+    echo " the flagged line(s). Pre-existing hygiene debt is caught by the"
+    echo " periodic full-tree scan -- 'bash adapters/claude-code/hooks/harness-"
+    echo " hygiene-scan.sh --full-tree' (also run by the harness-review skill"
+    echo " and the secret-backstop CI workflow) -- not by this per-commit gate.)"
+    echo "----------------------------------------------------------------------"
+  } >&2
+fi
 
 # ---------- report (R3.4 Gate Philosophy Law — one shared emitter) -------
 #
 # _hhs_print_report — the ONE structured-message emitter, called by BOTH
 # the enforce path and --check with the same MATCHES_TMP/MATCH_COUNT
 # computed by the identical scan loop above. Fields: WHAT / WHY / FIX /
-# ESCAPE (doctor-lintable). The hatch block (structured waiver) was
-# already a copy-pasteable command; it now also carries the ESCAPE label
-# so the doctor's gate-message lint can find it mechanically.
+# ESCAPE (doctor-lintable). The ESCAPE field's CONTENT branches on whether
+# any [denylist] (Layer 1 / security-class) match is present (Defect 2):
+# a denylist-only or mixed batch gets the operator-escalation text (no
+# self-service recipe for the denylist matches); a heuristic/addendum-lint-
+# only batch keeps the original copy-pasteable waiver recipe unchanged.
 
 if [ "$MATCH_COUNT" -eq 0 ]; then
   if [ "$CHECK_MODE" -eq 1 ]; then
@@ -1572,24 +2013,62 @@ _hhs_print_report() {
     echo "      body at the place it corrects, then delete the heading — see"
     echo "      REQ-B10 / docs/plans/gated-pipeline-master-2026-08.md Task 19."
     echo ""
-    echo "ESCAPE: a fresh (<1h), per-file, ledger-logged structured waiver —"
-    echo "      suppresses matches on ONLY the named file(s), this run, NEVER"
-    echo "      a blanket suppression of the whole scan. Cost: the waiver ages"
-    echo "      out in 1h, is logged to the signal ledger, and still requires"
-    echo "      naming BOTH purpose clauses honestly (a false clause is a"
-    echo "      harness-hygiene violation in its own right). Use only for a"
-    echo "      genuine NOVEL false-positive, not a known-legitimate file"
-    echo "      (those get the durable is_exempt() remedy above instead):"
-    echo "        mkdir -p $HHS_STATE_DIR && \\"
-    echo "        { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
-    echo "          printf 'Because: <Y>\\n'; \\"
-    echo "          printf 'Files: <repo-relative-path> [<repo-relative-path> ...]\\n'; \\"
-    echo "        } > $HHS_STATE_DIR/harness-hygiene-waiver-\$(date +%s).txt"
-    echo "      Re-run the commit after writing the waiver. (git commit"
-    echo "      --no-verify skips only the git-native hook layer, cannot"
-    echo "      bypass this scan's PreToolUse wiring, and is prohibited"
-    echo "      without operator say-so — constitution §7.)"
-    echo ""
+    if [ "$DENYLIST_MATCH_COUNT" -gt 0 ]; then
+      echo "ESCAPE: at least one match above is [denylist] — the SECURITY CLASS"
+      echo "      (personal/business/identity-bearing strings). This class is"
+      echo "      NOT SELF-WAIVABLE by an agent, ever. Stop and escalate to the"
+      echo "      operator IN THIS CONVERSATION:"
+      echo "        1. Quote the matched [denylist] line(s) above verbatim."
+      echo "        2. Ask: is this content safe to ship, or must it be removed?"
+      echo "        3. ONLY IF the operator explicitly authorizes it in chat,"
+      echo "           write a SEPARATE, distinctly-named marker (never the"
+      echo "           plain waiver above — that one is inert against [denylist]):"
+      echo "             mkdir -p $HHS_STATE_DIR && \\"
+      echo "             { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
+      echo "               printf 'Because: <Y>\\n'; \\"
+      echo "               printf 'Files: <repo-relative-path> [...]\\n'; \\"
+      echo "               printf 'Operator-Authorized: <what the operator said, >=20 chars, not a placeholder>\\n'; \\"
+      echo "             } > $HHS_STATE_DIR/harness-hygiene-operator-waiver-\$(date +%s).txt"
+      echo "      HONEST TRUST MODEL: nothing above is a structural barrier — an"
+      echo "      agent's own Bash/Write tools CAN author this exact file without"
+      echo "      any operator turn ever happening (same disclosure this repo's"
+      echo "      review-record-push-gate manifest entry already makes about its"
+      echo "      own override marker). The distinct filename, the extra"
+      echo "      Operator-Authorized clause, and same-session ledger surfacing"
+      echo "      (session-start-digest.sh's bypass-24h feed, plus a same-session"
+      echo "      Stop-time obligation naming this gate) raise the COST and AUDIT"
+      echo "      LEGIBILITY of self-issuance; they do NOT make it unforgeable."
+      echo "      Self-issuing this marker without operator say-so IN THIS"
+      echo "      CONVERSATION is a harness-hygiene violation in its own right."
+      if [ "$OTHER_MATCH_COUNT" -gt 0 ]; then
+        echo ""
+        echo "      For the NON-denylist ([heuristic]/[addendum-lint]) match(es)"
+        echo "      in the SAME batch above, the standard self-service waiver"
+        echo "      still applies — see below."
+      fi
+      echo ""
+    fi
+    if [ "$OTHER_MATCH_COUNT" -gt 0 ]; then
+      [ "$DENYLIST_MATCH_COUNT" -eq 0 ] && echo "ESCAPE: a fresh (<1h), per-file, ledger-logged structured waiver —"
+      [ "$DENYLIST_MATCH_COUNT" -gt 0 ] && echo "      (self-service waiver for the non-denylist matches above):"
+      echo "      suppresses matches on ONLY the named file(s), this run, NEVER"
+      echo "      a blanket suppression of the whole scan. Cost: the waiver ages"
+      echo "      out in 1h, is logged to the signal ledger, and still requires"
+      echo "      naming BOTH purpose clauses honestly (a false clause is a"
+      echo "      harness-hygiene violation in its own right). Use only for a"
+      echo "      genuine NOVEL false-positive, not a known-legitimate file"
+      echo "      (those get the durable is_exempt() remedy above instead):"
+      echo "        mkdir -p $HHS_STATE_DIR && \\"
+      echo "        { printf 'Purpose: this gate exists to prevent <X>\\n'; \\"
+      echo "          printf 'Because: <Y>\\n'; \\"
+      echo "          printf 'Files: <repo-relative-path> [<repo-relative-path> ...]\\n'; \\"
+      echo "        } > $HHS_STATE_DIR/harness-hygiene-waiver-\$(date +%s).txt"
+      echo "      Re-run the commit after writing the waiver. (git commit"
+      echo "      --no-verify skips only the git-native hook layer, cannot"
+      echo "      bypass this scan's PreToolUse wiring, and is prohibited"
+      echo "      without operator say-so — constitution §7.)"
+      echo ""
+    fi
     echo "Denylist: adapters/claude-code/patterns/harness-denylist.txt"
     echo "Rule: principles/harness-hygiene.md"
     echo "This gate: ~/.claude/hooks/harness-hygiene-scan.sh (source: adapters/claude-code/hooks/harness-hygiene-scan.sh)"

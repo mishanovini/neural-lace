@@ -339,6 +339,12 @@ source "$_SVD_DIR/lib/nl-paths.sh"
 # defends against that explicitly), never a crash of the whole Stop chain.
 # shellcheck disable=SC1091
 { source "$_SVD_DIR/lib/review-chain-lib.sh" 2>/dev/null; } || true
+# workaround-sensor-lib.sh (Defect 4, harness safety fix 2026-08-04 —
+# escape-obligation Stop-side check, see _svd_escape_naming_check below).
+# Same guarded/best-effort posture as review-chain-lib.sh immediately
+# above: a missing or broken lib degrades the check to a silent no-op.
+# shellcheck disable=SC1091
+{ source "$_SVD_DIR/lib/workaround-sensor-lib.sh" 2>/dev/null; } || true
 
 # The three member gates this dispatcher aggregates, in the order they
 # used to run in the Stop chain (work-integrity, session-honesty,
@@ -1345,6 +1351,77 @@ _svd_obligation_check() {
 }
 
 # ----------------------------------------------------------------------
+# _svd_escape_naming_check <transcript_path> <session_id>  (Defect 4,
+# harness safety fix 2026-08-04 — amendment to the hygiene-gate incident
+# fix. "Wire escapes onto the SAME accountability rail Task 25 built.")
+#
+# SAME gap-contributing shape as _svd_obligation_check immediately above —
+# folds into the SAME block-once-then-ledger cycle below (the generic
+# cycle-counter keys on sorted "<gate>:<check>" pairs, not message text,
+# so a stable check id here is what makes the SECOND identical Stop
+# downgrade rather than nag — see stop-verdict-dispatcher.sh's own
+# cycle-counting comment a few hundred lines down).
+#
+# CONTRACT: THIS session (session_id, not scanning every session that
+# ever used an escape) used a gate escape (any workaround-sensor.jsonl
+# row for this session with a non-empty bypass_kind — ws_record's own
+# shape) that is still OPEN (see workaround-sensor-lib.sh's
+# ws_open_escape_obligations for the fixed/acknowledged closure rules)
+# AND is not named in the terminal DONE/CONTINUING marker line -> gap.
+# Naming an open gate in the marker satisfies THIS Stop's transparency
+# requirement; it does not itself close the obligation (see that lib's
+# own header for why) — a later Stop in the same session that is still
+# open and still unnamed gaps again, and the shared downgrade cycle
+# (not a bespoke one here) is what stops that from nagging forever.
+#
+# HONESTY CONSTRAINT (same one workaround-sensor-lib.sh states): this
+# does not make a self-served escape "impossible" — it makes it
+# IMPOSSIBLE TO HIDE from THIS session's own Stop.
+# ----------------------------------------------------------------------
+_svd_escape_naming_check() {
+  local transcript_path="$1" session_id="$2"
+  declare -F ws_open_escape_obligations >/dev/null 2>&1 || return 0
+  [[ -n "$session_id" ]] || return 0
+
+  local text
+  text=$(_svd_final_assistant_message "$transcript_path")
+  [[ -n "$text" ]] || return 0
+
+  local marker_line
+  marker_line=$(printf '%s\n' "$text" | grep -E '^(DONE|PAUSING|BLOCKED|CONTINUING):' | tail -n1)
+  [[ -n "$marker_line" ]] || return 0
+  case "$marker_line" in
+    DONE:*|CONTINUING:*) ;;
+    *) return 0 ;;
+  esac
+
+  local open_tmp
+  open_tmp="$(mktemp 2>/dev/null || echo "/tmp/svd-escape-$$")"
+  ws_open_escape_obligations "$session_id" > "$open_tmp" 2>/dev/null
+  local open_count="${WS_OPEN_ESCAPE_GATES_COUNT:-0}"
+  if [[ "$open_count" -eq 0 ]]; then
+    rm -f "$open_tmp" 2>/dev/null
+    return 0
+  fi
+
+  local gate unnamed=""
+  while IFS= read -r gate; do
+    [[ -n "$gate" ]] || continue
+    if printf '%s' "$marker_line" | grep -qF "$gate"; then
+      continue
+    fi
+    unnamed="${unnamed:+$unnamed,}${gate}"
+  done < "$open_tmp"
+  rm -f "$open_tmp" 2>/dev/null
+
+  [[ -n "$unnamed" ]] || return 0
+
+  printf '{"gate":"stop-verdict-dispatcher","check":"escape-obligations","message":"%s"}\n' \
+    "$(_svd_json_escape "session used a gate escape not yet fixed or operator-acknowledged, and not named in the terminal marker: ${unnamed}. Name the gate(s) explicitly in the DONE/CONTINUING line, fix the underlying content, or get an operator acknowledgment (see lib/workaround-sensor-lib.sh)")"
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # Main (production execution) — skipped entirely under --self-test.
 # ----------------------------------------------------------------------
 _svd_main() {
@@ -1440,6 +1517,16 @@ _svd_main() {
   _svd_step_t1=$(_svd_now_ms)
   _svd_trace_record "verify-obligations" "$((_svd_step_t1 - _svd_step_t0))" "$([[ -n "$obligation_gaps" ]] && echo "block" || echo "allow")"
   [[ -n "$obligation_gaps" ]] && all_gaps+="${obligation_gaps}"$'\n'
+
+  # Escape-obligation naming check (Defect 4, harness safety fix
+  # 2026-08-04): same gap-contributing shape as verify-obligations
+  # immediately above — folds into the SAME block-once-then-ledger cycle.
+  _svd_step_t0=$(_svd_now_ms)
+  local escape_gaps
+  escape_gaps=$(_svd_escape_naming_check "$transcript_path" "$session_id")
+  _svd_step_t1=$(_svd_now_ms)
+  _svd_trace_record "escape-obligations" "$((_svd_step_t1 - _svd_step_t0))" "$([[ -n "$escape_gaps" ]] && echo "block" || echo "allow")"
+  [[ -n "$escape_gaps" ]] && all_gaps+="${escape_gaps}"$'\n'
 
   # Aggregate every member gate's --report output. Each member is timed
   # individually (specs-o §O.1 deliverable 2 / contract C2: "each
@@ -3172,6 +3259,103 @@ STUBEOF
   T37=$(_write_transcript "$tmproot/s37" $'Merged and verified two tasks on docs/plans/s37-fixture.md.\n\nDONE: shipped and verified')
   RC37=$(_run_dispatcher "$HOOKS" "$REPO" "$T37" "sess-s37")
   _expect "obligation-check-closed-obligations-pass" "$RC37" "0"
+
+  # ================================================================
+  # Scenarios 38-41 (Defect 4, harness safety fix 2026-08-04 — amendment
+  # to the hygiene-gate incident fix): escape-obligation naming check.
+  # A fresh WORKAROUND_SENSOR_LEDGER_PATH per scenario (exported BEFORE
+  # _run_dispatcher so the spawned child process inherits it) — the
+  # dispatcher's own HARNESS_SELFTEST=1 export would otherwise route
+  # ws_record/ws_open_escape_obligations to a PID-keyed sandbox path this
+  # outer harness cannot predict or pre-populate (same fix
+  # harness-hygiene-scan.sh's own self-test already applies for the same
+  # reason — see its WS_LEDGER_DIR).
+  # ================================================================
+
+  # Scenario 38 (bar item "escape used -> obligation opens" + "stop with
+  # unnamed escape -> blocked"): a fresh escape row for THIS session,
+  # gate not named in the terminal marker -> BLOCK (first Stop, cycle 1).
+  _setup_scenario s38
+  HOOKS=$(_build_dispatcher_repo s38)
+  REPO="$tmproot/s38/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  S38_LEDGER="$tmproot/s38/state/workaround-sensor.jsonl"
+  mkdir -p "$(dirname "$S38_LEDGER")"
+  printf '{"ts":"2026-08-04T09:39:34Z","gate":"harness-hygiene-scan","session":"sess-s38","bypass_kind":"waiver-file","command_fingerprint":"file=docs/plans/foo.md","detail":""}\n' > "$S38_LEDGER"
+  export WORKAROUND_SENSOR_LEDGER_PATH="$S38_LEDGER"
+  T38=$(_write_transcript "$tmproot/s38" $'Committed the plan update.\n\nDONE: shipped the change')
+  RC38=$(_run_dispatcher "$HOOKS" "$REPO" "$T38" "sess-s38")
+  unset WORKAROUND_SENSOR_LEDGER_PATH
+  _expect "escape-check-open-and-unnamed-blocks" "$RC38" "2"
+  if grep -q '\[stop-verdict-dispatcher/escape-obligations\]' "$tmproot/last-stdout.txt" 2>/dev/null \
+     && grep -q 'harness-hygiene-scan' "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (escape-check-gap-names-the-gate): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (escape-check-gap-names-the-gate): FAIL (expected a [stop-verdict-dispatcher/escape-obligations] gap naming harness-hygiene-scan)" >&2
+    failed=$((failed+1))
+  fi
+
+  # Scenario 39 (bar item "stop with escape named in the marker -> passes"):
+  # SAME open escape, but the terminal marker NAMES the gate -> exit 0.
+  _setup_scenario s39
+  HOOKS=$(_build_dispatcher_repo s39)
+  REPO="$tmproot/s39/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  S39_LEDGER="$tmproot/s39/state/workaround-sensor.jsonl"
+  mkdir -p "$(dirname "$S39_LEDGER")"
+  printf '{"ts":"2026-08-04T09:39:34Z","gate":"harness-hygiene-scan","session":"sess-s39","bypass_kind":"waiver-file","command_fingerprint":"file=docs/plans/foo.md","detail":""}\n' > "$S39_LEDGER"
+  export WORKAROUND_SENSOR_LEDGER_PATH="$S39_LEDGER"
+  T39=$(_write_transcript "$tmproot/s39" $'Used a harness-hygiene-scan waiver for docs/plans/foo.md, a known false positive.\n\nDONE: shipped the change (harness-hygiene-scan waiver used and disclosed above)')
+  RC39=$(_run_dispatcher "$HOOKS" "$REPO" "$T39" "sess-s39")
+  unset WORKAROUND_SENSOR_LEDGER_PATH
+  _expect "escape-check-named-in-marker-passes" "$RC39" "0"
+
+  # Scenario 40 (bar item "second identical stop -> downgrades, no nag
+  # loop"): the SAME open-and-unnamed gap-set as Scenario 38, but Stop is
+  # invoked TWICE for the same session — first blocks (cycle 1), second
+  # downgrades (cycle >=2, ADR 059 D2 block-once-then-ledger) rather than
+  # blocking forever. Reuses stop-hook-retry-guard.sh's own cycle counter
+  # (RETRY_GUARD_STATE_DIR, set per-scenario by _setup_scenario), the SAME
+  # shared mechanism every other gap type in this suite already rides —
+  # no bespoke downgrade logic was written for this check.
+  _setup_scenario s40
+  HOOKS=$(_build_dispatcher_repo s40)
+  REPO="$tmproot/s40/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  S40_LEDGER="$tmproot/s40/state/workaround-sensor.jsonl"
+  mkdir -p "$(dirname "$S40_LEDGER")"
+  printf '{"ts":"2026-08-04T09:39:34Z","gate":"harness-hygiene-scan","session":"sess-s40","bypass_kind":"waiver-file","command_fingerprint":"file=docs/plans/foo.md","detail":""}\n' > "$S40_LEDGER"
+  export WORKAROUND_SENSOR_LEDGER_PATH="$S40_LEDGER"
+  T40=$(_write_transcript "$tmproot/s40" $'Committed the plan update.\n\nDONE: shipped the change')
+  RC40_FIRST=$(_run_dispatcher "$HOOKS" "$REPO" "$T40" "sess-s40")
+  RC40_SECOND=$(_run_dispatcher "$HOOKS" "$REPO" "$T40" "sess-s40")
+  unset WORKAROUND_SENSOR_LEDGER_PATH
+  _expect "escape-check-first-stop-blocks" "$RC40_FIRST" "2"
+  _expect "escape-check-second-identical-stop-downgrades-no-nag-loop" "$RC40_SECOND" "0"
+
+  # Scenario 41 (bar item complement — a gate escape that was NEVER used
+  # this session contributes no gap, proving the check is session-scoped
+  # and does not fire on an empty/absent ledger).
+  _setup_scenario s41
+  HOOKS=$(_build_dispatcher_repo s41)
+  REPO="$tmproot/s41/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T41=$(_write_transcript "$tmproot/s41" $'Nothing unusual this session.\n\nDONE: nothing to report')
+  RC41=$(_run_dispatcher "$HOOKS" "$REPO" "$T41" "sess-s41")
+  _expect "escape-check-no-escape-used-no-gap" "$RC41" "0"
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2
