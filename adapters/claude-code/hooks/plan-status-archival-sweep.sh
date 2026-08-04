@@ -29,9 +29,22 @@
 # - rules/discovery-protocol.md
 # - docs/discoveries/2026-05-04-sed-status-flip-bypasses-plan-lifecycle.md
 #
-# Self-test: invoke with --self-test to exercise five scenarios.
+# Self-test: invoke with --self-test to exercise seven scenarios.
 
 set -u
+
+# THE canonical plan-status enum + lifecycle data (plan-status-schema-and-
+# doctrine task, 2026-08-04) — same file plan-lifecycle.sh reads for its
+# own is_terminal_status()/archive_subdir logic. This sweep is the safety
+# net for the SAME destination decision (docs/plans/archive/ vs
+# docs/plans/deferred/), so it reads the SAME schema rather than carrying
+# a second hardcoded copy that could silently drift from the first. See
+# plan-lifecycle.sh's own header comment for the full jq-vs-generated-
+# include reasoning; safe fallback below when jq/the schema are
+# unavailable (this is a SessionStart hook — never block/crash on a
+# missing dependency).
+_PSAS_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+_PSAS_STATUS_SCHEMA="$_PSAS_HOOK_DIR/../schemas/plan-status.schema.json"
 
 # -------- Utility: extract Status value from frontmatter region --------
 # Plan files use a non-YAML "Status: VALUE" line near the top, NOT a
@@ -111,7 +124,9 @@ sweep_plans() {
   local plans_dir="$cwd/docs/plans"
   local archive_dir="$plans_dir/archive"
   # DEFERRED is terminal-for-editing but NOT done-for-building → it rests in
-  # the intended-but-not-active area, not archive/ (ADR 051 / Misha 2026-06-04).
+  # the intended-but-not-active area, not archive/ (ADR 052 / Misha 2026-06-04).
+  # Destination-per-status is schema-driven (_PSAS_STATUS_SCHEMA above); the
+  # case statement below is the fallback only.
   local deferred_dir="$plans_dir/deferred"
 
   # If the directory doesn't exist, exit silently. Common in projects
@@ -136,11 +151,33 @@ sweep_plans() {
     status_val=$(plan_status_value "$plan")
     [ -n "$status_val" ] || continue
 
-    local dest_dir dest_label
-    case "$status_val" in
-      DEFERRED|deferred)
+    # Schema lookup first (case-insensitive tolerance matches the
+    # pre-schema behavior below, which also accepted lowercase). Empty
+    # result — no jq, schema missing/unreadable, OR the schema itself
+    # says this token doesn't trigger archival (ACTIVE/DRAFT/PROPOSED/
+    # REFERENCE all correctly resolve to empty here) — falls through to
+    # the hardcoded case statement, whose own default is `continue`
+    # (skip), the same safe no-op every non-archiving token already
+    # produces. So "couldn't determine" and "schema says no" land on the
+    # identical, correct outcome; only a positive archive/deferred
+    # answer short-circuits the fallback.
+    local status_upper dest_subdir dest_dir dest_label
+    status_upper=$(printf '%s' "$status_val" | tr '[:lower:]' '[:upper:]')
+    dest_subdir=""
+    if command -v jq >/dev/null 2>&1 && [ -f "$_PSAS_STATUS_SCHEMA" ]; then
+      dest_subdir=$(jq -r --arg t "$status_upper" '.statuses[]? | select(.token == $t and .lifecycle.triggers_archival) | (.lifecycle.archive_subdir // empty)' "$_PSAS_STATUS_SCHEMA" 2>/dev/null)
+    fi
+    if [ -z "$dest_subdir" ]; then
+      case "$status_upper" in
+        DEFERRED) dest_subdir="deferred" ;;
+        COMPLETED|ABANDONED|SUPERSEDED) dest_subdir="archive" ;;
+        *) continue ;;
+      esac
+    fi
+    case "$dest_subdir" in
+      deferred)
         dest_dir="$deferred_dir"; dest_label="docs/plans/deferred/ (intended, not active)" ;;
-      COMPLETED|ABANDONED|SUPERSEDED|completed|abandoned|superseded)
+      archive)
         dest_dir="$archive_dir"; dest_label="docs/plans/archive/" ;;
       *)
         continue ;;
@@ -287,13 +324,72 @@ EOF
     failures=$((failures + 1))
   fi
 
+  # ---- Scenario 6 (plan-status-schema-and-doctrine task, 2026-08-04):
+  # _PSAS_STATUS_SCHEMA proves the schema-lookup added to sweep_plans()
+  # actually CONSULTS live schema content, not just coincides with its
+  # hardcoded fallback. Fixture flips DEFERRED's archive_subdir to
+  # "archive" (real schema says "deferred") — a sweep that ignored the
+  # schema would still route to deferred/ and this scenario would catch
+  # it. Overrides the module-level variable directly (sweep_plans is
+  # called in-process, unlike plan-lifecycle.sh's subprocess-per-
+  # invocation shape) and restores it afterward so scenario order never
+  # matters.
+  local s6="$tmp/schema-driven-dest"
+  mkdir -p "$s6/docs/plans"
+  init_git_repo "$s6"
+  cat > "$s6/docs/plans/fixture-plan.md" <<'EOF'
+# Plan: Fixture
+Status: DEFERRED
+
+## Goal
+Test fixture.
+EOF
+  git -C "$s6" add docs/plans/fixture-plan.md && git -C "$s6" commit -q -m "test"
+  local fixture_schema real_schema
+  real_schema="$_PSAS_STATUS_SCHEMA"
+  fixture_schema="$tmp/fixture-plan-status.schema.json"
+  jq '(.statuses[] | select(.token=="DEFERRED") | .lifecycle.archive_subdir) |= "archive"' \
+    "$real_schema" > "$fixture_schema"
+  _PSAS_STATUS_SCHEMA="$fixture_schema"
+  sweep_plans "$s6" >/dev/null 2>&1
+  _PSAS_STATUS_SCHEMA="$real_schema"
+  if [ -f "$s6/docs/plans/archive/fixture-plan.md" ] && [ ! -f "$s6/docs/plans/deferred/fixture-plan.md" ]; then
+    echo "PASS: [schema-driven-dest] fixture schema (DEFERRED->archive) governed the sweep, not the hardcoded fallback"
+  else
+    echo "FAIL: [schema-driven-dest] sweep_plans did not honor the fixture schema's DEFERRED->archive mapping" >&2
+    failures=$((failures + 1))
+  fi
+
+  # ---- Scenario 6b: sanity — with _PSAS_STATUS_SCHEMA restored to the
+  # real production schema, the SAME DEFERRED plan routes to deferred/
+  # again, proving the override left no residue and default behavior is
+  # the real schema's, not the fixture's.
+  local s6b="$tmp/schema-driven-dest-restored"
+  mkdir -p "$s6b/docs/plans"
+  init_git_repo "$s6b"
+  cat > "$s6b/docs/plans/fixture-plan.md" <<'EOF'
+# Plan: Fixture
+Status: DEFERRED
+
+## Goal
+Test fixture.
+EOF
+  git -C "$s6b" add docs/plans/fixture-plan.md && git -C "$s6b" commit -q -m "test"
+  sweep_plans "$s6b" >/dev/null 2>&1
+  if [ -f "$s6b/docs/plans/deferred/fixture-plan.md" ] && [ ! -f "$s6b/docs/plans/archive/fixture-plan.md" ]; then
+    echo "PASS: [schema-driven-dest-restored] real production schema (DEFERRED->deferred) governs after restore"
+  else
+    echo "FAIL: [schema-driven-dest-restored] restoring _PSAS_STATUS_SCHEMA did not restore real-schema behavior" >&2
+    failures=$((failures + 1))
+  fi
+
   if [ "$failures" -gt 0 ]; then
     echo ""
     echo "$failures self-test scenario(s) FAILED" >&2
     return 1
   fi
   echo ""
-  echo "All 5 self-test scenarios PASSED"
+  echo "All 7 self-test scenarios PASSED"
   return 0
 }
 
