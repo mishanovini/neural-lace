@@ -618,6 +618,24 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
+    // ---- scan_provenance (2026-08-04 stale-checkout fix, part b — the
+    // non-silence class fix): present on EVERY payload, never conditional.
+    // This fixture sets ROADMAP_PLAN_SCAN_ROOT explicitly, so resolved_via
+    // must say exactly that (an override, not a mainRepoRoot() derivation)
+    // — and repoDir is a plain tmp dir, not a git repo, so head_sha/
+    // behind_origin_master are honestly undeterminable, never fabricated.
+    const prov = r1.json && r1.json.scan_provenance;
+    ok('S1f scan_provenance is present with the pinned shape (root/resolved_via/head_sha/behind_origin_master/checked_at)',
+      !!prov && typeof prov.root === 'string' && typeof prov.resolved_via === 'string' &&
+      typeof prov.head_sha === 'string' && typeof prov.checked_at === 'string' &&
+      (prov.behind_origin_master === null || typeof prov.behind_origin_master === 'number'),
+      JSON.stringify(prov));
+    ok('S1g scan_provenance.root is the SANDBOXED fixture repo, never the real checkout (ROADMAP_PLAN_SCAN_ROOT honored)',
+      prov && path.resolve(prov.root) === path.resolve(repoDir), JSON.stringify(prov));
+    ok('S1h scan_provenance.resolved_via is "env-override" — ROADMAP_PLAN_SCAN_ROOT was set, so this is NOT deriveLib.mainRepoRoot()\'s own worktree/self resolution',
+      prov && prov.resolved_via === 'env-override', JSON.stringify(prov));
+    ok('S1i scan_provenance honestly reports head_sha:\'\'/behind_origin_master:null for this non-git fixture dir — never a fabricated sha or count',
+      prov && prov.head_sha === '' && prov.behind_origin_master === null, JSON.stringify(prov));
     ok('S1e exactly 26 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture] + stale-dispatch-plan [false-eternal-running fix, 2026-07-30] + corrupt-ts-plan [malformed-is-not-absent fix, 2026-07-30] + unbindable-plan and unbindable-stale-plan [unbindable-attributed-dispatch fix, 2026-08-02]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
       items.length === 26, topIds.join(','));
     ok('R11 child-a-fixture no longer appears in the TOP-LEVEL list (it renders once, nested under its master)',

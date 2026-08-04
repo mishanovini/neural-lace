@@ -79,6 +79,11 @@
 // ============================================================
 // GET /api/roadmap -> {
 //   ok, generated_at, completed_age_days, stale_links_omitted,
+//   scan_provenance: {root, resolved_via, head_sha, behind_origin_master,
+//                      checked_at},    // 2026-08-04 stale-checkout fix,
+//                                      // part b — see scanProvenance()'s
+//                                      // own header below for the exact
+//                                      // field-by-field contract.
 //   items: [RoadmapItem],           // top-level PLANS, in BUILD ORDER
 //   unbound_sessions: UnboundSessionsNode | null,  // R9-7b — see below
 // }
@@ -1919,6 +1924,58 @@ function buildRoadmapTree() {
     topLevel: hierarchy.topLevel,
     ghostCount: discovered.ghostCount,
     unboundSessionsNode: unboundSessionsNode,
+    scanRoot: scanRoot, // threaded through to buildRoadmapPayload's scan_provenance (below) — computed once, never re-derived
+  };
+}
+
+// scanProvenance(scanRoot) — NON-SILENCE fix (2026-08-04 operator complaint:
+// a stale worktree checkout rendered 11/25 plan tasks done, with ZERO signal
+// that the tree scanned was not the canonical repo). See derive-lib.js's
+// mainRepoRoot()/mainRepoRootInfo()/repoHeadInfo() headers for the full
+// mechanism this reports on. EXACT PAYLOAD SHAPE (pinned for the web layer):
+//   scan_provenance: {
+//     root: string,                    // absolute path actually scanned
+//     resolved_via: 'env-override'      // ROADMAP_PLAN_SCAN_ROOT was set —
+//                  | 'main-checkout'    //   no staleness signal implied.
+//                                       // deriveLib.mainRepoRoot() redirected
+//                                       // AWAY from this server's own
+//                                       // worktree to the main checkout it
+//                                       // branched from (the fixed case).
+//                  | 'self',            // deriveLib.mainRepoRoot() found no
+//                                       // worktree redirect needed (this
+//                                       // process's own checkout root WAS
+//                                       // already the git-common root —
+//                                       // the ordinary non-worktree deploy).
+//     head_sha: string,                // '' when undeterminable (not a git
+//                                       // dir / no git binary) — the web
+//                                       // layer's cue to render "unknown",
+//                                       // never a blank confident value.
+//     behind_origin_master: number|null,// commits reachable from a LOCAL
+//                                       // origin/master ref but not from
+//                                       // HEAD, i.e. `git rev-list --count
+//                                       // HEAD..origin/master`. null when
+//                                       // undeterminable (no local
+//                                       // origin/master ref — this NEVER
+//                                       // fetches over the network, so a
+//                                       // machine that hasn't fetched
+//                                       // recently reports "behind" as of
+//                                       // its last fetch, not live truth).
+//     checked_at: string,              // ISO8601 — when this git snapshot
+//                                       // was taken; TTL-cached (default
+//                                       // 60s, COCKPIT_GIT_INFO_TTL_MS),
+//                                       // so this can trail `generated_at`
+//                                       // by up to the TTL on a busy poller.
+//   }
+function scanProvenance(scanRoot) {
+  const usedOverride = !!process.env.ROADMAP_PLAN_SCAN_ROOT;
+  const rootInfo = deriveLib.mainRepoRootInfo();
+  const gitInfo = deriveLib.repoHeadInfo(scanRoot);
+  return {
+    root: scanRoot,
+    resolved_via: usedOverride ? 'env-override' : (rootInfo.redirectedFromWorktree ? 'main-checkout' : 'self'),
+    head_sha: gitInfo.head_sha,
+    behind_origin_master: gitInfo.behind_origin_master,
+    checked_at: gitInfo.checked_at,
   };
 }
 
@@ -1935,6 +1992,12 @@ function buildRoadmapPayload() {
     // `items` entirely (never 150+ dead roots), but named here as ONE
     // honest aggregate rather than a silent drop (C5).
     stale_links_omitted: tree.ghostCount,
+    // scan_provenance (2026-08-04 stale-checkout fix, part b — see
+    // scanProvenance's own header for the exact shape): the class fix that
+    // makes a future stale-checkout regression IMPOSSIBLE to render
+    // silently — the web layer always has root/head_sha/behind-count to
+    // show, even when everything else about the payload looks normal.
+    scan_provenance: scanProvenance(tree.scanRoot),
     items: tree.topLevel,
   };
 }

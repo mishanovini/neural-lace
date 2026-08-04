@@ -34,6 +34,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync } = require('child_process');
 const projects = require('../config/projects.js');
 
 // ============================================================
@@ -64,12 +65,145 @@ function heartbeatStateDir() {
 
 // mainRepoRoot() — best-effort "this repo's root" for resolving plan files
 // (and, in server.js, NEEDS-YOU.md/operator-todo.md/backlog.md) when a
-// per-ask `repo` field is absent/unreachable. config/projects.js's
-// selfRepoRoot() already computes exactly this (the conv-tree-ui repo root,
-// worktree-pool-aware) — reused rather than re-derived (no git dependency at
-// read time).
+// per-ask `repo` field is absent/unreachable.
+//
+// STALE-CHECKOUT FIX (2026-08-04 operator complaint: "the status still shows
+// a lot of things not complete"). config/projects.js's selfRepoRoot() only
+// answers "where do the RUNNING SERVER's own files live" — a pure __dirname
+// climb, no git awareness. When the cockpit is launched from a git
+// WORKTREE of this repo (this harness's own standard per-builder-session
+// pattern — a worktree under a pool dir, or an operator-maintained stable
+// worktree like `workstreams-ui-server`), that self-path is whichever
+// commit that worktree's branch happens to be checked out at — which can
+// sit dozens of commits behind origin/master indefinitely (observed:
+// 36 commits behind, 11/25 plan-progress checkboxes rendered instead of
+// 24/25). The operator's own repo-root convention already distinguishes
+// "self" from "the main checkout" for exactly this reason — see
+// adapters/claude-code/hooks/lib/nl-paths.sh's nl_main_checkout_root()
+// (bash-only; this is the Node equivalent of the SAME git-common-dir
+// technique, applied to THIS repo's own worktree, not the neural-lace
+// harness meta-repo nl-paths.sh resolves).
+//
+// A linked worktree's `git rev-parse --git-dir` differs from
+// `--git-common-dir` (the worktree's own gitdir lives under
+// `<main>/.git/worktrees/<name>`; the COMMON dir is always `<main>/.git`).
+// When they differ, the main checkout's root is `dirname(git-common-dir)` —
+// deterministic, no config file or registry lookup needed, and correct even
+// for a worktree the operator created by hand today. When they're equal
+// (self already IS a normal, non-worktree checkout, or git is unavailable/
+// this isn't a git dir at all), self stands unchanged — SAME behavior as
+// before this fix for every non-worktree deployment.
+//
+// ROADMAP_PLAN_SCAN_ROOT (roadmap-routes.js/inbox-routes.js) and every
+// other mainRepoRoot() consumer's own env overrides are UNCHANGED — this
+// function is a fallback, evaluated only when no override applies; those
+// call sites' `process.env.X || deriveLib.mainRepoRoot()` short-circuit
+// means this new git spawn never fires in a sandboxed self-test that sets
+// its own override (roadmap-routes.selftest.js / inbox-routes.selftest.js).
+//
+// PROCESS-LIFETIME CACHE (not a TTL): a running server's OWN file location
+// and worktree topology cannot change while it is running, so this is
+// computed at most ONCE per process and memoized forever after — not
+// re-spawned per request, never a poll. See gitInfoCacheGet below for the
+// (bounded-TTL, request-triggered-not-timer-driven) sibling cache used for
+// the staleness signal, which DOES need periodic refresh since HEAD/
+// origin-master genuinely change while the process runs.
+function gitFieldSync(args, cwd) {
+  try {
+    return String(execFileSync('git', args, {
+      cwd: cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000,
+    })).trim();
+  } catch (_) { return ''; } // no git binary / not a git dir / any spawn failure -> honest '', never a throw
+}
+
+// deriveCanonicalRoot(self, gitDirRaw, commonDirRaw) — the PURE decision
+// (no spawn, no I/O) extracted so it is unit-testable without faking git or
+// this process's own real checkout location. `gitDirRaw`/`commonDirRaw` are
+// whatever `git rev-parse --git-dir`/`--git-common-dir` printed (possibly
+// relative, possibly '' on failure) for cwd=self.
+function deriveCanonicalRoot(self, gitDirRaw, commonDirRaw) {
+  if (!gitDirRaw || !commonDirRaw) return { root: self, redirectedFromWorktree: false };
+  let gitDirAbs, commonDirAbs;
+  try {
+    gitDirAbs = path.resolve(self, gitDirRaw);
+    commonDirAbs = path.resolve(self, commonDirRaw);
+  } catch (_) { return { root: self, redirectedFromWorktree: false }; }
+  if (gitDirAbs === commonDirAbs) return { root: self, redirectedFromWorktree: false };
+  // Linked worktree: the main checkout's root is the parent of the COMMON
+  // .git dir (every linked worktree's git-dir lives under
+  // <main>/.git/worktrees/<name>; the common dir is always <main>/.git).
+  return { root: path.dirname(commonDirAbs), redirectedFromWorktree: true };
+}
+
+let _canonicalRootCache = null; // { root, redirectedFromWorktree, selfRoot } | null
+function resolveCanonicalRepoRoot() {
+  if (_canonicalRootCache) return _canonicalRootCache;
+  let self;
+  try { self = projects.selfRepoRoot(); } catch (_) { self = process.cwd(); }
+  const gitDirRaw = gitFieldSync(['rev-parse', '--git-dir'], self);
+  const commonDirRaw = gitFieldSync(['rev-parse', '--git-common-dir'], self);
+  const decided = deriveCanonicalRoot(self, gitDirRaw, commonDirRaw);
+  _canonicalRootCache = { root: decided.root, redirectedFromWorktree: decided.redirectedFromWorktree, selfRoot: self };
+  return _canonicalRootCache;
+}
+
 function mainRepoRoot() {
-  try { return projects.selfRepoRoot(); } catch (_) { return process.cwd(); }
+  try { return resolveCanonicalRepoRoot().root; } catch (_) { return process.cwd(); }
+}
+
+// mainRepoRootInfo() — the SAME resolution as mainRepoRoot(), plus the
+// bookkeeping a caller needs to render an honest staleness signal (roadmap-
+// routes.js's `scan_provenance` payload field, part (b) of this fix): did
+// this actually redirect away from the running server's own worktree, and
+// what was that raw self-path. Never used to change resolution — purely
+// descriptive.
+function mainRepoRootInfo() {
+  try { return resolveCanonicalRepoRoot(); } catch (_) {
+    const cwd = process.cwd();
+    return { root: cwd, redirectedFromWorktree: false, selfRoot: cwd };
+  }
+}
+
+// ------------------------------------------------------------------------
+// repoHeadInfo(root) — NON-SILENCE staleness signal (part (b) of the
+// 2026-08-04 fix): the resolved scan root alone doesn't tell an operator
+// whether ITS OWN checkout is behind origin/master — a worktree pinned to
+// an old branch is exactly as stale as the bug this fix closes, just one
+// hop further out. `{ head_sha, behind_origin_master, checked_at }`, every
+// field best-effort (never throws): head_sha:'' / behind_origin_master:null
+// when undeterminable (not a git dir, no git binary, no local
+// `origin/master` ref at all — this NEVER fetches, so a machine that hasn't
+// fetched in a while sees "behind" as of its last fetch, not live network
+// state; still strictly more honest than the prior total silence).
+//
+// REQUEST-TRIGGERED TTL CACHE, not a timer poll (state-watch.js's own
+// header draws exactly this line: "a TTL/timer poll, however infrequent, is
+// still PULL — cost scales with clock ticks, not with change rate"). This
+// cache never runs on its own; it only (re)computes the FIRST time a
+// request asks after the previous value has aged past the TTL — cost scales
+// with REQUEST rate past expiry, never with wall-clock ticks while the
+// cockpit sits idle. Two git spawns per cache miss (rev-parse + rev-list),
+// bounded to at most one miss per TTL window per distinct root.
+function gitInfoTtlMs() {
+  const raw = process.env.COCKPIT_GIT_INFO_TTL_MS;
+  if (raw === undefined || raw === '') return 60000;
+  const n = Number(raw);
+  return isNaN(n) || n < 0 ? 60000 : n;
+}
+const _gitInfoCache = {}; // root -> { data, at }
+function repoHeadInfo(root) {
+  const now = Date.now();
+  const cached = _gitInfoCache[root];
+  if (cached && (now - cached.at) < gitInfoTtlMs()) return cached.data;
+  const headSha = gitFieldSync(['rev-parse', 'HEAD'], root);
+  let behind = null;
+  if (headSha) {
+    const countRaw = gitFieldSync(['rev-list', '--count', 'HEAD..origin/master'], root);
+    if (/^\d+$/.test(countRaw)) behind = Number(countRaw);
+  }
+  const data = { head_sha: headSha, behind_origin_master: behind, checked_at: new Date(now).toISOString() };
+  _gitInfoCache[root] = { data: data, at: now };
+  return data;
 }
 
 // readJsonlLines(file) — best-effort JSONL reader: a missing file or a
@@ -1153,6 +1287,10 @@ module.exports = {
   dispatchProvenanceStateDir,
   heartbeatStateDir,
   mainRepoRoot,
+  // canonical-root resolution + staleness signal (2026-08-04 stale-checkout fix)
+  mainRepoRootInfo,
+  deriveCanonicalRoot,
+  repoHeadInfo,
   // registry / event / marker readers
   readJsonlLines,
   readAskRegistry,
@@ -1672,6 +1810,150 @@ async function selfTest() {
     if (savedArDir21 === undefined) delete process.env.ASK_REGISTRY_STATE_DIR;
     else process.env.ASK_REGISTRY_STATE_DIR = savedArDir21;
     try { fs.rmSync(tmp21, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+  }
+
+  // ========================================================================
+  // 2026-08-04 STALE-CHECKOUT FIX — mainRepoRoot() worktree-canonicalization
+  // (deriveCanonicalRoot's pure decision logic) + repoHeadInfo's staleness
+  // signal (roadmap-routes.js's scan_provenance payload field, part b).
+  // ========================================================================
+
+  // ---- 22. deriveCanonicalRoot: PURE decision logic, no git/fs involved —
+  // covers the shapes real git output can take without depending on this
+  // process's own actual checkout topology (that's covered by 22e below,
+  // against a REAL independently-recomputed oracle). Every path literal
+  // below is deliberately a leading-slash absolute path — Node's
+  // path.isAbsolute() treats a leading '/' as absolute on win32 too
+  // (drive-relative to whatever drive path.resolve runs on), so these
+  // assertions are CWD-independent on every platform, never a hidden
+  // dependency on this test process's own working directory.
+  const dcAbs = deriveCanonicalRoot('/repo/.claude/worktrees/pool/wt1', '/repo/.git/worktrees/wt1', '/repo/.git');
+  ok('22. deriveCanonicalRoot: ABSOLUTE linked-worktree shape (git-dir != git-common-dir — what this repo\'s own git actually prints, confirmed directly against this checkout) redirects root to dirname(git-common-dir), the MAIN checkout — never self',
+    dcAbs.root === path.resolve('/repo') && dcAbs.redirectedFromWorktree === true, JSON.stringify(dcAbs));
+  const nonWtSelf = path.resolve('/repo');
+  const dcSelf = deriveCanonicalRoot(nonWtSelf, '.git', '.git');
+  ok('22b. deriveCanonicalRoot: ordinary non-worktree checkout (git-dir === git-common-dir, git\'s normal relative ".git" printing) leaves root as self — UNCHANGED behavior for every non-worktree deployment',
+    dcSelf.root === nonWtSelf && dcSelf.redirectedFromWorktree === false, JSON.stringify(dcSelf));
+  const dcNoGit = deriveCanonicalRoot(nonWtSelf, '', '');
+  ok('22c. deriveCanonicalRoot: git unavailable / not a git dir at all (empty git-dir/git-common-dir, the gitFieldSync fail-open shape) -> self, never a throw or a guessed redirect',
+    dcNoGit.root === nonWtSelf && dcNoGit.redirectedFromWorktree === false, JSON.stringify(dcNoGit));
+  // 22d. RELATIVE-shape variant (in case a future/older git version ever
+  // prints git-dir/git-common-dir relative to self rather than absolute) —
+  // same decision, resolved via plain relative segments against self.
+  const relSelf = path.resolve('/pool/wf-ghi789');
+  const dcRel = deriveCanonicalRoot(relSelf, '../.git/worktrees/wf-ghi789', '../.git');
+  ok('22d. deriveCanonicalRoot: RELATIVE git-dir/git-common-dir (resolved against self) redirects identically to the absolute-shape case above',
+    dcRel.root === path.resolve('/pool') && dcRel.redirectedFromWorktree === true, JSON.stringify(dcRel));
+
+  // ---- 22e. mainRepoRoot(): REAL-ORACLE check against THIS PROCESS'S OWN
+  // actual checkout — independently re-derives the expected canonical root
+  // via the exact same git primitives, RIGHT HERE in the test (not asserted
+  // against a fixture), so this passes honestly whether the suite happens
+  // to run from a linked worktree (this build's own dev environment — the
+  // operator's exact bug shape) or from an ordinary non-worktree checkout
+  // (CI, a plain clone) — either way, the library's answer must match an
+  // independently-computed ground truth, not a hardcoded expectation.
+  {
+    const realSelf = projects.selfRepoRoot();
+    const realGd = gitFieldSync(['rev-parse', '--git-dir'], realSelf);
+    const realGcd = gitFieldSync(['rev-parse', '--git-common-dir'], realSelf);
+    const expected = deriveCanonicalRoot(realSelf, realGd, realGcd);
+    ok('22e. mainRepoRoot(): matches an INDEPENDENTLY-RECOMPUTED oracle (same git-dir/git-common-dir primitives, evaluated fresh here) for THIS process\'s real checkout — proves the fix against ground truth, not a fixture',
+      path.resolve(mainRepoRoot()) === path.resolve(expected.root),
+      JSON.stringify({ got: mainRepoRoot(), expectedRoot: expected.root, realSelf, realGd, realGcd }));
+    ok('22f. mainRepoRootInfo(): redirectedFromWorktree/selfRoot agree with the same independently-recomputed oracle',
+      mainRepoRootInfo().redirectedFromWorktree === expected.redirectedFromWorktree &&
+      path.resolve(mainRepoRootInfo().selfRoot) === path.resolve(realSelf),
+      JSON.stringify(mainRepoRootInfo()));
+  }
+
+  // ---- 23. repoHeadInfo: real fixture git repos (mirrors auditor.js's own
+  // spawnSync git fixture technique).
+  {
+    const { spawnSync } = require('child_process');
+    const tmp23 = fs.mkdtempSync(path.join(os.tmpdir(), 'derive-lib-gitinfo-st-'));
+    const savedTtl = process.env.COCKPIT_GIT_INFO_TTL_MS;
+    try {
+      process.env.COCKPIT_GIT_INFO_TTL_MS = '0'; // always-fresh for scenarios 23a-23d; 23e re-sets its own TTL
+      const repo23 = path.join(tmp23, 'repo');
+      fs.mkdirSync(repo23, { recursive: true });
+      spawnSync('git', ['init', '-q'], { cwd: repo23 });
+      spawnSync('git', ['config', 'core.hooksPath', ''], { cwd: repo23 });
+      spawnSync('git', ['config', 'user.email', 't@example.test'], { cwd: repo23 });
+      spawnSync('git', ['config', 'user.name', 'T'], { cwd: repo23 });
+      fs.writeFileSync(path.join(repo23, 'f.txt'), 'one\n');
+      spawnSync('git', ['add', '.'], { cwd: repo23 });
+      spawnSync('git', ['commit', '-q', '-m', 'c1'], { cwd: repo23 });
+      const sha1 = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo23, encoding: 'utf8' }).stdout.trim();
+
+      // 23a. No origin/master ref at all yet -> behind_origin_master:null,
+      // head_sha still populated (a genuine local-only checkout, honest
+      // "undeterminable" rather than a guessed 0).
+      const gi23a = repoHeadInfo(repo23);
+      ok('23a. repoHeadInfo: real repo, no local origin/master ref -> head_sha populated, behind_origin_master:null (undeterminable, never guessed 0)',
+        gi23a.head_sha === sha1 && gi23a.behind_origin_master === null, JSON.stringify(gi23a));
+
+      // 23b. origin/master == HEAD -> behind_origin_master:0.
+      spawnSync('git', ['update-ref', 'refs/remotes/origin/master', sha1], { cwd: repo23 });
+      const gi23b = repoHeadInfo(repo23);
+      ok('23b. repoHeadInfo: local origin/master ref equals HEAD -> behind_origin_master:0 (up to date)',
+        gi23b.behind_origin_master === 0, JSON.stringify(gi23b));
+
+      // 23c. HEAD moves 2 commits behind origin/master (the exact shape of
+      // the operator's real bug: a worktree pinned to an old commit while
+      // origin/master has moved on) -> behind_origin_master:2.
+      fs.appendFileSync(path.join(repo23, 'f.txt'), 'two\n');
+      spawnSync('git', ['commit', '-q', '-am', 'c2'], { cwd: repo23 });
+      fs.appendFileSync(path.join(repo23, 'f.txt'), 'three\n');
+      spawnSync('git', ['commit', '-q', '-am', 'c3'], { cwd: repo23 });
+      const sha3 = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo23, encoding: 'utf8' }).stdout.trim();
+      spawnSync('git', ['update-ref', 'refs/remotes/origin/master', sha3], { cwd: repo23 });
+      spawnSync('git', ['reset', '-q', '--hard', sha1], { cwd: repo23 }); // HEAD back to c1; origin/master stays at c3
+      const gi23c = repoHeadInfo(repo23);
+      ok('23c. repoHeadInfo: HEAD reset 2 commits behind a local origin/master ref -> behind_origin_master:2, head_sha reflects the ROLLED-BACK HEAD (this IS the operator\'s exact bug shape)',
+        gi23c.head_sha === sha1 && gi23c.behind_origin_master === 2, JSON.stringify(gi23c));
+
+      // 23d. A directory that is not a git repo at all -> both fields
+      // honestly undeterminable, never a throw.
+      const nonGitDir = path.join(tmp23, 'not-a-repo');
+      fs.mkdirSync(nonGitDir, { recursive: true });
+      const gi23d = repoHeadInfo(nonGitDir);
+      ok('23d. repoHeadInfo: not a git directory at all -> head_sha:\'\', behind_origin_master:null, no throw',
+        gi23d.head_sha === '' && gi23d.behind_origin_master === null, JSON.stringify(gi23d));
+
+      // 23e. TTL cache: a long TTL must NOT re-spawn git on every call — a
+      // commit landing AFTER the first read stays invisible until the TTL
+      // expires (request-triggered, not a background timer — see
+      // repoHeadInfo's own header). Verified by mutating the repo between
+      // two reads and asserting the SECOND read is still the stale cached
+      // value while checked_at is byte-identical (proof it truly did not
+      // re-spawn, not just coincidentally recomputed the same numbers).
+      process.env.COCKPIT_GIT_INFO_TTL_MS = '60000';
+      const repo23e = path.join(tmp23, 'repo-ttl');
+      fs.mkdirSync(repo23e, { recursive: true });
+      spawnSync('git', ['init', '-q'], { cwd: repo23e });
+      spawnSync('git', ['config', 'core.hooksPath', ''], { cwd: repo23e });
+      spawnSync('git', ['config', 'user.email', 't@example.test'], { cwd: repo23e });
+      spawnSync('git', ['config', 'user.name', 'T'], { cwd: repo23e });
+      fs.writeFileSync(path.join(repo23e, 'f.txt'), 'one\n');
+      spawnSync('git', ['add', '.'], { cwd: repo23e });
+      spawnSync('git', ['commit', '-q', '-m', 'c1'], { cwd: repo23e });
+      const giFirst = repoHeadInfo(repo23e);
+      fs.appendFileSync(path.join(repo23e, 'f.txt'), 'two\n');
+      spawnSync('git', ['commit', '-q', '-am', 'c2'], { cwd: repo23e });
+      const giSecond = repoHeadInfo(repo23e);
+      ok('23e. repoHeadInfo: within the TTL window, a SECOND call after a new commit lands still returns the FIRST cached snapshot (identical checked_at + head_sha) — request-triggered bounded cache, not a live re-derive per call, matching state-watch.js\'s push-not-timer-poll discipline',
+        giSecond.checked_at === giFirst.checked_at && giSecond.head_sha === giFirst.head_sha,
+        JSON.stringify({ first: giFirst, second: giSecond }));
+      process.env.COCKPIT_GIT_INFO_TTL_MS = '0';
+      const giThird = repoHeadInfo(repo23e);
+      ok('23f. repoHeadInfo: TTL=0 forces a fresh read -> the new commit is now visible (proves the cache genuinely gates on TTL, not on the root string alone)',
+        giThird.head_sha !== giFirst.head_sha, JSON.stringify({ first: giFirst, third: giThird }));
+    } finally {
+      if (savedTtl === undefined) delete process.env.COCKPIT_GIT_INFO_TTL_MS;
+      else process.env.COCKPIT_GIT_INFO_TTL_MS = savedTtl;
+      try { fs.rmSync(tmp23, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+    }
   }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
