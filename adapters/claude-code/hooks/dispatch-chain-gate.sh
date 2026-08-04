@@ -89,6 +89,268 @@ source "$_dcg_dir/lib/review-chain-lib.sh"
 # shellcheck source=./lib/gate-contract-lib.sh
 source "$_dcg_dir/lib/gate-contract-lib.sh"
 
+# ============================================================================
+# --- T25 verify-obligation WIP-limit ---
+# (gated-pipeline-master-2026-08 Task 25; operator directive 2026-08-03 /
+# OD-022. design r3 is NOT amended for this — the frozen-flip clause was not
+# triggered; see the plan's own In-flight scope-updates entry for Task 25.)
+#
+# APPENDED, SELF-CONTAINED ON PURPOSE: Task 17 is concurrently landing G2's
+# live PreToolUse enforcement + subagent_type triggering in THIS SAME FILE
+# (see the file-header comment above: "the FULL G2 ... is Task 17"). To
+# minimize merge conflict with that in-flight work, this block is
+# deliberately NOT interleaved into `_dcg_check` or the existing CLI `case`
+# statement below — it intercepts its OWN flag before the file's
+# pre-existing dispatch logic ever sees it, and calls a function that lives
+# on the LEDGER LIB side (review-chain-lib.sh's rc_wip_limit_decision, added
+# the same commit as this block — reuses the SAME dispatch-ledger reader
+# rule 3 already consumes, per the M-3 "no second implementation" rule)
+# rather than re-parsing the ledger here. When Task 17 wires the live
+# subagent_type-keyed PreToolUse trigger, its own consult path can call
+# `_dcg_check_wip_limit` (defined below) directly — no further edit to this
+# block should be needed.
+#
+# CONTRACT: dispatch-chain-gate.sh --check-wip-limit <plan-file>
+#   [--threshold N] [--waive <reason>]
+#   Exit 0 (proceed) unless the plan's open verify-obligation count is >=
+#   threshold (default 3) AND no verifier dispatch is in flight — see
+#   rc_wip_limit_decision's own header (hooks/lib/review-chain-lib.sh) for
+#   the full decision. `--waive <reason>` always proceeds (exit 0) but
+#   LEDGERS the escape via gate-contract-lib.sh's gc_escape_used (the SAME
+#   workaround-sensor ledger every other gate's named-reason waiver already
+#   feeds — Task 5's dashboard friction pane reads it), never a silent skip.
+#
+# EXPECTED FALSE-POSITIVE RATE (constitution §10 calibration requirement;
+# text corrected 2026-08-03 harness-review remediation round, C3 — the
+# PRIOR wording ("never trips this" for any active verifier dispatch) was
+# PROVEN FALSE: rc_verifier_in_flight's actual semantics are STRICT-NEWER —
+# a verifier marker whose ts is OLDER than the newest open build still
+# leaves the gate BLOCKING, matching rc_open_verify_obligations' own
+# self-test OBL4b. "In flight" means dispatched AFTER the newest unverified
+# merge, not merely dispatched at some point):
+# near-zero BY CONSTRUCTION for a legitimate parallel wave — obligations
+# only count as blocking when no verifier was dispatched AFTER the newest
+# unverified merge, so a session actively working the verify backlog
+# (dispatching a FRESH task-verifier while more builders land) never trips
+# this. The remaining FP surface is a plan whose task-verifier dispatches
+# never carry a role=verifier NL-ATTRIBUTION header (silently degrades the
+# in-flight check to "never in flight", which makes the gate STRICTER,
+# never looser — a false BLOCK is recoverable via --waive, so this
+# direction of error is the one accepted). Calibrated
+# against THIS session's own timeline (docs/plans/gated-pipeline-master-
+# 2026-08-evidence.md Task 25): 11 builder-complete rows landed with 0
+# verifier-complete rows over several hours before the operator's directive
+# — a threshold of 3 would have fired once, long before 11 accumulated.
+#
+# RETIREMENT CONDITION: retire this block once Stage-2 auto-dispatch
+# (design NON-GOALS / REQ-C6, Task 24's admission trigger) supersedes manual
+# builder-dispatch WIP management entirely — at that point an orchestrator
+# session never accumulates unverified merges to begin with, and this
+# consult becomes a dead check on an unreachable state.
+# ============================================================================
+
+# _dcg_wip_ledger_escape <plan-slug> <reason> — records a --waive escape via
+# the canonical gc_escape_used ledger (never a bespoke ledger file).
+_dcg_wip_ledger_escape() {
+  local slug="$1" reason="$2"
+  gc_escape_used "dispatch-chain-gate-wip-limit" "waiver" "$slug" "$reason" 2>/dev/null || true
+}
+
+# _dcg_check_wip_limit <plan-file> [<threshold>] [<waive-reason>] — the WIP-
+# limit decision, callable directly by a sourcing caller (e.g. a future
+# Task 17 PreToolUse consult) or via the --check-wip-limit CLI entry point
+# below. Prints a gc_block (FIX/ESCAPE fields included) on block, a summary
+# line otherwise. Return code: 0 proceed, 1 block (same convention as
+# _dcg_check).
+_dcg_check_wip_limit() {
+  local plan="$1" threshold="${2:-3}" waive="${3:-}"
+  local slug; slug="$(basename "$plan" .md)"
+
+  # C4 (harness-review remediation round, 2026-08-03 -- PROVEN: a
+  # slash-less invocation of this script, e.g. bare `dispatch-chain-
+  # gate.sh` with no leading path component, leaves
+  # `_dcg_dir="${BASH_SOURCE[0]%/*}"` UNCHANGED (no `/` to strip), so the
+  # `cd -- "dispatch-chain-gate.sh"` at file-top tries to cd into a FILE as
+  # a directory, fails, and _dcg_dir silently resolves EMPTY -- both
+  # `source` calls then target "/lib/*.sh" and fail with no error checking
+  # on either. Every rc_*/gc_* call afterward is "command not found",
+  # returning a nonzero exit that this function's own `local rc=$?` catches
+  # and reports as a legitimate BLOCK (exit 1) -- a self-test asserting
+  # "exit 1 = blocked correctly" FALSE-GREENS on a completely non-
+  # functioning gate. Guard explicitly: verify the two functions this
+  # function depends on actually exist BEFORE calling either.
+  if ! declare -F rc_wip_limit_decision >/dev/null 2>&1 || ! declare -F gc_block >/dev/null 2>&1; then
+    echo "dispatch-chain-gate --check-wip-limit: FATAL — required libs did not source (rc_wip_limit_decision/gc_block undefined; _dcg_dir='${_dcg_dir:-<empty>}') -- refusing to report a decision that would be meaningless. Re-invoke with a path-qualified script name (e.g. 'bash adapters/claude-code/hooks/dispatch-chain-gate.sh', never a bare slash-less name)." >&2
+    return 3
+  fi
+
+  if [[ -n "$waive" ]]; then
+    _dcg_wip_ledger_escape "$slug" "$waive"
+    echo "dispatch-chain-gate --check-wip-limit: $plan -- WAIVED ($waive), ledgered to the workaround-sensor ledger, proceeding" >&2
+    return 0
+  fi
+
+  rc_wip_limit_decision "$slug" "$threshold"
+  local rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    echo "dispatch-chain-gate --check-wip-limit: $plan -- $RC_WIP_REASON" >&2
+    return 0
+  fi
+
+  local tasks_csv=""
+  [[ "${#RC_OPEN_OBLIGATIONS[@]}" -gt 0 ]] && tasks_csv="$(IFS=,; echo "${RC_OPEN_OBLIGATIONS[*]}")"
+  gc_block \
+    "plan '$slug' has ${RC_OPEN_OBLIGATIONS_COUNT} open verify obligation(s) (tasks: $tasks_csv) with no verifier dispatch in flight" \
+    "OD-022 (operator directive 2026-08-03): the build->verified transition is mechanical and present-moment -- unverified builder-complete work must not accumulate past $threshold open task(s) on one plan without active verification" \
+    "dispatch task-verifier against the open task(s) above before dispatching another builder on this plan, or verify the oldest open tasks first to drop below $threshold -- if you already verified these tasks, check the verifier dispatch carried task= ids in its NL-ATTRIBUTION header (an untagged verifier dispatch can never close a specific task's obligation)" \
+    "re-run with --waive '<reason>' to proceed anyway (ledgered to the workaround-sensor ledger via gc_escape_used, named reason required)" \
+    >&2
+  return 1
+}
+
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--check-wip-limit" ]]; then
+  if [[ -z "${2:-}" ]]; then
+    echo "usage: dispatch-chain-gate.sh --check-wip-limit <plan-file> [--threshold N] [--waive <reason>]" >&2
+    exit 2
+  fi
+  _dcg_wl_plan="$2"; shift 2
+  _dcg_wl_threshold=3
+  _dcg_wl_waive=""
+  # C2 fix (harness-review remediation round, 2026-08-03 -- PROVEN via
+  # isolated reproduction: bash's `shift N` silently no-ops, does NOT error
+  # and does NOT decrement $#, when N exceeds the remaining positional
+  # count. A trailing valueless `--threshold`/`--waive` (no value token
+  # after it) left `shift 2` unable to shift, so `$1` never changed and
+  # this loop spun forever on the SAME arg -- a genuine hang, not a
+  # theoretical one. Arity-checked before every `shift 2` now: a missing
+  # value is a usage error (exit 2), never a silent hang.
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --threshold)
+        [[ -n "${2:-}" ]] || { echo "usage: dispatch-chain-gate.sh --check-wip-limit <plan-file> [--threshold N] [--waive <reason>] -- --threshold requires a value" >&2; exit 2; }
+        _dcg_wl_threshold="$2"; shift 2 ;;
+      --waive)
+        [[ -n "${2:-}" ]] || { echo "usage: dispatch-chain-gate.sh --check-wip-limit <plan-file> [--threshold N] [--waive <reason>] -- --waive requires a value" >&2; exit 2; }
+        _dcg_wl_waive="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  _dcg_check_wip_limit "$_dcg_wl_plan" "$_dcg_wl_threshold" "$_dcg_wl_waive"
+  _dcg_wl_rc=$?
+  # C4: propagate rc=3 (broken lib sourcing) DISTINCTLY from rc=1 (a real
+  # WIP-limit block) — collapsing both to exit 1 is exactly the false-green
+  # this fix exists to close.
+  case "$_dcg_wl_rc" in
+    0) exit 0 ;;
+    3) exit 3 ;;
+    *) exit 1 ;;
+  esac
+fi
+
+if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test-wip-limit" ]]; then
+  # Run ALONGSIDE the existing --self-test (not merged into it) — see the
+  # block header above for why (T17 conflict minimization). A full
+  # verification pass for this file runs BOTH:
+  #   bash dispatch-chain-gate.sh --self-test
+  #   bash dispatch-chain-gate.sh --self-test-wip-limit
+  #
+  # C4 (harness-review remediation round, 2026-08-03): guard THIS
+  # process's own lib sourcing before running anything — see
+  # _dcg_check_wip_limit's matching guard for the full false-green
+  # rationale. This process calls rc_wip_limit_decision directly nowhere,
+  # but a broken _dcg_dir here means every subprocess this suite spawns
+  # (`bash "$0" --check-wip-limit ...`) is ALSO broken identically, so
+  # failing loud here — before spending time on 10 scenarios that would
+  # all report misleading PASS/FAIL noise — is strictly more honest.
+  if ! declare -F rc_wip_limit_decision >/dev/null 2>&1 || ! declare -F gc_block >/dev/null 2>&1; then
+    echo "self-test-wip-limit: FATAL — required libs did not source (rc_wip_limit_decision/gc_block undefined; _dcg_dir='${_dcg_dir:-<empty>}'). Re-invoke with a path-qualified script name." >&2
+    exit 3
+  fi
+  WL_PASSED=0
+  WL_FAILED=0
+  _wlst() { # <label> <expected> <actual>
+    if [[ "$2" == "$3" ]]; then
+      echo "self-test-wip-limit ($1): PASS" >&2
+      WL_PASSED=$((WL_PASSED + 1))
+    else
+      echo "self-test-wip-limit ($1): FAIL (expected '$2', got '$3')" >&2
+      WL_FAILED=$((WL_FAILED + 1))
+    fi
+  }
+
+  WLT="$(mktemp -d)" || { echo "self-test-wip-limit: mktemp failed" >&2; exit 3; }
+  trap 'rm -rf "$WLT" 2>/dev/null || true' EXIT
+  WL_LEDGER="$WLT/ledger.jsonl"
+  WL_PLAN="$WLT/docs-plans/wip-fixture.md"
+  mkdir -p "$(dirname "$WL_PLAN")"
+  echo "# WIP fixture plan" > "$WL_PLAN"
+  export RC_LEDGER_PATH="$WL_LEDGER"
+  export DISPATCH_PROVENANCE_STATE_DIR="$WLT/dispatch-provenance"
+  mkdir -p "$DISPATCH_PROVENANCE_STATE_DIR"
+
+  _wl_row() { # <subagent_type> <ts> <task_id>
+    printf '{"subagent_type":"%s","model":"claude-fable-5","ts":%s,"session_id":"selftest","artifact_ref":"docs/plans/wip-fixture.md","task_id":"%s"}\n' \
+      "$1" "$2" "$3" >> "$WL_LEDGER"
+  }
+
+  # ---- GOLDEN SCENARIO (§10 evidence bar item 1): 3 builder-complete rows,
+  # no verifier rows -> BLOCKS a 4th builder dispatch, naming the open
+  # obligations. ----
+  : > "$WL_LEDGER"
+  _wl_row "plan-phase-builder" 1000 "5"
+  _wl_row "plan-phase-builder" 1001 "6"
+  _wl_row "plan-phase-builder" 1002 "7"
+  WL_OUT="$(bash "$0" --check-wip-limit "$WL_PLAN" 2>&1)"
+  WL_RC=$?
+  _wlst "golden-3-open-no-verifier-blocks-exit1" "1" "$WL_RC"
+  WL_NAMES_ALL=1
+  for t in 5 6 7; do printf '%s' "$WL_OUT" | grep -q "$t" || WL_NAMES_ALL=0; done
+  _wlst "golden-block-names-all-open-tasks" "1" "$WL_NAMES_ALL"
+  for marker in "[GATE:WHAT]" "[GATE:WHY]" "[GATE:FIX]" "[GATE:ESCAPE]"; do
+    WL_MC=$(printf '%s' "$WL_OUT" | grep -c -F "$marker")
+    _wlst "golden-block-has-$marker" "1" "$WL_MC"
+  done
+
+  # ---- GOLDEN SCENARIO continued: add verifier rows for each open task ->
+  # dispatch passes (exit 0). ----
+  _wl_row "task-verifier" 2000 "5"
+  _wl_row "task-verifier" 2001 "6"
+  _wl_row "task-verifier" 2002 "7"
+  WL_OUT2="$(bash "$0" --check-wip-limit "$WL_PLAN" 2>&1)"
+  WL_RC2=$?
+  _wlst "golden-after-verify-rows-passes-exit0" "0" "$WL_RC2"
+
+  # ---- Below-threshold (2 open, default threshold 3) -> proceeds. ----
+  : > "$WL_LEDGER"
+  _wl_row "plan-phase-builder" 1000 "1"
+  _wl_row "plan-phase-builder" 1001 "2"
+  bash "$0" --check-wip-limit "$WL_PLAN" >/dev/null 2>&1
+  _wlst "below-threshold-proceeds-exit0" "0" "$?"
+
+  # ---- --waive always proceeds and ledgers the escape. ----
+  : > "$WL_LEDGER"
+  _wl_row "plan-phase-builder" 1000 "1"
+  _wl_row "plan-phase-builder" 1001 "2"
+  _wl_row "plan-phase-builder" 1002 "3"
+  export HARNESS_SELFTEST=1
+  export WORKAROUND_SENSOR_LEDGER_PATH="$WLT/workaround-ledger.jsonl"
+  bash "$0" --check-wip-limit "$WL_PLAN" --waive "operator-approved parallel wave" >/dev/null 2>&1
+  _wlst "waive-proceeds-exit0" "0" "$?"
+  WL_WAIVED=0
+  grep -q '"bypass_kind":"waiver"' "$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null && WL_WAIVED=1
+  _wlst "waive-ledgered-to-workaround-sensor" "1" "$WL_WAIVED"
+  unset WORKAROUND_SENSOR_LEDGER_PATH HARNESS_SELFTEST
+
+  echo "self-test-wip-limit summary: $WL_PASSED passed, $WL_FAILED failed (of $((WL_PASSED + WL_FAILED)) scenarios)" >&2
+  if [[ "$WL_FAILED" -eq 0 ]]; then
+    exit 0
+  else
+    exit 1
+  fi
+fi
+# --- end T25 verify-obligation WIP-limit block ---
+# ============================================================================
+
 # ============================================================
 # Config resolution (script-location-relative, like model-pin-gate.sh's
 # agents_dir — NOT session-cwd-relative and NOT nl-paths.sh's
@@ -399,11 +661,33 @@ _dcg_gate() {
   case "$RC_VERDICT" in
     PASS)
       echo "dispatch-chain-gate: $plan_file — Review Chain valid, dispatch proceeds (subagent_type=$atype)" >&2
+      # T25 / OD-022 WIP-limit consult (harness-review remediation round,
+      # 2026-08-03, C1): placement HERE — inside the build-category branch,
+      # after the chain already validated — means only a genuine BUILDER
+      # dispatch (this branch is unreachable for task-verifier, a "review"
+      # category type per model-policy.json, so remedy verifier dispatches
+      # are never blockable by this consult) can trip the WIP limit.
+      # C4: rc=3 (broken lib sourcing) fails OPEN here, never blocks a real
+      # dispatch on an internal tooling failure — matches this design's own
+      # Behavioral Contract ("never fail-closed on an internal error"); only
+      # rc=1 (a genuine WIP-limit decision) blocks.
+      _dcg_wip_rc=0; _dcg_check_wip_limit "$plan_file" || _dcg_wip_rc=$?
+      if [[ "$_dcg_wip_rc" -eq 3 ]]; then
+        echo "dispatch-chain-gate: WARN — WIP-limit consult could not run (lib sourcing broken); proceeding (fail-open, never fail-closed on an internal error)" >&2
+      elif [[ "$_dcg_wip_rc" -ne 0 ]]; then
+        return 2
+      fi
       return 0
       ;;
     WARN)
       echo "dispatch-chain-gate: $plan_file — Review Chain WARN (proceeding): $RC_REASON" >&2
       printf '%s\n' "${RC_DETAIL_LINES[@]}" >&2
+      _dcg_wip_rc=0; _dcg_check_wip_limit "$plan_file" || _dcg_wip_rc=$?
+      if [[ "$_dcg_wip_rc" -eq 3 ]]; then
+        echo "dispatch-chain-gate: WARN — WIP-limit consult could not run (lib sourcing broken); proceeding (fail-open, never fail-closed on an internal error)" >&2
+      elif [[ "$_dcg_wip_rc" -ne 0 ]]; then
+        return 2
+      fi
       return 0
       ;;
   esac
@@ -666,6 +950,39 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   _st "valid-chain-plan-silent-pass-rc0" "0" "$RC5"
   BLOCKMARKERS5=$(printf '%s\n' "$OUT5" | grep -c -F "[GATE:")
   _st "valid-chain-plan-no-gate-block-markers" "0" "$BLOCKMARKERS5"
+
+  # --- C1 (harness-review remediation round, 2026-08-03): the T25 WIP-limit
+  # consult LIVE inside PreToolUse mode -- reuses the SAME g2-demo-valid.md
+  # plan + ledger the scenario immediately above just proved has a VALID
+  # chain (so any block below is attributable to the WIP limit, not a chain
+  # failure), then layers 3 builder-complete rows for that plan's tasks onto
+  # the SAME ledger file.
+  # ------------------------------------------------------------------------
+  WIPLEDGER="$G2T/g2-valid-ledger.jsonl"
+  {
+    printf '{"subagent_type":"plan-phase-builder","model":"claude-fable-5","ts":9001,"session_id":"wip1","artifact_ref":"docs/plans/g2-demo-valid.md","task_id":"2"}\n'
+    printf '{"subagent_type":"plan-phase-builder","model":"claude-fable-5","ts":9002,"session_id":"wip2","artifact_ref":"docs/plans/g2-demo-valid.md","task_id":"3"}\n'
+    printf '{"subagent_type":"plan-phase-builder","model":"claude-fable-5","ts":9003,"session_id":"wip3","artifact_ref":"docs/plans/g2-demo-valid.md","task_id":"4"}\n'
+  } >>"$WIPLEDGER"
+
+  # A 4th BUILDER dispatch against the same plan -> WIP-limit BLOCK (rc 2,
+  # not rc 1 -- this is the PreToolUse enforce path, distinct from --check's
+  # would-block convention).
+  OUT8="$(cd "$G2R" && RC_LEDGER_LANDING_DATE="2020-01-01" RC_LEDGER_PATH="$WIPLEDGER" DISPATCH_PROVENANCE_STATE_DIR="$G2T/g2-wip-dispatch-provenance" bash "$_dcg_dir/dispatch-chain-gate.sh" <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 5 of docs/plans/g2-demo-valid.md","prompt":"NL-ATTRIBUTION: plan=g2-demo-valid task=5 role=builder\nBuild Task 5 of docs/plans/g2-demo-valid.md in your worktree."}}' 2>&1)"
+  RC8=$?
+  _st "c1-wip-limit-blocks-4th-builder-rc2" "2" "$RC8"
+  WIPNAMES=1
+  for t in 2 3 4; do printf '%s' "$OUT8" | grep -q "$t" || WIPNAMES=0; done
+  _st "c1-wip-limit-block-names-open-tasks" "1" "$WIPNAMES"
+
+  # The SAME open-obligation ledger, but a task-verifier dispatch (a
+  # "review" category type, never build-category) -> proceeds untouched;
+  # _dcg_is_build_type's early return means this dispatch never even
+  # reaches the WIP-limit consult, so remedy verifier dispatches are
+  # provably unblockable by construction, not just by policy.
+  OUT9="$(cd "$G2R" && RC_LEDGER_LANDING_DATE="2020-01-01" RC_LEDGER_PATH="$WIPLEDGER" DISPATCH_PROVENANCE_STATE_DIR="$G2T/g2-wip-dispatch-provenance" bash "$_dcg_dir/dispatch-chain-gate.sh" <<<'{"tool_name":"Task","tool_input":{"subagent_type":"task-verifier","description":"Verify Task 2 of docs/plans/g2-demo-valid.md","prompt":"NL-ATTRIBUTION: plan=g2-demo-valid task=2 role=verifier\nVerify Task 2 of docs/plans/g2-demo-valid.md."}}' 2>&1)"
+  RC9=$?
+  _st "c1-verifier-dispatch-unblockable-rc0" "0" "$RC9"
 
   # --- research-type dispatch -> fully untouched ----------------------------
   BEFORE_LEDGER_LINES=$(wc -l <"$WORKAROUND_SENSOR_LEDGER_PATH" 2>/dev/null || echo 0)

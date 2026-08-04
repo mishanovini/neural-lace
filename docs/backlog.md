@@ -34,6 +34,19 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 ## Open work — substantive deferrals
 
+- **PLAN-REVIEWER-CHECK19-3-UNRELATED-FAILURES-01 — `plan-reviewer.sh --self-test` fails 3
+  Check-19 (intended-functionality restatement) scenarios on this machine, unrelated to any
+  gated-pipeline-master-2026-08 Task 25 change** (found 2026-08-03 while re-running this file as a
+  `review-chain-lib.sh` consumer suite; Task 25 made ZERO edits to `plan-reviewer.sh` — `git diff`
+  confirms — and Check 19's own implementation, `adapters/claude-code/hooks/plan-reviewer.sh:1826`
+  onward, references none of the files Task 25 touched). Failures: `ee3
+  check19-pre-existing-warns-not-blocks` ("no WARN emitted"), `ee4
+  check19-draft-to-active-flip-blocks` ("permanent-grandfather bypass is open"), `ee7
+  check19-undecidable-warns-not-blocks` ("no UNDECIDABLE warn emitted"). The Checks 20-22 scenarios
+  in the SAME suite (the actual `review-chain-lib.sh` consumer surface: `c20a`/`c21b`/`c22c`/
+  `c2022d`/`c2022e`) all PASS, confirming this task's own diff is not the cause. Re-derive: `bash
+  adapters/claude-code/hooks/plan-reviewer.sh --self-test 2>&1 | grep -E 'ee[347]\)'`.
+- **STALE-PRE-STOP-VERIFIER-DOC-REFERENCE-01 — doctrine/planning-full.md's "Task Completion — Verifier Mandate" section still names `pre-stop-verifier.sh` as the Stop-hook enforcement mechanism, but that file is now a retired exit-0 shim** (`adapters/claude-code/hooks/pre-stop-verifier.sh:2` — "Retired to attic/ (Wave D.5, ADR 058 D5). Exit-0 shim ..."); the real live enforcement is `stop-verdict-dispatcher.sh` (aggregates work-integrity-gate/session-honesty-gate/bug-persistence-gate + end-manifest validation). Noticed while adding the OD-022 verify-obligation subsection alongside it (gated-pipeline-master-2026-08 Task 25); out of that task's scope to fix. Re-derive: `grep -rn pre-stop-verifier adapters/claude-code/doctrine/*.md`.
 - **TWO-GATES-DEAD-LIVE-BECAUSE-THE-SYNC-NEVER-ADDED-THEIR-BODY-FILES-01 — `scope-enforcement-gate` and `concurrent-ownership-gate` currently FAIL OPEN on Misha-Laptop; their split-out `-body.sh` files were never deployed** (added 2026-08-03; label: `harness-gap`, `priority:high`; fold-in: the blocked-deploy review now in flight). **PROVEN by execution, not inference.** The other machine's Stage 0b work split both gates into a thin entry file plus a `-body.sh` sourced only when the command is relevant. The bodies landed in the repo; they were never copied into `~/.claude/hooks/`. Live result:
   ```
   scope-enforcement-gate.sh  line 230: .../scope-enforcement-gate-body.sh: No such file or directory   -> rc=1

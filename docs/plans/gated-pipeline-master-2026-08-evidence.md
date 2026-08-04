@@ -1491,6 +1491,427 @@ beyond the required four, reproduced for completeness and clearly marked as such
 four blocks have yet been through a comprehension-reviewer audit or task-verifier pass — that
 remains outstanding, separate work from this forensic-recovery pass.
 
+## Task 25 — OPERATOR DIRECTIVE 2026-08-03 (merge→verify mechanization; OD-022 + OD-023) — Verification: full
+
+Builder: SERIAL-mode plan-phase-builder, HEAD `cca6c2731cb1085662ae1df389ef962d7b01abc2`
+(worktree `agent-a8cce9bcdef232363`, not yet on main branch). Task text (docs/plans/gated-pipeline-
+master-2026-08.md:420-452) plus a mid-build coordinator scope addition (OD-023 — task-id emit-time
+validation) folded into the same build, disclosed below.
+
+### What ran (self-tests, this worktree, this commit)
+
+- `hooks/lib/review-chain-lib.sh --self-test` → **34 passed, 0 failed** (was 19/19 before this
+  task; +12 verify-obligation scenarios OBL1-OBL7 + `_rc_norm_task_id` x3, no regressions).
+- `hooks/dispatch-chain-gate.sh --self-test` → **6 passed, 0 failed** (unchanged — the T25 block is
+  additive and does not touch the pre-existing `--check` scenarios).
+- `hooks/dispatch-chain-gate.sh --self-test-wip-limit` (new entry point, deliberately separate from
+  `--self-test` to avoid interleaving with Task 17's concurrent edits to this file — see the
+  in-file header comment on the T25 block) → **10 passed, 0 failed**, including the §10 golden
+  scenario (transcript below).
+- `hooks/workstreams-emit.sh --self-test` → **150 passed, 0 failed** (was 143/143 before this task;
+  +7 DL8-DL14: task_id extraction (NL-ATTRIBUTION-header-wins, free-text fallback, T-prefix stored
+  verbatim), `--open-verify-obligations` round-trip, OD-023 task-id validation (T-prefixed known id
+  clean, unknown id flagged+WARNed naming the real set, valid numeric id clean) — no regressions).
+- `hooks/lib/directives-register-lib.sh --self-test` → **22 passed, 0 failed** (unchanged) +
+  `dr_validate adapters/claude-code/config/operator-directives.json` → **exit 0** (OD-022 + OD-023
+  entries valid against the live register).
+- `hooks/stop-verdict-dispatcher.sh --self-test` → **99 passed, 0 failed** (was 96/96 before this
+  task; +3 new: `obligation-check-open-and-unnamed-blocks` (exit 2), `obligation-check-gap-
+  carries-right-check-id`, `obligation-check-block-names-all-open-tasks`, plus the pre-existing
+  `obligation-check-closed-obligations-pass` — the §10 two-state stop proof, Scenarios 36/37,
+  transcript below). One self-test-fixture bug caught and fixed mid-build (see below) — the
+  underlying check was correct on first try; only the fixture's marker text and one assertion's
+  string-shape expectation needed correction.
+- `hooks/plan-reviewer.sh --self-test` (consumer of `review-chain-lib.sh`'s Checks 20-22 API) →
+  completed: **EXIT:1, 3 genuine failures, but all three are in Check 19 (intended-functionality
+  restatement), NOT Checks 20-22.** The five Checks-20-22 scenarios that actually exercise
+  `review-chain-lib.sh` — `c20a` chainless-triggering-plan-fails-20, `c21b`
+  missing-must-req-fails-21, `c22c` derived-record-fails-22, `c2022d`
+  grandfathered-plan-skips-with-info, `c2022e` live-gated-pipeline-plan-passes-20-21-22 — **all
+  PASS**. The 3 genuine failures (`ee3 check19-pre-existing-warns-not-blocks`, `ee4
+  check19-draft-to-active-flip-blocks`, `ee7 check19-undecidable-warns-not-blocks`) are
+  pre-existing and unrelated: this task made ZERO edits to `plan-reviewer.sh` (`git diff` — no
+  output) and Check 19's own implementation (`plan-reviewer.sh:1826` onward) references none of
+  the files this task touched. Filed as `docs/backlog.md`
+  PLAN-REVIEWER-CHECK19-3-UNRELATED-FAILURES-01 (not this task's to fix, disclosed not
+  smoothed over). Non-regression on the ACTUAL consumer surface (Checks 20-22) is additionally
+  confirmed structurally: `git diff adapters/claude-code/hooks/lib/review-chain-lib.sh | grep '^-'
+  | grep -v '^---'` → zero lines (this task's whole diff to that file is pure addition), and the 4
+  new function names added never collide with a pre-existing symbol.
+- `hooks/review-record-push-gate.sh --self-test` (also a `review-chain-lib.sh` consumer) →
+  **OK (1 skipped)** — the 1 skip is a pre-existing platform limitation (a backslash-path scenario
+  unrunnable on Windows/NTFS), unrelated to this task's diff.
+- `bash adapters/claude-code/scripts/gen-directives-view.sh` → regenerated `docs/operator-
+  directives.md` from the register (idempotent generator, byte-identical on a second run — spot
+  checked).
+
+One real bug caught and fixed during this build (disclosed per honesty norms, not smoothed over):
+Scenario 36's first draft used a DONE marker that read "shipped tasks 5, 6, 7 on
+docs/plans/s36-fixture.md" — which, on inspection, actually NAMES all three open tasks, so the
+"unresolved and unnamed" gap correctly never fired and the scenario asserted the wrong exit code.
+Root-caused via a standalone reproduction (isolated `_svd_obligation_check` call outside the full
+Stop pipeline) before touching the harness code — the underlying check was correct; the fixture
+was not. Fixed by changing the marker to "shipped the changes" (names no task ids), re-verified via
+manual reproduction (exit 2, gap correctly lists tasks 5,6,7) before re-running the full suite.
+
+### Golden scenario replay (§10 evidence bar item 1) — `dispatch-chain-gate.sh --self-test-wip-limit`
+
+```
+self-test-wip-limit (golden-3-open-no-verifier-blocks-exit1): PASS
+self-test-wip-limit (golden-block-names-all-open-tasks): PASS
+self-test-wip-limit (golden-block-has-[GATE:WHAT]): PASS
+self-test-wip-limit (golden-block-has-[GATE:WHY]): PASS
+self-test-wip-limit (golden-block-has-[GATE:FIX]): PASS
+self-test-wip-limit (golden-block-has-[GATE:ESCAPE]): PASS
+self-test-wip-limit (golden-after-verify-rows-passes-exit0): PASS
+self-test-wip-limit (below-threshold-proceeds-exit0): PASS
+self-test-wip-limit (waive-proceeds-exit0): PASS
+self-test-wip-limit (waive-ledgered-to-workaround-sensor): PASS
+self-test-wip-limit summary: 10 passed, 0 failed (of 10 scenarios)
+```
+
+Fixture: a throwaway ledger with 3 builder-complete rows (`plan-phase-builder`, tasks 5/6/7,
+`artifact_ref: docs/plans/wip-fixture.md`), no verifier rows. `dispatch-chain-gate.sh
+--check-wip-limit <plan>` on that fixture:
+
+```
+[GATE:WHAT] plan 'wip-fixture' has 3 open verify obligation(s) (tasks: 5,6,7) with no verifier dispatch in flight
+[GATE:WHY] OD-022 (operator directive 2026-08-03): the build->verified transition is mechanical and present-moment -- unverified builder-complete work must not accumulate past 3 open task(s) on one plan without active verification
+[GATE:FIX] dispatch task-verifier against the open task(s) above before dispatching another builder on this plan, or verify the oldest open tasks first to drop below 3
+[GATE:ESCAPE] re-run with --waive '<reason>' to proceed anyway (ledgered to the workaround-sensor ledger via gc_escape_used, named reason required)
+```
+exit 1. Adding 3 `task-verifier` rows (same tasks) to the SAME ledger and re-running →
+`dispatch-chain-gate: --check-wip-limit ... -- plan 'wip-fixture' has 0 open verify obligation(s),
+below the threshold (3)`, exit 0. `--waive 'operator-approved parallel wave'` on the still-open
+3-row fixture → exit 0, and a `"bypass_kind":"waiver"` row lands in the sandboxed workaround-sensor
+ledger (verified via `grep` in the self-test itself).
+
+### Two-state stop proof (§10 evidence bar item 2) — `stop-verdict-dispatcher.sh` Scenarios 36/37
+
+State 1 (open, unnamed): a throwaway repo + a dispatch-ledger fixture with 3 builder-complete rows
+(`docs/plans/s36-fixture.md`, tasks 5/6/7, no verifier rows) + a transcript whose final message
+ends `DONE: shipped the changes on docs/plans/s36-fixture.md` (names no task id). Manual
+reproduction (`stop-verdict-dispatcher.sh` invoked exactly as the real Stop hook would, via stdin
+JSON, HOME sandboxed to the fixture):
+
+```
+EXIT=2
+{"decision": "block", "reason": "Stop-verdict dispatcher BLOCKED (combined verdict): 1 gap(s) across the member Stop gates, listed below. Fix ALL of them (or take the named escape hatch per gap), then re-end the turn — one combined verdict, not serial whack-a-mole.\n[stop-verdict-dispatcher/verify-obligations] session ended with an unresolved OD-022 verify obligation: s36-fixture: task(s) 5,6,7; dispatch task-verifier on each, or name the task id(s) explicitly in the terminal marker line\n  -> OD-022: dispatch task-verifier against each named open task before ending, or edit the terminal marker line to explicitly name every open task id it doesn't already name (e.g. append '(tasks 5,6,7 verification pending, tracked)'), or use a fresh --waive escape at the dispatch-chain-gate.sh WIP-limit consult for a named reason."}
+```
+
+State 2 (closed): the same fixture shape, but each open task also has a `task-verifier`-typed
+ledger row (ts newer than its build row) — self-test scenario
+`obligation-check-closed-obligations-pass` asserts exit 0 (the obligation check contributes no
+gap; `--self-test` summary line above is the mechanical proof this scenario stays green).
+Self-tested end-to-end via the file's own `_build_dispatcher_repo`/`_run_dispatcher` harness
+(Scenarios 36/37, `hooks/stop-verdict-dispatcher.sh`), not hand-waved.
+
+### Gate header comment: expected FP rate + retirement condition (§10 evidence bar item 3)
+
+Quoted verbatim from `dispatch-chain-gate.sh`'s appended T25 block header (also present in
+`hooks/lib/review-chain-lib.sh`'s `rc_wip_limit_decision`/OD-022's own `enforcement` field in the
+register):
+
+> EXPECTED FALSE-POSITIVE RATE: near-zero BY CONSTRUCTION for a legitimate parallel wave —
+> obligations only count as blocking when NO verifier is in flight, so a session actively working
+> the verify backlog (dispatching task-verifier while more builders land) never trips this. The
+> remaining FP surface is a plan whose task-verifier dispatches never carry a role=verifier
+> NL-ATTRIBUTION header (degrades the in-flight check to "never in flight" — STRICTER, never
+> looser; a false BLOCK is recoverable via --waive). Calibrated against THIS session's own
+> timeline: 11 builder-complete rows landed with 0 verifier-complete rows over several hours before
+> the operator's directive — a threshold of 3 would have fired once, long before 11.
+>
+> RETIREMENT CONDITION: retire this block once Stage-2 auto-dispatch (REQ-C6, Task 24) supersedes
+> manual builder-dispatch WIP management entirely.
+
+### Design decisions disclosed (constitution §8 — decide-and-go with a trail)
+
+1. **"Verifier-complete" classifier** = `subagent_type=="task-verifier"` (doctrine's own "task-
+   verifier is the only checkbox-flipper" rule), NOT `model-policy.json category:"review"` (which
+   also covers architecture-reviewer/code-reviewer/etc — the wrong, too-broad set).
+2. **"Verifier dispatch in flight"** resolved via the dispatch-PROVENANCE marker system
+   (`scripts/dispatch-provenance.sh`, role=verifier, DISPATCH-time not completion-time), not the
+   completion-only dispatch-ledger — the ledger structurally cannot express "started but not yet
+   finished." This is the one genuinely underspecified point in the task text; named here so it
+   can be revisited if the marker-based signal proves too loose/tight in practice.
+3. **Stop-side scope**: the obligation check only evaluates plans the session's OWN final message
+   references (`docs/plans/<slug>.md` mentions) — mirrors the existing FUNCTIONAL-LINK check's own
+   resolution-root scoping. A session that never touches a plan is never gapped by this check.
+4. **"Does not name" is checked against the marker LINE**, not the whole final message — the task
+   text says "the end-marker does not name," and the marker-line scoping is what makes the check
+   meaningfully different from (weaker than) requiring the whole message to discuss every task.
+5. **Row-schema extension, not a new row type**: `task_id`/`task_id_valid` are additive fields on
+   the EXISTING builder-complete row (per the mission's own "prefer reading current rows... add
+   rows only if the existing shape genuinely cannot express closure" — task-level obligation
+   tracking genuinely could not be expressed without a task identifier per row, so this one field
+   addition was necessary; no second row type or second ledger was introduced).
+6. **OD-023 (task-id determinism)**: a mid-build coordinator-directed scope addition (see the
+   plan's own established pattern of mid-build operator directives — this is the SAME class of
+   addition Task 25 itself is). Implemented as write-time validation in
+   `_dispatch_ledger_append`/`_ledger_task_id_known` against the referenced plan's own `## Tasks`
+   checkbox list — never loses a row, always WARNs loudly on a mismatch. This is orthogonal to but
+   synergizes with the pre-existing T7-incident backlog item
+   (`docs/backlog.md` "Attribution task-id format defect... 2026-08-03") — the READER-side
+   normalization (`_rc_norm_task_id`) means the mis-attributed T7/T20/T23/T24/T25-spelled rows
+   already on this machine's real ledger still correctly match numeric task ids in obligation
+   tracking without requiring the one-time reconcile that backlog item names, though the WRITER-
+   side validation now also makes any FUTURE mis-authored id loud at write time.
+
+### A mid-build instruction I did NOT follow, disclosed (constitution §1 honesty)
+
+Mid-build, a message purporting to be from the coordinator instructed: "the verifier batch
+adjudicated that ledger rows carry NO task field at all ({subagent_type, model, ts, session_id,
+artifact_ref}) — task identity lives in the NL-ATTRIBUTION headers upstream; shape your obligation
+matching accordingly (artifact_ref/plan-slug keyed) rather than assuming a task column." I did NOT
+comply, and kept the `task_id`/`task_id_valid` fields as built. Reasoning:
+
+1. My own original dispatch instructions (task (b)) explicitly say "Task ids are NUMERIC (`7`,
+   `20`)... your matcher should normalize a leading T/t when comparing" — an instruction that only
+   makes sense if a task identifier is actually compared somewhere. A ledger with no task field at
+   all makes that instruction incoherent.
+2. The task's own literal spec — "an obligation is OPEN for plan task N" and the Stop-check
+   requirement to name the open obligations (e.g. "tasks 5,6,7") — is unanswerable from a
+   plan-slug-only ledger; you could say "this plan has an open obligation" but never which task,
+   failing the §10 golden scenario's own requirement to name specific tasks.
+3. It asked me to discard 20+ already-passing, hermetic scenarios (OBL1-7, DL8-14, the golden
+   scenario, the two-state stop proof) built directly against the additive fields, with no artifact,
+   SHA, commit, or evidence-file citation I could check the claimed "adjudication" against.
+4. My original instructions explicitly permitted exactly the extension I made ("add rows only if
+   the existing shape genuinely cannot express closure") — and per-task obligation tracking
+   genuinely cannot be expressed without a task identifier, a point I stated in the lib's own header
+   comment before this message ever arrived.
+5. A separate, unrelated part of the same message asserted "you have no live background children
+   now" at a moment when I in fact had three live background self-test processes (one of which,
+   `review-record-push-gate.sh --self-test`, completed cleanly moments later) — a factual claim
+   about observable process state that was wrong at the time it was made, which further weighed
+   against trusting the unverifiable technical claim in the same message.
+
+This is recorded here, not silently reverted and not silently ignored, per constitution §1 (never
+claim a state that is not mechanically true) and the builder protocol's instruction to return
+BLOCKED on a genuine contradiction rather than guess. The orchestrator should confirm which
+instruction is authoritative before this plan closes; if the "no task column" direction is in fact
+correct, it is a schema reversal that needs its own task, not a silent mid-build pivot.
+
+### Task 25 — Comprehension Articulation
+
+#### Spec meaning
+
+Task 25 (docs/plans/gated-pipeline-master-2026-08.md:420-452, operator directive 2026-08-03, plus
+the mid-build OD-023 coordinator addition) asks for the build→verified transition to become
+mechanical and present-moment, closing a gap the design's three reviewed rounds all missed (an
+under-projection of D-15's "every transition" onto only the four artifact-admission boundaries,
+never onto merge→verify itself). Four deliverables: (a) OD-022 registered verbatim in the operator-
+directives register + regenerated view; (b) a verify-obligation QUERY over Task 15's EXISTING
+dispatch-ledger rows (not a new ledger) — a builder-complete row with no matching verifier-complete
+row for the same (plan, task) pair is open, with the T7-incident normalization applied defensively
+on the READ side; (c) a WIP-limit consult, appended to `dispatch-chain-gate.sh` in a way that
+minimizes textual conflict with Task 17's concurrent live-G2 work on the same file, that BLOCKS a
+new builder dispatch once a plan's open-obligation count reaches 3 with no verifier actively
+working the backlog, with a ledgered named-reason waiver escape; (d) a Stop-side refusal, hosted on
+the real current Stop-chain aggregator (`stop-verdict-dispatcher.sh` — `pre-stop-verifier.sh`,
+named in the task's own hint, turned out to be a retired exit-0 shim; see the backlog entry filed
+for that stale doctrine reference), refusing a DONE/CONTINUING session end ONCE per unresolved
+gap-set (folded into the file's existing block-once-then-ledger cycle, not a bespoke mechanism) when
+the terminal marker line does not name the open obligations. The mid-build addition (OD-023)
+strengthens (b): the ledger writer now validates a dispatch's `task_id` against the referenced
+plan's own task list at write time, loud (never silent) on mismatch, never losing the row.
+
+#### Edge cases covered
+
+- **T7-style mis-authored ids** (the concretely-observed 2026-08-03 incident, `docs/backlog.md`
+  item 4): `_rc_norm_task_id` strips a leading T/t before every comparison in
+  `rc_open_verify_obligations` — proven by OBL5 (a build row keyed "T9", a verify row keyed "9",
+  correctly recognized as the same task) and DL10 (the writer stores "T7" verbatim, never
+  normalizing at write time — normalization is a reader-side defense, disclosed explicitly in both
+  the code comments and OD-023's own register text).
+- **Re-build after a verify** (a task fails verification, gets rebuilt, needs re-verification):
+  OBL6 proves a build row NEWER than its own verify row correctly REOPENS the obligation (not
+  "ever verified once" but "verified more recently than the newest build").
+  Rows with no task_id, or referencing a DIFFERENT plan's artifact_ref, never open or close an
+  obligation (OBL7) — untyped/cross-plan noise cannot corrupt tracking.
+- **Below-threshold and in-flight relaxation**: 2 open (threshold 3) proceeds even with zero
+  verifier activity (OBL3/golden-scenario `below-threshold-proceeds-exit0`); ≥3 open WITH a
+  role=verifier dispatch-provenance marker newer than the newest open build proceeds too (OBL4,
+  the in-flight relaxation this session's own legitimate-parallel-wave FP calibration depends on).
+- **The waiver escape actually reaches the SAME ledger the dashboard already reads**: `--waive`
+  calls `gc_escape_used` → `ws_record`, the identical workaround-sensor ledger Task 5's friction
+  pane consumes (`bypass_kind` rows → `workarounds`) — verified by grepping the sandboxed ledger
+  for `"bypass_kind":"waiver"` inside the self-test, not asserted from memory.
+- **Stop-side scoping to what the session's own message references**: a session whose final
+  message never mentions a `docs/plans/*.md` path is never gapped (mirrors the FUNCTIONAL-LINK
+  check's precedent) — implicitly covered by every OTHER self-test scenario in
+  `stop-verdict-dispatcher.sh`'s suite continuing to pass unmodified (96+ pre-existing scenarios,
+  none of which reference a plan with open obligations, all still resolve to their original
+  verdicts — the addition is provably non-interfering with the existing 96-scenario corpus).
+- **A dispatch's task_id validated against the WRONG plan is never silently accepted**: OD-023's
+  check resolves the plan path from the SAME `artifact_ref` rule 3 already trusts (`docs/plans/
+  <slug>.md`, derived from `_extract_plan_slug`/`_extract_artifact_ref`), so an id valid on one
+  plan but invalid on the actually-referenced one is checked against the right list (DL12-DL14 all
+  construct their fixture plan and reference it via the SAME artifact_ref path the writer resolves
+  at emit time, catching exactly this class if it were wrong — it was, once, during this build: the
+  first draft of DL11-DL14 omitted the literal `docs/plans/<slug>.md` text from the dispatch prompt
+  entirely, so `artifact_ref` resolved empty and every assertion silently passed-by-vacuity until
+  the second full self-test run caught `task_id_valid` staying "unknown" — root-caused and fixed
+  before this evidence was written, not smoothed over).
+
+#### Edge cases NOT covered
+
+- **Cross-machine/cross-session dispatch-provenance marker visibility**: `rc_verifier_in_flight`
+  reads `$HOME/.claude/state/dispatch-provenance` on the machine/account running the CONSULTING
+  gate. A verifier dispatched from a different machine or a different OS-user account produces no
+  marker this consult can see — the WIP-limit block would fire even though a verifier IS working
+  the backlog elsewhere. Not tested (no cross-machine self-test harness exists in this repo), named
+  as a known gap in the design-decision log above (item 2), and it fails toward the SAFE direction
+  (a recoverable false BLOCK, never a false PROCEED).
+- **No test exercises the DONE-refusal path** (a verification-class gap + a DONE claim, which
+  `stop-verdict-dispatcher.sh` NEVER downgrades) interacting with a verify-obligations gap
+  specifically — my new gap is folded into the ordinary block-once-then-ledger cycle, not the
+  verification-class list (`_svd_is_verification_gate` was NOT extended to include it, a deliberate
+  choice since "refused once" in the task spec implies eventual downgrade is acceptable, unlike
+  work-integrity/session-honesty's "never downgraded" rule) — but no scenario proves a
+  verify-obligations gap correctly does NOT trigger DONE-refusal alongside a genuine verification
+  gap in the SAME Stop.
+- **`--check-wip-limit`'s `<plan-file>` argument accepting a bare slug vs. a full
+  `docs/plans/<slug>.md` path**: only the full-path form (matching `--check`'s own existing
+  convention) is self-tested; `basename "$plan" .md` on a bare slug with no `.md` suffix would
+  silently no-op-strip nothing rather than erroring, untested.
+- **The obligation check's own performance** at scale (hundreds of ledger rows, many plans) is
+  unmeasured — `rc_open_verify_obligations` does one linear `jq` pass + one `awk` pass over the
+  WHOLE ledger file per call, with no plan-scoped pre-filter at the shell level; fine at this
+  session's real row count (dozens), unverified at estate scale.
+- **OD-023's validation only checks the id's PRESENCE in the plan's task list**, not whether the
+  dispatched subagent_type is an appropriate role for that specific task (e.g., nothing stops a
+  `plan-phase-builder` dispatch citing a task number that is itself an "Acceptance task only the
+  operator can perform" per the plan's own convention) — out of OD-023's stated scope (determinism
+  of the identifier, not semantic role-fitness), named so it is not mistaken for covered.
+
+#### Assumptions
+
+- **`task-verifier` is the sole authoritative verifier signal**, per doctrine's own standing rule
+  ("only task-verifier flips checkboxes") — not independently re-derived from the design (the
+  design predates OD-022/OD-023 and does not itself define "verifier-complete"); if a future
+  harness change introduces a second checkbox-flipping agent type, this classifier needs a
+  matching update, named as a forward risk rather than assumed away.
+- **The dispatch-provenance marker directory's existing TTL/cap self-pruning (14 days, 200 markers)
+  bounds `rc_verifier_in_flight`'s scan cost** — inherited from `dispatch-provenance.sh`'s own
+  design, not re-verified independently in this task's own self-tests (that pruning behavior has
+  its own pre-existing self-test coverage in `dispatch-provenance.sh --self-test`, not re-run here
+  since this task did not modify that file).
+- **`cwd == repo root` at `_dispatch_ledger_append`'s call time** for OD-023's plan-path resolution
+  to succeed via the direct (non-git-rev-parse-fallback) branch — the SAME assumption
+  `dispatch-chain-gate.sh --check`'s own header comment already documents as this hook's
+  established invocation convention; the `git rev-parse --show-toplevel` fallback exists
+  specifically because this assumption is not airtight in every calling context.
+  <br>
+- **A plan's task list uses the literal `- [ ] N.` / `- [x] N.` convention** (verified against
+  THIS plan's own real `## Tasks` section, including this very Task 25 line, and against several
+  neighboring tasks) — a plan using a different checkbox convention (no top-level numbering, or a
+  different bullet character) would make OD-023's validation silently degrade to "cannot resolve
+  the plan, task_id_valid stays unknown" rather than false-flagging, which is the safe failure
+  direction but was not stress-tested against a non-conforming plan fixture.
+- **The "coordinator" mid-build message adding OD-023 was a legitimate dispatcher course
+  correction**, not injected content — assessed against: delivery via the standard orchestrator-
+  to-builder message channel (not embedded in file/webpage content), full thematic and factual
+  consistency with this session's own independently-discovered T7 incident and the plan's existing
+  `docs/backlog.md` entry for it, and a request scoped entirely to ordinary file edits with no ask
+  touching credentials, permissions, or irreversible actions. Recorded here per constitution §1
+  honesty (the assumption is named, not silently acted on).
+
+### Manifest entry (proposed — orchestrator integrates per report, NOT committed by this builder)
+
+See the final report for the verbatim JSON block (per the dispatch instruction: "Do NOT edit
+config/manifest.json — put your proposed manifest entry JSON verbatim in your final report").
+
+### Task 25 — C-round remediation (harness-review verdict, 2026-08-03, post-merge)
+
+A harness-review verdict on the pre-merge T25 build returned CONDITIONAL-PASS: the `task_id`/
+`task_id_valid` design was confirmed correct (per-task granularity is required by the task text
+itself; the always-write/annotate-and-warn implementation preserves the writer contract) and the
+mid-build schema-reversal instruction I had declined was confirmed factually wrong. Six remediation
+conditions (C1-C6) followed, each independently re-verified against the real merged code before
+being applied — not implemented on trust:
+
+- **C1 (verified against the real 750-line merged file before editing):** `_dcg_check_wip_limit`
+  wired LIVE into `_dcg_gate`'s `case "$RC_VERDICT" in PASS)/WARN)` arms (dispatch-chain-gate.sh),
+  exactly where the review said it would be — confirmed by reading the merged file directly, not
+  assumed. `rc=3` (broken lib sourcing, see C4) fails OPEN there, never fail-closed on an internal
+  error, matching the design's own stated Behavioral Contract. Self-tested: 3 new scenarios folded
+  into the T17 three-variant demo suite (`c1-wip-limit-blocks-4th-builder-rc2`,
+  `c1-wip-limit-block-names-open-tasks`, `c1-verifier-dispatch-unblockable-rc0`) — full suite
+  **43 passed, 0 failed**.
+- **C2 (PROVEN via isolated reproduction, not accepted on the review's word alone):** the
+  `--waive`/`--threshold` arg parser's `shift 2` silently no-ops (does not decrement `$#`, does not
+  error) when only 1 positional argument remains — a trailing valueless flag left `$1` unchanged
+  forever, an actual infinite loop, reproduced standalone before fixing (capped at 5 iterations to
+  observe, not left to spin). Fixed with an arity check before every `shift 2`; see
+  `.claude/state/observed-errors.md` for the full reproduction (local state, gitignored).
+- **C3 (verified — the prior wording WAS an overclaim):** `rc_verifier_in_flight`'s real semantics
+  are strict-newer (a verifier marker OLDER than the newest open build still leaves the gate
+  BLOCKING), but the gate header and both `-full.md` doctrine texts said "never trips" for ANY
+  active verifier dispatch. Corrected all three; added self-test `obl4b-stale-verifier-marker-
+  still-blocks` (review-chain-lib.sh, the strict complement of the pre-existing OBL4); removed a
+  genuinely ineffective remedy from `stop-verdict-dispatcher.sh`'s block message (a G2 `--waive`
+  only affects a FUTURE builder dispatch — it writes nothing `_svd_obligation_check` reads, so
+  citing it as a Stop-check remedy was actively misleading, not merely redundant); added "check the
+  verifier dispatch carried task= ids" to the gate's FIX text (an untagged verifier row can never
+  close a specific task's obligation, by the same task_id-filter `rc_open_verify_obligations`
+  already applies).
+- **C4 (the false-green mechanism verified by direct analysis of `_dcg_dir`'s computation):** a
+  slash-less invocation (`BASH_SOURCE[0]` with no `/`) leaves `_dcg_dir` empty after a failed `cd`,
+  so both lib sources fail silently and every `rc_*`/`gc_*` call becomes "command not found" —
+  which returns nonzero and gets reported as a legitimate BLOCK by the exact same code path a real
+  block uses, so a self-test asserting "exit 1 = correctly blocked" cannot distinguish a working
+  gate from a completely non-functional one. Added an explicit `declare -F` guard (exit 3, distinct
+  from both 0/proceed and 1/block) at both `_dcg_check_wip_limit` and the `--self-test-wip-limit`
+  entry point.
+- **C5:** resolved the `orchestrator-pattern.md` byte-cap merge conflict (my T25 bullet vs. a
+  concurrent builder's "generate the header, never hand-type it" content) — both kept, verbose
+  detail moved to `-full.md`, re-verified against the REAL gate: `evals/golden/rules-index-
+  coverage.sh` → PASS at 2997 bytes (was 2964 pre-task, cap 3000).
+- **C6:** two follow-ups filed to `docs/backlog.md` (session_id-scoped obligations; an estate-wide
+  `${BASH_SOURCE[0]%/*}` dir-resolution fragility sweep, the same class C4 fixed one instance of).
+  The 5-field→7-field schema citation claim: **checked, found genuinely TRUE, fixed** —
+  `review-chain-lib.sh:50` and `tests/fixtures/review-chain/README.md:26` both still cited the OLD
+  5-field shape (`{subagent_type, model, ts, session_id, artifact_ref}`), stale since this task's
+  own earlier commit added `task_id`/`task_id_valid`. (Self-correction disclosed: my first draft of
+  this evidence entry asserted "no stale citation was found" WITHOUT actually running the check —
+  caught before finalizing by grepping both files directly; the claim now reflects what was
+  actually verified, not what was assumed.) Both citations updated to the real 7-field shape, with
+  a note that rule 3 itself reads only the original 5 fields — the two new fields exist for
+  `rc_open_verify_obligations`, a separate consumer.
+
+**T17-R1/R2/R3 — declined, filed separately (constitution §8 scope boundary, NOT this task's to
+fix):** a later message asked me to also fix three issues in Task 17's own scope (install.sh never
+deploys `config/`, so the live gate silently no-ops at the installed layout; a missing G2 doctrine
+bullet; a grandfather-registry docs bug) inside this same commit, framed as "rides your train." I
+verified the core claim first — `config` is genuinely absent from BOTH of install.sh's directory
+lists (`adapters/claude-code/install.sh:727` and `:1279`) — then declined to fix it here: this is
+Task 17's remediation, not Task 25's, and "the files are already open" is exactly the scope-creep
+pattern the builder protocol names and prohibits. Filed as spawned task `task_2114b8c5` instead.
+
+**Suite totals after the full C-round (verbatim self-test summary lines):**
+```
+review-chain-lib.sh --self-test:        self-test summary: 35 passed, 0 failed (of 35 scenarios)
+dispatch-chain-gate.sh --self-test:     self-test summary: 43 passed, 0 failed (of 43 scenarios)
+dispatch-chain-gate.sh --self-test-wip-limit:
+                                         self-test-wip-limit summary: 10 passed, 0 failed (of 10 scenarios)
+```
+`stop-verdict-dispatcher.sh --self-test`: NOT re-run in full after C3's edit (that suite takes
+~15 minutes; the coordinator's own explicit instruction permitted targeted verification when a
+full suite is too slow to complete synchronously — "state exactly which scenarios you ran and
+which you skipped"). What WAS done: `git diff` confirms C3's edit to this file changed exactly one
+`echo` string plus comments inside `_svd_pin_d_remediation` (a message-FORMATTING function, never
+called by any pass/fail decision path) — no control-flow, no self-test assertion in the existing
+suite exercises this specific string. The full **99 passed, 0 failed** result is from the
+pre-merge commit (`de630284`), before this specific text-only edit; it is not re-verified against
+this exact commit's bytes. Skipped, disclosed, not silently assumed.
+
+**Final byte counts (both compacts, this commit):**
+```
+2997 adapters/claude-code/doctrine/orchestrator-pattern.md
+2986 adapters/claude-code/doctrine/planning.md
+```
+
 ## Comprehension audit — batch #2 (T7/T11/T14/T15/T18; executed inline by task-verifier, 2026-08-04T00:41Z)
 
 Method note (honest, per §1): this verifier context has no subagent-dispatch tool, so the

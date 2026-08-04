@@ -395,6 +395,48 @@ This is a Pattern-class harness rule, not a Mechanism. It is NOT hook-enforced a
 
 These are welcome additions. Until they exist, this pattern works on discipline + the existing task-verifier mandate.
 
+## Verify-obligation tracking (OD-022, gated-pipeline-master-2026-08 Task 25)
+
+The build→verified transition is mechanical and present-moment: a builder-complete
+dispatch-ledger row with no matching task-verifier row for that task is an OPEN
+OBLIGATION. Golden case this mechanism exists for: this plan's own build accumulated
+11 merged tasks with 0 verified for hours before the operator flagged it twice.
+
+**The chain:**
+- `hooks/workstreams-emit.sh`'s `--on-builder-complete` writer (Task 15) now also
+  records `task_id` (NL-ATTRIBUTION `task=` header, falling back to a free-text
+  "Task N" scrape) and `task_id_valid` (OD-023 — validated against the referenced
+  plan's own `## Tasks` checkbox list at emit time; an unknown id is still written,
+  never lost, but flagged + WARNed on stderr).
+- `hooks/lib/review-chain-lib.sh`'s `rc_open_verify_obligations <plan-slug>` is the
+  ONE query (the same lib rule 3 already uses to read the ledger — no second
+  parser): a task is open when its latest builder-complete row is newer than its
+  latest task-verifier row (or there is no verifier row at all). Query it directly:
+  `bash hooks/workstreams-emit.sh --open-verify-obligations <plan-slug>`.
+- `hooks/dispatch-chain-gate.sh`'s appended `--check-wip-limit <plan-file>` consult
+  block (kept deliberately separate from the file's `_dcg_check`/CLI body to avoid
+  conflicting with Task 17's concurrent G2 PreToolUse work) BLOCKS a new BUILDER
+  dispatch when the plan's open-obligation count is ≥3 AND no verifier dispatch is
+  in flight — STRICT-NEWER semantics (`rc_verifier_in_flight`, via dispatch-
+  provenance markers): "in flight" means dispatched AFTER the newest unverified
+  merge, not merely dispatched at some point in the past (a stale verifier marker
+  older than the newest open build still leaves the gate BLOCKING — self-tested,
+  OBL4b). A genuinely fresh role=verifier dispatch relaxes the block, since the
+  backlog is already being worked.
+  `--waive '<reason>'` proceeds anyway, ledgered via `gc_escape_used` (same
+  workaround-sensor ledger the dashboard friction pane already reads).
+- `hooks/stop-verdict-dispatcher.sh`'s `_svd_obligation_check` refuses a session
+  ending DONE/CONTINUING once per unresolved gap-set (the SAME block-once-then-
+  ledger cycle every other Stop gap already rides) when a plan its final message
+  references has open obligations the terminal marker line does not name.
+
+**Practical effect for you (the orchestrator):** verify as you go, not in a batch at
+the end. If G2 blocks your next builder dispatch, dispatch `task-verifier` against
+the named open tasks first (or `--waive` with a real reason if a parallel wave's
+verifier is about to catch up anyway). Retirement condition: Stage-2 auto-dispatch
+(REQ-C6) supersedes this once an orchestrator session never accumulates unverified
+merges to begin with.
+
 ## Agent Teams pairing
 
 The orchestrator pattern (`Execution Mode: orchestrator`) and Agent Teams (`Execution Mode: agent-team`) are TWO COEXISTING execution modes for multi-task plans. They are not alternatives that replace each other; a downstream session picks one based on the work's coordination shape, and the harness supports both.
