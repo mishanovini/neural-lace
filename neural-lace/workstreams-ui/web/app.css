@@ -1195,19 +1195,46 @@ button, a, [role="button"] { min-height: 24px; }
      2. 1fr   — title (state-colored, item 5) + transient marker chips
                 (new / added-mid-build) + rare reference-lifecycle badges
                 (dangling-parent/cycle)
-     3. 190px — the task-span text (item 2 + Round 13 fix 6: "T3 next" /
+     3. 130px — the task-span text (item 2 + Round 13 fix 6: "T3 next" /
                 "all done", the done-half retired — the bar already says
                 how much) OR a master's two labeled fractions (spans into
-                column 4) OR, for a TASK row, "next"/"running" (fix 4)
+                column 4) OR, for a TASK row, "running" OR a per-task STAGE
+                chip + "next" (FIX 3c, below)
      4. 76px  — the progress bar + "n/m" fraction text (tabular-nums)
      5. 46px  — the EXCEPTION glyph (item 4) — empty for the three
                 DERIVABLE states, a small icon for the three the fraction
                 cannot derive (stalled/merged-unverified/unknown)
-     6. 132px — the EXCEPTION label chip (loud, full text) + any collapsed-
-                descendant roll-up badges (C1) ---- */
+     6. 210px — the EXCEPTION label chip (loud, full text) + any collapsed-
+                descendant roll-up badges (C1)
+   FIX 3 (2026-08-04, operator verbatim — three defects on this same row,
+   all fixed together since (a) funds (c) and (b) is the correctness gap
+   the wrap rule below closes):
+     (a) "there seems to be a fixed-width space between the Status column
+         and the Progress Bar column ... that space is just wasting space"
+         — column 3 was 190px, but a stripped task id + "next"/"running"/
+         "all done" never needs that much (the existing text-overflow:
+         ellipsis on .rm-cell-taskspan, unchanged, is the safety net for
+         any outlier long enough to still overflow 130px). 190px -> 130px.
+     (b) "the tag at the end of each row seems to be cut off at the end of
+         the row" — column 6 was 132px, white-space:nowrap, with NO
+         ellipsis/wrap fallback: a real label ("11 stalled — no recent
+         dispatch", "merged — deploy unverified, 3h ago") simply overflowed
+         the fixed track with nothing to clip or wrap it, reading as
+         silently cut off past the row's visible edge. 132px -> 210px, AND
+         (see .rm-cell-exception below) the chip/badges inside this column
+         are now allowed to WRAP onto a second line instead of forcing one
+         unbreakable line — the full text is always reachable, never
+         silently dropped.
+     (c) "If the task gets to the verification stage, we should probably
+         add that into the status" — see roadmap.js's deriveTaskStage /
+         TASK-STAGE-BEGIN for the per-task stage chip that now fills
+         column 3 on rows that used to render nothing there.
+   Net row-width change: -60px (a) + 78px (b) = +18px — fixing (b) costs
+   more than (a) reclaims; both are correctness fixes, not a space
+   budget. ---- */
 .rm-node > summary.rm-row {
   display: grid;
-  grid-template-columns: 16px minmax(0,1fr) 190px 76px 46px 132px;
+  grid-template-columns: 16px minmax(0,1fr) 130px 76px 46px 210px;
   align-items: center;
   gap: 10px;
   cursor: pointer;
@@ -1264,8 +1291,43 @@ button, a, [role="button"] { min-height: 24px; }
    the leaf chip above and the running-green title, text-based (the word
    "running" is the non-colour carrier, WCAG 1.4.1). */
 .rm-taskspan-running { color: var(--running); font-weight: 600; }
+/* FIX 3c (operator, 2026-08-04): the per-task STAGE chip (roadmap.js's
+   deriveTaskStage) — the ladder the row previously had NO text signal for
+   at all (not-started vs. building vs. verified all rendered as an empty
+   column). Deliberately spends NO new colour: these are the exact same
+   three tokens (var(--muted)/var(--border2), var(--text)/var(--border2),
+   var(--done)) the not-started/in-progress/complete ladder already uses
+   elsewhere in this file (see .rm-title-not-started/-in-progress/-complete
+   and the dead-but-consistent .chip.rm-status-not-started/-in-progress/
+   -complete rules below) — "match the existing visual language, don't
+   introduce a new colour system" applies to a brand-new chip exactly as it
+   does to a new component. Separate class names (not a reuse of
+   .rm-status-*) because this ladder answers a DIFFERENT question (per-task
+   build-pipeline position, not the row's own six-value status) in a
+   different column — reusing the status classes here would make a future
+   `grep rm-status-in-progress` return two unrelated meanings. */
+.chip.rm-task-stage { white-space: nowrap; }
+.chip.rm-task-stage-not-started { color: var(--muted); border-color: var(--border2); }
+.chip.rm-task-stage-building { color: var(--text); border-color: var(--border2); }
+.chip.rm-task-stage-verified { color: var(--done); border-color: var(--done); }
 .rm-cell-exglyph { font-size: 13px; text-align: center; }
 .rm-cell-exception { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+/* FIX 3b (operator, 2026-08-04): the exception chip/roll-up badges used to
+   be forced `white-space: nowrap` (see .chip.rm-status below) with no
+   fallback — a label longer than the fixed 132px-then-210px column simply
+   overflowed with nothing to clip or wrap it, reading as silently cut off
+   at the row's edge. Scoped to THIS column only (not a global change to
+   .chip.rm-status, which the kanban card also reuses at a different, wider
+   width — see renderKanban) — letting the text wrap onto a second line
+   here means the row grows taller for a genuinely long combined label, but
+   the full text is ALWAYS fully visible, never silently dropped ("a status
+   the operator cannot read is a status that does not exist"). */
+.rm-cell-exception .chip.rm-status,
+.rm-cell-exception .chip.rm-rollup-badge {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
 .rm-cell-mastersummary { grid-column: 3 / 5; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 /* ---- six states, TITLE-carried (item 5 — recession not emphasis: the
    eye lands on the title, leftmost + largest, not on an 11px chip at the
