@@ -17,8 +17,8 @@ this view is regenerated, not edited.
 
 | Metric | Count |
 |---|---|
-| Total entries | 23 |
-| BINDING | 23 |
+| Total entries | 24 |
+| BINDING | 24 |
 | SUPERSEDED | 0 |
 | Operator-only (no code surface) | 2 |
 
@@ -422,4 +422,22 @@ this view is regenerated, not edited.
 > Sanctioned alternative: a mechanical check that validates the id against the one real source of truth (the plan's own task list) at the moment it is recorded, loud on mismatch, never silently guessing or normalizing away the mistake at the write site (normalization is a READER-side defense, per rc_open_verify_obligations -- the WRITE site's job is to say so, not to fix it quietly).
 
 *Source: operator directive 2026-08-03 (session 4a470c8c, mid-build on docs/plans/gated-pipeline-master-2026-08.md Task 25)*
+
+### OD-024 — solution-shape-layer-sweep
+
+**Status:** BINDING
+
+**Surfaces:**
+- `adapters/claude-code/doctrine/orchestrator-pattern.md`
+- `adapters/claude-code/doctrine/orchestrator-pattern-full.md`
+- `docs/plans/**`
+
+**Instruction:**
+
+> Rule: operator, verbatim (2026-08-04): "I want for you to always be thinking about comprehensive solutions. I am finding that it has consistently been the case that the solutions you propose tend to assume very simple, single-threaded issues and propose simple, single-threaded solutions. I keep trying to push for comprehensive solutions. ... the best solution should really include the mechanical solution: better prompting for guiding the agents in the correct direction, better pattern definition, etc. There are multiple layers available to us for making the harness do the right thing. I want for us to be utilizing all of those layers, not just one."
+> Golden case: 2026-08-04 status-vocabulary program -- instance = ~11 unknown-status cockpit chips (measured: 24 freelanced Status values across neural-lace + a sibling product repo's plans); class = plan Status fields have no validated vocabulary; all six layers (schema/data model, mechanical gate, parser/renderer, migration of existing estate, doctrine/pattern, agent prompt) named in the worked fixture, doctrine/orchestrator-pattern-full.md.
+> Anti-pattern: dispatching a single builder to patch only the reported symptom (e.g. teach the parser to accept one more freelanced string) with no class statement and no layer sweep -- solves the instance, reproduces the class.
+> Sanctioned alternative: the SOLUTION-SHAPE PROTOCOL (doctrine/orchestrator-pattern.md + -full.md) -- before the first builder dispatch, write a CLASS STATEMENT (the general failure class this defect instances) and sweep all six layers, each used or explicitly waived with a stated reason; instance-only is a justified exception, never the default; the dispatch prompt carries the class statement.
+
+*Source: operator directive 2026-08-04 (session 4a470c8c), 'THE COMPREHENSIVE-SOLUTIONS DIRECTIVE'*
 
