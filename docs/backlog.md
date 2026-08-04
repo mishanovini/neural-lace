@@ -3488,5 +3488,73 @@ guard or `cd`-based resolution. T25 guarded its own entry points only.
 
 - **COCKPIT-ASK-DETAIL-CLASSIFY-SESSIONS-PER-REQUEST-01 — `GET /api/ask/<id>` shells `hb_classify` once per request, uncached** (added 2026-08-02 from the same subprocess-storm fix; label: `harness-gap`, `priority:low`; fold-in: opportunistic, if ask-detail views become a hot path). `buildAskDetailPayload` (`neural-lace/workstreams-ui/server/server.js`) calls `deriveLib.classifySessions(sessionIds)` (`neural-lace/workstreams-ui/server/derive-lib.js`) on EVERY request, which spawns a bash login shell sourcing `session-heartbeat-lib.sh` and calling `hb_classify` per session id. NOT converted in this fix: `web/asks.js` only fetches `/api/ask/<id>` on first expand (not polled — confirmed by grep, no `setInterval`/SSE-driven refetch of the detail endpoint), so this is bounded by user click-rate rather than a clock or a change-storm, unlike the confirmed golden-case source. A short-TTL cache or single-flight-per-session-set would still be a legitimate small hardening if this view becomes hot. **Re-derive:** `grep -n "classifySessions" neural-lace/workstreams-ui/server/server.js neural-lace/workstreams-ui/server/derive-lib.js`.
 
-- **COCKPIT-SERVER-SELFTEST-FLAKY-ASK-FIXTURE-01 — `server.selftest.js` intermittently crashes mid-suite in the ask/dispatch-provenance fixture section, PRE-EXISTING and unrelated to the subprocess-storm fix** (added 2026-08-02 from the same fix's verification pass; label: `harness-gap`, `priority:medium`; fold-in: next touch of the ask-fixture setup in `server.selftest.js`). **PROVEN pre-existing:** reproduced identically on UNMODIFIED baseline code (git stash of every storm-fix change, two separate runs) — run 1 crashed `Error: ENOENT ... dispatch-provenance/fixture-marker__1.json` at the fixture-write step; run 2 crashed `TypeError: Cannot read properties of undefined (reading 'asks')` later in the same section, both around the S23+ ask-registry/dispatch-provenance scenarios. Two DIFFERENT crash points across two runs of the SAME unmodified code confirms a timing/race bug in the ask-fixture setup (likely a directory-creation race ahead of a synchronous write), not a deterministic break — and not something the storm fix touched (every scenario through S26b, including the DeriveCache-heavy S6b/S6c/S17/S22, passed cleanly both before and after this fix in every run). **Re-derive:** `node neural-lace/workstreams-ui/server/server.selftest.js` a few times in a row and compare crash points/lines.
+- **COCKPIT-SERVER-SELFTEST-FLAKY-ASK-FIXTURE-01 — `server.selftest.js` intermittently crashes mid-suite in the ask/dispatch-provenance fixture section, PRE-EXISTING and unrelated to the subprocess-storm fix** (added 2026-08-02 from the same fix's verification pass; label: `harness-gap`, `priority:medium`; fold-in: next touch of the ask-fixture setup in `server.selftest.js`). **PROVEN pre-existing:** reproduced identically on UNMODIFIED baseline code (git stash of every storm-fix change, two separate runs) — run 1 crashed `Error: ENOENT ... dispatch-provenance/fixture-marker__1.json` at the fixture-write step; run 2 crashed `TypeError: Cannot read properties of undefined (reading 'asks')` later in the same section, both around the S23+ ask-registry/dispatch-provenance scenarios. Two DIFFERENT crash points across two runs of the SAME unmodified code confirms a timing/race bug in the ask-fixture setup (likely a directory-creation race ahead of a synchronous write), not a deterministic break — and not something the storm fix touched (every scenario through S26b, including the DeriveCache-heavy S6b/S6c/S17/S22, passed cleanly both before and after this fix in every run). **Re-derive:** `node neural-lace/workstreams-ui/server/server.selftest.js` a few times in a row and compare crash points/lines. **Re-confirmed 2026-08-04** as part of the FIX-4 deploy-unverified-chip investigation below: reproduced identically with and without that fix's own (unrelated, additive-only) `completion-oracle.js` change, via `git stash`/`git stash pop` A-B on the same worktree — same crash, same line (`server.selftest.js:893`, `landingAfterDismiss.json.completed.asks` where `.completed` is undefined).
+
+## COCKPIT-ROADMAP-DEPLOY-UNVERIFIED-CHIP-INVESTIGATION-2026-08-04 — FIX 4 findings
+(label: `cockpit`, `harness-gap`; from the gated-pipeline FIX-4 dispatch investigating the
+operator's 2026-08-04 report "a lot of these plans are still showing that the deployment has
+not been verified"; filed same-turn per constitution §5)
+
+**Investigated:** `neural-lace/workstreams-ui/server/completion-oracle.js` (the deploy oracle) —
+own file, fixed in this dispatch (see `docs/decisions/` / plan evidence for the actual commit).
+**PROVEN, not reproducible as reported today:** all 7 of the 8 plans the operator named that
+actually appear in the roadmap (Agent Efficiency Fixes, Anti-vaporware config-controls, context-
+watermark, macOS portability, Supervisor tick, Deterministic-process review gate, Intended-
+Functionality statement) were re-derived LIVE against the real `~/.claude/state` ask-registry +
+`docs/plans/archive/` corpus on this machine (a fresh `node server/server.js` on a scratch port,
+`GET /api/roadmap`, current master HEAD 2afa84fc) and EVERY one already renders
+`status.value:"complete"` — zero `merged-unverified` items anywhere in the current roadmap. Root
+cause: these plans' project resolves to `neural-lace` (`planProjectFromPath`,
+`server/roadmap-routes.js:1259-1263`), whose oracle class has been `merged-is-deployed` since the
+oracle's original commit (`f1488def`, 2026-07-19, never since modified — `git log` verified) — an
+unconditional complete, no deploy evidence required, by design. No `config/completion-oracle.json`
+override exists on this machine (confirmed by directory listing) to have ever changed this.
+**HYPOTHESIS (unconfirmed, needs the operator to check):** the "still shows unverified" report
+reflects a stale/long-running cockpit server process (port 7733) that predates a recent merge —
+`GET /api/roadmap` has NO cache layer (`server.js:1201` calls `roadmapRoutes.handle` directly;
+`derive-cache.js` is a SEPARATE subsystem for the observability panes only, unrelated to this
+route), so a live re-derive on unmodified current code cannot itself explain stale output; a
+restart is the standard refuter. If the chips persist after a clean restart against current
+master, this hypothesis is wrong and needs fresh investigation with the operator's actual current
+screenshot.
+
+**REAL BUG FOUND AND FIXED (own file):** the module's OTHER class, `deploy-oracle` (for a project
+whose deploy confirmation is real evidence rather than "merged is deployed"), was permanently
+non-functional — no caller on any live path ever supplied `evaluateComplete()` a real
+`deployReadyAtMs`; the sole caller (`server/roadmap-routes.js:1565`, out of this dispatch's
+ownership) hardcodes `deployReadyAtMs: null` unconditionally. A project ever configured
+`deploy-oracle` could NEVER show complete, no matter how much real evidence existed. Fixed by
+adding `deployReadyAtMsForProject`/`deployReadyAtMsFromReviewIndex`/`readReviewIndexEntries` to
+`completion-oracle.js` — a pure, sync, file-based (no spawn, A6-safe) reader of
+`docs/reviews/records/index.json` (the file `write-review-record.sh`'s own header names as "the
+ONE file the deploy gate actually reads on its hot path"), self-tested (scenarios 12-21,
+`completion-oracle.js --self-test`) including a byte-for-byte fixture of the REAL committed
+record `hcr-20260803-52d447a5` (2026-08-03 review-gated install.sh sync, the exact example the
+operator's own context cited). **NOT YET WIRED IN:** replacing `roadmap-routes.js:1565`'s
+hardcoded `null` with a call to `deployReadyAtMsForProject` is a `roadmap-routes.js` change,
+explicitly out of this dispatch's ownership (parallel builder owns that file) — a real follow-up,
+not implied done here.
+
+**SEPARATE REAL BUG FOUND, NOT MINE TO FIX (`roadmap-routes.js`/`derive-lib.js`):** one of the 8
+named plans, "Requests tab" (`docs/plans/archive/requests-tab-visibility-fix-2026-07-30.md`,
+`Status: COMPLETED`), is not merely showing "unverified" — it is ABSENT from the roadmap
+entirely, worse than the reported symptom. PROVEN root cause: the archive-recency gate
+(`scanPlanDir`, `roadmap-routes.js` ~line 666, `if (archived && !recentSlugs[slug]) return`)
+requires either (a) a registered `ask-registry.jsonl` entry linking the slug
+(`recentSlugsFromAskLinks`, `roadmap-routes.js:452-460`) — confirmed ZERO such entries exist
+(`grep -c requests-tab-visibility-fix ~/.claude/state/ask-registry.jsonl` = 0) — or (b) a
+progress-log event in the shared UNLINKED lane (`recentSlugsFromEvents`, `roadmap-routes.js:469-
+475`, calls `deriveLib.readAskEvents('')` → `derive-lib.js:90-94` reads only
+`progress-logs/unlinked.jsonl`). This plan's 10 real events (most recent `2026-08-04T04:56:06Z`,
+today) live in `progress-logs/ask-auto-69752570c1d63e96.jsonl` — a NAMED-ask file, not
+`unlinked.jsonl` (confirmed: 0 matches in `unlinked.jsonl` itself) — AND that ask id has ZERO
+entries in `ask-registry.jsonl` (confirmed by grep: it was apparently never registered at all).
+Net effect: a completed, recently-active plan with an orphaned (unregistered) ask is invisible to
+BOTH recency-evidence functions and silently drops out of the roadmap. **Re-derive:**
+`grep -c requests-tab-visibility-fix ~/.claude/state/ask-registry.jsonl` (expect 0),
+`grep -c requests-tab-visibility-fix ~/.claude/state/progress-logs/ask-auto-69752570c1d63e96.jsonl`
+(expect >0), `grep -c requests-tab-visibility-fix ~/.claude/state/progress-logs/unlinked.jsonl`
+(expect 0). Fold-in: next touch of `recentSlugsFromEvents`/`readAskEvents` or the orphaned-ask
+reconciliation sweep (this repo already has precedent for salvaging orphaned worktree/ask state —
+see recent `T21 salvage pass` commits).
 
