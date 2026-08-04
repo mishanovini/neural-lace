@@ -106,12 +106,46 @@ dr__script_dir() {
 dr__resolve_root() {
   local sd root
   sd="$(dr__script_dir)"
+  # PRIMARY: the shared canonical resolver (lib/nl-paths.sh, ~20 other hooks
+  # already use it — this file skipped it and paid for the gap, gated-
+  # pipeline-master-2026-08 Task 8 doctor triage). nl_repo_root() has an
+  # NL_REPO_ROOT env tier and an install-time ~/.claude/local/nl-repo-path
+  # config-file tier BEFORE it falls back to git — both of which this file's
+  # old git+manual-climb-only implementation lacked. That absence is exactly
+  # why the doctor's self-test sweep (which runs hooks/lib/*.sh from the LIVE
+  # MIRROR at ~/.claude/hooks/lib/, not a git checkout) mis-resolved fixtures:
+  # ~/.claude is not a git repo, so the git tier failed, and the manual climb
+  # below (`../../../..`, sized for the REPO depth hooks/lib -> hooks ->
+  # claude-code -> adapters -> root) climbed only 4 levels from the LIVE
+  # layout's shallower hooks/lib -> hooks -> .claude -> <user>, landing at
+  # the user's home directory's PARENT (one level short of the real
+  # checkout) — reproduced directly by running this climb from the live
+  # path: ROOT resolved to the Users-drive root, and the fixture path
+  # formula then appended "adapters/claude-code/tests/fixtures/directives-
+  # register" beneath that wrong root, so the self-test reported the
+  # fixtures missing at a path that does not exist. nl_repo_root()'s
+  # config-file tier (written by install.sh) resolves correctly from
+  # either location.
+  if [[ -f "${sd}/nl-paths.sh" ]]; then
+    # shellcheck disable=SC1091
+    if source "${sd}/nl-paths.sh" 2>/dev/null && declare -F nl_repo_root >/dev/null 2>&1; then
+      root="$(nl_repo_root)"
+      if [[ -n "$root" ]]; then
+        printf '%s\n' "$root"
+        return 0
+      fi
+    fi
+  fi
+  # FALLBACK (nl-paths.sh missing/unreadable): the old behavior, unchanged.
   root="$(git -C "$sd" rev-parse --show-toplevel 2>/dev/null)"
   if [[ -n "$root" ]]; then
     printf '%s\n' "$root"
     return 0
   fi
   # Manual climb fallback: hooks/lib -> hooks -> claude-code -> adapters -> root
+  # (correct ONLY for the repo-shaped depth; kept as a last resort so a
+  # checkout missing nl-paths.sh degrades to today's behavior rather than
+  # a hard failure).
   root="$(cd "$sd/../../../.." 2>/dev/null && pwd)"
   if [[ -n "$root" ]]; then
     printf '%s\n' "$root"

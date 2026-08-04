@@ -3242,9 +3242,46 @@ the declared name, and never the absence of a declaration.**
    branches multiplies Actions minutes by the ~20-branches/day worktree churn. Recommend
    `push: branches-ignore: [worktree-*, harness/active-sessions/*]` if adopted at all.
 
-## SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 — harness-doctor.sh's own P-14 jq-parity self-test
-cannot exercise its nonode fallback on Windows/MSYS2 (added 2026-08-03, gated-pipeline-master-
-2026-08 Task 8 doctor triage; label: `harness-gap`, `priority:medium`).
+## SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 — FIXED 2026-08-04 (shim launcher only; see
+CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01 below for a genuine bug this fix unmasked) — harness-
+doctor.sh's own P-14 jq-parity self-test could not exercise its nonode fallback on Windows/
+MSYS2 (added 2026-08-03, gated-pipeline-master-2026-08 Task 8 doctor triage; label:
+`harness-gap`, `priority:medium`).
+
+**Fix landed (gated-pipeline-master-2026-08 Task 8 continuation, 2026-08-04):** per this entry's
+own proposed direction — `_nonode_path()` (harness-doctor.sh, self-test section) no longer
+symlinks `bash` into the shim, and `_run_quick_nonode()` resolves the real interpreter via
+`${BASH:-$(command -v bash)}` BEFORE the `PATH="$shim"` override, so the grandchild's own
+command-name lookup never touches the shim's PATH. **Re-verified: 4 of the 5 previously-crashing
+scenarios now PASS** (`dpp-jq-parity-red`, `dpp-jq-parity-grandfather`, `ngeb-jq-parity-red`,
+`budget-chains-jq-parity-red`) — `harness-doctor.sh --self-test` went from 186 passed/5 failed to
+190 passed/1 failed. The 5th (`claim-honesty-jq-parity-red`) no longer crashes either, but now
+fails with a DIFFERENT, genuine finding — see the new entry below; the "independently confirmed
+the doctor's jq branches themselves are fine... no divergence found... by inspection" claim
+originally in this entry is WRONG for `claim-honesty` specifically (inspection missed it because
+the shim crash had never let the jq branch actually run before now).
+
+## CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01 — `extract_manifest_gates`'s jq fallback and node branch
+produce different output for the same manifest fixture (added 2026-08-04, gated-pipeline-
+master-2026-08 Task 8 doctor triage continuation, exposed by fixing SELFTEST-SWEEP-NONODE-SHIM-
+WINDOWS-01 above; label: `harness-gap`, `priority:medium`).
+
+**Symptom, PROVEN (`harness-doctor.sh --self-test`, scenario `claim-honesty-jq-parity-red`):**
+against the self-test's `wired-gate` fixture, the node branch of `extract_manifest_gates`
+(harness-doctor.sh:656-664) emits ONE claim-honesty RED (`manifest gate 'pending-gate' has
+wired_template false and no honest_status`); the jq branch (harness-doctor.sh:665-672) emits
+THAT SAME RED plus a SECOND one the node branch never produces: `manifest gate 'wired-gate'
+claims wired_template true but hook 'wired-gate.sh' does not appear in live settings.json — run
+install`. The two branches are supposed to be byte-identical (`_assert_node_jq_parity`'s whole
+purpose, harness-doctor.sh ~4410-4420) — this is a real divergence, not a fixture artifact (the
+same fixture drives both branches in the same self-test run).
+
+**Not root-caused here (out of this task's sweep-layer scope):** HYPOTHESIZED (refuter: diff the
+raw `GATE`/`GH` stream lines the two branches emit for the `wired-gate` entry, byte for byte,
+against harness-doctor.sh:656-672's two implementations) — the jq form's boolean/array handling
+of `wired_template`/`hooks` for this entry shape differs from the node form's, causing check_claim_
+honesty's live-settings.json cross-check (harness-doctor.sh:710-727) to fire on the jq branch
+only. Needs a side-by-side stream dump to confirm before touching either jq or node expression.
 
 **Symptom:** `harness-doctor.sh --self-test` reports 5 failing scenarios (`dpp-jq-parity-red`,
 `dpp-jq-parity-grandfather`, `ngeb-jq-parity-red`, `claim-honesty-jq-parity-red`,
@@ -3302,6 +3339,75 @@ is non-hermetic by construction — it will flake whenever it happens to run nea
 boundary. Not chased further (would require reading model-pin-gate.sh's fixture-injection path
 in depth); flagged so a future pass hermeticizes the tier-state input for these two scenarios
 rather than reading `adapters/claude-code/config/model-policy.json`'s live state.
+
+## SELFTEST-SWEEP-NOT-STALENESS-2026-08-04 — six selftest-sweep REDs are NOT explained by
+live-vs-repo staleness, contra this task's own working hypothesis (added 2026-08-04,
+gated-pipeline-master-2026-08 Task 8 doctor triage continuation; label: `harness-gap`,
+`priority:low`).
+
+**Context:** this session's dispatch hypothesized that most of the 14 selftest-sweep REDs named
+in the 2026-08-03 pass (`plan-reviewer.sh`, `scope-enforcement-gate-body.sh`,
+`session-start-digest.sh`, `session-start-auto-install.sh`, `concurrent-ownership-gate-body.sh`,
+`review-record-commit-gate.sh`, `model-pin-gate.sh`, `admission-lib.sh`, `git-command-parse.sh`,
+`self-sync-guard.sh`) share dispatch-chain-gate.sh's PROVEN root cause: the sweep runs the LIVE
+mirror copy (`~/.claude/hooks/...`), which lags an in-flight/unmerged branch's repo copy.
+`harness-doctor.sh`'s `check_selftest_sweep` was fixed this session (see the T8 commit) to
+detect this via `cmp -s` and downgrade a genuinely-diverged failure from RED to a disclosed WARN.
+
+**PROVEN by direct `cmp` on this checkout, same session:** `dispatch-chain-gate.sh` (182 live
+lines vs 1121 repo lines) and `review-record-push-gate.sh` (2096 vs 2774) ARE explained by
+staleness — confirmed massively diverged. But six of the ten named above are **byte-identical**
+between the live mirror and the repo copy at the same relative path: `plan-reviewer.sh`,
+`review-record-commit-gate.sh`, `model-pin-gate.sh`, `adapters/claude-code/hooks/lib/admission-
+lib.sh`, `adapters/claude-code/hooks/lib/git-command-parse.sh`, `adapters/claude-code/hooks/lib/
+self-sync-guard.sh` (`cmp` exit 0 on every pair, checked directly). Staleness cannot be the cause
+for these six — whatever fails, fails identically regardless of which copy runs.
+`scope-enforcement-gate-body.sh` / `session-start-digest.sh` / `session-start-auto-install.sh` /
+`concurrent-ownership-gate-body.sh` DO diverge (9-63 lines) but far less than the two proven
+cases; not independently re-run this session (time-boxed), so their sweep REDs remain of
+UNKNOWN cause pending a direct re-run.
+
+**Per-suite disposition of the six byte-identical ones:**
+- `model-pin-gate.sh` — already covered by `MODEL-PIN-GATE-SELFTEST-NONHERMETIC-01` above; the
+  byte-identity finding here is consistent with (does not refute) that entry's non-hermetic-
+  tier-state HYPOTHESIS.
+- `self-sync-guard.sh` — PROVEN (direct re-run this session): 4 passed, 5 failed. Every failure
+  is a symlink-creation assertion (`ln: failed to create symbolic link '.../dangling.json': No
+  such file or directory`) — the SAME class this file's 2026-08-03 section already names as
+  "Windows-specific self-test friction" (nonode-shim symlink, NTFS-reserved-character fixtures).
+  HYPOTHESIZED: Windows/NTFS symlink-creation limitation in the fixture, not a doctor-sweep
+  defect (refuter: run on macOS/Linux — if it also fails there, the cause is a genuine fixture
+  bug, not environmental).
+- `adapters/claude-code/hooks/lib/admission-lib.sh` — PROVEN (direct re-run this session): **80
+  passed, 0 failed, full GREEN.** The sweep's own "79/1" does not reproduce directly — same
+  TRANSIENT-not-durable pattern as `model-pin-gate.sh` above (byte-identical live/repo copy,
+  passes standalone, fails under sweep load). Not chased further; likely a shared-resource/
+  timing sensitivity common to self-tests run back-to-back inside a ~50+-suite sweep, not a
+  defect in the lib itself.
+- `adapters/claude-code/hooks/lib/git-command-parse.sh` — PROVEN (direct re-run this session,
+  identified): **114 passed, 1 failed, both times — same single scenario**: `FAIL: 32KB
+  separator-dense commit took 697ms — the fast path is not being taken`. This is a PERFORMANCE
+  THRESHOLD assertion, not a correctness one. HYPOTHESIZED (refuter: re-run alone on an idle
+  machine — if it passes, timing-sensitivity is confirmed; if it still fails at ~700ms, the fast
+  path genuinely regressed and this becomes a real perf bug): both of this session's "direct"
+  re-runs executed WHILE a massive concurrent `harness-doctor.sh --full` sweep (and, for the
+  first re-run, ANOTHER self-test) were consuming CPU on the same machine — i.e. NEITHER run was
+  actually on an idle machine, so this may be the SAME transient/CPU-contention class as
+  `model-pin-gate.sh`/`admission-lib.sh` above, not a genuinely-reproducible defect. Correcting
+  this entry's own earlier (wrong) claim that this was "NOT transient" — that claim compared two
+  contended runs to the sweep's own contended run, which proves nothing about idle-machine
+  behavior. OPEN — needs a genuinely idle-machine re-run to classify.
+- `plan-reviewer.sh`, `review-record-commit-gate.sh` — direct re-run attempted this session but
+  not concluded within the time budget (both are large/slow suites; `plan-reviewer.sh` alone is
+  independently measured elsewhere in this file at ~987s). OPEN, not yet investigated — same
+  disposition the 2026-08-03 pass already gave both; this entry additionally rules out staleness
+  as their cause.
+
+**Why not chased further here:** this task's mission was the SWEEP-LAYER defects (path mangling,
+skip-vs-fail rc contract, live-vs-repo disclosure) plus fixes "you cannot fix cheaply" get
+dispositioned, not root-caused. These six are per-suite genuine-or-flaky failures requiring
+individual, potentially lengthy (10-15+ min per suite) investigation — out of proportion for this
+pass. Flagged so a future pass runs each to a direct conclusion.
 
 ## NL-ISSUES-TRIAGE-20260803 — nl-issue triage escalation (auto-filed)
 
