@@ -2165,11 +2165,14 @@ ok('R12-0 selftest can locate the TASK-SPAN/FILTER-MATCH extraction anchors (sou
 // into the title cell instead. R12-3/R12-6 FLIP here (both pinned the OLD
 // 7-column template/order) — a grid-template-columns assertion that
 // survives retiring a whole column was never proving the column existed.
-ok('R13-1 the row is a CSS grid with the 6-column template (marker column retired — chevron / 1fr title / 190px task-span / 76px fraction / 46px exception-glyph / 132px exception-label), align-items:center, gap:10px',
-  /\.rm-node > summary\.rm-row\s*\{[^}]*display:\s*grid/.test(C) &&
-  /grid-template-columns:\s*16px minmax\(0,1fr\) 190px 76px 46px 132px/.test(C) &&
-  /\.rm-node > summary\.rm-row\s*\{[^}]*align-items:\s*center/.test(C) &&
-  /\.rm-node > summary\.rm-row\s*\{[^}]*gap:\s*10px/.test(C));
+//
+// R13-1 (which pinned the column count AND the 190px/132px widths) is
+// SUPERSEDED, not merely deleted — the column-count/order half of what it
+// proved is still true and still covered by R13-2/R13-3 below; the width
+// half is now R21-1 (FIX 3a/3b section, further down this file), which
+// pins the NEW widths and explicitly asserts the OLD ones are gone. Kept
+// here as a removal note rather than a silent disappearance, per this
+// file's own discipline against unexplained assertion churn.
 ok('R12-4 the fraction text uses tabular-nums so "5/6" and "12/14" align digit-for-digit down a column',
   /\.rm-progress-text\s*\{[^}]*font-variant-numeric:\s*tabular-nums/.test(C));
 ok('R12-5 the title truncates with CSS ellipsis, and the FULL title (never just the slug) lives in title= for the truncated case',
@@ -2874,8 +2877,13 @@ const elSrc = extractMarkedBlock(roadmapJs, '// EL-HELPER-BEGIN', '// EL-HELPER-
 const runningClaimSrc = extractMarkedBlock(roadmapJs, '// RUNNING-CLAIM-BEGIN', '// RUNNING-CLAIM-END');
 const taskSpanCellSrc = extractMarkedBlock(roadmapJs, '// TASK-SPAN-CELL-BEGIN', '// TASK-SPAN-CELL-END');
 const nodeIsActiveSrc = extractMarkedBlock(roadmapJs, '// NODE-IS-ACTIVE-BEGIN', '// NODE-IS-ACTIVE-END');
-ok('R20-0 selftest can locate the EL-HELPER/RUNNING-CLAIM/TASK-SPAN-CELL/NODE-IS-ACTIVE extraction anchors (source-execution harness precondition)',
-  !!elSrc && !!runningClaimSrc && !!taskSpanCellSrc && !!nodeIsActiveSrc);
+// FIX 3c (2026-08-04): taskSpanCell now calls deriveTaskStage (a SEPARATE
+// marked block, TASK-STAGE-BEGIN/END, upstream of TASK-SPAN-CELL in
+// roadmap.js) — runCell's sandbox must concatenate it in too, or every
+// task-kind cell throws a ReferenceError the moment it's exercised.
+const taskStageSrc = extractMarkedBlock(roadmapJs, '// TASK-STAGE-BEGIN', '// TASK-STAGE-END');
+ok('R20-0 selftest can locate the EL-HELPER/RUNNING-CLAIM/TASK-SPAN-CELL/NODE-IS-ACTIVE/TASK-STAGE extraction anchors (source-execution harness precondition)',
+  !!elSrc && !!runningClaimSrc && !!taskSpanCellSrc && !!nodeIsActiveSrc && !!taskStageSrc);
 
 // The VERBATIM live payload for stale-dispatch-plan/1: status.value
 // 'stalled', and ONE attached session whose OWN status.value is 'stalled'
@@ -2915,7 +2923,7 @@ const RUNNING_TASK_PAYLOAD = {
 function runCell(payload, isNext) {
   const sandbox = { document: makeFakeDom() };
   vmMod.createContext(sandbox);
-  const code = elSrc + '\n' + runningClaimSrc + '\n' + taskSpanSrc + '\n' + taskSpanCellSrc +
+  const code = elSrc + '\n' + runningClaimSrc + '\n' + taskSpanSrc + '\n' + taskStageSrc + '\n' + taskSpanCellSrc +
     '\nvar __cell = taskSpanCell(' + JSON.stringify(payload) + ', ' + (isNext ? 'true' : 'false') + ');' +
     '\nvar __out = __cell.children.map(function (c) { return { cls: c.className, text: c.textContent }; });';
   try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
@@ -2939,21 +2947,124 @@ ok('R13-61 taskSpanCell: a task that is BOTH the next open task AND genuinely ru
     const c = runCell(RUNNING_TASK_PAYLOAD, true);
     return !c.__error && c.length === 1 && c[0].text === 'running' && /rm-task-running/.test(c[0].cls);
   })());
-ok('R20-3 a stale-session task that IS the next open task falls through to the neutral "next" token — the row still says something true, it does not go silently blank',
+// AMENDMENT (FIX 3c, operator, 2026-08-04): R20-3 and R20-4 originally
+// pinned exactly the bug the operator went on to name — "a task that is
+// BUILT and MERGED but awaiting task-verifier renders identically to one
+// never started (plain unchecked row)". R20-3's stale-but-next task USED
+// TO render the bare positional word "next" with NO build-stage context;
+// R20-4's untouched task USED TO render nothing at all — the same "blank"
+// a not-started task and a stalled one were both reduced to. Both are
+// FLIPPED here to pin the fix (deriveTaskStage, TASK-STAGE-BEGIN in
+// roadmap.js) rather than the gap it closes — this is the exact "existing
+// assertion encoded the old broken behavior" case, not a weakened check:
+// the new assertions are STRICTER (they pin two children / the stage
+// class, not just an absence of "running").
+ok('R20-3 a stale (stalled, not running) task that IS the next open task now renders its build-STAGE ("building" — status.value stalled comes from the same real-heartbeat not-done branch as in-progress/unknown, per roadmap-routes.js\'s own payload-contract doc) ahead of the neutral "next" token — the row says TWO true things, not one, and never goes silently blank',
   (function () {
     const c = runCell(STALE_TASK_PAYLOAD, true);
-    return !c.__error && c.length === 1 && c[0].text === 'next' && /rm-task-next/.test(c[0].cls);
+    return !c.__error && c.length === 2 &&
+      c[0].text === 'building' && /chip rm-task-stage rm-task-stage-building/.test(c[0].cls) &&
+      c[1].text === 'next' && /rm-task-next/.test(c[1].cls);
   })());
-ok('R20-4 an EMPTY live_sessions array still renders nothing (the pre-existing honest-absence behavior is unchanged by the predicate swap)',
+ok('R20-4 a genuinely untouched task (not-started, empty live_sessions, not next) now renders an explicit "not started" stage chip — THE OPERATOR\'S NAMED DEFECT: this cell used to render nothing here, making it visually IDENTICAL to a task whose work was done but unverified (R20-3\'s "building" case) or a stalled one (R20-1). An empty cell could never distinguish those; an explicit, always-on stage label can',
   (function () {
     const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'not-started' }, roll_up: {}, live_sessions: [] }, false);
-    return !c.__error && c.length === 0;
+    return !c.__error && c.length === 1 && c[0].text === 'not started' && /chip rm-task-stage rm-task-stage-not-started/.test(c[0].cls);
   })());
 ok('R20-5 a session leaf with a MISSING/partial status object never counts as running (defensive: the predicate reads status.value, so a malformed leaf is not a running claim)',
   (function () {
     const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'stalled' }, roll_up: {}, live_sessions: [{ id: 'a', title: 'x' }, { id: 'b', title: 'y', status: {} }] }, false);
     return !c.__error && c.every((x) => x.text !== 'running');
   })());
+ok('R20-6 a complete task (checkbox flipped — task-verifier is the ONLY checkbox-flipper, per this repo\'s own harness doctrine, so a checked box already IS a verified claim) renders an explicit "verified" stage chip, not an empty cell',
+  (function () {
+    const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'complete' }, roll_up: {}, live_sessions: [] }, false);
+    return !c.__error && c.length === 1 && c[0].text === 'verified' && /chip rm-task-stage rm-task-stage-verified/.test(c[0].cls);
+  })());
+ok('R20-7 a not-started task that nonetheless carries a live session (a dispatch that just started, 0 progress yet) reads "building", not "not started" — the belt-and-braces OR in deriveTaskStage never misses live evidence just because status.value has not caught up yet',
+  (function () {
+    const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'not-started' }, roll_up: {}, live_sessions: [{ id: 'a', title: 'x', status: { value: 'stalled' } }] }, false);
+    return !c.__error && c.length === 1 && c[0].text === 'building' && /rm-task-stage-building/.test(c[0].cls);
+  })());
+ok('R20-8 a not-started task carrying running_now:true (but no live_sessions array) ALSO reads "building" — the OR checks running_now independently of live_sessions.length',
+  (function () {
+    const c = runCell({ id: 'p/1', kind: 'task', title: 't', status: { value: 'not-started' }, roll_up: {}, running_now: true, live_sessions: [] }, false);
+    return !c.__error && c.length === 1 && c[0].text === 'building' && /rm-task-stage-building/.test(c[0].cls);
+  })());
+
+// ---- deriveTaskStage: standalone pure-function execution (no DOM) --------
+function taskStage(itemExpr) { return runPure(taskStageSrc, 'deriveTaskStage(' + itemExpr + ')'); }
+ok('R20-9 deriveTaskStage: complete -> verified',
+  taskStage('{status:{value:"complete"}}') === 'verified');
+ok('R20-10 deriveTaskStage: in-progress/stalled/unknown -> building (the payload contract\'s own words: all three come from the SAME real-heartbeat-backed not-done derivation branch)',
+  taskStage('{status:{value:"in-progress"}}') === 'building' &&
+  taskStage('{status:{value:"stalled"}}') === 'building' &&
+  taskStage('{status:{value:"unknown"}}') === 'building');
+ok('R20-11 deriveTaskStage: not-started with zero live evidence -> not-started (never overclaimed)',
+  taskStage('{status:{value:"not-started"},live_sessions:[]}') === 'not-started' &&
+  runPure(taskStageSrc, 'deriveTaskStage({status:{value:"not-started"}})') === 'not-started');
+ok('R20-12 deriveTaskStage: malformed/absent item never throws — defaults to not-started, the honest floor',
+  runPure(taskStageSrc, 'deriveTaskStage(null)') === 'not-started' &&
+  runPure(taskStageSrc, 'deriveTaskStage({})') === 'not-started');
+ok('R20-13 deriveTaskStage is self-contained (does not reference isRunningNow/hasRunningSession from the RUNNING-CLAIM block) — it reads item.running_now directly so the block can be extracted and executed alone',
+  !/isRunningNow\(|hasRunningSession\(/.test(taskStageSrc));
+
+// ---- FIX 3a/3b: the row grid (real CSS, not source presence) -------------
+// AMENDMENT (2026-08-04): R13-1 pinned the OLD 190px/132px column widths as
+// a load-bearing invariant. The operator has since identified BOTH numbers
+// as the actual defect ("a fixed-width space ... just wasting space" /
+// "the tag ... cut off at the end of the row") — pinning them further would
+// pin the bug, not the fix. Flipped to the new 130px/210px template; the
+// mutation-control half (56px must stay gone) is unchanged.
+ok('R21-1 (was R13-1) the row grid: 130px task-span (reclaimed from the operator-identified wasted 190px) / 210px exception-label (widened from the operator-identified cut-off 132px), the other four tracks unchanged, align-items:center, gap:10px',
+  /\.rm-node > summary\.rm-row\s*\{[^}]*display:\s*grid/.test(C) &&
+  /grid-template-columns:\s*16px minmax\(0,1fr\) 130px 76px 46px 210px/.test(C) &&
+  !/grid-template-columns:\s*16px minmax\(0,1fr\) 190px 76px 46px 132px/.test(C) &&
+  /\.rm-node > summary\.rm-row\s*\{[^}]*align-items:\s*center/.test(C) &&
+  /\.rm-node > summary\.rm-row\s*\{[^}]*gap:\s*10px/.test(C));
+ok('R21-2 mutation control: the retired 56px marker column has NOT crept back in with this width change',
+  !/56px/.test(C.match(/\.rm-node > summary\.rm-row\s*\{[^}]*\}/)[0]));
+ok('R21-3 FIX 3b: the exception column\'s status chip AND roll-up badges are allowed to wrap (white-space:normal, overflow-wrap:anywhere) SCOPED to .rm-cell-exception — never a blanket change to .chip.rm-status (which the kanban card also uses at a different width)',
+  /\.rm-cell-exception \.chip\.rm-status, \.rm-cell-exception \.chip\.rm-rollup-badge \{[^}]*white-space:\s*normal/.test(C) &&
+  /\.rm-cell-exception \.chip\.rm-status, \.rm-cell-exception \.chip\.rm-rollup-badge \{[^}]*overflow-wrap:\s*anywhere/.test(C));
+ok('R21-4 FIX 3b belt-and-braces: statusChip() also sets a title= with the full text on the (non-button) span branch, so the complete label is discoverable via hover even if narrow enough to still wrap mid-word',
+  /chip = el\('span', chipClass, text\);\s*\n[\s\S]{0,300}?chip\.title = text;/.test(roadmapJsNoComments));
+ok('R21-5 FIX 3c: the new per-task stage chip reuses the EXISTING not-started/in-progress/complete colour tokens (var(--muted)/var(--border2), var(--text)/var(--border2), var(--done)) — no new colour system introduced for this chip',
+  /\.chip\.rm-task-stage-not-started\s*\{\s*color:\s*var\(--muted\);\s*border-color:\s*var\(--border2\)/.test(C) &&
+  /\.chip\.rm-task-stage-building\s*\{\s*color:\s*var\(--text\);\s*border-color:\s*var\(--border2\)/.test(C) &&
+  /\.chip\.rm-task-stage-verified\s*\{\s*color:\s*var\(--done\);\s*border-color:\s*var\(--done\)/.test(C));
+
+// ---- FIX 3 trailer: the optional staleness/snapshot-age indicator --------
+// A parallel builder (different worktree, invisible to this session) is
+// adding these fields to GET /api/roadmap; snapshotStalenessSuffix reads
+// them defensively and is a pure, self-contained function (does not depend
+// on formatAge being in scope — formatAge is STUBBED below, matching the
+// existing renderUnboundSrc test's own precedent for this exact situation).
+const snapshotStalenessSrc = extractMarkedBlock(roadmapJs, '// SNAPSHOT-STALENESS-BEGIN', '// SNAPSHOT-STALENESS-END');
+ok('R21-6 selftest can locate the SNAPSHOT-STALENESS extraction anchor',
+  !!snapshotStalenessSrc);
+function runStalenessSuffix(payloadExpr) {
+  const sandbox = {};
+  vmMod.createContext(sandbox);
+  const code = 'function formatAge(iso) { return "3m ago"; }\n' + snapshotStalenessSrc +
+    '\nvar __result = snapshotStalenessSuffix(' + payloadExpr + ');';
+  try { vmMod.runInContext(code, sandbox); } catch (err) { return { __error: String(err) }; }
+  return sandbox.__result;
+}
+ok('R21-7 snapshotStalenessSuffix renders NOTHING (empty string) when the payload carries none of the guessed field names — inert by construction, never a fabricated placeholder, on a payload shaped exactly like TODAY\'S real /api/roadmap response',
+  runStalenessSuffix('{ok:true, generated_at:"2026-08-04T00:00:00Z", items:[]}') === '');
+ok('R21-7b inert on a null/absent payload too (never throws)',
+  runStalenessSuffix('null') === '');
+ok('R21-8 snapshotStalenessSuffix renders a compact HEAD note when head_sha is present',
+  runStalenessSuffix('{head_sha:"2afa84fc1234"}') === ' — HEAD 2afa84fc');
+ok('R21-9 snapshotStalenessSuffix renders a behind-count note only when > 0 (never "0 behind" noise)',
+  runStalenessSuffix('{behind_count:3}') === ' — 3 behind' &&
+  runStalenessSuffix('{behind_count:0}') === '');
+ok('R21-10 snapshotStalenessSuffix renders the snapshot age via the (stubbed) formatAge, and appends the scan root in parens when present, combining all parts in one compact suffix',
+  runStalenessSuffix('{head_sha:"abc123",behind_count:2,snapshot_derived_at:"2026-08-04T00:00:00Z",scan_root:"/repo"}') ===
+    ' — HEAD abc123, 2 behind, snapshot 3m ago (/repo)');
+ok('R21-11 setAgeLabel (DOM wiring) calls snapshotStalenessSuffix(lastPayload) and appends it to the existing age text — source-verified (the DOM assembly is exercised behaviorally by R21-7..10 above via the same extracted function)',
+  /ageEl\.textContent = 'derived ' \+ formatAge\(lastDerivedAt\)[\s\S]{0,120}?snapshotStalenessSuffix\(lastPayload\)/.test(roadmapJsNoComments));
 
 // runPredicate(src, expr) — the two other swept sites are pure, so they run
 // without a DOM.
