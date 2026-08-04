@@ -3542,7 +3542,7 @@ condition, F7-F10 minors named-not-fixed by the reviewer's own instruction):
 5. **F7 — vaporware "weekly" backstop docs conflict.** Some harness doc(s) describe a
    scheduled/weekly full-tree hygiene audit that does not exist as a live mechanism (only the
    manually-invoked `/harness-review` skill wraps `--full-tree`, and it is not on any schedule per
-   `adapters/claude-code/config/schedule-manifest.json`). Sweep `grep -rn "weekly.*hygiene\|periodic.*full-tree" adapters/claude-code/` and correct or retire each claim.
+   `adapters/claude-code/config/schedule-manifest.json`). Sweep `grep -rn -i "weekly.*hygiene|periodic.*full-tree|required check|branch.protection requires" adapters/claude-code/ .github/ docs/` and correct or retire each claim. WIDENED 2026-08-04 (delta re-review): the class includes unverified-enforcement-semantics claims — "REQUIRED check" asserted without querying live branch protection; one shipped in the C-round itself, one pre-existed in server-side-enforcement.yml (both fixed at merge).|periodic.*full-tree" adapters/claude-code/` and correct or retire each claim.
 6. **F8 — unbounded ledger scan on the Stop path.** `ws_open_escape_obligations` (called from
    `_svd_escape_naming_check` on every Stop) reads the ENTIRE `workaround-sensor.jsonl` via `cat`
    with no line cap, unlike `session-start-digest.sh`'s own `feed_bypass_surface` (`tail -n 1000`).
