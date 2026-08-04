@@ -369,7 +369,19 @@ fi
 # agent is covered without an edit here).
 _dcg_build_types() {
   local file="${DCG_MODEL_POLICY_PATH:-$_dcg_dir/../config/model-policy.json}"
-  [[ -f "$file" ]] || return 0
+  if [[ ! -f "$file" ]]; then
+    # T17 remedy R1b (2026-08-04): this used to `return 0` SILENTLY, which on
+    # any installed machine where config/ was never deployed (the R1a fix
+    # closes that gap going forward, but a partial/stale/manually-pruned
+    # deploy can still hit this) made G2 chain-validation a permanent,
+    # invisible no-op -- every build-category dispatch misclassified as
+    # non-build and waved through the M-7 proceed branch with zero signal.
+    # Loud + explicit fail-open per the design's own Failure-modes contract
+    # ("never silent"): name the missing file and the exact degraded
+    # behavior on every affected dispatch, not just once.
+    echo "dispatch-chain-gate: WARN — config/model-policy.json not found at $file; G2 cannot classify build-category subagent_types, so chain-validation is DEGRADED (fail-open: this dispatch is treated as non-build and proceeds WITHOUT a chain check). Fix: ensure config/ is deployed alongside hooks/ (install.sh's dir loop / session-start-auto-install.sh's SYNC_SUBDIRS must both carry config/), or set DCG_MODEL_POLICY_PATH." >&2
+    return 0
+  fi
   jq -r '.agents | to_entries[] | select(.value.category=="build") | .key' "$file" 2>/dev/null
 }
 
@@ -403,7 +415,17 @@ _dcg_is_build_type() {
 # at the T17 merge train, 2026-08-03).
 _dcg_grandfathered() {
   local slug="$1" file="${DCG_GRANDFATHER_PATH:-$_dcg_dir/../config/g2-grandfather-slugs.txt}"
-  [[ -n "$slug" && -f "$file" ]] || return 1
+  [[ -n "$slug" ]] || return 1
+  if [[ ! -f "$file" ]]; then
+    # T17 remedy R1b (2026-08-04): same class as _dcg_build_types above --
+    # was a SILENT `return 1`. Loud here too, even though "not grandfathered"
+    # is the fail-SAFE direction for this specific check (a legacy plan that
+    # should have been exempted instead gets held to a real chain, never the
+    # reverse) -- the operator still needs to know the exemption mechanism is
+    # unreachable, not just that this one dispatch got the safe outcome.
+    echo "dispatch-chain-gate: WARN — config/g2-grandfather-slugs.txt not found at $file; G2 cannot check the legacy-plan exemption, so grandfather lookup is DEGRADED for this slug (treated as NOT grandfathered -- fails toward requiring a real review chain, never toward silently exempting one). Fix: ensure config/ is deployed alongside hooks/ (install.sh's dir loop / session-start-auto-install.sh's SYNC_SUBDIRS must both carry config/), or set DCG_GRANDFATHER_PATH." >&2
+    return 1
+  fi
   local h; h="$(printf '%s' "$slug" | sha256sum 2>/dev/null | cut -d' ' -f1)"
   [[ -n "$h" ]] || return 1
   grep -vE '^[[:space:]]*(#|$)' "$file" 2>/dev/null | grep -qxF "$h"
@@ -1022,6 +1044,38 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   _st "no-repo-cwd-warns-and-passes-rc0" "0" "$RC10"
   NOREPOWARN=$(printf '%s\n' "$OUT10" | grep -c -i "not inside a git repo")
   _st "no-repo-cwd-warn-names-no-repo" "1" "$(( NOREPOWARN > 0 ? 1 : 0 ))"
+
+  # ==========================================================================
+  # T17 remedy R1b (2026-08-04): the installed-form no-op the verifier's A/B
+  # probe found -- both config/ dependencies missing MUST degrade LOUDLY, not
+  # silently. Assert on the WARN TEXT itself, not just rc: a silent fail-open
+  # and a loud fail-open produce the SAME rc, so rc alone cannot distinguish
+  # "fixed" from "still silent."
+  # ==========================================================================
+
+  # --- config absent: model-policy.json missing -> G2 cannot classify
+  # build-category subagent_types at all, so this build-category dispatch
+  # falls through the SAME path a genuinely non-build type would (M-7
+  # proceed, rc0) -- but must now WARN, naming the file and "DEGRADED". -----
+  OUT12="$(cd "$G2R" && DCG_MODEL_POLICY_PATH="$G2T/does-not-exist-model-policy.json" bash "$_dcg_dir/dispatch-chain-gate.sh" <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 1 of docs/plans/g2-demo-valid.md","prompt":"NL-ATTRIBUTION: plan=g2-demo-valid task=1 role=builder\nBuild Task 1 of docs/plans/g2-demo-valid.md in your worktree."}}' 2>&1)"
+  RC12=$?
+  _st "config-absent-model-policy-fails-open-rc0" "0" "$RC12"
+  MPWARN=$(printf '%s\n' "$OUT12" | grep -c -F "model-policy.json not found")
+  _st "config-absent-model-policy-warns-names-file" "1" "$(( MPWARN > 0 ? 1 : 0 ))"
+  MPDEGRADED=$(printf '%s\n' "$OUT12" | grep -c -i "DEGRADED")
+  _st "config-absent-model-policy-warns-names-degraded" "1" "$(( MPDEGRADED > 0 ? 1 : 0 ))"
+
+  # --- config absent: grandfather registry missing -> a chain-less plan's
+  # exemption check is unreachable, so it BLOCKS (fails toward a real chain,
+  # never toward silent exemption) -- but must WARN, naming the file and
+  # "DEGRADED", not just silently return "not grandfathered". --------------
+  OUT13="$(cd "$G2R" && DCG_GRANDFATHER_PATH="$G2T/does-not-exist-grandfather.txt" bash "$_dcg_dir/dispatch-chain-gate.sh" <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 1 of docs/plans/g2-demo-new-plan.md","prompt":"NL-ATTRIBUTION: plan=g2-demo-new-plan task=1 role=builder\nBuild Task 1 of docs/plans/g2-demo-new-plan.md in your worktree."}}' 2>&1)"
+  RC13=$?
+  _st "config-absent-grandfather-still-blocks-rc2" "2" "$RC13"
+  GFMISSWARN=$(printf '%s\n' "$OUT13" | grep -c -F "g2-grandfather-slugs.txt not found")
+  _st "config-absent-grandfather-warns-names-file" "1" "$(( GFMISSWARN > 0 ? 1 : 0 ))"
+  GFMISSDEGRADED=$(printf '%s\n' "$OUT13" | grep -c -i "DEGRADED")
+  _st "config-absent-grandfather-warns-names-degraded" "1" "$(( GFMISSDEGRADED > 0 ? 1 : 0 ))"
 
   # --- non-spawn tool (Bash) -> silently untouched --------------------------
   OUT11="$(bash "$_dcg_dir/dispatch-chain-gate.sh" <<<'{"tool_name":"Bash","tool_input":{"command":"ls"}}' 2>&1)"

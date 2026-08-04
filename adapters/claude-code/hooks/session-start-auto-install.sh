@@ -87,8 +87,15 @@ LIVE_DIR="${LIVE_DIR_OVERRIDE:-$HOME/.claude}"
 # Extended Wave-C C.5: doctrine/ added as the new canonical home for doctrine
 # content moved out of rules/ — never-delete semantics are fine here; canon
 # stops carrying the old rules/*.md content after the master merge, and
-# install.sh's rules-prune step is the one place stale rules/*.md get removed.)
-SYNC_SUBDIRS="hooks scripts agents rules templates skills doctrine"
+# install.sh's rules-prune step is the one place stale rules/*.md get removed.
+# Extended T17 remedy R1 (2026-08-04): config/ added -- dispatch-chain-gate.sh
+# reads config/model-policy.json + config/g2-grandfather-slugs.txt SCRIPT-
+# LOCATION-RELATIVE to its own installed location, by explicit design, and
+# neither install.sh's dir loop nor this SYNC_SUBDIRS list deployed config/ at
+# all before this fix -- every installed machine's G2 gate silently degraded
+# to a permanent no-op. config/ is the FIRST heterogeneous-extension subdir
+# (.json/.txt/.md/.example) -- see _subdir_ext below.)
+SYNC_SUBDIRS="hooks scripts agents rules templates skills doctrine config"
 
 # Review-before-deploy gate (harness-governance-batch-2026-07-15, task 2;
 # design: docs/design-notes/review-record-primitive.md, Amendment F). This
@@ -169,10 +176,15 @@ if ! declare -F nl_run_bounded >/dev/null 2>&1; then
   }
 fi
 
-# Per-subdir canonical file extension: executable (.sh) vs content (.md).
+# Per-subdir canonical file extension(s): executable (.sh) vs content (.md)
+# vs config (heterogeneous -- .json/.txt/.md/.example; T17 remedy R1,
+# 2026-08-04). Space-separated when a subdir ships more than one type; every
+# caller (sync_canonical_files' ls-tree filter, its live-side drift glob, and
+# the chmod-executable check) must treat the result as a SET, not a scalar.
 _subdir_ext() {
   case "$1" in
     hooks|scripts) printf 'sh' ;;
+    config)        printf 'json txt md example' ;;
     *)             printf 'md' ;;
   esac
 }
@@ -322,14 +334,20 @@ _content_same() {
 }
 
 # Sync canonical files of one subdir (hooks|scripts=.sh, agents|rules|
-# templates|skills=.md) into live. master-wins. Args: nl_dir, ref, subdir
+# templates|skills=.md, config=.json/.txt/.md/.example) into live. master-
+# wins. Args: nl_dir, ref, subdir
 sync_canonical_files() {
   local nl="$1" ref="$2" subdir="$3"
   local live_sub="$LIVE_DIR/$subdir"
-  local ext; ext=$(_subdir_ext "$subdir")
+  # exts is a SET (space-separated, may be multiple -- config/ ships
+  # heterogeneous file types; every other subdir today is single-extension,
+  # but the code below never assumes that). ext_pat is the same set as an
+  # ERE alternation for the ls-tree filter below.
+  local exts; exts=$(_subdir_ext "$subdir")
+  local ext_pat; ext_pat=$(printf '%s' "$exts" | tr ' ' '|')
   mkdir -p "$live_sub" 2>/dev/null || true
 
-  # Canonical paths for this subdir at the ref (extension per subdir),
+  # Canonical paths for this subdir at the ref (extension SET per subdir),
   # RELATIVE to the subdir. `-r` (recursive) is required: skills are
   # directory-form (`skills/<name>/SKILL.md` — the only form the Skill tool
   # registers; flat `skills/<name>.md` is silently non-invocable, see
@@ -340,7 +358,7 @@ sync_canonical_files() {
   # flat listing previously missed.
   local canon_list
   canon_list=$(git -C "$nl" ls-tree -r --name-only "$ref" "adapters/claude-code/$subdir/" 2>/dev/null \
-    | grep "\\.${ext}\$" | sed "s#^adapters/claude-code/$subdir/##" | sort -u)
+    | grep -E "\\.(${ext_pat})\$" | sed "s#^adapters/claude-code/$subdir/##" | sort -u)
   [ -z "$canon_list" ] && return 0
 
   local b tmp target
@@ -391,15 +409,20 @@ sync_canonical_files() {
       fi
     fi
 
+    # Per-FILE extension (not per-subdir "$ext"): config/ ships a set, and
+    # only a genuine .sh member of that set (none today, but the check must
+    # be file-accurate, not subdir-accurate) should ever get +x.
+    local b_ext="${b##*.}"
+
     if [ "$is_missing" -eq 1 ]; then
-      cp "$tmp" "$target" 2>/dev/null && { [ "$ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
+      cp "$tmp" "$target" 2>/dev/null && { [ "$b_ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
       N_INSTALLED=$((N_INSTALLED + 1))
       _log "installed $subdir/$b (was missing)"
     elif [ "$is_diff" -eq 1 ]; then
       # master-wins, but back up the prior live copy first ($b may be nested).
       mkdir -p "$BACKUP_DIR/$subdir/$(dirname "$b")" 2>/dev/null || true
       cp "$target" "$BACKUP_DIR/$subdir/$b" 2>/dev/null || true
-      cp "$tmp" "$target" 2>/dev/null && { [ "$ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
+      cp "$tmp" "$target" 2>/dev/null && { [ "$b_ext" = sh ] && chmod +x "$target" 2>/dev/null; :; }
       N_UPDATED=$((N_UPDATED + 1))
       _log "updated $subdir/$b (backed up prior copy to $(basename "$BACKUP_DIR")/$subdir/)"
     else
@@ -409,9 +432,13 @@ sync_canonical_files() {
   done <<< "$canon_list"
 
   # Count live files NOT in canonical (informational drift; never touched —
-  # with ONE exception below for migrated flat skills).
-  local f base
-  for f in "$live_sub"/*."$ext"; do
+  # with ONE exception below for migrated flat skills). Loops over every
+  # extension in the SET (config/ has more than one; every other subdir's
+  # set today is a single element, so this is a no-behavior-change
+  # generalization for them).
+  local f base one_ext
+  for one_ext in $exts; do
+  for f in "$live_sub"/*."$one_ext"; do
     [ -e "$f" ] || continue
     base=$(basename "$f")
     if ! printf '%s\n' "$canon_list" | grep -qx "$base"; then
@@ -440,6 +467,7 @@ sync_canonical_files() {
       fi
       N_DRIFT=$((N_DRIFT + 1))
     fi
+  done
   done
   return 0
 }
@@ -1128,6 +1156,27 @@ TMPL
     echo "PASS: kill-switch-marker-absent-normal-behavior-unchanged"; pass=$((pass+1))
   else
     echo "FAIL: kill-switch-marker-absent-normal-behavior-unchanged (out: $out)"; fail=$((fail+1))
+  fi
+
+  # ---- Scenario 25 (T17 remedy R1, 2026-08-04): config/ syncs EVERY
+  # extension in its set (.json AND .txt), not just one -- the exact class
+  # of gap that left dispatch-chain-gate.sh's config/model-policy.json and
+  # config/g2-grandfather-slugs.txt undeployed on every installed machine
+  # before this fix (SYNC_SUBDIRS did not carry config/ at all, and
+  # _subdir_ext was a single scalar extension per subdir -- config/ is the
+  # first heterogeneous one). ----
+  mkdir -p "$CANON/adapters/claude-code/config"
+  printf '%s\n' '{"agents":{"plan-phase-builder":{"category":"build"}}}' > "$CANON/adapters/claude-code/config/model-policy.json"
+  printf '%s\n' '# g2 grandfather list (opaque sha256 entries)' > "$CANON/adapters/claude-code/config/g2-grandfather-slugs.txt"
+  ( cd "$CANON" && git add -A && git commit --quiet -m "add config/ (T17 remedy self-test fixture)" )
+  local L25="$tmp/live25"; mkdir -p "$L25"
+  out=$(_run_main "$L25")
+  if [ -f "$L25/config/model-policy.json" ] && [ -f "$L25/config/g2-grandfather-slugs.txt" ] \
+     && diff -q "$L25/config/model-policy.json" <(git -C "$CANON" show master:adapters/claude-code/config/model-policy.json) >/dev/null 2>&1 \
+     && diff -q "$L25/config/g2-grandfather-slugs.txt" <(git -C "$CANON" show master:adapters/claude-code/config/g2-grandfather-slugs.txt) >/dev/null 2>&1; then
+    echo "PASS: config-subdir-syncs-heterogeneous-extensions (.json AND .txt both deployed)"; pass=$((pass+1))
+  else
+    echo "FAIL: config-subdir-syncs-heterogeneous-extensions (out: $out; ls: $(ls "$L25/config" 2>/dev/null))"; fail=$((fail+1))
   fi
 
   echo ""
