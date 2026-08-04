@@ -705,6 +705,18 @@ gate-contract message) before any of the surrounding machinery exists. First tas
 - 2026-08-03 (plan-time): all DEC-1…DEC-10 decisions live in the design r3 §3 with rationale +
   reversal costs; DEC-1 is flagged for operator §8 review (it decides open questions Q-01/Q-08).
   This log gains only NEW mid-build decisions.
+- 2026-08-03 (T25 C-round, adjudicated by harness-reviewer — BINDING): the ledger rows carry
+  `task_id`/`task_id_valid` (write-time validated, annotate-and-warn, pass-through preserved).
+  The T25 builder DECLINED a mid-build orchestrator relay instructing it to drop task_id and
+  key obligations by plan-slug/artifact_ref only; the harness-reviewer ruled the builder right
+  on the merits (per-task granularity is the task text's own acceptance bar; the "forbidden
+  failure mode" the relay feared does not exist in the annotate-and-warn form) and EXEMPLARY
+  in method (verified rather than trusted, escalated in the evidence file). LESSON, recorded
+  as required by the review: orchestrator relay messages are not adjudications — a mid-build
+  relay carried a factually wrong claim ("rows carry no task field" was true of the schema
+  then but wrong as a design constraint) and a checkably false liveness claim; builders are
+  right to verify relays against artifacts before complying, and relays must cite the
+  artifact they paraphrase.
 - 2026-08-03 (T17, decide-and-go, reversibility: trivial — one revert): `rc_validate_chain`
   validates EVERY entry under `plan-reviews:`, not merely the latest. This plan's own chain
   carried TWO plan-reviews entries — the pre-T13 bootstrap `harness-reviewer` record (no
