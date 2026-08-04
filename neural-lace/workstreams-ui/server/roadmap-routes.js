@@ -560,14 +560,14 @@ function newestLinkTs(links) {
 // the operator actually configured. A malformed/absent config file is an
 // honest zero-length list (never a crash, never a silent guess).
 // R17 (operator 2026-07-30, decision A — multi-project grouping): each
-// entry supports TWO forms — the pre-existing flat string (`"Circuit":
+// entry supports TWO forms — the pre-existing flat string (`"AcmeApp":
 // "/abs/path"`, no group — those plans land in the honest '(ungrouped)'
 // display bucket, see projectGroupFor below) AND a new object form
-// (`"Circuit": { "root": "...", "group": "Pocket Technician" }`) that
+// (`"AcmeApp": { "root": "...", "group": "Acme Co" }`) that
 // additionally declares which top-level DISPLAY GROUP the repo's plans
 // belong to. `group` is deliberately read straight from the config file,
 // never defaulted/guessed here — the operator's own binding rule for this
-// round ("default group... for Circuit is NOT hardcoded").
+// round ("default group... for the example repo is NOT hardcoded").
 function configuredRepoRoots() {
   const cfgPath = process.env.ROADMAP_PROJECTS_CONFIG ||
     path.join(__dirname, '..', 'config', 'projects.json');
@@ -608,7 +608,7 @@ function projectGroupFor(projectKey) {
   // (same as the `{key:'self', root:...}` convention discoverPlanFiles
   // uses), which the operator's chosen config KEY need not equal (a
   // config key is just a human label picked for the JSON file; the real
-  // Circuit case happens to have key===basename==="Circuit", but that is
+  // configured-repo case can have key===basename, but that is
   // a coincidence, not a guarantee this lookup may rely on).
   const configured = configuredRepoRoots();
   for (let i = 0; i < configured.length; i++) {
