@@ -79,9 +79,18 @@
 #   {"ts":"...","bash_count":N,"claude_count":N,"worktree_count":N,
 #    "defender_cpu_ms":N|null,"degraded":bool,
 #    "reaped":[{"pid":N,"cmd_head":"...","age_min":N,"action":
-#    "reaped"|"reap_failed"|"would_reap"}]}
+#    "reaped"|"reap_failed"|"would_reap","what":"...",
+#    "why_it_existed":"...","which_prevention_failed":"..."}]}
 # "reaped" is `[]` when no orphan candidates were found this tick (a valid,
 # expected, common empty-reap result — not an error).
+#
+# what/why_it_existed/which_prevention_failed are the REQ-C5 minimal
+# cleanup-as-sensor fields (OD-007, DEC-8, gated-pipeline-master-2026-08
+# Task 23): this janitor is the harness's one REAL cleanup-performing
+# mechanism (estate-janitor.sh is a read-only reducer, never mutates —
+# see its own header); OD-007's golden case (repeated orphan/zombie
+# cleanups, P-12/P-13, with no learning record) is exactly what this
+# reaper used to do. See pts_reap_orphans for field semantics + consumer.
 #
 # ============================================================
 # ENV OVERRIDES (HARNESS_SELFTEST house convention + CMD-override
@@ -302,8 +311,35 @@ _pts_heartbeat_pids() {
 }
 
 # ---- orphan detection + reap ----------------------------------------------
-# Populates PTS_REAP_RESULTS (array of "pid|cmd_head|age_min|action").
-# Requires pts_collect_processes to have already run (uses PTS_PROC_ROWS).
+# Populates PTS_REAP_RESULTS (array of "pid|cmd_head|age_min|action|what|
+# why_it_existed|which_prevention_failed"). Requires pts_collect_processes
+# to have already run (uses PTS_PROC_ROWS).
+#
+# REQ-C5 minimal cleanup-as-sensor fields (OD-007 "cleanup-and-prevention-
+# as-sensor": "every cleanup logs {what, why it existed, which prevention
+# failed} -- a cleanup without a learning record is itself a defect";
+# DEC-8 minimal form; gated-pipeline-master-2026-08 Task 23). Each value is
+# computed HONESTLY from what this reaper actually knows at candidate time
+# -- it never invents a per-instance root cause the mechanism cannot see
+# (no write-ahead intent / job attribution exists yet -- S-23, explicitly
+# NOT BUILT this cycle), so why_it_existed/which_prevention_failed name the
+# one TRUE structural fact this reaper's own guard cascade already proves
+# for every candidate it finds (no Job-Object parent-child lifetime
+# binding on this platform), not a fabricated specific cause.
+#   what                    — which process, restated plainly (pid + name +
+#                             the dead ppid that orphaned it)
+#   why_it_existed           — the structural reason it survived long enough
+#                             to be a candidate
+#   which_prevention_failed  — the named mechanism that would have made this
+#                             cleanup unnecessary (S-21, explicitly planned,
+#                             NOT YET BUILT)
+# Consumer: no automated reader exists yet for these 3 fields -- the
+# PLANNED consumer is OD-007's own sanctioned next step, "weekly
+# aggregation [naming] the top producer for a proactive fix," once a
+# second measured loss class justifies building it (DEC-8, explicit
+# non-goal this cycle); the INTERIM real consumer is an operator/triage
+# session reading ticks.jsonl directly, same convention as
+# docs/reviews/2026-08-02-estate-entropy-triage.md.
 PTS_REAP_RESULTS=()
 pts_reap_orphans() {
   PTS_REAP_RESULTS=()
@@ -398,7 +434,17 @@ pts_reap_orphans() {
       action="would_reap"
     fi
 
-    PTS_REAP_RESULTS+=("${pid}|$(_pts_json_escape "$cmd_head")|${age_min}|${action}")
+    # REQ-C5 cleanup-as-sensor fields (see the header comment above
+    # PTS_REAP_RESULTS for the full contract + consumer) -- computed per
+    # candidate from facts this guard cascade already proved a few lines
+    # up (ppid absent from this snapshot, age past threshold): real,
+    # per-instance pid/ppid/age values, not a repeated constant string.
+    local what why_it_existed which_prevention_failed
+    what="orphaned ${name} pid ${pid} (parent pid ${ppid} no longer present in the process table)"
+    why_it_existed="its parent exited without this child self-terminating, and survived ${age_min}m past the ${age_threshold_min}m threshold -- no parent-child lifecycle binding enforces child death with parent exit on this platform"
+    which_prevention_failed="Job-Object KILL_ON_JOB_CLOSE child-lifetime binding (S-21, NOT YET BUILT) -- would have terminated this child automatically when its parent exited, making this reap unnecessary"
+
+    PTS_REAP_RESULTS+=("${pid}|$(_pts_json_escape "$cmd_head")|${age_min}|${action}|$(_pts_json_escape "$what")|$(_pts_json_escape "$why_it_existed")|$(_pts_json_escape "$which_prevention_failed")")
   done
   return 0
 }
@@ -427,12 +473,13 @@ pts_append_tick_line() {
   local degraded_bool="false"
   { [[ "${PTS_DEGRADED:-0}" == "1" ]] || [[ "${PTS_DEFENDER_DEGRADED:-0}" == "1" ]]; } && degraded_bool="true"
 
-  local reaped_json="" r first=1 rpid rcmd rage raction
+  local reaped_json="" r first=1 rpid rcmd rage raction rwhat rwhy rprevention
   for r in "${PTS_REAP_RESULTS[@]:-}"; do
     [[ -z "$r" ]] && continue
-    IFS='|' read -r rpid rcmd rage raction <<< "$r"
+    IFS='|' read -r rpid rcmd rage raction rwhat rwhy rprevention <<< "$r"
     if [[ "$first" == "1" ]]; then first=0; else reaped_json+=","; fi
-    reaped_json+="$(printf '{"pid":%s,"cmd_head":"%s","age_min":%s,"action":"%s"}' "$rpid" "$rcmd" "$rage" "$raction")"
+    reaped_json+="$(printf '{"pid":%s,"cmd_head":"%s","age_min":%s,"action":"%s","what":"%s","why_it_existed":"%s","which_prevention_failed":"%s"}' \
+      "$rpid" "$rcmd" "$rage" "$raction" "$rwhat" "$rwhy" "$rprevention")"
   done
 
   printf '{"ts":"%s","bash_count":%d,"claude_count":%d,"worktree_count":%d,"defender_cpu_ms":%s,"degraded":%s,"reaped":[%s]}\n' \
@@ -686,6 +733,44 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" && "${1:-}" == "--self-test" ]]; then
   [[ "$_pts_found_900" == "1" ]] && _pts_pass "old parent-dead pid 900 -> reap candidate" || _pts_fail "pid 900 should be a candidate (results: ${PTS_REAP_RESULTS[*]})"
   [[ "$_pts_found_901" == "0" ]] && _pts_pass "young parent-dead pid 901 -> NOT a candidate (still working)" || _pts_fail "pid 901 should NOT be a candidate"
   [[ "$_pts_found_902" == "0" ]] && _pts_pass "old parent-ALIVE pid 902 -> NOT a candidate" || _pts_fail "pid 902 should NOT be a candidate (parent 950 is alive)"
+
+  echo "Scenario 5b: REQ-C5 cleanup-as-sensor fields (Task 23) -- what/why_it_existed/which_prevention_failed are REAL, per-candidate values (not a hardcoded placeholder), both in PTS_REAP_RESULTS and in the actual ticks.jsonl ledger line"
+  _pts_900_entry=""
+  for _pts_r in "${PTS_REAP_RESULTS[@]}"; do
+    case "$_pts_r" in
+      900\|*) _pts_900_entry="$_pts_r" ;;
+    esac
+  done
+  # field 5=what field 6=why_it_existed field 7=which_prevention_failed
+  IFS='|' read -r _pts_f_pid _pts_f_cmd _pts_f_age _pts_f_action _pts_f_what _pts_f_why _pts_f_prevention <<< "$_pts_900_entry"
+  if [[ "$_pts_f_what" == *"900"* && "$_pts_f_what" == *"999999"* ]]; then
+    _pts_pass "what embeds THIS candidate's real pid (900) and real dead-ppid (999999), not a fixed string"
+  else
+    _pts_fail "what did not embed the real pid/ppid: '$_pts_f_what'"
+  fi
+  if [[ -n "$_pts_f_why" && "$_pts_f_why" == *"parent"* ]]; then
+    _pts_pass "why_it_existed is non-empty and names the structural cause (parent lifecycle)"
+  else
+    _pts_fail "why_it_existed missing/unexpected: '$_pts_f_why'"
+  fi
+  if [[ -n "$_pts_f_prevention" && "$_pts_f_prevention" == *"S-21"* ]]; then
+    _pts_pass "which_prevention_failed names the concrete planned prevention mechanism (S-21), not a vague placeholder"
+  else
+    _pts_fail "which_prevention_failed missing/unexpected: '$_pts_f_prevention'"
+  fi
+  # Now prove the SAME 3 fields reach the actual JSONL ledger line
+  # pts_append_tick_line writes (not just the in-memory array).
+  _pts_ledger_5b="$(pts_append_tick_line)"
+  if [[ -f "$_pts_ledger_5b" ]] && grep -q '"pid":900' "$_pts_ledger_5b" && grep -q '"what":"orphaned bash.exe pid 900' "$_pts_ledger_5b"; then
+    _pts_pass "ticks.jsonl ledger line carries the real 'what' text for pid 900 (write site, not just the array)"
+  else
+    _pts_fail "ledger line missing pid-900 'what' field: $(cat "$_pts_ledger_5b" 2>/dev/null)"
+  fi
+  if grep -q '"which_prevention_failed":"Job-Object' "$_pts_ledger_5b" 2>/dev/null; then
+    _pts_pass "ticks.jsonl ledger line carries which_prevention_failed"
+  else
+    _pts_fail "ledger line missing which_prevention_failed: $(cat "$_pts_ledger_5b" 2>/dev/null)"
+  fi
 
   echo "Scenario 6: heartbeat guard — a candidate whose pid matches a live heartbeat file is NEVER reaped"
   _PTS_HB_DIR="$_PTS_T/heartbeats"
