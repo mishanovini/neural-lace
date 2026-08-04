@@ -625,6 +625,9 @@ _ny_lint_ask_text() {
 
 _ny_lint_decision_text() {
   local text="$1"
+  # has_reply_with: "1" when the caller supplied --reply-with (a first-class
+  # field, so the text itself doesn't need to spell out a "Reply:" line).
+  local has_reply_with="${2:-0}"
   local -a warnings=()
 
   # --- (a) no-context ---------------------------------------------------
@@ -665,6 +668,19 @@ _ny_lint_decision_text() {
     fi
   fi
 
+  # --- (d) no-reply-line (S7, needs-you readability review 2026-08-03) ----
+  # WARN-ONLY BY DESIGN: unlike (a)-(c), cmd_add deliberately excludes this
+  # code from its interactive-block decision (see cmd_add's
+  # blocking_lint_warnings split below) -- constitution §10 requires a
+  # measured false-positive rate before ANY check earns blocking power, and
+  # this one has none yet. It is still stored in lint_warnings (cockpit
+  # Inbox / observability consumption, same array the other 3 codes use --
+  # T25's "decision-only" contract is unaffected, only the CODE SET grows)
+  # and produces its own warn-only stderr notice for both caller types.
+  if [[ "$has_reply_with" != "1" ]] && ! printf '%s' "$text" | grep -qiE '\breply\b'; then
+    warnings+=("no-reply-line")
+  fi
+
   local w
   for w in "${warnings[@]:-}"; do
     [[ -n "$w" ]] && printf '%s\n' "$w"
@@ -678,6 +694,22 @@ _ny_lint_decision_text() {
 cmd_add() {
   _ny_ensure_state
   local section="" text="" session_id="" tier="" mechanical=0
+  # S6 (needs-you readability review 2026-08-03) — three additive flags, all
+  # optional, all schema_version-1-compatible (extra JSON fields, every
+  # existing jq read tolerates them):
+  #   --reply-with <str>  stored verbatim as .reply_with; the Decide-now
+  #                        table (S2) and _ny_lint_decision_text's (d) check
+  #                        (S7) both prefer this field over heuristically
+  #                        extracting a "Reply:" line from --text.
+  #   --blocking           stored as .blocking=true; hoists this item to the
+  #                        top of the Awaiting-your-decision / Decide-now
+  #                        ordering (S3) ahead of merely-recent items.
+  #   --supersedes <id>    after this add succeeds, auto-resolves <id> with
+  #                        note "superseded by <new-id>". A missing/already-
+  #                        resolved target WARNS (stderr) and never dies —
+  #                        add must stay total (constraint 5, same rung as
+  #                        the Task-4 splice below).
+  local reply_with="" blocking=0 supersedes=""
   local -a links=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -687,6 +719,9 @@ cmd_add() {
       --link) links+=("$2"); shift 2 ;;
       --tier) tier="$2"; shift 2 ;;
       --mechanical) mechanical=1; shift ;;
+      --reply-with) reply_with="$2"; shift 2 ;;
+      --blocking) blocking=1; shift ;;
+      --supersedes) supersedes="$2"; shift 2 ;;
       *) die "add: unknown flag '$1'" ;;
     esac
   done
@@ -701,25 +736,47 @@ cmd_add() {
   local ts; ts="$(_ny_now)"
 
   # Cold-reader lint (constitution §3 amendment 53d3bee): --section decision
-  # only. WARN-only — never blocks add, never touches $?. See
-  # _ny_lint_decision_text's own header comment for the three checks.
+  # only. See _ny_lint_decision_text's own header comment for the checks.
+  #
+  # S7 (needs-you readability review 2026-08-03) split lint_warnings (the
+  # FULL set, stored on the ledger item for the cockpit Inbox / observability
+  # — unchanged contract) from blocking_lint_warnings (the subset that can
+  # actually BLOCK an interactive add or trigger the mechanical quarantine
+  # notice). Only the original 3 codes (no-context/no-anchor/no-outcomes) are
+  # blocking-eligible; the newer no-reply-line code is warn-only by design
+  # (constitution §10 — no measured false-positive rate yet) and can never
+  # block either caller type, even though it still lands in lint_warnings.
   local -a lint_warnings=()
+  local -a blocking_lint_warnings=()
   if [[ "$section" == "decision" ]]; then
+    local _ny_has_reply=0
+    [[ -n "$reply_with" ]] && _ny_has_reply=1
     while IFS= read -r _ny_lw; do
       [[ -n "$_ny_lw" ]] && lint_warnings+=("$_ny_lw")
-    done < <(_ny_lint_decision_text "$text")
-    if [[ "${#lint_warnings[@]}" -gt 0 ]]; then
+    done < <(_ny_lint_decision_text "$text" "$_ny_has_reply")
+    for _ny_lw in "${lint_warnings[@]:-}"; do
+      [[ -n "$_ny_lw" && "$_ny_lw" != "no-reply-line" ]] && blocking_lint_warnings+=("$_ny_lw")
+    done
+    if [[ "${#blocking_lint_warnings[@]}" -gt 0 ]]; then
       if [[ "$mechanical" == "1" ]]; then
         # MECHANICAL caller: store-and-quarantine, never reject (A1 — the
         # ledger-never-rejects contract; no live actor is present to retry a
-        # hook/dispatcher call, so the item must land somewhere).
+        # hook/dispatcher call, so the item must land somewhere). Message
+        # names the FULL set (lint_warnings) for completeness even though
+        # the block/quarantine decision itself only depends on the blocking
+        # subset.
         err "cold-reader lint: this decision entry is missing: ${lint_warnings[*]} (added anyway — MECHANICAL caller, stored + quarantined, never rejected; see needs-you.sh header 'LINT PROMOTION' for what each code means and why mechanical callers differ from interactive ones)"
       else
         # INTERACTIVE/MODEL-INVOKED path: BLOCK. A live session is present
         # and can retry with the missing context in the same turn — nothing
         # is written to the ledger (die() exits before _ny_write_ledger).
-        die "cold-reader lint BLOCKED this add (interactive path): missing ${lint_warnings[*]}. Add the missing context — background/what-is-this prose, a concrete artifact anchor (a repo path, URL, or id like NL-FINDING-035/NY-123/#456/a SHA), and per-option outcome text — and retry. If this is a scripted/dispatcher caller with no live actor to retry, pass --mechanical instead (that path stores + quarantines rather than blocking). See needs-you.sh header 'LINT PROMOTION' for exactly what each code means."
+        die "cold-reader lint BLOCKED this add (interactive path): missing ${blocking_lint_warnings[*]}. Add the missing context — background/what-is-this prose, a concrete artifact anchor (a repo path, URL, or id like NL-FINDING-035/NY-123/#456/a SHA), and per-option outcome text — and retry. If this is a scripted/dispatcher caller with no live actor to retry, pass --mechanical instead (that path stores + quarantines rather than blocking). See needs-you.sh header 'LINT PROMOTION' for exactly what each code means."
       fi
+    elif [[ "${#lint_warnings[@]}" -gt 0 ]]; then
+      # Only warn-only codes fired (currently just no-reply-line): never
+      # blocks, never quarantines — a lightweight notice for BOTH caller
+      # types, and the code is still stamped into the stored lint_warnings.
+      err "cold-reader lint (warn-only, never blocks): this decision entry is missing: ${lint_warnings[*]} — consider --reply-with or a 'Reply:' line so the operator knows exactly how to respond."
     fi
   elif [[ "$section" == "question" ]]; then
     # ASK LINT (constitution §2 "every ask is a complete instruction", 2026-07-28).
@@ -765,20 +822,33 @@ cmd_add() {
   if [[ "${#lint_warnings[@]}" -gt 0 ]]; then
     lint_warnings_csv=$(IFS=,; echo "${lint_warnings[*]}")
   fi
+  # blocking_lint_csv: the subset used for the progress-log "§3-context"
+  # flag below — kept scoped to the ORIGINAL 3 checks (background/anchor/
+  # outcomes) so a purely-cosmetic no-reply-line warning doesn't relabel an
+  # otherwise well-formed entry as missing §3 context.
+  local blocking_lint_csv=""
+  if [[ "${#blocking_lint_warnings[@]}" -gt 0 ]]; then
+    blocking_lint_csv=$(IFS=,; echo "${blocking_lint_warnings[*]}")
+  fi
   local cur; cur=$(_ny_read_ledger)
   local new
   new=$(echo "$cur" | jq \
     --arg id "$id" --arg ts "$ts" --arg section "$section" --arg text "$text" \
     --arg session_id "$session_id" --arg tier "$tier" --arg lint_csv "$lint_warnings_csv" \
+    --arg reply_with "$reply_with" --arg supersedes "$supersedes" \
+    --argjson blocking "$([[ "$blocking" == "1" ]] && echo true || echo false)" \
     '
     ($session_id | if . == "" then null else . end) as $session
     | ($tier | if . == "" then null else . end) as $tier_v
     | ($lint_csv | if . == "" then [] else split(",") end) as $lint_warnings
+    | ($reply_with | if . == "" then null else . end) as $reply_with_v
+    | ($supersedes | if . == "" then null else . end) as $supersedes_v
     | .items += [{
         id: $id, created_at: $ts, updated_at: $ts, section: $section, text: $text,
         links: $ARGS.positional, session: $session, tier: $tier_v,
         state: "open", resolved_at: null, resolution_note: null,
-        lint_warnings: $lint_warnings
+        lint_warnings: $lint_warnings, reply_with: $reply_with_v,
+        blocking: $blocking, supersedes: $supersedes_v
       }]
     ' \
     --args -- "${links[@]+"${links[@]}"}")
@@ -812,6 +882,18 @@ cmd_add() {
   cmd_render >/dev/null
 
   # ------------------------------------------------------------------
+  # S6 --supersedes: auto-resolve the named older entry now that the
+  # superseding item is safely on disk. Best-effort — a missing/already-
+  # resolved target WARNS on stderr and never fails `add` (constraint 5);
+  # the new entry has already been written by this point regardless.
+  # ------------------------------------------------------------------
+  if [[ -n "$supersedes" ]]; then
+    if ! cmd_resolve "$supersedes" --note "superseded by $id" >/dev/null 2>&1; then
+      err "add: --supersedes target '$supersedes' was not found (or could not be resolved) — '$id' was still added normally; the superseding link is recorded on '$id' (.supersedes) but the older entry was NOT auto-resolved. Resolve it by hand if it should close."
+    fi
+  fi
+
+  # ------------------------------------------------------------------
   # TASK 4 CALL POINT (ask-rooted-workstreams-p1): progress-log
   # waiting_on_operator emission + docs/operator-todo.md auto-pointer. See
   # this file's "TASK 4 SPLICE" header comment for the full contract + the
@@ -822,10 +904,10 @@ cmd_add() {
     decision|question)
       local _ny_ctx_flag="n/a"
       if [[ "$section" == "decision" ]]; then
-        if [[ "${#lint_warnings[@]}" -eq 0 ]]; then
+        if [[ "${#blocking_lint_warnings[@]}" -eq 0 ]]; then
           _ny_ctx_flag="present"
         else
-          _ny_ctx_flag="missing(${lint_warnings_csv})"
+          _ny_ctx_flag="missing(${blocking_lint_csv})"
         fi
       fi
       local _ny_title
@@ -927,6 +1009,18 @@ cmd_resolve() {
 # ----------------------------------------------------------------------
 NY_REVIEW_WINDOW_DAYS=7
 
+# NY_STALE_OPEN_DAYS (readability review 2026-08-03, S4): open decisions /
+# questions / in-flight items older than this (by created_at for decisions,
+# by the dedup group's FIRST-SEEN date for questions/inflight) render-time
+# demote out of their normal section into "## Probably dead — confirm to
+# close" instead of costing full-length attention forever. Render-time-only
+# partition -- NO ledger mutation (cmd_render stays idempotent; re-render is
+# still byte-identical apart from the Generated timestamp). One threshold
+# call made decide-and-go per the review's "Open questions for the operator"
+# section: 14 days is long enough that a week away doesn't demote a live
+# ask, short enough that a month-old cohort collapses.
+NY_STALE_OPEN_DAYS=14
+
 cmd_expire() {
   _ny_ensure_state
   local cutoff_secs=$(( NY_REVIEW_WINDOW_DAYS * 86400 ))
@@ -973,12 +1067,12 @@ cmd_expire() {
 #
 # ORDER MATTERS (nl-issues 2026-07-29 "needs-you.sh render corrupts paths"):
 # a literal backslash in the ORIGINAL text (e.g. a Windows path segment like
-# "Pocket Technician\neural-lace") is jq-@tsv-encoded as TWO backslash chars
+# "Example Co\neural-lace") is jq-@tsv-encoded as TWO backslash chars
 # ("\\") immediately followed by the literal 'n' -- i.e. \\n. Unescaping \t
 # and \n BEFORE restoring \\ (the previous implementation's order) makes the
 # second half of that escaped backslash look exactly like a real \n newline
 # token, so it got converted to an actual newline and silently ATE the 'n' --
-# splitting the path mid-word ("Pocket Technician\" / "eural-lace"). Fix:
+# splitting the path mid-word ("Example Co\" / "eural-lace"). Fix:
 # swap every escaped backslash out for a placeholder byte FIRST, so it can
 # never be misread as half of a \t/\n token; only restore the real backslash
 # at the very end, after \t/\n have already been expanded from what's left.
@@ -1012,9 +1106,9 @@ _ny_tsv_unescape() {
 #   instead), or -- the false-positive this comment used to not warn about,
 #   caught live in the real machine ledger the first time this rendered
 #   against production data -- truncating an unquoted Windows path at the
-#   first SPACE in a directory name ("C:\Users\misha\dev\Pocket Technician\..."
-#   has a space in "Pocket Technician"; an unquoted, whitespace-terminated
-#   match produced the truncated fragment "C:\Users\misha\dev\Pocket", which
+#   first SPACE in a directory name ("C:\Users\operator\dev\Example Co\..."
+#   has a space in "Example Co"; an unquoted, whitespace-terminated
+#   match produced the truncated fragment "C:\Users\operator\dev\Example", which
 #   isn't a real path at all and got wrongly flagged dead). Every real "run
 #   this file" pointer actually seen in this ledger is double-quoted
 #   (`bash "C:\...\foo.sh"` / `bash "/tmp/.../foo.sh"`), so scoping BOTH
@@ -1111,13 +1205,39 @@ _ny_render_decision_block() {
   # literal doubled backslashes ("C:\\Users\\...") instead of a real single
   # backslash. Same fix, same helper.
   links_line="$(_ny_tsv_unescape "$links_line")"
+
+  # S1 (needs-you readability review 2026-08-03, Finding 1 — render-title-
+  # duplication): the OLD code printed `### $(head -1 text)` and then the
+  # FULL text verbatim, including that same first line — every decision
+  # block's first two lines were identical walls. Fix: the title line is
+  # ONLY the (markdown-heading-stripped) first line of text; the body is
+  # everything AFTER that first line (tail -n +2), and is omitted entirely
+  # for a single-line entry rather than printing an empty line.
   local title
   title=$(printf '%s' "$text" | head -1)
+  # Strip a leading "#{1,6} " heading marker so a --text block whose first
+  # line is itself "### Foo" renders as "### Foo", not "### ### Foo" (the
+  # live double-hash defect the review's NY-1783716259-0a77 entry exhibited).
+  title=$(printf '%s' "$title" | sed -E 's/^#{1,6}[[:space:]]+//')
   [[ -n "$title" ]] || title="(untitled decision)"
+
+  local line_count body=""
+  line_count=$(printf '%s\n' "$text" | wc -l | tr -d ' ')
+  if [[ "${line_count:-0}" -gt 1 ]]; then
+    body="$(printf '%s\n' "$text" | tail -n +2)"
+  fi
+
   printf '### %s\n' "$title"
-  printf '%s\n' "$text"
-  printf 'Links: %s\n' "$links_line"
-  printf '*(added %s, session `%s`, id `%s`)*\n' "$created" "$session" "$id"
+  [[ -n "$body" ]] && printf '%s\n' "$body"
+
+  # Empty-field noise (Finding 8): suppress "Links: (none)" and a spelled-
+  # out "session `unknown`" — every line here competes with the signal.
+  [[ "$links_line" != "(none)" ]] && printf 'Links: %s\n' "$links_line"
+  if [[ -z "$session" || "$session" == "unknown" ]]; then
+    printf '*(added %s, id `%s`)*\n' "$created" "$id"
+  else
+    printf '*(added %s, session `%s`, id `%s`)*\n' "$created" "$session" "$id"
+  fi
 
   local -a raw_links=()
   local _ny_rl
@@ -1131,21 +1251,26 @@ _ny_render_decision_block() {
 
 _ny_render_bullet() {
   local it="$1"
-  local fields text session created dedup_count
-  fields=$(echo "$it" | jq -r '[.text, (.session // "unknown"), (.created_at | split("T")[0]), (._dedup_count // 1)] | @tsv')
-  IFS=$'\t' read -r text session created dedup_count <<< "$fields"
+  local fields text session created dedup_count first_seen
+  fields=$(echo "$it" | jq -r '[.text, (.session // "unknown"), (.created_at | split("T")[0]), (._dedup_count // 1), ((._first_seen // .created_at) | split("T")[0])] | @tsv')
+  IFS=$'\t' read -r text session created dedup_count first_seen <<< "$fields"
   text="$(_ny_tsv_unescape "$text")"
   # Dedup collapse (nl-issues 2026-07-29, defect class (b) "duplicate
-  # noise"): cmd_render's caller groups identical-text open bullets before
-  # calling this, stamping ._dedup_count == the group size and picking the
-  # FIRST-SEEN (earliest created_at) item as the representative -- so
-  # `created`/`session` here are already the first occurrence's. When the
-  # group has more than one member, name the repeat count instead of
-  # silently rendering N near-identical lines.
+  # noise"; renormalized S5, needs-you readability review 2026-08-03):
+  # cmd_render's caller groups open bullets by NORMALIZED text (volatile
+  # spans like "3d ago"/"alert #12" stripped before grouping) and stamps
+  # ._dedup_count == the group size, ._first_seen == the earliest member's
+  # created_at, and the item itself is the NEWEST member of the group (so
+  # `text`/`session`/`created` here reflect the most recent, most current
+  # occurrence — not a stale first report). When the group has more than
+  # one member, name the repeat count and cite when it was FIRST seen,
+  # instead of silently rendering N near-identical lines.
+  local _ny_session_clause=""
+  [[ -n "$session" && "$session" != "unknown" ]] && _ny_session_clause=", session \`$session\`"
   if [[ "${dedup_count:-1}" -gt 1 ]]; then
-    printf -- '- %s — *(added %s, session `%s`; x%s since %s)*\n' "$text" "$created" "$session" "$dedup_count" "$created"
+    printf -- '- %s — *(added %s%s; x%s since %s)*\n' "$text" "$created" "$_ny_session_clause" "$dedup_count" "$first_seen"
   else
-    printf -- '- %s — *(added %s, session `%s`)*\n' "$text" "$created" "$session"
+    printf -- '- %s — *(added %s%s)*\n' "$text" "$created" "$_ny_session_clause"
   fi
 
   local -a raw_links=()
@@ -1170,6 +1295,82 @@ _ny_render_decided_line() {
   else
     printf -- '- %s — resolved %s\n' "$text" "$resolved"
   fi
+}
+
+# ----------------------------------------------------------------------
+# _ny_render_decide_now_row <item-json> <row-number>  (S2, needs-you
+# readability review 2026-08-03) — one row of the new "## Decide now" table
+# rendered above the four canonical sections. <item-json> is one item from
+# cmd_render's decide_now_rows pool (an open decision or a deduped-fresh
+# open question, already carrying ._age_days from its source computation).
+# Columns: # | id (short suffix) | Ask (title, <=70 chars) | Reply with
+# (the .reply_with field if the caller supplied --reply-with, else a
+# heuristic extraction of the first text line matching /reply/i) | Age |
+# Blocking?.
+# ----------------------------------------------------------------------
+_ny_render_decide_now_row() {
+  local it="$1" idx="$2"
+  # Field separator: \x01 (NOT @tsv's tab). bash's `read` treats consecutive
+  # IFS WHITESPACE characters (space/tab/newline — tab included, regardless
+  # of what IFS is set to) as a SINGLE delimiter and silently drops empty
+  # fields between them; reply_with is legitimately empty whenever neither
+  # --reply-with nor a heuristic "reply" line was found, which with a tab
+  # delimiter silently shifted every column after it left by one. \x01 is
+  # not IFS-whitespace, so empty fields survive `read` intact (verified: a
+  # tab-delimited row with an empty middle field reads back with age/
+  # blocking shifted left by one; the same row with \x01 reads back
+  # correctly). This also means these already-single-line, hash/pipe-
+  # sanitized fields need no _ny_tsv_unescape pass (no @tsv backslash
+  # escaping was ever applied to them).
+  local fields idsuf title reply age blocking
+  fields=$(echo "$it" | jq -r '
+    def striphash: sub("^#{1,6}[[:space:]]+"; "");
+    (.id | split("-") | last) as $idsuf
+    | ((.text | split("\n")[0]) | striphash | gsub("[|]"; "/")) as $title0
+    | (if ($title0 | length) > 70 then ($title0[0:69] + "…") else $title0 end) as $title
+    | ((.reply_with // first(.text | split("\n")[] | select(test("reply"; "i"))) // "")) as $reply0
+    | (($reply0 | gsub("[|]"; "/"))) as $reply1
+    | (._age_days // 0) as $age
+    | (if (.blocking // false) then "yes" else "no" end) as $blocking
+    | [$idsuf, $title, $reply1, ($age | tostring), $blocking] | join("")
+  ')
+  fields="${fields%$'\r'}"
+  IFS=$'\x01' read -r idsuf title reply age blocking <<< "$fields"
+  # A heuristically-extracted line still carries its markdown/label
+  # decoration ("**Reply with:**", "Reply:") — strip it down to the payload.
+  # A --reply-with field (already just the payload) passes through unchanged.
+  reply="$(printf '%s' "$reply" | sed -E 's/\*\*//g; s/^[[:space:]]*[Rr]eply( with)?:?[[:space:]]*//; s/[[:space:]]+$//')"
+  [[ -n "$reply" ]] || reply="(see block below)"
+  [[ -n "$title" ]] || title="(untitled)"
+  printf '| %s | `%s` | %s | %s | %sd | %s |\n' "$idx" "$idsuf" "$title" "$reply" "$age" "$blocking"
+}
+
+# ----------------------------------------------------------------------
+# _ny_render_dead_line <item-json>  (S4, needs-you readability review
+# 2026-08-03) — one line of the new "## Probably dead — confirm to close"
+# section. <item-json> is any open decision/question/inflight item whose
+# ._age_days (decisions: since created_at; questions/inflight: since the
+# dedup group's first-seen date) exceeds NY_STALE_OPEN_DAYS. This NEVER
+# mutates the ledger or resolves anything itself — it is a render-time-only
+# demotion (cmd_render stays idempotent); the reply affordance is advisory
+# text for a human/agent to act on via the existing `resolve` verb. Display
+# uses the short id SUFFIX (matches the digest's convention, e.g. `caeb`)
+# but the reply affordance carries the FULL id, since `resolve <id>` still
+# requires an exact match — the hard contract's ids are unchanged.
+# ----------------------------------------------------------------------
+_ny_render_dead_line() {
+  local it="$1"
+  local fields id title age
+  fields=$(echo "$it" | jq -r '
+    def striphash: sub("^#{1,6}[[:space:]]+"; "");
+    [.id, ((.text | split("\n")[0]) | striphash | gsub("[|]"; "/")), (._age_days // 0 | tostring)] | @tsv
+  ')
+  IFS=$'\t' read -r id title age <<< "$fields"
+  title="$(_ny_tsv_unescape "$title")"
+  [[ -n "$title" ]] || title="(untitled)"
+  local idsuf="${id##*-}"
+  printf -- '- `%s` %s · %sd — reply `confirm dead %s` (resolves) / `still live %s` (re-promotes)\n' \
+    "$idsuf" "$title" "$age" "$id" "$id"
 }
 
 # ----------------------------------------------------------------------
@@ -1278,8 +1479,79 @@ cmd_bootstrap_migrate() {
 }
 
 # ----------------------------------------------------------------------
+# _NY_NORMKEY_JQDEF — shared jq `def normkey: ...;` text (S5, needs-you
+# readability review 2026-08-03, Finding 4). Strips VOLATILE spans from an
+# item's text before dedup-grouping, so a recurring mechanical emitter
+# (supervisor-tick's orphaned-worktree alert is the observed case: "last
+# commit Nd ago", "alert #N", "N live/throttled session(s)") groups its
+# near-identical re-reports into ONE bullet instead of N. Literal parens in
+# the volatile spans are matched via a bracket class ([(]/[)]) rather than a
+# backslash escape — jq string literals treat a bare `\(` as the START of
+# string interpolation, not an escaped paren, so `[(]`/`[)]` is both correct
+# and readable. Interpolated into both the Open-questions and In-flight jq
+# pipelines below (recurring noise was observed in both sections).
+# ----------------------------------------------------------------------
+_NY_NORMKEY_JQDEF='def normkey:
+    gsub("[0-9]+d ago"; "Nd ago")
+    | gsub("alert #[0-9]+"; "alert #N")
+    | gsub("[0-9]+ live/throttled session[(]s[)]"; "N live/throttled session(s)")
+    | gsub("dirty=[0-9]+ file[(]s[)]"; "dirty=N file(s)")
+    | gsub("unintegrated=[0-9]+ commit[(]s[)]"; "unintegrated=N commit(s)")
+    | gsub("First detected [^;]*;"; "First detected ;");'
+
+# ----------------------------------------------------------------------
+# _ny_split_tagged <tagged-jsonl>  (used by cmd_render's S4 fresh/stale
+# partition below).
+#
+# PERFORMANCE NOTE (this environment): sequential jq subprocess spawns
+# inside a single long-lived bash process have been observed to HANG on
+# this machine past a certain count (cmd_add's own jq-add-call comment
+# notes the same class). An early draft of cmd_render's fresh/stale
+# partitioning spawned ~14 jq processes per render (compute + a
+# fresh-filter + a stale-filter, x3 sections, plus separate `length`
+# calls) and reproducibly hung by the 2nd `add` in a row (each `add` calls
+# `render` internally). Fix: each section's jq call does age-tagging AND
+# emits a fresh/stale TAG prefix per line ("F\t{...}" / "S\t{...}") in ONE
+# pass; the fresh/stale SPLIT itself happens here in pure bash (no
+# subprocess). Counts use _ny_count_lines (grep, no subprocess spawn cost
+# beyond grep itself) instead of a separate `jq length` call. This drops
+# the fixed per-render jq-process count from ~14 to ~5.
+#
+# PORTABILITY: no `local -n` nameref (bash <4.3 — including this repo's
+# macOS/bash-3.2 floor — has no namerefs at all). Sets the two GLOBAL-scope
+# vars _NY_SPLIT_FRESH / _NY_SPLIT_STALE (safe: cmd_render is never
+# re-entrant/concurrent within one process); the caller copies them out
+# into its own locals immediately after each call.
+# ----------------------------------------------------------------------
+_ny_split_tagged() {
+  local _ny_st_in="$1"
+  _NY_SPLIT_FRESH=""; _NY_SPLIT_STALE=""
+  local _ny_st_tag _ny_st_json
+  while IFS=$'\t' read -r _ny_st_tag _ny_st_json; do
+    [[ -z "$_ny_st_tag" ]] && continue
+    if [[ "$_ny_st_tag" == "F" ]]; then
+      _NY_SPLIT_FRESH+="$_ny_st_json"$'\n'
+    else
+      _NY_SPLIT_STALE+="$_ny_st_json"$'\n'
+    fi
+  done <<< "$_ny_st_in"
+}
+
+# _ny_count_lines <possibly-empty-jsonl-string> — count of non-blank lines,
+# no jq subprocess (see _ny_split_tagged's PERFORMANCE NOTE above).
+_ny_count_lines() {
+  [[ -z "$1" ]] && { printf '0'; return; }
+  printf '%s\n' "$1" | grep -c '.'
+}
+
+# ----------------------------------------------------------------------
 # cmd_render — bootstrap-migrate, then expire, then rewrite NEEDS-YOU.md in
-# full (4 sections, always).
+# full: the "## Decide now" summary + the four canonical sections (fresh
+# items only) + "## Probably dead — confirm to close" (S2-S4, needs-you
+# readability review 2026-08-03), always in the same order, always with all
+# four CANONICAL headers present even when empty (the new sections are
+# ADDITIVE — see _ny_md_has_all_headers's own comment for why the canonical
+# four must never go missing).
 # ----------------------------------------------------------------------
 cmd_render() {
   _ny_ensure_state
@@ -1293,68 +1565,166 @@ cmd_render() {
 
   local tmp; tmp=$(mktemp "${md_path}.XXXXXX") || die "mktemp failed"
 
+  # S3/S4: decisions — every OPEN decision gets ._age_days (jq's own `now`,
+  # matching cmd_expire's existing convention — no bash/jq clock-skew risk),
+  # then ONE overall order: newest-first (sort_by(.created_at)|reverse),
+  # THEN a second STABLE sort hoisting .blocking==true to the top (stable
+  # sort preserves the newest-first order within each blocking group — the
+  # standard "sort by secondary key, then stable-sort by primary key" trick,
+  # no compound key needed), then a fresh/stale TAG per S4's threshold.
+  local decisions_tagged decisions_fresh decisions_stale
+  decisions_tagged=$(echo "$cur" | jq -r --argjson stale "$NY_STALE_OPEN_DAYS" '
+    (now) as $now
+    | [.items[] | select(.section == "decision" and .state == "open")
+        | . + {_age_days: (($now - (.created_at | fromdateiso8601)) / 86400 | floor)}]
+    | sort_by(.created_at) | reverse
+    | sort_by(if (.blocking // false) then 0 else 1 end)
+    | .[]
+    | (if (._age_days <= $stale) then "F" else "S" end) + "\t" + (tojson)
+    ')
+  _ny_split_tagged "$decisions_tagged"; decisions_fresh="$_NY_SPLIT_FRESH"; decisions_stale="$_NY_SPLIT_STALE"
+
+  # S4/S5: questions — normalize+dedup (S5's normkey), keep the NEWEST
+  # member of each group as the representative (text/session reflect the
+  # most current occurrence), stamp ._first_seen (earliest member) and
+  # ._dedup_count, age the GROUP by ._first_seen (a topic still being
+  # actively re-reported stays "fresh" even if it started long ago; one
+  # that stopped being reported goes stale), tag fresh/stale. Order stays
+  # chronological (oldest-topic-first) — "questions/inflight are logs, not
+  # queues" (S3's "Required generalization").
+  local questions_tagged questions_fresh questions_stale
+  questions_tagged=$(echo "$cur" | jq -r --argjson stale "$NY_STALE_OPEN_DAYS" "
+    $_NY_NORMKEY_JQDEF
+    (now) as \$now
+    | [.items[] | select(.section == \"question\" and .state == \"open\")]
+    | group_by(.text | normkey)
+    | map(
+        (sort_by(.created_at)) as \$g
+        | (\$g[0].created_at) as \$fs
+        | (\$g[-1] + {_dedup_count: (\$g | length), _first_seen: \$fs})
+      )
+    | map(. + {_age_days: ((\$now - (._first_seen | fromdateiso8601)) / 86400 | floor)})
+    | sort_by(._first_seen)
+    | .[]
+    | (if (._age_days <= \$stale) then \"F\" else \"S\" end) + \"\t\" + (tojson)
+    ")
+  _ny_split_tagged "$questions_tagged"; questions_fresh="$_NY_SPLIT_FRESH"; questions_stale="$_NY_SPLIT_STALE"
+
+  # In flight: same normalize+dedup+age+tag treatment as questions above —
+  # this is the section that actually accumulated ~30 near-identical
+  # unresolved stop-gate rows in production (nl-issues 2026-07-29).
+  local inflight_tagged inflight_fresh inflight_stale
+  inflight_tagged=$(echo "$cur" | jq -r --argjson stale "$NY_STALE_OPEN_DAYS" "
+    $_NY_NORMKEY_JQDEF
+    (now) as \$now
+    | [.items[] | select(.section == \"inflight\" and .state == \"open\")]
+    | group_by(.text | normkey)
+    | map(
+        (sort_by(.created_at)) as \$g
+        | (\$g[0].created_at) as \$fs
+        | (\$g[-1] + {_dedup_count: (\$g | length), _first_seen: \$fs})
+      )
+    | map(. + {_age_days: ((\$now - (._first_seen | fromdateiso8601)) / 86400 | floor)})
+    | sort_by(._first_seen)
+    | .[]
+    | (if (._age_days <= \$stale) then \"F\" else \"S\" end) + \"\t\" + (tojson)
+    ")
+  _ny_split_tagged "$inflight_tagged"; inflight_fresh="$_NY_SPLIT_FRESH"; inflight_stale="$_NY_SPLIT_STALE"
+
+  # ------------------------------------------------------------------
+  # S2: Decide-now pool — fresh open decisions UNION fresh (deduped) open
+  # questions, re-sorted by the SAME blocking-then-newest rule as decisions
+  # above, capped at 10 rows. Slurped from the two already-fresh JSONL
+  # streams (no re-querying the ledger) — ONE jq call.
+  # ------------------------------------------------------------------
+  local decide_now_total decide_now_rows
+  decide_now_total=$(( $(_ny_count_lines "$decisions_fresh") + $(_ny_count_lines "$questions_fresh") ))
+  decide_now_rows=$(printf '%s\n%s\n' "$decisions_fresh" "$questions_fresh" | jq -cs '
+    sort_by(.created_at) | reverse
+    | sort_by(if (.blocking // false) then 0 else 1 end)
+    | .[0:10]
+    | .[]
+    ')
+
+  # S4: Probably-dead pool — every stale decision/question/inflight item,
+  # oldest (largest ._age_days) first. ONE jq call.
+  local dead_count dead_pool
+  dead_count=$(( $(_ny_count_lines "$decisions_stale") + $(_ny_count_lines "$questions_stale") + $(_ny_count_lines "$inflight_stale") ))
+  dead_pool=$(printf '%s\n%s\n%s\n' "$decisions_stale" "$questions_stale" "$inflight_stale" | jq -cs 'sort_by(._age_days) | reverse | .[]')
+
+  local questions_fresh_count
+  questions_fresh_count=$(_ny_count_lines "$questions_fresh")
+
   {
-    printf '# NEEDS-YOU\n\n'
-    printf 'Canonical awaiting-operator ledger (constitution §2/§3/§8). Machine-local, '
-    printf 'mechanically maintained by `adapters/claude-code/scripts/needs-you.sh` — do not\n'
-    printf 'hand-edit; re-render will overwrite. Generated %s.\n\n' "$(_ny_now)"
+    printf '# NEEDS-YOU\n'
+    # S2's count banner replaces the old 2-line "Generated <ts>." tail — the
+    # answer to "what do you need from me" is now the first screen instead
+    # of buried after a boilerplate paragraph (Finding 5, missing-executive-
+    # summary). The do-not-hand-edit notice survives, de-emphasized.
+    printf 'Generated %s · %s decide-now · %s probably-dead · %s open question(s)\n\n' \
+      "$(_ny_now)" "$decide_now_total" "$dead_count" "$questions_fresh_count"
+    printf '_Canonical awaiting-operator ledger (constitution §2/§3/§8). Machine-local, mechanically maintained by `adapters/claude-code/scripts/needs-you.sh` — do not hand-edit; re-render will overwrite._\n\n'
+
+    printf '## Decide now\n\n'
+    if [[ -z "$decide_now_rows" ]]; then
+      printf '_Nothing needs an answer right now._\n\n'
+    else
+      printf '| # | id | Ask | Reply with | Age | Blocking? |\n'
+      printf '|---|------|-----------------------------------------------------------|----------------------------------|-----|-----------|\n'
+      local _ny_dn_i=0
+      while IFS= read -r _ny_dn_row; do
+        [[ -n "$_ny_dn_row" ]] || continue
+        _ny_dn_i=$((_ny_dn_i + 1))
+        _ny_render_decide_now_row "$_ny_dn_row" "$_ny_dn_i"
+      done <<< "$decide_now_rows"
+      if [[ "${decide_now_total:-0}" -gt 10 ]]; then
+        printf '\n_(showing the 10 most urgent of %s eligible; the rest are listed under their normal section below.)_\n' "$decide_now_total"
+      fi
+      printf '\n'
+    fi
 
     printf '## Awaiting your decision\n\n'
-    local decisions dcount
-    decisions=$(echo "$cur" | jq -c '.items[] | select(.section == "decision" and .state == "open")')
-    if [[ -z "$decisions" ]]; then
+    if [[ -z "$decisions_fresh" ]]; then
       printf '_None open._\n\n'
     else
       while IFS= read -r it; do
         [[ -n "$it" ]] || continue
         _ny_render_decision_block "$it"
         printf '\n'
-      done <<< "$decisions"
+      done <<< "$decisions_fresh"
     fi
 
     printf '## Open questions\n\n'
-    local questions
-    # Dedup collapse (defect class (b)): group open items by identical text,
-    # keep the first-seen (earliest created_at) item as representative +
-    # stamp ._dedup_count with the group size; _ny_render_bullet renders the
-    # count instead of one line per near-identical repeat. Never touches the
-    # underlying ledger -- this is render-time-only collapsing.
-    questions=$(echo "$cur" | jq -c '
-      [.items[] | select(.section == "question" and .state == "open")]
-      | group_by(.text)
-      | map((sort_by(.created_at)) as $g | $g[0] + {_dedup_count: ($g | length)})
-      | sort_by(.created_at)
-      | .[]
-    ')
-    if [[ -z "$questions" ]]; then
+    if [[ -z "$questions_fresh" ]]; then
       printf '_None open._\n\n'
     else
       while IFS= read -r it2; do
         [[ -n "$it2" ]] || continue
         _ny_render_bullet "$it2"
-      done <<< "$questions"
+      done <<< "$questions_fresh"
       printf '\n'
     fi
 
     printf '## In flight (sessions + waves)\n\n'
-    local inflight
-    # Same dedup collapse as Open questions above -- this is the section that
-    # actually accumulated ~30 near-identical unresolved stop-gate rows in
-    # production (nl-issues 2026-07-29).
-    inflight=$(echo "$cur" | jq -c '
-      [.items[] | select(.section == "inflight" and .state == "open")]
-      | group_by(.text)
-      | map((sort_by(.created_at)) as $g | $g[0] + {_dedup_count: ($g | length)})
-      | sort_by(.created_at)
-      | .[]
-    ')
-    if [[ -z "$inflight" ]]; then
+    if [[ -z "$inflight_fresh" ]]; then
       printf '_Nothing in flight._\n\n'
     else
       while IFS= read -r it3; do
         [[ -n "$it3" ]] || continue
         _ny_render_bullet "$it3"
-      done <<< "$inflight"
+      done <<< "$inflight_fresh"
+      printf '\n'
+    fi
+
+    printf '## Probably dead — confirm to close\n\n'
+    if [[ -z "$dead_pool" ]]; then
+      printf '_None._\n\n'
+    else
+      printf 'Open more than %s days (decisions: since added; questions/in-flight: since last re-reported), or evidence says superseded. One line each.\n\n' "$NY_STALE_OPEN_DAYS"
+      while IFS= read -r it5; do
+        [[ -n "$it5" ]] || continue
+        _ny_render_dead_line "$it5"
+      done <<< "$dead_pool"
       printf '\n'
     fi
 
@@ -1641,13 +2011,23 @@ cmd_selftest() {
   fi
 
   # T19: idempotency — rendering again does not create a SECOND migrated
-  # ledger item. (Note: the rendered markdown itself legitimately shows the
-  # migrated text twice within a single item's block — once as the "### "
-  # title line, once as the body — since _ny_render_decision_block always
-  # renders title-then-full-body for every decision item, migrated or not;
-  # see T4's "Ship tonight?" fixture for the same non-migration-related
-  # shape. So idempotency must be asserted against the LEDGER's item count,
-  # not a grep-count over the rendered file.)
+  # ledger item.
+  #
+  # HONEST AMENDMENT (S1/S8, needs-you readability review 2026-08-03): this
+  # comment used to say the rendered markdown "legitimately shows the
+  # migrated text twice within a single item's block — once as the '### '
+  # title line, once as the body — since _ny_render_decision_block ALWAYS
+  # renders title-then-full-body for every decision item" and cited that as
+  # the reason idempotency must be checked against the ledger's item count,
+  # not a grep-count over the file. That was CODIFYING A BUG, not a real
+  # constraint: the review's Finding 1 (render-title-duplication) proved
+  # every one of the live ledger's 15 open decision blocks opened with its
+  # title printed twice as an identical wall of text — exactly this
+  # "legitimate" shape. S1 fixed it (body = tail -n +2 of text; the title
+  # line never repeats). The ledger-count assertion below is STILL the
+  # right oracle for idempotency (it is a stronger check regardless), but
+  # T19b now ALSO asserts the post-S1 invariant directly: the migrated
+  # item's first text line appears in the rendered file EXACTLY ONCE.
   (
     export NEEDS_YOU_STATE_DIR="$sandbox3/state"
     export NEEDS_YOU_MD_PATH="$sandbox3/NEEDS-YOU.md"
@@ -1657,6 +2037,17 @@ cmd_selftest() {
   migrate_count3=$(jq '[.items[] | select(.tier == "migrated_from_legacy_file")] | length' "$sandbox3/state/ledger.json" 2>/dev/null || echo "?")
   [[ "$migrate_count3" == "1" ]] && ok "T19 bootstrap-migrate is idempotent (exactly 1 migrated ledger item after repeat render)" \
     || fail_ "T19 expected exactly 1 migrated ledger item after repeat render, got $migrate_count3"
+  # Scoped to "## Awaiting your decision" (not grep-over-the-whole-file):
+  # S2's Decide-now table LEGITIMATELY repeats a fresh item's title in its
+  # own Ask column above the canonical sections — that is by design, not a
+  # title-dup regression. The S1 invariant this scenario actually tests
+  # (title-then-full-body no longer duplicates within ONE decision block)
+  # only makes sense scoped to the block's own section.
+  local awaiting_block19 title19_count
+  awaiting_block19=$(awk '/^## Awaiting your decision/{flag=1;next}/^## /{flag=0}flag' "$md3")
+  title19_count=$(echo "$awaiting_block19" | grep -cF "Activate auto-resume daemon")
+  [[ "$title19_count" == "1" ]] && ok "T19b S1 regression: migrated item's title line appears exactly once under Awaiting your decision (not title-then-full-body)" \
+    || fail_ "T19b expected the migrated title text exactly once under Awaiting your decision, found $title19_count occurrences"
   rm -rf "$sandbox3"
 
   # T20: absent file (no prior NEEDS-YOU.md at all) still renders cleanly
@@ -1693,10 +2084,17 @@ cmd_selftest() {
     cmd_render >/dev/null 2>&1
   )
   local md5="$sandbox5/NEEDS-YOU.md"
-  local q_count5
-  q_count5=$(grep -c "Already-canonical fixture question" "$md5" || true)
+  # Scoped to "## Open questions" (not grep-over-the-whole-file): a single
+  # fresh open question LEGITIMATELY appears twice now — once in the new
+  # S2 Decide-now table's Ask column, once as its own bullet here — by
+  # design, not a re-migration regression. The re-migration question this
+  # scenario actually tests only makes sense scoped to the question's own
+  # section (a spurious SECOND bullet there would be the real symptom).
+  local questions_block5 q_count5
+  questions_block5=$(awk '/^## Open questions/{flag=1;next}/^## /{flag=0}flag' "$md5")
+  q_count5=$(echo "$questions_block5" | grep -c "Already-canonical fixture question" || true)
   [[ "$q_count5" == "1" ]] && ok "T21 well-formed file untouched by bootstrap-migrate (no re-migration)" \
-    || fail_ "T21 expected exactly 1 occurrence, got $q_count5 (possible spurious re-migration)"
+    || fail_ "T21 expected exactly 1 occurrence under Open questions, got $q_count5 (possible spurious re-migration)"
   rm -rf "$sandbox5"
 
   # ----------------------------------------------------------------------
@@ -1709,11 +2107,18 @@ cmd_selftest() {
   export NEEDS_YOU_MD_PATH="$sandbox6/NEEDS-YOU.md"
 
   # T22: a GOOD decision entry (context prose + a repo-path anchor + a
-  # §3-style Options table whose column 2 carries per-option outcome text)
-  # gets an EMPTY lint_warnings array — no false-positive warn on a
-  # well-formed block.
+  # §3-style Options table whose column 2 carries per-option outcome text +
+  # a Reply line) gets an EMPTY lint_warnings array — no false-positive warn
+  # on a well-formed block.
+  #
+  # HONEST AMENDMENT (S7, needs-you readability review 2026-08-03): this
+  # fixture used to omit a "Reply:" line entirely — fine before S7, since
+  # no-reply-line didn't exist yet. Per the review's target format, a truly
+  # well-formed §3 block always names its reply tokens, so amending the
+  # fixture to include one makes T22 a MORE rigorous "0 warnings" check
+  # (all 4 codes clean), not a weaker one.
   local good_text
-  good_text=$'### Ship the O.9 dashboard tonight?\nThe backlog KPI dashboard (adapters/claude-code/docs/kpis.md) has been green in staging for 3 days; shipping now vs Monday only changes who is on call if it regresses.\n| Option | What happens |\n|---|---|\n| Ship tonight | goes live now, I am on call |\n| Wait for Monday | ships Monday, no weekend on-call risk |\nMy pick: ship tonight.'
+  good_text=$'### Ship the O.9 dashboard tonight?\nThe backlog KPI dashboard (adapters/claude-code/docs/kpis.md) has been green in staging for 3 days; shipping now vs Monday only changes who is on call if it regresses.\n| Option | What happens |\n|---|---|\n| Ship tonight | goes live now, I am on call |\n| Wait for Monday | ships Monday, no weekend on-call risk |\nMy pick: ship tonight. Reply with: ship tonight / wait for monday.'
   local id22
   id22=$(cmd_add --section decision --text "$good_text" --session "sess-t22")
   local lint22
@@ -2013,16 +2418,16 @@ cmd_selftest() {
   export PROGRESS_LOG_STATE_DIR="$sandbox10/progress-logs"
   export OPERATOR_TODO_PATH="$sandbox10/operator-todo.md"
 
-  echo "Scenario T36: escape-safe rendering — a backslash-n Windows path renders intact byte-for-byte (the reported operator incident: 'Pocket Technician\\neural-lace' rendered split across two lines with the 'n' silently eaten)"
-  local t32_text='Reference path: C:\Users\misha\dev\Pocket Technician\neural-lace\docs\backlog.md (path check fixture)'
+  echo "Scenario T36: escape-safe rendering — a backslash-n Windows path renders intact byte-for-byte (the reported operator incident: 'Example Co\\neural-lace' rendered split across two lines with the 'n' silently eaten)"
+  local t32_text='Reference path: C:\Users\operator\dev\Example Co\neural-lace\docs\backlog.md (path check fixture)'
   cmd_add --section inflight --text "$t32_text" --session "sess-t32" >/dev/null
   cmd_render >/dev/null
-  if grep -qF 'Pocket Technician\neural-lace\docs\backlog.md' "$NEEDS_YOU_MD_PATH"; then
+  if grep -qF 'Example Co\neural-lace\docs\backlog.md' "$NEEDS_YOU_MD_PATH"; then
     ok "T36 backslash-n path rendered intact, byte-for-byte (no mid-word split, no eaten 'n')"
   else
-    fail_ "T36 backslash-n path was corrupted in the rendered file (expected literal 'Pocket Technician\\neural-lace\\docs\\backlog.md' on one line)"
+    fail_ "T36 backslash-n path was corrupted in the rendered file (expected literal 'Example Co\\neural-lace\\docs\\backlog.md' on one line)"
   fi
-  if grep -qE '^Reference path: C:\\Users\\misha\\dev\\Pocket Technician\\$' "$NEEDS_YOU_MD_PATH"; then
+  if grep -qE '^Reference path: C:\\Users\\operator\\dev\\Example Co\\$' "$NEEDS_YOU_MD_PATH"; then
     fail_ "T36b the corrupted split form (path cut off after 'Technician\\') is present — regression"
   else
     ok "T36b no corrupted split-line form present"
@@ -2234,6 +2639,245 @@ cmd_selftest() {
   fi
   rm -rf "$sandbox8"
 
+  # ----------------------------------------------------------------------
+  # T45-T54: needs-you readability review 2026-08-03 (S1-S8) regression
+  # coverage. Each fixture uses its own fresh sandbox so counts/assertions
+  # aren't muddied by earlier scenarios' ledger items.
+  # ----------------------------------------------------------------------
+
+  echo "Scenario T45: S2 Decide-now table caps at 10 rows even with 12 eligible fresh decisions"
+  local sandbox11; sandbox11=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox11/state"
+  export NEEDS_YOU_MD_PATH="$sandbox11/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox11/pl"
+  export OPERATOR_TODO_PATH="$sandbox11/todo.md"
+  local _ny_i45
+  for _ny_i45 in 1 2 3 4 5 6 7 8 9 10 11 12; do
+    cmd_add --section decision --mechanical \
+      --text "Fixture decision number $_ny_i45 for the decide-now cap test, anchor NL-FINDING-0$_ny_i45." \
+      --session "sess-t45-$_ny_i45" >/dev/null
+  done
+  local dn_rows45
+  dn_rows45=$(grep -cE '^\| [0-9]+ \| `' "$NEEDS_YOU_MD_PATH")
+  [[ "$dn_rows45" == "10" ]] && ok "T45 Decide-now table caps at 10 rows (12 eligible fresh decisions added)" \
+    || fail_ "T45 expected exactly 10 Decide-now rows, got $dn_rows45"
+  if grep -qF 'showing the 10 most urgent of 12 eligible' "$NEEDS_YOU_MD_PATH"; then
+    ok "T45b cap note names the true eligible total (12)"
+  else
+    fail_ "T45b expected a 'showing the 10 most urgent of 12 eligible' note"
+  fi
+  rm -rf "$sandbox11"
+
+  echo "Scenario T46: S4 stale-demotion boundary — 15 days old demotes to Probably dead, 13 days old stays in Awaiting your decision (NY_STALE_OPEN_DAYS=$NY_STALE_OPEN_DAYS)"
+  local sandbox12; sandbox12=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox12/state"
+  export NEEDS_YOU_MD_PATH="$sandbox12/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox12/pl"
+  export OPERATOR_TODO_PATH="$sandbox12/todo.md"
+  local id46a id46b
+  id46a=$(cmd_add --section decision --mechanical --text "Fifteen day old fixture decision for the stale-demotion boundary test." --session "sess-t46a")
+  id46b=$(cmd_add --section decision --mechanical --text "Thirteen day old fixture decision for the stale-demotion boundary test." --session "sess-t46b")
+  local ts15 ts13
+  ts15=$(date -u -d "15 days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -j -v-15d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+  ts13=$(date -u -d "13 days ago" +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null || date -u -j -v-13d +"%Y-%m-%dT%H:%M:%SZ" 2>/dev/null)
+  local ledger46="$NEEDS_YOU_STATE_DIR/ledger.json"
+  local cur46 new46
+  cur46=$(cat "$ledger46")
+  new46=$(echo "$cur46" | jq --arg a "$id46a" --arg ta "$ts15" --arg b "$id46b" --arg tb "$ts13" \
+    '.items |= map(if .id == $a then . + {created_at:$ta} elif .id == $b then . + {created_at:$tb} else . end)')
+  printf '%s\n' "$new46" > "$ledger46"
+  cmd_render >/dev/null
+  local dead_block46 awaiting_block46
+  dead_block46=$(awk '/^## Probably dead/{flag=1;next}/^## /{flag=0}flag' "$NEEDS_YOU_MD_PATH")
+  awaiting_block46=$(awk '/^## Awaiting your decision/{flag=1;next}/^## /{flag=0}flag' "$NEEDS_YOU_MD_PATH")
+  if echo "$dead_block46" | grep -q "Fifteen day old fixture"; then
+    ok "T46a 15-day-old open decision demotes to Probably dead"
+  else
+    fail_ "T46a expected the 15-day-old fixture under Probably dead"
+  fi
+  if echo "$awaiting_block46" | grep -q "Thirteen day old fixture"; then
+    ok "T46b 13-day-old open decision STAYS in Awaiting your decision (not yet stale)"
+  else
+    fail_ "T46b expected the 13-day-old fixture to remain under Awaiting your decision"
+  fi
+  if echo "$awaiting_block46" | grep -q "Fifteen day old fixture"; then
+    fail_ "T46c 15-day-old fixture incorrectly still under Awaiting your decision"
+  else
+    ok "T46c 15-day-old fixture correctly absent from Awaiting your decision"
+  fi
+  rm -rf "$sandbox12"
+
+  echo "Scenario T47: S5 dedup normalization collapses volatile-token variants of the same recurring alert into ONE bullet"
+  local sandbox13; sandbox13=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox13/state"
+  export NEEDS_YOU_MD_PATH="$sandbox13/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox13/pl"
+  export OPERATOR_TODO_PATH="$sandbox13/todo.md"
+  cmd_add --section inflight --text "Orphaned worktree alert: last commit 3d ago, alert #12, 2 live/throttled session(s)" --session "sess-t47-a" >/dev/null
+  cmd_add --section inflight --text "Orphaned worktree alert: last commit 5d ago, alert #45, 4 live/throttled session(s)" --session "sess-t47-b" >/dev/null
+  cmd_add --section inflight --text "Orphaned worktree alert: last commit 9d ago, alert #99, 1 live/throttled session(s)" --session "sess-t47-c" >/dev/null
+  local inflight_block47
+  inflight_block47=$(awk '/^## In flight/{flag=1;next}/^## /{flag=0}flag' "$NEEDS_YOU_MD_PATH")
+  local bullets47
+  bullets47=$(echo "$inflight_block47" | grep -cE '^- Orphaned worktree alert')
+  [[ "$bullets47" == "1" ]] && ok "T47 3 volatile-token variants of the same alert collapse to 1 bullet" \
+    || fail_ "T47 expected exactly 1 collapsed bullet, got $bullets47"
+  if echo "$inflight_block47" | grep -qE 'x3 since'; then
+    ok "T47b collapsed bullet names the repeat count"
+  else
+    fail_ "T47b expected an 'x3 since' annotation"
+  fi
+  rm -rf "$sandbox13"
+
+  echo "Scenario T48: S6 --supersedes auto-resolves the named older entry"
+  local sandbox14; sandbox14=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox14/state"
+  export NEEDS_YOU_MD_PATH="$sandbox14/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox14/pl"
+  export OPERATOR_TODO_PATH="$sandbox14/todo.md"
+  local id48a id48b
+  id48a=$(cmd_add --section decision --mechanical --text "Original ask that will be superseded by a follow-up decision." --session "sess-t48a")
+  id48b=$(cmd_add --section decision --mechanical --text "Follow-up decision superseding the original ask." --session "sess-t48b" --supersedes "$id48a")
+  local state48
+  state48=$(jq -r --arg id "$id48a" '.items[] | select(.id == $id) | .state' "$NEEDS_YOU_STATE_DIR/ledger.json")
+  [[ "$state48" == "resolved" ]] && ok "T48a --supersedes auto-resolves the named older entry" \
+    || fail_ "T48a expected '$id48a' to be resolved, state is '$state48'"
+  local note48
+  note48=$(jq -r --arg id "$id48a" '.items[] | select(.id == $id) | .resolution_note' "$NEEDS_YOU_STATE_DIR/ledger.json")
+  if [[ "$note48" == *"superseded by $id48b"* ]]; then
+    ok "T48b resolution note names the superseding id"
+  else
+    fail_ "T48b expected resolution note to mention 'superseded by $id48b', got '$note48'"
+  fi
+  local awaiting_block48
+  awaiting_block48=$(awk '/^## Awaiting your decision/{flag=1;next}/^## /{flag=0}flag' "$NEEDS_YOU_MD_PATH")
+  if echo "$awaiting_block48" | grep -q "Original ask that will be superseded"; then
+    fail_ "T48c superseded entry still rendered under Awaiting your decision"
+  else
+    ok "T48c superseded entry no longer rendered under Awaiting your decision"
+  fi
+  local rc48d
+  ( cmd_add --section decision --mechanical --text "Add with a bogus supersedes target should still succeed." --session "sess-t48d" --supersedes "NY-does-not-exist" >/dev/null 2>&1 )
+  rc48d=$?
+  [[ "$rc48d" == "0" ]] && ok "T48d --supersedes with a missing target still succeeds (warn, never fails add)" \
+    || fail_ "T48d expected exit 0 even with a missing --supersedes target, got $rc48d"
+  rm -rf "$sandbox14"
+
+  echo "Scenario T49: S3 --blocking hoists an OLDER item to the top of Awaiting your decision, ahead of a newer non-blocking item"
+  local sandbox15; sandbox15=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox15/state"
+  export NEEDS_YOU_MD_PATH="$sandbox15/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox15/pl"
+  export OPERATOR_TODO_PATH="$sandbox15/todo.md"
+  cmd_add --section decision --mechanical --text "Oldest fixture but marked blocking, added first." --session "sess-t49a" --blocking >/dev/null
+  cmd_add --section decision --mechanical --text "Newest fixture added second, not blocking." --session "sess-t49b" >/dev/null
+  local awaiting_block49 first_title49
+  awaiting_block49=$(awk '/^## Awaiting your decision/{flag=1;next}/^## /{flag=0}flag' "$NEEDS_YOU_MD_PATH")
+  first_title49=$(echo "$awaiting_block49" | grep -m1 '^### ')
+  if [[ "$first_title49" == *"Oldest fixture but marked blocking"* ]]; then
+    ok "T49 a --blocking item hoists to the top of Awaiting your decision despite being older"
+  else
+    fail_ "T49 expected the blocking fixture first, got: $first_title49"
+  fi
+  rm -rf "$sandbox15"
+
+  echo "Scenario T50: S1 regression — a genuinely single-line decision text renders with NO duplicated/empty body line"
+  local sandbox16; sandbox16=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox16/state"
+  export NEEDS_YOU_MD_PATH="$sandbox16/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox16/pl"
+  export OPERATOR_TODO_PATH="$sandbox16/todo.md"
+  cmd_add --section decision --mechanical --text "A genuinely single line decision text with no newline anywhere in it at all." --session "sess-t50" >/dev/null
+  local awaiting_block50 occurrences50
+  awaiting_block50=$(awk '/^## Awaiting your decision/{flag=1;next}/^## /{flag=0}flag' "$NEEDS_YOU_MD_PATH")
+  occurrences50=$(echo "$awaiting_block50" | grep -cF "A genuinely single line decision text")
+  [[ "$occurrences50" == "1" ]] && ok "T50 a single-line decision text renders exactly once under Awaiting your decision (title only)" \
+    || fail_ "T50 expected exactly 1 occurrence under Awaiting your decision, got $occurrences50"
+  rm -rf "$sandbox16"
+
+  echo "Scenario T51: Finding 8 empty-field noise suppressed — no 'Links: (none)' and no spelled-out 'session \`unknown\`'"
+  local sandbox17; sandbox17=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox17/state"
+  export NEEDS_YOU_MD_PATH="$sandbox17/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox17/pl"
+  export OPERATOR_TODO_PATH="$sandbox17/todo.md"
+  cmd_add --section decision --mechanical --text $'### No session, no links fixture\nThis fixture has real context prose but was added without --session or --link.' >/dev/null
+  local awaiting_block51
+  awaiting_block51=$(awk '/^## Awaiting your decision/{flag=1;next}/^## /{flag=0}flag' "$NEEDS_YOU_MD_PATH")
+  if echo "$awaiting_block51" | grep -q "^Links:"; then
+    fail_ "T51a expected no 'Links:' line for an entry with zero links"
+  else
+    ok "T51a 'Links: (none)' noise suppressed for a linkless entry"
+  fi
+  if echo "$awaiting_block51" | grep -q 'session `unknown`'; then
+    fail_ "T51b expected no spelled-out 'session \`unknown\`'"
+  else
+    ok "T51b 'session \`unknown\`' noise suppressed"
+  fi
+  if echo "$awaiting_block51" | grep -qE '^\*\(added [0-9-]+, id `NY-'; then
+    ok "T51c meta line still carries added-date + id when session is absent"
+  else
+    fail_ "T51c expected a '*(added <date>, id \`NY-...\`)*' meta line"
+  fi
+  rm -rf "$sandbox17"
+
+  echo "Scenario T52: S7 no-reply-line is WARN-ONLY — never blocks the interactive path, still recorded in lint_warnings"
+  local sandbox18; sandbox18=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox18/state"
+  export NEEDS_YOU_MD_PATH="$sandbox18/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox18/pl"
+  export OPERATOR_TODO_PATH="$sandbox18/todo.md"
+  local text52 rc52 id52
+  # NOTE: deliberately avoids the word "reply" anywhere in this fixture's
+  # own prose (even to say it's absent) — the heuristic is a literal
+  # substring/word match, so a sentence like "no reply line anywhere" would
+  # itself satisfy the check it's meant to fail (caught by this fixture's
+  # own dry run: T52b first failed for exactly this reason).
+  text52=$'### Ship the T52 fixture tonight?\nThis has real context prose and an anchor at adapters/claude-code/scripts/needs-you.sh, with no closing instruction on how to answer.\n| Option | What happens |\n|---|---|\n| Yes | ships |\nMy pick: yes.'
+  id52=$( cmd_add --section decision --text "$text52" --session "sess-t52" )
+  rc52=$?
+  [[ "$rc52" == "0" ]] && ok "T52a interactive add of a context/anchor/outcome-complete-but-reply-less decision succeeds (never blocks on no-reply-line alone)" \
+    || fail_ "T52a expected exit 0, got $rc52"
+  local lint52
+  lint52=$(jq -r --arg id "$id52" '.items[] | select(.id == $id) | .lint_warnings | join(",")' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  [[ "$lint52" == "no-reply-line" ]] && ok "T52b lint_warnings still records no-reply-line (observability, not a block)" \
+    || fail_ "T52b expected lint_warnings == 'no-reply-line', got '$lint52'"
+  local id52c lint52c
+  id52c=$(cmd_add --section decision --text "$text52" --session "sess-t52c" --reply-with "yes")
+  lint52c=$(jq -r --arg id "$id52c" '.items[] | select(.id == $id) | .lint_warnings | length' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  [[ "$lint52c" == "0" ]] && ok "T52c --reply-with suppresses no-reply-line entirely" \
+    || fail_ "T52c expected 0 lint_warnings with --reply-with supplied, got $lint52c"
+  rm -rf "$sandbox18"
+
+  echo "Scenario T53: hard contract — _ny_md_has_all_headers still passes on the new Decide-now/Probably-dead layout"
+  local sandbox19; sandbox19=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox19/state"
+  export NEEDS_YOU_MD_PATH="$sandbox19/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox19/pl"
+  export OPERATOR_TODO_PATH="$sandbox19/todo.md"
+  cmd_add --section decision --mechanical --text "Fixture to force a non-empty render for the header-invariant check." --session "sess-t53" >/dev/null
+  if _ny_md_has_all_headers "$NEEDS_YOU_MD_PATH"; then
+    ok "T53 _ny_md_has_all_headers still passes on the new layout (canonical 4 headers untouched)"
+  else
+    fail_ "T53 _ny_md_has_all_headers FAILED on the new layout — the canonical 4 headers must never go missing"
+  fi
+  rm -rf "$sandbox19"
+
+  echo "Scenario T54: durable enforcement — no rendered line is an exact duplicate of its immediate predecessor (catches the render-title-duplication class generically)"
+  local sandbox20; sandbox20=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox20/state"
+  export NEEDS_YOU_MD_PATH="$sandbox20/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox20/pl"
+  export OPERATOR_TODO_PATH="$sandbox20/todo.md"
+  cmd_add --section decision --mechanical --text $'### T54 duplicate-line regression fixture\nSome real context prose that is not the same as the title line above it.' --session "sess-t54" >/dev/null
+  cmd_add --section question --text "T54 open question fixture for the duplicate-line invariant." --session "sess-t54b" >/dev/null
+  if awk 'NF { if ($0 == prev) { exit 1 } prev = $0 } END { exit 0 }' "$NEEDS_YOU_MD_PATH"; then
+    ok "T54 no rendered line is an exact duplicate of its immediate predecessor"
+  else
+    fail_ "T54 found a rendered line identical to its immediate predecessor — possible render-title-duplication regression"
+  fi
+  rm -rf "$sandbox20"
+
   echo ""
   echo "RESULT: $pass passed, $fail failed"
   if [[ "$fail" -gt 0 ]]; then
@@ -2254,12 +2898,18 @@ Usage: needs-you.sh <verb> [args]
 Verbs:
   add                    --section decision|question|inflight|decided --text STR
                          [--session ID] [--link URL]* [--tier 1|2|3]
-                         [--mechanical]
+                         [--mechanical] [--reply-with STR] [--blocking]
+                         [--supersedes ID]
                          -> prints new entry id, exit 0. For --section
                          decision, a cold-reader-lint failure BLOCKS
                          (exit 1, nothing written) unless --mechanical is
                          passed, in which case it stores + quarantines
-                         instead (see header 'LINT PROMOTION').
+                         instead (see header 'LINT PROMOTION'). --reply-with
+                         feeds the "## Decide now" table's Reply-with column
+                         directly; --blocking hoists the item to the top of
+                         its ordering; --supersedes <id> auto-resolves <id>
+                         once this add succeeds (missing target -> warn,
+                         never fails the add).
   resolve <id>           [--note STR] -> moves entry to "Recently decided"
   expire                 collapse >7-day-old decided items into a count
   bootstrap-migrate      migrate a stale/hand-authored NEEDS-YOU.md into the
