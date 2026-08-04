@@ -1,0 +1,97 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://neural-lace.dev/schemas/plan-status.v1.json",
+  "title": "Plan Status Vocabulary (v1)",
+  "description": "The canonical, closed enum for a plan file's `Status:` header line (Build Doctrine planning surface). Replaces freelanced prose Status values (measured 2026-08-04: 30 files across this repo and a sibling repo on this machine, using shapes like 'DEFERRED (operator 2026-07-30: ...)', 'REFERENCE (spec appendix...)', 'NORMATIVE for Wave O builders (...)', 'PROPOSAL', 'DRAFT -- <prose>') that the cockpit's plan parser (neural-lace/workstreams-ui/server/plan-parse.js + roadmap-routes.js's KNOWN_PLAN_STATUS_TOKENS) cannot recognize, rendering 'status unknown -- plan parse failed (unrecognized Status: ...)'. Every existing lifecycle token (ACTIVE, COMPLETED, SUPERSEDED, DEFERRED, ABANDONED — plan-lifecycle.sh's is_terminal_status) is preserved verbatim; DRAFT/PROPOSED/REFERENCE are added as first-class tokens. Prose qualifiers that used to be glued onto the Status: value move to the optional Status-note: header line (see status_note below) instead of being dropped. THIS FILE IS THE REGISTRY plan Status: values are validated against: adapters/claude-code/hooks/plan-edit-validator.sh's write-time gate reads it fresh on every plan Write/Edit (never a hardcoded second copy of the enum) and blocks a Status: value that is not one of the 8 tokens below, or that has any text after the token on the same line. Installs machine-wide to ~/.claude/schemas/plan-status.schema.json via install.sh's existing, unconditional schemas/ directory sync (adapters/claude-code/install.sh:770-771 + :1506-1507, sync_directory \"$ADAPTER_DIR/schemas\" \"$CLAUDE_DIR/schemas\" — no per-file allowlist), so the same installed hook enforces this vocabulary in every repo on the machine, including sibling repos outside this checkout entirely, once install.sh has run there. jq access patterns: `jq -r '.statuses[].token' <file>` for the valid-token set; `jq -r '.statuses[] | select(.lifecycle.triggers_archival) | .token' <file>` for the archival-trigger subset (COMPLETED/SUPERSEDED/DEFERRED/ABANDONED, matching plan-lifecycle.sh's is_terminal_status exactly); `jq -r --arg t \"$TOKEN\" '.statuses[] | select(.token==$t) | .lifecycle.archive_subdir' <file>` for a single token's destination subdirectory. Schema version 1 (initial).",
+  "schema_version": 1,
+  "statuses": [
+    {
+      "token": "DRAFT",
+      "description": "Plan exists but is not yet ready for build — the author is still iterating on scope, tasks, or acceptance criteria. Has not been offered for review/promotion to ACTIVE. Pre-build, non-archival: stays in docs/plans/ indefinitely until promoted or explicitly deferred/abandoned.",
+      "phase": "pre-build",
+      "cockpit_render": "Draft",
+      "lifecycle": {
+        "triggers_archival": false,
+        "archive_subdir": null
+      }
+    },
+    {
+      "token": "PROPOSED",
+      "description": "Plan is drafted and offered for review/approval before build starts — the pre-ACTIVE review gate. Supersedes the freelanced 'PROPOSED'/'PROPOSAL' prose variants (case- and word-form drift) measured in a sibling repo's corpus; the migration from those prose forms to this exact token is a document-migration concern, not something this schema or its write-time gate performs automatically.",
+      "phase": "pre-build",
+      "cockpit_render": "Proposed",
+      "lifecycle": {
+        "triggers_archival": false,
+        "archive_subdir": null
+      }
+    },
+    {
+      "token": "ACTIVE",
+      "description": "Plan is currently being built — tasks are open for dispatch, checkbox flips are live (gated by this same hook's pre-existing evidence-first authorization). The one phase plan-reviewer.sh's Check 10 (5-field header schema) and Check 11 (Behavioral Contracts at rung >= 3) actively enforce. Building, non-archival.",
+      "phase": "building",
+      "cockpit_render": "Active",
+      "lifecycle": {
+        "triggers_archival": false,
+        "archive_subdir": null
+      }
+    },
+    {
+      "token": "COMPLETED",
+      "description": "Every task verified done with evidence; the plan's work is finished. This hook's pre-existing Status-COMPLETED-without-evidence check (the block this schema check is layered alongside, not replacing) already requires a companion <slug>-evidence.md before this transition is allowed. Triggers plan-lifecycle.sh's PostToolUse auto-archival: `git mv` to docs/plans/archive/.",
+      "phase": "terminal",
+      "cockpit_render": "Completed",
+      "lifecycle": {
+        "triggers_archival": true,
+        "archive_subdir": "archive"
+      }
+    },
+    {
+      "token": "SUPERSEDED",
+      "description": "The plan's intent was subsumed by a later plan or decision; this plan is no longer the live source of truth for that work. Triggers plan-lifecycle.sh's auto-archival to docs/plans/archive/, same as COMPLETED.",
+      "phase": "terminal",
+      "cockpit_render": "Superseded",
+      "lifecycle": {
+        "triggers_archival": true,
+        "archive_subdir": "archive"
+      }
+    },
+    {
+      "token": "DEFERRED",
+      "description": "Work is intentionally paused, not abandoned: terminal for tracking/editing purposes (routes out of the active roadmap, matching plan-lifecycle.sh's is_terminal_status) but the intent to eventually build it survives. Per ADR 051 (2026-06-04 destination split), routes to docs/plans/deferred/ — deliberately NOT docs/plans/archive/, so a re-activation search looks in the intended-but-not-active area rather than alongside genuinely finished work.",
+      "phase": "terminal",
+      "cockpit_render": "Deferred",
+      "lifecycle": {
+        "triggers_archival": true,
+        "archive_subdir": "deferred"
+      }
+    },
+    {
+      "token": "ABANDONED",
+      "description": "Work was deliberately dropped and will not be built. Triggers plan-lifecycle.sh's auto-archival to docs/plans/archive/, same as COMPLETED/SUPERSEDED.",
+      "phase": "terminal",
+      "cockpit_render": "Abandoned",
+      "lifecycle": {
+        "triggers_archival": true,
+        "archive_subdir": "archive"
+      }
+    },
+    {
+      "token": "REFERENCE",
+      "description": "Not a build plan at all — a living reference document (spec appendix, normative doc consulted by other plans' builders) that never has tasks dispatched against it. Supersedes the freelanced 'REFERENCE (spec appendix...)' and 'NORMATIVE for Wave O builders (...)' prose forms measured in the neural-lace corpus. Never auto-archived (it stays in place precisely because it is still actively consulted); the cockpit's own roadmap scanner already excludes this token from the active-plan tree by design (workstreams-ui/server/roadmap-routes.js's isEligiblePlanStatus comment: 'Recognized-but-ineligible statuses (REFERENCE/NORMATIVE) keep their unconditional exclusion — their header survived, so their author's intent is legible').",
+      "phase": "terminal",
+      "cockpit_render": "Reference",
+      "lifecycle": {
+        "triggers_archival": false,
+        "archive_subdir": null
+      }
+    }
+  ],
+  "status_note": {
+    "header": "Status-note",
+    "position": "Immediately after the Status: header line — before any blank line or the next header field.",
+    "required": false,
+    "parsed_for_state": false,
+    "purpose": "Carries the prose qualifier that used to be freelanced directly onto the Status: line (dates, operator attribution, rationale, scope caveats — e.g. what used to be written as 'DEFERRED (operator 2026-07-30: ...)' or 'REFERENCE (spec appendix...)'). Kept OUT of the Status: value itself so every consumer that greps/parses a bare Status: token (plan-lifecycle.sh's extract_status, plan-parse.js's parsePlanStatus, roadmap-routes.js's planStatusToken/KNOWN_PLAN_STATUS_TOKENS) gets exactly one of the 8 tokens above, never prose to choke on. This is documentation for humans: parsed_for_state is false because no script's state machine reads it today, and it is not currently rendered by the cockpit either — a future consumer may choose to surface it, but that is not a claim this schema makes.",
+    "example": "Status: DEFERRED\nStatus-note: operator 2026-07-30 — paused pending Wave P capacity; re-activate after the estate-coordination pass lands."
+  }
+}
