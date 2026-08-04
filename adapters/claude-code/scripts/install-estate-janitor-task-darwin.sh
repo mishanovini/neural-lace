@@ -46,7 +46,8 @@
 # launchd's ProgramArguments runs ONE program, so chaining two scripts with
 # a date-stamped log redirect would otherwise mean embedding a shell string
 # inside XML — two nested quoting contexts over paths this repo KNOWS contain
-# a space (the canonical checkout is `.../Pocket Technician/neural-lace`).
+# a space (the canonical macOS checkout lives under a workspace directory
+# whose name contains a space).
 # That is precisely the untested-quoting class this task was told not to
 # ship. Instead the installer writes a small wrapper script with every path
 # shell-quoted by `_ej_shq` (single-quote wrapping with embedded-quote
@@ -632,7 +633,7 @@ EOF
 
   # ---- the quoting proofs: this is why the wrapper indirection exists ----
   echo "Scenario 11: paths containing a SPACE survive into a RUNNABLE wrapper"
-  local sp_dir="$tmp/Pocket Technician/neural lace"
+  local sp_dir="$tmp/workspace with space/neural lace"
   mkdir -p "$sp_dir"
   local sp_j="$sp_dir/estate-janitor.sh" sp_b="$sp_dir/estate-brief.sh"
   printf '#!/usr/bin/env bash\necho "janitor-ok arg=$1"\n' > "$sp_j"; chmod +x "$sp_j"
