@@ -82,6 +82,71 @@
 #         every producer emits §3-complete items by construction and the
 #         lint has not fired for a month.
 #
+#     PLAIN-LANGUAGE FIELD SET (operator directive 2026-08-04 — "DEC-4 is not
+#     written in plain English"): the cold-reader lint above scores a single
+#     free-text --text BLOB written by the agent, which does not stop an
+#     entry from opening with an internal id, leading with mechanism/
+#     provenance instead of consequence, or burying "what happens if you do
+#     nothing" mid-paragraph — exactly DEC-4's (id NY-1785771976-caeb) shape.
+#     For --section decision, `add` now accepts a SEPARATE, ordered field set
+#     so the RENDERER controls presentation order, not agent prose:
+#       --ask <str>            (a) one plain sentence a non-specialist reads
+#       --what-is-this <str>   (b) 2-3 sentences defining every term of art
+#       --if-nothing <str>     (c) the consequence of inaction, with a date
+#                               if one applies
+#       --option <str>*        (d) repeatable; each is the OUTCOME the
+#                               operator gets, not the command run, plus
+#                               cost/risk
+#       --my-pick <str>        (e) the pick + a one-line why
+#       --reply-with <str>     (f) already existed (S6) — the exact reply
+#                               text; reused unchanged here
+#       --provenance <str>*    (g) optional, repeatable; SHAs/review files/
+#                               finding ids go HERE, last — a curious reader
+#                               finds them, a deciding reader skips them
+#     Supplying --ask switches `add` into STRUCTURED MODE for that entry
+#     (an opt-in format, additive to the existing --text contract — a bare
+#     --text decision entry is still fully supported; see "backward
+#     compatibility" note below). Structured mode is decision-only; --ask on
+#     any other --section dies.
+#
+#     PLAIN-LANGUAGE LINT (same INTERACTIVE-BLOCK/MECHANICAL-QUARANTINE split
+#     as the cold-reader lint above, see _ny_lint_field_set()): BLOCKS when —
+#       - a bare internal identifier (a 7-40 char hex commit SHA, `HR-F\d+`,
+#         `DEC-\d+`, `T\d+`, or a `*.md` review-filename token) appears in
+#         fields (a)-(e) with no plain-language gloss word (commit/review/
+#         task/finding/PR/plan/decision/doc/file/ref/id/issue/ticket) nearby
+#         — move it to --provenance instead, or explain it in words;
+#       - THE ASK is longer than ~30 words — trim it, move detail to (b);
+#       - an OPTION leads (first ~5 words) with a command/flag token
+#         (powershell/npx/npm/git/bash/python/node/curl/psql/supabase, or a
+#         `-flag`/`--flag` token) instead of the outcome — restate as what
+#         changes for the operator;
+#       - (c) WHAT HAPPENS IF YOU DO NOTHING is empty — every decision needs
+#         a stated cost of inaction.
+#     BACKWARD COMPATIBILITY: this is a NEW, opt-in format. The pre-existing
+#     --text contract (and its cold-reader lint above) is completely
+#     unchanged and still the only path for --section question/inflight/
+#     decided and for any decision entry that doesn't pass --ask — the
+#     83-scenario self-test suite predating this task exercises exactly that
+#     path and stays green. Structured and free-text decision entries can
+#     coexist in the same ledger; the renderer (_ny_render_decision_block)
+#     detects which shape an item has (`.ask` present or not) and renders
+#     accordingly.
+#
+#   needs-you.sh rewrite <id> --ask <str> [--what-is-this <str>]
+#                        [--if-nothing <str>] [--option <str>]*
+#                        [--my-pick <str>] [--reply-with <str>]
+#                        [--provenance <str>]* [--mechanical]
+#     Replaces an EXISTING decision entry's content with the plain-language
+#     field set above (id, section, created_at, links, session, state are all
+#     preserved; updated_at advances to now). Dies if <id> is not found, or if
+#     it is not a --section decision entry (the field set is decision-
+#     shaped). Runs the SAME plain-language lint as `add` (interactive block
+#     unless --mechanical). This is the MECHANISM for cleaning up the ~10
+#     live entries authored before this task in the old free-text shape — it
+#     does not rewrite them itself; each one needs a human/agent to actually
+#     read it and decide what the plain-language fields should say.
+#
 #   needs-you.sh resolve <id> [--note <str>]
 #     Marks entry <id> resolved (moves it out of its open section and into
 #     "Recently decided for your §8 review" with today's date), re-renders,
@@ -689,6 +754,145 @@ _ny_lint_decision_text() {
 }
 
 # ----------------------------------------------------------------------
+# PLAIN-LANGUAGE FIELD SET (operator directive 2026-08-04). See this file's
+# header "PLAIN-LANGUAGE FIELD SET" section for the full field list and lint
+# rules. This is the WRITE-PATH fix: the renderer redesign earlier the same
+# day fixed how an entry is DISPLAYED; the content itself was still authored
+# by an agent as one free-text blob (DEC-4, id NY-1785771976-caeb, is the
+# worked example — opens with an unexplained internal id and a term of art,
+# leads with mechanism/provenance instead of consequence). These functions
+# score the SEPARATE fields (a)-(e) an author supplies via --ask/
+# --what-is-this/--if-nothing/--option/--my-pick, so a violation can be
+# pinpointed to a named field instead of a heuristic guess over one blob.
+# ----------------------------------------------------------------------
+
+# _ny_field_identifier_hit <text>
+#   Prints the first bare-internal-identifier-shaped token found in <text>
+#   that has no plain-language gloss word within the ~30 characters
+#   immediately before it (empty output == none found). Candidate shapes, in
+#   priority order: a 7-40 char hex commit SHA, HR-F<n>, DEC-<n>, T<n> (task
+#   ids), a bare `*.md` review-filename token. Deliberately heuristic (regex
+#   over raw text, synchronous, no LLM available at write time) — same
+#   design constraint _ny_lint_decision_text's own header documents. The
+#   gloss-word list is intentionally a fixed vocabulary (commit/review/task/
+#   finding/PR/pull request/plan/decision/doc/file/ref/id/issue/ticket) —
+#   ANY of these physically adjacent to the identifier is accepted as "this
+#   author is explaining it in the same breath," which is the actual bar: an
+#   identifier is fine in a plain-language field IF the author glossed it
+#   inline ("commit 6f5d1b22 fixed the race"); an identifier with nothing
+#   around it ("6f5d1b22 fixed the race") is not. This is NOT satisfiable by
+#   keyword-stuffing alone — stuffing "commit" far from the actual SHA does
+#   not help, since the window is a fixed ~30 chars immediately preceding
+#   the hit, not "anywhere in the field."
+_ny_field_identifier_hit() {
+  local text="$1"
+  # Every alternative is \b-bounded on both sides so a short word like "id"
+  # or "ref" only matches as its own word — not as a substring of an
+  # unrelated word ("decide", "reference", "avoided" must NOT gloss).
+  local glosswords='\bcommits?\b|\breviews?\b|\btasks?\b|\bfindings?\b|\bPRs?\b|\bpull request\b|\bplans?\b|\bdecisions?\b|\bdocs?\b|\bfiles?\b|\brefs?\b|\bids?\b|\bissues?\b|\btickets?\b'
+  local -a pats=('[0-9a-f]{7,40}' 'HR-F[0-9]+' 'DEC-[0-9]+' 'T[0-9]+' '[A-Za-z0-9_.-]+\.md')
+  local pat hit before tail_before
+  for pat in "${pats[@]}"; do
+    while IFS= read -r hit; do
+      [[ -z "$hit" ]] && continue
+      before="${text%%"$hit"*}"
+      tail_before="${before: -30}"
+      if ! printf '%s' "$tail_before" | grep -qiE "($glosswords)"; then
+        printf '%s' "$hit"
+        return 0
+      fi
+    done < <(printf '%s' "$text" | grep -oE "\\b${pat}\\b" 2>/dev/null)
+  done
+  return 1
+}
+
+# _ny_option_is_command_only <option-text>
+#   True (exit 0) iff <option-text>'s first ~5 words LEAD with a command/flag
+#   token (powershell/npx/npm/git/bash/python/node/curl/psql/supabase, or a
+#   `-flag`/`--flag` shaped token) — the "I run: powershell -File ..." shape
+#   the operator's DEC-4 complaint named explicitly. Checks the LEAD only
+#   (not "anywhere in the option"), because an outcome-first option is
+#   allowed to mention the command afterward ("X resumes within 5 minutes,
+#   via install-maintenance-task.ps1") — it is leading with mechanism instead
+#   of outcome that the field-set format forbids.
+_ny_option_is_command_only() {
+  local opt="$1"
+  local lead
+  lead="$(printf '%s' "$opt" | awk '{for(i=1;i<=5 && i<=NF;i++) printf "%s ", $i}')"
+  printf '%s' "$lead" | grep -qiE '(^|[^A-Za-z])(powershell|npx|npm|git|bash|python3?|node|curl|psql|supabase|--[A-Za-z][A-Za-z-]*|-[A-Za-z][A-Za-z-]*)([^A-Za-z]|$)'
+}
+
+# _ny_lint_field_set <ask> <what-is-this> <if-nothing> <my-pick> [option]...
+#   Prints ZERO or more lines, each "CODE\t<code>" or "DETAIL\t<fix message>"
+#   (one CODE/DETAIL pair per finding, empty output == clean). Both are
+#   printed together on ONE stdout stream — deliberately NOT split across a
+#   return-array-plus-a-global, because every real caller reads this
+#   function's output via a subshell (command/process substitution), and a
+#   bash global array written inside that subshell is invisible to the
+#   caller once the subshell exits (this file's _ny_split_tagged has the
+#   same lesson learned the same way — see its own PERFORMANCE NOTE). The
+#   caller does ONE `lint_output=$(_ny_lint_field_set ...)` capture, then
+#   parses CODE/DETAIL lines back out via `<<<` (a here-string, not a pipe —
+#   stays in the caller's own shell) into its own two arrays.
+#   Codes:
+#     bare-identifier      — see _ny_field_identifier_hit above.
+#     ask-too-long         — THE ASK exceeds ~30 words.
+#     option-command-only  — see _ny_option_is_command_only above.
+#     no-consequence       — (c) WHAT HAPPENS IF YOU DO NOTHING is empty.
+_ny_lint_field_set() {
+  local ask="$1" what_is_this="$2" if_nothing="$3" my_pick="$4"
+  shift 4
+  local -a options=("$@")
+
+  local ask_words
+  ask_words=$(printf '%s' "$ask" | tr -s '[:space:]' '\n' | grep -c '[^[:space:]]' 2>/dev/null)
+  ask_words="${ask_words:-0}"
+  if [[ "$ask_words" -gt 30 ]]; then
+    printf 'CODE\task-too-long\n'
+    printf 'DETAIL\task-too-long: THE ASK is %s words (limit ~30) — trim it to one plain sentence a non-specialist reads; move detail into WHAT THIS IS.\n' "$ask_words"
+  fi
+
+  if [[ -z "$if_nothing" ]]; then
+    printf 'CODE\tno-consequence\n'
+    printf 'DETAIL\tno-consequence: WHAT HAPPENS IF YOU DO NOTHING (--if-nothing) is empty — every decision needs a stated cost of inaction, with a date if one applies.\n'
+  fi
+
+  local _fname _fld hit
+  for _fname in "THE ASK (--ask)" "WHAT THIS IS (--what-is-this)" "IF YOU DO NOTHING (--if-nothing)" "MY PICK (--my-pick)"; do
+    case "$_fname" in
+      "THE ASK"*) _fld="$ask" ;;
+      "WHAT THIS IS"*) _fld="$what_is_this" ;;
+      "IF YOU DO NOTHING"*) _fld="$if_nothing" ;;
+      "MY PICK"*) _fld="$my_pick" ;;
+    esac
+    [[ -z "$_fld" ]] && continue
+    hit="$(_ny_field_identifier_hit "$_fld")"
+    if [[ -n "$hit" ]]; then
+      printf 'CODE\tbare-identifier\n'
+      printf 'DETAIL\tbare-identifier: %s contains '"'"'%s'"'"' with no plain-language gloss nearby — either explain what it is in words (e.g. '"'"'commit %s'"'"'), or move it to --provenance.\n' "$_fname" "$hit" "$hit"
+    fi
+  done
+
+  local _oi=0 _o
+  for _o in "${options[@]:-}"; do
+    [[ -z "$_o" ]] && continue
+    _oi=$((_oi+1))
+    hit="$(_ny_field_identifier_hit "$_o")"
+    if [[ -n "$hit" ]]; then
+      printf 'CODE\tbare-identifier\n'
+      printf 'DETAIL\tbare-identifier: Option %s contains '"'"'%s'"'"' with no plain-language gloss nearby — either explain what it is in words, or move it to --provenance.\n' "$_oi" "$hit"
+    fi
+    if _ny_option_is_command_only "$_o"; then
+      local _snippet; _snippet="$(printf '%s' "$_o" | cut -c1-50)"
+      printf 'CODE\toption-command-only\n'
+      printf 'DETAIL\toption-command-only: Option %s leads with a command/flag ('"'"'%s...'"'"') instead of the outcome the operator gets — restate as what changes (e.g. '"'"'X resumes within 5 minutes'"'"'); the command can still follow, or go in --provenance.\n' "$_oi" "$_snippet"
+    fi
+  done
+
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # cmd_add
 # ----------------------------------------------------------------------
 cmd_add() {
@@ -710,7 +914,13 @@ cmd_add() {
   #                        add must stay total (constraint 5, same rung as
   #                        the Task-4 splice below).
   local reply_with="" blocking=0 supersedes=""
-  local -a links=()
+  # PLAIN-LANGUAGE FIELD SET (operator directive 2026-08-04): six more
+  # optional flags, --section decision only. See this file's header
+  # "PLAIN-LANGUAGE FIELD SET" section for the full contract. Supplying
+  # --ask switches this add into STRUCTURED MODE; --text stays fully
+  # supported (and required) for every other shape of call, unchanged.
+  local ask="" what_is_this="" if_nothing="" my_pick=""
+  local -a links=() options=() provenance=()
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --section) section="$2"; shift 2 ;;
@@ -722,6 +932,12 @@ cmd_add() {
       --reply-with) reply_with="$2"; shift 2 ;;
       --blocking) blocking=1; shift ;;
       --supersedes) supersedes="$2"; shift 2 ;;
+      --ask) ask="$2"; shift 2 ;;
+      --what-is-this) what_is_this="$2"; shift 2 ;;
+      --if-nothing) if_nothing="$2"; shift 2 ;;
+      --option) options+=("$2"); shift 2 ;;
+      --my-pick) my_pick="$2"; shift 2 ;;
+      --provenance) provenance+=("$2"); shift 2 ;;
       *) die "add: unknown flag '$1'" ;;
     esac
   done
@@ -730,7 +946,20 @@ cmd_add() {
     decision|question|inflight|decided) ;;
     *) die "add: --section must be one of decision|question|inflight|decided (got '$section')" ;;
   esac
-  [[ -n "$text" ]] || die "add: --text is required"
+  local structured_mode=0
+  if [[ -n "$ask" ]]; then
+    structured_mode=1
+    [[ "$section" == "decision" ]] || die "add: --ask (plain-language field set) is decision-only (got --section '$section')"
+  fi
+  if [[ "$structured_mode" == "1" ]]; then
+    # --text is optional in structured mode; fall back to the ask sentence so
+    # every downstream consumer that still reads $text/.text (the Decide-now
+    # table's title fallback, the progress-log summary, the ntfy-push body)
+    # keeps working unchanged for a structured entry too.
+    [[ -n "$text" ]] || text="$ask"
+  else
+    [[ -n "$text" ]] || die "add: --text is required (or use --ask to author a structured decision entry — see needs-you.sh header)"
+  fi
 
   local id; id="$(_ny_gen_id)"
   local ts; ts="$(_ny_now)"
@@ -748,7 +977,7 @@ cmd_add() {
   # block either caller type, even though it still lands in lint_warnings.
   local -a lint_warnings=()
   local -a blocking_lint_warnings=()
-  if [[ "$section" == "decision" ]]; then
+  if [[ "$section" == "decision" && "$structured_mode" == "0" ]]; then
     local _ny_has_reply=0
     [[ -n "$reply_with" ]] && _ny_has_reply=1
     while IFS= read -r _ny_lw; do
@@ -777,6 +1006,45 @@ cmd_add() {
       # blocks, never quarantines — a lightweight notice for BOTH caller
       # types, and the code is still stamped into the stored lint_warnings.
       err "cold-reader lint (warn-only, never blocks): this decision entry is missing: ${lint_warnings[*]} — consider --reply-with or a 'Reply:' line so the operator knows exactly how to respond."
+    fi
+  elif [[ "$section" == "decision" && "$structured_mode" == "1" ]]; then
+    # PLAIN-LANGUAGE LINT (operator directive 2026-08-04): scores the
+    # SEPARATE fields, not a --text blob. Same interactive-block/mechanical-
+    # quarantine split as the cold-reader lint above — see this file's
+    # header "PLAIN-LANGUAGE FIELD SET" section.
+    # Single subshell capture (see _ny_lint_field_set's own header for why:
+    # a `< <(...)` process-substitution read runs the producer in ITS OWN
+    # subshell, so a global array it sets would never reach this scope —
+    # the tagged CODE/DETAIL stream + a `<<<` here-string parse below stays
+    # entirely in cmd_add's own shell).
+    local _ny_fs_out
+    _ny_fs_out=$(_ny_lint_field_set "$ask" "$what_is_this" "$if_nothing" "$my_pick" "${options[@]+"${options[@]}"}")
+    local -a _ny_fs_details=()
+    local _ny_kind _ny_val
+    while IFS=$'\t' read -r _ny_kind _ny_val; do
+      case "$_ny_kind" in
+        CODE) [[ -n "$_ny_val" ]] && lint_warnings+=("$_ny_val") ;;
+        DETAIL) [[ -n "$_ny_val" ]] && _ny_fs_details+=("$_ny_val") ;;
+      esac
+    done <<< "$_ny_fs_out"
+    # NOT "${lint_warnings[@]:-}" here: on a ZERO-element array, bash's `:-`
+    # default-value operator substitutes the (empty) default word, which
+    # inside `(...)` array construction produces a ONE-element array holding
+    # an empty string — not the empty array this needs. `+"${arr[@]}"` (the
+    # codebase's established "set, so expand literally" guard — see cmd_add's
+    # own BASH 3.2 ROOT-CAUSE NOTE on the links[] expansion above) is the
+    # correct idiom for copying a possibly-empty array.
+    local -a blocking_lint_warnings=("${lint_warnings[@]+"${lint_warnings[@]}"}")
+    if [[ "${#blocking_lint_warnings[@]}" -gt 0 ]]; then
+      local _ny_fs_msg="" _ny_d
+      for _ny_d in "${_ny_fs_details[@]:-}"; do
+        [[ -n "$_ny_d" ]] && _ny_fs_msg="${_ny_fs_msg}"$'\n  - '"$_ny_d"
+      done
+      if [[ "$mechanical" == "1" ]]; then
+        err "plain-language lint: this decision entry is missing: ${lint_warnings[*]} (added anyway — MECHANICAL caller, stored + quarantined, never rejected).${_ny_fs_msg}"
+      else
+        die "plain-language lint BLOCKED this add (interactive path): ${lint_warnings[*]}.${_ny_fs_msg}"$'\n'"Fix the field(s) named above and retry. If this is a scripted/dispatcher caller with no live actor to retry, pass --mechanical instead."
+      fi
     fi
   elif [[ "$section" == "question" ]]; then
     # ASK LINT (constitution §2 "every ask is a complete instruction", 2026-07-28).
@@ -830,6 +1098,22 @@ cmd_add() {
   if [[ "${#blocking_lint_warnings[@]}" -gt 0 ]]; then
     blocking_lint_csv=$(IFS=,; echo "${blocking_lint_warnings[*]}")
   fi
+  # PLAIN-LANGUAGE FIELD SET: options[]/provenance[] need the SAME
+  # multi-value-through-one-jq-call trick lint_warnings uses above, but a
+  # plain comma-join is unsafe here (unlike lint codes, option/provenance
+  # TEXT can itself contain commas) — joined on ASCII Unit Separator
+  # (\x1f, a byte that never appears in authored prose) and split back out
+  # inside the filter instead. Still one jq invocation total (see the
+  # jq-subprocess-count-sensitive note above this block).
+  local options_csv="" provenance_csv=""
+  if [[ "${#options[@]}" -gt 0 ]]; then
+    options_csv=$(printf '%s\x1f' "${options[@]}")
+    options_csv="${options_csv%$'\x1f'}"
+  fi
+  if [[ "${#provenance[@]}" -gt 0 ]]; then
+    provenance_csv=$(printf '%s\x1f' "${provenance[@]}")
+    provenance_csv="${provenance_csv%$'\x1f'}"
+  fi
   local cur; cur=$(_ny_read_ledger)
   local new
   new=$(echo "$cur" | jq \
@@ -837,18 +1121,30 @@ cmd_add() {
     --arg session_id "$session_id" --arg tier "$tier" --arg lint_csv "$lint_warnings_csv" \
     --arg reply_with "$reply_with" --arg supersedes "$supersedes" \
     --argjson blocking "$([[ "$blocking" == "1" ]] && echo true || echo false)" \
+    --argjson structured "$([[ "$structured_mode" == "1" ]] && echo true || echo false)" \
+    --arg ask "$ask" --arg what_is_this "$what_is_this" --arg if_nothing "$if_nothing" \
+    --arg my_pick "$my_pick" --arg options_us "$options_csv" --arg provenance_us "$provenance_csv" \
     '
     ($session_id | if . == "" then null else . end) as $session
     | ($tier | if . == "" then null else . end) as $tier_v
     | ($lint_csv | if . == "" then [] else split(",") end) as $lint_warnings
     | ($reply_with | if . == "" then null else . end) as $reply_with_v
     | ($supersedes | if . == "" then null else . end) as $supersedes_v
+    | ($options_us | if . == "" then [] else split("") end) as $options
+    | ($provenance_us | if . == "" then [] else split("") end) as $provenance
+    | (if $structured then $ask else null end) as $ask_v
+    | (if $structured then ($what_is_this | if . == "" then null else . end) else null end) as $what_is_this_v
+    | (if $structured then ($if_nothing | if . == "" then null else . end) else null end) as $if_nothing_v
+    | (if $structured then ($my_pick | if . == "" then null else . end) else null end) as $my_pick_v
     | .items += [{
         id: $id, created_at: $ts, updated_at: $ts, section: $section, text: $text,
         links: $ARGS.positional, session: $session, tier: $tier_v,
         state: "open", resolved_at: null, resolution_note: null,
         lint_warnings: $lint_warnings, reply_with: $reply_with_v,
-        blocking: $blocking, supersedes: $supersedes_v
+        blocking: $blocking, supersedes: $supersedes_v,
+        ask: $ask_v, what_is_this: $what_is_this_v, if_nothing: $if_nothing_v,
+        options: (if $structured then $options else [] end), my_pick: $my_pick_v,
+        provenance: (if $structured then $provenance else [] end)
       }]
     ' \
     --args -- "${links[@]+"${links[@]}"}")
@@ -999,6 +1295,112 @@ cmd_resolve() {
   fi
   _ny_write_ledger "$new" || { err "resolve: aborting — ledger write was rejected (see previous error); $id was NOT marked resolved"; return 1; }
   cmd_render >/dev/null
+}
+
+# ----------------------------------------------------------------------
+# cmd_rewrite — operator directive 2026-08-04: the MECHANISM for cleaning up
+# an entry authored in the old free-text shape into the new plain-language
+# field set. Does NOT do the rewriting itself (each of the ~10 live entries
+# needs a human/agent to actually read it and decide what THE ASK/WHAT THIS
+# IS/etc. should say) — see this file's header "PLAIN-LANGUAGE FIELD SET"
+# section for the full field contract and the rewrite verb's usage line.
+# ----------------------------------------------------------------------
+cmd_rewrite() {
+  _ny_ensure_state
+  local id="${1:-}"; shift || true
+  [[ -n "$id" ]] || die "rewrite: missing <id>"
+  local ask="" what_is_this="" if_nothing="" my_pick="" reply_with="" mechanical=0
+  local -a options=() provenance=()
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --ask) ask="$2"; shift 2 ;;
+      --what-is-this) what_is_this="$2"; shift 2 ;;
+      --if-nothing) if_nothing="$2"; shift 2 ;;
+      --option) options+=("$2"); shift 2 ;;
+      --my-pick) my_pick="$2"; shift 2 ;;
+      --reply-with) reply_with="$2"; shift 2 ;;
+      --provenance) provenance+=("$2"); shift 2 ;;
+      --mechanical) mechanical=1; shift ;;
+      *) die "rewrite: unknown flag '$1'" ;;
+    esac
+  done
+  [[ -n "$ask" ]] || die "rewrite: --ask is required (the plain-language field set always needs THE ASK)"
+
+  local cur; cur=$(_ny_read_ledger)
+  local existing_section
+  existing_section=$(echo "$cur" | jq -r --arg id "$id" '[.items[] | select(.id == $id) | .section] | first // ""')
+  [[ -n "$existing_section" ]] || die "rewrite: id '$id' not found"
+  [[ "$existing_section" == "decision" ]] || die "rewrite: '$id' is a --section $existing_section entry — the plain-language field set is decision-only, so rewrite only applies to decisions."
+
+  # Same plain-language lint as `add`'s structured path, same interactive-
+  # block/mechanical-quarantine split — see this file's header. Single
+  # subshell capture + `<<<` parse in THIS shell (see _ny_lint_field_set's
+  # own header comment for why a `< <(...)` process-substitution read would
+  # silently lose any global the producer set).
+  local -a lint_warnings=()
+  local _ny_fs_out
+  _ny_fs_out=$(_ny_lint_field_set "$ask" "$what_is_this" "$if_nothing" "$my_pick" "${options[@]+"${options[@]}"}")
+  local -a _ny_fs_details=()
+  local _ny_kind _ny_val
+  while IFS=$'\t' read -r _ny_kind _ny_val; do
+    case "$_ny_kind" in
+      CODE) [[ -n "$_ny_val" ]] && lint_warnings+=("$_ny_val") ;;
+      DETAIL) [[ -n "$_ny_val" ]] && _ny_fs_details+=("$_ny_val") ;;
+    esac
+  done <<< "$_ny_fs_out"
+  if [[ "${#lint_warnings[@]}" -gt 0 ]]; then
+    local _ny_fs_msg="" _ny_d
+    for _ny_d in "${_ny_fs_details[@]:-}"; do
+      [[ -n "$_ny_d" ]] && _ny_fs_msg="${_ny_fs_msg}"$'\n  - '"$_ny_d"
+    done
+    if [[ "$mechanical" == "1" ]]; then
+      err "plain-language lint: rewrite of '$id' is missing: ${lint_warnings[*]} (stored anyway — MECHANICAL caller, quarantined, never rejected).${_ny_fs_msg}"
+    else
+      die "plain-language lint BLOCKED this rewrite (interactive path): ${lint_warnings[*]}.${_ny_fs_msg}"$'\n'"Fix the field(s) named above and retry. Pass --mechanical to store + quarantine instead of blocking."
+    fi
+  fi
+
+  local lint_warnings_csv=""
+  if [[ "${#lint_warnings[@]}" -gt 0 ]]; then
+    lint_warnings_csv=$(IFS=,; echo "${lint_warnings[*]}")
+  fi
+  local options_csv="" provenance_csv=""
+  if [[ "${#options[@]}" -gt 0 ]]; then
+    options_csv=$(printf '%s\x1f' "${options[@]}")
+    options_csv="${options_csv%$'\x1f'}"
+  fi
+  if [[ "${#provenance[@]}" -gt 0 ]]; then
+    provenance_csv=$(printf '%s\x1f' "${provenance[@]}")
+    provenance_csv="${provenance_csv%$'\x1f'}"
+  fi
+  local ts; ts=$(_ny_now)
+  local new
+  new=$(echo "$cur" | jq \
+    --arg id "$id" --arg ts "$ts" --arg ask "$ask" --arg what_is_this "$what_is_this" \
+    --arg if_nothing "$if_nothing" --arg my_pick "$my_pick" --arg reply_with "$reply_with" \
+    --arg options_us "$options_csv" --arg provenance_us "$provenance_csv" --arg lint_csv "$lint_warnings_csv" \
+    '
+    ($lint_csv | if . == "" then [] else split(",") end) as $lint_warnings
+    | ($reply_with | if . == "" then null else . end) as $reply_with_v
+    | ($what_is_this | if . == "" then null else . end) as $what_is_this_v
+    | ($if_nothing | if . == "" then null else . end) as $if_nothing_v
+    | ($my_pick | if . == "" then null else . end) as $my_pick_v
+    | ($options_us | if . == "" then [] else split("") end) as $options
+    | ($provenance_us | if . == "" then [] else split("") end) as $provenance
+    | .items |= map(
+        if .id == $id then
+          . + {
+            updated_at: $ts, text: $ask, ask: $ask, what_is_this: $what_is_this_v,
+            if_nothing: $if_nothing_v, my_pick: $my_pick_v, options: $options,
+            provenance: $provenance, reply_with: $reply_with_v, lint_warnings: $lint_warnings
+          }
+        else . end
+      )
+    ')
+  [[ -n "$new" ]] || die "rewrite: failed to build the updated ledger (jq produced no output); refusing to write"
+  _ny_write_ledger "$new" || die "rewrite: aborting — ledger write was rejected (see previous error); '$id' was NOT rewritten"
+  cmd_render >/dev/null
+  echo "$id"
 }
 
 # ----------------------------------------------------------------------
@@ -1191,11 +1593,106 @@ _ny_liveness_note() {
   printf '_(liveness: %s)_\n' "$joined"
 }
 
+# _ny_render_decision_block_structured <item-json>  (operator directive
+# 2026-08-04, plain-language field set) — renders an item authored via
+# --ask in the FIXED (a)-(g) order from this file's header "PLAIN-LANGUAGE
+# FIELD SET" section: the renderer controls the order here, reading each
+# field directly off the item, never trusting an agent-supplied blob's own
+# internal ordering.
+_ny_render_decision_block_structured() {
+  local it="$1"
+  local fields ask what_is_this if_nothing my_pick reply_with session id created
+  fields=$(echo "$it" | jq -r '[.ask, (.what_is_this // ""), (.if_nothing // ""), (.my_pick // ""), (.reply_with // ""), (.session // "unknown"), .id, (.created_at | split("T")[0])] | @tsv')
+  IFS=$'\t' read -r ask what_is_this if_nothing my_pick reply_with session id created <<< "$fields"
+  ask="$(_ny_tsv_unescape "$ask")"
+  what_is_this="$(_ny_tsv_unescape "$what_is_this")"
+  if_nothing="$(_ny_tsv_unescape "$if_nothing")"
+  my_pick="$(_ny_tsv_unescape "$my_pick")"
+  reply_with="$(_ny_tsv_unescape "$reply_with")"
+  [[ -n "$ask" ]] || ask="(untitled decision)"
+
+  # (a) THE ASK — one plain sentence, rendered as the block's title.
+  printf '### %s\n' "$ask"
+  # (b) WHAT THIS IS
+  [[ -n "$what_is_this" ]] && printf 'What this is: %s\n' "$what_is_this"
+  # (c) WHAT HAPPENS IF YOU DO NOTHING
+  [[ -n "$if_nothing" ]] && printf 'If you do nothing: %s\n' "$if_nothing"
+
+  # (d) OPTIONS — one bullet per --option, outcome-first per the author.
+  local -a options=()
+  local _o
+  while IFS= read -r _o; do
+    _o="${_o%$'\r'}"
+    [[ -n "$_o" ]] && options+=("$_o")
+  done < <(echo "$it" | jq -r '.options[]?')
+  if [[ "${#options[@]}" -gt 0 ]]; then
+    printf 'Options:\n'
+    for _o in "${options[@]}"; do
+      printf -- '- %s\n' "$_o"
+    done
+  fi
+
+  # (e) MY PICK
+  [[ -n "$my_pick" ]] && printf 'My pick: %s\n' "$my_pick"
+  # (f) REPLY WITH — reuses the pre-existing S6 .reply_with field.
+  [[ -n "$reply_with" ]] && printf 'Reply with: %s\n' "$reply_with"
+
+  local links_line
+  links_line=$(echo "$it" | jq -r '(.links // [] | if length == 0 then "(none)" else join(" ") end)')
+  links_line="$(_ny_tsv_unescape "$links_line")"
+  [[ "$links_line" != "(none)" ]] && printf 'Links: %s\n' "$links_line"
+
+  if [[ -z "$session" || "$session" == "unknown" ]]; then
+    printf '*(added %s, id `%s`)*\n' "$created" "$id"
+  else
+    printf '*(added %s, session `%s`, id `%s`)*\n' "$created" "$session" "$id"
+  fi
+
+  # (g) PROVENANCE — optional, LAST: a curious reader finds it, a deciding
+  # reader has already stopped reading by here.
+  local -a provenance=()
+  local _p
+  while IFS= read -r _p; do
+    _p="${_p%$'\r'}"
+    [[ -n "$_p" ]] && provenance+=("$_p")
+  done < <(echo "$it" | jq -r '.provenance[]?')
+  if [[ "${#provenance[@]}" -gt 0 ]]; then
+    local joined="" _pp
+    for _pp in "${provenance[@]}"; do
+      if [[ -z "$joined" ]]; then joined="$_pp"; else joined="$joined; $_pp"; fi
+    done
+    printf 'Provenance: %s\n' "$joined"
+  fi
+
+  local -a raw_links=()
+  local _ny_rl
+  while IFS= read -r _ny_rl; do
+    _ny_rl="${_ny_rl%$'\r'}"
+    [[ -n "$_ny_rl" ]] && raw_links+=("$_ny_rl")
+  done < <(echo "$it" | jq -r '.links[]?')
+  local composed_text; composed_text="$ask"$'\n'"$what_is_this"$'\n'"$if_nothing"
+  local note; note="$(_ny_liveness_note "$composed_text" "${raw_links[@]}")"
+  [[ -n "$note" ]] && printf '%s\n' "$note"
+}
+
 # Render a single "Awaiting your decision" block (compact §3-style).
 # Single jq call (tab-joined fields) rather than one jq invocation per field —
 # keeps subprocess churn down since render can iterate many items.
 _ny_render_decision_block() {
   local it="$1"
+  # PLAIN-LANGUAGE FIELD SET dispatch (operator directive 2026-08-04): an
+  # item authored via --ask carries a non-null/non-empty .ask — render it in
+  # the fixed structured order instead of the legacy free-text path below.
+  # A pre-existing --text-only item (every item before this task, and every
+  # item added without --ask afterward) has .ask == null and falls straight
+  # through to the unchanged legacy renderer.
+  local _ny_has_ask
+  _ny_has_ask=$(echo "$it" | jq -r '(.ask // "") | length > 0')
+  if [[ "$_ny_has_ask" == "true" ]]; then
+    _ny_render_decision_block_structured "$it"
+    return
+  fi
+
   local fields text session id created links_line
   fields=$(echo "$it" | jq -r '[.text, (.session // "unknown"), .id, (.created_at | split("T")[0]), (.links // [] | if length == 0 then "(none)" else join(" ") end)] | @tsv')
   IFS=$'\t' read -r text session id created links_line <<< "$fields"
@@ -1326,7 +1823,7 @@ _ny_render_decide_now_row() {
   fields=$(echo "$it" | jq -r '
     def striphash: sub("^#{1,6}[[:space:]]+"; "");
     (.id | split("-") | last) as $idsuf
-    | ((.text | split("\n")[0]) | striphash | gsub("[|]"; "/")) as $title0
+    | ((.ask // (.text | split("\n")[0])) | striphash | gsub("[|]"; "/")) as $title0
     | (if ($title0 | length) > 70 then ($title0[0:69] + "…") else $title0 end) as $title
     | ((.reply_with // first(.text | split("\n")[] | select(test("reply"; "i"))) // "")) as $reply0
     | (($reply0 | gsub("[|]"; "/"))) as $reply1
@@ -1363,7 +1860,7 @@ _ny_render_dead_line() {
   local fields id title age
   fields=$(echo "$it" | jq -r '
     def striphash: sub("^#{1,6}[[:space:]]+"; "");
-    [.id, ((.text | split("\n")[0]) | striphash | gsub("[|]"; "/")), (._age_days // 0 | tostring)] | @tsv
+    [.id, ((.ask // (.text | split("\n")[0])) | striphash | gsub("[|]"; "/")), (._age_days // 0 | tostring)] | @tsv
   ')
   IFS=$'\t' read -r id title age <<< "$fields"
   title="$(_ny_tsv_unescape "$title")"
@@ -2878,6 +3375,169 @@ cmd_selftest() {
   fi
   rm -rf "$sandbox20"
 
+  # ----------------------------------------------------------------------
+  # T55-T63: PLAIN-LANGUAGE FIELD SET (operator directive 2026-08-04) — the
+  # WRITE-PATH fix. Fresh sandbox so lint/render assertions aren't muddied
+  # by earlier fixtures.
+  # ----------------------------------------------------------------------
+  local sandbox21; sandbox21=$(mktemp -d)
+  export NEEDS_YOU_STATE_DIR="$sandbox21/state"
+  export NEEDS_YOU_MD_PATH="$sandbox21/NEEDS-YOU.md"
+  export PROGRESS_LOG_STATE_DIR="$sandbox21/pl"
+  export OPERATOR_TODO_PATH="$sandbox21/todo.md"
+
+  echo "Scenario T55: a fully well-formed --ask entry passes the plain-language lint with zero warnings and renders in the fixed (a)-(g) order"
+  local id55
+  id55=$(cmd_add --section decision \
+    --ask "Should we turn on the nightly backup job?" \
+    --what-is-this "This is an automated task that copies the database to backup storage every night. It has run cleanly in a two-week trial." \
+    --if-nothing "Nothing changes — there is still no automated backup, and the manual weekly backup stays the only protection." \
+    --option "Turn it on -> nightly backups start tonight and continue automatically from now on." \
+    --option "Wait another week -> one more week of manual-only backups, then turn on later." \
+    --my-pick "Turn it on — the trial has been clean for two weeks." \
+    --reply-with "turn it on / wait another week" \
+    --session "sess-t55")
+  local lint55
+  lint55=$(jq -r --arg id "$id55" '.items[] | select(.id == $id) | .lint_warnings | length' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  [[ "$lint55" == "0" ]] && ok "T55a well-formed structured entry gets empty lint_warnings (no false-positive)" \
+    || fail_ "T55a expected 0 lint_warnings, got $lint55"
+  local block55
+  block55=$(awk '/^### Should we turn on the nightly backup job\?/{flag=1} flag{print} /^\*\(added/{if(flag){exit}}' "$NEEDS_YOU_MD_PATH")
+  if printf '%s\n' "$block55" | grep -qF "What this is: This is an automated task" \
+     && printf '%s\n' "$block55" | grep -qF "If you do nothing: Nothing changes" \
+     && printf '%s\n' "$block55" | grep -qF "Options:" \
+     && printf '%s\n' "$block55" | grep -qF "My pick: Turn it on" \
+     && printf '%s\n' "$block55" | grep -qF "Reply with: turn it on / wait another week"; then
+    ok "T55b structured block renders all fields (a)-(f), in order, title-first"
+  else
+    fail_ "T55b structured block missing an expected field or wrong order; got: $block55"
+  fi
+  local order55_wit order55_ifn
+  order55_wit=$(grep -n "^What this is:" "$NEEDS_YOU_MD_PATH" | head -1 | cut -d: -f1)
+  order55_ifn=$(grep -n "^If you do nothing:" "$NEEDS_YOU_MD_PATH" | head -1 | cut -d: -f1)
+  [[ -n "$order55_wit" && -n "$order55_ifn" && "$order55_wit" -lt "$order55_ifn" ]] && \
+    ok "T55c renderer enforces field order (WHAT THIS IS before IF YOU DO NOTHING) regardless of flag order on the command line" \
+    || fail_ "T55c expected WHAT THIS IS to render before IF YOU DO NOTHING"
+  if grep -q "Should we turn on the nightly backup job?" <(awk '/^## Decide now/{flag=1;next}/^## /{flag=0}flag' "$NEEDS_YOU_MD_PATH"); then
+    ok "T55d Decide-now table title uses .ask, not a synthesized .text"
+  else
+    fail_ "T55d expected the Decide-now table to show the ask as the title"
+  fi
+
+  echo "Scenario T56: a bare commit SHA in THE ASK with no gloss word nearby BLOCKS an interactive structured add, and is store-and-quarantined for a mechanical one"
+  local stderr56 rc56
+  stderr56=$(cmd_add --section decision --ask "Should we ratify 6f5d1b22 for production?" \
+    --if-nothing "Nothing ships." --session "sess-t56" 2>&1 >/dev/null)
+  rc56=$?
+  [[ "$rc56" != "0" ]] && ok "T56a interactive structured add with a bare SHA in THE ASK BLOCKS" \
+    || fail_ "T56a expected non-zero exit, got $rc56"
+  printf '%s' "$stderr56" | grep -qi "bare-identifier" && ok "T56b block message names bare-identifier" \
+    || fail_ "T56b expected 'bare-identifier' in stderr, got: $stderr56"
+  printf '%s' "$stderr56" | grep -qF "6f5d1b22" && ok "T56c block message quotes the offending token (6f5d1b22), not just the code" \
+    || fail_ "T56c expected the message to name the offending token, got: $stderr56"
+  local id56m
+  id56m=$(cmd_add --section decision --mechanical --ask "Should we ratify 6f5d1b22 for production?" \
+    --if-nothing "Nothing ships." --session "sess-t56m")
+  [[ "$id56m" =~ ^NY- ]] && ok "T56d mechanical structured add with the same bare SHA is quarantined, not blocked (id returned: $id56m)" \
+    || fail_ "T56d expected a mechanical add to still return an id, got '$id56m'"
+
+  echo "Scenario T56e: the SAME SHA, glossed inline ('commit 6f5d1b22'), does NOT trigger bare-identifier — proves the check is gloss-aware, not identifier-phobic"
+  local id56e lint56e
+  id56e=$(cmd_add --section decision --ask "Should we ship the fix?" \
+    --what-is-this "Commit 6f5d1b22 fixed the race condition that caused the outage." \
+    --if-nothing "The race condition stays live in production." --session "sess-t56e")
+  lint56e=$(jq -r --arg id "$id56e" '.items[] | select(.id == $id) | .lint_warnings | join(",")' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  [[ "$lint56e" != *"bare-identifier"* ]] && ok "T56e a glossed identifier ('commit 6f5d1b22') does not fire bare-identifier" \
+    || fail_ "T56e expected no bare-identifier warning for a glossed SHA, got: $lint56e"
+
+  echo "Scenario T57: THE ASK over ~30 words BLOCKS (interactive) — trim-and-move-to-what-is-this is the fix"
+  local long_ask57
+  long_ask57="Should we go ahead and definitely ratify approve and sign off on turning on the new nightly automated backup job that copies every table in the production database to the cold storage bucket starting tonight"
+  local stderr57 rc57
+  stderr57=$(cmd_add --section decision --ask "$long_ask57" --if-nothing "Nothing." --session "sess-t57" 2>&1 >/dev/null)
+  rc57=$?
+  [[ "$rc57" != "0" ]] && printf '%s' "$stderr57" | grep -qi "ask-too-long" \
+    && ok "T57 an ask over ~30 words BLOCKS with ask-too-long" \
+    || fail_ "T57 expected a non-zero exit naming ask-too-long, got rc=$rc57 stderr=$stderr57"
+
+  echo "Scenario T58: an option that LEADS with a command/flag token instead of the outcome BLOCKS (the DEC-4 'I run: powershell -File ...' shape)"
+  local stderr58 rc58
+  stderr58=$(cmd_add --section decision --ask "Should we register the maintenance task?" \
+    --if-nothing "Nothing runs on a schedule." \
+    --option "I run: powershell -File install-maintenance-task.ps1 and maintenance resumes." \
+    --session "sess-t58" 2>&1 >/dev/null)
+  rc58=$?
+  [[ "$rc58" != "0" ]] && printf '%s' "$stderr58" | grep -qi "option-command-only" \
+    && ok "T58a a command-led option BLOCKS with option-command-only" \
+    || fail_ "T58a expected a non-zero exit naming option-command-only, got rc=$rc58 stderr=$stderr58"
+  local id58b lint58b
+  id58b=$(cmd_add --section decision --ask "Should we register the maintenance task?" \
+    --if-nothing "Nothing runs on a schedule." \
+    --option "Maintenance resumes machine-wide within 5 minutes, run via install-maintenance-task.ps1." \
+    --session "sess-t58b")
+  lint58b=$(jq -r --arg id "$id58b" '.items[] | select(.id == $id) | .lint_warnings | join(",")' "$NEEDS_YOU_STATE_DIR/ledger.json" 2>/dev/null)
+  [[ "$lint58b" != *"option-command-only"* ]] && ok "T58b the SAME command, mentioned AFTER the outcome, does not fire option-command-only (leading, not mentioning, is the violation)" \
+    || fail_ "T58b expected no option-command-only warning when outcome leads, got: $lint58b"
+
+  echo "Scenario T59: omitting --if-nothing BLOCKS with no-consequence"
+  local stderr59 rc59
+  stderr59=$(cmd_add --section decision --ask "Should we ship the widget?" --my-pick "Ship it." --session "sess-t59" 2>&1 >/dev/null)
+  rc59=$?
+  [[ "$rc59" != "0" ]] && printf '%s' "$stderr59" | grep -qi "no-consequence" \
+    && ok "T59 a structured add with no --if-nothing BLOCKS with no-consequence" \
+    || fail_ "T59 expected a non-zero exit naming no-consequence, got rc=$rc59 stderr=$stderr59"
+
+  echo "Scenario T60: --ask on a non-decision section is rejected outright (structured mode is decision-only)"
+  local rc60
+  ( cmd_add --section question --ask "Should we do X?" --text "x" --session "sess-t60" >/dev/null 2>&1 )
+  rc60=$?
+  [[ "$rc60" != "0" ]] && ok "T60 --ask on --section question dies" || fail_ "T60 expected --ask on a non-decision section to die"
+
+  echo "Scenario T61: rewrite verb turns an OLD free-text decision entry into the structured format — id/created_at/section preserved, updated_at advances, render shows the new (a)-(g) layout"
+  local id61 created61_before
+  id61=$(cmd_add --section decision --mechanical \
+    --text $'### DEC-OLD (old shape)\nBACKGROUND: some prose with commit 6f5d1b22 mixed in.\nOption ratify -> I run: powershell -File foo.ps1' \
+    --session "sess-t61-old")
+  created61_before=$(jq -r --arg id "$id61" '.items[] | select(.id == $id) | .created_at' "$NEEDS_YOU_STATE_DIR/ledger.json")
+  local rw_out61
+  rw_out61=$(cmd_rewrite "$id61" \
+    --ask "Should we ratify the maintenance daemon?" \
+    --what-is-this "This is a background process that keeps scheduled upkeep running. Commit 6f5d1b22 hardened it." \
+    --if-nothing "No scheduled maintenance runs on this machine." \
+    --option "Ratify it -> maintenance resumes within 5 minutes." \
+    --my-pick "Ratify — it has been reviewed twice." \
+    --reply-with "ratify")
+  [[ "$rw_out61" == "$id61" ]] && ok "T61a rewrite returns the SAME id" || fail_ "T61a expected rewrite to return $id61, got $rw_out61"
+  local created61_after section61_after
+  created61_after=$(jq -r --arg id "$id61" '.items[] | select(.id == $id) | .created_at' "$NEEDS_YOU_STATE_DIR/ledger.json")
+  section61_after=$(jq -r --arg id "$id61" '.items[] | select(.id == $id) | .section' "$NEEDS_YOU_STATE_DIR/ledger.json")
+  [[ "$created61_after" == "$created61_before" ]] && ok "T61b rewrite preserves created_at" || fail_ "T61b created_at changed ($created61_before -> $created61_after)"
+  [[ "$section61_after" == "decision" ]] && ok "T61c rewrite preserves section=decision" || fail_ "T61c expected section=decision, got $section61_after"
+  if grep -q "Should we ratify the maintenance daemon?" "$NEEDS_YOU_MD_PATH" && ! grep -q "DEC-OLD (old shape)" "$NEEDS_YOU_MD_PATH"; then
+    ok "T61d re-render shows the NEW structured title, old free-text title is gone"
+  else
+    fail_ "T61d expected the rewritten title to replace the old free-text title in the render"
+  fi
+
+  echo "Scenario T62: rewrite dies with a clear message when the target is not a decision entry"
+  local id62 rc62 stderr62
+  id62=$(cmd_add --section question --text "An open question, not a decision" --session "sess-t62")
+  stderr62=$(cmd_rewrite "$id62" --ask "x" --if-nothing "y" 2>&1 >/dev/null)
+  rc62=$?
+  [[ "$rc62" != "0" ]] && printf '%s' "$stderr62" | grep -qi "decision-only" \
+    && ok "T62 rewrite on a non-decision entry dies naming decision-only" \
+    || fail_ "T62 expected a non-zero exit naming decision-only, got rc=$rc62 stderr=$stderr62"
+
+  echo "Scenario T63: rewrite on an unknown id dies naming 'not found'"
+  local rc63 stderr63
+  stderr63=$(cmd_rewrite "NY-does-not-exist" --ask "x" --if-nothing "y" 2>&1 >/dev/null)
+  rc63=$?
+  [[ "$rc63" != "0" ]] && printf '%s' "$stderr63" | grep -qi "not found" \
+    && ok "T63 rewrite on an unknown id dies naming 'not found'" \
+    || fail_ "T63 expected a non-zero exit naming 'not found', got rc=$rc63 stderr=$stderr63"
+
+  rm -rf "$sandbox21"
+
   echo ""
   echo "RESULT: $pass passed, $fail failed"
   if [[ "$fail" -gt 0 ]]; then
@@ -2909,7 +3569,24 @@ Verbs:
                          directly; --blocking hoists the item to the top of
                          its ordering; --supersedes <id> auto-resolves <id>
                          once this add succeeds (missing target -> warn,
-                         never fails the add).
+                         never fails the add). PLAIN-LANGUAGE FIELD SET
+                         (operator directive 2026-08-04): --ask STR switches
+                         a decision add into structured mode — pass
+                         [--what-is-this STR] [--if-nothing STR]
+                         [--option STR]* [--my-pick STR] [--provenance STR]*
+                         alongside it; a plain-language lint BLOCKS
+                         (interactive) or quarantines (--mechanical) on a
+                         bare identifier without a gloss, an ask over ~30
+                         words, a command-led option, or a missing
+                         --if-nothing. See header 'PLAIN-LANGUAGE FIELD SET'.
+  rewrite <id>           --ask STR [--what-is-this STR] [--if-nothing STR]
+                         [--option STR]* [--my-pick STR] [--reply-with STR]
+                         [--provenance STR]* [--mechanical]
+                         -> replaces a decision entry's content with the
+                         plain-language field set (id/section/created_at/
+                         links/session preserved); same lint as `add`'s
+                         structured mode. The mechanism for cleaning up an
+                         entry authored in the old free-text shape.
   resolve <id>           [--note STR] -> moves entry to "Recently decided"
   expire                 collapse >7-day-old decided items into a count
   bootstrap-migrate      migrate a stale/hand-authored NEEDS-YOU.md into the
@@ -2929,6 +3606,7 @@ fi
 
 case "$1" in
   add) shift; cmd_add "$@" ;;
+  rewrite) shift; cmd_rewrite "$@" ;;
   resolve) shift; cmd_resolve "$@" ;;
   expire) shift; cmd_expire "$@" ;;
   bootstrap-migrate) shift; cmd_bootstrap_migrate "$@" ;;
