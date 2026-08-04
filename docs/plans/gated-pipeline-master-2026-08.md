@@ -335,7 +335,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     **Integration points:**
     - model-pin-gate rides the same matcher — ordering verified non-conflicting (both read-only on tool_input)
     - Live settings reconcile on THIS machine after template lands (additive sync limitation known)
-- [ ] 18. REQ-B9 G3 extension: `review-record-push-gate.sh` consumes the DEC-5 class-table config
+- [x] 18. REQ-B9 G3 extension: `review-record-push-gate.sh` consumes the DEC-5 class-table config
   (harness class → BLOCK by config date; provenance-docs EXEMPT; product/other → WARN with
   per-class baselines measured from the calibration week's real push history); same-push
   record-honoring stated + tested — Verification: full — Implements: REQ-B9 — Directives: OD-002, OD-004, OD-005, OD-007, OD-018 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs
@@ -349,7 +349,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - `adapters/claude-code/hooks/review-record-push-gate.sh` class computation → pushed paths via the pre-push ref args
     **Integration points:**
     - `git-hooks/pre-push` stage 4 dispatcher unchanged (extension is inside the gate script)
-- [ ] 19. REQ-B10 no-addendum lint (in hygiene-scan; narrowed pattern per M-9 + harness delta:
+- [x] 19. REQ-B10 no-addendum lint (in hygiene-scan; narrowed pattern per M-9 + harness delta:
   Addendum/Update: in designs+plans with `docs/plans/archive/**` EXCLUDED from scope entirely;
   `Round [0-9]` in `docs/designs/**` ONLY; case-insensitive; fresh-waiver escape, ledgered; the 5
   measured legitimate hits as verbatim negative fixtures) + the considerations brief's addenda
@@ -363,7 +363,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - `docs/designs/harness-execution-redesign-considerations-2026-08-02.md` → zero `^#+ .*Addendum` matches post-integration
     **Integration points:**
     - Pre-commit chain ordering unchanged; the lint rides the existing hygiene-scan invocation
-- [ ] 20. REQ-B11+B12 carriage channels 2+3 (after Task 11): `scripts/dispatch-directives.sh`
+- [x] 20. REQ-B11+B12 carriage channels 2+3 (after Task 11): `scripts/dispatch-directives.sh`
   (tag-matched entries for a task's Files-to-Modify, printed for prompt inlining) +
   orchestrator-pattern doctrine step + doctrine-jit merged single-emission register walk (C-1
   form: both walks compute, ONE `hookSpecificOutput` JSON object emitted containing both bodies;
@@ -404,11 +404,11 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   from the live settings.json the same way budget-bash-hooks counts them; the evidence file
   asserts ONE recomputable number per metric with its exact command — Verification: contract —
   Implements: REQ-C3, REQ-C4 — Directives: OD-001, OD-006, OD-016 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs impact: brief body edits ARE the doc change
-- [ ] 23. REQ-C5 minimal Stage-3 subset: death-certificate fields on nl-maintenance's existing
+- [x] 23. REQ-C5 minimal Stage-3 subset: death-certificate fields on nl-maintenance's existing
   handle-wait + cleanup-as-sensor fields on the existing janitor log, each naming its consumer at
   birth in the field comment — Verification: contract — Implements: REQ-C5 — Directives: OD-001, OD-003, OD-006, OD-007, OD-009, OD-016 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs
   impact: none — fields documented at their write sites
-- [ ] 24. REQ-C6 Stage-2 admission trigger: doctor WARN "stage-2 admission open since <date>"
+- [x] 24. REQ-C6 Stage-2 admission trigger: doctor WARN "stage-2 admission open since <date>"
   (data-file date written by Task 8's completion) persisting until a Stage-2 plan goes ACTIVE.
   Detection mechanism (T16 F-6): a Stage-2 plan is an ACTIVE `docs/plans/*.md` whose header
   carries `stage-2-successor: gated-pipeline-master-2026-08` (the marker convention this task
