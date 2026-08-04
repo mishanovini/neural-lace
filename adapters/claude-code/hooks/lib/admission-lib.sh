@@ -385,9 +385,16 @@ _adm_scrub() {
 # verifier|reviewer|advocate enum, attributed is "0"|"1" (both already
 # pre-validated by _extract_nl_attribution before reaching here; this
 # allowlist is the second, independent gate, not the only one).
+# attribution_source added Defect B (2026-08-04, operator proposal): closed
+# enum header|derived|derived-partial|none (also pre-validated by
+# workstreams-emit.sh's _derive_attribution before reaching here) — tells a
+# ledger reader HOW MUCH to trust the plan/task values on the same row:
+# "header" is a claim of fact, "derived"/"derived-partial" is a best-effort
+# inference from prompt text or repo state (never a green-chip claim), "none"
+# means neither resolved anything.
 _adm_key_allowed() {
   case "$1" in
-    repo|agent|kind|reason_hint|plan|task|session|role|attributed) return 0 ;;
+    repo|agent|kind|reason_hint|plan|task|session|role|attributed|attribution_source) return 0 ;;
     *) return 1 ;;
   esac
 }

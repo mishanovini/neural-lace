@@ -34,7 +34,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 const projects = require('../config/projects.js');
 
 // ============================================================
@@ -946,11 +946,104 @@ function activityThresholdsMs() {
 // exactly what keeps a merely-quiet heartbeat from flapping to
 // "stalled: crashed" (F6's AV-pressure scenario). Only a heartbeat OLDER
 // than the activity window renders 'crashed'.
+//
+// STAYS AGE-ONLY, DELIBERATELY (2026-08-04): this function's own boundary
+// self-test scenarios below pin its pure-age contract directly. Every
+// CALLER that needs pid-awareness now goes through classifyHeartbeatLiveness
+// (immediately below), which wraps this function rather than changing it.
 function classifyHeartbeatAge(ageMs, th) {
   if (ageMs == null || isNaN(ageMs)) return 'crashed'; // no usable age -> never a guessed "live"
   if (ageMs <= th.activeMs) return 'live';
   if (ageMs <= th.activityWindowMs) return 'quiet';
   return 'crashed';
+}
+
+// pidAliveNode(pid) -> true | false | null
+//
+// PHANTOM-RUNNING FIX (2026-08-04, operator-flagged Defect A): an
+// IN-PROCESS liveness check — process.kill(pid, 0) — NOT a subprocess
+// spawn. This is a materially DIFFERENT mechanism from
+// session-heartbeat-lib.sh's `_hb_pid_alive` (`kill -0`/`ps -p` run from an
+// MSYS/Git-Bash shell, which that lib's own header documents as UNRELIABLE
+// for a foreign native-Windows pid — MSYS's pid table does not reliably see
+// arbitrary Windows pids). Node's process.kill on Windows goes through
+// libuv's uv_kill, which calls OpenProcess + GetExitCodeProcess against the
+// REAL Windows process table directly — no MSYS pid-table indirection.
+//
+// VERIFIED, not assumed (constitution §1 — a platform-liveness claim needs
+// evidence, not a plausible-sounding mechanism description): tested against
+// the operator's own 5 cited phantom-running pids (13964, 601406, 1045527,
+// 209068, 723121) — every one threw ESRCH here, matching an independent
+// `Get-Process -Id <pid>` (native PowerShell, no MSYS involvement at all)
+// finding no such process for all five. Also verified a genuinely-exited
+// Node child's own pid correctly reports dead immediately after exit (no
+// reap-delay false-positive window observed).
+//
+//   true  — process.kill(pid, 0) did not throw: the pid names a live,
+//           signalable process.
+//   false — threw ESRCH ("no such process"): PROVEN dead. The only value
+//           this function's callers may treat as positive dead-evidence.
+//   null  — inconclusive: pid is not a positive integer (missing/zero/
+//           negative/non-numeric — a heartbeat schema this old reader
+//           cannot use), OR the call threw EPERM (the process EXISTS but
+//           this process lacks permission to signal it — that is evidence
+//           of life, not death, so EPERM maps to true, not null), OR any
+//           other unrecognized errno. Callers must NEVER treat null as
+//           "dead" — an inconclusive check changes nothing, and the
+//           age-based verdict stands exactly as it did before this fix.
+function pidAliveNode(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (err) {
+    if (err && err.code === 'ESRCH') return false;
+    if (err && err.code === 'EPERM') return true; // exists, just not signalable by us
+    return null; // inconclusive — never assert dead without ESRCH
+  }
+}
+
+// classifyHeartbeatLiveness(hb, nowMs, th, pidCheckFn) -> 'live' | 'quiet' | 'crashed'
+//
+// THE REAL fix for the phantom-running defect (operator, 2026-08-04): "the
+// cockpit renders '13 running, unattributed' / 'running (quiet), 2h/17h/
+// 22h ago' for sessions whose PID is verifiably dead — liveness must be
+// VERIFIED, not inferred from a file's existence." classifyHeartbeatAge
+// alone cannot do this (by design — see its own header): a heartbeat file
+// written at SessionStart and never updated again (the session died before
+// ever reaching a Stop-time touch) sits inside the activityWindowMs grace
+// window for HOURS, rendering 'quiet' (still "running" to every consumer)
+// even though the process backing it has been gone the whole time.
+//
+// THE RULE (pid existence + the existing age/staleness bound, combined):
+// age-classify first; if age ALONE already says 'crashed', pid evidence is
+// moot (already the worst verdict, and a heartbeat this old skips the pid
+// check entirely — no cost paid for the common ancient-and-already-reaped
+// case). Only when age says 'live' or 'quiet' — i.e. exactly the case that
+// can currently lie — do we pay the one cheap in-process pidAliveNode call.
+// A PROVEN-dead pid (false) overrides the age verdict to 'crashed'
+// regardless of how fresh last_activity_ts looks, because pid death is
+// unambiguous positive evidence with NO grace period needed (unlike the
+// activityWindowMs bound, which exists to tolerate a genuinely-alive
+// process going quiet for a while — an AV throttle, a rate-limit pause).
+// An inconclusive check (null: no usable pid, or a non-ESRCH/EPERM errno)
+// changes NOTHING — the age-only verdict stands, so every existing
+// quiet-grace-window guarantee this module's callers depend on is
+// unaffected for every heartbeat this check cannot speak to.
+//
+// pidCheckFn is an injectable override (default pidAliveNode) purely so the
+// self-test can simulate ESRCH/alive/inconclusive without needing a real OS
+// process for every scenario; every production caller omits it.
+function classifyHeartbeatLiveness(hb, nowMs, th, pidCheckFn) {
+  const check = typeof pidCheckFn === 'function' ? pidCheckFn : pidAliveNode;
+  const ts = hb && hb.last_activity_ts ? Date.parse(hb.last_activity_ts) : NaN;
+  const ageMs = isNaN(ts) ? NaN : nowMs - ts;
+  const ageCls = classifyHeartbeatAge(ageMs, th);
+  if (ageCls === 'crashed') return 'crashed'; // already the worst verdict — no pid check needed
+  const alive = check(hb && hb.pid);
+  if (alive === false) return 'crashed'; // PROVEN-dead pid overrides a fresh/quiet timestamp
+  return ageCls; // alive===true, or null (inconclusive) -> trust the age verdict, unchanged
 }
 
 // sessionActivityForIds(sessionIds, heartbeats, nowMs, th) -> 'live' |
@@ -980,20 +1073,28 @@ function classifyHeartbeatAge(ageMs, th) {
 // valid heartbeat on a DIFFERENT attached session) always wins over a
 // corrupt record for an unrelated session; 'invalid' fires only when the
 // corrupt record is the ONLY evidence found.
-function sessionActivityForIds(sessionIds, heartbeats, nowMs, th) {
+// PHANTOM-RUNNING FIX (2026-08-04): tracks the freshest matching HEARTBEAT
+// RECORD, not just its timestamp (the pre-fix shape), so the pid it carries
+// reaches classifyHeartbeatLiveness below — a dead-pid session attached to
+// an item must downgrade that item's own crashed signal exactly the same
+// way it downgrades the unattributed-sessions node (roadmap-routes.js).
+// `pidCheckFn` threads straight through to classifyHeartbeatLiveness (see
+// its header) — production callers omit it; only the self-test injects one.
+function sessionActivityForIds(sessionIds, heartbeats, nowMs, th, pidCheckFn) {
   const ids = {};
   (sessionIds || []).forEach((sid) => { if (sid) ids[sid] = true; });
   if (!Object.keys(ids).length) return 'no-heartbeat';
-  let freshest = null;
+  let freshestHb = null;
+  let freshestTs = null;
   let sawInvalidRecord = false;
   (heartbeats || []).forEach((hb) => {
     if (!hb || !ids[hb.session_id]) return;
     const ts = Date.parse(hb.last_activity_ts);
     if (isNaN(ts)) { sawInvalidRecord = true; return; }
-    if (freshest === null || ts > freshest) freshest = ts;
+    if (freshestTs === null || ts > freshestTs) { freshestTs = ts; freshestHb = hb; }
   });
-  if (freshest === null) return sawInvalidRecord ? 'invalid' : 'no-heartbeat';
-  return classifyHeartbeatAge(nowMs - freshest, th);
+  if (freshestTs === null) return sawInvalidRecord ? 'invalid' : 'no-heartbeat';
+  return classifyHeartbeatLiveness(freshestHb, nowMs, th, pidCheckFn);
 }
 
 // deriveStalledReason(signals) -> one of STALLED_REASONS | null
@@ -1325,6 +1426,8 @@ module.exports = {
   ATTENTION_PRECEDENCE,
   activityThresholdsMs,
   classifyHeartbeatAge,
+  pidAliveNode,
+  classifyHeartbeatLiveness,
   sessionActivityForIds,
   deriveStalledReason,
   deriveItemStatus,
@@ -1358,6 +1461,47 @@ async function selfTest() {
     classifyHeartbeatAge(TH.activityWindowMs + 1, TH) === 'crashed');
   ok('1f. classifyHeartbeatAge: no usable age (NaN) -> crashed, never a guessed live',
     classifyHeartbeatAge(NaN, TH) === 'crashed' && classifyHeartbeatAge(null, TH) === 'crashed');
+
+  // ---- pidAliveNode + classifyHeartbeatLiveness (2026-08-04 phantom-running
+  // fix, operator-flagged Defect A). A genuinely-dead pid is obtained by
+  // spawning a real child process and letting spawnSync block until it has
+  // fully exited — by the time spawnSync returns, that pid is PROVABLY dead
+  // (same "just-exited subshell" reliability idiom
+  // session-heartbeat-lib.sh's own --self-test uses for its bash-side
+  // equivalent), so this is a real OS-level proof, not a guessed-nonexistent
+  // large integer.
+  const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+  const deadPid = deadChild.pid;
+  ok('1g. pidAliveNode: this process\'s OWN pid -> true (alive)', pidAliveNode(process.pid) === true, String(process.pid));
+  ok('1h. pidAliveNode: a REAL, just-exited child pid -> false (PROVEN dead via ESRCH)', pidAliveNode(deadPid) === false, String(deadPid));
+  ok('1i. pidAliveNode: non-numeric/zero/negative/missing pid -> null (inconclusive, never a guessed death)',
+    pidAliveNode('not-a-pid') === null && pidAliveNode(0) === null && pidAliveNode(-5) === null && pidAliveNode(undefined) === null);
+
+  const nowL = Date.now();
+  const hbFreshOwnPid = { last_activity_ts: new Date(nowL).toISOString(), pid: process.pid };
+  const hbFreshDeadPid = { last_activity_ts: new Date(nowL).toISOString(), pid: deadPid };
+  // Just past the active boundary, well within the activity window — the
+  // exact "running (quiet), 2h/17h/22h ago" shape the operator reported.
+  const hbQuietDeadPid = { last_activity_ts: new Date(nowL - (TH.activeMs + 60 * 1000)).toISOString(), pid: deadPid };
+  const hbAncientAlivePid = { last_activity_ts: new Date(nowL - (TH.activityWindowMs + 60 * 1000)).toISOString(), pid: process.pid };
+  ok('1j. classifyHeartbeatLiveness: fresh timestamp + ALIVE pid -> live (unchanged from age-only)',
+    classifyHeartbeatLiveness(hbFreshOwnPid, nowL, TH) === 'live');
+  // THE CORE FIX: a timestamp that age-alone classifies 'live' or 'quiet'
+  // (exactly the operator's reported "running (quiet), 2h/17h/22h ago"
+  // shape) must render 'crashed' once the pid is PROVEN dead — this is the
+  // one assertion set that a revert-the-fix mutation (classifyHeartbeatLiveness
+  // returning classifyHeartbeatAge(...) unchanged) breaks; see the
+  // mutation-test note in this task's report.
+  ok('1k. classifyHeartbeatLiveness: FRESH timestamp (age says live) + PROVEN-dead pid -> crashed, never "running" (THE phantom-running fix)',
+    classifyHeartbeatLiveness(hbFreshDeadPid, nowL, TH) === 'crashed');
+  ok('1l. classifyHeartbeatLiveness: QUIET-window timestamp (age says quiet, the exact "2h/17h/22h ago" shape) + PROVEN-dead pid -> crashed',
+    classifyHeartbeatLiveness(hbQuietDeadPid, nowL, TH) === 'crashed');
+  ok('1m. classifyHeartbeatLiveness: an ALREADY-crashed-by-age timestamp + an ALIVE pid stays crashed — pid evidence never resurrects an ancient heartbeat, and the pid check is SKIPPED entirely once age alone is conclusive',
+    classifyHeartbeatLiveness(hbAncientAlivePid, nowL, TH) === 'crashed');
+  ok('1n. classifyHeartbeatLiveness: fresh timestamp + INCONCLUSIVE pid check (injected pidCheckFn returning null) -> the age verdict stands unchanged (live), an inconclusive check never downgrades',
+    classifyHeartbeatLiveness({ last_activity_ts: new Date(nowL).toISOString(), pid: 999 }, nowL, TH, () => null) === 'live');
+  ok('1o. classifyHeartbeatLiveness: quiet timestamp + INCONCLUSIVE pid check -> stays quiet, preserving the existing AV-throttle/rate-limit grace window this module\'s callers depend on',
+    classifyHeartbeatLiveness({ last_activity_ts: new Date(nowL - (TH.activeMs + 60 * 1000)).toISOString(), pid: 999 }, nowL, TH, () => null) === 'quiet');
 
   // ---- sessionActivityForIds.
   const now = Date.parse('2026-07-19T12:00:00Z');
