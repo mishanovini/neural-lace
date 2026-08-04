@@ -77,7 +77,9 @@
 //      the first non-null result — see server.js/auditor.js's own
 //      `resolveAskPlanAbsPath`.)
 //   loadPlanFile(absPath)  -> the honest, rich read:
-//       { ok: true,  tasks: [...], status: '<Status: value>', absPath }
+//       { ok: true,  tasks: [...], status: '<Status: value>',
+//         statusNote, statusToken, statusRecognized, statusEntry,
+//         statusSchemaAvailable, statusSchemaError, absPath }
 //       { ok: false, reason: 'absent',  absPath, error: null }
 //       { ok: false, reason: 'damaged', absPath, error: '<message>' }
 //     'absent' = the file genuinely does not exist (ENOENT) — the caller
@@ -86,14 +88,74 @@
 //     directory, or any other non-ENOENT failure) — a genuinely different,
 //     honest state a future consumer (Task 5's staleness renderer) can
 //     surface as `damaged` rather than silently collapsing it into the same
-//     "empty/absent" bucket (never a silent zero).
+//     "empty/absent" bucket (never a silent zero). The `status*` fields
+//     (2026-08-04, "the class" — cockpit-parser-status-enum) are the
+//     additive product of parsePlanStatusInfo below; see that function's own
+//     header comment for what each one means.
 //   parsePlanFile(absPath) -> `{tasks, status, absPath}` | `null` — the
 //     EXACT prior shape of auditor.js's own `parsePlanFile` (both 'absent'
 //     and 'damaged' collapse to `null` here, for drop-in parity with every
 //     existing caller, which never distinguished the two). Built on
-//     `loadPlanFile`.
+//     `loadPlanFile`, but DELIBERATELY narrower — it does not carry the new
+//     `status*` fields, preserving this function's own "exact prior shape"
+//     parity contract unchanged; a caller wanting the canonical-enum
+//     classification uses `loadPlanFile` or `parsePlanStatusInfo` directly.
+//
+// ------------------------------------------------------------------------
+// Canonical Status enum + Status-note (2026-08-04, "the class" —
+// cockpit-parser-status-enum, operator: "I want to get all these unknown
+// states rectified so that I can actually keep track of the actual status
+// of everything"). Schema-driven, NOT a hardcoded token list living here —
+// see loadPlanStatusSchema below for the single source of truth:
+//   parsePlanStatusNote(markdown) -> string ('' if no `Status-note:` line
+//     immediately following the matched `Status:` line — see that
+//     function's header for why the position is checked literally rather
+//     than via a general header-wide scan).
+//   loadPlanStatusSchema() -> the honest three-way schema read:
+//       { ok: true,  statuses: [...8 statusEntry objects...], statusNote: {...}, path }
+//       { ok: false, reason: 'missing', path, error: null }   -- schema file absent (ENOENT)
+//       { ok: false, reason: 'invalid', path, error: '<msg>' } -- present but
+//         unparseable/malformed (JSON.parse failure, or no `statuses` array)
+//     Reads adapters/claude-code/schemas/plan-status.schema.json fresh on
+//     every call (no in-memory caching — same "always re-read the small disk
+//     file" convention as parsePlanStatus/resolvePlanAbsPath elsewhere in
+//     this module) via an in-process `fs.readFileSync` — NEVER a subprocess.
+//   planStatusTokens() -> string[] — the schema's ordered token list (e.g.
+//     ['DRAFT','PROPOSED','ACTIVE','COMPLETED','SUPERSEDED','DEFERRED',
+//     'ABANDONED','REFERENCE']), or `[]` (honest empty, not a guess) when
+//     the schema could not be loaded.
+//   classifyPlanStatus(statusText) -> the schema-driven classification of a
+//     raw `Status:` value:
+//       { token, recognized, entry, schemaAvailable, schemaError }
+//     `token` is the UPPERCASED leading alpha/digit/`-`/`_` run of
+//     `statusText` (same heuristic as roadmap-routes.js's own
+//     `planStatusToken()`, independently duplicated per this module's
+//     established small-glue-duplication convention — see the header note
+//     above on auditor.js/server.js's resolver glue) — this is what lets a
+//     PRE-MIGRATION, still prose-qualified value (the live
+//     "DEFERRED (operator 2026-07-30: ...)" / "REFERENCE (spec appendix
+//     ...)" shapes this schema exists to migrate away from) classify
+//     correctly TODAY, before any individual plan file is edited to the
+//     bare-token form. `recognized` is true only when `token` case-
+//     sensitively equals one of the schema's 8 canonical tokens; `entry` is
+//     that status's full schema object (description/phase/cockpit_render/
+//     lifecycle) when recognized, else `null`. FAIL LOUD: when the schema
+//     itself could not be loaded, `schemaAvailable` is false and
+//     `recognized` is UNCONDITIONALLY false (never a guess from a
+//     hardcoded/remembered copy of the enum) — `schemaError` carries the
+//     honest reason, so a caller can distinguish "the schema is genuinely
+//     unavailable, fall back to today's unknown-status rendering" from "the
+//     schema loaded fine and this token is genuinely unrecognized" (the
+//     latter KEEPS the current honest parse-failed rendering by design —
+//     the gate backstop, not a bug).
+//   parsePlanStatusInfo(markdown) -> the one-call combination of
+//     parsePlanStatus + parsePlanStatusNote + classifyPlanStatus:
+//       { status, note, token, recognized, entry, schemaAvailable, schemaError }
+//     This is what `loadPlanFile` calls internally to populate its
+//     additive `status*` fields.
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 // ----------------------------------------------------------------------
@@ -114,8 +176,9 @@ const TASK_LINE_START_RE = /^- \[([ xX])\][ \t]+(.*)$/;
 //
 // R11 EXTENSION (2026-07-28, operator round 11): the LETTERED-BATCH shapes
 // (`A1`, `B2`, `C2-3` — single UPPERCASE batch letter directly fused to the
-// digits, dash-separated sub-ids) verified live in 4 Circuit plans + the
-// A2P master family were SILENTLY DROPPED by the verbatim port (proven:
+// digits, dash-separated sub-ids) verified live in 4 plans in a sibling
+// project's plan corpus + the A2P master family were SILENTLY DROPPED by
+// the verbatim port (proven:
 // parseTasks on `- [ ] A1. lettered...` returned []) — every lettered plan
 // rendered with most tasks invisible, corrupting the roadmap's progress
 // counts ("progress seems completely random" had a data hole under it).
@@ -335,6 +398,172 @@ function parsePlanStatus(markdown) {
 }
 
 // ----------------------------------------------------------------------
+// Canonical Status enum + Status-note (2026-08-04, "the class" —
+// cockpit-parser-status-enum). See the module header's own API listing for
+// the full description of every function below; this block is the
+// implementation.
+// ----------------------------------------------------------------------
+
+// STATUS_NOTE_LINE_RE — the `Status-note:` header field.
+const STATUS_NOTE_LINE_RE = /^Status-note:[ \t]*(.+?)[ \t]*$/;
+
+// parsePlanStatusNote(markdown) -> the plan header's `Status-note:` value,
+// or ''. Per the schema's own status_note.position contract ("immediately
+// after the Status: line, before any other header field"), this checks
+// SPECIFICALLY the line right after the first matched `Status:` line — not
+// a general header-wide scan — so a `Status-note:`-shaped line appearing
+// elsewhere in a plan's PROSE (e.g. a `## Decisions Log` entry quoting this
+// very contract, or this module's own header comment above) is never
+// mistaken for the real header field. Mirrors parsePlanStatus's own
+// first-match, line-by-line scan shape.
+function parsePlanStatusNote(markdown) {
+  const text = markdown == null ? '' : String(markdown);
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const m = STATUS_LINE_RE.exec(lines[i].replace(/\r$/, ''));
+    if (m) {
+      if (i + 1 >= lines.length) return '';
+      const noteM = STATUS_NOTE_LINE_RE.exec(lines[i + 1].replace(/\r$/, ''));
+      return noteM ? noteM[1].trim() : '';
+    }
+  }
+  return '';
+}
+
+// PLAN_STATUS_SCHEMA_OVERRIDE — the SAME env-var name/convention as
+// plan-lifecycle.sh's own test-only injection point (adapters/claude-code/
+// hooks/plan-lifecycle.sh, `_PL_STATUS_SCHEMA="${PLAN_STATUS_SCHEMA_OVERRIDE:-...}"`)
+// — a single override env var therefore sandboxes BOTH the bash and JS
+// consumers of the same schema identically, and lets this module's own
+// self-test inject a fixture without touching the real repo file.
+//
+// planStatusSchemaPath() -> the resolved schema path: the override when
+// set, else the repo-relative default. `__dirname` here is
+// `<repoRoot>/neural-lace/workstreams-ui/server`; three levels up is the
+// repo root that also holds `adapters/` — the SAME `__dirname`-relative
+// `adapters/claude-code/...` resolution convention already used throughout
+// this codebase (derive-cache.js's nl.sh, auditor.js's needs-you.sh, etc.
+// all climb the identical three levels). Deliberately does NOT fall back to
+// the machine-wide `~/.claude/schemas/` install location: unlike a bash
+// hook (which is ITSELF installed there, so a self-relative `../schemas/`
+// lookup resolves correctly from either the repo or the installed copy),
+// this file is a cockpit-app module that only ever runs from inside a
+// checkout of this repo — the repo-relative path is the one real copy it
+// can see.
+function planStatusSchemaPath() {
+  if (process.env.PLAN_STATUS_SCHEMA_OVERRIDE) return process.env.PLAN_STATUS_SCHEMA_OVERRIDE;
+  return path.join(__dirname, '..', '..', '..', 'adapters', 'claude-code', 'schemas', 'plan-status.schema.json');
+}
+
+// loadPlanStatusSchema() -> the honest three-way schema read (mirrors
+// loadPlanFile's own absent/damaged/ok shape — never a silent empty enum
+// masquerading as "the schema legitimately declares zero statuses"):
+//   { ok: true,  statuses: [...], statusNote: {...}|null, path }
+//   { ok: false, reason: 'missing', path, error: null }        -- ENOENT
+//   { ok: false, reason: 'invalid', path, error: '<message>' } -- present
+//     but unreadable/unparseable/malformed (JSON.parse threw, permission
+//     error, or the top-level shape carries no `statuses` array).
+// This IS the fail-loud backstop the task requires: any caller that gets
+// ok:false here has explicit, honest grounds to fall back to today's
+// "status unknown -- plan parse failed" rendering, rather than a
+// classifier that silently pretends every status is recognized (or
+// silently pretends none are). No subprocess anywhere in this path — a
+// plain in-process `fs.readFileSync` + `JSON.parse`, and no in-memory
+// caching (re-read every call, same freshness/testability convention as
+// `parsePlanStatus`/`resolvePlanAbsPath` elsewhere in this module).
+function loadPlanStatusSchema() {
+  const schemaPath = planStatusSchemaPath();
+  let text;
+  try {
+    text = fs.readFileSync(schemaPath, 'utf8');
+  } catch (err) {
+    if (err && err.code === 'ENOENT') {
+      return { ok: false, reason: 'missing', path: schemaPath, error: null };
+    }
+    return { ok: false, reason: 'invalid', path: schemaPath, error: String(err && err.message || err) };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return { ok: false, reason: 'invalid', path: schemaPath, error: 'JSON parse failed: ' + String(err && err.message || err) };
+  }
+  if (!parsed || !Array.isArray(parsed.statuses)) {
+    return { ok: false, reason: 'invalid', path: schemaPath, error: 'schema missing a `statuses` array' };
+  }
+  return { ok: true, statuses: parsed.statuses, statusNote: parsed.status_note || null, path: schemaPath };
+}
+
+// planStatusTokens() -> the schema's ordered token list (e.g. ['DRAFT',
+// 'PROPOSED', 'ACTIVE', 'COMPLETED', 'SUPERSEDED', 'DEFERRED', 'ABANDONED',
+// 'REFERENCE']), or `[]` (honest empty, not a guess) when the schema could
+// not be loaded. The jq-equivalent of `.statuses[].token` per the schema's
+// own consumption-contract examples, for a caller that wants the raw valid-
+// token set without the full classification shape.
+function planStatusTokens() {
+  const schema = loadPlanStatusSchema();
+  return schema.ok ? schema.statuses.map((s) => s && s.token).filter(Boolean) : [];
+}
+
+// STATUS_TOKEN_LEADING_RE — the leading alpha token of a raw Status: value
+// (mirrors roadmap-routes.js's own `planStatusToken()` regex exactly,
+// independently duplicated per this module's established small-glue-
+// duplication convention — see the header note on auditor.js/server.js's
+// resolver glue).
+const STATUS_TOKEN_LEADING_RE = /^([A-Za-z][A-Za-z0-9_-]*)/;
+
+function planStatusLeadingToken(statusText) {
+  const m = STATUS_TOKEN_LEADING_RE.exec(String(statusText || '').trim());
+  return m ? m[1].toUpperCase() : '';
+}
+
+// classifyPlanStatus(statusText) -> the schema-driven classification. See
+// the module header's own API listing for the full field-by-field
+// contract; this is the implementation. Reads the schema fresh via
+// loadPlanStatusSchema on every call (no caching — see that function's own
+// header for why).
+function classifyPlanStatus(statusText) {
+  const token = planStatusLeadingToken(statusText);
+  const schema = loadPlanStatusSchema();
+  if (!schema.ok) {
+    // FAIL LOUD: the schema itself is unavailable, so nothing is EVER
+    // claimed "recognized" here, regardless of what token was extracted —
+    // never a guess from a hardcoded/remembered copy of the enum.
+    return {
+      token: token,
+      recognized: false,
+      entry: null,
+      schemaAvailable: false,
+      schemaError: schema.error || ('schema ' + schema.reason + ' at ' + schema.path),
+    };
+  }
+  if (!token) {
+    return { token: '', recognized: false, entry: null, schemaAvailable: true, schemaError: '' };
+  }
+  const entry = schema.statuses.find((s) => s && s.token === token) || null;
+  return { token: token, recognized: !!entry, entry: entry, schemaAvailable: true, schemaError: '' };
+}
+
+// parsePlanStatusInfo(markdown) -> the one-call combination of
+// parsePlanStatus + parsePlanStatusNote + classifyPlanStatus. This is what
+// loadPlanFile calls internally to populate its additive `status*` fields.
+function parsePlanStatusInfo(markdown) {
+  const text = markdown == null ? '' : String(markdown);
+  const status = parsePlanStatus(text);
+  const note = parsePlanStatusNote(text);
+  const classified = classifyPlanStatus(status);
+  return {
+    status: status,
+    note: note,
+    token: classified.token,
+    recognized: classified.recognized,
+    entry: classified.entry,
+    schemaAvailable: classified.schemaAvailable,
+    schemaError: classified.schemaError,
+  };
+}
+
+// ----------------------------------------------------------------------
 // extractPlanTaskReferences(text) -> [{slug, taskId}, ...] —
 // ROADMAP-WAITING-ON-YOU-SIGNAL-01 (2026-07-29 round 14): CONSERVATIVE,
 // EXPLICIT reference extraction shared by roadmap-routes.js (the
@@ -430,10 +659,17 @@ function loadPlanFile(absPath) {
     }
     return { ok: false, reason: 'damaged', absPath: absPath, error: String(err && err.message || err) };
   }
+  const statusInfo = parsePlanStatusInfo(text);
   return {
     ok: true,
     tasks: parseTasks(text),
-    status: parsePlanStatus(text),
+    status: statusInfo.status,
+    statusNote: statusInfo.note,
+    statusToken: statusInfo.token,
+    statusRecognized: statusInfo.recognized,
+    statusEntry: statusInfo.entry,
+    statusSchemaAvailable: statusInfo.schemaAvailable,
+    statusSchemaError: statusInfo.schemaError,
     absPath: absPath,
   };
 }
@@ -456,6 +692,14 @@ module.exports = {
   resolvePlanAbsPath: resolvePlanAbsPath,
   loadPlanFile: loadPlanFile,
   parsePlanFile: parsePlanFile,
+  // Canonical Status enum + Status-note (2026-08-04, "the class" —
+  // cockpit-parser-status-enum) — see the module header's API listing.
+  parsePlanStatusNote: parsePlanStatusNote,
+  loadPlanStatusSchema: loadPlanStatusSchema,
+  planStatusSchemaPath: planStatusSchemaPath,
+  planStatusTokens: planStatusTokens,
+  classifyPlanStatus: classifyPlanStatus,
+  parsePlanStatusInfo: parsePlanStatusInfo,
   // exported for tests / documentation parity
   TASK_LINE_START_RE: TASK_LINE_START_RE,
   TASK_ID_TOKEN_RE: TASK_ID_TOKEN_RE,
@@ -697,6 +941,200 @@ function selfTest() {
   ok('parsePlanFile returns {tasks, status, absPath} for a real archived plan',
     parsedOk && parsedOk.status === 'COMPLETED' && parsedOk.tasks.length === 1 && parsedOk.tasks[0].done === true,
     JSON.stringify(parsedOk));
+
+  // ---- Canonical Status enum + Status-note (cockpit-parser-status-enum) ----
+  // Every schema-related scenario below uses an EXPLICIT PLAN_STATUS_SCHEMA_
+  // OVERRIDE pointing at a controlled tmp path (never the real repo schema
+  // at adapters/claude-code/schemas/plan-status.schema.json) — deterministic
+  // regardless of whether that schema commit has landed in this worktree
+  // yet. The env var is restored to its original value at the end of this
+  // block so it never leaks into later scenarios.
+  const origSchemaOverride = process.env.PLAN_STATUS_SCHEMA_OVERRIDE;
+  const schemaTmp = fs.mkdtempSync(path.join(os.tmpdir(), 'plan-status-schema-selftest-'));
+
+  // parsePlanStatusNote — position contract (immediately after Status:,
+  // nowhere else) and edge cases, no schema override needed.
+  const noteAdjacent = parsePlanStatusNote('Status: DEFERRED\nStatus-note: operator note here\n\nMore prose.');
+  ok('parsePlanStatusNote reads the line immediately after Status:',
+    noteAdjacent === 'operator note here', JSON.stringify(noteAdjacent));
+  const noteMissing = parsePlanStatusNote('Status: ACTIVE\n\nNo note line follows.');
+  ok('parsePlanStatusNote returns \'\' (honest absence) when no Status-note line follows',
+    noteMissing === '', JSON.stringify(noteMissing));
+  const noteNotAdjacent = parsePlanStatusNote('Status: ACTIVE\n\nStatus-note: too far away, not the next line\n');
+  ok('parsePlanStatusNote ignores a Status-note-shaped line that is NOT the line immediately after Status: (position contract, not a general scan)',
+    noteNotAdjacent === '', JSON.stringify(noteNotAdjacent));
+  const noteLastLine = parsePlanStatusNote('Status: ACTIVE');
+  ok('parsePlanStatusNote returns \'\' when the Status: line is the last line of the file',
+    noteLastLine === '', JSON.stringify(noteLastLine));
+  const noteCrlf = parsePlanStatusNote('Status: DEFERRED\r\nStatus-note: crlf note\r\n');
+  ok('parsePlanStatusNote handles CRLF line endings, matching parsePlanStatus\'s own \\r stripping',
+    noteCrlf === 'crlf note', JSON.stringify(noteCrlf));
+
+  // loadPlanStatusSchema / classifyPlanStatus / planStatusTokens — FAIL LOUD
+  // when the schema is genuinely unavailable at the resolved path.
+  delete process.env.PLAN_STATUS_SCHEMA_OVERRIDE;
+  process.env.PLAN_STATUS_SCHEMA_OVERRIDE = path.join(schemaTmp, 'does-not-exist.schema.json');
+  const missingSchema = loadPlanStatusSchema();
+  ok('loadPlanStatusSchema reports missing (ENOENT) honestly, not a silent empty enum',
+    missingSchema.ok === false && missingSchema.reason === 'missing' && missingSchema.error === null,
+    JSON.stringify(missingSchema));
+  const classifyNoSchema = classifyPlanStatus('ACTIVE');
+  ok('classifyPlanStatus FAILS LOUD when the schema is unavailable: never claims recognized, even for a token that WOULD be canonical',
+    classifyNoSchema.recognized === false && classifyNoSchema.schemaAvailable === false &&
+    classifyNoSchema.token === 'ACTIVE' && !!classifyNoSchema.schemaError,
+    JSON.stringify(classifyNoSchema));
+  ok('planStatusTokens returns [] (honest empty, not a guess) when the schema is unavailable',
+    Array.isArray(planStatusTokens()) && planStatusTokens().length === 0);
+
+  // Malformed schema file: present but not valid JSON, and present-but-
+  // missing-the-statuses-array — both 'invalid', distinct from 'missing'.
+  const badJsonPath = path.join(schemaTmp, 'bad-json.schema.json');
+  fs.writeFileSync(badJsonPath, '{ not valid json');
+  process.env.PLAN_STATUS_SCHEMA_OVERRIDE = badJsonPath;
+  const badJsonSchema = loadPlanStatusSchema();
+  ok('loadPlanStatusSchema reports invalid (not missing) for unparseable JSON, with a real error message',
+    badJsonSchema.ok === false && badJsonSchema.reason === 'invalid' && /JSON parse failed/.test(badJsonSchema.error),
+    JSON.stringify(badJsonSchema));
+
+  const noStatusesPath = path.join(schemaTmp, 'no-statuses.schema.json');
+  fs.writeFileSync(noStatusesPath, JSON.stringify({ schema_version: 1 }));
+  process.env.PLAN_STATUS_SCHEMA_OVERRIDE = noStatusesPath;
+  const noStatusesSchema = loadPlanStatusSchema();
+  ok('loadPlanStatusSchema reports invalid for well-formed JSON missing a `statuses` array',
+    noStatusesSchema.ok === false && noStatusesSchema.reason === 'invalid' && /statuses/.test(noStatusesSchema.error),
+    JSON.stringify(noStatusesSchema));
+
+  // A valid fixture carrying the real 8-token shape (mirrors the actual
+  // adapters/claude-code/schemas/plan-status.schema.json statuses[] content
+  // — token/description/phase/cockpit_render/lifecycle per entry).
+  function fixtureStatusEntry(token, phase, triggersArchival, archiveSubdir) {
+    return {
+      token: token,
+      description: token + ' fixture description, at least ten characters long.',
+      phase: phase,
+      cockpit_render: 'fixture-render-' + token.toLowerCase(),
+      lifecycle: { triggers_archival: triggersArchival, archive_subdir: archiveSubdir },
+    };
+  }
+  const validSchemaObj = {
+    schema_version: 1,
+    statuses: [
+      fixtureStatusEntry('DRAFT', 'pre-build', false, null),
+      fixtureStatusEntry('PROPOSED', 'pre-build', false, null),
+      fixtureStatusEntry('ACTIVE', 'building', false, null),
+      fixtureStatusEntry('COMPLETED', 'terminal', true, 'archive'),
+      fixtureStatusEntry('SUPERSEDED', 'terminal', true, 'archive'),
+      fixtureStatusEntry('DEFERRED', 'terminal', true, 'deferred'),
+      fixtureStatusEntry('ABANDONED', 'terminal', true, 'archive'),
+      fixtureStatusEntry('REFERENCE', 'terminal', false, null),
+    ],
+    status_note: {
+      header: 'Status-note', position: 'immediately after the Status: line, before any other header field',
+      required: false, parsed_for_state: false, purpose: 'fixture purpose text', example: 'fixture example',
+    },
+  };
+  const validSchemaPath = path.join(schemaTmp, 'valid.schema.json');
+  fs.writeFileSync(validSchemaPath, JSON.stringify(validSchemaObj));
+  process.env.PLAN_STATUS_SCHEMA_OVERRIDE = validSchemaPath;
+
+  const loadedValid = loadPlanStatusSchema();
+  ok('loadPlanStatusSchema reports ok with all 8 statuses + statusNote for a valid fixture',
+    loadedValid.ok === true && loadedValid.statuses.length === 8 && loadedValid.statusNote &&
+    loadedValid.statusNote.header === 'Status-note' && loadedValid.path === validSchemaPath,
+    JSON.stringify(loadedValid));
+
+  const tokens = planStatusTokens();
+  ok('planStatusTokens returns the schema\'s exact 8-token set, in order, for a valid fixture',
+    JSON.stringify(tokens) === JSON.stringify(['DRAFT', 'PROPOSED', 'ACTIVE', 'COMPLETED', 'SUPERSEDED', 'DEFERRED', 'ABANDONED', 'REFERENCE']),
+    JSON.stringify(tokens));
+
+  // Pre-build states (DRAFT/PROPOSED) and REFERENCE are first-class
+  // recognized statuses — the exact "stop calling them unknown" requirement.
+  ['DRAFT', 'PROPOSED', 'REFERENCE'].forEach((tok) => {
+    const c = classifyPlanStatus(tok);
+    ok('classifyPlanStatus recognizes bare ' + tok + ' as a first-class canonical status (pre-build/REFERENCE, not \'unknown\')',
+      c.recognized === true && c.entry && c.entry.token === tok && c.schemaAvailable === true,
+      JSON.stringify(c));
+  });
+
+  // The full terminal set too, for completeness of the 8-value enum.
+  ['ACTIVE', 'COMPLETED', 'SUPERSEDED', 'DEFERRED', 'ABANDONED'].forEach((tok) => {
+    const c = classifyPlanStatus(tok);
+    ok('classifyPlanStatus recognizes bare ' + tok, c.recognized === true && c.entry && c.entry.token === tok, JSON.stringify(c));
+  });
+
+  // Pre-migration, prose-qualified real-world shapes (the actual freelanced
+  // values this schema exists to replace — see this module's own header)
+  // classify correctly via the leading-token heuristic, TODAY, before any
+  // individual plan file is edited to the bare-token form.
+  const cReferenceProse = classifyPlanStatus('REFERENCE (spec appendix, not an independent plan -- task B.0 deliverable)');
+  ok('classifyPlanStatus recognizes a pre-migration REFERENCE-prose value via the leading token',
+    cReferenceProse.token === 'REFERENCE' && cReferenceProse.recognized === true, JSON.stringify(cReferenceProse));
+  const cDeferredProse = classifyPlanStatus('DEFERRED (operator 2026-07-30: paused pending accountable-estate T7 loe-calibration backfill)');
+  ok('classifyPlanStatus recognizes a pre-migration DEFERRED-with-parenthetical value via the leading token',
+    cDeferredProse.token === 'DEFERRED' && cDeferredProse.recognized === true, JSON.stringify(cDeferredProse));
+  const cLowercase = classifyPlanStatus('active');
+  ok('classifyPlanStatus tolerates lowercase input by uppercasing (same convention as roadmap-routes.js\'s own planStatusToken)',
+    cLowercase.token === 'ACTIVE' && cLowercase.recognized === true, JSON.stringify(cLowercase));
+
+  // Genuinely unrecognized strings KEEP the honest parse-failed backstop —
+  // this is the gate working as intended, not a bug (e.g. the pre-migration
+  // 'NORMATIVE for Wave O builders (...)' freelanced token; migrating actual
+  // plan files' Status: text to REFERENCE is separate, out-of-scope work).
+  const cNormative = classifyPlanStatus('NORMATIVE for Wave O builders (must implement per spec)');
+  ok('classifyPlanStatus does NOT silently map a genuinely unrecognized legacy token (NORMATIVE) to REFERENCE -- migration is a separate concern, not parser guesswork',
+    cNormative.token === 'NORMATIVE' && cNormative.recognized === false && cNormative.entry === null && cNormative.schemaAvailable === true,
+    JSON.stringify(cNormative));
+  const cEmpty = classifyPlanStatus('');
+  ok('classifyPlanStatus on an empty Status: value: token \'\', not recognized, but schemaAvailable true (schema loaded fine, there is just no status)',
+    cEmpty.token === '' && cEmpty.recognized === false && cEmpty.schemaAvailable === true, JSON.stringify(cEmpty));
+
+  // parsePlanStatusInfo — the one-call combination.
+  const infoRich = parsePlanStatusInfo('Status: DEFERRED\nStatus-note: operator note\n');
+  ok('parsePlanStatusInfo combines status + note + classification in one call',
+    infoRich.status === 'DEFERRED' && infoRich.note === 'operator note' &&
+    infoRich.token === 'DEFERRED' && infoRich.recognized === true && infoRich.entry.token === 'DEFERRED',
+    JSON.stringify(infoRich));
+
+  // loadPlanFile end-to-end: a real plan file on disk carrying Status +
+  // Status-note, read through the full loadPlanFile path (the additive
+  // status* fields a future roadmap-routes.js wiring will consume).
+  const statusPlanAbs = path.join(schemaTmp, 'status-enum-plan.md');
+  fs.writeFileSync(statusPlanAbs,
+    '# Plan\nStatus: DEFERRED\nStatus-note: operator 2026-07-30 -- paused pending backfill\n\n## Tasks\n\n- [ ] 1. x\n');
+  const loadedStatusPlan = loadPlanFile(statusPlanAbs);
+  ok('loadPlanFile populates statusNote/statusToken/statusRecognized/statusEntry additively',
+    loadedStatusPlan.ok === true && loadedStatusPlan.status === 'DEFERRED' &&
+    loadedStatusPlan.statusNote === 'operator 2026-07-30 -- paused pending backfill' &&
+    loadedStatusPlan.statusToken === 'DEFERRED' && loadedStatusPlan.statusRecognized === true &&
+    loadedStatusPlan.statusEntry && loadedStatusPlan.statusEntry.token === 'DEFERRED' &&
+    loadedStatusPlan.statusSchemaAvailable === true && loadedStatusPlan.statusSchemaError === '',
+    JSON.stringify(loadedStatusPlan));
+
+  // parsePlanFile's "EXACT prior shape" parity contract must NOT leak the
+  // new status* fields — proven by an exact key-set check, not just a
+  // spot-check of the fields that DO exist.
+  const parsedParity = parsePlanFile(statusPlanAbs);
+  ok('parsePlanFile keeps its EXACT {tasks, status, absPath} shape — the new status* fields do not leak into the parity function',
+    parsedParity && JSON.stringify(Object.keys(parsedParity).sort()) === JSON.stringify(['absPath', 'status', 'tasks']),
+    JSON.stringify(parsedParity && Object.keys(parsedParity)));
+
+  // A DRAFT plan (no schema-unaware hardcoded token list would have
+  // recognized this before this task) reads as a first-class recognized
+  // status through loadPlanFile too, not just the lower-level classifier.
+  const draftPlanAbs = path.join(schemaTmp, 'draft-plan.md');
+  fs.writeFileSync(draftPlanAbs, '# Plan\nStatus: DRAFT\n\n## Tasks\n\n- [ ] 1. x\n');
+  const loadedDraftPlan = loadPlanFile(draftPlanAbs);
+  ok('loadPlanFile recognizes a DRAFT plan as a first-class canonical status, not unrecognized',
+    loadedDraftPlan.statusToken === 'DRAFT' && loadedDraftPlan.statusRecognized === true &&
+    loadedDraftPlan.statusEntry.phase === 'pre-build' && loadedDraftPlan.statusNote === '',
+    JSON.stringify(loadedDraftPlan));
+
+  // Restore the override env var exactly as found, so nothing leaks past
+  // this self-test block into whatever runs next in the same process.
+  if (origSchemaOverride === undefined) delete process.env.PLAN_STATUS_SCHEMA_OVERRIDE;
+  else process.env.PLAN_STATUS_SCHEMA_OVERRIDE = origSchemaOverride;
+  try { fs.rmSync(schemaTmp, { recursive: true, force: true }); } catch (_) { /* best-effort */ }
 
   // ---- extractPlanTaskReferences (ROADMAP-WAITING-ON-YOU-SIGNAL-01) ----
   const refsHash = extractPlanTaskReferences('please look at #roadmap/cockpit-roadmap-redesign/9 today');
