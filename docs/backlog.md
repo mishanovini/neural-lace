@@ -3494,3 +3494,71 @@ guard or `cd`-based resolution. T25 guarded its own entry points only.
 
 - **COCKPIT-SERVER-SELFTEST-FLAKY-ASK-FIXTURE-01 — `server.selftest.js` intermittently crashes mid-suite in the ask/dispatch-provenance fixture section, PRE-EXISTING and unrelated to the subprocess-storm fix** (added 2026-08-02 from the same fix's verification pass; label: `harness-gap`, `priority:medium`; fold-in: next touch of the ask-fixture setup in `server.selftest.js`). **PROVEN pre-existing:** reproduced identically on UNMODIFIED baseline code (git stash of every storm-fix change, two separate runs) — run 1 crashed `Error: ENOENT ... dispatch-provenance/fixture-marker__1.json` at the fixture-write step; run 2 crashed `TypeError: Cannot read properties of undefined (reading 'asks')` later in the same section, both around the S23+ ask-registry/dispatch-provenance scenarios. Two DIFFERENT crash points across two runs of the SAME unmodified code confirms a timing/race bug in the ask-fixture setup (likely a directory-creation race ahead of a synchronous write), not a deterministic break — and not something the storm fix touched (every scenario through S26b, including the DeriveCache-heavy S6b/S6c/S17/S22, passed cleanly both before and after this fix in every run). **Re-derive:** `node neural-lace/workstreams-ui/server/server.selftest.js` a few times in a row and compare crash points/lines.
 
+## HYGIENE-GATE-ESCAPE-ACCOUNTABILITY-FOLLOWUPS-2026-08-04 — honest residuals from the hygiene-gate self-service-escape fix
+(label: `harness-gap`; from the hygiene-gate incident fix, harness-hygiene-scan.sh Defects 1-2 + workaround-sensor-lib.sh/stop-verdict-dispatcher.sh/session-start-digest.sh Defect 3-4)
+
+Three named, disclosed-not-hidden gaps in the same-turn-visible + Stop-blocking escape-obligation
+mechanism (`ws_open_escape_obligations`, `_svd_escape_naming_check`):
+
+1. **Same-turn NOTICE (Defect 4 item c) is wired at harness-hygiene-scan.sh's own `ws_record` call
+   sites only.** The four OTHER existing `ws_record` callers (`concurrent-ownership-gate-body.sh`,
+   `dispatch-chain-gate.sh`, `review-record-push-gate.sh`, `scope-enforcement-gate-body.sh`) have
+   their escapes tracked generically by `ws_open_escape_obligations`/the Stop-side check (any
+   `bypass_kind` row opens an obligation regardless of which gate wrote it), but do NOT yet print
+   an in-turn "this opened an obligation" notice at their own waiver-honored call sites — an agent
+   using one of those gates' escapes only learns about the obligation at the NEXT Stop, not in the
+   same turn. Fold-in: one small edit per call site, same one-line `printf ... >&2` pattern
+   harness-hygiene-scan.sh now uses.
+2. **FIXED auto-close (`_ws_escape_gate_fixed`) only re-verifies `gate=="harness-hygiene-scan"`**
+   (the one caller with an honest `--check <file>` re-verification mode this lib knows how to
+   drive). Every other gate's escapes can never auto-close via re-scan — they fall through to
+   requiring an `escape-obligation-ack-*.txt` marker, or stay open indefinitely. This is a
+   deliberate fail-closed scoping choice (documented in the lib's own header), not an oversight,
+   but it means e.g. a `concurrent-ownership-gate` escape has no "the lock cleared itself" path.
+3. **`manifest.json`'s `harness-hygiene-scan` entry is not updated** with the new
+   `escape-obligations` Stop check, the `bypass-24h` digest feed, or the operator-waiver marker
+   class — the manifest's enforcement inventory is stale for this gate until a future pass reconciles
+   it. **Re-derive:** `grep -n '"id": "harness-hygiene-scan"' adapters/claude-code/manifest.json`.
+
+C-round additions (harness-reviewer REFORMULATE on `b8c9fe0a`, 2026-08-04 — C1 required fix +
+condition, F7-F10 minors named-not-fixed by the reviewer's own instruction):
+
+4. **C1 residual — the two push-time CI jobs are still whole-file, not delta-scoped.**
+   `.github/workflows/secret-backstop.yml:133` and `server-side-enforcement.yml:118` both invoke
+   `bash adapters/claude-code/hooks/harness-hygiene-scan.sh "${changed[@]}"` (explicit changed-file
+   args = MODE="files" = whole-file scan, PROVEN by reading both files directly) on every
+   `push`/`pull_request`, with no waiver-marker channel (a fresh CI checkout has no
+   `.claude/state/`). The messaging fix (this same commit) now tells the truth about this instead of
+   claiming a nonexistent "periodic full-tree scan" catches pre-existing debt. Deliberately NOT
+   attempted in the same series: editing GitHub Actions YAML that cannot be exercised from this
+   environment ("cannot run Actions live from this environment" — the workflow's own header) risks
+   silently weakening the real security backstop, a worse outcome than leaving it whole-file and
+   honestly documented. **Concrete fix shape for the next session:** give
+   `harness-hygiene-scan.sh` a base-ref delta mode analogous to `_hhs_build_delta_view` (which
+   already accepts a rename-source 4th arg) but driven by `git diff <base_sha>..<head_sha> -U0`
+   instead of `--cached`; wire both workflow `run:` blocks to pass `BASE_SHA`/`HEAD_SHA` through to
+   a new `--diff-range <base> <head>` flag instead of relying on MODE="files" whole-file reads.
+   **Re-derive:** `grep -n "harness-hygiene-scan.sh \"\${changed\[@\]}\"" .github/workflows/*.yml`.
+5. **F7 — vaporware "weekly" backstop docs conflict.** Some harness doc(s) describe a
+   scheduled/weekly full-tree hygiene audit that does not exist as a live mechanism (only the
+   manually-invoked `/harness-review` skill wraps `--full-tree`, and it is not on any schedule per
+   `adapters/claude-code/config/schedule-manifest.json`). Sweep `grep -rn "weekly.*hygiene\|periodic.*full-tree" adapters/claude-code/` and correct or retire each claim.
+6. **F8 — unbounded ledger scan on the Stop path.** `ws_open_escape_obligations` (called from
+   `_svd_escape_naming_check` on every Stop) reads the ENTIRE `workaround-sensor.jsonl` via `cat`
+   with no line cap, unlike `session-start-digest.sh`'s own `feed_bypass_surface` (`tail -n 1000`).
+   On a long-lived machine the ledger grows unboundedly; bound the read (e.g. `tail -n N` before the
+   per-line filter) the same way the digest feed already does.
+7. **F9 — the ack directory is not named in the Stop-time block message.** `_svd_escape_naming_check`'s
+   gap message points at "lib/workaround-sensor-lib.sh" for the marker spec but never states the
+   concrete directory (`dirname "$(_workaround_sensor_path)"`, i.e. normally
+   `$HOME/.claude/state/`) an operator or agent would need to actually find/write
+   `escape-obligation-ack-*.txt` into. Name the resolved directory in the gap message.
+8. **F10 — a waiver-coverage ledger row fires even when nothing was actually suppressed.**
+   The regular-waiver / operator-waiver `ws_record`/`ledger_emit` calls in harness-hygiene-scan.sh
+   fire whenever `regular_waived`/`operator_waived` is true for a file, regardless of whether Layer
+   2/3 (`check_heuristics`/`check_addendum_lint`) would have found ANYTHING to suppress on that
+   file — a waiver marker naming a file that turns out to have zero matches still logs a
+   "waiver used" ledger row and opens/refreshes an escape obligation. Scope the log/obligation to
+   files where a suppression genuinely occurred (track whether Layer 2/3 would have matched before
+   deciding whether to log).
+
