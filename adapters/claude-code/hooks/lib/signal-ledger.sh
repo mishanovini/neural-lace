@@ -233,6 +233,18 @@ ledger_emit_typed() {
 # regardless of verdict value, which is the deterministic-trigger property
 # this plan's design law requires (never gated on "was it PASS").
 #
+# `flip-verdict`'s detail field contract (2026-08-04 extension, operator
+# directive "check off the check boxes in two places (plan file and
+# ledger)"): plan=<bare slug, no .md> task=<verbatim id> verdict=<...>
+# confidence=<... or "unknown"> verifier=<...> evidence=<file#task=id
+# pointer, or "unknown">. See plan-edit-validator.sh's emit_flip_ledger_
+# event/flip_ledger_fields header comments for the full contract and the
+# event-vs-projection framing; adapters/claude-code/scripts/verify-event-
+# audit.sh is the read-only consumer that cross-checks a plan's checked
+# boxes against this event stream and reports "no verification event on
+# record" as its own honest state (never fabricated, never silently
+# equated with either verified or unverified).
+#
 # Every one of the 18 Wave-O/pre-Wave-O types above (plus the two SE
 # additions just above, and the further post-Wave-O ad-hoc additions this
 # comment registry has not yet been reconciled with — see
