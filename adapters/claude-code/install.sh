@@ -724,6 +724,8 @@ if [ "$MODE" = "dry-run" ]; then
   check_sync_target "$ADAPTER_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
   # skills + templates included here to mirror the real sync loop below
   # (parity with session-start-auto-install.sh's SYNC_SUBDIRS — nl-issue [31]).
+  # config/ is DELIBERATELY NOT in this whole-directory loop -- see the
+  # dedicated config/ preview block below (T17 remedy R1, 2026-08-04) for why.
   for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands doctrine skills templates; do
     if [ -d "$ADAPTER_DIR/$dir" ]; then
       check_sync_target "$ADAPTER_DIR/$dir" "$CLAUDE_DIR/$dir" "$dir/"
@@ -767,6 +769,18 @@ if [ "$MODE" = "dry-run" ]; then
   fi
   if [ -d "$ADAPTER_DIR/schemas" ]; then
     check_sync_target "$ADAPTER_DIR/schemas" "$CLAUDE_DIR/schemas" "schemas/"
+  fi
+  # config/ (T17 remedy R1, 2026-08-04): PER-FILE, matching the real flow —
+  # ~/.claude/config/ already holds machine-local files this repo does NOT
+  # own (active-repos.txt, register-path; see the real-flow comment for the
+  # full explanation), so previewing it as a single directory replace would
+  # promise a wipe the real run never performs. Each repo-tracked file is
+  # previewed individually instead.
+  if [ -d "$ADAPTER_DIR/config" ]; then
+    while IFS= read -r -d '' rel; do
+      rel="${rel#./}"
+      check_sync_target "$ADAPTER_DIR/config/$rel" "$CLAUDE_DIR/config/$rel" "config/$rel"
+    done < <(cd "$ADAPTER_DIR/config" && find . -type f -print0)
   fi
   # templates/ previewed via the main loop above (sourced from the adapter dir);
   # the former repo-root patterns/templates preview was removed with its real-flow
@@ -1276,11 +1290,53 @@ sync_file "$ADAPTER_DIR/CLAUDE.md" "$CLAUDE_DIR/CLAUDE.md" "CLAUDE.md"
 # the next SessionStart tick ran auto-install. Sourcing both from the adapter
 # dir here (same source AND target auto-install reads) closes that drift —
 # nl-issue [31].
+#
+# config/ is DELIBERATELY NOT added to this loop. sync_directory() does
+# `rm -rf "$dst"` before repopulating -- correct for every dir above (pure
+# harness content, no legitimate machine-local drift), but WRONG for
+# config/: ~/.claude/config/ already holds genuine machine-local files this
+# same repo ships consumers for -- active-repos.txt (pr-health-snapshot.sh's
+# default PR_HEALTH_REPOS_CONFIG, operator-populated) and register-path
+# (register-surfacer.sh's coordination-repo pointer) -- neither of which
+# exists in adapters/claude-code/config/ at all. Wiring config/ into this
+# loop would `rm -rf` and silently destroy both on every real install run.
+# See the dedicated, NON-destructive per-file sync below instead.
 for dir in rules agents hooks scripts pipeline-prompts pipeline-templates commands doctrine skills templates; do
   if [ -d "$ADAPTER_DIR/$dir" ]; then
     sync_directory "$ADAPTER_DIR/$dir" "$CLAUDE_DIR/$dir" "$dir"
   fi
 done
+
+# ============================================================
+# config/ (T17 remedy R1, 2026-08-04, HR-F9-adjacent deployment gap):
+# dispatch-chain-gate.sh resolves BOTH its config dependencies
+# (model-policy.json, g2-grandfather-slugs.txt) SCRIPT-LOCATION-RELATIVE to
+# its own installed location (_dcg_dir/../config/...), by explicit design —
+# not via nl_repo_root(). Neither this script nor session-start-auto-
+# install.sh's SYNC_SUBDIRS deployed config/ before this fix, so on every
+# already-installed machine the gate's [[ -f ]] guards degraded SILENTLY and
+# G2 chain-validation was a permanent no-op regardless of the repo
+# checkout's own correctness. A/B-proven (verifier + this remedy): the SAME
+# chain-less builder-dispatch event BLOCKS (exit 2) against the repo
+# checkout and silently PROCEEDS (exit 0) against a replica installed
+# layout (gate+lib copied, no sibling config/). See
+# dispatch-chain-gate.sh's _dcg_build_types/_dcg_grandfathered for the loud-
+# WARN fallback that now covers the residual case (config/ present but a
+# specific file missing, e.g. a partial/corrupted deploy).
+#
+# PER-FILE, never whole-directory (see the comment above the main loop):
+# only files that actually exist in the repo's config/ are ever touched;
+# any machine-local file already living at ~/.claude/config/ (active-
+# repos.txt, register-path, or anything else an operator or another
+# mechanism ever drops there) is left completely alone -- sync_file()
+# backs up + replaces exactly one named path, never `rm -rf`s the parent.
+if [ -d "$ADAPTER_DIR/config" ]; then
+  mkdir -p "$CLAUDE_DIR/config"
+  while IFS= read -r -d '' rel; do
+    rel="${rel#./}"
+    sync_file "$ADAPTER_DIR/config/$rel" "$CLAUDE_DIR/config/$rel" "config/$rel"
+  done < <(cd "$ADAPTER_DIR/config" && find . -type f -print0)
+fi
 
 # ============================================================
 # Prune stale ~/.claude/rules/*.md (Wave C, C.5): the harness moved almost

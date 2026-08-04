@@ -34,10 +34,18 @@
 # else here).
 #
 # Regenerate with (from the repo root; OVERWRITES the whole file, so
-# re-add this header block afterward):
+# re-add this header block afterward). T17 remedy R3 (2026-08-04): this
+# command previously emitted PLAINTEXT slug basenames with no hashing step
+# at all -- following it as written would both break _dcg_grandfathered's
+# hash-match lookup (fail-closed: every legacy plan would BLOCK instead of
+# WARN) and re-introduce the exact plaintext-product-string-in-the-harness
+# shape S9's conversion (2026-08-03) removed. Every slug is now piped
+# through sha256sum, matching the header's own membership-test line above:
 #   { for f in docs/plans/*.md; do basename "$f" .md; done; \
 #     for f in docs/plans/archive/*.md; do basename "$f" .md; done; } \
-#     | sort -u > adapters/claude-code/config/g2-grandfather-slugs.txt
+#     | sort -u \
+#     | while read -r s; do printf '%s' "$s" | sha256sum | cut -d' ' -f1; done \
+#     > adapters/claude-code/config/g2-grandfather-slugs.txt
 #
 # Lines starting with # and blank lines are ignored by the gate's reader
 # (_dcg_grandfathered in hooks/dispatch-chain-gate.sh).

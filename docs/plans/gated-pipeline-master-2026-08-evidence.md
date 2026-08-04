@@ -2686,4 +2686,157 @@ Gaps:
   - Docs impact: orchestrator-pattern.md gains the G2 dispatch-gate step (Sweep query: grep -c "dispatch-chain-gate" adapters/claude-code/doctrine/orchestrator-pattern.md → must become ≥1; fold the still-outstanding T15 dispatch-ledger one-liner into the same commit — its "next train will carry it" premise has now been falsified twice.)
   - NON-BLOCKING (same remedy commit, one line): the registry header's "Regenerate with" command emits PLAINTEXT basenames with no sha256 step — following it would both break _dcg_grandfathered's hash matching (fail-closed: every legacy slug would BLOCK instead of WARN) and re-introduce the §9 string the conversion removed; pipe each basename through sha256sum in the documented command.
   - NON-BLOCKING (cleanup, T21's drain or sooner): the pre-conversion PLAINTEXT registry blob exists at commit 78e67de3 on local branch worktree-agent-a38c63c69628eb5a9 (never pushed, not on master) — delete the branch+worktree to purge the product-codename string from local history.
+
+## Task 17 — REMEDY ROUND (builder, batch #3 FAIL remediation, 2026-08-04)
+
+Fixes R1 (both bases), R2 (docs-impact), R3 (registry header) built in a worktree rooted
+at master @ d1d20320. Not yet re-verified by task-verifier (dispatched separately per
+the remedy contract).
+
+### R1a — install.sh / session-start-auto-install.sh now deploy config/
+
+`adapters/claude-code/install.sh`'s dir loop and
+`adapters/claude-code/hooks/session-start-auto-install.sh`'s `SYNC_SUBDIRS` both
+omitted `config/` — the batch #3 FAIL basis. Fixed with ONE additional finding beyond
+the FAIL basis itself: **the live `~/.claude/config/` directory is NOT empty on a
+real machine** — it already holds genuine machine-local files this repo does not own
+(`active-repos.txt`, `pr-health-snapshot.sh`'s operator-populated repo list;
+`register-path`, `register-surfacer.sh`'s coordination-repo pointer), confirmed on
+this machine (`ls ~/.claude/config` → `active-repos.txt`,
+`active-repos.txt.bak-1780471149`, `register-path`, none of which exist in the repo's
+`adapters/claude-code/config/`). `install.sh`'s `sync_directory()` does `rm -rf "$dst"`
+before repopulating — correct for every other synced dir (pure harness content, no
+legitimate machine-local drift) but would have **silently destroyed both files on the
+very first real `install.sh` run** had `config` simply been appended to that loop, as
+the original FAIL-basis remedy option (a) suggested (that option's own text flagged
+"verify config/ holds no machine-local files first" as a precondition — checked here,
+and it does not hold).
+
+Fix actually shipped:
+- `install.sh`: `config` is **not** added to the whole-directory `sync_directory` loop.
+  A dedicated PER-FILE block (dry-run preview + real flow) walks only the files that
+  exist in the repo's `adapters/claude-code/config/` and `sync_file()`s each one by
+  name — `sync_file` backs up + replaces exactly the one named path, never `rm -rf`s
+  the parent, so any live-only file at `~/.claude/config/` is left completely alone.
+- `session-start-auto-install.sh`: `config` IS added to `SYNC_SUBDIRS` — its
+  `sync_canonical_files()` is already per-file (install-if-missing/update-if-differing,
+  unknown live files counted as informational drift and never touched), so no
+  destructive-loop hazard exists there. `_subdir_ext()` was generalized from a single
+  scalar extension per subdir to a space-separated SET (config/ ships
+  `.json .txt .md .example`, the first heterogeneous-extension subdir); the ls-tree
+  filter, the per-file chmod check, and the live-side drift-glob loop were all updated
+  to iterate the set rather than assume one extension.
+- Functional proof (not just a repo-relative reading): a standalone extraction of
+  `install.sh`'s sync primitives (`sync_file`, `backup_if_real_file`, the self-sync
+  guard) run against fabricated `ADAPTER_DIR`/`CLAUDE_DIR` fixtures confirmed
+  `model-policy.json` + `g2-grandfather-slugs.txt` deploy correctly AND a fabricated
+  machine-local `active-repos.txt` (seeded with a sentinel string) survives byte-for-
+  byte untouched — `ALL PASS` (script:
+  `<scratchpad>/t17-config-sync-functest.sh`).
+- `install.sh --dry-run` against the REAL live `~/.claude/` (read-only, no HOME
+  override, "Dry run complete. No changes made." confirmed) now lists each of the 10
+  repo-tracked config files individually as `[WOULD CREATE]` and — critically —
+  neither `active-repos.txt` nor `register-path` appear anywhere in the diff.
+
+### R1b — dispatch-chain-gate.sh loud-fallback on missing config
+
+`_dcg_build_types()` (model-policy.json) and `_dcg_grandfathered()`
+(g2-grandfather-slugs.txt) both silently `return`ed on a missing file before this fix.
+Both now emit a `WARN` naming the missing file and the word `DEGRADED` plus the exact
+fail-open/fail-safe behavior, to stderr, on every affected dispatch (not just once).
+Two new `--self-test` scenarios assert on the WARN TEXT, not just rc (a silent and a
+loud fail-open produce the identical rc, so rc alone cannot prove the fix):
+`config-absent-model-policy-*` (3 assertions) and `config-absent-grandfather-*` (3
+assertions) — all PASS in the 49/49 run below.
+
+### R1c — installed-layout A/B, re-run per the remedy contract
+
+Built two replicas under the scratchpad (`hooks/dispatch-chain-gate.sh` + `hooks/lib/`
+copied from the POST-FIX repo; one with a sibling `config/` populated from the repo's
+real `config/model-policy.json` + `config/g2-grandfather-slugs.txt`, one without), and
+a throwaway git repo carrying one chain-less `docs/plans/t17-ab-probe-plan.md`. Same
+chain-less builder-dispatch event fired at both replicas via Git Bash directly
+(`C:\Program Files\Git\bin\bash.exe`, PowerShell tool — the sandboxed Bash tool
+declines `cd`+git chains into paths outside this worktree):
+
+```
+=== A: replica WITH config/ (POST-FIX layout, config/ present per the R1a fix) === rc=2
+dispatch-chain-gate: plan-phase-builder dispatch BLOCKED — docs/plans/t17-ab-probe-plan.md has no Review Chain
+[GATE:WHAT] docs/plans/t17-ab-probe-plan.md has no ## Review Chain block
+[GATE:WHY] G2 (plan -> build) requires mechanical proof the design/plan reviews ran before a builder dispatches against this plan (D-15's acceptance bar; design docs/designs/gated-pipeline-master-2026-08-03.md SS4)
+[GATE:FIX] dispatch the required reviewers (plan-fidelity-reviewer at minimum; design-author's reviewers too if design-ref is required), then add a ## Review Chain block naming each reviewer/verdict/record — schema in design SS4
+[GATE:ESCAPE] none for a new plan — a legacy plan predating this gate is exempted only via the install-generated grandfather slug list (config/g2-grandfather-slugs.txt), never by this flag
+-- detail --
+[FAIL] chain-presence: no ## Review Chain section found in docs/plans/t17-ab-probe-plan.md
+```
+
+```
+=== B: replica WITHOUT config/ (partial/pre-deploy state — SAME event, identical POST-FIX gate+lib bytes, only config/ removed) === rc=0
+dispatch-chain-gate: WARN — config/model-policy.json not found at <replica>/hooks/../config/model-policy.json; G2 cannot classify build-category subagent_types, so chain-validation is DEGRADED (fail-open: this dispatch is treated as non-build and proceeds WITHOUT a chain check). Fix: ensure config/ is deployed alongside hooks/ (install.sh's dir loop / session-start-auto-install.sh's SYNC_SUBDIRS must both carry config/), or set DCG_MODEL_POLICY_PATH.
+dispatch-chain-gate: WARN — non-build dispatch (subagent_type=plan-phase-builder) references docs/plans/t17-ab-probe-plan.md; recorded (M-7 evasion heuristic), never blocked
+```
+
+A now BLOCKS where the pre-fix verifier probe silently proceeded; B still fail-opens
+(by design — the gate must never fail-closed on its own internal-config unavailability)
+but is now LOUD, naming the exact missing file and "DEGRADED" — the contrast the batch
+#3 FAIL demanded. This is the belt-and-suspenders pairing: R1a makes the deploy path
+carry config/ so replica-A's layout is what real installs will actually have; R1b
+covers the residual case (a partial/corrupted/manually-pruned deploy) so even that
+degrades loudly instead of silently.
+
+### R2 — orchestrator-pattern.md gains the G2 gate step
+
+`grep -c "Verify obligations (OD-022)" adapters/claude-code/doctrine/orchestrator-pattern.md`
+→ 1 (T15's dispatch-ledger note already landed via T25's merge, confirmed — no
+duplicate work needed). Added ONE new bullet: "G2 gate: Task|Agent dispatch routes
+through dispatch-chain-gate.sh — chain-invalid BLOCKS, grandfathered/no-repo WARN.
+-full.md." `grep -c "dispatch-chain-gate" adapters/claude-code/doctrine/orchestrator-pattern.md`
+→ 1 (was 0). Compact was at 2997/3000 bytes; trimmed six other bullets (redundant
+words, not content) to land the new bullet at 2998/3000. `planning.md` (2986/3000,
+also named in the dispatch) required no change — it does not reference the gate and
+the dispatch's own instruction said R2 there was conditional on T15's note being
+absent, which it was not.
+
+### R3 — registry regen command now hashes
+
+`config/g2-grandfather-slugs.txt`'s header "Regenerate with" command previously piped
+plaintext slug basenames straight to the output file with no hashing step (would have
+broken `_dcg_grandfathered`'s hash-match lookup fail-closed, and re-introduced the
+plaintext-product-string shape the T17 merge-train conversion removed). Fixed to
+`| while read -r s; do printf '%s' "$s" | sha256sum | cut -d' ' -f1; done`, matching
+the header's own membership-test convention. Verified by running the corrected command
+against a fabricated two-plan fixture and independently computing `sha256("alpha")` /
+`sha256("beta")` — byte-identical match (`<scratchpad>/t17-regen-cmd-test/run.sh`).
+
+### Suites (verbatim)
+
+```
+$ bash adapters/claude-code/hooks/dispatch-chain-gate.sh --self-test
+self-test summary: 49 passed, 0 failed (of 49 scenarios)
+
+$ bash adapters/claude-code/hooks/dispatch-chain-gate.sh --self-test-wip-limit
+self-test-wip-limit summary: 10 passed, 0 failed (of 10 scenarios)
+
+$ bash adapters/claude-code/hooks/session-start-auto-install.sh --self-test
+[self-test] 22 passed, 3 failed
+```
+
+The 3 `session-start-auto-install.sh` failures (`SELF-SYNC-01-golden-scenario`,
+`SELF-SYNC-01-settings-merge-guard`, `SELF-SYNC-01-prune-guard`) are PRE-EXISTING and
+UNRELATED to this remedy: all three require `ln -s` to create a real OS symlink, and
+this Windows/Git-Bash checkout (no Developer Mode / elevated privilege) silently
+creates a plain directory copy instead — confirmed directly (`mkdir real && ln -s real
+link; [ -L link ]` → NOT A SYMLINK) and by re-running the UNMODIFIED HEAD version of
+the same script in place, which fails the identical three scenarios. HYPOTHESIZED:
+these would PASS on a machine where `ln -s` produces genuine symlinks (e.g. WSL, macOS,
+or Windows with Developer Mode); REFUTED if they still fail there. `install.sh` has no
+`--self-test` (confirmed via its own `--help` output — flags are `--dry-run
+--replace-settings --uninstall --verify --help` only); verified instead via
+`--dry-run` (shown above) plus the standalone functional test of its sync primitives.
+
+### Compact byte counts (files touched)
+
+- `adapters/claude-code/doctrine/orchestrator-pattern.md`: 2998/3000 (was 2997/3000;
+  +1 bullet, -6 trims)
+- `adapters/claude-code/doctrine/planning.md`: 2986/3000 (untouched, no change needed)
   - NOTE (not a gap, verification obligation): live ~/.claude settings + hook-file sync for this gate land at the next SessionStart (master fully pushed, 0/0 vs origin; hooks/templates are in the sync sets) — HYPOTHESIZED, refuted if a fresh session's live settings still lack the Task|Agent dispatch-chain block. Moot for blocking purposes until FAIL-basis-1 is fixed, since the synced gate would currently no-op.
