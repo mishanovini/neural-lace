@@ -398,3 +398,20 @@ dirty/locked refusal backstopped every entry):
   346646c3; `aa43558579db80e88` — since merged via 1cb3d2bb; `a05a34c3229e0a919`
   — this drain's own tree, merged via d0aeb643). All three now eligible for the
   NEXT sweep, not this one.
+
+## Salvage pass 2 (orchestrator, 2026-08-04, doctor-directed)
+
+- `a05a34c3229e0a919` (T21's own tree): dirt = machine-generated loe churn only → removed.
+- `a411c11a6438d7354`: dirty backlog rows SALVAGED (two cockpit-poller rows re-appended to
+  docs/backlog.md); its one unintegrated-by-patch-id commit 3b07d826 proven content-identical
+  to master 0808f2d9 (numstat byte-match) → removed.
+- `a87622c2020ce66a5`: dirt was the T8 corrected-diagnosis annotation — already landed on
+  master via another path → removed.
+- STILL HELD (genuinely unintegrated by patch-id; content-level reconciliation owed):
+  `a60cd9f14ad2034df` (agent-efficiency T5/T7 — 38-hook path sweep), `aa680cc77830d361b`
+  (session-start-digest reentry/single-flight), `afcf419ea529b1ca0` (review-record
+  trust-anchor), `hopeful-bose-b98694` (workstreams-ui child-tree timeout-kill). Doctor
+  budget-worktrees REDs on these are honest signal until reconciled.
+- Stale branch `worktree-agent-a132819c46733c9c9` (no worktree, no upstream) deleted.
+- Gate note: concurrent-ownership-gate consistently BLOCKED these mutations as compound
+  commands yet allowed each identical single-target command — matcher defect, nl-issued.
