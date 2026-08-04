@@ -196,7 +196,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   Verification: contract — Implements: REQ-A4 — Directives: n/a — operator-directives register
   (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: doctrine/INDEX.md
   regenerated (generator)
-- [ ] 7. Mechanized flips + targeted fixes (after Tasks 3,4,6 — shared files), decomposed per
+- [x] 7. Mechanized flips + targeted fixes (after Tasks 3,4,6 — shared files), decomposed per
   target — Verification: full — Implements: REQ-A5 — Directives: n/a — operator-directives
   register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact:
   single-flight-halt-runbook.md HALT-path note; CPU methodology note in the perf research doc
@@ -245,7 +245,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   — Verification: contract — Implements: REQ-A7 — Directives: n/a — operator-directives register
   (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: NEEDS-YOU.md entry (via
   generator)
-- [ ] 11. REQ-B1+B4 register: `config/operator-directives.json` (canonical) + generator for
+- [x] 11. REQ-B1+B4 register: `config/operator-directives.json` (canonical) + generator for
   `docs/operator-directives.md` view + `hooks/lib/directives-register-lib.sh` (ONE parser,
   round-trip fixture test) + seeding (nl-issues 153/154/158 + curated D-01…D-23, each intake entry
   `register_ref`'d) + ADR forward-guard WARN lint + same-commit `derive-cache.js:7-11` supersession
@@ -272,7 +272,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   push-directive drop replayed as a design+plan pair in the agent's eval block) — Verification:
   contract — Implements: REQ-B3 — Directives: n/a — operator-directives register (REQ-B1/Task 11)
   not yet built; no OD- id exists to cite — Docs impact: model-policy.json entry (category review)
-- [ ] 14. REQ-B5+B7 template + checks: plan-template gains `design-ref:` header + per-task
+- [x] 14. REQ-B5+B7 template + checks: plan-template gains `design-ref:` header + per-task
   `Implements:`/`Directives:` + Review Chain section; plan-reviewer Checks 20-22 (20: design-ref
   required-when-triggered + design-reviews valid incl. anchor-at-HEAD comparison; 21: every design
   MUST-REQ claimed by ≥1 task + Directives fields present; 22: chain records name
@@ -290,7 +290,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     **Integration points:**
     - Check 17 comment marked superseded (kept for keyword-triggering only) — same commit
     - Task 1's lib is the parser — no second implementation (M-3 rule)
-- [ ] 15. REQ-B14 dispatch ledger (delta-D2 form): `workstreams-emit.sh` **`--on-builder-complete`
+- [x] 15. REQ-B14 dispatch ledger (delta-D2 form): `workstreams-emit.sh` **`--on-builder-complete`
   PostToolUse path** appends `{subagent_type, model, ts, session_id, artifact_ref}` to
   `~/.claude/state/dispatch-ledger.jsonl` — completion-side so blocked/failed dispatches mint no
   row; `artifact_ref` from the existing prompt parse; ledger-landing date recorded in the lib
