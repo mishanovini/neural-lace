@@ -72,6 +72,15 @@ have_jq() { command -v jq >/dev/null 2>&1; }
 #   I|id|instruction-line   (one line per instruction line, in order —
 #                            the only way to carry embedded newlines through
 #                            a pipe-delimited single-line stream)
+#   M|id|intent|applies_when|worked_example|elaborated_by|elaborated_at|
+#     reviewed_by   (Task: directives-elaboration-layer, operator proposal
+#                    2026-08-04 — ONE line, only when the entry carries a
+#                    well-formed elaboration object. Scalar elaboration
+#                    fields are authored single-line-only by convention, so
+#                    they fit the pipe-delimited stream directly, unlike
+#                    `instruction` above.)
+#   R|id|requirement-text   (one per elaboration.requirements item, in order)
+#   N|id|anti-pattern-text  (one per elaboration.anti_patterns item, in order)
 # ------------------------------------------------------------
 extract_stream() {
   local register="$1"
@@ -90,6 +99,12 @@ for (const e of m.entries || []) {
   for (const u of (e.supersedes || [])) console.log(["U", id, u].join("|"));
   const instr = typeof e.instruction === "string" ? e.instruction : "";
   for (const line of instr.split("\n")) console.log(["I", id, line].join("|"));
+  const el = (e.elaboration && typeof e.elaboration === "object") ? e.elaboration : null;
+  if (el) {
+    console.log(["M", id, el.intent || "", el.applies_when || "", el.worked_example || "", el.elaborated_by || "", el.elaborated_at || "", el.reviewed_by || ""].join("|"));
+    for (const r of (el.requirements || [])) console.log(["R", id, r].join("|"));
+    for (const n of (el.anti_patterns || [])) console.log(["N", id, n].join("|"));
+  }
 }' "$register" 2>/dev/null
   else
     jq -r '
@@ -99,7 +114,14 @@ for (const e of m.entries || []) {
   ($e.source // "")] | join("|")),
 ((($e.surfaces // [])[]) | "S|\($e.id)|\(.)"),
 ((($e.supersedes // [])[]) | "U|\($e.id)|\(.)"),
-((($e.instruction // "") | split("\n")[]) | "I|\($e.id)|\(.)")' "$register" 2>/dev/null
+((($e.instruction // "") | split("\n")[]) | "I|\($e.id)|\(.)"),
+(if ($e.elaboration != null) then
+   (["M", $e.id, ($e.elaboration.intent // ""), ($e.elaboration.applies_when // ""),
+     ($e.elaboration.worked_example // ""), ($e.elaboration.elaborated_by // ""),
+     ($e.elaboration.elaborated_at // ""), ($e.elaboration.reviewed_by // "")] | join("|")),
+   ((($e.elaboration.requirements // [])[]) | "R|\($e.id)|\(.)"),
+   ((($e.elaboration.anti_patterns // [])[]) | "N|\($e.id)|\(.)")
+ else empty end)' "$register" 2>/dev/null
   fi
 }
 
@@ -181,6 +203,56 @@ render() {
       echo "> ${line}"
     done
     echo ""
+    # ---- Elaboration (Task: directives-elaboration-layer, operator
+    # proposal 2026-08-04) — OPTIONAL, additive. Rendered ONLY when the
+    # entry carries an M line. The verbatim Instruction above stays PRIMARY
+    # and unmodified by this section; the banner below is the "correct me
+    # if wrong" review-hook this task's item 4 requires — every seeded
+    # elaboration ships with reviewed_by=pending-operator, so no code path
+    # here may claim operator sign-off on the interpretation's behalf.
+    local mline
+    mline="$(printf '%s\n' "$stream" | awk -F'|' -v want="$id" '$1=="M" && $2==want {print; exit}')"
+    if [[ -n "$mline" ]]; then
+      local m_intent m_applies m_worked m_by m_at m_reviewed
+      m_intent="$(printf '%s' "$mline" | awk -F'|' '{print $3}')"
+      m_applies="$(printf '%s' "$mline" | awk -F'|' '{print $4}')"
+      m_worked="$(printf '%s' "$mline" | awk -F'|' '{print $5}')"
+      m_by="$(printf '%s' "$mline" | awk -F'|' '{print $6}')"
+      m_at="$(printf '%s' "$mline" | awk -F'|' '{print $7}')"
+      m_reviewed="$(printf '%s' "$mline" | awk -F'|' '{print $8}')"
+      echo "**Elaboration:**"
+      echo ""
+      echo "> **Interpretation — correct me if wrong.** This section interprets the"
+      echo "> verbatim Instruction above; it does not replace it, and on any conflict"
+      echo "> the verbatim Instruction wins. Review status: \`reviewed_by: ${m_reviewed}\`."
+      echo ">"
+      echo "> *Intent:* ${m_intent}"
+      echo ">"
+      echo "> *Applies when:* ${m_applies}"
+      local req_cell
+      req_cell="$(printf '%s\n' "$stream" | awk -F'|' -v want="$id" '$1=="R" && $2==want {print $3}')"
+      if [[ -n "$req_cell" ]]; then
+        echo ">"
+        echo "> *Requirements:*"
+        while IFS= read -r r; do
+          [[ -n "$r" ]] && echo "> - ${r}"
+        done <<< "$req_cell"
+      fi
+      local antip_cell
+      antip_cell="$(printf '%s\n' "$stream" | awk -F'|' -v want="$id" '$1=="N" && $2==want {print $3}')"
+      if [[ -n "$antip_cell" ]]; then
+        echo ">"
+        echo "> *Anti-patterns (violates the directive while superficially complying):*"
+        while IFS= read -r a; do
+          [[ -n "$a" ]] && echo "> - ${a}"
+        done <<< "$antip_cell"
+      fi
+      echo ">"
+      echo "> *Worked example:* ${m_worked}"
+      echo ">"
+      echo "> *Elaborated by ${m_by} on ${m_at}.*"
+      echo ""
+    fi
     if [[ -n "$source" ]]; then
       echo "*Source: ${source}*"
       echo ""
@@ -274,7 +346,17 @@ run_self_test() {
       "surfaces": ["adapters/claude-code/hooks/**"],
       "supersedes": [],
       "instruction": "Rule: b.\nGolden case: b.",
-      "source": "fixture"
+      "source": "fixture",
+      "elaboration": {
+        "intent": "Fixture elaboration intent for the gen-view banner self-test.",
+        "requirements": ["Fixture req one.", "Fixture req two.", "Fixture req three."],
+        "anti_patterns": ["Fixture antip one."],
+        "applies_when": "Fixture applies_when.",
+        "worked_example": "Fixture worked example.",
+        "elaborated_by": "fixture-author",
+        "elaborated_at": "2026-08-04",
+        "reviewed_by": "pending-operator"
+      }
     },
     {
       "id": "OD-001",
@@ -314,6 +396,34 @@ EOF
     PASSED=$((PASSED + 1))
   else
     echo "self-test (s2-operator-only-surfaces-label): FAIL" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # S2b — Task: directives-elaboration-layer (operator proposal 2026-08-04):
+  # an entry WITH elaboration (OD-002) renders the "correct me if wrong"
+  # interpretation banner plus its intent/requirements/anti_patterns/
+  # reviewed_by content.
+  if grep -q 'Interpretation — correct me if wrong' "$D/docs/operator-directives.md" \
+     && grep -q 'reviewed_by: pending-operator' "$D/docs/operator-directives.md" \
+     && grep -q 'Fixture elaboration intent for the gen-view banner self-test' "$D/docs/operator-directives.md" \
+     && grep -q -- '- Fixture req one\.' "$D/docs/operator-directives.md" \
+     && grep -q -- '- Fixture antip one\.' "$D/docs/operator-directives.md"; then
+    echo "self-test (s2b-elaboration-banner-renders-for-elaborated-entry): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s2b-elaboration-banner-renders-for-elaborated-entry): FAIL" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # S2c — MUTATION CHECK counterpart: OD-001 (SUPERSEDED, no elaboration
+  # field at all) must NOT render an "Elaboration:" heading — the optional-
+  # field contract holds in the absent direction too.
+  if ! awk '/^### OD-001/{f=1} f && /^### OD-002/{exit} f && /^\*\*Elaboration:\*\*/{found=1} END{exit !found}' \
+       "$D/docs/operator-directives.md"; then
+    echo "self-test (s2c-no-elaboration-heading-for-plain-entry): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s2c-no-elaboration-heading-for-plain-entry): FAIL" >&2
     FAILED=$((FAILED + 1))
   fi
 

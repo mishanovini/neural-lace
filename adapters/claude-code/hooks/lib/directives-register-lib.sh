@@ -47,6 +47,39 @@
 #                 alternative), a single string with embedded \n
 #
 # ============================================================
+# ELABORATION (OPTIONAL, ADDITIVE field — operator proposal 2026-08-04:
+# "translate my verbatim words into something more complete and thorough").
+# ============================================================
+# An entry MAY carry an "elaboration" object alongside the 5-field contract
+# above. The verbatim `instruction` field stays PRIMARY and untouched by
+# this feature — elaboration INTERPRETS, never replaces; on any conflict
+# between an elaboration and the verbatim instruction, the verbatim wins,
+# and each elaboration's own `intent` text says so explicitly (a lib-level
+# validation cannot check semantic fidelity, only shape — see dr_validate's
+# elaboration checks below, and reviewed_by for the human-review tracking).
+#   elaboration.intent            one paragraph: the outcome the operator is
+#                                  actually buying, beyond the literal words.
+#   elaboration.requirements      array of 3-7 derived, testable bullets.
+#   elaboration.anti_patterns     array of >=1 bullets — what violates the
+#                                  directive while superficially complying
+#                                  (the Goodhart list).
+#   elaboration.applies_when      trigger conditions, one line.
+#   elaboration.worked_example    a real incident where following/violating
+#                                  the directive mattered, one line.
+#   elaboration.elaborated_by     who/what wrote this elaboration.
+#   elaboration.elaborated_at     date written.
+#   elaboration.reviewed_by       "pending-operator" until a human operator
+#                                  signs off — no code path may claim
+#                                  operator sign-off on an elaboration's
+#                                  behalf; the generated view (gen-
+#                                  directives-view.sh) renders every
+#                                  elaboration with a visible "interpretation
+#                                  — correct me if wrong" banner.
+# Validated shape only (presence, nonempty, requirements count 3-7,
+# anti_patterns count >=1) — semantic correctness of the interpretation is a
+# human-review concern this lib cannot and does not judge.
+#
+# ============================================================
 # PUBLIC API
 # ============================================================
 #   dr_default_register_path
@@ -79,6 +112,18 @@
 #       code surface to carry) whose surfaces list matches ANY of the given
 #       files. Pure lib computation, never judgment (design §4: "glob match
 #       on Files-to-Modify; lib computation, not judgment").
+#   dr_has_elaboration <register.json> <id>
+#       rc 0 iff entry <id> carries a well-formed elaboration object (has a
+#       non-empty intent), rc 1 otherwise (absent field, absent entry, or
+#       missing/unreadable register — same fail-open posture as every other
+#       function here).
+#   dr_get_elaboration_field <register.json> <id> <field>
+#       field is one of: intent | applies_when | worked_example |
+#       elaborated_by | elaborated_at | reviewed_by | requirements |
+#       anti_patterns. Scalar fields echo one line (empty if absent); array
+#       fields (requirements, anti_patterns) echo one value per line. Node/jq
+#       backed (same as dr_get_field) — NOT the doctrine-jit hot path; see
+#       dr_register_walk_bash below for that.
 #
 # ============================================================
 # FAILURE MODES (design "Failure modes" section — this lib's contract)
@@ -174,10 +219,22 @@ dr__have_jq() { command -v jq >/dev/null 2>&1; }
 # dr__stream <register.json> — normalized pipe-delimited extraction, the
 # gen-architecture-doc.sh extract_stream convention. One E line per entry
 # (id/status/operator_only/n_surfaces/n_supersedes/instruction_line_count),
-# one S line per (id, surface) pair, one U line per (id, supersedes) pair.
-# `instruction` itself is deliberately NOT streamed here (it contains
-# embedded newlines that would break the one-line-per-record contract) —
-# dr_get_field fetches it via a dedicated single-entry extraction.
+# one S line per (id, surface) pair, one U line per (id, supersedes) pair,
+# and (Task: directives-elaboration-layer) one M line per entry that
+# carries a well-formed `elaboration` object —
+# id/n_requirements/n_anti_patterns/len(intent)/len(applies_when)/
+# len(worked_example)/len(elaborated_by)/len(elaborated_at)/len(reviewed_by)
+# — used ONLY by dr_validate's shape checks below; an entry with no
+# elaboration field emits no M line at all (absence, not zeros — dr_validate
+# must not require the field). `instruction` itself is deliberately NOT
+# streamed here (it contains embedded newlines that would break the
+# one-line-per-record contract) — dr_get_field fetches it via a dedicated
+# single-entry extraction; elaboration.intent/applies_when/worked_example/
+# elaborated_by/elaborated_at/reviewed_by are single-line-only BY
+# AUTHORING CONVENTION (no embedded \n, no literal `|`) so dr_get_elaboration_
+# field can fetch them the same way, and M-line length counts here are a
+# cheap proxy for "field is present and non-empty" without needing to
+# stream the text itself.
 dr__stream() {
   local path="$1"
   [[ -f "$path" ]] || return 2
@@ -199,6 +256,13 @@ for (const e of entries) {
   console.log(["E", id, status, opOnly, surfaces.length, supersedes.length, lines].join("|"));
   for (const s of surfaces) console.log(["S", id, s].join("|"));
   for (const u of supersedes) console.log(["U", id, u].join("|"));
+  const el = (e.elaboration && typeof e.elaboration === "object") ? e.elaboration : null;
+  if (el) {
+    const reqs = Array.isArray(el.requirements) ? el.requirements : [];
+    const antip = Array.isArray(el.anti_patterns) ? el.anti_patterns : [];
+    const len = (s) => (typeof s === "string" ? s.length : 0);
+    console.log(["M", id, reqs.length, antip.length, len(el.intent), len(el.applies_when), len(el.worked_example), len(el.elaborated_by), len(el.elaborated_at), len(el.reviewed_by)].join("|"));
+  }
 }
 ' "$path" 2>/dev/null
     return $?
@@ -213,7 +277,19 @@ for (const e of entries) {
    ((($e.instruction // "") | split("\n") | length) | tostring)
  ] | join("|")),
 ((($e.surfaces // [])[]) | "S|\($e.id)|\(.)"),
-((($e.supersedes // [])[]) | "U|\($e.id)|\(.)")
+((($e.supersedes // [])[]) | "U|\($e.id)|\(.)"),
+(if ($e.elaboration != null) then
+   ([ "M", $e.id,
+      (($e.elaboration.requirements // []) | length | tostring),
+      (($e.elaboration.anti_patterns // []) | length | tostring),
+      (($e.elaboration.intent // "") | length | tostring),
+      (($e.elaboration.applies_when // "") | length | tostring),
+      (($e.elaboration.worked_example // "") | length | tostring),
+      (($e.elaboration.elaborated_by // "") | length | tostring),
+      (($e.elaboration.elaborated_at // "") | length | tostring),
+      (($e.elaboration.reviewed_by // "") | length | tostring)
+    ] | join("|"))
+ else empty end)
 ' "$path" 2>/dev/null
     return $?
   fi
@@ -266,6 +342,31 @@ dr_validate() {
     fi
   done <<< "$stream"
 
+  # ---- elaboration shape checks (Task: directives-elaboration-layer) ----
+  # An M line exists ONLY for an entry that carries an elaboration object at
+  # all (dr__stream's absence-not-zeros contract above) — an entry with no
+  # elaboration field is skipped entirely here, never flagged, since the
+  # field is OPTIONAL. Shape only: presence/nonempty + requirements count
+  # 3-7 + anti_patterns count >=1. Semantic correctness is a human-review
+  # concern (reviewed_by), not this lib's job.
+  while IFS='|' read -r tag id nreq nanti ilen alen wlen blen tlen rlen; do
+    [[ "$tag" == "M" ]] || continue
+    if [[ "$nreq" -lt 3 || "$nreq" -gt 7 ]]; then
+      echo "[directives-register] ERROR: entry ${id} elaboration.requirements has ${nreq} items (must be 3-7)" >&2
+      errors=$((errors + 1))
+    fi
+    if [[ "$nanti" -lt 1 ]]; then
+      echo "[directives-register] ERROR: entry ${id} elaboration.anti_patterns is empty (must be >=1)" >&2
+      errors=$((errors + 1))
+    fi
+    [[ "$ilen" -eq 0 ]] && { echo "[directives-register] ERROR: entry ${id} elaboration.intent is empty" >&2; errors=$((errors + 1)); }
+    [[ "$alen" -eq 0 ]] && { echo "[directives-register] ERROR: entry ${id} elaboration.applies_when is empty" >&2; errors=$((errors + 1)); }
+    [[ "$wlen" -eq 0 ]] && { echo "[directives-register] ERROR: entry ${id} elaboration.worked_example is empty" >&2; errors=$((errors + 1)); }
+    [[ "$blen" -eq 0 ]] && { echo "[directives-register] ERROR: entry ${id} elaboration.elaborated_by is empty" >&2; errors=$((errors + 1)); }
+    [[ "$tlen" -eq 0 ]] && { echo "[directives-register] ERROR: entry ${id} elaboration.elaborated_at is empty" >&2; errors=$((errors + 1)); }
+    [[ "$rlen" -eq 0 ]] && { echo "[directives-register] ERROR: entry ${id} elaboration.reviewed_by is empty" >&2; errors=$((errors + 1)); }
+  done <<< "$stream"
+
   local dupes
   dupes="$(printf '%s\n' "$stream" | awk -F'|' '$1=="E"{print $2}' | LC_ALL=C sort | uniq -d)"
   if [[ -n "$dupes" ]]; then
@@ -315,6 +416,64 @@ process.stdout.write(e && typeof e.instruction === "string" ? e.instruction : ""
       ;;
     operator_only)
       dr__stream "$path" 2>/dev/null | awk -F'|' -v want="$id" '$1=="E" && $2==want {print $4}'
+      ;;
+    *)
+      return 2
+      ;;
+  esac
+}
+
+# ============================================================
+# dr_has_elaboration <register.json> <id>
+# dr_get_elaboration_field <register.json> <id> <field>
+# (Task: directives-elaboration-layer, operator proposal 2026-08-04)
+#
+# Node/jq backed, same convention as dr_get_field above — NOT the doctrine-
+# jit hot path (that's dr_register_walk_bash's fused pure-bash reader
+# further down, which reads intent/requirements/anti_patterns directly off
+# the same JSON text with zero subprocess calls). This pair is for channel-2
+# (dispatch-directives.sh, run once per orchestrator dispatch decision, not
+# once per Edit) and any other non-hot-path caller.
+# ============================================================
+dr_has_elaboration() {
+  local path="$1" id="$2" v
+  v="$(dr_get_elaboration_field "$path" "$id" intent 2>/dev/null)"
+  [[ -n "$v" ]]
+}
+
+dr_get_elaboration_field() {
+  local path="$1" id="$2" field="$3"
+  case "$field" in
+    intent|applies_when|worked_example|elaborated_by|elaborated_at|reviewed_by)
+      if dr__have_node; then
+        node -e '
+const fs = require("fs");
+let m;
+try { m = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) { process.exit(0); }
+const e = (m.entries || []).find(x => x.id === process.argv[2]);
+const el = e && e.elaboration && typeof e.elaboration === "object" ? e.elaboration : null;
+const f = process.argv[3];
+process.stdout.write(el && typeof el[f] === "string" ? el[f] : "");
+' "$path" "$id" "$field" 2>/dev/null
+      elif dr__have_jq; then
+        jq -r --arg id "$id" --arg f "$field" '(.entries[] | select(.id==$id) | .elaboration[$f]) // ""' "$path" 2>/dev/null
+      fi
+      ;;
+    requirements|anti_patterns)
+      if dr__have_node; then
+        node -e '
+const fs = require("fs");
+let m;
+try { m = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); } catch (e) { process.exit(0); }
+const e = (m.entries || []).find(x => x.id === process.argv[2]);
+const el = e && e.elaboration && typeof e.elaboration === "object" ? e.elaboration : null;
+const f = process.argv[3];
+const arr = el && Array.isArray(el[f]) ? el[f] : [];
+for (const v of arr) console.log(v);
+' "$path" "$id" "$field" 2>/dev/null
+      elif dr__have_jq; then
+        jq -r --arg id "$id" --arg f "$field" '(.entries[] | select(.id==$id) | .elaboration[$f] // [])[]' "$path" 2>/dev/null
+      fi
       ;;
     *)
       return 2
@@ -661,48 +820,127 @@ dr_register_walk_bash() {
   set +f
   IFS="$_old_ifs"
 
-  local id="" status="" instr="" in_surfaces=0 any_hit=0 line v
+  local id="" status="" instr="" any_hit=0 line v
+  # array_target: 0=not-collecting, 1=surfaces, 2=elaboration.requirements,
+  # 3=elaboration.anti_patterns (Task: directives-elaboration-layer —
+  # carries elaboration.{intent,requirements,anti_patterns} in compact form
+  # alongside the verbatim instruction when a directive matches, per the
+  # operator's elaboration-layer proposal 2026-08-04). REPLACES the earlier
+  # two-variable (in_surfaces + elab_mode) draft of this addition: measured
+  # ~12-29ms slower end-to-end (T-elab-timing evidence, this task's build)
+  # than this single-variable, single-gate version, because the earlier
+  # draft added a SECOND top-of-loop `if` gate (elab_mode==1, "in the
+  # elaboration object but not inside one of its arrays") evaluated on
+  # EVERY line of the ENTIRE file regardless of whether that line has
+  # anything to do with elaboration — the file's own established finding
+  # (module header, "each line iterated 300+ times") is that per-line
+  # overhead on this hot path is NOT proportional to the feature's own
+  # content size, it is paid by every line in the file. This version has
+  # exactly ONE array-collecting gate (unifying surfaces + both elaboration
+  # arrays behind array_target) and folds elaboration's scalar fields
+  # (intent/requirements-open/anti_patterns-open) into the SAME top-level
+  # `case` already used for id/status/surfaces/instruction — safe because
+  # "intent"/"requirements"/"anti_patterns" key text never appears outside
+  # an elaboration object in the real register or its fixtures (a
+  # documented authoring convention, not enforced by this parser), and
+  # elab_intent/elab_reqs/elab_antip are reset on every entry ("id":) line
+  # boundary below, the same boundary instr/status/any_hit already reset
+  # on — elaboration is always nested inside exactly one entry.
+  local elab_intent="" elab_reqs=() elab_antip=()
+
+  # _dr__rw_decode <raw> — the SAME 5-pass escape decode as the original
+  # inlined instruction-decode this replaces, factored to one place since
+  # elaboration now needs it at up to 1+N+M call sites (intent + each
+  # requirement/anti_pattern item) instead of the historical single
+  # instruction call site. SETS THE GLOBAL _DR_RW_DECODED rather than
+  # echoing/printing — a plain function call is fork-free in bash, but
+  # ANY `$( )` around it (even wrapping a bash function, not just an
+  # external binary) is always a fork; capturing via a global preserves the
+  # exact zero-subprocess-per-line contract this hot path is measured
+  # against (module header "WHY THIS SECOND CODE PATH EXISTS" /
+  # DR_REGISTER_WALK_OUT's own docstring make the identical argument for
+  # why THAT is a global instead of a return value).
+  _dr__rw_decode() {
+    local s="$1" ph=$'\x01'
+    s="${s//\\\\/$ph}"
+    s="${s//\\n/$'\n'}"
+    s="${s//\\\"/\"}"
+    s="${s//\\t/$'\t'}"
+    s="${s//$ph/\\}"
+    _DR_RW_DECODED="$s"
+  }
 
   _dr__rw_flush() {
     [[ -z "$id" ]] && return 0
     if [[ "$status" == "BINDING" && "$any_hit" -eq 1 ]]; then
-      # INLINED _dr__decode_escapes's body rather than calling it via
-      # `$( )` — a command substitution is a fork REGARDLESS of what's
-      # inside it, and this is the hot path a `$( )` here would defeat
-      # (same reasoning as DR_REGISTER_WALK_OUT itself being a global, see
-      # this function's docstring above). _dr__decode_escapes stays as a
-      # standalone function too (self-tested directly, used as a
-      # documented public-ish helper) — this is a deliberate, narrow
-      # duplication of ~5 lines to keep the hot path fork-free, not a
-      # second decode implementation with different semantics.
-      local decoded="$instr" ph=$'\x01'
-      decoded="${decoded//\\\\/$ph}"
-      decoded="${decoded//\\n/$'\n'}"
-      decoded="${decoded//\\\"/\"}"
-      decoded="${decoded//\\t/$'\t'}"
-      decoded="${decoded//$ph/\\}"
+      _dr__rw_decode "$instr"
       DR_REGISTER_WALK_OUT="${DR_REGISTER_WALK_OUT}===${id}===
-${decoded}
-
+${_DR_RW_DECODED}
+"
+      if [[ -n "$elab_intent" ]]; then
+        _dr__rw_decode "$elab_intent"
+        local elab_block="[ELABORATION -- interpretation, not verbatim; on conflict the Rule above wins]
+Intent: ${_DR_RW_DECODED}"
+        if [[ ${#elab_reqs[@]} -gt 0 ]]; then
+          elab_block="${elab_block}
+Requirements:"
+          local ri
+          for ri in "${elab_reqs[@]}"; do
+            _dr__rw_decode "$ri"
+            elab_block="${elab_block}
+  - ${_DR_RW_DECODED}"
+          done
+        fi
+        if [[ ${#elab_antip[@]} -gt 0 ]]; then
+          elab_block="${elab_block}
+Anti-patterns:"
+          local ai
+          for ai in "${elab_antip[@]}"; do
+            _dr__rw_decode "$ai"
+            elab_block="${elab_block}
+  - ${_DR_RW_DECODED}"
+          done
+        fi
+        DR_REGISTER_WALK_OUT="${DR_REGISTER_WALK_OUT}
+${elab_block}
+"
+      fi
+      DR_REGISTER_WALK_OUT="${DR_REGISTER_WALK_OUT}
 "
     fi
     return 0
   }
 
+  local array_target=0
+
   for line in "${_lines[@]}"; do
     line="${line%$'\r'}"
 
-    if [[ "$in_surfaces" -eq 1 ]]; then
+    if [[ "$array_target" -ne 0 ]]; then
       case "$line" in
         *']'*)
-          in_surfaces=0
+          array_target=0
           ;;
         *'"'*)
-          if [[ "$any_hit" -eq 0 ]]; then
-            v="${line#*\"}"
-            v="${v%\"*}"
-            dr_surface_matches "$file" "$v" && any_hit=1
-          fi
+          case "$array_target" in
+            1)
+              if [[ "$any_hit" -eq 0 ]]; then
+                v="${line#*\"}"
+                v="${v%\"*}"
+                dr_surface_matches "$file" "$v" && any_hit=1
+              fi
+              ;;
+            2)
+              v="${line#*\"}"
+              v="${v%\"*}"
+              elab_reqs+=("$v")
+              ;;
+            3)
+              v="${line#*\"}"
+              v="${v%\"*}"
+              elab_antip+=("$v")
+              ;;
+          esac
           ;;
       esac
       continue
@@ -713,7 +951,8 @@ ${decoded}
         _dr__rw_flush
         v="${line#*\"id\": \"}"
         v="${v%\"*}"
-        id="$v"; status=""; instr=""; any_hit=0; in_surfaces=0
+        id="$v"; status=""; instr=""; any_hit=0; array_target=0
+        elab_intent=""; elab_reqs=(); elab_antip=()
         ;;
       *'"status":'*'"'*)
         v="${line#*\"status\": \"}"
@@ -724,12 +963,29 @@ ${decoded}
         : # empty surfaces — any_hit stays 0, nothing to do
         ;;
       *'"surfaces": ['*)
-        in_surfaces=1
+        array_target=1
         ;;
       *'"instruction":'*'"'*)
         v="${line#*\"instruction\": \"}"
         v="${v%\"*}"
         instr="$v"
+        ;;
+      *'"intent":'*'"'*)
+        v="${line#*\"intent\": \"}"
+        v="${v%\"*}"
+        elab_intent="$v"
+        ;;
+      *'"requirements": [],'*)
+        : # empty requirements array — nothing to collect
+        ;;
+      *'"requirements": ['*)
+        array_target=2
+        ;;
+      *'"anti_patterns": [],'*)
+        :
+        ;;
+      *'"anti_patterns": ['*)
+        array_target=3
         ;;
     esac
   done
@@ -851,6 +1107,53 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   WALK_OUT_NEG="$DR_REGISTER_WALK_OUT"
   _st "register-walk-bash-no-match-silent" "" "$WALK_OUT_NEG"
 
+  # ---- Task: directives-elaboration-layer (operator proposal 2026-08-04)
+  # ---- elaboration carriage on the SAME OD-901 walk from above: the
+  # compact intent/requirements/anti_patterns block must be present,
+  # correctly decoded, and appear AFTER the verbatim instruction (never
+  # replacing it — WALK_OUT above already proved the verbatim text is
+  # still there unchanged).
+  if printf '%s' "$WALK_OUT" | grep -q '\[ELABORATION' \
+     && printf '%s' "$WALK_OUT" | grep -q 'Intent: Fixture intent paragraph' \
+     && printf '%s' "$WALK_OUT" | grep -q '  - Fixture requirement one\.' \
+     && printf '%s' "$WALK_OUT" | grep -q '  - Fixture anti-pattern one\.'; then
+    echo "self-test (register-walk-bash-elaboration-block-present): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (register-walk-bash-elaboration-block-present): FAIL (got: $WALK_OUT)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # MUTATION CHECK counterpart: OD-902 (surface docs/designs/**, NO
+  # elaboration field) must produce its instruction with NO [ELABORATION
+  # block — proves the optional-field contract holds in the absent
+  # direction too, not just "elaboration renders when present."
+  dr_register_walk_bash "$FIXREG" "docs/designs/some-design.md"
+  WALK_OUT_902="$DR_REGISTER_WALK_OUT"
+  if printf '%s' "$WALK_OUT_902" | grep -q '^===OD-902===$' \
+     && ! printf '%s' "$WALK_OUT_902" | grep -q '\[ELABORATION'; then
+    echo "self-test (register-walk-bash-no-elaboration-for-plain-entry): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (register-walk-bash-no-elaboration-for-plain-entry): FAIL (got: $WALK_OUT_902)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- dr_has_elaboration / dr_get_elaboration_field (node/jq path) ----
+  dr_has_elaboration "$FIXREG" "OD-901"
+  _st_rc "has-elaboration-true-OD-901" "0" "$?"
+  dr_has_elaboration "$FIXREG" "OD-902"
+  _st_rc "has-elaboration-false-OD-902" "1" "$?"
+  _st "get-elaboration-intent-OD-901" \
+    "Fixture intent paragraph for the elaboration-carriage round-trip self-test." \
+    "$(dr_get_elaboration_field "$FIXREG" "OD-901" intent)"
+  _st "get-elaboration-reviewed-by-OD-901" "pending-operator" \
+    "$(dr_get_elaboration_field "$FIXREG" "OD-901" reviewed_by)"
+  REQ_COUNT="$(dr_get_elaboration_field "$FIXREG" "OD-901" requirements | wc -l | tr -d '[:space:]')"
+  _st "get-elaboration-requirements-count-OD-901" "3" "$REQ_COUNT"
+  _st "get-elaboration-field-empty-for-no-elab-entry" "" \
+    "$(dr_get_elaboration_field "$FIXREG" "OD-902" intent)"
+
   # decode correctness: escaped backslash + newline + quote round-trip
   DECODED="$(_dr__decode_escapes 'line1\nHKLM\\\\SOFTWARE\\\\Claude\nquote:\"x\"')"
   EXPECTED_DECODED="$(printf 'line1\nHKLM\\\\SOFTWARE\\\\Claude\nquote:"x"')"
@@ -859,17 +1162,20 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # ---- real committed register: Task 20's own three wire-checked files
   # must resolve to exactly the set the T20 fidelity-carriage computation
   # expects (OD-002/007/008/013/018), PLUS OD-021 (added to the register
-  # after that computation was made — a live demonstration that this
+  # after that computation was made), PLUS OD-024 (added later still,
+  # surfaces include adapters/claude-code/doctrine/orchestrator-pattern.md
+  # — one of these three test files) — a live demonstration that this
   # matcher tracks the CURRENT register, not a stale snapshot; see the T20
   # evidence entry for the carriage-WARN this produces against the plan's
-  # own now-stale Directives: line). ----
+  # own now-stale Directives: line, and this task's own elaboration-layer
+  # build for the OD-024 addition. ----
   REALREG="$(dr_default_register_path 2>/dev/null || true)"
   if [[ -n "$REALREG" && -f "$REALREG" ]]; then
     REAL_RESULT="$(dr_entries_for_files_bash "$REALREG" \
       "adapters/claude-code/scripts/dispatch-directives.sh" \
       "adapters/claude-code/hooks/doctrine-jit.sh" \
       "adapters/claude-code/doctrine/orchestrator-pattern.md" | paste -sd, -)"
-    _st "real-register-t20-files-match-set" "OD-002,OD-007,OD-008,OD-013,OD-018,OD-021" "$REAL_RESULT"
+    _st "real-register-t20-files-match-set" "OD-002,OD-007,OD-008,OD-013,OD-018,OD-021,OD-024" "$REAL_RESULT"
   else
     echo "self-test (real-register-t20-files-match-set): SKIP — real register not resolvable in this environment" >&2
   fi
@@ -911,6 +1217,72 @@ EOF
 
   dr_validate "$TMPD/does-not-exist.json" >/dev/null 2>&1
   _st_rc "validate-missing-file-errors" "2" "$?"
+
+  # ---- Task: directives-elaboration-layer — elaboration shape checks ----
+  # S1: well-formed elaboration on an otherwise-valid entry is ACCEPTED
+  # (schema accepts entries WITH elaboration).
+  cat > "$TMPD/elab-good.json" <<'EOF'
+{"entries":[{"id":"OD-001","status":"BINDING","surfaces":[],"supersedes":[],"instruction":"a",
+"elaboration":{"intent":"i","requirements":["r1","r2","r3"],"anti_patterns":["a1"],
+"applies_when":"w","worked_example":"e","elaborated_by":"b","elaborated_at":"2026-08-04","reviewed_by":"pending-operator"}}]}
+EOF
+  dr_validate "$TMPD/elab-good.json" >/dev/null 2>&1
+  _st_rc "validate-elaboration-well-formed-passes" "0" "$?"
+
+  # S2: an entry with NO elaboration field at all is still ACCEPTED (schema
+  # accepts entries WITHOUT elaboration — the optional-field contract).
+  cat > "$TMPD/elab-absent.json" <<'EOF'
+{"entries":[{"id":"OD-001","status":"BINDING","surfaces":[],"supersedes":[],"instruction":"a"}]}
+EOF
+  dr_validate "$TMPD/elab-absent.json" >/dev/null 2>&1
+  _st_rc "validate-elaboration-absent-passes" "0" "$?"
+
+  # S3: MUTATION CHECK — requirements below the 3-item floor is REJECTED
+  # (proves the count-bound check actually fires, not just present-by-name).
+  cat > "$TMPD/elab-toofewreq.json" <<'EOF'
+{"entries":[{"id":"OD-001","status":"BINDING","surfaces":[],"supersedes":[],"instruction":"a",
+"elaboration":{"intent":"i","requirements":["r1","r2"],"anti_patterns":["a1"],
+"applies_when":"w","worked_example":"e","elaborated_by":"b","elaborated_at":"2026-08-04","reviewed_by":"pending-operator"}}]}
+EOF
+  dr_validate "$TMPD/elab-toofewreq.json" >/dev/null 2>&1
+  _st_rc "validate-elaboration-too-few-requirements-fails" "1" "$?"
+
+  # S4: requirements above the 7-item ceiling is REJECTED.
+  cat > "$TMPD/elab-toomanyreq.json" <<'EOF'
+{"entries":[{"id":"OD-001","status":"BINDING","surfaces":[],"supersedes":[],"instruction":"a",
+"elaboration":{"intent":"i","requirements":["r1","r2","r3","r4","r5","r6","r7","r8"],"anti_patterns":["a1"],
+"applies_when":"w","worked_example":"e","elaborated_by":"b","elaborated_at":"2026-08-04","reviewed_by":"pending-operator"}}]}
+EOF
+  dr_validate "$TMPD/elab-toomanyreq.json" >/dev/null 2>&1
+  _st_rc "validate-elaboration-too-many-requirements-fails" "1" "$?"
+
+  # S5: empty anti_patterns array is REJECTED (must be >=1).
+  cat > "$TMPD/elab-noantip.json" <<'EOF'
+{"entries":[{"id":"OD-001","status":"BINDING","surfaces":[],"supersedes":[],"instruction":"a",
+"elaboration":{"intent":"i","requirements":["r1","r2","r3"],"anti_patterns":[],
+"applies_when":"w","worked_example":"e","elaborated_by":"b","elaborated_at":"2026-08-04","reviewed_by":"pending-operator"}}]}
+EOF
+  dr_validate "$TMPD/elab-noantip.json" >/dev/null 2>&1
+  _st_rc "validate-elaboration-empty-anti-patterns-fails" "1" "$?"
+
+  # S6: empty intent is REJECTED.
+  cat > "$TMPD/elab-nointent.json" <<'EOF'
+{"entries":[{"id":"OD-001","status":"BINDING","surfaces":[],"supersedes":[],"instruction":"a",
+"elaboration":{"intent":"","requirements":["r1","r2","r3"],"anti_patterns":["a1"],
+"applies_when":"w","worked_example":"e","elaborated_by":"b","elaborated_at":"2026-08-04","reviewed_by":"pending-operator"}}]}
+EOF
+  dr_validate "$TMPD/elab-nointent.json" >/dev/null 2>&1
+  _st_rc "validate-elaboration-empty-intent-fails" "1" "$?"
+
+  # S7: empty reviewed_by is REJECTED (the review-hook field this task's
+  # item 4 requires must actually be populated, never silently blank).
+  cat > "$TMPD/elab-noreviewed.json" <<'EOF'
+{"entries":[{"id":"OD-001","status":"BINDING","surfaces":[],"supersedes":[],"instruction":"a",
+"elaboration":{"intent":"i","requirements":["r1","r2","r3"],"anti_patterns":["a1"],
+"applies_when":"w","worked_example":"e","elaborated_by":"b","elaborated_at":"2026-08-04","reviewed_by":""}}]}
+EOF
+  dr_validate "$TMPD/elab-noreviewed.json" >/dev/null 2>&1
+  _st_rc "validate-elaboration-empty-reviewed-by-fails" "1" "$?"
 
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed (of $((PASSED + FAILED)) scenarios)" >&2

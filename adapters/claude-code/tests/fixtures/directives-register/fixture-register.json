@@ -10,7 +10,23 @@
         "adapters/claude-code/hooks/*gate*.sh"
       ],
       "supersedes": [],
-      "instruction": "Rule: fixture binding entry whose surface matches a hooks/*gate*.sh file.\nGolden case: self-test round-trip (positive case).\nAnti-pattern: n/a (fixture).\nSanctioned alternative: n/a (fixture)."
+      "instruction": "Rule: fixture binding entry whose surface matches a hooks/*gate*.sh file.\nGolden case: self-test round-trip (positive case).\nAnti-pattern: n/a (fixture).\nSanctioned alternative: n/a (fixture).",
+      "elaboration": {
+        "intent": "Fixture intent paragraph for the elaboration-carriage round-trip self-test.",
+        "requirements": [
+          "Fixture requirement one.",
+          "Fixture requirement two.",
+          "Fixture requirement three."
+        ],
+        "anti_patterns": [
+          "Fixture anti-pattern one."
+        ],
+        "applies_when": "Fixture applies_when text.",
+        "worked_example": "Fixture worked example text.",
+        "elaborated_by": "fixture-author",
+        "elaborated_at": "2026-08-04",
+        "reviewed_by": "pending-operator"
+      }
     },
     {
       "id": "OD-902",

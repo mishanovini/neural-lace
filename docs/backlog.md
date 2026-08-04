@@ -3494,3 +3494,36 @@ guard or `cd`-based resolution. T25 guarded its own entry points only.
 
 - **COCKPIT-SERVER-SELFTEST-FLAKY-ASK-FIXTURE-01 — `server.selftest.js` intermittently crashes mid-suite in the ask/dispatch-provenance fixture section, PRE-EXISTING and unrelated to the subprocess-storm fix** (added 2026-08-02 from the same fix's verification pass; label: `harness-gap`, `priority:medium`; fold-in: next touch of the ask-fixture setup in `server.selftest.js`). **PROVEN pre-existing:** reproduced identically on UNMODIFIED baseline code (git stash of every storm-fix change, two separate runs) — run 1 crashed `Error: ENOENT ... dispatch-provenance/fixture-marker__1.json` at the fixture-write step; run 2 crashed `TypeError: Cannot read properties of undefined (reading 'asks')` later in the same section, both around the S23+ ask-registry/dispatch-provenance scenarios. Two DIFFERENT crash points across two runs of the SAME unmodified code confirms a timing/race bug in the ask-fixture setup (likely a directory-creation race ahead of a synchronous write), not a deterministic break — and not something the storm fix touched (every scenario through S26b, including the DeriveCache-heavy S6b/S6c/S17/S22, passed cleanly both before and after this fix in every run). **Re-derive:** `node neural-lace/workstreams-ui/server/server.selftest.js` a few times in a row and compare crash points/lines.
 
+## DR-RESOLVE-ROOT-WORKTREE-BLINDNESS-2026-08-04 — self-tests silently validate the MAIN checkout, not the calling worktree
+(label: `harness-gap`, `priority:medium`; found while building the operator-directives elaboration layer, session 4a470c8c)
+
+**PROVEN:** `hooks/lib/directives-register-lib.sh --self-test` run from an isolated builder worktree
+(`.claude/worktrees/agent-*`) with no `NL_REPO_ROOT` override resolves its fixtures/register via
+`dr__resolve_root` -> `nl_repo_root`'s config-file tier (`~/.claude/local/nl-repo-path`, a single
+fixed absolute path written at install time — confirmed content:
+`/c/Users/misha/claude-projects/neural-lace`, the MAIN checkout), NOT the worktree the self-test is
+actually running from. Concretely: editing `adapters/claude-code/tests/fixtures/directives-register/
+fixture-register.json` in a worktree and running `--self-test` there still reads the MAIN checkout's
+unmodified copy of that file — `dr_has_elaboration`/`dr_get_elaboration_field`/`dr_register_walk_bash`
+assertions against the edited fixture failed with "field not found" until `NL_REPO_ROOT=<worktree
+path>` was set explicitly, at which point the same suite passed (44/44). Same root cause as the
+already-diagnosed 2026-08-04 selftest-sweep triage's live-mirror gap (commit cd02f6f9) but the OTHER
+direction: that fix taught `dr__resolve_root` to prefer `nl_repo_root`'s config-file tier over the git
+tier specifically so a non-git live-mirror install resolves correctly — but the SAME config-file tier
+now silently outranks git's own worktree-aware `rev-parse --show-toplevel` for every dispatched
+builder worktree, which is a git checkout and previously would have resolved correctly via the git
+tier alone. Every builder session working in a worktree that runs a self-test without setting
+`NL_REPO_ROOT` is at risk of a false-GREEN (testing the main checkout's stale files while believing
+it verified its own worktree's edits) or, as observed here, a false-RED (worktree edits appear
+missing). **Sanctioned interim workaround** (used for this session's own verification): export
+`NL_REPO_ROOT=<absolute worktree path>` before invoking any `--self-test` from a worktree. **Re-derive:**
+`cat ~/.claude/local/nl-repo-path` (shows the fixed main-checkout path); from any worktree, run
+`bash adapters/claude-code/hooks/lib/directives-register-lib.sh --self-test` after editing a fixture
+file and observe it validating the UNMODIFIED main-checkout copy. **Candidate fix** (not built here,
+scope-limited to the elaboration-layer task): `dr__resolve_root`/`nl_repo_root` prefer a `git -C
+"$sd" rev-parse --show-toplevel` result when `$sd` (the sourcing script's own directory) is inside a
+`.git`-having tree that differs from the config-file path, falling back to the config-file tier only
+when git resolution fails entirely (preserves the live-mirror fix's own guarantee while restoring
+worktree-correctness) — needs its own harness-reviewer pass since `nl_repo_root` is a shared,
+widely-sourced primitive (~20+ callers per its own header comment), not scoped to this lib alone.
+

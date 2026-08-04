@@ -402,6 +402,32 @@ this view is regenerated, not edited.
 > Anti-pattern: an orchestrator or builder session treating "I'll verify later" or "the queue will clear eventually" as an acceptable steady state instead of a temporary backlog that must actively shrink.
 > Sanctioned alternative: dispatch task-verifier for each open obligation before dispatching more builders on the same plan, or name every open obligation explicitly in the session's terminal marker; a ledgered waiver with a named reason is the only other escape.
 
+**Elaboration:**
+
+> **Interpretation — correct me if wrong.** This section interprets the
+> verbatim Instruction above; it does not replace it, and on any conflict
+> the verbatim Instruction wins. Review status: `reviewed_by: pending-operator`.
+>
+> *Intent:* The operator is buying a pipeline where build and verify never drift apart long enough that someone has to notice and flag it -- continuous cleanliness, not periodic catch-up. 'Mechanize verification' is the operator's specific lever; the outcome being purchased is a system that keeps itself honest about what is actually done versus merely built, at every point in time, without relying on a human to remember to check. Where this interpretation conflicts with the verbatim Rule above, the verbatim wins.
+>
+> *Applies when:* Any session dispatching plan-phase-builder agents against a multi-task plan; any session about to end its turn with a DONE or CONTINUING marker while a plan has open build obligations.
+>
+> *Requirements:*
+> - Before dispatching a new plan-phase-builder, the count of open build-to-verify obligations for that plan is computed (rc_open_verify_obligations) and acted on, not just logged.
+> - At 3 or more open obligations with no verifier in flight, a new BUILDER dispatch is blocked (dispatch-chain-gate.sh G2) unless a ledgered --waive names a reason.
+> - A DONE or CONTINUING Stop marker is refused while unresolved gap-sets exist, until the gaps are named or a ledgered waiver covers them (stop-verdict-dispatcher.sh).
+> - Every escape or waiver used to bypass the obligation check is recorded, never applied silently (workaround-as-sensor, OD-005).
+> - Obligation state is queryable at any time from the dispatch ledger itself, never reconstructed from a session's memory of what it dispatched.
+>
+> *Anti-patterns (violates the directive while superficially complying):*
+> - Treating 'I will verify later' or 'the queue will clear eventually' as an acceptable steady state instead of a temporary backlog that must actively shrink.
+> - Dispatching builder N+1 while builders 1 through N sit unverified with no active plan to close the gap.
+> - Using the --waive escape to suppress the WIP-limit gate without a reason recorded in the ledger.
+>
+> *Worked example:* 2026-08-03, this plan's own build: 11 tasks merged, 0 verified for hours, and the operator flagged the accumulation twice via cockpit chips before issuing this directive verbatim.
+>
+> *Elaborated by plan-phase-builder (session 4a470c8c, directives-elaboration-layer task) on 2026-08-04.*
+
 *Source: docs/plans/gated-pipeline-master-2026-08.md Task 25 (operator directive 2026-08-03, session 4a470c8c) + backlog AUTO-VERIFY-DISPATCH-2026-08-03 (absorbed, row deleted same commit)*
 
 ### OD-023 — task-id-determinism
@@ -421,6 +447,31 @@ this view is regenerated, not edited.
 > Anti-pattern: a naming/id convention documented only in prose, left for each dispatching session to reconstruct from memory or free-text scraping.
 > Sanctioned alternative: a mechanical check that validates the id against the one real source of truth (the plan's own task list) at the moment it is recorded, loud on mismatch, never silently guessing or normalizing away the mistake at the write site (normalization is a READER-side defense, per rc_open_verify_obligations -- the WRITE site's job is to say so, not to fix it quietly).
 
+**Elaboration:**
+
+> **Interpretation — correct me if wrong.** This section interprets the
+> verbatim Instruction above; it does not replace it, and on any conflict
+> the verbatim Instruction wins. Review status: `reviewed_by: pending-operator`.
+>
+> *Intent:* The operator is buying an environment where an agent never has to guess, remember, or invent an identifier for a standing-process artifact -- every id used downstream can be mechanically checked against the one real source of truth for it, so cross-system attribution and ledger lookups never silently break because two actors typed the same concept two different ways. Where this interpretation conflicts with the verbatim Rule above, the verbatim wins.
+>
+> *Applies when:* Any mechanism that writes an id into a dispatch header, ledger row, or cross-system attribution tag -- NL-ATTRIBUTION headers, dispatch-ledger task_id fields, plan task numbers.
+>
+> *Requirements:*
+> - Any identifier written into a standing-process artifact (a dispatch header, a ledger row, an attribution tag) is generated from, or validated against, its authoritative source at the moment it is written -- never hand-typed from memory or convention.
+> - A mismatch between a used id and its source-of-truth's real id set is loud (a WARN or hard error naming the valid set) at the moment it is written, never discovered later by a downstream reader.
+> - If normalization or best-effort guessing at a malformed id happens at all, it happens only at READER sites as a defense -- the WRITE site's job is to say the id is wrong, not to fix it quietly.
+> - A new id-bearing convention is checked against this rule before it ships: is there exactly one authoritative source for the id, and is a mismatch against it loud?
+>
+> *Anti-patterns (violates the directive while superficially complying):*
+> - Hand-typing an id into a dispatch prompt or attribution header from memory or habit instead of generating it from the source of truth.
+> - A naming or id convention documented only in prose, left for each session to reconstruct on its own.
+> - A parser that silently coerces or guesses at a malformed id instead of flagging the mismatch.
+>
+> *Worked example:* 2026-08-03 attribution incident: an orchestrator hand-typed a T7-style task id into an NL-ATTRIBUTION header while the plan's own task ids are plain numeric, so the cockpit could not attribute the live work back to its task.
+>
+> *Elaborated by plan-phase-builder (session 4a470c8c, directives-elaboration-layer task) on 2026-08-04.*
+
 *Source: operator directive 2026-08-03 (session 4a470c8c, mid-build on docs/plans/gated-pipeline-master-2026-08.md Task 25)*
 
 ### OD-024 — solution-shape-layer-sweep
@@ -438,6 +489,33 @@ this view is regenerated, not edited.
 > Golden case: 2026-08-04 status-vocabulary program -- instance = ~11 unknown-status cockpit chips (measured: 24 freelanced Status values across neural-lace + a sibling product repo's plans); class = plan Status fields have no validated vocabulary; all six layers (schema/data model, mechanical gate, parser/renderer, migration of existing estate, doctrine/pattern, agent prompt) named in the worked fixture, doctrine/orchestrator-pattern-full.md.
 > Anti-pattern: dispatching a single builder to patch only the reported symptom (e.g. teach the parser to accept one more freelanced string) with no class statement and no layer sweep -- solves the instance, reproduces the class.
 > Sanctioned alternative: the SOLUTION-SHAPE PROTOCOL (doctrine/orchestrator-pattern.md + -full.md) -- before the first builder dispatch, write a CLASS STATEMENT (the general failure class this defect instances) and sweep all six layers, each used or explicitly waived with a stated reason; instance-only is a justified exception, never the default; the dispatch prompt carries the class statement.
+
+**Elaboration:**
+
+> **Interpretation — correct me if wrong.** This section interprets the
+> verbatim Instruction above; it does not replace it, and on any conflict
+> the verbatim Instruction wins. Review status: `reviewed_by: pending-operator`.
+>
+> *Intent:* The operator is buying durable, class-level fixes that close a failure mode everywhere it can recur -- schema, gate, parser, existing estate, doctrine, and agent prompt -- not a quick patch that satisfies only the one instance the operator happened to notice. An instance-only fix reliably reproduces the same class again under a different disguise; the operator has observed this pattern repeatedly and named it directly. Where this interpretation conflicts with the verbatim Rule above, the verbatim wins.
+>
+> *Applies when:* Any session about to dispatch a fix for an operator-reported defect -- before the first builder dispatch.
+>
+> *Requirements:*
+> - Before the first builder dispatch for an operator-reported defect, write a one-line CLASS STATEMENT naming the general failure class this instance belongs to, not just the instance itself.
+> - Sweep the schema/data-model layer: does the underlying data shape need to change to make the failure structurally impossible, not just less likely?
+> - Sweep the mechanical-gate layer: is there a hook or check that can block the failure at write time, not just document it?
+> - Sweep the parser/renderer layer: does every reader of the affected data agree on its shape, or can one reader silently diverge from another?
+> - Sweep the existing-estate layer: does already-created content that would still violate the fixed rule get migrated or flagged, not just new writes going forward?
+> - Sweep the doctrine/pattern layer and the agent-prompt layer so the standing guidance and the dispatch prompt itself carry the class statement, and record each of the six layers above as used or explicitly waived with a stated reason in the same commit or plan -- never silently skipped.
+>
+> *Anti-patterns (violates the directive while superficially complying):*
+> - single-threaded-fix-with-class-language: dispatching one narrow patch (e.g. teach the parser to accept one more freelanced value) while describing it in class-sounding language ('fixes the vocabulary problem') without actually sweeping the other five layers.
+> - Fixing only the reported symptom and leaving the schema, gate, and existing-estate layers untouched, so the same class resurfaces under a new instance days later.
+> - A commit or plan that claims a comprehensive fix with no per-layer accounting of what was used versus explicitly waived.
+>
+> *Worked example:* 2026-08-04 status-vocabulary program: instance was about 11 unknown-status cockpit chips (24 freelanced Status values measured across two plan sets); class was that plan Status fields have no validated vocabulary at all; the worked fixture in orchestrator-pattern-full.md names all six layers.
+>
+> *Elaborated by plan-phase-builder (session 4a470c8c, directives-elaboration-layer task) on 2026-08-04.*
 
 *Source: operator directive 2026-08-04 (session 4a470c8c), 'THE COMPREHENSIVE-SOLUTIONS DIRECTIVE'*
 
