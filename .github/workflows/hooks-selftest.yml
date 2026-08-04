@@ -24,8 +24,27 @@ jobs:
     # this runs in CI and tighten this back down if it is much lower.
     timeout-minutes: 30
     steps:
+      # fetch-depth: 0 (2026-08-04 CI triage, run 30870970472): several hook
+      # self-tests (dispatch-chain-gate.sh's "valid-chain-exit-zero", via
+      # review-chain-lib.sh's rc_file_first_commit_epoch/rc_record_head_
+      # commit_epoch) shell out to `git log --follow` over the checked-out
+      # repo's REAL history to compute a fixture's first-commit epoch. The
+      # actions/checkout@v5 default (fetch-depth: 1) leaves exactly ONE
+      # commit in the local object graph; git treats that shallow boundary
+      # as a rootless commit, so `git log -- <any tracked file>` reports
+      # EVERY file as "introduced" by that one boundary commit — collapsing
+      # rule 3's comparison window to a single instant (lo==hi==the
+      # boundary commit's own timestamp) regardless of the file's true
+      # history. PROVEN locally: a `git clone --depth 1` reproduces the
+      # exact CI failure (`self-test (valid-chain-exit-zero): FAIL`,
+      # window `[1785809388,1785809388]`, both bounds the boundary commit);
+      # the identical suite passes 40/40 against a full-history checkout.
+      # Full history removes the collapse at the source — no hook logic
+      # changed.
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Show shell + tool versions
         run: |
@@ -214,8 +233,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # fetch-depth: 0 — same shallow-clone-collapses-git-log-history class
+      # as the `hooks` job above; this job's *.sh tests are equally capable
+      # of shelling out to git-history-dependent helpers.
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Configure git identity
         run: |
