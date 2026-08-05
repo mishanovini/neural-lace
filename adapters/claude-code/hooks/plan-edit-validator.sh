@@ -189,8 +189,33 @@ acquire_plan_lock() {
 
   # --- Path 1: flock(1) ---
   if command -v flock >/dev/null 2>&1; then
-    # Open fd 9 on the lock file (creating it if needed)
-    exec 9>"$lock_file" 2>/dev/null || {
+    # Open fd 9 on the lock file (creating it if needed).
+    #
+    # CI-triage 2026-08-04 (plan-edit-validator Linux-red, 3rd attempt,
+    # root-caused via a local flock(1) shim forcing this branch — MSYS2/
+    # Windows has no flock binary so this path was NEVER exercised by any
+    # prior local run, which is exactly why it was invisible until CI):
+    # `exec 9>"$lock_file" 2>/dev/null` used to tack `2>/dev/null` directly
+    # onto a bare `exec` (no command, redirections only). Per bash's exec
+    # semantics that makes EVERY listed redirection PERMANENT for the
+    # current shell -- not just fd 9 (intended), but fd 2 as well
+    # (unintended): stderr silently stayed pointed at /dev/null for the
+    # rest of the process. Every self-test scenario below writes its PASS/
+    # FAIL/summary lines via `>&2`, so once F1 took this branch on any
+    # machine with flock installed (every GitHub Actions ubuntu-latest
+    # runner), all subsequent diagnostic output vanished -- reproducing
+    # exactly the observed symptom (zero captured output, real nonzero
+    # exit, since $FAILED and the final `exit` code are ordinary variables/
+    # control flow, unaffected by the silenced stream). Fix: wrap the exec
+    # in a `{ ; }` group and apply `2>/dev/null` to the GROUP instead of to
+    # exec's own redirection list -- this scopes the stderr suppression to
+    # only the group's execution (an ordinary compound-command redirect,
+    # restored once the group exits) while the fd-9 assignment inside
+    # still persists on the shell as intended. Verified empirically: the
+    # old form silences every `>&2` write for the rest of the process; the
+    # new form does not, and a genuine exec-open failure is still caught
+    # by the `||` fallback either way.
+    { exec 9>"$lock_file"; } 2>/dev/null || {
       PLAN_LOCK_FILE=""
       return 1
     }
@@ -202,7 +227,7 @@ acquire_plan_lock() {
       return 0
     fi
     # flock timed out
-    exec 9>&- 2>/dev/null || true
+    { exec 9>&-; } 2>/dev/null || true
     PLAN_LOCK_FILE=""
     return 1
   fi
@@ -268,8 +293,10 @@ release_plan_lock() {
   fi
   case "$PLAN_LOCK_HELD_VIA" in
     flock)
-      # Closing fd 9 releases the flock
-      exec 9>&- 2>/dev/null || true
+      # Closing fd 9 releases the flock. Group-wrapped (see acquire_plan_lock's
+      # comment above) so `2>/dev/null` scopes to this close attempt only,
+      # not a permanent stderr redirect for the rest of the process.
+      { exec 9>&-; } 2>/dev/null || true
       ;;
     pid)
       # Only remove if we still own it
@@ -519,12 +546,17 @@ acquire_plan_lock() {
   if [[ "$PLAN_LOCK_FILE" == "$lock_file" ]]; then return 0; fi
   PLAN_LOCK_FILE="$lock_file"
   if command -v flock >/dev/null 2>&1; then
-    exec 9>"$lock_file" 2>/dev/null || { PLAN_LOCK_FILE=""; return 1; }
+    # Group-wrapped exec (see the real acquire_plan_lock's identical fix,
+    # above, for the full root-cause explanation): a bare `exec 9>file
+    # 2>/dev/null` permanently redirects the WHOLE shell's stderr, not
+    # just this attempt's. This LOCKLIB copy is sourced fresh by each F2
+    # worker subprocess, so it carries the same fix for the same reason.
+    { exec 9>"$lock_file"; } 2>/dev/null || { PLAN_LOCK_FILE=""; return 1; }
     if flock -w "$timeout_s" 9 2>/dev/null; then
       PLAN_LOCK_FD=9; PLAN_LOCK_HELD_VIA="flock"
       echo "$$" >&9 2>/dev/null || true; return 0
     fi
-    exec 9>&- 2>/dev/null || true; PLAN_LOCK_FILE=""; return 1
+    { exec 9>&-; } 2>/dev/null || true; PLAN_LOCK_FILE=""; return 1
   fi
   local waited_ms=0; local total_ms=$((timeout_s * 1000))
   while [[ "$waited_ms" -lt "$total_ms" ]]; do
@@ -554,7 +586,7 @@ acquire_plan_lock() {
 release_plan_lock() {
   if [[ -z "$PLAN_LOCK_FILE" ]]; then return 0; fi
   case "$PLAN_LOCK_HELD_VIA" in
-    flock) exec 9>&- 2>/dev/null || true ;;
+    flock) { exec 9>&-; } 2>/dev/null || true ;;
     pid)
       local holder_pid=""
       holder_pid=$(head -n 1 "$PLAN_LOCK_FILE" 2>/dev/null | tr -d '[:space:]')
@@ -1787,8 +1819,68 @@ EVID
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F33 (CI-triage 2026-08-04, plan-edit-validator Linux-red root cause,
+  # 3rd attempt) — regression pin: acquire_plan_lock's flock(1) branch
+  # must never leak a permanent stderr redirect onto the calling process.
+  #
+  # `flock` is absent on this checkout (MSYS2/Windows -- `command -v
+  # flock` fails here), so the flock branch is otherwise NEVER exercised
+  # by any local run of this suite. That is exactly why a bare `exec
+  # 9>"$lock_file" 2>/dev/null` (whose redirections, per bash's exec
+  # semantics, persist on the CURRENT SHELL, not just that one attempt --
+  # so `2>/dev/null` silently darkened stderr for the REST of the process)
+  # went undetected through three prior CI-triage rounds: every self-test
+  # PASS/FAIL/summary line below writes via `>&2`, so once F1 took this
+  # branch on any machine with flock installed (every GitHub Actions
+  # ubuntu-latest runner), all subsequent diagnostic output vanished --
+  # zero captured output, a real nonzero exit (the $FAILED tally and final
+  # `exit` are ordinary control flow, unaffected by the silenced stream).
+  #
+  # This scenario forces the flock branch on ANY platform via a temporary
+  # flock(1) stub on PATH, so the regression is caught here regardless of
+  # whether the local machine has a real flock binary. It targets the
+  # REAL, current acquire_plan_lock/release_plan_lock (via `declare -f`,
+  # not a hand-copied duplicate) so it can never silently drift stale.
+  # ============================================================
+  F33_DIR="$TMPDIR_SELFTEST/f33"
+  mkdir -p "$F33_DIR/binshim"
+  cat > "$F33_DIR/binshim/flock" <<'SHIM'
+#!/bin/bash
+# Minimal stand-in: always "succeeds" immediately. This scenario only
+# checks that the CALLER's stderr survives taking the flock branch, not
+# real locking semantics -- F2 above already covers real concurrent-worker
+# serialization behavior with a genuine multi-process contention test.
+exit 0
+SHIM
+  chmod +x "$F33_DIR/binshim/flock"
+  F33_LOCKFUNCS="$F33_DIR/lockfuncs.sh"
+  { declare -f acquire_plan_lock; declare -f release_plan_lock; } > "$F33_LOCKFUNCS"
+  F33_PLAN="$F33_DIR/plan.md"
+  : > "$F33_PLAN"
+  F33_SCRIPT="$F33_DIR/probe.sh"
+  cat > "$F33_SCRIPT" <<PROBE
+#!/bin/bash
+source "$F33_LOCKFUNCS"
+acquire_plan_lock "$F33_PLAN" || exit 9
+echo "F33-STDERR-CANARY" >&2
+release_plan_lock
+PROBE
+  chmod +x "$F33_SCRIPT"
+  set +e
+  F33_OUT="$(PATH="$F33_DIR/binshim:$PATH" bash "$F33_SCRIPT" 2>&1 >/dev/null)"
+  RC_F33=$?
+  set -e
+  if [[ "$RC_F33" -eq 0 ]] && printf '%s' "$F33_OUT" | grep -q "F33-STDERR-CANARY"; then
+    echo "self-test (F33) flock-branch-does-not-leak-permanent-stderr-redirect: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F33) flock-branch-does-not-leak-permanent-stderr-redirect: FAIL (rc=$RC_F33 out='$F33_OUT' -- missing CANARY means the flock branch's exec silenced stderr for the rest of the process, exactly the 2026-08-04 CI-red bug)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 32 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 33 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
