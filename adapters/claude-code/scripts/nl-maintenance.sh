@@ -49,10 +49,23 @@
 #                           `--daemon` backgrounded (nohup+disown, mirroring
 #                           ensure-cockpit.sh's exact dispatch contract) iff
 #                           stale AND not already relaunching. Always exits 0.
+#                           FLAP DETECTION (DEC-4 follow-up guard): if this
+#                           relaunch is the Nth inside a rolling window
+#                           (NM_FLAP_THRESHOLD/NM_FLAP_WINDOW_SECONDS,
+#                           default 4/3600s -- see _nm_flap_window_seconds
+#                           for the measured derivation), the watchdog
+#                           STOPS resurrecting, writes flap-state.json
+#                           (doctor + dashboard visible), and requires
+#                           `--reset-flap` before it will relaunch again.
 #   --status [--json]      human/debug snapshot of job due-ness + snapshot
 #                           freshness + HALT state. NOT the dashboard's own
 #                           read path (the dashboard reads snapshot files
 #                           directly for true O(1) — invariant 3).
+#   --reset-flap            clear a tripped flap-stop (removes
+#                           flap-state.json + the restart-count log) so the
+#                           watchdog resumes resurrecting on the next stale
+#                           heartbeat. The ONE explicit operator/orchestrator
+#                           action the flap guard requires before resuming.
 #   --self-test             fixture-sandboxed suite.
 #
 # ============================================================
@@ -75,6 +88,17 @@
 #                                 itself triggers (invariant 7) -- doctor's
 #                                 OWN bypass ledger (harness-doctor.sh) is
 #                                 separate and documented there.
+#   flap-restarts.log             one epoch per line, one per watchdog
+#                                 relaunch DECISION; pruned to the rolling
+#                                 window on every append (see
+#                                 _nm_flap_record_and_count).
+#   flap-state.json               present ONLY while a flap-stop is tripped
+#                                 (schema: tripped_at/restart_count/
+#                                 window_seconds/threshold/reason); read by
+#                                 harness-doctor.sh's check_maintenance_
+#                                 daemon_flap (always RED while present) and
+#                                 by _nm_refresh_dashboard_snapshot's `flap`
+#                                 field. Cleared only by `--reset-flap`.
 #
 # Self-test: bash nl-maintenance.sh --self-test
 
@@ -113,6 +137,119 @@ _nm_heartbeat_path() { printf '%s/daemon.heartbeat.json' "$(_nm_state_dir)"; }
 _nm_pid_path()        { printf '%s/daemon.pid' "$(_nm_state_dir)"; }
 _nm_dashboard_path()  { printf '%s/dashboard.json' "$(_nm_snap_dir)"; }
 _nm_tick_log_path()   { printf '%s/tick.jsonl' "$(_nm_logs_dir)"; }
+_nm_flap_restarts_path() { printf '%s/flap-restarts.log' "$(_nm_state_dir)"; }
+_nm_flap_state_path()    { printf '%s/flap-state.json' "$(_nm_state_dir)"; }
+
+# ----------------------------------------------------------------------
+# Flap detection (gated-pipeline-master-2026-08, DEC-4 follow-up guard --
+# the uncovered risk named to the operator before registration: a daemon
+# that crashes every few minutes LOOKS alive from a distance because the
+# watchdog keeps resurrecting it -- burning CPU, masking a real bug, and
+# reporting healthy). N and the window are DERIVED, not guessed:
+#
+#   - The watchdog is the ONLY thing that can ever trigger a relaunch, and
+#     it fires on a fixed OS-scheduled cadence of 300s (install-maintenance-
+#     task.ps1 -WatchdogIntervalSeconds, matching NM_WATCHDOG_STALE_SECONDS).
+#     That makes 1 relaunch / 300s a HARD architectural ceiling -- a daemon
+#     that crashes on every single start can never restart more than
+#     3600/300 = 12 times inside any rolling hour, by construction.
+#   - A HEALTHY pass is far cheaper than that 300s budget: measured on this
+#     machine, one real `_nm_tick_body` (job execution + first-time
+#     dashboard write) took 9.6s wall-clock, and a same-machine repeat pass
+#     with nothing newly due (pure scheduling overhead: job-table jq reads +
+#     heartbeat write, dashboard skipped inside its own TTL) took 2.1s --
+#     both 30-140x inside the 300s stale threshold. That margin means a
+#     genuinely healthy daemon should trigger ZERO watchdog relaunches in
+#     ordinary operation; the only legitimate (non-bug) causes are rare,
+#     isolated events -- a machine sleep/hibernate spanning >300s, or an
+#     operator manually killing the daemon while debugging.
+#   - NM_FLAP_THRESHOLD defaults to 4 restarts inside NM_FLAP_WINDOW_SECONDS
+#     (default 3600s = 1h): comfortably above what any plausible isolated
+#     legitimate event (or even two) could ever produce in an hour, yet at
+#     less than half the 12/hour architectural ceiling a real flapping bug
+#     hits -- so a true flap trips within ~4 watchdog cycles (~20 minutes)
+#     rather than being allowed to churn silently for the full window.
+# ----------------------------------------------------------------------
+_nm_flap_window_seconds() { printf '%s' "${NM_FLAP_WINDOW_SECONDS:-3600}"; }
+_nm_flap_threshold()      { printf '%s' "${NM_FLAP_THRESHOLD:-4}"; }
+
+# _nm_flap_stopped — rc 0 iff a flap-stop is currently tripped
+# (flap-state.json exists). Presence alone is the gate: the rolling
+# window's own decay (old restarts aging out) NEVER auto-clears a trip --
+# only the explicit `--reset-flap` operator/orchestrator action does. That
+# asymmetry is deliberate (fail-safe direction: stop and shout, require a
+# human/orchestrator look before resuming automatic action).
+_nm_flap_stopped() {
+  [[ -f "$(_nm_flap_state_path)" ]]
+}
+
+# _nm_flap_record_and_count — append THIS relaunch decision's epoch to the
+# rolling restart log, prune entries older than the window, and print the
+# resulting in-window count (including this one). Called exactly once per
+# genuine relaunch DECISION (after the existing per-fire sf_guard dedup on
+# "nl-maintenance-watchdog-relaunch"), so two overlapping watchdog fires for
+# the SAME stale-heartbeat episode never double-count.
+_nm_flap_record_and_count() {
+  local f now window tmp line kept=0
+  f="$(_nm_flap_restarts_path)"
+  now="$(_nm_now)"
+  window="$(_nm_flap_window_seconds)"
+  mkdir -p "$(_nm_state_dir)" 2>/dev/null || true
+  printf '%s\n' "$now" >> "$f" 2>/dev/null || true
+  tmp="${f}.tmp.$$"
+  : > "$tmp" 2>/dev/null || true
+  if [[ -f "$f" ]]; then
+    while IFS= read -r line; do
+      [[ "$line" =~ ^[0-9]+$ ]] || continue
+      if [[ $(( now - line )) -lt "$window" ]]; then
+        printf '%s\n' "$line" >> "$tmp"
+        kept=$((kept + 1))
+      fi
+    done < "$f"
+  fi
+  mv -f "$tmp" "$f" 2>/dev/null || rm -f "$tmp" 2>/dev/null
+  printf '%s' "$kept"
+}
+
+# _nm_flap_trip <count> — the Nth restart landed inside the window: write
+# the doctor/dashboard-visible flap-state.json (reusing the T23 death-
+# certificate field NAMES -- death_outcome/death_cause -- on a genuinely
+# NEW value pair; this is not a kill event, no signal is sent here, the
+# fields describe why NO new daemon handle is being created) and log the
+# loud stop. The OLD daemon.pid process (if anything is even still there --
+# it may already have exited on its own) is deliberately left untouched:
+# the guard's job is to stop the RESURRECTION loop, not to also perform
+# process hygiene that could remove evidence the operator needs to diagnose
+# the crash loop.
+_nm_flap_trip() {
+  local count="$1" ts window threshold reason
+  window="$(_nm_flap_window_seconds)"
+  threshold="$(_nm_flap_threshold)"
+  ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
+  reason="daemon restarted ${count} times in ${window}s (threshold ${threshold}) -- resurrection halted, explicit --reset-flap required"
+  local payload
+  payload="$(printf '{"schema":1,"tripped_at":"%s","tripped_at_epoch":%s,"restart_count":%s,"window_seconds":%s,"threshold":%s,"reason":"%s"}' \
+    "$(_nm_json_escape "$ts")" "$(_nm_now)" "$count" "$window" "$threshold" "$(_nm_json_escape "$reason")")"
+  _nm_atomic_write "$(_nm_flap_state_path)" "$payload"
+  _nm_log "\"action\":\"watchdog-flap-stop\",\"restart_count\":${count},\"window_seconds\":${window},\"threshold\":${threshold},\"death_outcome\":\"resurrection_halted\",\"death_cause\":\"flap_threshold_exceeded\""
+  echo "[nl-maintenance-watchdog] FLAP DETECTED: ${count} daemon restarts within ${window}s (threshold ${threshold}) -- STOPPING resurrection. Old daemon left as-is for investigation. Run 'bash nl-maintenance.sh --reset-flap' after diagnosing to resume." >&2
+}
+
+# --reset-flap — the ONE explicit operator/orchestrator action that clears a
+# tripped flap-stop AND the restart-count log (so the next window starts
+# clean rather than primed to re-trip on the very next legitimate restart).
+run_reset_flap() {
+  local f; f="$(_nm_flap_state_path)"
+  if [[ ! -f "$f" ]]; then
+    echo "[nl-maintenance] no active flap-stop to reset" >&2
+    return 0
+  fi
+  rm -f "$f" 2>/dev/null || true
+  rm -f "$(_nm_flap_restarts_path)" 2>/dev/null || true
+  _nm_log "\"action\":\"flap-reset\",\"reason\":\"explicit operator/orchestrator reset\""
+  echo "[nl-maintenance] flap-stop cleared -- watchdog will resurrect the daemon again on the next stale heartbeat" >&2
+  return 0
+}
 
 _nm_repo_root() {
   if [[ -n "${NL_REPO_ROOT:-}" ]]; then
@@ -490,6 +627,24 @@ _nm_refresh_dashboard_snapshot() {
   fi
   local friction_available; [[ -f "$friction_path" ]] && friction_available=true || friction_available=false
 
+  # Flap detection surface (DEC-4 follow-up guard) -- reuses this SAME
+  # dashboard snapshot the operator already reads rather than inventing a
+  # new one. flap.tripped mirrors _nm_flap_stopped's own predicate exactly
+  # (file presence); flap.detail carries the full flap-state.json payload
+  # verbatim (null while healthy) so the pane can show restart_count/
+  # window_seconds/threshold/reason without a second read.
+  local flap_path flap_detail_json flap_tripped
+  flap_path="$(_nm_flap_state_path)"
+  flap_detail_json="null"
+  flap_tripped=false
+  if [[ -f "$flap_path" ]]; then
+    local flap_parsed; flap_parsed="$(_nm_jq -c '.' "$flap_path")"
+    if [[ -n "$flap_parsed" ]]; then
+      flap_detail_json="$flap_parsed"
+      flap_tripped=true
+    fi
+  fi
+
   local ts; ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo unknown)"
   local payload
   payload="$(_nm_jq -nc \
@@ -505,6 +660,8 @@ _nm_refresh_dashboard_snapshot() {
     --argjson cost_rows "$cost_rows" \
     --argjson friction_rows "$friction_rows" \
     --argjson friction_available "$friction_available" \
+    --argjson flap_tripped "$flap_tripped" \
+    --argjson flap_detail "$flap_detail_json" \
     '{
       schema: 1,
       generated_at: $ts,
@@ -516,7 +673,8 @@ _nm_refresh_dashboard_snapshot() {
         net_artifact_delta: { value: $net_delta, restricted_to: "adapters/claude-code/**", target: "<=0 (anti-bloat, D-07)" }
       },
       cost_budget: $cost_rows,
-      gate_friction: { available: $friction_available, rows: $friction_rows }
+      gate_friction: { available: $friction_available, rows: $friction_rows },
+      flap: { tripped: $flap_tripped, detail: $flap_detail }
     }')"
   [[ -z "$payload" ]] && return 1
   _nm_atomic_write "$snap" "$payload"
@@ -704,6 +862,16 @@ run_watchdog() {
     age="unknown"
   fi
 
+  # Flap-stop short-circuit -- checked BEFORE even claiming the relaunch
+  # sf_guard, so a tripped state never contends for that lock and every
+  # subsequent watchdog fire while tripped is a fast, cheap, log-only no-op
+  # until an explicit --reset-flap.
+  if _nm_flap_stopped; then
+    echo "[nl-maintenance-watchdog] flap-stop ACTIVE ($(cat "$(_nm_flap_state_path)" 2>/dev/null)) -- not relaunching; run 'bash nl-maintenance.sh --reset-flap' after investigating to resume" >&2
+    _nm_log "\"action\":\"watchdog-flap-stop-active\",\"reason\":\"flap-stop already tripped, waiting for explicit reset\""
+    return 0
+  fi
+
   # Single-flight the relaunch decision itself (invariant 4) so two
   # overlapping watchdog fires never double-spawn the daemon.
   if declare -F sf_guard >/dev/null 2>&1; then
@@ -714,6 +882,17 @@ run_watchdog() {
   fi
 
   _nm_log "\"action\":\"watchdog-relaunch\",\"reason\":\"stale heartbeat\",\"heartbeat_age_s\":\"$(_nm_json_escape "$age")\""
+
+  # Flap counting -- record THIS relaunch decision and check the rolling
+  # window BEFORE touching the old process or spawning a new one. If the
+  # threshold is hit, trip and return without doing either (fail-safe
+  # direction: stop resurrecting and shout, rather than keep piling
+  # relaunches on top of a daemon that cannot stay up).
+  local flap_count; flap_count="$(_nm_flap_record_and_count)"
+  if [[ "$flap_count" -ge "$(_nm_flap_threshold)" ]]; then
+    _nm_flap_trip "$flap_count"
+    return 0
+  fi
 
   # HR-F1: before relaunching, try to kill the OLD daemon named in
   # daemon.pid -- but ONLY after verifying its command line actually names
@@ -1205,6 +1384,82 @@ EOF
     echo "FAIL: S17 expected numeric-or-empty, got '$s17_census'" >&2; fail=$((fail+1))
   fi
 
+  echo "Scenario 18: flap detection -- N-1 restarts inside the rolling window STILL resurrects (N=NM_FLAP_THRESHOLD default 4, window=NM_FLAP_WINDOW_SECONDS default 3600s)"
+  local s18_state="$tmp/s18"
+  mkdir -p "$s18_state"
+  printf '{"schema":1,"generated_at":"2000-01-01T00:00:00Z","generated_at_epoch":1,"pid":1,"halted":false}' > "$s18_state/daemon.heartbeat.json"
+  local s18_now; s18_now="$(date +%s)"
+  # Seed 2 PRIOR restart epochs inside the window -- THIS watchdog fire's
+  # own decision becomes the 3rd, i.e. N-1 = 3 total against a threshold of 4.
+  printf '%s\n%s\n' "$((s18_now - 10))" "$((s18_now - 5))" > "$s18_state/flap-restarts.log"
+  local s18_out; s18_out="$(NL_MAINT_STATE_DIR="$s18_state" SF_DISABLE=1 HARNESS_SELFTEST=1 bash -c "source '$self_abs'; run_watchdog" 2>&1)"
+  _contains "$s18_out" "would relaunch" "S18a N-1(=3) restarts in the window still resurrects (relaunch stub reached)"
+  _not_contains "$s18_out" "FLAP DETECTED" "S18b flap guard did not trip at N-1"
+  if [[ -f "$s18_state/flap-state.json" ]]; then
+    echo "FAIL: S18c flap-state.json should NOT exist at N-1" >&2; fail=$((fail+1))
+  else
+    echo "PASS: S18c flap-state.json absent at N-1 (not tripped)"; pass=$((pass+1))
+  fi
+  local s18_count; s18_count="$(wc -l < "$s18_state/flap-restarts.log" 2>/dev/null | tr -d '[:space:]')"
+  _ok "$s18_count" "3" "S18d restart log holds exactly 3 entries after this fire (2 seeded + 1 this decision)"
+
+  echo "Scenario 19: flap detection -- the Nth restart inside the window STOPS resurrection and writes a doctor/dashboard-visible death certificate (T23 death_outcome/death_cause field reuse, new values)"
+  local s19_state="$tmp/s19"
+  mkdir -p "$s19_state"
+  printf '{"schema":1,"generated_at":"2000-01-01T00:00:00Z","generated_at_epoch":1,"pid":1,"halted":false}' > "$s19_state/daemon.heartbeat.json"
+  local s19_now; s19_now="$(date +%s)"
+  # Seed 3 PRIOR restart epochs inside the window -- THIS fire's own
+  # decision is the 4th (N=4), which must trip the guard.
+  printf '%s\n%s\n%s\n' "$((s19_now - 15))" "$((s19_now - 10))" "$((s19_now - 5))" > "$s19_state/flap-restarts.log"
+  local s19_out; s19_out="$(NL_MAINT_STATE_DIR="$s19_state" SF_DISABLE=1 HARNESS_SELFTEST=1 bash -c "source '$self_abs'; run_watchdog" 2>&1)"
+  _contains "$s19_out" "FLAP DETECTED" "S19a Nth(=4) restart trips the flap guard with a loud stderr line"
+  _not_contains "$s19_out" "would relaunch" "S19b relaunch stub is NEVER reached once tripped (STOP wins outright, not a partial stop)"
+  _file_exists "$s19_state/flap-state.json" "S19c flap-state.json written (doctor/dashboard-visible death certificate)"
+  local s19_json; s19_json="$(cat "$s19_state/flap-state.json" 2>/dev/null)"
+  _contains "$s19_json" '"restart_count":4' "S19d death certificate names the real restart count"
+  _contains "$s19_json" '"threshold":4' "S19e death certificate names the real threshold"
+  _contains "$s19_json" '"window_seconds":3600' "S19f death certificate names the real window"
+  local s19_log; s19_log="$(cat "$s19_state/logs/tick.jsonl" 2>/dev/null)"
+  _contains "$s19_log" '"action":"watchdog-flap-stop"' "S19g tick log carries the flap-stop action"
+  _contains "$s19_log" '"death_outcome":"resurrection_halted"' "S19h tick log death_outcome is the flap-specific value (never reuses the kill-branch's term_signal_sent)"
+  _contains "$s19_log" '"death_cause":"flap_threshold_exceeded"' "S19i tick log death_cause names the real cause"
+
+  echo "Scenario 19b: once tripped, EVERY subsequent watchdog fire is a fast log-only no-op until --reset-flap -- never re-relaunches, never re-trips a second death certificate"
+  local s19b_out; s19b_out="$(NL_MAINT_STATE_DIR="$s19_state" SF_DISABLE=1 HARNESS_SELFTEST=1 bash -c "source '$self_abs'; run_watchdog" 2>&1)"
+  _contains "$s19b_out" "flap-stop ACTIVE" "S19b-1 the tripped short-circuit fires on the very next watchdog call"
+  _not_contains "$s19b_out" "would relaunch" "S19b-2 still never relaunches while tripped"
+
+  echo "Scenario 19c: --reset-flap is the ONE explicit operator/orchestrator action that clears a trip; resurrection resumes on the next stale heartbeat"
+  local s19c_out; s19c_out="$(NL_MAINT_STATE_DIR="$s19_state" bash -c "source '$self_abs'; run_reset_flap" 2>&1)"
+  _contains "$s19c_out" "flap-stop cleared" "S19c-1 --reset-flap reports success"
+  if [[ -f "$s19_state/flap-state.json" ]]; then
+    echo "FAIL: S19c-2 flap-state.json should be removed by --reset-flap" >&2; fail=$((fail+1))
+  else
+    echo "PASS: S19c-2 flap-state.json removed by --reset-flap"; pass=$((pass+1))
+  fi
+  local s19d_out; s19d_out="$(NL_MAINT_STATE_DIR="$s19_state" SF_DISABLE=1 HARNESS_SELFTEST=1 bash -c "source '$self_abs'; run_watchdog" 2>&1)"
+  _contains "$s19d_out" "would relaunch" "S19c-3 resurrection resumes immediately after reset (the restart log was cleared too, so the next window starts clean)"
+
+  echo "Scenario 20: flap detection -- restarts OUTSIDE the rolling window are pruned and never count; window expiry lets resurrection resume even with 3 historical (but stale) restarts on record"
+  local s20_state="$tmp/s20"
+  mkdir -p "$s20_state"
+  printf '{"schema":1,"generated_at":"2000-01-01T00:00:00Z","generated_at_epoch":1,"pid":1,"halted":false}' > "$s20_state/daemon.heartbeat.json"
+  local s20_now; s20_now="$(date +%s)"
+  # Seed 3 restart epochs OLDER than the window (default 3600s) -- if the
+  # window never decayed, this fire would be the 4th and would trip. They
+  # must instead be pruned away, leaving only this fire's own entry.
+  printf '%s\n%s\n%s\n' "$((s20_now - 7200))" "$((s20_now - 5000))" "$((s20_now - 4000))" > "$s20_state/flap-restarts.log"
+  local s20_out; s20_out="$(NL_MAINT_STATE_DIR="$s20_state" SF_DISABLE=1 HARNESS_SELFTEST=1 bash -c "source '$self_abs'; run_watchdog" 2>&1)"
+  _contains "$s20_out" "would relaunch" "S20a restarts aged out of the window are pruned -- this fire is treated as restart #1, not #4, so resurrection proceeds"
+  _not_contains "$s20_out" "FLAP DETECTED" "S20b the guard never trips off aged-out restarts"
+  if [[ -f "$s20_state/flap-state.json" ]]; then
+    echo "FAIL: S20c flap-state.json should not exist -- window expiry must reset the counter" >&2; fail=$((fail+1))
+  else
+    echo "PASS: S20c flap-state.json absent -- window expiry correctly reset the counter"; pass=$((pass+1))
+  fi
+  local s20_count; s20_count="$(wc -l < "$s20_state/flap-restarts.log" 2>/dev/null | tr -d '[:space:]')"
+  _ok "$s20_count" "1" "S20d pruning left only the 1 in-window entry (this fire's own) -- the 3 stale ones were dropped from the log"
+
   echo ""
   echo "self-test interpreter: ${BASH_VERSION:-unknown}"
   echo "self-test summary: ${pass} passed, ${fail} failed"
@@ -1222,8 +1477,9 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
     --daemon) shift; run_daemon "$@" ;;
     --watchdog) run_watchdog ;;
     --status) run_status ;;
+    --reset-flap) run_reset_flap ;;
     *)
-      echo "usage: nl-maintenance.sh --tick|--daemon [--interval S] [--max-iterations N]|--watchdog|--status|--self-test" >&2
+      echo "usage: nl-maintenance.sh --tick|--daemon [--interval S] [--max-iterations N]|--watchdog|--status|--reset-flap|--self-test" >&2
       exit 2
       ;;
   esac

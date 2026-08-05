@@ -756,6 +756,47 @@ gate-contract message) before any of the surrounding machinery exists. First tas
   adjacent to those three, not a scope/task edit, and is logged here precisely so it is never a
   silent one. Landed as its own commit, separate from T17's G2-mechanism commit, so the two are
   independently auditable.
+- 2026-08-04 (DEC-4 ratification + follow-up guard, decide-and-go, reversibility: trivial —
+  `--reset-flap` + a revert): the operator ratified the resident-daemon shape for T10/REQ-A7 —
+  verbatim, one word, **"ratify"** — on the explicit precondition that ONE named uncovered risk
+  gets a guard before `NL-Maintenance` registration executes: a daemon that crashes every few
+  minutes LOOKS alive from a distance because the watchdog keeps resurrecting it (burning CPU,
+  masking the real bug, reporting healthy) — every OTHER failure mode (identity-checked kill,
+  zero-substrate doctor WARN->RED, T23 death certificates, single-flight against spawn storms,
+  HALT drain, proven `-Rollback`) was already covered; this one was not. Built: `nl-maintenance.sh`
+  `run_watchdog` now counts relaunch decisions in a rolling window (`NM_FLAP_WINDOW_SECONDS`,
+  default 3600s) against `NM_FLAP_THRESHOLD` (default 4). Numbers derived, not guessed: the
+  watchdog is the ONLY relaunch trigger and fires on a fixed OS cadence of 300s
+  (`install-maintenance-task.ps1 -WatchdogIntervalSeconds`, matching `NM_WATCHDOG_STALE_SECONDS`)
+  — a hard architectural ceiling of 12 relaunches/hour by construction; a healthy pass measured on
+  this machine at 2.1s (pure scheduling overhead, no job due) to 9.6s (real job + first dashboard
+  write, incl. a `schtasks` census spawn) is 30-140x inside that 300s stale threshold, so a
+  genuinely healthy daemon should trigger ZERO watchdog relaunches — 4/hour sits comfortably above
+  any plausible isolated legitimate event (laptop sleep/wake, one operator-debug kill) yet at
+  under half the 12/hour ceiling a real flap hits, so a true flap trips within ~4 cycles (~20 min)
+  instead of churning silently for the full window. At the Nth restart the watchdog STOPS
+  resurrecting (old process left untouched — the guard's job is to stop the loop, not also perform
+  process hygiene that could remove diagnostic evidence), writes
+  `state/nl-maintenance/flap-state.json` (T23 `death_outcome`/`death_cause` field-NAME reuse, new
+  values `resurrection_halted`/`flap_threshold_exceeded` — nothing is signaled at this decision
+  point, so the kill-branch's `term_signal_sent` value is never reused), and every later watchdog
+  fire is a fast log-only no-op until the ONE explicit `--reset-flap` operator/orchestrator action
+  (fail-safe direction: stop and shout, never resume automatically). Doctor-visible: new
+  `check_maintenance_daemon_flap` (`harness-doctor.sh`) REDs (never WARNs) while the file is
+  present, silent/tolerate-absent otherwise — reuses the EXISTING `state/nl-maintenance/`
+  directory the doctor already reads (activation-marker, heartbeat), no new state surface, per the
+  operator's explicit instruction to reuse rather than invent. Dashboard-visible:
+  `_nm_refresh_dashboard_snapshot`'s payload gained a `flap: {tripped, detail}` field reading the
+  same file, alongside the gate-friction pane it already writes. Proof: `nl-maintenance.sh
+  --self-test` gained 22 pinned assertions (Scenarios 18-20 — N-1 restarts still resurrects; the
+  Nth restart stops + writes the death certificate + is doctor-visible + `--reset-flap` round-trips
+  clean; restarts aged out of the window are pruned and never count, i.e. window expiry resets the
+  counter and resurrection resumes), each independently mutation-tested (threshold `-ge`->`-gt`,
+  window-pruning disabled, the tripped short-circuit disabled) and confirmed to break ONLY its own
+  scenario. Doctor wiring proven live against a scoped `HARNESS_DOCTOR_HOME` fixture (`--quick`):
+  silent when healthy, RED with full restart_count/window/threshold detail when tripped. Full
+  totals + doctor-suite re-run + registration-readiness note: this task's session return to the
+  orchestrator (task=10 attribution) and `docs/plans/gated-pipeline-master-2026-08-evidence.md`.
 
 ## Definition of Done
 

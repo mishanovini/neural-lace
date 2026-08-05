@@ -3281,3 +3281,89 @@ All 11 flagged self-approval records enqueued for independent re-review (queue 3
 rq-20260804-{020f1307,2f035501,52ed09d4,3466375d,67df4328,6130119b,07bf54aa,10a57861,6549536a,
 77fe7297,44924ea2}); zero claims/completions performed — the second-principal runner (Decision
 067) now holds the entire remaining path for this RED class.
+
+---
+
+## Task 10 — DEC-4 follow-up: watchdog flap-detection guard (2026-08-04)
+
+Operator ratified the resident-daemon shape (verbatim "ratify") on the precondition that the
+named uncovered risk — a daemon that crashes every few minutes looking alive because the
+watchdog keeps resurrecting it — gets a restart-rate guard before registration. Built in
+`adapters/claude-code/scripts/nl-maintenance.sh` (`run_watchdog` + new
+`_nm_flap_*`/`run_reset_flap` functions) and `adapters/claude-code/hooks/harness-doctor.sh`
+(new `check_maintenance_daemon_flap`). Full derivation, mechanism, and Decisions Log entry:
+`docs/plans/gated-pipeline-master-2026-08.md` Decisions Log, 2026-08-04 entry.
+
+**N and window:** `NM_FLAP_THRESHOLD=4` restarts inside `NM_FLAP_WINDOW_SECONDS=3600`. Derived
+from (a) the watchdog's fixed 300s OS-scheduled cadence (`install-maintenance-task.ps1
+-WatchdogIntervalSeconds`) being the ONLY relaunch trigger, giving a hard architectural ceiling
+of 12 relaunches/hour by construction, and (b) a measured healthy tick on this machine: 2.1s
+(pure scheduling overhead, nothing due) and 9.6s (a real job + first dashboard write, incl. a
+`schtasks` census spawn) — both 30-140x inside the 300s stale threshold, so a healthy daemon
+should trigger zero watchdog relaunches in ordinary operation. 4/hour sits comfortably above any
+plausible isolated legitimate restart (laptop sleep/wake, one operator-debug kill) yet under
+half the 12/hour ceiling a true flap hits.
+
+**Stop-and-shout behavior:** at the Nth restart, `run_watchdog` returns WITHOUT touching the old
+daemon.pid process and WITHOUT spawning a new one; writes `state/nl-maintenance/flap-state.json`
+(schema: tripped_at/restart_count/window_seconds/threshold/reason); logs
+`{"action":"watchdog-flap-stop","death_outcome":"resurrection_halted","death_cause":"flap_threshold_exceeded"}`
+to `logs/tick.jsonl` (T23 field-name reuse, new values — nothing is signaled at this decision
+point, so the kill-branch's `term_signal_sent` is never reused). Every subsequent watchdog fire
+short-circuits to a fast log-only no-op (`"flap-stop ACTIVE"`) before even claiming the relaunch
+sf_guard. The ONE explicit resume action is `bash nl-maintenance.sh --reset-flap`, which removes
+both flap-state.json and the restart-count log (fresh window on resume).
+
+**Where it surfaces:**
+- `harness-doctor.sh`'s new `check_maintenance_daemon_flap` (called from `run_quick_checks`
+  right after `check_maintenance_both_substrates_alive`) REDs — never WARNs — while
+  `state/nl-maintenance/flap-state.json` is present; completely silent/tolerate-absent
+  otherwise. Reuses the EXISTING `state/nl-maintenance/` directory the doctor already reads
+  (activation-marker, daemon.heartbeat.json) — no new state surface, per the operator's explicit
+  instruction.
+- `_nm_refresh_dashboard_snapshot`'s payload (`snapshots/dashboard.json`) gained a
+  `flap: {tripped, detail}` field reading the same file, alongside the existing
+  `gate_friction`/`cost_budget` panes the operator already reads.
+
+**Self-test bar (nl-maintenance.sh --self-test, Scenarios 18-20, 22 new assertions):**
+- Scenario 18 (N-1=3 restarts in-window): still resurrects — `would relaunch` reached,
+  flap-state.json absent, restart log holds exactly 3 entries. 4/4 assertions PASS.
+- Scenario 19 (Nth=4 restart): STOPS — `FLAP DETECTED`, `would relaunch` never reached,
+  flap-state.json written with real restart_count/threshold/window_seconds, tick.jsonl carries
+  the flap-stop action + the new death_outcome/death_cause values. 9/9 assertions PASS.
+  Scenario 19b (already tripped): the very next watchdog fire short-circuits (`flap-stop
+  ACTIVE`), never re-relaunches. 2/2 PASS. Scenario 19c (`--reset-flap`): clears the file,
+  resurrection resumes on the next stale heartbeat. 3/3 PASS.
+- Scenario 20 (window expiry): 3 restart epochs seeded OUTSIDE the window are pruned before
+  counting — this fire is treated as restart #1, not #4, so resurrection proceeds; restart log
+  ends with exactly 1 entry (the 3 stale ones dropped). 4/4 assertions PASS.
+
+**Mutation testing (each pinned scenario confirmed non-vacuous):**
+1. Threshold comparison `-ge` -> `-gt`: broke ALL of Scenario 19's 9 assertions (Nth restart no
+   longer trips); Scenarios 18/20 unaffected (their seeded counts never cross the threshold
+   either way). Confirms Scenario 19 actually exercises the threshold comparison.
+2. Window-pruning condition disabled (`-lt "$window"` -> `-lt 999999999`, i.e. never prune):
+   broke ALL of Scenario 20's 4 assertions (aged-out restarts wrongly counted, guard tripped
+   when it should not have); Scenarios 18/19 unaffected. Confirms Scenario 20 actually exercises
+   the pruning logic, not just window-irrelevant paths.
+3. Flap-stopped short-circuit disabled (`if _nm_flap_stopped; then` -> `if false; then`): broke
+   ONLY Scenario 19b-1 (the short-circuit's own assertion — the second fire re-tripped with a
+   fresh death certificate instead of short-circuiting); every other assertion, including 19b-2's
+   weaker "never relaunches" check, still passed coincidentally (re-tripping also never
+   relaunches). Confirms 19b-1 is the load-bearing assertion for that specific behavior.
+
+Runtime verification: command `bash adapters/claude-code/scripts/nl-maintenance.sh --self-test`   # → 71 total assertions (49 baseline + 22 new), 70 passed / 1 failed on the run captured for this entry — the 1 failure is `S11b` (a PRE-EXISTING heartbeat-timing assertion unrelated to this change), PROVEN pre-existing via `git stash` A/B on this machine: stashing this commit's diff and re-running against the unmodified script reproduced the SAME S11b failure (48 passed / 1 failed), and a separate earlier run against the unmodified script came up 49/0 clean — i.e. S11b flakes under this Windows/MSYS2 machine's variable process-spawn load independent of any code in this diff. All 22 new flap assertions passed in every run (this one and both stash-comparison runs).
+
+Runtime verification: command scoped `HARNESS_DOCTOR_HOME`/`NL_REPO_ROOT` fixture, `bash harness-doctor.sh --quick <fixture-repo>`   # → healthy fixture (no flap-state.json): no `maintenance-daemon-flap` line, silent as designed. Tripped fixture (flap-state.json present, restart_count=4/window=3600/threshold=4): `[doctor] RED maintenance-daemon-flap: nl-maintenance daemon FLAP-STOPPED at 2026-08-04T12:00:00Z (4 restarts in 3600s, threshold 4) -- the watchdog is NOT resurrecting it; ...` — verdict flips to `[doctor] FAILED — 1 red, ...`.
+
+Runtime verification: command `jq empty adapters/claude-code/manifest.json && bash adapters/claude-code/scripts/manifest-check.sh`   # → JSON valid; `[manifest-check] GREEN — 167 entries, 128 hooks covered, 0 warn` (new `maintenance-daemon-flap` entry added, `nl-maintenance-core` honest_status updated to the 71/71 count + flap-guard summary).
+
+Runtime verification: command `bash -n adapters/claude-code/scripts/nl-maintenance.sh && bash -n adapters/claude-code/hooks/harness-doctor.sh`   # → both syntax-clean.
+
+**For the orchestrator, before running `install-maintenance-task.ps1` (registration):** this
+guard changes NOTHING about the installer/registration contract itself (no flags, no schedule,
+no task-name changes) — it only changes what `--watchdog` does internally once registered. The
+guard is inert until a daemon actually starts flapping; on a healthy first activation it will
+never fire. `harness-doctor.sh --quick` re-run on THIS machine (not a fixture) is still owed
+post-registration as part of the normal T10 registration proof, same as before this guard
+landed — this task does not change that obligation.

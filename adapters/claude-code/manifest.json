@@ -3566,7 +3566,35 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "Windows-native central maintenance core (tick/daemon/watchdog + dashboard snapshot), self-tested 37/37 incl. S11-under-real-guard after the HR-F1 fix (6f5d1b22, re-reviewed PASS in docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md). NOT REGISTERED as a scheduled task on any machine: activation awaits DEC-4 operator ratification (gated-pipeline T10). Until then the maintenance-zero-substrates doctor check (HR-F4 inverse) carries the honest state."
+      "honest_status": "Windows-native central maintenance core (tick/daemon/watchdog + dashboard snapshot), self-tested 71/71 (was 37/37, then 49/49 at T22) incl. S11-under-real-guard after the HR-F1 fix (6f5d1b22, re-reviewed PASS in docs/reviews/2026-08-03-gated-pipeline-t3-t4-implementation-review.md) and the +22-assertion flap-detection guard added 2026-08-04 (DEC-4 operator ratification 'ratify', precondition before registration). NOT REGISTERED as a scheduled task on any machine: registration is the orchestrator's next step, gated on this guard landing. Until then the maintenance-zero-substrates doctor check (HR-F4 inverse) carries the honest state. Known flake: S11b (heartbeat-distinct-epoch timing assertion) intermittently fails under machine load on this Windows/MSYS2 host -- PROVEN pre-existing and unrelated to the flap guard (reproduces identically against the unmodified pre-flap script via git-stash A/B, 48/1 vs a lucky 49/0 baseline)."
+    },
+    {
+      "id": "maintenance-daemon-flap",
+      "kind": "pattern",
+      "doctrine_file": null,
+      "hooks": [
+        "harness-doctor.sh"
+      ],
+      "events": [
+        "SessionStart",
+        "manual"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [
+          "adapters/claude-code/scripts/nl-maintenance.sh"
+        ],
+        "keywords": [
+          "flap",
+          "flap-state",
+          "reset-flap",
+          "resurrection"
+        ]
+      },
+      "blocking": false,
+      "budget_class": "none",
+      "honest_status": "2026-08-04, gated-pipeline-master-2026-08 DEC-4 follow-up guard: the operator ratified the resident-daemon shape ('ratify', verbatim) on the precondition that the ONE uncovered risk -- a daemon that crashes every few minutes looking alive because the watchdog keeps resurrecting it -- gets a restart-rate guard before registration. nl-maintenance.sh's run_watchdog now counts relaunch decisions in a rolling window (NM_FLAP_WINDOW_SECONDS, default 3600s) against NM_FLAP_THRESHOLD (default 4): derived from the watchdog's fixed 300s OS-scheduled cadence (install-maintenance-task.ps1 -WatchdogIntervalSeconds, matching NM_WATCHDOG_STALE_SECONDS) being the hard ceiling on relaunch frequency (max 12/hour by construction) and a measured healthy tick (2.1s pure scheduling overhead / 9.6s incl. a real job + first dashboard write on this machine, both 30-140x inside the 300s stale threshold, so a healthy daemon should trigger ZERO watchdog relaunches). At the Nth restart the watchdog STOPS resurrecting (never touches the old process, never spawns a new one), writes state/nl-maintenance/flap-state.json (T23 death_outcome/death_cause field-name reuse, new values: resurrection_halted/flap_threshold_exceeded), and every later fire is a fast log-only no-op until the ONE explicit `--reset-flap` operator/orchestrator action. Doctor-visible: this new check_maintenance_daemon_flap (harness-doctor.sh) REDs (never WARNs) while flap-state.json is present, tolerate-absent/silent otherwise -- reuses the existing state/nl-maintenance/ directory harness-doctor.sh already reads (activation-marker, daemon.heartbeat.json), no new state surface. Dashboard-visible: _nm_refresh_dashboard_snapshot's payload gained a `flap: {tripped, detail}` field reading the same file. self-test: 22 new pinned assertions in nl-maintenance.sh --self-test (Scenarios 18-20: N-1 restarts still resurrects, Nth restart stops+death-cert+doctor-visible+reset-flap round-trip, window-expiry prunes and resumes) -- each mutation-tested (threshold -ge->-gt, window-prune disabled, short-circuit disabled) and confirmed to fail ONLY the scenario it should. Doctor wiring verified live via a scoped HARNESS_DOCTOR_HOME fixture (--quick): silent when healthy, RED with full detail when tripped."
     },
     {
       "id": "doctor-verdict-cache",

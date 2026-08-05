@@ -2720,6 +2720,40 @@ check_maintenance_both_substrates_alive() {
 }
 
 # ------------------------------------------------------------
+# Check: maintenance-daemon-flap (DEC-4 follow-up guard, gated-pipeline-
+# master-2026-08: the uncovered risk named to the operator before T10
+# registration -- a daemon that crashes every few minutes LOOKS alive from
+# a distance because the watchdog keeps resurrecting it, burning CPU,
+# masking a real bug, and reporting healthy). nl-maintenance.sh's watchdog
+# writes state/nl-maintenance/flap-state.json ONLY when it has STOPPED
+# resurrecting the daemon after NM_FLAP_THRESHOLD restarts inside
+# NM_FLAP_WINDOW_SECONDS (see nl-maintenance.sh's _nm_flap_trip). Presence
+# of that file is ALWAYS a RED, never a WARN: a stopped daemon means every
+# job it hosts (coord-sync/supervisor-tick/workstreams-heartbeat/session-
+# resumer/health-tick/doctor-verdict-refresh) is un-scheduled until an
+# operator investigates and clears it with `--reset-flap`. Reuses the
+# EXISTING state/nl-maintenance/ directory this file already reads
+# (activation-marker, daemon.heartbeat.json above) -- no new state surface.
+# Tolerate-absent: no file = healthy, completely silent (never a fabricated
+# finding), matching every other check in this file's convention.
+# ------------------------------------------------------------
+check_maintenance_daemon_flap() {
+  local live_home="$1"
+  local flap="${live_home}/state/nl-maintenance/flap-state.json"
+  if [[ -f "$flap" ]] && command -v jq >/dev/null 2>&1; then
+    local count window threshold tripped_at
+    count="$(jq -r '.restart_count // empty' "$flap" 2>/dev/null | tr -d '\r')"
+    window="$(jq -r '.window_seconds // empty' "$flap" 2>/dev/null | tr -d '\r')"
+    threshold="$(jq -r '.threshold // empty' "$flap" 2>/dev/null | tr -d '\r')"
+    tripped_at="$(jq -r '.tripped_at // empty' "$flap" 2>/dev/null | tr -d '\r')"
+    _red "maintenance-daemon-flap" "nl-maintenance daemon FLAP-STOPPED at ${tripped_at:-unknown time} (${count:-?} restarts in ${window:-?}s, threshold ${threshold:-?}) -- the watchdog is NOT resurrecting it; every hosted job (coord-sync/supervisor-tick/workstreams-heartbeat/session-resumer/health-tick/doctor-verdict-refresh) is unscheduled. Investigate the crash cause (adapters/claude-code/scripts/nl-maintenance.sh logs/tick.jsonl), then run 'bash adapters/claude-code/scripts/nl-maintenance.sh --reset-flap' to resume"
+  elif [[ -f "$flap" ]]; then
+    _red "maintenance-daemon-flap" "nl-maintenance daemon FLAP-STOPPED (flap-state.json present at ${flap}, jq unavailable to read detail) -- the watchdog is NOT resurrecting it; investigate then run --reset-flap"
+  fi
+  CHECKS_RUN=$((CHECKS_RUN + 1))
+}
+
+# ------------------------------------------------------------
 # Check: stage2-admission-open (gated-pipeline-master-2026-08 T24, REQ-C6 /
 # arch-M3): REQ-A8's completion (Task 8, doctor triage finishing at <=9
 # survivor REDs) mechanically OPENS Stage-2 admission -- this WARN converts
@@ -4286,6 +4320,8 @@ run_quick_checks() {
   check_budget_bash_hooks "$live_home" "$repo_root"
   # harness-execution-redesign-2026-08 Task 3 (Stage 1, invariant 9)
   check_maintenance_both_substrates_alive "$live_home" "$repo_root"
+  # gated-pipeline-master-2026-08 DEC-4 follow-up guard (flap detection)
+  check_maintenance_daemon_flap "$live_home"
   # gated-pipeline-master-2026-08 T24 (REQ-C6/arch-M3)
   check_stage2_admission_open "$live_home" "$repo_root"
   # HARNESS-GAP-62 class fix (2026-08-04) -- standing silence detector
