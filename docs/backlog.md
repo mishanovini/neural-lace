@@ -3562,3 +3562,29 @@ condition, F7-F10 minors named-not-fixed by the reviewer's own instruction):
    files where a suppression genuinely occurred (track whether Layer 2/3 would have matched before
    deciding whether to log).
 
+
+## GREEN-RUNNING-CHIP-MERGE-PENDING-2026-08-05 — built, browser-verified, NOT yet on master
+(label: `cockpit`, `operator-priority`; owner: next session, FIRST task)
+
+The operator's repeatedly-requested green "currently building" highlight is BUILT and proven,
+but sits unmerged in worktree `agent-aa9a284a346ee2a14`, branch `worktree-agent-aa9a284a346ee2a14`:
+  - `c8df1d2c` — three-way conflict resolution (plan-status schema + manifest + plan-edit-validator)
+  - `5c95b277` — the green feature itself
+PROVEN by its builder: field `running_now` (stamped by `stampRunningNow`, roadmap-routes.js),
+CSS `.rm-title-running` (`--running: #4ade80`); new SINK 1b in workstreams-emit.sh emits
+`task_started` with sentinel `task_id="(plan-only)"` for plan-only headers; four pinned
+scenarios PINNED4-1..4 each mutation-killed; live browser DOM check found exactly 3
+`.rm-title-running` elements at rgb(74,222,128) weight 700 against the real running server.
+Suites: workstreams-emit 161/0, roadmap-routes 175/0, cockpit 593/0, manifest GREEN.
+
+WHY NOT MERGED: its base (df0eade8) predates master's exec-stderr fix (ab4480be) and flap guard
+(c043b6ec). The merge conflicts in plan-edit-validator.sh's self-test block — HEAD's F33
+(exec-redirection regression pin) vs the branch's G1-G9 (Status-validation scenarios) — and git
+splits the region MID-SCENARIO, so a naive union produces a syntactically invalid script
+(verified: "line 3287: syntax error: unexpected end of file"). Merge was aborted; master is
+clean and green at c043b6ec (plan-edit-validator 33/33).
+
+HOW TO FINISH: rebase `worktree-agent-aa9a284a346ee2a14` onto current master, or hand-merge the
+self-test block keeping BOTH F33 and G1-G9 intact as whole scenarios (check the final
+"of N scenarios" count matches the real total), then re-run plan-edit-validator --self-test,
+roadmap-routes.selftest.js, cockpit.selftest.js, and manifest-check before pushing.
