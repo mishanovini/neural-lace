@@ -3588,3 +3588,39 @@ HOW TO FINISH: rebase `worktree-agent-aa9a284a346ee2a14` onto current master, or
 self-test block keeping BOTH F33 and G1-G9 intact as whole scenarios (check the final
 "of N scenarios" count matches the real total), then re-run plan-edit-validator --self-test,
 roadmap-routes.selftest.js, cockpit.selftest.js, and manifest-check before pushing.
+
+## NL-ISSUES-TRIAGE-20260805 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 17 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 20d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## AUTO-MODE-ASK-RULES-BECOME-SILENT-DENIALS-2026-08-05 — three `ask` permission rules read as
+hard denials in auto mode, and the block message misdiagnoses them (label: `harness-gap`,
+`operator-decision`)
+
+**PROVEN today:** `~/.claude/settings.json` `permissions.ask` contains exactly three entries —
+`Bash(SUPABASE_ACCESS_TOKEN=* supabase db push:*)`, `Bash(npx supabase db push:*)`,
+`Bash(supabase db push:*)`. In an autonomous (no-human-in-loop) session an `ask` rule cannot
+prompt, so it resolves as a DENIAL. `permissions.allow` already contains `Bash(*)`, but the
+more-specific `ask` pattern wins, so the broad allow is irrelevant.
+
+**Why it matters:** the denial surfaces as "Blocked by the Claude Code auto mode classifier …
+the user can add a Bash permission rule to their settings" — generic boilerplate that sends the
+operator to add an allow rule they ALREADY have (`Bash(*)`). Two sessions' worth of operator
+friction traced to this: the operator explicitly authorized `apply parts migration`, and the
+apply still could not run. The true remedy is to MOVE the pattern from `ask` to `allow` (or
+delete it), not to add anything.
+
+**Also blocked, mechanism NOT yet confirmed as an ask-rule:** `gh api -X PATCH
+repos/<owner>/<repo>/branches/master/protection/...` (branch-protection mutation) and mass
+config rewrites (the 51 `.env.local` repoint). These may be classifier-semantic denials rather
+than settings-driven — verify before advising the operator on those two.
+
+**Durability note (operator directive 2026-08-04, "solutions should be everlasting"):** the
+repo template `adapters/claude-code/settings.json.template` carries `permissions.allow` (6
+entries) but NO `ask`/`deny` block — so the three ask rules are MACHINE-LOCAL only and would not
+follow to another machine. Any decision here should land in the template to be durable, and the
+template→live sync path for `permissions` (as opposed to hook wirings) needs confirming — it was
+not verified in this session.
