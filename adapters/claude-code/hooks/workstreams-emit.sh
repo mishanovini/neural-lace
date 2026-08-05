@@ -2979,10 +2979,7 @@ PLANEOF
   # NLA3: PARTIAL header (plan= present, task= missing) -> attributed=0
   # (both fields are required to name a real <slug>/<task_id> node) even
   # though plan WAS parsed and is still recorded (diagnostic visibility,
-  # never silently dropped) -- and _emit_dispatch_provenance falls all the
-  # way back to the free-text heuristic rather than trusting a
-  # half-populated header (this prompt's free text also names no plan, so
-  # the net effect mirrors PL3: no task_started emitted).
+  # never silently dropped).
   # NL_ATTRIBUTION_DERIVE_ROOT sandboxed here too (Defect B, 2026-08-04),
   # same rationale as NLA2 -- even though the merge rule below makes the
   # header's own partial plan value win regardless of what the ambient
@@ -3007,10 +3004,35 @@ PLANEOF
     echo "FAIL: NLA3c expected attribution_source=derived-partial in $ledger_nla3"; fail=$((fail+1))
     [[ -n "$ledger_nla3" ]] && cat "$ledger_nla3"
   fi
-  if [[ ! -d "$plog_nla3" || -z "$(ls -A "$plog_nla3" 2>/dev/null)" ]]; then
-    echo "PASS: NLA3b a partial header falls back to the free-text heuristic in full (no task_started emitted, matching PL3's plan-less anti-noise since the free text also names no plan)"; pass=$((pass+1))
+  # NLA3b -- REVISED 2026-08-04 (cockpit green-highlight task, SINK 1b).
+  # This assertion used to require NO task_started at all for a partial
+  # header, on the theory that h_attributed=0 falls all the way through to
+  # the free-text heuristic and this prompt's free text also names no plan.
+  # That was correct UNDER THE OLD SINK 1 RULE but is now the wrong
+  # behaviour to pin: the operator's repeated ask ("colour the PLAN green
+  # rather than guessing a task") is answered by SINK 1b in
+  # _emit_dispatch_provenance, which fires on h_plan alone (STILL
+  # header-sourced -- _extract_nl_attribution populated it from a real
+  # `NL-ATTRIBUTION: plan=` line, not a guess) and writes task_started with
+  # the sentinel task_id "(plan-only)" -- never a real task, only ever the
+  # plan (roadmap-routes.js's deriveUnbindableDispatchLeaves already treats
+  # an unresolvable task_id as plan-level-only, S22c-S22k). NOT an empty
+  # string: roadmap-routes.js's eventsForSlug filters on `e.task_id`
+  # TRUTHINESS, which would silently drop an empty-string task_id before it
+  # ever reached that path -- see this sink's own header comment for the
+  # full story of that near-miss. See the header comment above for why this
+  # is NOT the same widening as the scrape bug
+  # ROADMAP-FALSE-ETERNAL-RUNNING-01 removed: the free-text/tier-2
+  # derivation path is DERV3's shape below, and DERV3b right after this
+  # pins that THAT path still emits nothing.
+  local plog_nla3_file; plog_nla3_file=$(ls "$plog_nla3"/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$plog_nla3_file" ]] && grep -q '"type":"task_started"' "$plog_nla3_file" 2>/dev/null \
+      && grep -q '"plan_slug":"orphan-plan"' "$plog_nla3_file" 2>/dev/null \
+      && grep -q '"task_id":"(plan-only)"' "$plog_nla3_file" 2>/dev/null; then
+    echo "PASS: NLA3b (SINK 1b) a partial header (plan=orphan-plan, no task=) DOES now emit task_started, with plan_slug=orphan-plan and the sentinel task_id \"(plan-only)\" -- header-sourced, plan-only, never guessing a task, never an empty string that eventsForSlug would silently drop"; pass=$((pass+1))
   else
-    echo "FAIL: NLA3b expected no task_started output for a partial-header, plan-less-by-heuristic dispatch (plog3=$(ls -A "$plog_nla3" 2>/dev/null))"; fail=$((fail+1))
+    echo "FAIL: NLA3b expected a task_started event with plan_slug=orphan-plan task_id=\"(plan-only)\" under $plog_nla3 (file=$plog_nla3_file)"; fail=$((fail+1))
+    [[ -n "$plog_nla3_file" ]] && cat "$plog_nla3_file"
   fi
 
   # NLA4: role=hacker (out-of-enum) -> role dropped (empty), plan/task
@@ -3105,8 +3127,8 @@ Status: ACTIVE
 
 - [ ] 1. x
 EOF
-  local adm_derv3="$tmp/adm-derv3"
-  ADM_STATE_DIR="$adm_derv3" CONV_TREE_STATE_PATH="$tmp/derv-3.json" CLAUDE_SESSION_ID="sess-derv-3" \
+  local adm_derv3="$tmp/adm-derv3" plog_derv3="$tmp/pl-derv3"
+  PROGRESS_LOG_STATE_DIR="$plog_derv3" ADM_STATE_DIR="$adm_derv3" CONV_TREE_STATE_PATH="$tmp/derv-3.json" CLAUDE_SESSION_ID="sess-derv-3" \
     NL_ATTRIBUTION_DERIVE_ROOT="$derv3_root" \
     bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Sweep","prompt":"no plan or task mentioned anywhere in this prompt at all"},"session_id":"sess-derv-3"}' >/dev/null 2>&1
   local ledger_derv3; ledger_derv3=$(ls "$adm_derv3"/ledger/*.jsonl 2>/dev/null | head -n1)
@@ -3116,6 +3138,22 @@ EOF
   else
     echo "FAIL: DERV3 expected attribution_source=derived-partial plan=only-active-plan with no task in $ledger_derv3"; fail=$((fail+1))
     [[ -n "$ledger_derv3" ]] && cat "$ledger_derv3"
+  fi
+  # DERV3b (cockpit green-highlight task, SINK 1b guard, 2026-08-04): THIS is
+  # the exact boundary SINK 1b in _emit_dispatch_provenance must NOT cross.
+  # DERV3's attribution_source is ALSO "derived-partial" (same label NLA3b
+  # above exercises), but it got there via _derive_attribution's tier-2
+  # single-active-plan GUESS from a prompt carrying NO NL-ATTRIBUTION header
+  # at all -- not from a real header line. SINK 1b gates strictly on
+  # `h_plan` (the raw _extract_nl_attribution output, empty here since there
+  # is no header), never on the derived/final plan value, so this dispatch
+  # must produce NO task_started anywhere. If this ever goes red, SINK 1b
+  # has been widened to the derivation tier and reintroduced
+  # ROADMAP-FALSE-ETERNAL-RUNNING-01's mention/guess-is-not-a-dispatch bug.
+  if [[ ! -d "$plog_derv3" || -z "$(ls -A "$plog_derv3" 2>/dev/null)" ]]; then
+    echo "PASS: DERV3b SINK 1b does NOT fire for a tier-2 pure-guess derived-partial (no header at all) -- no task_started anywhere, guarding against re-widening SINK 1 to the scrape/guess path"; pass=$((pass+1))
+  else
+    echo "FAIL: DERV3b expected NO task_started output for the no-header tier-2-guess dispatch (plog=$(ls -A "$plog_derv3" 2>/dev/null))"; fail=$((fail+1))
   fi
 
   # DERV4: same shape as DERV3 but the repo directory exists with NO
@@ -4405,6 +4443,60 @@ _emit_dispatch_provenance() {
       bash "$pl_cli" emit --type task_started --ask "$h_ask_id" --plan-slug "$h_plan" \
         --task-id "$h_task" --session-id "$sid" --dedup-extra "$dispatch_token" \
         --summary "task ${h_task} dispatched" --emitter workstreams-emit \
+        >/dev/null 2>&1 || true
+    fi
+  elif [[ -n "$h_plan" ]]; then
+    # ---- SINK 1b: PLAN-ONLY HEADER (2026-08-04, operator: "colour the plan
+    # green rather than guess a task" -- docs/backlog.md
+    # ROADMAP-FALSE-ETERNAL-RUNNING-01) --------------------------------------
+    # A REAL `NL-ATTRIBUTION:` header line named this plan (h_plan is
+    # STILL header-sourced here -- _extract_nl_attribution populates it
+    # independently of whether task= was also present; only attributed=1,
+    # which needs BOTH fields, is false) but the dispatcher omitted `task=`.
+    # This branch is deliberately narrower than "attribution_source=
+    # derived-partial" as the governor ledger uses that label: THAT label
+    # also covers _derive_attribution's tier-2 single-active-plan GUESS,
+    # produced from a dispatch with NO header at all -- exactly the
+    # mention/guess-is-not-a-dispatch shape SINK 1's header-only rule exists
+    # to keep out (see the "TWO SINKS ARE NOT THE SAME SIGNAL" block above).
+    # That guess must NEVER reach SINK 1 and does not reach this branch --
+    # it only ever sets `final_plan`/`attribution_source`, which this
+    # function never reads. Only h_plan, straight from the real header
+    # parse, gates this branch.
+    #
+    # Emitting the sentinel task_id "(plan-only)" -- NOT an empty string --
+    # rather than fabricating or guessing a real one keeps this OUT of every
+    # task node (plan-parse.js's TASK_ID_TOKEN_RE never produces a token
+    # containing parentheses, so no real task can ever collide with this
+    # key) and lets it flow through the EXISTING deriveUnbindableDispatchLeaves
+    # path in roadmap-routes.js, which already surfaces a task_started whose
+    # task_id does not resolve to a real task at the PLAN level only, never
+    # promoting it to a task row (S22c-S22k in roadmap-routes.selftest.js
+    # already prove that path). This sink just gives that pre-existing,
+    # already-tested path a genuinely-partial-but-real-header input instead
+    # of relying on it to catch only a wrong-shaped task id.
+    # NOT EMPTY STRING (caught while wiring this, 2026-08-04): an EARLIER
+    # version of this sink emitted --task-id "" -- but roadmap-routes.js's
+    # eventsForSlug filters `e.task_id` for TRUTHINESS
+    # (`.filter((e) => e && e.plan_slug === slug && e.task_id)`), which
+    # silently drops an empty-string task_id before deriveUnbindableDispatchLeaves
+    # ever sees it. A truthy, never-real sentinel is required, not merely a
+    # falsy placeholder -- pinned by NLA3b/NLA3d below and by roadmap-routes.
+    # selftest.js's own PINNED4-3 (server-side proof the sentinel actually
+    # reaches the plan-only leaf).
+    #
+    # DO NOT widen this branch to fire on the tier-2/no-header case (i.e. do
+    # not swap `$h_plan` for `$final_plan_in` here) -- that is the exact
+    # defect ROADMAP-FALSE-ETERNAL-RUNNING-01 removed from SINK 1, and
+    # reintroducing it here would re-green plans from a prompt that merely
+    # MENTIONS them or from "there's only one active plan" guesswork.
+    local pl_cli_b; pl_cli_b=$(_pl_progress_log_cli)
+    if [[ -f "$pl_cli_b" ]]; then
+      local h_ask_id_b; h_ask_id_b=$(_resolve_ask_id_for_plan_slug "$h_plan")
+      local dispatch_token_b; dispatch_token_b=$(_dispatch_replay_token "$sid" "$h_plan" "(plan-only)")
+      bash "$pl_cli_b" emit --type task_started --ask "$h_ask_id_b" --plan-slug "$h_plan" \
+        --task-id "(plan-only)" --session-id "$sid" --dedup-extra "$dispatch_token_b" \
+        --summary "plan-only dispatch (header named no task=)" --emitter workstreams-emit \
         >/dev/null 2>&1 || true
     fi
   fi

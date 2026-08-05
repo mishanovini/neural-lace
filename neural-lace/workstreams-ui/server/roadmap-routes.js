@@ -984,9 +984,22 @@ function deriveUnbindableDispatchLeaves(slug, tasks, startedTs, sessionsByTask, 
     const leaves = deriveLiveAgentLeaves(slug + '/(unbindable)', usable, hbCtx.heartbeats,
       hbCtx.nowMs, startedIdleExpired, 'in-progress');
     leaves.forEach((leaf) => {
-      // The id the dispatch actually sent, verbatim and quoted — this is the
-      // whole diagnostic value of the leaf.
-      leaf.title += ' — dispatched for task "' + taskId + '", which is not a task id in this plan';
+      // taskId === '(plan-only)' is SINK 1b's sentinel (workstreams-emit.sh
+      // _emit_dispatch_provenance: a real NL-ATTRIBUTION header named this
+      // plan but omitted task=) — distinct from a non-empty-but-unresolvable
+      // id (a hand-typed task= that does not match any real task). Both land
+      // here by construction (realIds['(plan-only)'] is always falsy —
+      // plan-parse.js's TASK_ID_TOKEN_RE never produces a token containing
+      // parentheses) and both get the SAME plan-level-only treatment, just
+      // worded honestly for which case this is so the operator is never
+      // told a real id was rejected when none was sent at all. NOT an empty
+      // string — SINK 1b deliberately avoids '' because eventsForSlug
+      // filters events on `e.task_id` truthiness (an earlier version of
+      // this feature silently dropped an empty-string task_id before it
+      // ever reached this function; see SINK 1b's own header comment).
+      leaf.title += taskId === '(plan-only)'
+        ? ' — dispatched with no task= in the header (plan-only attribution)'
+        : ' — dispatched for task "' + taskId + '", which is not a task id in this plan';
       out.push(leaf);
     });
     // R9-7b bookkeeping — SCOPED TO RUNNING LEAVES ONLY (2026-08-01,

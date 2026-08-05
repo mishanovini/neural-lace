@@ -1664,6 +1664,158 @@ async function main() {
     const demoPlanAfterCorrupt = findItem(r3.json.items, 'demo-plan');
     ok('S14c ...with from_requests honestly empty (provenance genuinely cannot be derived from an unreadable registry — never fabricated)',
       demoPlanAfterCorrupt && Array.isArray(demoPlanAfterCorrupt.from_requests) && demoPlanAfterCorrupt.from_requests.length === 0);
+
+    // ========================================================================
+    // PINNED4 (2026-08-04, cockpit "currently building" green highlight —
+    // operator, repeated across sessions: "I want to see... which plans and
+    // tasks are currently running... highlighted green... You've screwed it
+    // up, and then fixed it, and then deleted it, apparently."). FOUR
+    // scenarios named DIRECTLY after the four the orchestrator asked to be
+    // pinned as an explicit anti-regression floor, each self-contained
+    // (its own plan/task/session/heartbeat, never sharing state with an
+    // earlier scenario in this file) so a future edit cannot accidentally
+    // make one pass by relying on another's fixture. Each is EXECUTED
+    // end-to-end against the real running_now field the client's
+    // titleClass() reads (see web/cockpit.selftest.js R21-7..R21-15 for the
+    // client-side proof that running_now:true/false actually flips the
+    // rm-title-running CSS class — this suite proves the SERVER computes
+    // that field correctly; that suite proves the CLIENT paints it
+    // correctly; together they are the full chain).
+    //
+    // WHY header-only attribution feeds the green path AT ALL (the
+    // recurring question the next agent must not re-litigate): a prior
+    // version of this feature turned chips green from INFERRED attribution
+    // (prompt text merely MENTIONING a plan/task, or "there's only one
+    // active plan so it must be that one") and rendered work as
+    // eternally-running that had already finished — see docs/backlog.md
+    // ROADMAP-FALSE-ETERNAL-RUNNING-01 for the full incident. That is why
+    // SINK 1 in workstreams-emit.sh's _emit_dispatch_provenance is
+    // HEADER-ONLY (task_started fires only from a real `NL-ATTRIBUTION:`
+    // line the dispatcher actually wrote) and why PINNED4-3 below proves
+    // the PARTIAL-header case still requires a real header (see DERV3b in
+    // workstreams-emit.sh's own --self-test for the sibling guard that a
+    // NO-header guess can never reach this path either).
+    // ========================================================================
+
+    // ---- PINNED4-1: live + pid-verified -> green -------------------------
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'pinned-live-plan.md'), [
+      '# Plan: Pinned Live', '', 'Status: ACTIVE', '', '## Tasks', '',
+      '- [ ] 1. a task with a genuinely live, pid-verified session',
+      '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(heartbeatDir, 'sess-pinned-live.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-pinned-live', pid: process.pid, cwd: repoDir, repo_root: repoDir,
+      worktree_root: repoDir, branch: 'fixture-pinned-live', model: 'fixture',
+      last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'active',
+    }));
+    // Appended to unlinked.jsonl (NOT a standalone file) — eventsForSlug's
+    // no-linked-ask leg only ever reads readAskEvents('') ->
+    // '<progressDir>/unlinked.jsonl'; a differently-named file is silently
+    // never read (caught by this scenario itself going green for the wrong
+    // reason on the first pass — running_now:false from an unread event is
+    // indistinguishable from a genuine correct negative until you check
+    // status.value too).
+    fs.appendFileSync(path.join(progressDir, 'unlinked.jsonl'),
+      JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'pinned-live-plan', task_id: '1', session_id: 'sess-pinned-live' }) + '\n');
+    const rP1 = await httpGet(PORT, '/api/roadmap');
+    const p1Task = findItem(rP1.json.items, 'pinned-live-plan/1');
+    const p1Plan = findItem(rP1.json.items, 'pinned-live-plan');
+    ok('PINNED4-1 a task with a RECENT task_started + a heartbeat whose pid is genuinely alive (process.kill(pid,0) succeeds) renders running_now:true on the task',
+      p1Task && p1Task.running_now === true,
+      p1Task && JSON.stringify({ running_now: p1Task.running_now, status: p1Task.status }));
+    ok('PINNED4-1b ...and the roll-up makes the PLAN running_now:true too (the client\'s green title class reads this field on both rows — web/cockpit.selftest.js R21-9)',
+      p1Plan && p1Plan.running_now === true,
+      p1Plan && JSON.stringify(p1Plan.running_now));
+
+    // ---- PINNED4-2: marker present but pid PROVEN dead -> NOT green ------
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'pinned-deadpid-plan.md'), [
+      '# Plan: Pinned Dead Pid', '', 'Status: ACTIVE', '', '## Tasks', '',
+      '- [ ] 1. a task whose only session heartbeat carries a dead pid',
+      '',
+    ].join('\n'));
+    const pinnedDeadRt = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+    fs.writeFileSync(path.join(heartbeatDir, 'sess-pinned-dead.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-pinned-dead', pid: pinnedDeadRt.pid, cwd: repoDir, repo_root: repoDir,
+      worktree_root: repoDir, branch: 'fixture-pinned-dead', model: 'fixture',
+      // Deliberately FRESH timestamp (seconds old) — age alone would say
+      // "live"/"quiet", never "crashed". Only the dead-pid check can catch
+      // this (classifyHeartbeatLiveness, derive-lib.js) — the exact
+      // phantom-running shape the operator reported (marker file present
+      // and recent; the process behind it already exited).
+      last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'active',
+    }));
+    fs.appendFileSync(path.join(progressDir, 'unlinked.jsonl'),
+      JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'pinned-deadpid-plan', task_id: '1', session_id: 'sess-pinned-dead' }) + '\n');
+    const rP2 = await httpGet(PORT, '/api/roadmap');
+    const p2Task = findItem(rP2.json.items, 'pinned-deadpid-plan/1');
+    const p2Plan = findItem(rP2.json.items, 'pinned-deadpid-plan');
+    ok('PINNED4-2 a task with a RECENT task_started but a heartbeat whose pid is PROVEN dead (process.kill(pid,0) throws ESRCH) renders running_now:false — the marker being present and fresh is not enough',
+      p2Task && p2Task.running_now === false,
+      p2Task && JSON.stringify({ running_now: p2Task.running_now, status: p2Task.status }));
+    ok('PINNED4-2b ...and the leaf itself is stalled, not running (the dead pid overrides the fresh timestamp, per classifyHeartbeatLiveness)',
+      p2Task && (p2Task.live_sessions || []).length === 1 && p2Task.live_sessions[0].status.value === 'stalled',
+      p2Task && JSON.stringify(p2Task.live_sessions));
+    ok('PINNED4-2c ...and the PLAN is not green either — a dead-pid task must never roll up a false green to its ancestor',
+      p2Plan && p2Plan.running_now === false,
+      p2Plan && JSON.stringify(p2Plan.running_now));
+
+    // ---- PINNED4-3: partial attribution (SINK 1b sentinel) -> PLAN green,
+    // TASK not green ---------------------------------------------------------
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'pinned-partial-plan.md'), [
+      '# Plan: Pinned Partial', '', 'Status: ACTIVE', '', '## Tasks', '',
+      '- [ ] 1. a real task that the plan-only dispatch never named',
+      '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(heartbeatDir, 'sess-pinned-partial.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-pinned-partial', pid: process.pid, cwd: repoDir, repo_root: repoDir,
+      worktree_root: repoDir, branch: 'fixture-pinned-partial', model: 'fixture',
+      last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'active',
+    }));
+    // The EXACT event shape workstreams-emit.sh's SINK 1b now writes for a
+    // header that named plan= but omitted task= — task_id is the sentinel
+    // "(plan-only)", never a real task id and never an empty string (see
+    // that sink's own header comment for why "" was rejected: eventsForSlug
+    // below filters on task_id truthiness and would silently drop it).
+    fs.appendFileSync(path.join(progressDir, 'unlinked.jsonl'),
+      JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'pinned-partial-plan', task_id: '(plan-only)', session_id: 'sess-pinned-partial' }) + '\n');
+    const rP3 = await httpGet(PORT, '/api/roadmap');
+    const p3Task = findItem(rP3.json.items, 'pinned-partial-plan/1');
+    const p3Plan = findItem(rP3.json.items, 'pinned-partial-plan');
+    ok('PINNED4-3 a plan-only dispatch (SINK 1b: real header named the plan, omitted task=) never claims task 1 — the REAL task node stays running_now:false, partial truth beats a wrong-task green',
+      p3Task && p3Task.running_now === false,
+      p3Task && JSON.stringify({ running_now: p3Task.running_now, status: p3Task.status, live_sessions: p3Task.live_sessions }));
+    ok('PINNED4-3b ...but the PLAN itself DOES render running_now:true — the dispatch is real and live, surfaced at the level it can honestly be attributed to',
+      p3Plan && p3Plan.running_now === true,
+      p3Plan && JSON.stringify(p3Plan.running_now));
+    ok('PINNED4-3c ...via a live_sessions leaf on the PLAN (not the task) whose title honestly says no task= was sent, not that an id was rejected',
+      p3Plan && (p3Plan.live_sessions || []).some((s) => /no task= in the header \(plan-only attribution\)/.test(s.title || '')),
+      p3Plan && JSON.stringify((p3Plan.live_sessions || []).map((s) => s.title)));
+
+    // ---- PINNED4-4: finished/completed -> NOT green, even with a live
+    // session still attached to the (now-done) task's own task_started -----
+    fs.writeFileSync(path.join(repoDir, 'docs', 'plans', 'pinned-done-plan.md'), [
+      '# Plan: Pinned Done', '', 'Status: ACTIVE', '', '## Tasks', '',
+      '- [x] 1. a task that is done, even though its dispatcher session is still alive',
+      '',
+    ].join('\n'));
+    fs.writeFileSync(path.join(heartbeatDir, 'sess-pinned-done.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-pinned-done', pid: process.pid, cwd: repoDir, repo_root: repoDir,
+      worktree_root: repoDir, branch: 'fixture-pinned-done', model: 'fixture',
+      last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'active',
+    }));
+    fs.appendFileSync(path.join(progressDir, 'unlinked.jsonl'), [
+      JSON.stringify({ type: 'task_started', ts: RECENT_TASK_STARTED_TS, plan_slug: 'pinned-done-plan', task_id: '1', session_id: 'sess-pinned-done' }),
+      JSON.stringify({ type: 'task_done', ts: RECENT_TASK_STARTED_TS_2, plan_slug: 'pinned-done-plan', task_id: '1', session_id: 'sess-pinned-done', evidence_link: '' }),
+    ].join('\n') + '\n');
+    const rP4 = await httpGet(PORT, '/api/roadmap');
+    const p4Task = findItem(rP4.json.items, 'pinned-done-plan/1');
+    const p4Plan = findItem(rP4.json.items, 'pinned-done-plan');
+    ok('PINNED4-4 a DONE task (checkbox checked, task_done event present) renders running_now:false even though its attached session\'s heartbeat is genuinely live seconds old — finished work is never green',
+      p4Task && p4Task.status.value === 'complete' && p4Task.running_now === false,
+      p4Task && JSON.stringify({ status: p4Task.status, running_now: p4Task.running_now }));
+    ok('PINNED4-4b ...and the plan does not roll up a false green from it either',
+      p4Plan && p4Plan.running_now === false,
+      p4Plan && JSON.stringify(p4Plan.running_now));
   } finally {
     server.close();
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) {}
