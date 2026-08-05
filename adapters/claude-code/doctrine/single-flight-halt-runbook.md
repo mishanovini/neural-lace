@@ -42,6 +42,18 @@ rm -f ~/.claude/state/single-flight/HALT # resume
 DRAIN not KILL: in-flight work finishes, nothing new arms. Every tick wrapper checks
 `sf_halt_active` first and logs a drain notice (durable log + stdout, always both).
 
+## Flap-stop — distinct from HALT/drain, do not confuse the two
+
+`nl-maintenance.sh`'s `--watchdog` also carries a SEPARATE guard: if it relaunches the daemon
+`NM_FLAP_THRESHOLD` times (default 4) inside `NM_FLAP_WINDOW_SECONDS` (default 3600s), it STOPS
+resurrecting, writes `state/nl-maintenance/flap-state.json`, and every later fire is a log-only
+no-op until `nl-maintenance.sh --reset-flap`. Unlike HALT (an operator's deliberate, reversible-
+by-file-delete stop gesture), a flap-stop is the watchdog's OWN automatic response to a daemon
+that cannot stay up — it means something is actively crash-looping, not that anyone asked it to
+stop. `harness-doctor.sh`'s `maintenance-daemon-flap` check REDs while tripped (never silent).
+Full derivation of the threshold/window numbers: `nl-maintenance.sh`'s own header comment above
+`_nm_flap_window_seconds`.
+
 ## Chesterton's Fence + mechanized budgets
 
 `hook-reentry-guard.sh` / `sessionstart-singleflight.sh` are unchanged, still wired — belt, never
