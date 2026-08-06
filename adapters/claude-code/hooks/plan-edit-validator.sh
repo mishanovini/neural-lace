@@ -1172,7 +1172,18 @@ Backlog items absorbed: FIXTURE-SURFACE-01 (fixture absorption); FIXTURE-REF-OPE
   F15_DIR="$TMPDIR_SELFTEST/f15/docs/plans"
   mkdir -p "$F15_DIR"
   printf '# F15 Plan\n\nStatus: DRAFT\n\n## Files to Modify/Create\n\n`adapters/claude-code/hooks/session-start-digest.sh` (extend)\n' > "$F15_DIR/f15-plan.md"
-  F15_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f15-plan.md","old_string":"Status: DRAFT","new_string":"Status: DRAFT (f15 edit)"}}' "$F15_DIR")"
+  # NOTE (2026-08-04, plan-status write-time gate): the old_string/new_string
+  # pair used to target the Status: line itself ("Status: DRAFT" -> "Status:
+  # DRAFT (f15 edit)"), which is now correctly caught by the new Status
+  # enum + prose-after-value check added below (Check: pev_validate_status_
+  # line) -- that check's OWN self-test coverage is G1-G8 further down.
+  # Retargeted to the Files-to-Modify line instead so THIS scenario stays
+  # scoped to its original, still-valid purpose (a no-task-line prose edit
+  # is allowed with a backlog-absorption WARN) without colliding with an
+  # unrelated check. The plan still names the session-start-digest.sh
+  # surface either way, so the absorption-warn assertions below are
+  # unaffected.
+  F15_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f15-plan.md","old_string":"`adapters/claude-code/hooks/session-start-digest.sh` (extend)","new_string":"`adapters/claude-code/hooks/session-start-digest.sh` (extend further)"}}' "$F15_DIR")"
   set +e
   F15_ERR="$(printf '%s' "$F15_JSON" | BACKLOG_MD_PATH="$BL_FIXTURE" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
   RC_F15=$?
@@ -1879,8 +1890,193 @@ PROBE
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # G1-G9 (2026-08-04, "the class" -- operator directive: unknown-status
+  # cockpit chips + freelanced Status: prose) -- pev_validate_status_line
+  # write-time gate: schema-enum membership + prose-after-value block +
+  # the unchanged-value grandfather, on both Edit and Write, plus the
+  # fail-open path when the schema file is missing.
+  # ============================================================
+
+  # ---- G1: fresh Write, bare valid token (no prose) -- ALLOWED ----
+  G1_DIR="$TMPDIR_SELFTEST/g1/docs/plans"
+  mkdir -p "$G1_DIR"
+  G1_CONTENT=$'# G1 Plan\n\nStatus: ACTIVE\n\n## Goal\n\nFixture for the Status enum write-time gate self-test.\n'
+  G1_JSON="$(jq -n --arg fp "$G1_DIR/g1-plan.md" --arg c "$G1_CONTENT" '{tool_name:"Write",tool_input:{file_path:$fp,content:$c}}')"
+  set +e
+  G1_OUT="$(printf '%s' "$G1_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G1=$?
+  set -e
+  if [[ "$RC_G1" -eq 0 ]]; then
+    echo "self-test (G1) fresh-write-bare-valid-status-token-allowed: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G1) fresh-write-bare-valid-status-token-allowed: FAIL (rc=$RC_G1 out=$G1_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- G2: fresh Write, token NOT in the schema enum -- BLOCKED ----
+  G2_DIR="$TMPDIR_SELFTEST/g2/docs/plans"
+  mkdir -p "$G2_DIR"
+  G2_CONTENT=$'# G2 Plan\n\nStatus: WOOF\n\n## Goal\n\nFixture.\n'
+  G2_JSON="$(jq -n --arg fp "$G2_DIR/g2-plan.md" --arg c "$G2_CONTENT" '{tool_name:"Write",tool_input:{file_path:$fp,content:$c}}')"
+  set +e
+  G2_OUT="$(printf '%s' "$G2_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G2=$?
+  set -e
+  if [[ "$RC_G2" -eq 1 ]] && printf '%s' "$G2_OUT" | grep -q "not in the canonical enum"; then
+    echo "self-test (G2) fresh-write-unrecognized-token-blocked: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G2) fresh-write-unrecognized-token-blocked: FAIL (rc=$RC_G2 out=$G2_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- G3: fresh Write, valid token + prose glued onto the value --
+  # BLOCKED, fix message shows the exact Status-note rewrite ----
+  G3_DIR="$TMPDIR_SELFTEST/g3/docs/plans"
+  mkdir -p "$G3_DIR"
+  G3_CONTENT=$'# G3 Plan\n\nStatus: DEFERRED (operator 2026-07-30: paused pending capacity)\n\n## Goal\n\nFixture.\n'
+  G3_JSON="$(jq -n --arg fp "$G3_DIR/g3-plan.md" --arg c "$G3_CONTENT" '{tool_name:"Write",tool_input:{file_path:$fp,content:$c}}')"
+  set +e
+  G3_OUT="$(printf '%s' "$G3_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G3=$?
+  set -e
+  if [[ "$RC_G3" -eq 1 ]] \
+     && printf '%s' "$G3_OUT" | grep -q "prose after the Status value" \
+     && printf '%s' "$G3_OUT" | grep -q "Status: DEFERRED$" \
+     && printf '%s' "$G3_OUT" | grep -q "Status-note: (operator 2026-07-30: paused pending capacity)"; then
+    echo "self-test (G3) fresh-write-prose-after-value-blocked-with-rewrite: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G3) fresh-write-prose-after-value-blocked-with-rewrite: FAIL (rc=$RC_G3 out=$G3_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- G4: Edit changing Status to a DIFFERENT valid, bare token --
+  # ALLOWED ----
+  G4_DIR="$TMPDIR_SELFTEST/g4/docs/plans"
+  mkdir -p "$G4_DIR"
+  printf '# G4 Plan\n\nStatus: ACTIVE\n\n## Goal\n\nFixture.\n' > "$G4_DIR/g4-plan.md"
+  G4_JSON="$(jq -n --arg fp "$G4_DIR/g4-plan.md" '{tool_name:"Edit",tool_input:{file_path:$fp,old_string:"Status: ACTIVE",new_string:"Status: REFERENCE"}}')"
+  set +e
+  G4_OUT="$(printf '%s' "$G4_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G4=$?
+  set -e
+  if [[ "$RC_G4" -eq 0 ]]; then
+    echo "self-test (G4) edit-to-different-valid-bare-token-allowed: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G4) edit-to-different-valid-bare-token-allowed: FAIL (rc=$RC_G4 out=$G4_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- G5: Edit changing Status to an unrecognized token that ALSO
+  # carries trailing prose -- the enum check must fire (and its message),
+  # not the prose-after-value message, since the token itself is unknown ----
+  G5_DIR="$TMPDIR_SELFTEST/g5/docs/plans"
+  mkdir -p "$G5_DIR"
+  printf '# G5 Plan\n\nStatus: ACTIVE\n\n## Goal\n\nFixture.\n' > "$G5_DIR/g5-plan.md"
+  G5_JSON="$(jq -n --arg fp "$G5_DIR/g5-plan.md" '{tool_name:"Edit",tool_input:{file_path:$fp,old_string:"Status: ACTIVE",new_string:"Status: NORMATIVE for Wave O builders (see spec appendix C)"}}')"
+  set +e
+  G5_OUT="$(printf '%s' "$G5_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G5=$?
+  set -e
+  if [[ "$RC_G5" -eq 1 ]] && printf '%s' "$G5_OUT" | grep -q "not in the canonical enum"; then
+    echo "self-test (G5) edit-unrecognized-token-with-prose-blocked-as-enum-error: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G5) edit-unrecognized-token-with-prose-blocked-as-enum-error: FAIL (rc=$RC_G5 out=$G5_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- G6: Edit whose old_string/new_string carries an UNCHANGED legacy
+  # freelanced (invalid) Status: line as pure surrounding context, while
+  # actually changing an unrelated line in the same span -- GRANDFATHERED,
+  # must NOT block. This is the mutation-sensitive scenario: if the
+  # unchanged-vs-changed comparison in the Edit branch is deleted, this
+  # freelanced line would be (re-)validated and wrongly BLOCK. ----
+  G6_DIR="$TMPDIR_SELFTEST/g6/docs/plans"
+  mkdir -p "$G6_DIR"
+  printf '# G6 Plan\n\nStatus: DEFERRED (operator 2026-07-30: legacy freelanced note)\n\n## Goal\n\nOriginal goal text.\n' > "$G6_DIR/g6-plan.md"
+  G6_OLD=$'Status: DEFERRED (operator 2026-07-30: legacy freelanced note)\n\n## Goal\n\nOriginal goal text.'
+  G6_NEW=$'Status: DEFERRED (operator 2026-07-30: legacy freelanced note)\n\n## Goal\n\nRevised goal text, unrelated to Status.'
+  G6_JSON="$(jq -n --arg fp "$G6_DIR/g6-plan.md" --arg o "$G6_OLD" --arg n "$G6_NEW" '{tool_name:"Edit",tool_input:{file_path:$fp,old_string:$o,new_string:$n}}')"
+  set +e
+  G6_OUT="$(printf '%s' "$G6_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G6=$?
+  set -e
+  if [[ "$RC_G6" -eq 0 ]]; then
+    echo "self-test (G6) edit-unchanged-legacy-status-in-context-grandfathered: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G6) edit-unchanged-legacy-status-in-context-grandfathered: FAIL (rc=$RC_G6 out=$G6_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- G7: existing-file Write carrying the SAME legacy freelanced
+  # Status: line through an otherwise-unrelated full-file overwrite --
+  # GRANDFATHERED, must NOT block. Same mutation-sensitivity rationale
+  # as G6, for the Write branch's old-vs-new comparison. ----
+  G7_DIR="$TMPDIR_SELFTEST/g7/docs/plans"
+  mkdir -p "$G7_DIR"
+  printf '# G7 Plan\n\nStatus: REFERENCE (spec appendix B)\n\n## Goal\n\nOriginal.\n' > "$G7_DIR/g7-plan.md"
+  G7_CONTENT=$'# G7 Plan\n\nStatus: REFERENCE (spec appendix B)\n\n## Goal\n\nRevised, unrelated to Status.\n'
+  G7_JSON="$(jq -n --arg fp "$G7_DIR/g7-plan.md" --arg c "$G7_CONTENT" '{tool_name:"Write",tool_input:{file_path:$fp,content:$c}}')"
+  set +e
+  G7_OUT="$(printf '%s' "$G7_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G7=$?
+  set -e
+  if [[ "$RC_G7" -eq 0 ]]; then
+    echo "self-test (G7) write-unchanged-legacy-status-through-overwrite-grandfathered: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G7) write-unchanged-legacy-status-through-overwrite-grandfathered: FAIL (rc=$RC_G7 out=$G7_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- G8: existing-file Write where Status ACTUALLY CHANGES to a
+  # prose-laden value -- BLOCKED (the grandfather only covers UNCHANGED
+  # values, never a genuine transition) ----
+  G8_DIR="$TMPDIR_SELFTEST/g8/docs/plans"
+  mkdir -p "$G8_DIR"
+  printf '# G8 Plan\n\nStatus: ACTIVE\n\n## Goal\n\nOriginal.\n' > "$G8_DIR/g8-plan.md"
+  G8_CONTENT=$'# G8 Plan\n\nStatus: DEFERRED (operator note, no schema edit)\n\n## Goal\n\nOriginal.\n'
+  G8_JSON="$(jq -n --arg fp "$G8_DIR/g8-plan.md" --arg c "$G8_CONTENT" '{tool_name:"Write",tool_input:{file_path:$fp,content:$c}}')"
+  set +e
+  G8_OUT="$(printf '%s' "$G8_JSON" | CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G8=$?
+  set -e
+  if [[ "$RC_G8" -eq 1 ]] && printf '%s' "$G8_OUT" | grep -q "prose after the Status value"; then
+    echo "self-test (G8) write-status-changes-to-prose-laden-value-blocked: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G8) write-status-changes-to-prose-laden-value-blocked: FAIL (rc=$RC_G8 out=$G8_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- G9: schema file missing/unreadable -- FAIL OPEN (never blocks a
+  # plan write because the harness's own schema file is absent), proven
+  # against an obviously-bogus token that WOULD block if the schema were
+  # present (see G2) ----
+  G9_DIR="$TMPDIR_SELFTEST/g9/docs/plans"
+  mkdir -p "$G9_DIR"
+  G9_CONTENT=$'# G9 Plan\n\nStatus: TOTALLY_MADE_UP\n\n## Goal\n\nFixture.\n'
+  G9_JSON="$(jq -n --arg fp "$G9_DIR/g9-plan.md" --arg c "$G9_CONTENT" '{tool_name:"Write",tool_input:{file_path:$fp,content:$c}}')"
+  set +e
+  G9_OUT="$(printf '%s' "$G9_JSON" | PLAN_STATUS_SCHEMA_PATH="$TMPDIR_SELFTEST/does-not-exist-schema.json" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_G9=$?
+  set -e
+  if [[ "$RC_G9" -eq 0 ]]; then
+    echo "self-test (G9) missing-schema-fails-open: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (G9) missing-schema-fails-open: FAIL (rc=$RC_G9 out=$G9_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 33 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 42 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -2618,6 +2814,196 @@ emit_flip_ledger_event() {
   return 0
 }
 
+# ============================================================
+# Status enum + Status-note write-time gate ("the class", operator
+# directive 2026-08-04: "I want to get all these unknown states rectified
+# so that I can actually keep track of the actual status of everything")
+# ============================================================
+#
+# Extends this hook's PRE-EXISTING Status: header handling (the
+# Status:ACTIVE|DEFERRED -> COMPLETED evidence-gate a few dozen lines
+# below) with a second, independent check: every Status: value THIS EDIT
+# or WRITE actually introduces or changes must be one of the 8 canonical
+# tokens in adapters/claude-code/schemas/plan-status.schema.json — read
+# fresh here on every invocation, never a hardcoded second copy of the
+# enum. Prose glued onto the Status: value itself (the freelanced shape
+# this class exists to kill — "DEFERRED (operator 2026-07-30: ...)",
+# "REFERENCE (spec appendix...)", "NORMATIVE for Wave O builders (...)")
+# is blocked with a fix message showing the exact two-line rewrite: a bare
+# "Status: <TOKEN>" plus the prose relocated verbatim to a "Status-note:"
+# line immediately after (the schema's status_note.header).
+#
+# GRANDFATHER, matching this exact codebase's own established design for
+# this exact tension (plan-reviewer.sh Check 19's honest_status in
+# manifest.json: "blocking 46 pre-existing plans on next edit is the
+# trust-erosion shape that turns a Mechanism into an override habit"):
+# this check fires ONLY when the Status: line is being introduced or
+# CHANGED by the operation in front of it, never merely carried through
+# unchanged as incidental context in an unrelated edit/overwrite. See
+# pev_should_validate_status_edit / the Write-path old-vs-new comparisons
+# below for the exact mechanics. A plan that already carries one of the
+# 30 freelanced Status values measured 2026-08-04 is NOT retroactively
+# blocked by an unrelated touch — only by a write that actually sets a
+# NEW Status: value.
+#
+# WRITE-TIME SCOPE (PROVEN, not assumed): this hook has no repo-scoping of
+# its own — FILE_PATH comes entirely from the tool_input JSON, resolved
+# against docs/plans/*.md by pattern match only (see the FILE_PATH_NORM
+# check near the top of this file). install.sh syncs adapters/claude-code/
+# schemas/ to ~/.claude/schemas/ unconditionally (install.sh:770-771 +
+# :1506-1507, sync_directory with no per-file allowlist) the same way it
+# syncs hooks/ to ~/.claude/hooks/ — so the SAME installed
+# ~/.claude/hooks/plan-edit-validator.sh, reading the SAME installed
+# ~/.claude/schemas/plan-status.schema.json, gates a docs/plans/*.md
+# write in ANY repo on this machine once install.sh has run there,
+# including sibling repos outside this checkout entirely — this is the
+# same mechanism every other hook in this settings.json chain already
+# relies on, not something new built for this check.
+#
+# GOLDEN SCENARIO (constitution S10 evidence bar): the ~11 cockpit
+# "status unknown — plan parse failed (unrecognized Status: ...)" chips
+# this class was opened to fix, and the corpus census behind them (30
+# freelanced Status files measured 2026-08-04 across this repo and a
+# sibling repo on this machine: this repo — 13x DEFERRED, 3x ACTIVE, 5x
+# "REFERENCE (spec appendix...)", 1x "NORMATIVE for Wave O builders
+# (...)", 1x "DEFERRED (operator 2026-07-30: ...)"; the sibling repo —
+# 20x ACTIVE, 6x DRAFT, 1x PROPOSED, 2x PROPOSAL-variant prose, 2x
+# "DRAFT -- <prose>"). A write-time gate cannot rewrite files nobody is
+# editing —
+# migrating those 30 files to the canonical vocabulary is a separate,
+# already-tracked concern; THIS check's evidence is that it stops a 31st
+# freelanced value from ever landing again, and self-tests G1-G8 below
+# prove that mechanically (schema-missing fail-open included).
+#
+# FP EXPECTATION: a genuinely NEW status word requires a schema edit
+# (adapters/claude-code/schemas/plan-status.schema.json) landed and
+# installed FIRST, before any plan can declare it — that friction is
+# deliberate, not a bug. The whole point of this class is that Status is
+# a closed, reviewed enum, never a plan-author's unilateral word choice;
+# a legitimate plan author hitting this block for a real new lifecycle
+# concept is expected to open the schema-edit conversation, not reword
+# around the gate. Legitimate edits that never touch the Status: value at
+# all (the overwhelming majority of plan edits) never invoke this check —
+# see the grandfather note above.
+#
+# RETIREMENT CONDITION: retire this check if plan-status.schema.json's
+# enum is ever superseded by a different enforcement mechanism (e.g. the
+# cockpit's own KNOWN_PLAN_STATUS_TOKENS in roadmap-routes.js becomes
+# schema-driven with its own write path), or if the operator decides
+# Status free-text is wanted after all. Neither is true as of 2026-08-04.
+PLAN_STATUS_SCHEMA="${PLAN_STATUS_SCHEMA_PATH:-$_PEV_SELF_DIR/../schemas/plan-status.schema.json}"
+
+# pev_status_schema_tokens — newline-separated valid Status: tokens read
+# fresh from PLAN_STATUS_SCHEMA, or empty output (rc 1) if the schema is
+# missing/unreadable/malformed. Callers MUST fail OPEN on empty output
+# (see pev_validate_status_line below) — a missing/broken schema file is
+# a harness defect, never a reason to block a plan author's write. No
+# caching: this hook already shells out to jq per line elsewhere in this
+# file; one more small jq call is not a meaningfully different cost, and
+# a stale in-memory enum surviving a schema edit would be a worse defect
+# than the extra process spawn.
+pev_status_schema_tokens() {
+  [[ -f "$PLAN_STATUS_SCHEMA" ]] || return 1
+  jq -r '.statuses[].token' "$PLAN_STATUS_SCHEMA" 2>/dev/null
+}
+
+# pev_validate_status_line <status_line> <context_label>
+#   <status_line>  — the exact "Status: ..." line text as it would land in
+#                    the file (may include trailing prose — that is
+#                    exactly what this validates against).
+#   <context_label> — "Edit" or "Write", used only in the block message.
+# Returns 0 (pass — including the fail-open "no schema" and "no value"
+# cases) or exits the whole hook with 1 (block), printing a self-contained
+# fix message. Callers do not need to check a return code; this matches
+# the file's existing inline-block idiom (see the Status:COMPLETED check
+# immediately below this function for the same pattern).
+pev_validate_status_line() {
+  local status_line="$1" context_label="$2"
+  local raw_value token rest valid_tokens
+  raw_value="${status_line#Status:}"
+  raw_value="$(printf '%s' "$raw_value" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  # "Status:" with no value at all is a different, pre-existing problem
+  # (Check 10 in plan-reviewer.sh, which is Status-gated and runs at
+  # commit time) — not this write-time check's concern.
+  [[ -z "$raw_value" ]] && return 0
+
+  read -r token rest <<< "$raw_value"
+
+  # NOTE: `|| true` is required here, not decorative — this file runs
+  # under `set -e` (line 40), and `var=$(failing_cmd)` DOES trigger
+  # errexit on the surrounding script even though the failure is fully
+  # handled by the `-z "$valid_tokens"` check two lines down (the same
+  # pitfall this file's own OLD_CHECKED/NEW_CHECKED lines already guard
+  # against elsewhere with an explicit `|| echo "0"`). Without this guard,
+  # a MISSING schema file would silently `exit 1` the whole hook via
+  # errexit instead of reaching the documented fail-open path below —
+  # exactly backwards from the intended behavior. Covered by self-test G9.
+  valid_tokens="$(pev_status_schema_tokens 2>/dev/null || true)"
+  if [[ -z "$valid_tokens" ]]; then
+    # Schema missing/unreadable/malformed — fail OPEN, see the function
+    # comment above. Never block a plan write because the harness's own
+    # schema file is absent.
+    return 0
+  fi
+
+  if ! printf '%s\n' "$valid_tokens" | grep -qxF "$token"; then
+    cat >&2 <<ERR
+
+================================================================
+PLAN ${context_label^^} BLOCKED — Status value not in the canonical enum
+================================================================
+
+  $status_line
+
+"$token" is not a recognized plan Status. The canonical enum (schema:
+adapters/claude-code/schemas/plan-status.schema.json) is:
+
+$(printf '%s\n' "$valid_tokens" | sed 's/^/  - /')
+
+Fix: pick the ONE token above that matches this plan's real lifecycle
+state and rewrite the header line to exactly:
+
+  Status: <TOKEN>
+
+If this plan genuinely needs a status word that is not on this list,
+that is a real (reviewed) vocabulary change: edit
+adapters/claude-code/schemas/plan-status.schema.json first (adds the
+token to the enum), then use the new token here.
+
+This gate: ~/.claude/hooks/plan-edit-validator.sh (source: adapters/claude-code/hooks/plan-edit-validator.sh)
+ERR
+    exit 1
+  fi
+
+  if [[ -n "$rest" ]]; then
+    cat >&2 <<ERR
+
+================================================================
+PLAN ${context_label^^} BLOCKED — prose after the Status value
+================================================================
+
+  $status_line
+
+"$token" is a valid Status token, but there is text after it on the
+same line ("$rest"). Prose belongs on its own Status-note: line, not
+glued onto Status: — every consumer that reads a bare Status: token
+(plan-lifecycle.sh's extract_status, plan-parse.js's parsePlanStatus,
+the cockpit's roadmap-routes.js) expects exactly one of the 8 canonical
+tokens there, nothing else.
+
+Fix: rewrite as two lines:
+
+  Status: $token
+  Status-note: $rest
+
+This gate: ~/.claude/hooks/plan-edit-validator.sh (source: adapters/claude-code/hooks/plan-edit-validator.sh)
+ERR
+    exit 1
+  fi
+
+  return 0
+}
+
 # For Edit calls: look at old_string vs new_string
 if [[ "$TOOL_NAME" == "Edit" ]]; then
   if [[ "$HAS_NESTED" == "true" ]]; then
@@ -2755,6 +3141,20 @@ ERR
     fi
   fi
 
+  # Status enum + prose-after-value check (see the function's own header
+  # comment above for the full design). GRANDFATHER: only fires when the
+  # Status: line this edit produces actually DIFFERS from whatever Status:
+  # line (if any) was already present in old_string — an edit whose
+  # old_string/new_string span happens to carry an UNCHANGED Status: line
+  # merely as surrounding context (e.g. a multi-line replace touching a
+  # different field) must never retroactively block on a pre-existing
+  # legacy plan's freelanced value it isn't even trying to change.
+  OLD_STATUS_IN_EDIT=$(printf '%s\n' "$OLD_STR" | grep -E '^Status:' | head -1)
+  NEW_STATUS_IN_EDIT=$(printf '%s\n' "$NEW_STR" | grep -E '^Status:' | head -1)
+  if [[ -n "$NEW_STATUS_IN_EDIT" ]] && [[ "$NEW_STATUS_IN_EDIT" != "$OLD_STATUS_IN_EDIT" ]]; then
+    pev_validate_status_line "$NEW_STATUS_IN_EDIT" "Edit"
+  fi
+
   # Also block Status: <non-COMPLETED> → Status: COMPLETED transitions
   # unless an evidence file already exists for the plan
   if echo "$OLD_STR" | grep -qE '^Status:\s*(ACTIVE|DEFERRED)'; then
@@ -2807,6 +3207,12 @@ if [[ "$TOOL_NAME" == "Write" ]]; then
     # the existing exit 0 below); in --check mode, reports would-warn/
     # would-pass and stops here.
     _pev_check_mode_report_and_exit
+    # Status enum + prose-after-value check: a brand-new plan file has no
+    # grandfather (there is nothing pre-existing to compare against) — any
+    # Status: line it declares is being introduced fresh, so validate it
+    # unconditionally when present.
+    NEW_STATUS_IN_WRITE=$(printf '%s\n' "$NEW_CONTENT" | grep -E '^Status:' | head -1)
+    [[ -n "$NEW_STATUS_IN_WRITE" ]] && pev_validate_status_line "$NEW_STATUS_IN_WRITE" "Write"
     exit 0
   fi
 
@@ -2844,6 +3250,18 @@ To resolve: invoke the task-verifier agent via the Task tool.
 
 ERR
     exit 1
+  fi
+
+  # Status enum + prose-after-value check, GRANDFATHERED the same way as
+  # the Edit-path check above: only fires when the Status: line this Write
+  # would leave on disk actually DIFFERS from the Status: line already on
+  # disk today — a Write that overwrites the whole file for an unrelated
+  # reason but carries a pre-existing legacy freelanced Status value
+  # through unchanged is never retroactively blocked by this check.
+  OLD_STATUS_ON_DISK=$(grep -E '^Status:' "$FILE_PATH" 2>/dev/null | head -1)
+  NEW_STATUS_IN_WRITE=$(printf '%s\n' "$NEW_CONTENT" | grep -E '^Status:' | head -1)
+  if [[ -n "$NEW_STATUS_IN_WRITE" ]] && [[ "$NEW_STATUS_IN_WRITE" != "$OLD_STATUS_ON_DISK" ]]; then
+    pev_validate_status_line "$NEW_STATUS_IN_WRITE" "Write"
   fi
 
   # Same Status-COMPLETED check for Write
