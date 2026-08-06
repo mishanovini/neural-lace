@@ -324,6 +324,93 @@ cmd_reconcile() {
 cmd_apply()   { cmd_reconcile "${2:---quiet}" >/dev/null 2>&1; cmd_reconcile; }
 cmd_restore() { cmd_reconcile "${2:---quiet}" >/dev/null 2>&1; cmd_reconcile; }
 
+# ---------------------------------------------------------------------------
+# resolve — THE QUERY-ONLY RESOLVER (operator directive 2026-08-05: "the
+# review agents are supposed to default to Fable and fall back to Opus ...
+# implement it mechanically"). apply/reconcile above answer the same
+# question but MUTATE agents/*.md; this answers it as a pure query so a
+# CALLER (dispatch-directives.sh, a gate's block message) can print "use
+# THIS model right now" without touching any file.
+#
+# Walks the FULL declared chain (config/model-policy.json's agents.<name>
+# .chain, or categories.<cat>.chain if no per-agent chain exists) and
+# returns the first tier NOT currently marked exhausted -- reusing the
+# SAME cmd_is_exhausted/cmd_reason this file already exposes (one
+# exhaustion parser, not two) and the SAME jq-over-model-policy.json idiom
+# cmd_fallback_for already uses (one policy parser, not two).
+#
+# usage: resolve --agent <agent-name> | --category <category-name>
+# stdout on success (rc 0):
+#   RESOLVED_MODEL=<tier>
+#   RESOLVED_REASON=<human-readable: which tiers were skipped and why>
+# stderr + rc 2 on failure -- NEVER a silent default (operator directive:
+# "sick and tired of Claude making assumptions ... based on those
+# assumptions" applies here too -- an unresolvable chain must be LOUD, not
+# quietly absorbed into "well I'll just pick something"):
+#   - the named agent/category has no chain declared in model-policy.json
+#     (unknown or genuinely empty chain)
+#   - every tier in the chain is currently marked exhausted
+cmd_resolve() {
+  local mode="${1:-}" name="${2:-}"
+  local policy="$_MA_SELF_DIR/../config/model-policy.json"
+  [[ -r "$policy" ]] || { echo "model-availability resolve: FAIL -- policy not found at $policy" >&2; return 2; }
+  command -v jq >/dev/null 2>&1 || { echo "model-availability resolve: FAIL -- jq not available" >&2; return 2; }
+
+  local chain_json=""
+  case "$mode" in
+    --agent)
+      [[ -n "$name" ]] || { echo "model-availability resolve: FAIL -- --agent requires a name" >&2; return 2; }
+      chain_json="$(jq -c --arg n "$name" '.agents[$n].chain // empty' "$policy" 2>/dev/null)"
+      if [[ -z "$chain_json" || "$chain_json" == "null" || "$chain_json" == "[]" ]]; then
+        local cat; cat="$(jq -r --arg n "$name" '.agents[$n].category // empty' "$policy" 2>/dev/null)"
+        [[ -n "$cat" ]] && chain_json="$(jq -c --arg c "$cat" '.categories[$c] // empty' "$policy" 2>/dev/null)"
+      fi
+      ;;
+    --category)
+      [[ -n "$name" ]] || { echo "model-availability resolve: FAIL -- --category requires a name" >&2; return 2; }
+      chain_json="$(jq -c --arg c "$name" '.categories[$c] // empty' "$policy" 2>/dev/null)"
+      ;;
+    *)
+      echo "model-availability resolve: FAIL -- usage: resolve --agent <name>|--category <name>" >&2
+      return 2
+      ;;
+  esac
+
+  if [[ -z "$chain_json" || "$chain_json" == "null" || "$chain_json" == "[]" ]]; then
+    echo "model-availability resolve: FAIL -- no chain declared for ${mode#--} '${name}' in $(basename "$policy") -- refusing to silently default" >&2
+    return 2
+  fi
+
+  local -a chain=()
+  # Windows jq emits CRLF even under `jq -r`; `read -r` only strips the
+  # trailing \n, so a bare `t` here would silently carry a `\r` and every
+  # tier comparison below (cmd_is_exhausted "$t", etc.) would miss (see
+  # reference_windows_jq_crlf_and_msys_symlink_copies -- the same class).
+  while IFS= read -r t; do
+    t="${t%$'\r'}"
+    [[ -n "$t" ]] && chain+=("$t")
+  done < <(printf '%s' "$chain_json" | jq -r '.[]' 2>/dev/null)
+  [[ "${#chain[@]}" -gt 0 ]] || { echo "model-availability resolve: FAIL -- empty chain for ${mode#--} '${name}' -- refusing to silently default" >&2; return 2; }
+
+  local t skipped_msg=""
+  for t in "${chain[@]}"; do
+    if cmd_is_exhausted "$t"; then
+      skipped_msg="${skipped_msg}${skipped_msg:+; }'${t}' observed exhausted (reason: $(cmd_reason "$t"))"
+      continue
+    fi
+    echo "RESOLVED_MODEL=${t}"
+    if [[ -z "$skipped_msg" ]]; then
+      echo "RESOLVED_REASON=chain[0] '${t}' fresh, using primary"
+    else
+      echo "RESOLVED_REASON=${skipped_msg}; using '${t}'"
+    fi
+    return 0
+  done
+
+  echo "model-availability resolve: FAIL -- every tier in ${mode#--} '${name}' chain (${chain[*]}) is currently marked exhausted (${skipped_msg}) -- refusing to silently default" >&2
+  return 2
+}
+
 _ma_self_test() {
   local P=0 F=0
   pass() { P=$((P+1)); echo "  PASS: $*"; }
@@ -399,6 +486,59 @@ _ma_self_test() {
     || fail "restore failed: got '$(_ma_pin_of "$AD/rev.md")'"
   unset MODEL_AVAIL_AGENTS_DIR
 
+  echo "Scenario 9: resolve -- chain[0] fresh -> chain[0] chosen"
+  cmd_clear fable >/dev/null 2>&1; cmd_clear opus >/dev/null 2>&1
+  OUT9="$(cmd_resolve --category review)"; RC9=$?
+  if [[ "$RC9" -eq 0 ]] && printf '%s' "$OUT9" | grep -q '^RESOLVED_MODEL=fable$'; then
+    pass "resolve --category review, nothing exhausted -> RESOLVED_MODEL=fable (chain[0])"
+  else
+    fail "resolve fresh-chain: rc=$RC9 out='$OUT9'"
+  fi
+
+  echo "Scenario 10: resolve -- chain[0] observed-exhausted WITHIN TTL -> chain[1] chosen with reason"
+  cmd_mark_exhausted fable --reason "self-test: within TTL" --hours 1 >/dev/null 2>&1
+  OUT10="$(cmd_resolve --category review)"; RC10=$?
+  if [[ "$RC10" -eq 0 ]] && printf '%s' "$OUT10" | grep -q '^RESOLVED_MODEL=opus$' && printf '%s' "$OUT10" | grep -qi "RESOLVED_REASON=.*fable.*exhausted"; then
+    pass "resolve --category review, fable exhausted -> RESOLVED_MODEL=opus, reason names fable"
+  else
+    fail "resolve within-TTL fallback: rc=$RC10 out='$OUT10'"
+  fi
+
+  echo "Scenario 11: resolve -- observation OLDER than TTL -> chain[0] retried"
+  # Write an already-EXPIRED marker directly (until_ts in the past), same
+  # technique as Scenario 4 -- avoids waiting out a real TTL.
+  printf '%s\t%s\t%s\n' "1" "1" "self-test: stale" > "$MODEL_AVAIL_STATE_DIR/fable"
+  OUT11="$(cmd_resolve --category review)"; RC11=$?
+  if [[ "$RC11" -eq 0 ]] && printf '%s' "$OUT11" | grep -q '^RESOLVED_MODEL=fable$'; then
+    pass "resolve --category review, EXPIRED fable marker -> retries chain[0] fable"
+  else
+    fail "resolve stale-TTL retry: rc=$RC11 out='$OUT11'"
+  fi
+  cmd_clear fable >/dev/null 2>&1
+
+  echo "Scenario 12: resolve -- unknown category -> loud failure, never a silent default"
+  cmd_resolve --category does-not-exist >/dev/null 2>&1
+  [[ $? -ne 0 ]] && pass "resolve --category does-not-exist -> non-zero rc" || fail "unknown category silently succeeded"
+
+  echo "Scenario 13: resolve -- unknown agent -> loud failure, never a silent default"
+  cmd_resolve --agent does-not-exist-agent >/dev/null 2>&1
+  [[ $? -ne 0 ]] && pass "resolve --agent does-not-exist-agent -> non-zero rc" || fail "unknown agent silently succeeded"
+
+  echo "Scenario 14: resolve -- EVERY tier in chain exhausted -> loud failure (distinct from unknown)"
+  cmd_mark_exhausted fable --reason "self-test: all-exhausted probe" --hours 1 >/dev/null 2>&1
+  cmd_mark_exhausted opus  --reason "self-test: all-exhausted probe" --hours 1 >/dev/null 2>&1
+  cmd_resolve --category review >/dev/null 2>&1
+  [[ $? -ne 0 ]] && pass "resolve --category review, EVERY tier exhausted -> non-zero rc" || fail "all-exhausted chain silently succeeded"
+  cmd_clear fable >/dev/null 2>&1; cmd_clear opus >/dev/null 2>&1
+
+  echo "Scenario 15: resolve --agent uses the agent's OWN chain (agents.<name>.chain), not a guess"
+  OUT15="$(cmd_resolve --agent task-verifier)"; RC15=$?
+  if [[ "$RC15" -eq 0 ]] && printf '%s' "$OUT15" | grep -q '^RESOLVED_MODEL=fable$'; then
+    pass "resolve --agent task-verifier -> RESOLVED_MODEL=fable (from real config/model-policy.json)"
+  else
+    fail "resolve --agent: rc=$RC15 out='$OUT15'"
+  fi
+
   rm -rf "$T"; unset MODEL_AVAIL_STATE_DIR
   echo
   echo "self-test summary: $P passed, $F failed"
@@ -417,8 +557,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     apply)          shift; cmd_apply "$@" ;;
     restore)        shift; cmd_restore "$@" ;;
     reconcile)      shift; cmd_reconcile "$@" ;;
+    resolve)        shift; cmd_resolve "$@" ;;
     --self-test)    _ma_self_test ;;
-    *) echo "usage: model-availability.sh {mark-exhausted|is-exhausted|clear|reason|fallback-for|status|apply|restore|reconcile|--self-test}" >&2; exit 2 ;;
+    *) echo "usage: model-availability.sh {mark-exhausted|is-exhausted|clear|reason|fallback-for|status|apply|restore|reconcile|resolve|--self-test}" >&2; exit 2 ;;
   esac
   exit $?
 fi
