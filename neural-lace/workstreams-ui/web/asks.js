@@ -587,7 +587,20 @@
       head.appendChild(noDoc);
     }
     block.appendChild(head);
-    if (!row.tasks || row.tasks.length === 0) {
+    // NAMED ABSENCE, local drill-down (cross-machine-plan-inventory defect
+    // 2). This branch used to say "no tasks found for this plan" for BOTH a
+    // genuinely empty plan and one this machine could not read — the same
+    // conflation the export carried. computePlanRows now labels which it is,
+    // so say which it is.
+    if (!Array.isArray(row.tasks)) {
+      var unread = document.createElement('div');
+      unread.className = 'pane-empty ask-plan-unreadable';
+      unread.textContent = 'plan file could not be read (' + (row.plan_state || 'unknown') + ')' +
+        (row.plan_state_reason ? ' — ' + row.plan_state_reason : '');
+      block.appendChild(unread);
+      return block;
+    }
+    if (row.tasks.length === 0) {
       var empty = document.createElement('div');
       empty.className = 'pane-empty ask-plan-empty';
       empty.textContent = 'no tasks found for this plan';
