@@ -263,6 +263,41 @@ function myCoordRefresh(cloneDir) {
 // throws (every sub-step above is already fail-open); returns a payload
 // shape server/payload-schema.js's LANDING_ALLOWED_KEYS validates.
 // ----------------------------------------------------------------------
+// PLAN_INVENTORY_SCHEMA_VERSION — the first export version whose plan rows
+// carry a NAMED plan_state. A row from any earlier version cannot be read
+// as 'parsed' without re-introducing the exact defect that version fixed
+// (an unreadable plan rendering as a healthy 0/0), so it is given its own
+// honest label instead. A host self-heals on its next export cycle.
+const PLAN_INVENTORY_SCHEMA_VERSION = 2;
+
+function planStateOf(p, schemaVersion) {
+  if (schemaVersion < PLAN_INVENTORY_SCHEMA_VERSION) return 'legacy-unlabelled';
+  return (typeof p.plan_state === 'string' && p.plan_state) ? p.plan_state : 'unknown';
+}
+
+function planStateReasonOf(p, schemaVersion) {
+  if (schemaVersion < PLAN_INVENTORY_SCHEMA_VERSION) {
+    return 'exported by an older client that predates named plan states — no claim either way about this plan';
+  }
+  if (typeof p.plan_state === 'string' && p.plan_state) return String(p.plan_state_reason || '');
+  return 'export carried no plan_state field';
+}
+
+// scanCoverageOf(scan) — the compact, operator-readable projection of the
+// writer's provenance.scan. A peer that predates it (or any peer whose
+// exporter could not read its own config) reports projects_config
+// 'unknown' — a named state, never a guessed 1.
+function scanCoverageOf(scan) {
+  const s = scan && typeof scan === 'object' ? scan : null;
+  if (!s) return { repos: 0, projects_config: 'unknown', completed_age_days: 0, stale_links_omitted: 0 };
+  return {
+    repos: Array.isArray(s.repo_roots) ? s.repo_roots.filter((r) => r && r.present).length : 0,
+    projects_config: typeof s.projects_config === 'string' && s.projects_config ? s.projects_config : 'unknown',
+    completed_age_days: Number(s.completed_age_days) || 0,
+    stale_links_omitted: Number(s.stale_links_omitted) || 0,
+  };
+}
+
 function computePeerView(opts) {
   opts = opts || {};
   const cloneDir = opts.cloneDir || coordCloneDir();
@@ -284,6 +319,7 @@ function computePeerView(opts) {
     const receivedIso = f.receivedAt.toISOString();
     const provenance = (f.payload && f.payload.provenance) || {};
     const plans = Array.isArray(f.payload.plans) ? f.payload.plans : [];
+    const schemaVersion = Number(f.payload && f.payload.schema_version) || 0;
     const sessions = Array.isArray(f.payload.sessions) ? f.payload.sessions : [];
     return {
       host: f.host,
@@ -298,12 +334,35 @@ function computePeerView(opts) {
       dirty: !!provenance.dirty,
       head_sha: provenance.head_sha || '',
       unmerged: isUnmerged(provenance),
+      // What this peer actually scanned — a DECLARED state, so a host with
+      // fewer plans reads as "scans 1 repo" rather than leaving the
+      // operator to infer why its list is shorter. config/projects.json is
+      // gitignored and machine-local, so this difference is legitimate;
+      // only a SILENT difference is not.
+      scan_coverage: scanCoverageOf(provenance.scan),
       plans: plans.map((p) => ({
         plan_slug: p.plan_slug || '',
         plan_doc: p.plan_doc || null,
         repo: p.repo || '',
-        plan_progress: p.progress || { done: 0, in_flight: 0, not_started: 0, total: 0 },
-        tasks: Array.isArray(p.tasks) ? p.tasks.map((t) => ({ id: t.id, done: !!t.done, in_flight: !!t.in_flight })) : [],
+        archived: !!p.archived,
+        discovery: p.discovery || '',
+        // NAMED ABSENCE, READER HALF (cross-machine-plan-inventory defect
+        // 2). This projection used to re-launder on read — `p.progress || {
+        // done:0,... }` and `Array.isArray(p.tasks) ? ... : []` — so fixing
+        // only the writer would have killed the named state right here and
+        // the operator would still have seen a healthy 0/0 for a plan this
+        // machine could not read.
+        //
+        // A schema_version < 2 export predates plan_state entirely. It is
+        // NOT defaulted to 'parsed': that is exactly the laundering being
+        // removed. It gets its own named state instead, and self-heals on
+        // that host's next export.
+        plan_state: planStateOf(p, schemaVersion),
+        plan_state_reason: planStateReasonOf(p, schemaVersion),
+        // INVARIANT PRESERVED ACROSS THE TRANSPORT: null, never a
+        // fabricated zero, whenever the writer could not read the plan.
+        plan_progress: Array.isArray(p.tasks) ? (p.progress || null) : null,
+        tasks: Array.isArray(p.tasks) ? p.tasks.map((t) => ({ id: t.id, done: !!t.done, in_flight: !!t.in_flight })) : null,
         // F4/requirement 8: EVERY peer plan row always carries this label —
         // never a bare checkbox that could read as local truth.
         provenance_label: provenanceLabel(ageMs, f.host, provenance),
@@ -472,6 +531,49 @@ async function selfTest() {
       view8.entries[0].sessions[0].state === 'fresh');
     ok('8e. a fresh receive (just wrote the fixture) classifies fresh-ish',
       view8.entries[0].state === 'fresh-ish');
+    // 8f: the schema-1 fixture above predates named plan states. It must NOT
+    // be read as 'parsed' — this projection used to launder on READ
+    // (`p.progress || {done:0,...}`, `Array.isArray(p.tasks) ? ... : []`),
+    // so a writer-only fix would have died right here and the operator would
+    // still have seen a healthy 0/0.
+    ok('8f. a schema_version:1 peer row is labelled "legacy-unlabelled", never silently promoted to "parsed"',
+      view8.entries[0].plans[0].plan_state === 'legacy-unlabelled' &&
+      (view8.entries[0].plans[0].plan_state_reason || '').length > 0,
+      JSON.stringify(view8.entries[0].plans[0]));
+
+    // ---- Scenario 8g-8i (cross-machine-plan-inventory): a schema-2 peer.
+    // The named absence has to survive the TRANSPORT, not just the writer.
+    const s8b = path.join(tmp, 's8b-clone');
+    const s8bdir = planExportDir(s8b);
+    fs.mkdirSync(s8bdir, { recursive: true });
+    fs.writeFileSync(path.join(s8bdir, 'peer-v2.json'), JSON.stringify({
+      schema_version: 2,
+      provenance: {
+        hostname: 'peer-v2', branch: 'master', head_sha: 'bbb222', dirty: false,
+        scan: { root: '/v2/repo', projects_config: 'malformed', completed_age_days: 7, stale_links_omitted: 5, repo_roots: [{ key: 'self', root: '/v2/repo', present: true }] },
+      },
+      plans: [
+        { plan_slug: 'good-plan', plan_doc: null, repo: '/v2/repo', archived: false, discovery: 'scan', plan_state: 'parsed', plan_state_reason: '', tasks: [{ id: '1', done: true, in_flight: false }], progress: { done: 1, in_flight: 0, not_started: 0, total: 1, unknown_rows: 0 } },
+        { plan_slug: 'empty-but-real', plan_doc: null, repo: '/v2/repo', archived: false, discovery: 'scan', plan_state: 'parsed', plan_state_reason: '', tasks: [], progress: { done: 0, in_flight: 0, not_started: 0, total: 0, unknown_rows: 0 } },
+        { plan_slug: 'gone-plan', plan_doc: null, repo: '/v2/repo', archived: false, discovery: 'ask-link', plan_state: 'unresolvable', plan_state_reason: 'no plan file at docs/plans/ or docs/plans/archive/', tasks: null, progress: null },
+      ],
+      sessions: [],
+    }));
+    const view8b = computePeerView({ cloneDir: s8b, selfHost: 'self-host' });
+    const rows8b = view8b.entries[0].plans;
+    ok('8g. a schema-2 UNRESOLVABLE row keeps tasks:null and plan_progress:null across the transport — the reader never re-fabricates the healthy 0/0 the writer refused to claim',
+      rows8b[2].plan_state === 'unresolvable' && rows8b[2].tasks === null &&
+      rows8b[2].plan_progress === null && rows8b[2].plan_state_reason.length > 0,
+      JSON.stringify(rows8b[2]));
+    ok('8h. ...while a GENUINELY empty plan still reads as a healthy zero (parsed, tasks:[], total 0) — absence and emptiness stay distinguishable after the round trip',
+      rows8b[1].plan_state === 'parsed' && Array.isArray(rows8b[1].tasks) &&
+      rows8b[1].tasks.length === 0 && rows8b[1].plan_progress.total === 0,
+      JSON.stringify(rows8b[1]));
+    ok('8i. scan_coverage surfaces the peer\'s DECLARED scan state, including a malformed projects config (never collapsed into "just one repo")',
+      view8b.entries[0].scan_coverage.projects_config === 'malformed' &&
+      view8b.entries[0].scan_coverage.repos === 1 &&
+      view8b.entries[0].scan_coverage.stale_links_omitted === 5,
+      JSON.stringify(view8b.entries[0].scan_coverage));
 
     // ---- Scenario 9: computePeerView on an entirely empty/absent clone ->
     // has_data:false (the "no data yet" collapse state), never a crash.

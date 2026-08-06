@@ -1682,13 +1682,51 @@ async function main() {
     fs.utimesSync(fetchHeadFixture, fiveMinAgo, fiveMinAgo);
 
     // fresh peer, unmerged branch (build/peer-feature): 1 done + 1 in-flight task.
+    //
+    // SCHEMA 2 (cross-machine-plan-inventory). This fixture is deliberately
+    // the SHAPE THAT USED TO 500 THE COCKPIT, because every unit suite goes
+    // green while it does: export-state's self-test never builds a landing
+    // payload, and peer-view's calls computePeerView directly, bypassing
+    // validateLanding entirely. The failure only ever appeared on a LIVE
+    // cockpit serving /api/asks with a real peer file present — i.e. on the
+    // second machine to sync — which is exactly the cross-machine scenario
+    // the whole change exists to fix. This scenario is the only place that
+    // catches it, so the fixture carries all three landmines at once:
+    //
+    //   1. a POPULATED plan_doc {project, path}. `path` was missing from
+    //      payload-schema's LANDING_ALLOWED_KEYS, so the recursive walk
+    //      failed on plan_doc.path and server.js turned that into a 500 —
+    //      blanking the cockpit's landing view. This was ALREADY happening
+    //      in production before this round (one peer had a populated
+    //      plan_doc); it is fixed, and this fixture keeps it fixed.
+    //   2. a plan_slug containing "-gate", which the anti-noise denylist
+    //      matches (/[a-z0-9_-]*-gate\b/i). Plan slugs are FILENAME STEMS
+    //      and routinely name mechanisms; measured on a real machine, 4 of
+    //      29 plans trip this. Now that the export ships the whole scanned
+    //      inventory rather than a couple of ask-linked slugs, an
+    //      un-exempted plan_slug would make the 500 the steady state.
+    //   3. a NON-PARSED row, carrying the named-absence fields end to end.
     fs.writeFileSync(path.join(peerExportDir, 'host-fresh.json'), JSON.stringify({
-      schema_version: 1,
-      provenance: { hostname: 'host-fresh', branch: 'build/peer-feature', head_sha: 'deadbeef1234', dirty: false },
+      schema_version: 2,
+      provenance: {
+        hostname: 'host-fresh', branch: 'build/peer-feature', head_sha: 'deadbeef1234', dirty: false,
+        scan: {
+          root: '/peer/repo', projects_config: 'loaded', completed_age_days: 7, stale_links_omitted: 3,
+          repo_roots: [{ key: 'self', root: '/peer/repo', present: true }, { key: 'other', root: '/peer/other', present: false }],
+        },
+      },
       plans: [{
-        repo: '/peer/repo', plan_slug: 'peer-fixture-plan', plan_doc: null,
+        repo: '/peer/repo', plan_slug: 'peer-fixture-plan',
+        plan_doc: { project: 'peer-project', path: 'docs/plans/peer-fixture-plan.md' },
+        archived: false, discovery: 'scan', plan_state: 'parsed', plan_state_reason: '',
         tasks: [{ id: '1', done: true, in_flight: false, evidence_link: '' }, { id: '2', done: false, in_flight: true, evidence_link: '' }],
-        progress: { done: 1, in_flight: 1, not_started: 0, total: 2 },
+        progress: { done: 1, in_flight: 1, not_started: 0, total: 2, unknown_rows: 0 },
+      }, {
+        repo: '/peer/repo', plan_slug: 'review-gate-identity-anchor-2026-07-30',
+        plan_doc: { project: 'peer-project', path: 'docs/plans/review-gate-identity-anchor-2026-07-30.md' },
+        archived: true, discovery: 'ask-link', plan_state: 'unresolvable',
+        plan_state_reason: 'no plan file at docs/plans/ or docs/plans/archive/ under repo "/peer/repo"',
+        tasks: null, progress: null,
       }],
       sessions: [{ session_id: 'peer-sess-1', role: 'dispatcher', resumed_from: '', plan_slug: 'peer-fixture-plan', task_id: '2', last_heartbeat_at: new Date().toISOString(), branch: 'build/peer-feature', repo_root: '/peer/repo', worktree_root: '/peer/repo' }],
       exported_at: new Date().toISOString(), content_hash: 'fixturehash1',
@@ -1697,9 +1735,19 @@ async function main() {
     // unreachable peer: keepalive stopped 2h ago (well past the 80min default bound).
     const unreachableFile = path.join(peerExportDir, 'host-unreachable.json');
     fs.writeFileSync(unreachableFile, JSON.stringify({
+      // Deliberately left at schema_version 1 with an OLD-SHAPE plan row
+      // (no plan_state at all): a machine that has not yet run the new
+      // exporter. The reader must NOT default that to 'parsed' — doing so
+      // would re-launder the exact bug being fixed — so it renders as the
+      // named 'legacy-unlabelled' and self-heals on that host's next cycle.
       schema_version: 1,
       provenance: { hostname: 'host-unreachable', branch: 'master', head_sha: 'aaa000', dirty: false },
-      plans: [], sessions: [],
+      plans: [{
+        repo: '/old/repo', plan_slug: 'legacy-shape-plan', plan_doc: null,
+        tasks: [{ id: '1', done: true, in_flight: false, evidence_link: '' }],
+        progress: { done: 1, in_flight: 0, not_started: 0, total: 1 },
+      }],
+      sessions: [],
       exported_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), content_hash: 'fixturehash2',
     }));
     const twoHoursAgoUnreach = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -1721,9 +1769,17 @@ async function main() {
     const peerLanding = await httpGet(PORT, '/api/asks');
     ok('S64 GET /api/asks (real HTTP) still returns ok:true + 200 with the peers block wired in (payload-schema validation passes)',
       peerLanding.status === 200 && peerLanding.json && peerLanding.json.ok === true && !!peerLanding.json.peers,
-      JSON.stringify(peerLanding.json && peerLanding.json.peers));
+      // Dump the SCHEMA DIAGNOSTICS on failure, not the (absent) peers
+      // block: the only way this assertion fails is a validateLanding
+      // rejection turned into a 500 by server.js, and the diagnostics name
+      // the exact JSON path of the offending key. Printing `peers` here just
+      // printed `undefined` and cost a debugging round trip.
+      'status=' + peerLanding.status + ' body=' + JSON.stringify(peerLanding.json).slice(0, 900));
 
-    const peers = peerLanding.json.peers;
+    // Never dereference through a failed response — a 500 body has no
+    // `peers`, and the resulting TypeError used to abort the whole suite
+    // mid-run (every scenario after this point silently never executed).
+    const peers = (peerLanding.json && peerLanding.json.peers) || { has_data: false, entries: [], persons: [] };
     ok('S64b peers.has_data is true (real peer data present)', peers.has_data === true);
     ok('S64c exactly 2 peer entries (fresh + unreachable) — self and the corrupt file are NOT among them',
       peers.entries.length === 2, JSON.stringify(peers.entries.map((e) => e.host)));
@@ -1731,6 +1787,40 @@ async function main() {
       !peers.entries.some((e) => e.host === 'host-self-test'));
     ok('S64e the corrupt file was skipped WITHOUT throwing (no host-corrupt entry, and the request still succeeded)',
       !peers.entries.some((e) => e.host === 'host-corrupt'));
+
+    // ---- S64f-S64j (cross-machine-plan-inventory, 2026-08-06): the
+    // schema-2 peer shape survives a REAL /api/asks round trip. Every
+    // assertion here is a 500-or-not question in disguise: validateLanding
+    // runs inside server.js before the payload reaches the wire, so a key
+    // this suite forgets to exercise is a blank cockpit landing page in
+    // production, on a machine other than the one that shipped the field.
+    const fresh64 = peers.entries.find((e) => e.host === 'host-fresh') || {};
+    const freshPlans64 = fresh64.plans || [];
+    const docRow64 = freshPlans64.find((p) => p.plan_slug === 'peer-fixture-plan');
+    ok('S64f a POPULATED plan_doc {project, path} survives validateLanding — `path` was missing from LANDING_ALLOWED_KEYS, which 500-ed /api/asks (and blanked the cockpit) for any peer carrying a real plan doc',
+      peerLanding.status === 200 && docRow64 && docRow64.plan_doc &&
+      docRow64.plan_doc.path === 'docs/plans/peer-fixture-plan.md',
+      JSON.stringify(docRow64 && docRow64.plan_doc));
+    const gateRow64 = freshPlans64.find((p) => /-gate\b/.test(p.plan_slug || ''));
+    ok('S64g a plan_slug matching the gate/hook denylist ("review-gate-identity-anchor-2026-07-30") is SERVED, not rejected — a slug is a filename identity, not status prose, and the scanned inventory ships these routinely',
+      peerLanding.status === 200 && !!gateRow64, JSON.stringify(freshPlans64.map((p) => p.plan_slug)));
+    ok('S64h a NON-PARSED peer plan row keeps its NAMED absence across the wire: plan_state set, reason non-empty, tasks null and plan_progress null — never a fabricated healthy 0/0',
+      gateRow64 && gateRow64.plan_state === 'unresolvable' && gateRow64.tasks === null &&
+      gateRow64.plan_progress === null && (gateRow64.plan_state_reason || '').length > 0,
+      JSON.stringify(gateRow64));
+    const legacyEntry64 = peers.entries.find((e) => e.host === 'host-unreachable');
+    const legacyRow64 = (legacyEntry64 && legacyEntry64.plans || [])[0];
+    ok('S64i a schema_version:1 peer (an un-upgraded machine) renders plan_state "legacy-unlabelled" — NOT defaulted to "parsed", which would re-launder the very bug the version bump exists to fix',
+      legacyRow64 && legacyRow64.plan_state === 'legacy-unlabelled' &&
+      (legacyRow64.plan_state_reason || '').length > 0,
+      JSON.stringify(legacyRow64));
+    ok('S64j scan_coverage names what each peer actually scanned (repo count + projects_config state + aging ceiling + omitted stale links), so a per-machine multi-repo difference is DECLARED rather than inferred from a short plan list',
+      fresh64.scan_coverage && fresh64.scan_coverage.repos === 1 &&
+      fresh64.scan_coverage.projects_config === 'loaded' &&
+      fresh64.scan_coverage.completed_age_days === 7 &&
+      fresh64.scan_coverage.stale_links_omitted === 3 &&
+      legacyEntry64 && legacyEntry64.scan_coverage.projects_config === 'unknown',
+      JSON.stringify(fresh64.scan_coverage));
 
     const freshEntry = peers.entries.find((e) => e.host === 'host-fresh');
     ok('S65 fresh peer renders state fresh-ish with an age label',

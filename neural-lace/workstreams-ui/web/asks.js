@@ -1081,10 +1081,21 @@
     slug.className = 'peer-plan-slug';
     slug.textContent = p.plan_slug || '(unnamed plan)';
     head.appendChild(slug);
-    var pct = p.plan_progress || { done: 0, in_flight: 0, not_started: 0, total: 0 };
+    // NAMED ABSENCE, LAST MILE (cross-machine-plan-inventory defect 2).
+    // This used to read `p.plan_progress || {done:0,...}`, which re-created
+    // the fabricated healthy zero right here on the screen even after the
+    // writer and the reader had both been fixed. A row whose peer could not
+    // read the plan now says SO, in words, instead of showing "0/0 done".
     var bar = document.createElement('span');
     bar.className = 'peer-plan-progress';
-    bar.textContent = pct.done + '/' + pct.total + ' done' + (pct.in_flight ? (', ' + pct.in_flight + ' in-flight') : '');
+    if (p.plan_progress && p.plan_state === 'parsed') {
+      var pct = p.plan_progress;
+      bar.textContent = pct.done + '/' + pct.total + ' done' + (pct.in_flight ? (', ' + pct.in_flight + ' in-flight') : '');
+    } else {
+      bar.className += ' peer-plan-unread';
+      bar.textContent = 'not readable on that machine (' + (p.plan_state || 'unknown') + ')';
+      if (p.plan_state_reason) bar.title = p.plan_state_reason;
+    }
     head.appendChild(bar);
     if (p.plan_doc && p.plan_doc.project && p.plan_doc.path) {
       var linkBtn = document.createElement('button');

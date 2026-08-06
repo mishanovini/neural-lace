@@ -126,7 +126,39 @@ const HREF_KEYS = new Set(['evidence_link', 'raw_link']);
 // truncation — truncating would just hide the size problem from the
 // caller instead of surfacing it).
 // ----------------------------------------------------------------------
-const DENYLIST_EXEMPT_KEYS = new Set(['description']);
+// cross-machine-plan-inventory (2026-08-06) adds TWO more, for the same
+// reason and with the same length cap:
+//
+// `plan_slug` — a plan slug is a FILENAME STEM, i.e. the plan's identity,
+// not rendered status copy. Plan filenames in this repo routinely and
+// legitimately name the mechanisms they are about, so the denylist fires on
+// ordinary, correct slugs: measured on this machine, 4 of 29 discovered
+// plans trip it purely on `-gate` (e.g. "review-gate-identity-anchor-
+// 2026-07-30"). Before this round only a couple of plans reached the
+// landing payload, so the collision was rare enough to look like noise; the
+// shared disk-scan inventory now ships every eligible plan, which would
+// make an unrecoverable /api/asks 500 the STEADY STATE for every machine
+// with a peer. Note this widens nothing the operator cannot already see:
+// GET /api/roadmap renders these very slugs and is not schema-validated at
+// all (server.js validates only /api/asks and /api/ask/<id>).
+//
+// `plan_state_reason` — the NAMED reason a plan could not be read. It
+// quotes the offending artifact verbatim (an unrecognized `Status:` value,
+// a resolver path), which is the whole point of naming the absence; running
+// the identifier scan over it would force this module to choose between an
+// honest reason string and a servable payload.
+//
+// `path` — the same argument as `plan_slug`, one level down. `path` appears
+// ONLY inside the {project, path} doc-ref shape (plan_doc, doc_ref,
+// link_refs, verbatim_doc_ref, evidence_doc_ref), where it is a filesystem
+// LOCATOR the operator clicks through to — not status copy. It is a
+// derived filename, so it inherits every identifier its file name contains:
+// "docs/plans/review-gate-identity-anchor-2026-07-30.md" trips the `-gate`
+// pattern purely because the plan it points at is about a gate. Note the
+// module header already carves `path` out of HREF_KEYS for exactly this
+// "it is a resolver argument, not rendered prose" reason; this is the same
+// carve-out against the other of the two orthogonal scans.
+const DENYLIST_EXEMPT_KEYS = new Set(['description', 'plan_slug', 'plan_state_reason', 'path']);
 const DENYLIST_EXEMPT_MAX_LEN = 2000;
 
 function isAbsoluteHref(value) {
@@ -177,6 +209,40 @@ const LANDING_ALLOWED_KEYS = new Set([
   'sessions', 'session_id', 'role', 'last_heartbeat_at', 'label',
   'last_refreshed_at', 'source',
   // ----------------------------------------------------------------------
+  // `path` — THE MISSING KEY (fixed 2026-08-06, cross-machine-plan-
+  // inventory). `plan_doc` has been on this list since the peer block
+  // shipped, but its own `{project, path}` members were never added, and
+  // `project` only validated by coincidence (it is on the list already, as
+  // a GROUP field). So the moment ANY peer exported a populated plan_doc,
+  // the recursive walk hit `$.peers.entries[i].plans[j].plan_doc.path`,
+  // reported "unknown field (not in allowlist)", and server.js:1243 turned
+  // that into a 500 on /api/asks — blanking the cockpit's entire landing
+  // view, on every OTHER machine, as soon as one machine synced a real
+  // plan record. This was already firing before this round's change
+  // (reproduced against the live plan-export/ clone), and it is the reason
+  // `path` is listed here rather than in some new block: the DETAIL
+  // allowlist has carried `path` for exactly this shape all along.
+  'path',
+  // ----------------------------------------------------------------------
+  // Shared plan-inventory fields (cross-machine-plan-inventory). The peer
+  // plans block is now the disk-scan inventory, so each row additionally
+  // carries whether it is archived, HOW it was discovered ('scan' vs
+  // 'ask-link' — deliberately not named `source`, which already means
+  // something unrelated above), and the NAMED read state.
+  //
+  // `plan_state` is the named-absence label ('parsed' | 'ineligible' |
+  // 'unresolvable' | 'absent' | 'damaged' | 'legacy-unlabelled' |
+  // 'unknown'); `tasks`/`plan_progress` are null for every value except
+  // 'parsed', which is what keeps an unreadable plan from rendering as a
+  // healthy 0/0. `unknown_rows` is the aggregate's count of rows it could
+  // not read. `scan_coverage` names what this host actually scanned, so
+  // the per-machine multi-repo difference (config/projects.json is
+  // gitignored and machine-local) is a DECLARED state rather than
+  // something the operator infers from a short list.
+  'archived', 'discovery', 'plan_state', 'plan_state_reason', 'unknown_rows',
+  'scan_coverage', 'repos', 'projects_config', 'completed_age_days',
+  'stale_links_omitted',
+  // ----------------------------------------------------------------------
   // Person-grouping fields (cockpit-roadmap-redesign Task 7, round 5) —
   // peer-view.js#computePeerView: `person` on each peer entry (a mapped
   // display name or the literal named state 'unassigned'), `persons` =
@@ -204,6 +270,11 @@ const DETAIL_ALLOWED_KEYS = new Set([
   // reason plan_doc does — a {project, path} pair is not an href.
   'doc_ref', 'link_refs', 'verbatim_doc_ref', 'evidence_doc_ref',
   'artifacts', 'sha',
+  // cross-machine-plan-inventory: computePlanRows now carries the NAMED
+  // read state onto every plan row it emits (this payload's `plan_rows`),
+  // and aggregatePlanProgress reports how many rows it could not read
+  // instead of folding them in as zeros.
+  'plan_state', 'plan_state_reason', 'unknown_rows',
   'sessions', 'role', 'state', 'resumed_from', 'task_id',
   'drift_badges',
   // drift-badge fields (Task 12) — see LANDING_ALLOWED_KEYS comment above.
