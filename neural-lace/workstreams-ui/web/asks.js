@@ -561,6 +561,13 @@
   // per-plan drill-down block (MULTI-PLAN CARDS, review round 2: one
   // live-doc link per plan; per-task rows grouped by plan).
   // ============================================================
+  // PLAN-BLOCK-BEGIN — extraction anchor for web/cockpit.selftest.js, which
+  // EXECUTES this function in a fake DOM rather than regexing its source.
+  // Which of the three tail branches (unreadable / empty / task list) runs
+  // for a given row is a BEHAVIOUR, and behaviour is what regressed here.
+  // TASK_STATUS_LABEL/taskStatusOf are inside the anchors deliberately: the
+  // peer-row harness concatenates this block ahead of PEER-PLAN-ROW so both
+  // run against the REAL label map, never a stub that could drift from it.
   var TASK_STATUS_LABEL = { done: 'done', in_flight: 'in flight', not_started: 'not started' };
   function taskStatusOf(t) { return t.done ? 'done' : (t.in_flight ? 'in_flight' : 'not_started'); }
   function renderPlanBlock(row) {
@@ -666,6 +673,7 @@
     block.appendChild(list);
     return block;
   }
+  // PLAN-BLOCK-END
 
   // renderArtifact() / the "Artifacts" drill-down section it backed were
   // REMOVED here (cockpit-roadmap-redesign Task 8, absorbed UI-polish
@@ -1085,6 +1093,11 @@
     return row;
   }
 
+  // PEER-PLAN-ROW-BEGIN — extraction anchor for web/cockpit.selftest.js,
+  // which EXECUTES this function against real on-the-wire peer rows. A
+  // source regex here would have passed happily while every schema-1 row on
+  // the operator's three hosts rendered "not readable"; only running it
+  // catches which branch a given row takes.
   function renderPeerPlanRow(p) {
     var wrap = document.createElement('div');
     wrap.className = 'peer-plan-row';
@@ -1097,13 +1110,59 @@
     // NAMED ABSENCE, LAST MILE (cross-machine-plan-inventory defect 2).
     // This used to read `p.plan_progress || {done:0,...}`, which re-created
     // the fabricated healthy zero right here on the screen even after the
-    // writer and the reader had both been fixed. A row whose peer could not
-    // read the plan now says SO, in words, instead of showing "0/0 done".
+    // writer and the reader had both been fixed.
+    //
+    // ------------------------------------------------------------------
+    // THREE STATES, NOT TWO (2026-08-06 remediation). The first cut of
+    // this branch gated on `p.plan_state === 'parsed'`, which regressed
+    // EVERY schema-1 peer row — including ones carrying fully populated
+    // progress — to "not readable on that machine". All three of this
+    // operator's hosts are schema-1 today, so on the live wire that turned
+    // the laptop's `ask-rooted-workstreams-p1` row from "18/18 done" into
+    // "not readable", and it would have stayed that way per host until
+    // that host next re-exported. Saying "not readable" about a row whose
+    // 18 task states are RIGHT THERE is not conservatism, it is a false
+    // claim in the opposite direction.
+    //
+    // What a legacy (schema_version < 2) peer can and cannot tell us is
+    // decided by the OLD exporter's code, not by guesswork. Master's
+    // derive-lib.js#computePlanRows does:
+    //     const planTasks = absPath ? countPlanTasks(absPath) : null;
+    //     const tasks = (planTasks || []).map(...)
+    // so an unreadable plan exports as `tasks: []` / `progress` all zeros.
+    // Therefore, from a legacy row:
+    //   total > 0   -> the numbers are REAL. A laundered-unreadable row
+    //                  can only ever produce zeros, so a non-zero total
+    //                  cannot be the laundering. Render the progress; the
+    //                  unverified label is provenance, not a data gap, so
+    //                  it belongs in the tooltip and nowhere else.
+    //   total === 0 -> genuinely AMBIGUOUS by construction: an empty plan
+    //                  and an unreadable one are byte-identical in a
+    //                  schema-1 export. Claim neither "0/0 done" (that IS
+    //                  the fabricated zero) nor "not readable" (equally
+    //                  unproven). Say there is no claim.
+    // A schema-2 peer states which it is, so `parsed` renders and a null
+    // plan_progress is a genuine, named absence.
+    // ------------------------------------------------------------------
     var bar = document.createElement('span');
     bar.className = 'peer-plan-progress';
-    if (p.plan_progress && p.plan_state === 'parsed') {
-      var pct = p.plan_progress;
+    var pct = p.plan_progress;
+    var hasCounts = !!pct && typeof pct.total === 'number';
+    if (hasCounts && (p.plan_state === 'parsed' || pct.total > 0)) {
       bar.textContent = pct.done + '/' + pct.total + ' done' + (pct.in_flight ? (', ' + pct.in_flight + ' in-flight') : '');
+      if (p.plan_state !== 'parsed') {
+        // Real counts from an un-upgraded client: shown, with the
+        // provenance caveat available on hover. No visible caveat — for
+        // total > 0 there is nothing the newer schema would have told us
+        // that these numbers do not already say.
+        bar.className += ' peer-plan-legacy';
+        if (p.plan_state_reason) bar.title = p.plan_state_reason;
+      }
+    } else if (hasCounts) {
+      // total === 0 on a non-parsed row — the ambiguous case above.
+      bar.className += ' peer-plan-unclaimed';
+      bar.textContent = 'no task claim from that machine (' + (p.plan_state || 'unknown') + ')';
+      if (p.plan_state_reason) bar.title = p.plan_state_reason;
     } else {
       bar.className += ' peer-plan-unread';
       bar.textContent = 'not readable on that machine (' + (p.plan_state || 'unknown') + ')';
@@ -1148,7 +1207,31 @@
     }
     return wrap;
   }
+  // PEER-PLAN-ROW-END
 
+  // SCAN-COVERAGE-BEGIN — extraction anchor for web/cockpit.selftest.js.
+  // scanCoverageText(c) turns peer-view.js's scan_coverage projection into
+  // one operator-readable line. It was computed by the server and
+  // allowlisted by payload-schema.js, and until this change NOTHING in web/
+  // read it (`grep -rn scan_coverage web/` = 0 hits): the per-machine
+  // difference in what each host can even see was named in JSON and silent
+  // on screen, which is the "signal with no consumer" defect this repo
+  // already has a law about. Two hosts showing 1 plan and 40 plans is a
+  // legitimate difference (config/projects.json is gitignored and
+  // machine-local) — but only if the operator can SEE that it is one.
+  //
+  // Named states, never guesses: `projects_config` renders verbatim
+  // (including 'unknown' and 'malformed'), and a peer that shipped no
+  // scan_coverage at all says so rather than rendering an invented zero.
+  function scanCoverageText(c) {
+    if (!c) return 'scan coverage not reported by that machine';
+    var repos = (typeof c.repos === 'number') ? c.repos : 0;
+    var parts = ['scanned ' + repos + (repos === 1 ? ' repo' : ' repos')];
+    parts.push('projects config: ' + (c.projects_config || 'unknown'));
+    if (c.completed_age_days) parts.push('completed plans aged out after ' + c.completed_age_days + 'd');
+    if (c.stale_links_omitted) parts.push(c.stale_links_omitted + ' stale plan link' + (c.stale_links_omitted === 1 ? '' : 's') + ' omitted');
+    return parts.join(' · ');
+  }
   function renderPeerEntry(e) {
     var box = document.createElement('div');
     box.className = 'peer-entry';
@@ -1163,6 +1246,10 @@
     chip.textContent = e.state_label; // text + color, never color-only
     head.appendChild(chip);
     box.appendChild(head);
+    var cov = document.createElement('div');
+    cov.className = 'peer-scan-coverage';
+    cov.textContent = scanCoverageText(e.scan_coverage);
+    box.appendChild(cov);
     (e.plans || []).forEach(function (p) { box.appendChild(renderPeerPlanRow(p)); });
     if (e.sessions && e.sessions.length) {
       var sessWrap = document.createElement('div');
@@ -1172,6 +1259,7 @@
     }
     return box;
   }
+  // SCAN-COVERAGE-END
 
   // renderPeerPersonGroups(body, peers) — cockpit-roadmap-redesign Task 7
   // (round 5 verbatim: peers group by PERSON — "Misha: desktop + laptop").

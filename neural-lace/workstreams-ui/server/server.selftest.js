@@ -1888,8 +1888,13 @@ async function main() {
       fresh64.scan_coverage.projects_config === 'loaded' &&
       fresh64.scan_coverage.completed_age_days === 7 &&
       fresh64.scan_coverage.stale_links_omitted === 3 &&
-      legacyEntry64 && legacyEntry64.scan_coverage.projects_config === 'unknown',
-      JSON.stringify(fresh64.scan_coverage));
+      // 2026-08-06 remediation: a peer that shipped no scan block reports
+      // scan_coverage NULL (an honest "not reported"), where this used to
+      // assert a zero-filled record with projects_config 'unknown'. That
+      // zero-fill rendered on screen as "scanned 0 repos" — a fabricated
+      // MEASUREMENT, the same defect class as the fabricated healthy 0/0.
+      legacyEntry64 && legacyEntry64.scan_coverage === null,
+      JSON.stringify({ fresh: fresh64.scan_coverage, legacy: legacyEntry64 && legacyEntry64.scan_coverage }));
 
     const freshEntry = peers.entries.find((e) => e.host === 'host-fresh');
     ok('S65 fresh peer renders state fresh-ish with an age label',

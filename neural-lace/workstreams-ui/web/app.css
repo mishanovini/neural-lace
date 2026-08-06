@@ -429,6 +429,9 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .ask-task-desc-summary { cursor: pointer; color: var(--muted); list-style: revert; }
 .ask-task-desc-full { margin-top: 3px; white-space: pre-wrap; }
 .ask-plan-empty { margin-top: 4px; }
+/* cross-machine-plan-inventory: a plan this machine could NOT read is a
+   different thing from a plan with no tasks — same law as the peer rows. */
+.ask-plan-unreadable { margin-top: 4px; color: var(--warn); }
 
 .ask-waiting-item { border: 1px solid var(--border2); border-radius: 6px; padding: 6px 8px; margin-bottom: 6px; background: var(--panel); }
 .ask-waiting-item:last-child { margin-bottom: 0; }
@@ -517,6 +520,19 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible {
 .peer-plan-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .peer-plan-slug { font-size: 13px; font-weight: 600; }
 .peer-plan-progress { font-size: 11px; color: var(--muted); }
+/* cross-machine-plan-inventory: the three progress states are distinguished
+   by their TEXT first (see asks.js#renderPeerPlanRow); these rules only add
+   emphasis, never meaning — nothing here is color-only.
+   .peer-plan-legacy    = real counts from an un-upgraded client (reads like
+                          any other count; the caveat is the hover title)
+   .peer-plan-unclaimed = schema-1 all-zero, genuinely ambiguous
+   .peer-plan-unread    = a named, proven absence */
+.peer-plan-progress.peer-plan-legacy { border-bottom: 1px dotted var(--border2); }
+.peer-plan-progress.peer-plan-unclaimed { color: var(--warn); font-style: italic; }
+.peer-plan-progress.peer-plan-unread { color: var(--warn); font-style: italic; }
+/* scan_coverage — what that machine could even see, stated rather than
+   inferred from a short plan list. */
+.peer-scan-coverage { font-size: 11px; color: var(--muted); margin: 2px 0 4px; }
 .peer-provenance-label { font-size: 11px; color: var(--muted); margin: 2px 0 4px; }
 .peer-provenance-label.peer-unmerged { color: var(--warn); font-weight: 600; }
 

@@ -284,12 +284,20 @@ function planStateReasonOf(p, schemaVersion) {
 }
 
 // scanCoverageOf(scan) — the compact, operator-readable projection of the
-// writer's provenance.scan. A peer that predates it (or any peer whose
-// exporter could not read its own config) reports projects_config
-// 'unknown' — a named state, never a guessed 1.
+// writer's provenance.scan. A peer whose exporter could not read its own
+// config reports projects_config 'unknown' — a named state, never a
+// guessed 1.
+//
+// A peer that shipped NO scan block at all (every schema-1 host, i.e. all
+// three of this operator's machines today) returns NULL, not a zero-filled
+// record (2026-08-06 remediation). The zero-filled version rendered as
+// "scanned 0 repos", which is a fabricated MEASUREMENT — the identical
+// defect class as the fabricated healthy 0/0 this whole change exists to
+// remove, one field over. Caught by rendering the real wire payload
+// through the real client render path, not by a unit test.
 function scanCoverageOf(scan) {
   const s = scan && typeof scan === 'object' ? scan : null;
-  if (!s) return { repos: 0, projects_config: 'unknown', completed_age_days: 0, stale_links_omitted: 0 };
+  if (!s) return null;
   return {
     repos: Array.isArray(s.repo_roots) ? s.repo_roots.filter((r) => r && r.present).length : 0,
     projects_config: typeof s.projects_config === 'string' && s.projects_config ? s.projects_config : 'unknown',
@@ -574,6 +582,15 @@ async function selfTest() {
       view8b.entries[0].scan_coverage.repos === 1 &&
       view8b.entries[0].scan_coverage.stale_links_omitted === 5,
       JSON.stringify(view8b.entries[0].scan_coverage));
+    // 8j (2026-08-06 remediation): a peer that shipped NO scan block —
+    // every schema-1 host, which today is ALL THREE of this operator's
+    // machines — must report NULL, not a zero-filled record. The zero-fill
+    // rendered on screen as "scanned 0 repos", a fabricated MEASUREMENT of
+    // the same class as the fabricated healthy 0/0 this change removes.
+    // The schema-1 fixture at the top of scenario 8 has no provenance.scan.
+    ok('8j. a peer that reported NO scan block gets scan_coverage null (an honest "not reported"), never a zero-filled record that renders as "scanned 0 repos"',
+      view8.entries[0].scan_coverage === null,
+      JSON.stringify(view8.entries[0].scan_coverage));
 
     // ---- Scenario 9: computePeerView on an entirely empty/absent clone ->
     // has_data:false (the "no data yet" collapse state), never a crash.
