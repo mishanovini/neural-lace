@@ -1585,15 +1585,16 @@ function absorbChildPlanRollUps(node) {
 // children on the live tree, never 'renderer supports parent-plan'").
 // ----------------------------------------------------------------------
 
-// repoRootFromAbsPath(absPath) -> the repo root a plan file lives under
-// (the part of its path before `/docs/plans/...`), used to re-resolve a
-// SAME-PROJECT parent-plan reference directly, bypassing discovery filters
-// entirely (the pinning case below).
-function repoRootFromAbsPath(absPath) {
-  if (!absPath) return '';
-  const m = String(absPath).replace(/\\/g, '/').match(/^(.*)\/docs\/plans\//);
-  return m ? m[1] : '';
-}
+// repoRootFromAbsPath(absPath) -> the repo root a plan file lives under,
+// used to re-resolve a SAME-PROJECT parent-plan reference directly,
+// bypassing discovery filters entirely (the pinning case below).
+//
+// RE-EXPORTED from derive-lib.js (2026-08-06), not re-implemented: this
+// module and export-state.js each carried a copy with a DIFFERENT regex.
+// See derive-lib.js's block for the divergence, why it was unreachable,
+// and why the strict form won. Same `===`-identity re-export as
+// discoverPlanFiles/scanPlanDir/isEligiblePlanStatus above.
+const repoRootFromAbsPath = deriveLib.repoRootFromAbsPath;
 
 // pinDanglingActiveMasters(items, ...) — Critical 4(1): "a master with ANY
 // non-terminal child is PINNED on the tree regardless of its own

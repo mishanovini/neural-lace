@@ -209,16 +209,14 @@ function derivePlanRecords() {
   return { records: records, ghost_count: discovered.ghostCount };
 }
 
-// repoRootFromAbsPath(absPath) — the repo root a scanned plan file belongs
-// to: walk up from <root>/docs/plans[/archive]/<slug>.md. Kept here (a
-// three-line path walk) rather than imported from roadmap-routes.js, which
-// is a route module this file must not depend on (A4's spirit).
-function repoRootFromAbsPath(absPath) {
-  if (!absPath) return '';
-  const norm = String(absPath).replace(/\\/g, '/');
-  const m = /^(.*)\/docs\/plans\/(?:archive\/)?[^/]+$/.exec(norm);
-  return m ? m[1] : '';
-}
+// repoRootFromAbsPath — the repo root a scanned plan file belongs to.
+// RE-EXPORTED from derive-lib.js, not re-implemented: this used to be a
+// local copy whose regex differed from roadmap-routes.js's copy (see
+// derive-lib.js's own block for the divergence and why the strict form
+// won). Importing it from derive-lib preserves A4 exactly — derive-lib is
+// pure local-disk reads, it is roadmap-routes.js (a route module owning
+// handle(req, res)) that this file must not depend on.
+const repoRootFromAbsPath = deriveLib.repoRootFromAbsPath;
 
 // deriveSessionsBlock() — A3c (BINDING): RAW `last_heartbeat_at` per
 // session, role/plan metadata folded in, NEVER a baked live/stale/crashed
@@ -339,6 +337,10 @@ module.exports = {
   runExport, buildPayload, contentHash, stableStringify, provenance,
   derivePlanRecords, deriveSessionsBlock, exportFilePath, hostname,
   KEEPALIVE_MS,
+  // Re-exported so the "ONE derivation" claim is MECHANICALLY checkable
+  // (=== identity against derive-lib's own object), the same way the plan
+  // scan's functions already are — see this file's self-test.
+  repoRootFromAbsPath,
 };
 
 // ============================================================================
@@ -768,6 +770,32 @@ async function selfTest() {
       else process.env[k] = savedEnv[k];
     });
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+  }
+
+  // ====================================================================
+  // Scenario 12 (2026-08-06 remediation) — ONE repo-identity rule.
+  // repoRootFromAbsPath was DUPLICATED with two different regexes, one
+  // here and one in roadmap-routes.js. Unreachable today (scanPlanDir is a
+  // flat readdirSync over two directories, so every absPath is one level
+  // deep), but a second copy of a repo-identity rule inside a change whose
+  // whole thesis is "no second derivation remains" is the defect itself.
+  // Asserted the same way the plan scan's own collapse was: `===` on the
+  // function object, which no amount of copy-paste can fake.
+  // ====================================================================
+  {
+    const rr = require('./roadmap-routes.js');
+    ok('12a. export-state and derive-lib share the IDENTICAL repoRootFromAbsPath function object (===), not a copy that happens to agree',
+      module.exports.repoRootFromAbsPath === deriveLib.repoRootFromAbsPath);
+    ok('12b. roadmap-routes shares that SAME object too — all three modules, one repo-identity rule',
+      rr.repoRootFromAbsPath === deriveLib.repoRootFromAbsPath &&
+      rr.repoRootFromAbsPath === module.exports.repoRootFromAbsPath);
+    ok('12c. the surviving rule is the STRICT one: it resolves the two shapes scanPlanDir actually produces (plain + archived) and answers \'\' for a deeper path rather than inventing a root — the exact case the two copies disagreed on',
+      deriveLib.repoRootFromAbsPath('C:/r/docs/plans/x.md') === 'C:/r' &&
+      deriveLib.repoRootFromAbsPath('C:/r/docs/plans/archive/x.md') === 'C:/r' &&
+      deriveLib.repoRootFromAbsPath('C:\\r\\docs\\plans\\x.md') === 'C:/r' &&
+      deriveLib.repoRootFromAbsPath('C:/r/docs/plans/a/b/x.md') === '' &&
+      deriveLib.repoRootFromAbsPath('C:/r/notes/x.md') === '' &&
+      deriveLib.repoRootFromAbsPath('') === '');
   }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');

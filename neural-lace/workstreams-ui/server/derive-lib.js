@@ -221,10 +221,86 @@ function readJsonlLines(file) {
 
 function readAskRegistry() { return readJsonlLines(askRegistryFile()); }
 
+// ----------------------------------------------------------------------
+// readAskEvents(askId) — MEMOIZED on (path, mtimeMs, size).
+//
+// THE N+1 THIS REMOVES (measured 2026-08-06, not guessed). Both plan-
+// inventory loops — export-state.js#derivePlanRecords and
+// roadmap-routes.js#buildRoadmapPayload — call eventsForSlug once per
+// discovered plan, and eventsForSlug ends with `readAskEvents('')`: the
+// shared UNLINKED lane, which for a scan-discovered plan with no ask is the
+// only source of task_started/task_done. On this machine:
+//     plans discovered      : 29
+//     distinct event lanes  : 1
+//     unlinked.jsonl        : 6,201,740 bytes / 12,959 events
+//     ONE readAskEvents('') : 117.5 ms
+//     => 29 x 6.2 MB = 179.9 MB of JSON re-parsed per export cycle
+// which profiled as 2,453.9 ms of the exporter's ~3.4 s total — 72% of the
+// wall time, spent reading the SAME 6.2 MB file 29 times. The cockpit's
+// Roadmap payload runs the identical loop over ~99 items.
+//
+// WHY MEMOIZE RATHER THAN HOIST AN INDEX INTO THE TWO LOOPS. Hoisting
+// would fix these two call sites and leave the next loop to rediscover the
+// cost; and it would mean two more places that know how lanes are joined,
+// in a change whose entire thesis is that no second derivation remains.
+// The cache sits under the ONE function every lane read already goes
+// through, so every present and future caller gets it.
+//
+// STALENESS. The key is (mtimeMs, size), so any append invalidates it — a
+// long-lived server picks up a new event on the next read, exactly as
+// before. The cost of a hit is one fs.statSync in place of a multi-MB
+// read+parse.
+//
+// MEMORY. Bounded to READ_CACHE_MAX_ENTRIES least-recently-used files.
+// This matters only in the server (the exporter is a short-lived process
+// that exits); with 115 lane files totalling 13 MB on disk, the ceiling is
+// the 8 largest of them.
+//
+// MUTATION. Returns a SHALLOW COPY: server.js sorts the returned array in
+// place (`deriveLib.readAskEvents(askId).sort(...)`), which would otherwise
+// reorder the cached array under every other reader. The event OBJECTS are
+// shared — callers read them and must not mutate them, which is already
+// true of every caller today.
+// ----------------------------------------------------------------------
+const READ_CACHE_MAX_ENTRIES = 8;
+const _eventReadCache = new Map(); // path -> { key, rows }  (Map = insertion-ordered = LRU order)
+// Counters, exported as eventReadCacheStats(). A performance fix needs an
+// oracle that can actually go RED: "it got faster" is not an assertion a
+// suite can hold, but "the second read of an unchanged file did not touch
+// the disk" is. `disk_reads` is the number that mattered — 29 before.
+const _eventReadStats = { hits: 0, disk_reads: 0 };
+function eventReadCacheStats() { return { hits: _eventReadStats.hits, disk_reads: _eventReadStats.disk_reads }; }
+function resetEventReadCache() {
+  _eventReadCache.clear();
+  _eventReadStats.hits = 0;
+  _eventReadStats.disk_reads = 0;
+}
+
+function readAskEventsCached(file) {
+  let st;
+  try { st = fs.statSync(file); } catch (_) { return []; }
+  const key = st.mtimeMs + ':' + st.size;
+  const hit = _eventReadCache.get(file);
+  if (hit && hit.key === key) {
+    _eventReadStats.hits++;
+    _eventReadCache.delete(file);
+    _eventReadCache.set(file, hit); // refresh LRU position
+    return hit.rows.slice();
+  }
+  _eventReadStats.disk_reads++;
+  const rows = readJsonlLines(file);
+  _eventReadCache.delete(file);
+  _eventReadCache.set(file, { key: key, rows: rows });
+  while (_eventReadCache.size > READ_CACHE_MAX_ENTRIES) {
+    _eventReadCache.delete(_eventReadCache.keys().next().value);
+  }
+  return rows.slice();
+}
+
 function readAskEvents(askId) {
   const dir = progressLogStateDir();
   const file = path.join(dir, (askId || 'unlinked') + '.jsonl');
-  return readJsonlLines(file);
+  return readAskEventsCached(file);
 }
 
 // ----------------------------------------------------------------------
@@ -759,6 +835,35 @@ const COMPLETED_AGE_DAYS = Number(process.env.ROADMAP_COMPLETED_AGE_DAYS) || 7;
 // documented meaning is unchanged.
 function planScanRoot() {
   return process.env.ROADMAP_PLAN_SCAN_ROOT || mainRepoRoot();
+}
+
+// ----------------------------------------------------------------------
+// repoRootFromAbsPath(absPath) — the repo root a plan file belongs to: the
+// path before `/docs/plans[/archive]/<file>`. Returns '' (never a guess)
+// for anything that is not shaped like a plan file.
+//
+// COLLAPSED HERE 2026-08-06. This lived in TWO places with two DIFFERENT
+// regexes — export-state.js's `/^(.*)\/docs\/plans\/(?:archive\/)?[^/]+$/`
+// and roadmap-routes.js's looser `/^(.*)\/docs\/plans\//`. They diverge on
+// a path nested deeper than one level under docs/plans/ (the strict one
+// returns '', the loose one returns a root). That is unreachable today —
+// scanPlanDir is a flat readdirSync over exactly two directories, so every
+// absPath either module can pass in is `<root>/docs/plans/<slug>.md` or
+// `<root>/docs/plans/archive/<slug>.md` — but a SECOND copy of a
+// repo-identity rule inside a change whose whole thesis is that no second
+// derivation remains is the defect the change exists to remove.
+//
+// The STRICT form wins: it encodes the shape scanPlanDir actually produces
+// and answers '' for anything else rather than inventing a root. Both
+// modules now re-export this one function object (=== identity), the same
+// way discoverPlanFiles/scanPlanDir/isEligiblePlanStatus already do —
+// asserted in export-state.js's self-test scenario 12.
+// ----------------------------------------------------------------------
+function repoRootFromAbsPath(absPath) {
+  if (!absPath) return '';
+  const norm = String(absPath).replace(/\\/g, '/');
+  const m = /^(.*)\/docs\/plans\/(?:archive\/)?[^/]+$/.exec(norm);
+  return m ? m[1] : '';
 }
 
 const PLAN_STATUS_EXCLUDE_RE = /^(REFERENCE|NORMATIVE)\b/i;
@@ -1872,6 +1977,8 @@ module.exports = {
   readJsonlLines,
   readAskRegistry,
   readAskEvents,
+  eventReadCacheStats,
+  resetEventReadCache,
   foldAskRegistry,
   readDispatchProvenanceMarkers,
   buildSessions,
@@ -1891,6 +1998,7 @@ module.exports = {
   COMPLETED_AGE_DAYS,
   planScanRoot,
   isEligiblePlanStatus,
+  repoRootFromAbsPath,
   planStatusToken,
   KNOWN_PLAN_STATUS_TOKENS,
   scanPlanDir,
@@ -2593,6 +2701,78 @@ async function selfTest() {
       if (savedTtl === undefined) delete process.env.COCKPIT_GIT_INFO_TTL_MS;
       else process.env.COCKPIT_GIT_INFO_TTL_MS = savedTtl;
       try { fs.rmSync(tmp23, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+    }
+  }
+
+  // ====================================================================
+  // Scenario 24 (2026-08-06 remediation) — readAskEvents is MEMOIZED, and
+  // the memo is correct.
+  //
+  // THE COST THIS BOUNDS, measured on this machine before the fix:
+  //   plans discovered      : 29
+  //   distinct event lanes  : 1
+  //   unlinked.jsonl        : 6,201,740 bytes / 12,959 events
+  //   => 29 x 6.2 MB = 179.9 MB of JSON re-parsed per export cycle,
+  //      profiled at 2,453.9 ms of the exporter's ~3.4 s (72%).
+  // The exporter and the cockpit's Roadmap both run this loop.
+  //
+  // "It got faster" is not an assertion a suite can hold. `disk_reads` is:
+  // N calls against an unchanged file must cost exactly ONE.
+  // ====================================================================
+  {
+    const tmp24 = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-evcache-'));
+    const saved24 = process.env.PROGRESS_LOG_STATE_DIR;
+    try {
+      process.env.PROGRESS_LOG_STATE_DIR = tmp24;
+      const ev = (o) => JSON.stringify(Object.assign({
+        v: 1, ts: '2026-08-01T00:00:00Z', ask_id: '', type: 'task_done',
+        plan_slug: 'p1', task_id: '1', sha: '', evidence_link: '', needs_you_id: '',
+      }, o));
+      const lane = path.join(tmp24, 'unlinked.jsonl');
+      fs.writeFileSync(lane, [ev({ task_id: '1' }), ev({ task_id: '2' })].join('\n') + '\n');
+
+      resetEventReadCache();
+      const first = readAskEvents('');
+      for (let i = 0; i < 28; i++) readAskEvents('');   // the other 28 plans in the loop
+      const s24 = eventReadCacheStats();
+      ok('24a. 29 reads of an UNCHANGED event lane cost exactly ONE disk read (28 cache hits) — this is the N+1 that made the exporter re-parse the same 6.2 MB file once per discovered plan',
+        s24.disk_reads === 1 && s24.hits === 28, JSON.stringify(s24));
+      ok('24b. the memoized read returns the same data as the uncached one (2 events)',
+        first.length === 2 && readAskEvents('').length === 2, JSON.stringify(first));
+
+      // Staleness: an append MUST be visible. A cache that cannot see a new
+      // event is worse than the N+1 it replaced.
+      fs.appendFileSync(lane, ev({ task_id: '3' }) + '\n');
+      const after = readAskEvents('');
+      const s24b = eventReadCacheStats();
+      ok('24c. an APPEND invalidates the memo — the new event is visible on the very next read, and it cost a real disk read (the key is mtime+size, not the path alone)',
+        after.length === 3 && s24b.disk_reads === 2, JSON.stringify({ len: after.length, stats: s24b }));
+
+      // Array-level mutation isolation: server.js sorts the returned array
+      // in place. That must not reorder what every other reader sees.
+      const a = readAskEvents('');
+      a.reverse();
+      a.push({ v: 1, ts: 'x', task_id: 'injected' });
+      const b = readAskEvents('');
+      ok('24d. the returned array is a COPY — a caller sorting/mutating it in place (server.js does exactly this) cannot corrupt the cached rows for every other reader',
+        b.length === 3 && b[0].task_id === '1' && !b.some((e) => e.task_id === 'injected'),
+        JSON.stringify(b.map((e) => e.task_id)));
+
+      // Bounded memory: the LRU cap must actually evict.
+      resetEventReadCache();
+      for (let i = 0; i < 12; i++) {
+        fs.writeFileSync(path.join(tmp24, 'lane' + i + '.jsonl'), ev({ task_id: String(i) }) + '\n');
+        readAskEvents('lane' + i);
+      }
+      readAskEvents('lane0'); // evicted long ago -> must be a disk read, not a hit
+      const s24c = eventReadCacheStats();
+      ok('24e. the cache is BOUNDED — after 12 distinct lanes the oldest is evicted, so re-reading it costs a disk read (13 reads, 0 hits). An unbounded cache would pin every lane file in the long-lived server',
+        s24c.disk_reads === 13 && s24c.hits === 0, JSON.stringify(s24c));
+    } finally {
+      if (saved24 === undefined) delete process.env.PROGRESS_LOG_STATE_DIR;
+      else process.env.PROGRESS_LOG_STATE_DIR = saved24;
+      resetEventReadCache();
+      try { fs.rmSync(tmp24, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
     }
   }
 
