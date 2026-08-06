@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260806-2d100453",
+  "created_at": "2026-08-06T01:57:01Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "opus (MODEL-POLICY DEVIATION: model-policy.json pins the review category to Fable; Fable weekly allowance exhausted, so this review ran on Opus)",
+  "plan_ref": "docs/plans/gated-pipeline-master-2026-08.md#deploy-review-a5ce6da6",
+  "change_ref": {
+    "commit_sha": "a5ce6da68d9a0a1a9130a32686f0e80ae2ce69d3",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/agents/task-verifier.md",
+      "blob_sha": "535eee75c704e2a94463f48da87bf6c56dac8182"
+    },
+    {
+      "path": "adapters/claude-code/config/design-ref-gate.json",
+      "blob_sha": "27ea5c24d69c746e68744c209cbb6962bd4a714f"
+    },
+    {
+      "path": "adapters/claude-code/config/g2-grandfather-slugs.txt",
+      "blob_sha": "cc94fd55ea7e3c074536897c87393e9db6a26b87"
+    },
+    {
+      "path": "adapters/claude-code/config/model-policy.json",
+      "blob_sha": "507f0795d713ba05b0f53cee3e88595d449f93b0"
+    },
+    {
+      "path": "adapters/claude-code/config/operator-directives.json",
+      "blob_sha": "81859e73155abdfab28d2930e4267140109a2728"
+    },
+    {
+      "path": "adapters/claude-code/config/review-class-table.json",
+      "blob_sha": "f96f846ce09f0bebad8ea63a95599918e542b49c"
+    },
+    {
+      "path": "adapters/claude-code/config/schedule-manifest.json",
+      "blob_sha": "8410a54e45b75b050dedff9c8acea8b2114eb9b1"
+    },
+    {
+      "path": "adapters/claude-code/hooks/concurrent-ownership-gate-body.sh",
+      "blob_sha": "368a35854e6bbf92fbb007f0be4411d37c7ff399"
+    },
+    {
+      "path": "adapters/claude-code/hooks/dispatch-chain-gate.sh",
+      "blob_sha": "20ad52dba96eaebe7486c0f86ff4f5c545047cd8"
+    },
+    {
+      "path": "adapters/claude-code/hooks/doctrine-jit.sh",
+      "blob_sha": "7e75b1b25f3c9d7a024e91e421c6a7657b05d451"
+    },
+    {
+      "path": "adapters/claude-code/hooks/gh-merge-canonical-gate.sh",
+      "blob_sha": "0c7d4e1bc6cdbaf342634b8263493086309032b2"
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-doctor.sh",
+      "blob_sha": "13eb90b5e708d381afdc1000dcd9938f5dcc0335"
+    },
+    {
+      "path": "adapters/claude-code/hooks/harness-hygiene-scan.sh",
+      "blob_sha": "40401f3d7425585e89a955e3f1b86e1d2fa36d06"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/admission-lib.sh",
+      "blob_sha": "efa995b9039d613498427959bdb7fe9977627d8d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/directives-register-lib.sh",
+      "blob_sha": "2f01c6eb4f0bd9ab3abdd54a2c265e78bb228d28"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/perf-tick-snapshot.sh",
+      "blob_sha": "342b14c0d0d48401a6648783adb01bfb77e969c4"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/review-chain-lib.sh",
+      "blob_sha": "1873759b92fb31601952b5d5c611e6cef6a5d640"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/signal-ledger.sh",
+      "blob_sha": "c9b4aeabd642456a7f9cdc46dcec611a3018635d"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/workaround-sensor-lib.sh",
+      "blob_sha": "d1cf88dff2eaaf7955a89703ed3736dfc46fc328"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-edit-validator.sh",
+      "blob_sha": "fe626c2f493625ee2583e46bd002c4dbac8567ac"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-lifecycle.sh",
+      "blob_sha": "5116b0383a3ab23dec0d983a2d65977fe6f7e462"
+    },
+    {
+      "path": "adapters/claude-code/hooks/plan-status-archival-sweep.sh",
+      "blob_sha": "66f1a468b7047e23f3c7e0c8202bf00a8c854489"
+    },
+    {
+      "path": "adapters/claude-code/hooks/review-record-push-gate.sh",
+      "blob_sha": "ac778a07c165a53c4389452f306fdb68c1255624"
+    },
+    {
+      "path": "adapters/claude-code/hooks/scope-enforcement-gate-body.sh",
+      "blob_sha": "6e99921ba05c8bdb124636c7dee857005f5c5acd"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-auto-install.sh",
+      "blob_sha": "e6ed530a8474c85eec3c8c3b146db4735eb7dcd8"
+    },
+    {
+      "path": "adapters/claude-code/hooks/session-start-digest.sh",
+      "blob_sha": "4279aa13b4a5d6e5a0445468f11f567d1e84ba6c"
+    },
+    {
+      "path": "adapters/claude-code/hooks/stop-verdict-dispatcher.sh",
+      "blob_sha": "e6301b700e3e79401be649616dc90ed7e8025dd4"
+    },
+    {
+      "path": "adapters/claude-code/hooks/workstreams-emit.sh",
+      "blob_sha": "0d53d4f35c27ba12ff38eb23fda2260529fc0f63"
+    },
+    {
+      "path": "adapters/claude-code/install.sh",
+      "blob_sha": "c01274fb5e1b179acb7b6ff5a7a078360778954d"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "bc442eaa104695188976145aa2e225b198243279"
+    },
+    {
+      "path": "adapters/claude-code/schemas/plan-status.schema.json",
+      "blob_sha": "363d4fe62275a1e1e7718d812faa6b79ea298666"
+    },
+    {
+      "path": "adapters/claude-code/scripts/dispatch-directives.sh",
+      "blob_sha": "8ff5220955c9cb71e9f557fc9e0258ed56fc21a4"
+    },
+    {
+      "path": "adapters/claude-code/scripts/install-estate-janitor-task-darwin.sh",
+      "blob_sha": "7e86da74a0833eadb247276a4b90d989a12e4da0"
+    },
+    {
+      "path": "adapters/claude-code/scripts/needs-you.sh",
+      "blob_sha": "a9d0674d385454b2c79a4904f1f0abf3a1113402"
+    },
+    {
+      "path": "adapters/claude-code/scripts/nl-maintenance.sh",
+      "blob_sha": "9c99df4bfd47f8ffc95d1833d10a4a52ce5cd150"
+    },
+    {
+      "path": "adapters/claude-code/scripts/verify-event-audit.sh",
+      "blob_sha": "15a1edd0225fb355501527e97303b902aa7c710d"
+    },
+    {
+      "path": "adapters/claude-code/settings.json.template",
+      "blob_sha": "a233579472dce38ceb91ecb807811782fa7e085a"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PASS — the a5ce6da6 delta is safe to make live: both new blocking gates resolve their config at the installed layout, degrade loudly rather than silently, ship negative self-test cases, and have a proven non-deadlocked exit; the six Major findings are documentation/test-suite honesty defects and one pre-existing platform artifact, none of which makes the deployed bytes unsafe.",
+    "findings_summary": "VERDICT PASS with 6 Major conditions (0 Critical). Verified per-item: (1) G2 dispatch-chain-gate 49/49; config resolves SCRIPT-relative and was PROVEN readable at a replica installed layout (block rc=2 on a chain-less plan; grandfather hit at the default ~/.claude/config path flipped it to a ledgered WARN rc=0); 284 opaque sha256 entries, 40/40 sampled real plan slugs present; install.sh (per-file, non-destructive) and session-start-auto-install.sh SYNC_SUBDIRS both now deploy config/; both missing-config paths emit loud WARNs (model-policy fail-open, grandfather fail-closed) with dedicated self-test scenarios. config/ deploy blast radius PROVEN bounded to dispatch-chain-gate -- every other config consumer resolves repo-root-relative. (2) T25 WIP limit: no deadlock PROVEN end-to-end -- a task-verifier dispatch is 'review' category so it never reaches the consult, the real PreToolUse writer wrote a role=verifier provenance marker, and the same oracle flipped rc 1 -> rc 0 on that marker. (3) Hygiene gate: --self-test OK; delta view is added-lines-only with the ++-prefix (C3) and git-mv rename-pairing fixes present in the deploying bytes; denylist hits non-self-waivable (sec1/sec2); escape->obligation rail proven non-nagging (stop-verdict-dispatcher 105/105 incl. escape-check-second-identical-stop-downgrades-no-nag-loop). (4) plan-Status write-time gate 42/42: reads .statuses[].token fresh from the schema each invocation (no hardcoded enum), fails OPEN when the schema is absent (G9), block message emits the exact Status/Status-note two-line rewrite (G3). (5) plan-edit-validator flock/exec brace-group fix present at lines 218/230/299/554/559/589, pinned by F33 via a flock shim. manifest-check.sh GREEN (167 entries, 128 hooks, 0 warn). MAJOR CONDITIONS (fix, none blocking): M1 the WIP block message and the manifest both advertise a --waive escape that is UNREACHABLE at the PreToolUse surface where the block fires (waive is positional arg 3; call sites at dispatch-chain-gate.sh:696/:707 pass only the plan file; no persisted waiver is ever read back) -- and the gate's own FP justification at :138 rests on that escape. M2 harness-doctor.sh advertises --no-cache in its own cached-verdict message but takes arg 2 as EXPLICIT_REPO_ROOT unconditionally (:8005), so --quick --no-cache silently rebases the scan onto a bogus root (observed: 8 red + two fabricated '--no-cache/NEEDS-YOU.md' reds, suppressing genuine template-live-drift / manifest-freshness / wave-f-f2-docs; 14 red without it). M3 doctrine/review-before-deploy.md:19-20 still asserts 'config/** never deployed by either carrier' -- false in these very bytes. M4 plan-edit-validator.sh:2953/:2982 use the bash-4-only ${var^^} against this repo's documented bash-3.2 floor (harmless on this machine's bash 5.2.37; degrades the block message on stock macOS /bin/bash 3.2.57). M5 docs/harness-architecture.md is stale vs the deploying manifest (gen-architecture-doc.sh --check exits 1; missing the PreToolUse dispatch-chain-gate row). M6 session-start-auto-install.sh --self-test exits 3 (22/3) -- PROVEN a platform artifact (SELF-SYNC-01 scenarios 19-22 need real symlinks; ln -s copies here), PROVEN pre-existing (added 2026-07-29 b8dd6746, untouched by this delta), but reported as FAIL rather than the SKIP-with-banner discipline review-record-push-gate.sh already uses. MINOR: the dispatch-chain-gate manifest fp_expectation claims a 'data-file condition in the gate config' for WARN demotion; no such config or code exists for this gate (the sibling design-ref-gate.json discloses this honestly, this entry does not). DEPLOYMENT-ORDER CAVEATS: (a) 2 in-flight chain-less plans postdating the grandfather snapshot will block builder dispatch immediately post-install -- plan-status-schema-and-doctrine (11 open tasks) and verify-event-emit-hotfix-2026-08-04 (2 open tasks); remedy is in the block message. (b) live settings.json wires workstreams-state-gate.sh (retired to attic/) on PreToolUse Task|Agent|Workflow and an MCP matcher; the settings merge is ADDITIVE so install will NOT remove it -- manual reconcile required or every dispatch keeps invoking a missing script. (c) manifest-disclosed perf: 5.7-9.6s per build-category dispatch. (d) blocking-gate budget is already RED at 15/14 and this deploy adds one (repo 40 blocking vs live 39). (e) post-deploy, re-run harness-doctor and confirm verify-event-silence clears on NEW flips -- the 0 flip-verdict ledger rows today reflect the STALE live hook, not the deploying one."
+  },
+  "written_by": "orchestrating session via write-review-record.sh. DECISION-067 RESIDUAL, stated plainly: this review's principal shares the machine and git identity (mishanovini, Office_PC) of the change author. It is NOT an independent-principal review; independence is pathway-only (a separate harness-reviewer agent context), not cross-machine, and no mechanism prevented the author's session from commissioning it.",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini",
+    "session_id": "4a470c8c-e5e4-49bb-a8f8-131206e35b58"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
