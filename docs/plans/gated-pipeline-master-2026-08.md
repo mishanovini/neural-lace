@@ -509,6 +509,14 @@ Modify:
 - `adapters/claude-code/doctrine/single-flight-halt-runbook-full.md` — new companion (T8)
 
 ## In-flight scope updates
+- 2026-08-06: `docs/handoffs/2026-08-06-cross-machine-process-and-cockpit-handoff.md` — Task 8's
+  remaining REDs require a **second-principal review runner** on a machine other than the builder's,
+  and nothing carried the needed context there. Git master is the only channel reaching all three
+  machines (the coordination repo carries a near-empty payload — see the doc's Part C), so the
+  handoff is a committed artifact rather than pasted text. It also records two live enforcement
+  gaps found while writing it: the local `core.hooksPath` override that disables the pre-push
+  funnel (`review-record-push-gate.sh`) in this repo, and the two dead `workstreams-state-gate.sh`
+  wirings that `merge_settings()` is structurally unable to remove.
 - 2026-08-03 (T16 Adjudication 1, DESCOPE DISPOSITION): design §4's G1 advisory layer
   (`hooks/design-ref-gate.sh` PreToolUse early-warning + `start-plan.sh --check` at scaffold) is
   NOT built this cycle — ruled sufficient-for-v1 by the plan-fidelity re-review on the design's
