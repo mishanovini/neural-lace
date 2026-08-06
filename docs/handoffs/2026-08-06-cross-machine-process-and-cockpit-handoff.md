@@ -29,6 +29,104 @@ git show origin/master:docs/handoffs/2026-08-06-cross-machine-process-and-cockpi
 
 ---
 
+# WORK QUEUED FOR THIS MACHINE (added 2026-08-06, operator-directed)
+
+The operator explicitly delegated the three items below to a machine other than Office_PC,
+because Office_PC is near its weekly token ceiling. Claim one by announcing it, do it, and
+push to master. Items are ordered by value.
+
+## Q1 — Design and build Stage 0: interpret-and-approve before design
+
+**This is a standing operator directive that was never built at any layer.** Do not treat it as
+a nice-to-have.
+
+The operator's words, 2026-08-04 and restated 2026-08-06: *"I want you to always interpret my
+requests and expand upon them to provide what you believe is your full understanding of what it
+is that I am trying to accomplish. I then want you to share that back with me for me to modify
+or approve before that gets turned into an initial design."*
+
+What exists already, and must be read before designing:
+- [`docs/designs/end-to-end-process.md`](../designs/end-to-end-process.md) defines this as
+  **Stage 0 — Intent capture**, and its own honest-status table marks Stage 0 **"NO — being
+  designed"**, not firing. That document is the design context; this work is its Stage 0.
+- [`docs/plans/archive/intended-functionality-stage-0-2026-07-30.md`](../plans/archive/intended-functionality-stage-0-2026-07-30.md)
+  is COMPLETED and builds the Intended-Functionality statement format plus its anti-restatement
+  gate — but it contains **no share-back-for-approval step**. Verified by grep: there is none.
+  So the format exists; the approval handshake does not.
+- The **elaboration layer** on the operator-directives register is the same idea already built
+  for *standing directives*: an optional `elaboration` object (intent, requirements,
+  anti_patterns, applies_when, worked_example) rendered behind an *"Interpretation — correct me
+  if wrong"* banner, shipping `reviewed_by: pending-operator` so no sign-off can be claimed.
+  **Reuse this shape** — it is operator-approved and already proven. It lives on branch
+  `worktree-agent-a25c1bcde68d67a0b` (commits `579b25bc` + `28608138`); if master's
+  `docs/operator-directives.md` already contains OD-024, the merge landed and it is on master.
+
+The gap to close: the same interpretation-and-approval handshake, applied to **any request**,
+firing **before** a design is authored — not only to standing directives after the fact.
+
+Author the design first and bring it to the operator before writing code. That is both the
+correct process and a demonstration of the feature itself.
+
+**Named residual to resolve while you are in this code:** the elaboration layer's
+`doctrine-jit.sh` register walk is a hot path with a nominal <50ms budget. Its timing was
+measured on Office_PC under heavy concurrent load — the *unmodified* code itself ran 45–65ms
+against a quiet-machine baseline of 23–39ms, and the new code averaged 71.3ms across ten runs.
+The delta is roughly 12–30ms but the measurement is not trustworthy. **Re-measure on your quieter
+machine** and report a clean number. If it is genuinely over budget, that is a real defect to
+fix, not a rounding error — this hook runs on every matching tool call.
+
+## Q2 — Second-principal verify and merge the plan-inventory fix (the cockpit sync fix)
+
+Branch `fix/cross-machine-plan-inventory-single-derivation`, built on Office_PC in worktree
+`.claude/worktrees/wf_4671371c-69c-2`. **It is not pushed** — Office_PC must push it before you
+can see it; if `git ls-remote origin` does not list it, ask.
+
+What it does: the cockpit and the cross-machine exporter derived the plan inventory from two
+different sources (the cockpit scanned `docs/plans/`; the exporter folded the ask registry, which
+had 2 `plan_linked` records against hundreds of plans). The scan moved into `derive-lib.js` and
+both consumers now call the **same function object** — verified by `===` identity, not by
+comment. Cockpit and export agree at 99 plans, set-equal.
+
+Three adversarial verifiers already ran on Office_PC: one CONFIRMED, two DOWNGRADE. **Do not
+re-do that review.** Your job is second-principal verification — the same checks run by someone
+who did not build it — plus the merge. Re-run every suite yourself and confirm these:
+export-state 19/0, roadmap-routes 165/0, server 181/0, cockpit 593/0, peer-view 41/1 (#14 is a
+pre-existing test-isolation leak), coord-sync 27/2 (pre-existing).
+
+Known costs, disclosed rather than discovered: exporter wall time 0.476s → 6.579s, and
+coordination-repo growth of roughly 6 MB/week across three hosts. A remediation round on
+Office_PC is bounding these; check the branch head before assuming they are still open.
+
+**This also closes gated-pipeline Task 8's second-principal review requirement**, which is the
+one thing Office_PC structurally cannot do for itself.
+
+## Q3 — The live `/api/asks` 500 (cockpit landing view is blank)
+
+**PROVEN on master `24ccc3f1`.** `/api/asks` returns HTTP 500 against real data because
+`server.js:1243-1246` turns any payload-schema failure into a 500, and three separate
+diagnostics fire:
+1. `unknown field (not in allowlist): $.peers.entries[0].plans[0].plan_doc.path` —
+   `payload-schema.js` `LANDING_ALLOWED_KEYS` lists `plan_doc` but not its `{project, path}`
+   members.
+2. `gate/hook identifier leaked at ...plan_slug (matched /[a-z0-9_-]*-gate\b/i)` — the denylist
+   matches plan slugs, which are filename stems that legitimately name mechanisms.
+3. `$.groups[8].asks[0].summary` matches `/\.sh\b/i` on `"harness-doctor.sh"` — an ask summary
+   legitimately naming a script.
+
+The Office_PC remediation fixes all three; verify on your machine that `/api/asks` returns
+`ok:true` **against a real running server with real data**, not by unit assertion. When you
+change the denylist, prove what it still catches — construct a payload with a genuine
+harness-internal leak and confirm it is still rejected. The denylist exists for a reason.
+
+**The root cause that let this hide, and the more valuable fix:**
+`server/server.selftest.js` **crashes at line 893** with
+`TypeError: Cannot read properties of undefined (reading 'asks')` after 61 PASS / 8 FAIL — so
+every scenario after it, including **S64 at line 1663 which tests exactly this**, has never run.
+A suite that dies midway looked like a suite that was fine. Make a crashed suite fail loudly
+with a count of scenarios that never executed. That defect class is the subject of Part D.
+
+---
+
 ## Part A — Check your CLI version before trusting any gate
 
 **What happened on Office_PC.** The `claude` CLI printed:
