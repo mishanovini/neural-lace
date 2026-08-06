@@ -161,6 +161,92 @@ const HREF_KEYS = new Set(['evidence_link', 'raw_link']);
 const DENYLIST_EXEMPT_KEYS = new Set(['description', 'plan_slug', 'plan_state_reason', 'path']);
 const DENYLIST_EXEMPT_MAX_LEN = 2000;
 
+// ----------------------------------------------------------------------
+// DENYLIST_EXEMPT_PATHS — an exemption scoped by POSITION, not by key name
+// (cross-machine-plan-inventory remediation, 2026-08-06).
+//
+// THE OUTAGE THIS FIXES. `/api/asks` returned 500 on this machine's real
+// data with:
+//   gate/hook identifier leaked at $.groups[8].asks[0].summary
+//   (matched /\.sh\b/i): "Fix divergence between node and jq implementations
+//   of claim-honesty check in harness-doctor.sh self-test."
+// and `/api/ask/ask-auto-0833ef2dd72e6eca` returned 500 on the SAME string
+// at `$.summary`. Both endpoints were dead; the landing view was blank.
+//
+// WHY A NEW MECHANISM RATHER THAN `DENYLIST_EXEMPT_KEYS.add('summary')`.
+// The key `summary` carries TWO DIFFERENT THINGS in these payloads:
+//   1. `$.groups[].asks[].summary` / `$.completed.asks[].summary` /
+//      `$.summary` — the ASK'S OWN TITLE (server.js's buildAskCard and
+//      buildAskDetailPayload, both `reg.summary` off the folded ask
+//      registry). This is the NAME OF A UNIT OF WORK.
+//   2. `$.narrative[].summary` — a per-EVENT narrative line
+//      (server.js:1100, `narrativeSummary(e)`), machine-composed status
+//      copy about what a mechanism did. This is exactly the noise the
+//      anti-noise law exists to keep off the surface, and it is already
+//      locked by a negative fixture (S70b).
+// A key-scoped exemption cannot tell them apart — adding 'summary' to
+// DENYLIST_EXEMPT_KEYS would silently un-guard the narrative channel too.
+// The walk already builds a JSON path; keying the exemption off that path
+// (with array indices normalized to `[]`) separates the two roles exactly.
+//
+// WHY THE ASK TITLE IS THE `plan_slug` ARGUMENT, ONE LEVEL UP. An ask title
+// is the ask's IDENTITY — the operator's (or the distiller's) name for a
+// unit of work — in a repo whose work is largely ABOUT harness mechanisms.
+// Naming the subject is the whole job of a title, so every one of the five
+// denylist patterns can appear in a correct one: `.sh` (measured: 1 of 106
+// real ask summaries on this machine today), `-gate` (the branch already
+// had to exempt `plan_slug` for this, 4 of 29 plans), a hook lifecycle
+// name, an `od_*` oracle, a mechanism token like `close-plan`. This is the
+// SAME class the `plan_slug` block above documents, and the same class the
+// header's "needs-you" carve-out documents: when a pattern collides with a
+// legitimate operator-facing NAME, the name wins and the pattern is scoped
+// away from it — the pattern itself is never weakened.
+//
+// WHY NOT NARROW `/\.sh\b/i` INSTEAD. There is no lexical difference
+// between a leak ("blocked by workstreams-state-gate.sh") and a legitimate
+// title ("fix harness-doctor.sh self-test") — the discriminator is the
+// FIELD'S ROLE, not the string. Any narrowing that lets the title through
+// also lets the leak through, in EVERY field, which is disabling the
+// pattern with extra steps. Scoping by role costs one field and keeps the
+// pattern at full strength everywhere else.
+//
+// WHAT THE DENYLIST STILL CATCHES AFTER THIS CHANGE. All five patterns
+// still run, unmodified, against every string in both payloads except the
+// four DENYLIST_EXEMPT_KEYS and the three paths below. On the real landing
+// payload measured here that is 3,300+ string values across 29 key names,
+// including every machine-composed status field the anti-noise law was
+// written for: `narrative_excerpt` (the ask card's progress line —
+// negative fixtures S27a/S51/S71e), `$.narrative[].summary` (the event
+// narrative — S70b/S71d), `message` and `divergence_class` and
+// `detail_ref` (drift badges), `state_label`, `provenance_label`, `label`,
+// `people_map_error`, `status`, `error`, `person`, `role`, `state`,
+// `discovery`, `plan_state`, `projects_config`, `source`, `branch`,
+// `host`, `repo`, `project`. Only the ask TITLE moved.
+//
+// The DENYLIST_EXEMPT_MAX_LEN cap applies here for the same compensating
+// reason it applies to `description`: the denylist no longer bounds this
+// field's content, so raw size still does.
+// ----------------------------------------------------------------------
+const DENYLIST_EXEMPT_PATHS = new Set([
+  '$.groups[].asks[].summary',  // landing: an ask CARD title (buildAskCard)
+  '$.completed.asks[].summary', // landing: a completed ask card title (same builder)
+  '$.summary',                  // detail: the ask's own title (buildAskDetailPayload)
+]);
+
+// Cheap pre-filter: only these key names can EVER be path-exempt, so the
+// path normalization below runs for a handful of values rather than for
+// every string in a ~200 KB payload.
+const PATH_EXEMPT_CANDIDATE_KEYS = new Set(['summary']);
+
+function normalizeWalkPath(pathLabel) {
+  return pathLabel.replace(/\[\d+\]/g, '[]');
+}
+
+function isDenylistExemptPath(key, pathLabel) {
+  if (!PATH_EXEMPT_CANDIDATE_KEYS.has(key)) return false;
+  return DENYLIST_EXEMPT_PATHS.has(normalizeWalkPath(pathLabel));
+}
+
 function isAbsoluteHref(value) {
   if (typeof value !== 'string' || value === '') return true; // empty is a legitimate "no link yet"
   if (/^https?:\/\//i.test(value)) return true;
@@ -313,7 +399,12 @@ function walk(node, allowedKeys, pathLabel, errors) {
         // is bounded instead by a raw length cap. Over-cap is a validation
         // ERROR (never a silent truncation — truncating would hide the
         // size problem rather than surface it).
-        if (DENYLIST_EXEMPT_KEYS.has(key)) {
+        // DENYLIST_EXEMPT_PATHS is the SAME carve-out scoped by POSITION
+        // instead of by key name — see its definition for why the ask
+        // TITLE (`$.groups[].asks[].summary`, `$.summary`) needs it while
+        // the identically-named event line (`$.narrative[].summary`) must
+        // stay scanned. Both routes land in the same length-capped branch.
+        if (DENYLIST_EXEMPT_KEYS.has(key) || isDenylistExemptPath(key, here)) {
           if (val.length > DENYLIST_EXEMPT_MAX_LEN) {
             errors.push('exempt field exceeds max length (' + DENYLIST_EXEMPT_MAX_LEN + ' chars) at ' + here + ': ' + val.length + ' chars');
           }
@@ -355,4 +446,5 @@ module.exports = {
   HREF_KEYS,
   DENYLIST_EXEMPT_KEYS,
   DENYLIST_EXEMPT_MAX_LEN,
+  DENYLIST_EXEMPT_PATHS,
 };
