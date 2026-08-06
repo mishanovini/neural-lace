@@ -32,7 +32,6 @@ design-reviews:
   - reviewer: harness-reviewer       verdict: PASS   record: docs/reviews/2026-08-03-gated-pipeline-design-harness-review.md  (r1 REFORMULATE → r2 delta REFORMULATE → r3 scoped confirmation PASS)
   - reviewer: architecture-reviewer  verdict: SOUND  record: docs/reviews/2026-08-03-gated-pipeline-design-architecture-review.md  (r1 SOUND-WITH-AMENDMENTS → r2 delta SOUND-WITH-AMENDMENTS → r3 scoped confirmation SOUND)
 plan-reviews:
-  - reviewer: harness-reviewer (role: plan-fidelity, bootstrap per design §8.1)  verdict: PASS  record: docs/reviews/2026-08-03-gated-pipeline-plan-fidelity-review.md  (REFORMULATE → F-1..F-5 fixed in a4176686 → amendment confirmation PASS; superseded by the T16 entry below)
   - reviewer: plan-fidelity-reviewer  verdict: PASS  record: docs/reviews/2026-08-03-gated-pipeline-t16-plan-fidelity-review.md  plan-blob: 0771581b2222e0198443bf425283bc7cf8cda400  (T16/REQ-B13: protocol-host execution, admission test reproduced; REFORMULATE → F-1/F-6/F-7/F-8 fixed @ 7eaaa9f6 → delta PASS with fresh attestation)
 
 ## Intended Functionality
@@ -196,7 +195,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   Verification: contract — Implements: REQ-A4 — Directives: n/a — operator-directives register
   (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: doctrine/INDEX.md
   regenerated (generator)
-- [ ] 7. Mechanized flips + targeted fixes (after Tasks 3,4,6 — shared files), decomposed per
+- [x] 7. Mechanized flips + targeted fixes (after Tasks 3,4,6 — shared files), decomposed per
   target — Verification: full — Implements: REQ-A5 — Directives: n/a — operator-directives
   register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact:
   single-flight-halt-runbook.md HALT-path note; CPU methodology note in the perf research doc
@@ -245,7 +244,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   — Verification: contract — Implements: REQ-A7 — Directives: n/a — operator-directives register
   (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs impact: NEEDS-YOU.md entry (via
   generator)
-- [ ] 11. REQ-B1+B4 register: `config/operator-directives.json` (canonical) + generator for
+- [x] 11. REQ-B1+B4 register: `config/operator-directives.json` (canonical) + generator for
   `docs/operator-directives.md` view + `hooks/lib/directives-register-lib.sh` (ONE parser,
   round-trip fixture test) + seeding (nl-issues 153/154/158 + curated D-01…D-23, each intake entry
   `register_ref`'d) + ADR forward-guard WARN lint + same-commit `derive-cache.js:7-11` supersession
@@ -272,7 +271,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   push-directive drop replayed as a design+plan pair in the agent's eval block) — Verification:
   contract — Implements: REQ-B3 — Directives: n/a — operator-directives register (REQ-B1/Task 11)
   not yet built; no OD- id exists to cite — Docs impact: model-policy.json entry (category review)
-- [ ] 14. REQ-B5+B7 template + checks: plan-template gains `design-ref:` header + per-task
+- [x] 14. REQ-B5+B7 template + checks: plan-template gains `design-ref:` header + per-task
   `Implements:`/`Directives:` + Review Chain section; plan-reviewer Checks 20-22 (20: design-ref
   required-when-triggered + design-reviews valid incl. anchor-at-HEAD comparison; 21: every design
   MUST-REQ claimed by ≥1 task + Directives fields present; 22: chain records name
@@ -290,7 +289,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     **Integration points:**
     - Check 17 comment marked superseded (kept for keyword-triggering only) — same commit
     - Task 1's lib is the parser — no second implementation (M-3 rule)
-- [ ] 15. REQ-B14 dispatch ledger (delta-D2 form): `workstreams-emit.sh` **`--on-builder-complete`
+- [x] 15. REQ-B14 dispatch ledger (delta-D2 form): `workstreams-emit.sh` **`--on-builder-complete`
   PostToolUse path** appends `{subagent_type, model, ts, session_id, artifact_ref}` to
   `~/.claude/state/dispatch-ledger.jsonl` — completion-side so blocked/failed dispatches mint no
   row; `artifact_ref` from the existing prompt parse; ledger-landing date recorded in the lib
@@ -314,7 +313,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   dispatchable — Verification: mechanical — Implements: REQ-B13 — Directives: n/a —
   operator-directives register (REQ-B1/Task 11) not yet built; no OD- id exists to cite — Docs
   impact: the review record itself
-- [ ] 17. REQ-B8 G2 gate live (after Task 16): `dispatch-chain-gate.sh` wired PreToolUse
+- [x] 17. REQ-B8 G2 gate live (after Task 16): `dispatch-chain-gate.sh` wired PreToolUse
   Task|Agent (subagent_type-keyed per design §4; grandfather list generated at install from extant
   plan slugs; gate-contract messages; `--check`; escape ledgered) + THE THREE-VARIANT DEMO with
   transcripts in the evidence file: (i) plan-phase-builder vs chain-less NEW fixture plan →
@@ -336,7 +335,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     **Integration points:**
     - model-pin-gate rides the same matcher — ordering verified non-conflicting (both read-only on tool_input)
     - Live settings reconcile on THIS machine after template lands (additive sync limitation known)
-- [ ] 18. REQ-B9 G3 extension: `review-record-push-gate.sh` consumes the DEC-5 class-table config
+- [x] 18. REQ-B9 G3 extension: `review-record-push-gate.sh` consumes the DEC-5 class-table config
   (harness class → BLOCK by config date; provenance-docs EXEMPT; product/other → WARN with
   per-class baselines measured from the calibration week's real push history); same-push
   record-honoring stated + tested — Verification: full — Implements: REQ-B9 — Directives: OD-002, OD-004, OD-005, OD-007, OD-018 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs
@@ -350,7 +349,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - `adapters/claude-code/hooks/review-record-push-gate.sh` class computation → pushed paths via the pre-push ref args
     **Integration points:**
     - `git-hooks/pre-push` stage 4 dispatcher unchanged (extension is inside the gate script)
-- [ ] 19. REQ-B10 no-addendum lint (in hygiene-scan; narrowed pattern per M-9 + harness delta:
+- [x] 19. REQ-B10 no-addendum lint (in hygiene-scan; narrowed pattern per M-9 + harness delta:
   Addendum/Update: in designs+plans with `docs/plans/archive/**` EXCLUDED from scope entirely;
   `Round [0-9]` in `docs/designs/**` ONLY; case-insensitive; fresh-waiver escape, ledgered; the 5
   measured legitimate hits as verbatim negative fixtures) + the considerations brief's addenda
@@ -364,7 +363,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - `docs/designs/harness-execution-redesign-considerations-2026-08-02.md` → zero `^#+ .*Addendum` matches post-integration
     **Integration points:**
     - Pre-commit chain ordering unchanged; the lint rides the existing hygiene-scan invocation
-- [ ] 20. REQ-B11+B12 carriage channels 2+3 (after Task 11): `scripts/dispatch-directives.sh`
+- [x] 20. REQ-B11+B12 carriage channels 2+3 (after Task 11): `scripts/dispatch-directives.sh`
   (tag-matched entries for a task's Files-to-Modify, printed for prompt inlining) +
   orchestrator-pattern doctrine step + doctrine-jit merged single-emission register walk (C-1
   form: both walks compute, ONE `hookSpecificOutput` JSON object emitted containing both bodies;
@@ -382,7 +381,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - `adapters/claude-code/hooks/doctrine-jit.sh` register walk → same lib; single `jq -n` emission site
     **Integration points:**
     - C-1's both-match scenario is the load-bearing test — asserted on raw stdout being ONE parseable JSON object
-- [ ] 21. REQ-C2 estate drain (after Task 17, so legacy-plan dispositions retire G2's grandfather
+- [x] 21. REQ-C2 estate drain (after Task 17, so legacy-plan dispositions retire G2's grandfather
   population): 10 verified-safe worktrees pruned; 135 nl-issues triaged via the mechanized
   supersession sweep + dispositions; 23 stale ACTIVE plans dispositioned (close/SUPERSEDE/DEFER,
   one line each); the 1,254 alerts: execute the 36%-clearing route fix or explicitly re-own it,
@@ -396,7 +395,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
     - n/a — drain task: the products are dispositions and removals verified by the counts above, not a new code chain (justification ≥30 chars)
     **Integration points:**
     - Concurrent-ownership gate will challenge Status flips on session-owned plans — follow its guidance per flip; never bypass
-- [ ] 22. REQ-C3+C4: honest scorecard in the existing dashboard snapshot (net-artifact delta,
+- [x] 22. REQ-C3+C4: honest scorecard in the existing dashboard snapshot (net-artifact delta,
   hooks-per-Bash, SessionStart spawns, machine-census scheduled tasks) + DEC-6 invariant-8
   amendment and DEC-7 cold-target re-scope recorded in the brief's body. Counting method (fidelity
   weakest-mapping fix): net-artifact delta = `git diff --stat` file census between the program's
@@ -405,11 +404,11 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   from the live settings.json the same way budget-bash-hooks counts them; the evidence file
   asserts ONE recomputable number per metric with its exact command — Verification: contract —
   Implements: REQ-C3, REQ-C4 — Directives: OD-001, OD-006, OD-016 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs impact: brief body edits ARE the doc change
-- [ ] 23. REQ-C5 minimal Stage-3 subset: death-certificate fields on nl-maintenance's existing
+- [x] 23. REQ-C5 minimal Stage-3 subset: death-certificate fields on nl-maintenance's existing
   handle-wait + cleanup-as-sensor fields on the existing janitor log, each naming its consumer at
   birth in the field comment — Verification: contract — Implements: REQ-C5 — Directives: OD-001, OD-003, OD-006, OD-007, OD-009, OD-016 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs
   impact: none — fields documented at their write sites
-- [ ] 24. REQ-C6 Stage-2 admission trigger: doctor WARN "stage-2 admission open since <date>"
+- [x] 24. REQ-C6 Stage-2 admission trigger: doctor WARN "stage-2 admission open since <date>"
   (data-file date written by Task 8's completion) persisting until a Stage-2 plan goes ACTIVE.
   Detection mechanism (T16 F-6): a Stage-2 plan is an ACTIVE `docs/plans/*.md` whose header
   carries `stage-2-successor: gated-pipeline-master-2026-08` (the marker convention this task
@@ -417,7 +416,7 @@ live (D-15's acceptance bar), and maintenance activation no longer risks the sto
   fixture with marker set + no such plan → WARN present; fixture with a matching ACTIVE plan →
   WARN clears — Verification: contract — Implements: REQ-C6 — Directives: OD-002, OD-007,
   OD-016, OD-018 (lib-computed 2026-08-03, T16 fidelity review F-1) — Docs impact: manifest entry
-- [ ] 25. OPERATOR DIRECTIVE 2026-08-03 (merge→verify mechanization; scope expanded per
+- [x] 25. OPERATOR DIRECTIVE 2026-08-03 (merge→verify mechanization; scope expanded per
   constitution §8 — correct scope > planned scope; absorbs backlog row AUTO-VERIFY-DISPATCH-
   2026-08-03, deleted same commit; NOT the T16 record's descoped "Task 25" G1-advisory spec —
   that disposition stands unchanged): the build→verified transition becomes mechanical and
@@ -525,6 +524,17 @@ Modify:
   companion (task-verifier/comprehension/orchestrator records); omitted from the Files map at
   authoring (an oversight — every plan has one), surfaced by scope-enforcement on the first
   evidence-only commit after the predecessor archive.
+- 2026-08-04: `.github/workflows/server-side-enforcement.yml` — CI-red triage (operator standing
+  directive), this plan's Task 8 continuation lineage: the `plan-edit-validator` job's
+  `actions/checkout@v5` step was the one step missing `fetch-depth: 0` (every sibling job in
+  the file already sets it); added it plus always-print-output CI diagnostics for the same job,
+  triaging a Linux-only red in `adapters/claude-code/hooks/plan-edit-validator.sh` whose F28-F32
+  id-shape-grammar scenarios this plan's Task 8 continuation added.
+- 2026-08-04: `.github/workflows/hooks-selftest.yml` — same CI-red triage: updated the stale
+  `KNOWN_FAILING_HOOKS` comment for `harness-doctor.sh` to reflect Task 8's own
+  SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 fix (4 of 5 jq-parity self-test scenarios now pass;
+  only `claim-honesty-jq-parity-red` — tracked separately as
+  CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01 — remains, owned by another in-flight session).
 - 2026-08-03: CI triage folded into Task 8's arbiter-readability remit (operator directive) —
   `.github/workflows/hooks-selftest.yml`; `adapters/claude-code/hooks/concurrent-ownership-gate-
   body.sh`, `scope-enforcement-gate-body.sh`, `gh-merge-canonical-gate.sh`; and 8 oversized
@@ -582,6 +592,23 @@ Modify:
   transitions instead of re-deriving the full transition set from D-15). The design file is NOT
   edited (frozen-flip clause not triggered); harness-reviewer PASS on the T25 gate diff is the
   review-at-the-transition for this addition.
+- 2026-08-03 (T17): removed the stale pre-T13 bootstrap `plan-reviews` entry ("reviewer:
+  harness-reviewer (role: plan-fidelity, bootstrap per design §8.1) ... superseded by the T16
+  entry below") from `## Review Chain`. That entry carries no `plan-blob:` anchor (it predates
+  the anchor field), so `rc_validate_chain` — which validates EVERY listed entry, not just the
+  latest — legitimately FAILED it on rule 2 ("no chain-side anchor blob to compare"), making the
+  PLAN'S OWN overall chain verdict FAIL (not the T16 entry's own WARN-during-calibration
+  mismatch, a separate, already-known condition). Discovered live while building T17's G2 gate:
+  had this landed unremoved, arming G2 (this task's own deliverable) would have BLOCKED the very
+  next plan-phase-builder/test-writer dispatch against THIS plan — including the orchestrator's
+  own subsequent Task 18+ builds. See the Decisions Log entry below for the full reasoning.
+- 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-1.txt` — one of the three D-15 acceptance-bar live transcripts T17's own task text directs it to create; the `## Files to Modify/Create` table lists T17's gate/wiring/grandfather-list files but not this evidence directory, a pre-existing gap (the Closure Contract independently names it), not something this build introduced; flagged by scope-enforcement-gate on the commit attempt, fixed via this entry per the gate's own option 1.
+- 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-2.txt` — same as the -1.txt entry immediately above (one bullet per file; scope-enforcement-gate's In-flight parser reads one physical line per bullet, not wrapped continuation lines).
+- 2026-08-03: `docs/plans/gated-pipeline-master-2026-08-evidence/t17-demo-variant-3.txt` — same as the -1.txt entry above.
+
+- 2026-08-03: `docs/reviews/2026-08-03-needs-you-readability-review.md` — operator-directed (verbatim complaint: NEEDS-YOU.md "incredibly messy … not clear what you actually need from me") readability audit of the `adapters/claude-code/scripts/needs-you.sh` render pipeline; review-only, no code changed; its S1-S8 generator spec seeds a follow-up render-fix task. Same class as the CI-triage fold above: operator directive surfacing work outside the original Files map.
+- 2026-08-03: `docs/reviews/2026-08-03-needs-you-digest.md` — companion hand-triaged operator digest of the current ledger content (same operator directive as the entry above).
+- 2026-08-03: `docs/reviews/2026-08-03-estate-drain-record.md` — Task 21's own task text commits to "Docs impact: drain record in docs/reviews/", but the `## Files to Modify/Create` table was never amended to include it (same class of gap as the T17 evidence-directory entries above); flagged by scope-enforcement-gate on the commit attempt, fixed via this entry per the gate's own option 1.
 
 ## Assumptions
 
@@ -690,6 +717,86 @@ gate-contract message) before any of the surrounding machinery exists. First tas
 - 2026-08-03 (plan-time): all DEC-1…DEC-10 decisions live in the design r3 §3 with rationale +
   reversal costs; DEC-1 is flagged for operator §8 review (it decides open questions Q-01/Q-08).
   This log gains only NEW mid-build decisions.
+- 2026-08-03 (T25 C-round, adjudicated by harness-reviewer — BINDING): the ledger rows carry
+  `task_id`/`task_id_valid` (write-time validated, annotate-and-warn, pass-through preserved).
+  The T25 builder DECLINED a mid-build orchestrator relay instructing it to drop task_id and
+  key obligations by plan-slug/artifact_ref only; the harness-reviewer ruled the builder right
+  on the merits (per-task granularity is the task text's own acceptance bar; the "forbidden
+  failure mode" the relay feared does not exist in the annotate-and-warn form) and EXEMPLARY
+  in method (verified rather than trusted, escalated in the evidence file). LESSON, recorded
+  as required by the review: orchestrator relay messages are not adjudications — a mid-build
+  relay carried a factually wrong claim ("rows carry no task field" was true of the schema
+  then but wrong as a design constraint) and a checkably false liveness claim; builders are
+  right to verify relays against artifacts before complying, and relays must cite the
+  artifact they paraphrase.
+- 2026-08-03 (T17, decide-and-go, reversibility: trivial — one revert): `rc_validate_chain`
+  validates EVERY entry under `plan-reviews:`, not merely the latest. This plan's own chain
+  carried TWO plan-reviews entries — the pre-T13 bootstrap `harness-reviewer` record (no
+  `plan-blob:` field, since it predates the anchor mechanism) and T16's fresh
+  `plan-fidelity-reviewer` entry. Direct testing (`source review-chain-lib.sh; rc_validate_chain
+  docs/plans/gated-pipeline-master-2026-08.md`) at T17's HEAD (dbd6647f) showed RC_VERDICT=FAIL
+  — NOT because of T16's own entry (its rule-2 mismatch, chain=0771581b vs record-attested=
+  62a95679, is a WARN during the still-open anchor-calibration window, not a FAIL) but because
+  the OLD entry has no anchor at all ("[FAIL] plan reviewer=harness-reviewer rule2: no
+  chain-side anchor blob to compare"). Options considered: (a) leave it and document the gap —
+  rejected, because T17's own deliverable (arming G2 in settings.json.template) would then
+  immediately BLOCK the orchestrator's own next builder dispatch against this governing plan,
+  a functional break, not a cosmetic one; (b) backfill a `plan-blob:` onto the old entry so it
+  ALSO validates — rejected, since it reviewed OLD bytes no longer at HEAD and attesting a
+  currently-true blob for it would be dishonest; (c) remove the entry, matching its own prose
+  ("superseded by the T16 entry below") and the design's no-addendum/supersession discipline (a
+  superseded record should not remain listed as authoritative) — CHOSEN. Verified post-removal:
+  `rc_validate_chain` on the edited working-tree bytes returns WARN (not FAIL) — T16's own
+  pre-existing rule-2 mismatch remains, WARN-only during calibration, never blocking (see the
+  Task 17 entry in `docs/plans/gated-pipeline-master-2026-08-evidence.md` for the exact re-run
+  transcript). This is plan-file metadata (Review Chain content), which
+  `spec-freeze-gate.sh`/`doctrine/spec-freeze.md` explicitly exempts from the frozen-scope
+  restriction ("Plan files themselves are exempt: checkbox flips, evidence appends, and
+  Decisions Log entries are always allowed") — read narrowly, this edit is a chain-content fix
+  adjacent to those three, not a scope/task edit, and is logged here precisely so it is never a
+  silent one. Landed as its own commit, separate from T17's G2-mechanism commit, so the two are
+  independently auditable.
+- 2026-08-04 (DEC-4 ratification + follow-up guard, decide-and-go, reversibility: trivial —
+  `--reset-flap` + a revert): the operator ratified the resident-daemon shape for T10/REQ-A7 —
+  verbatim, one word, **"ratify"** — on the explicit precondition that ONE named uncovered risk
+  gets a guard before `NL-Maintenance` registration executes: a daemon that crashes every few
+  minutes LOOKS alive from a distance because the watchdog keeps resurrecting it (burning CPU,
+  masking the real bug, reporting healthy) — every OTHER failure mode (identity-checked kill,
+  zero-substrate doctor WARN->RED, T23 death certificates, single-flight against spawn storms,
+  HALT drain, proven `-Rollback`) was already covered; this one was not. Built: `nl-maintenance.sh`
+  `run_watchdog` now counts relaunch decisions in a rolling window (`NM_FLAP_WINDOW_SECONDS`,
+  default 3600s) against `NM_FLAP_THRESHOLD` (default 4). Numbers derived, not guessed: the
+  watchdog is the ONLY relaunch trigger and fires on a fixed OS cadence of 300s
+  (`install-maintenance-task.ps1 -WatchdogIntervalSeconds`, matching `NM_WATCHDOG_STALE_SECONDS`)
+  — a hard architectural ceiling of 12 relaunches/hour by construction; a healthy pass measured on
+  this machine at 2.1s (pure scheduling overhead, no job due) to 9.6s (real job + first dashboard
+  write, incl. a `schtasks` census spawn) is 30-140x inside that 300s stale threshold, so a
+  genuinely healthy daemon should trigger ZERO watchdog relaunches — 4/hour sits comfortably above
+  any plausible isolated legitimate event (laptop sleep/wake, one operator-debug kill) yet at
+  under half the 12/hour ceiling a real flap hits, so a true flap trips within ~4 cycles (~20 min)
+  instead of churning silently for the full window. At the Nth restart the watchdog STOPS
+  resurrecting (old process left untouched — the guard's job is to stop the loop, not also perform
+  process hygiene that could remove diagnostic evidence), writes
+  `state/nl-maintenance/flap-state.json` (T23 `death_outcome`/`death_cause` field-NAME reuse, new
+  values `resurrection_halted`/`flap_threshold_exceeded` — nothing is signaled at this decision
+  point, so the kill-branch's `term_signal_sent` value is never reused), and every later watchdog
+  fire is a fast log-only no-op until the ONE explicit `--reset-flap` operator/orchestrator action
+  (fail-safe direction: stop and shout, never resume automatically). Doctor-visible: new
+  `check_maintenance_daemon_flap` (`harness-doctor.sh`) REDs (never WARNs) while the file is
+  present, silent/tolerate-absent otherwise — reuses the EXISTING `state/nl-maintenance/`
+  directory the doctor already reads (activation-marker, heartbeat), no new state surface, per the
+  operator's explicit instruction to reuse rather than invent. Dashboard-visible:
+  `_nm_refresh_dashboard_snapshot`'s payload gained a `flap: {tripped, detail}` field reading the
+  same file, alongside the gate-friction pane it already writes. Proof: `nl-maintenance.sh
+  --self-test` gained 22 pinned assertions (Scenarios 18-20 — N-1 restarts still resurrects; the
+  Nth restart stops + writes the death certificate + is doctor-visible + `--reset-flap` round-trips
+  clean; restarts aged out of the window are pruned and never count, i.e. window expiry resets the
+  counter and resurrection resumes), each independently mutation-tested (threshold `-ge`->`-gt`,
+  window-pruning disabled, the tripped short-circuit disabled) and confirmed to break ONLY its own
+  scenario. Doctor wiring proven live against a scoped `HARNESS_DOCTOR_HOME` fixture (`--quick`):
+  silent when healthy, RED with full restart_count/window/threshold detail when tripped. Full
+  totals + doctor-suite re-run + registration-readiness note: this task's session return to the
+  orchestrator (task=10 attribution) and `docs/plans/gated-pipeline-master-2026-08-evidence.md`.
 
 ## Definition of Done
 

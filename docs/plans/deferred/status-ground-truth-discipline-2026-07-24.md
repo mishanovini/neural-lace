@@ -1,6 +1,6 @@
 # Plan — Status-Grounding Discipline (report from ground truth, not stale artifacts)
 
-Status: ACTIVE
+Status: DEFERRED
 Mode: docs
 Owner: interactive session (2026-07-24)
 Backlog items absorbed: none
@@ -27,3 +27,13 @@ time. This plan lands the durable lesson and tracks the review-gated mechanism t
 ## Notes
 Companion to the same-session Fable model-facts lesson. This plan touches no always-loaded or JIT
 surface; the enforcement follow-up is deliberately separate and reviewed.
+
+## Drain disposition (gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+DEFERRED, not closed: Task 1 (lesson) is done and on master (`62d4e2f2`). The FOLLOW-UP task
+(doctrine JIT + narrowed claim-reviewer trigger) was never built — no doctrine file exists,
+`doctrine/INDEX.md` has no ground-truth entry (re-verified this pass). No activity since
+2026-07-23 (11 days at drain time). Unlike the sibling `model-awareness-knowledge` plan (closed
+this same drain), this follow-up was never separately picked up. Status flipped
+ACTIVE -> DEFERRED. Resume trigger: next harness-reviewer-gated doctrine pass revisiting
+claim-reviewer triggers.

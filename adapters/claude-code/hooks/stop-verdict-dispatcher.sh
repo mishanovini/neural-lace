@@ -331,6 +331,20 @@ source "$_SVD_DIR/lib/stop-hook-retry-guard.sh"
 source "$_SVD_DIR/lib/nl-paths.sh"
 # shellcheck disable=SC1091
 { source "$_SVD_DIR/lib/hook-reentry-guard.sh" 2>/dev/null; } || true
+# review-chain-lib.sh (gated-pipeline-master-2026-08 Task 25 / OD-022 —
+# verify-obligation Stop-side check, see _svd_obligation_check below).
+# Guarded/best-effort like hook-reentry-guard.sh immediately above: a
+# missing or broken lib degrades the obligation check to a silent no-op
+# (rc_open_verify_obligations simply won't exist; the check function
+# defends against that explicitly), never a crash of the whole Stop chain.
+# shellcheck disable=SC1091
+{ source "$_SVD_DIR/lib/review-chain-lib.sh" 2>/dev/null; } || true
+# workaround-sensor-lib.sh (Defect 4, harness safety fix 2026-08-04 —
+# escape-obligation Stop-side check, see _svd_escape_naming_check below).
+# Same guarded/best-effort posture as review-chain-lib.sh immediately
+# above: a missing or broken lib degrades the check to a silent no-op.
+# shellcheck disable=SC1091
+{ source "$_SVD_DIR/lib/workaround-sensor-lib.sh" 2>/dev/null; } || true
 
 # The three member gates this dispatcher aggregates, in the order they
 # used to run in the Stop chain (work-integrity, session-honesty,
@@ -805,6 +819,24 @@ _svd_pin_d_remediation() {
           ;;
       esac
       ;;
+    stop-verdict-dispatcher)
+      case "$check" in
+        verify-obligations)
+          # C3 (harness-review remediation round, 2026-08-03): the third
+          # remedy this line used to cite -- "use a --waive escape at
+          # dispatch-chain-gate.sh's WIP-limit consult" -- was REMOVED.
+          # PROVEN ineffective: that waiver only affects a FUTURE builder
+          # dispatch at G2 (dispatch-chain-gate.sh); it writes nothing
+          # _svd_obligation_check reads, so running it would report success
+          # while leaving THIS Stop block completely unresolved -- citing
+          # it here was misleading, not merely redundant.
+          echo "OD-022: dispatch task-verifier against each named open task before ending, or edit the terminal marker line to explicitly name every open task id it doesn't already name (e.g. append '(tasks 5,6,7 verification pending, tracked)')."
+          ;;
+        *)
+          echo "See adapters/claude-code/hooks/stop-verdict-dispatcher.sh's own check functions for this gap's source."
+          ;;
+      esac
+      ;;
     *)
       echo "Re-run the reporting gate's normal (blocking) mode locally to see its full remediation text on stderr."
       ;;
@@ -1215,6 +1247,181 @@ _svd_vocabulary_lock_check() {
 }
 
 # ----------------------------------------------------------------------
+# _svd_extract_plan_slugs <text> — every DISTINCT `docs/plans/<slug>.md`
+# reference in $text, one per line. Deliberately duplicates
+# workstreams-emit.sh's own `_extract_plan_slug` regex rather than sourcing
+# that file (this dispatcher's established convention: only review-chain-
+# lib.sh is sourced, as the ONE ledger reader — workstreams-emit.sh is a
+# PostToolUse hook body, not a lib, and this file does not depend on
+# sibling hook bodies at runtime). A session's final message legitimately
+# naming several plans (a multi-plan orchestrator sweep) is checked against
+# ALL of them, not just the first.
+# ----------------------------------------------------------------------
+_svd_extract_plan_slugs() {
+  local text="$1"
+  printf '%s' "$text" | grep -oE 'docs/plans/[A-Za-z0-9_.-]+\.md' 2>/dev/null \
+    | sed -E 's#^docs/plans/##; s#\.md$##' | LC_ALL=C sort -u
+}
+
+# ----------------------------------------------------------------------
+# _svd_obligation_check <transcript_path>  (Task 25 / OD-022 — the
+# stop-side of merge->verify mechanization)
+#
+# CONTRACT: unlike the four WARN-only checks above (functional-link,
+# cold-reader-lint, problems-persist, vocabulary-lock), this check
+# CONTRIBUTES a gap into `all_gaps` (same {"gate":...,"check":...,
+# "message":...} shape _svd_write_and_validate_manifest's end-manifest gap
+# uses) — it is folded into the SAME block-once-then-ledger cycle-counting
+# machinery every other gap already rides (_svd_main below), which is
+# exactly "refused once" (Task 25 spec): the FIRST Stop with this gap-set
+# blocks (exit 2); an UNCHANGED gap-set on a second Stop downgrades to
+# unresolved-gaps.jsonl + NEEDS-YOU.md and the session is allowed to end
+# (ADR 059 D2). This function itself never exits the process and never
+# fails open into a crash — every internal failure (no jq, no lib, no
+# transcript) returns silently with NO gap printed (Behavioral Contracts:
+# "never silent, never fail-closed on an internal error" — a missing
+# dependency here degrades this ONE check to a no-op, it does not touch the
+# rest of the Stop verdict).
+#
+# SCOPE (disclosed, per constitution §8 — this fills a genuine ambiguity in
+# the task text, not a mechanically-derivable value): "a session ending
+# DONE/CONTINUING with open obligations" is scoped to plans the session's
+# OWN final message actually references (via `docs/plans/<slug>.md`) — a
+# session that never touched a plan, or whose final message never names
+# one, has no attributable obligation context and is never gapped by this
+# check. This mirrors the FUNCTIONAL-LINK check's own resolution-root
+# scoping (only what the message itself points at is ever evaluated).
+#
+# "does not name" is checked against the MARKER LINE itself (the terminal
+# DONE:/CONTINUING: line), not the whole message — the task text says "the
+# end-marker does not name", not "the message" — so a session that
+# discusses task 7 at length in its body but whose one-line marker says
+# only "DONE: shipped the thing" still gaps if task 7 is open. The name
+# match is permissive (an optional leading T/t, per the T7-incident
+# convention already established in rc_open_verify_obligations) so "T7",
+# "Task 7", and "7" in the marker line all count as naming task 7.
+# ----------------------------------------------------------------------
+_svd_obligation_check() {
+  local transcript_path="$1"
+  declare -F rc_open_verify_obligations >/dev/null 2>&1 || return 0
+  command -v jq >/dev/null 2>&1 || return 0
+
+  local text
+  text=$(_svd_final_assistant_message "$transcript_path")
+  [[ -n "$text" ]] || return 0
+
+  # Terminal marker: the LAST non-empty line matching the constitution §6
+  # enum. Not DONE:/CONTINUING: -> nothing to check (PAUSING:/BLOCKED:
+  # already declare an honest incomplete state; out of this check's scope).
+  local marker_line
+  marker_line=$(printf '%s\n' "$text" | grep -E '^(DONE|PAUSING|BLOCKED|CONTINUING):' | tail -n1)
+  [[ -n "$marker_line" ]] || return 0
+  case "$marker_line" in
+    DONE:*|CONTINUING:*) ;;
+    *) return 0 ;;
+  esac
+
+  local slugs slug
+  slugs=$(_svd_extract_plan_slugs "$text")
+  [[ -n "$slugs" ]] || return 0
+
+  local unnamed_report="" any_unnamed=0
+  while IFS= read -r slug; do
+    [[ -n "$slug" ]] || continue
+    rc_open_verify_obligations "$slug" >/dev/null 2>&1
+    [[ "${RC_OPEN_OBLIGATIONS_COUNT:-0}" -gt 0 ]] || continue
+    local tid unnamed_for_slug=""
+    for tid in "${RC_OPEN_OBLIGATIONS[@]}"; do
+      if printf '%s' "$marker_line" | grep -qE "(^|[^0-9])[Tt]?${tid}([^0-9.]|$)"; then
+        continue
+      fi
+      unnamed_for_slug="${unnamed_for_slug:+$unnamed_for_slug,}${tid}"
+    done
+    if [[ -n "$unnamed_for_slug" ]]; then
+      any_unnamed=1
+      unnamed_report="${unnamed_report}${slug}: task(s) ${unnamed_for_slug}; "
+    fi
+  done <<< "$slugs"
+
+  [[ "$any_unnamed" -eq 1 ]] || return 0
+
+  printf '{"gate":"stop-verdict-dispatcher","check":"verify-obligations","message":"%s"}\n' \
+    "$(_svd_json_escape "session ended with an unresolved OD-022 verify obligation: ${unnamed_report}dispatch task-verifier on each, or name the task id(s) explicitly in the terminal marker line")"
+  return 0
+}
+
+# ----------------------------------------------------------------------
+# _svd_escape_naming_check <transcript_path> <session_id>  (Defect 4,
+# harness safety fix 2026-08-04 — amendment to the hygiene-gate incident
+# fix. "Wire escapes onto the SAME accountability rail Task 25 built.")
+#
+# SAME gap-contributing shape as _svd_obligation_check immediately above —
+# folds into the SAME block-once-then-ledger cycle below (the generic
+# cycle-counter keys on sorted "<gate>:<check>" pairs, not message text,
+# so a stable check id here is what makes the SECOND identical Stop
+# downgrade rather than nag — see stop-verdict-dispatcher.sh's own
+# cycle-counting comment a few hundred lines down).
+#
+# CONTRACT: THIS session (session_id, not scanning every session that
+# ever used an escape) used a gate escape (any workaround-sensor.jsonl
+# row for this session with a non-empty bypass_kind — ws_record's own
+# shape) that is still OPEN (see workaround-sensor-lib.sh's
+# ws_open_escape_obligations for the fixed/acknowledged closure rules)
+# AND is not named in the terminal DONE/CONTINUING marker line -> gap.
+# Naming an open gate in the marker satisfies THIS Stop's transparency
+# requirement; it does not itself close the obligation (see that lib's
+# own header for why) — a later Stop in the same session that is still
+# open and still unnamed gaps again, and the shared downgrade cycle
+# (not a bespoke one here) is what stops that from nagging forever.
+#
+# HONESTY CONSTRAINT (same one workaround-sensor-lib.sh states): this
+# does not make a self-served escape "impossible" — it makes it
+# IMPOSSIBLE TO HIDE from THIS session's own Stop.
+# ----------------------------------------------------------------------
+_svd_escape_naming_check() {
+  local transcript_path="$1" session_id="$2"
+  declare -F ws_open_escape_obligations >/dev/null 2>&1 || return 0
+  [[ -n "$session_id" ]] || return 0
+
+  local text
+  text=$(_svd_final_assistant_message "$transcript_path")
+  [[ -n "$text" ]] || return 0
+
+  local marker_line
+  marker_line=$(printf '%s\n' "$text" | grep -E '^(DONE|PAUSING|BLOCKED|CONTINUING):' | tail -n1)
+  [[ -n "$marker_line" ]] || return 0
+  case "$marker_line" in
+    DONE:*|CONTINUING:*) ;;
+    *) return 0 ;;
+  esac
+
+  local open_tmp
+  open_tmp="$(mktemp 2>/dev/null || echo "/tmp/svd-escape-$$")"
+  ws_open_escape_obligations "$session_id" > "$open_tmp" 2>/dev/null
+  local open_count="${WS_OPEN_ESCAPE_GATES_COUNT:-0}"
+  if [[ "$open_count" -eq 0 ]]; then
+    rm -f "$open_tmp" 2>/dev/null
+    return 0
+  fi
+
+  local gate unnamed=""
+  while IFS= read -r gate; do
+    [[ -n "$gate" ]] || continue
+    if printf '%s' "$marker_line" | grep -qF "$gate"; then
+      continue
+    fi
+    unnamed="${unnamed:+$unnamed,}${gate}"
+  done < "$open_tmp"
+  rm -f "$open_tmp" 2>/dev/null
+
+  [[ -n "$unnamed" ]] || return 0
+
+  printf '{"gate":"stop-verdict-dispatcher","check":"escape-obligations","message":"%s"}\n' \
+    "$(_svd_json_escape "session used a gate escape not yet fixed or operator-acknowledged, and not named in the terminal marker: ${unnamed}. Name the gate(s) explicitly in the DONE/CONTINUING line, fix the underlying content, or get an operator acknowledgment (see lib/workaround-sensor-lib.sh)")"
+  return 0
+}
+
+# ----------------------------------------------------------------------
 # Main (production execution) — skipped entirely under --self-test.
 # ----------------------------------------------------------------------
 _svd_main() {
@@ -1300,6 +1507,26 @@ _svd_main() {
   _svd_step_t1=$(_svd_now_ms)
   _svd_trace_record "end-manifest" "$((_svd_step_t1 - _svd_step_t0))" "$([[ -n "$manifest_gaps" ]] && echo "block" || echo "allow")"
   [[ -n "$manifest_gaps" ]] && all_gaps+="${manifest_gaps}"$'\n'
+
+  # Verify-obligation check (Task 25 / OD-022): same gap-contributing shape
+  # as end-manifest immediately above — folds into the SAME block-once-
+  # then-ledger cycle below, which is the "refused once" mechanism.
+  _svd_step_t0=$(_svd_now_ms)
+  local obligation_gaps
+  obligation_gaps=$(_svd_obligation_check "$transcript_path")
+  _svd_step_t1=$(_svd_now_ms)
+  _svd_trace_record "verify-obligations" "$((_svd_step_t1 - _svd_step_t0))" "$([[ -n "$obligation_gaps" ]] && echo "block" || echo "allow")"
+  [[ -n "$obligation_gaps" ]] && all_gaps+="${obligation_gaps}"$'\n'
+
+  # Escape-obligation naming check (Defect 4, harness safety fix
+  # 2026-08-04): same gap-contributing shape as verify-obligations
+  # immediately above — folds into the SAME block-once-then-ledger cycle.
+  _svd_step_t0=$(_svd_now_ms)
+  local escape_gaps
+  escape_gaps=$(_svd_escape_naming_check "$transcript_path" "$session_id")
+  _svd_step_t1=$(_svd_now_ms)
+  _svd_trace_record "escape-obligations" "$((_svd_step_t1 - _svd_step_t0))" "$([[ -n "$escape_gaps" ]] && echo "block" || echo "allow")"
+  [[ -n "$escape_gaps" ]] && all_gaps+="${escape_gaps}"$'\n'
 
   # Aggregate every member gate's --report output. Each member is timed
   # individually (specs-o §O.1 deliverable 2 / contract C2: "each
@@ -2957,6 +3184,178 @@ STUBEOF
     echo "self-test (vocabulary-lock-should-be-multispace-warns): FAIL (expected a vocabulary-lock warn naming 'should be fine' even with 2 spaces before 'fine' — the re-review's class-sweep sibling)" >&2
     failed=$((failed+1))
   fi
+
+  # ================================================================
+  # Scenario 36 (Task 25 / OD-022, §10 evidence bar item 2 — TWO-STATE STOP
+  # PROOF, state 1 of 2): a plan the session's final message references has
+  # 3 open verify obligations; the terminal DONE: marker names none of them
+  # -> BLOCKED (refused once — the "refused once" mechanism is the SAME
+  # block-once-then-ledger cycle every other gap already rides, proven
+  # elsewhere in this suite; this scenario proves the FIRST Stop for a
+  # fresh gap-set blocks).
+  # ================================================================
+  _setup_scenario s36
+  HOOKS=$(_build_dispatcher_repo s36)
+  REPO="$tmproot/s36/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  mkdir -p "$HOME/.claude/state"
+  S36_LEDGER="$HOME/.claude/state/dispatch-ledger.jsonl"
+  {
+    printf '{"subagent_type":"plan-phase-builder","model":"claude-fable-5","ts":1000,"session_id":"b1","artifact_ref":"docs/plans/s36-fixture.md","task_id":"5"}\n'
+    printf '{"subagent_type":"plan-phase-builder","model":"claude-fable-5","ts":1001,"session_id":"b2","artifact_ref":"docs/plans/s36-fixture.md","task_id":"6"}\n'
+    printf '{"subagent_type":"plan-phase-builder","model":"claude-fable-5","ts":1002,"session_id":"b3","artifact_ref":"docs/plans/s36-fixture.md","task_id":"7"}\n'
+  } > "$S36_LEDGER"
+  T36=$(_write_transcript "$tmproot/s36" $'Merged three tasks on docs/plans/s36-fixture.md.\n\nDONE: shipped the changes on docs/plans/s36-fixture.md')
+  RC36=$(_run_dispatcher "$HOOKS" "$REPO" "$T36" "sess-s36")
+  _expect "obligation-check-open-and-unnamed-blocks" "$RC36" "2"
+  # The final block JSON reformats each gap into "[gate/check] message"
+  # bracket notation inside its "reason" string (_svd_emit_block_message) —
+  # it does NOT carry the raw {"gate":...,"check":...} keys from the
+  # intermediate all_gaps JSONL, so the assertion greps for the bracket
+  # form actually printed, matching every other scenario's own convention
+  # in this suite (e.g. the end-manifest/marker-format assertions above).
+  if grep -q '\[stop-verdict-dispatcher/verify-obligations\]' "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (obligation-check-gap-carries-right-check-id): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (obligation-check-gap-carries-right-check-id): FAIL (expected a [stop-verdict-dispatcher/verify-obligations] gap in the block JSON reason)" >&2
+    failed=$((failed+1))
+  fi
+  S36_NAMES_ALL=1
+  for t in 5 6 7; do grep -q "$t" "$tmproot/last-stdout.txt" 2>/dev/null || S36_NAMES_ALL=0; done
+  if [[ "$S36_NAMES_ALL" -eq 1 ]]; then
+    echo "self-test (obligation-check-block-names-all-open-tasks): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (obligation-check-block-names-all-open-tasks): FAIL (expected tasks 5,6,7 all named in the block reason)" >&2
+    failed=$((failed+1))
+  fi
+
+  # ================================================================
+  # Scenario 37 (Task 25 / OD-022, §10 evidence bar item 2 — TWO-STATE STOP
+  # PROOF, state 2 of 2): the SAME plan, but every open task now has a
+  # matching task-verifier completion row -> the obligation check
+  # contributes NO gap, so the Stop passes (exit 0). Hermetic sibling of
+  # Scenario 36 — same fixture shape, only the ledger state differs.
+  # ================================================================
+  _setup_scenario s37
+  HOOKS=$(_build_dispatcher_repo s37)
+  REPO="$tmproot/s37/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  mkdir -p "$HOME/.claude/state"
+  S37_LEDGER="$HOME/.claude/state/dispatch-ledger.jsonl"
+  {
+    printf '{"subagent_type":"plan-phase-builder","model":"claude-fable-5","ts":1000,"session_id":"b1","artifact_ref":"docs/plans/s37-fixture.md","task_id":"5"}\n'
+    printf '{"subagent_type":"plan-phase-builder","model":"claude-fable-5","ts":1001,"session_id":"b2","artifact_ref":"docs/plans/s37-fixture.md","task_id":"6"}\n'
+    printf '{"subagent_type":"task-verifier","model":"claude-fable-5","ts":2000,"session_id":"v1","artifact_ref":"docs/plans/s37-fixture.md","task_id":"5"}\n'
+    printf '{"subagent_type":"task-verifier","model":"claude-fable-5","ts":2001,"session_id":"v2","artifact_ref":"docs/plans/s37-fixture.md","task_id":"6"}\n'
+  } > "$S37_LEDGER"
+  T37=$(_write_transcript "$tmproot/s37" $'Merged and verified two tasks on docs/plans/s37-fixture.md.\n\nDONE: shipped and verified')
+  RC37=$(_run_dispatcher "$HOOKS" "$REPO" "$T37" "sess-s37")
+  _expect "obligation-check-closed-obligations-pass" "$RC37" "0"
+
+  # ================================================================
+  # Scenarios 38-41 (Defect 4, harness safety fix 2026-08-04 — amendment
+  # to the hygiene-gate incident fix): escape-obligation naming check.
+  # A fresh WORKAROUND_SENSOR_LEDGER_PATH per scenario (exported BEFORE
+  # _run_dispatcher so the spawned child process inherits it) — the
+  # dispatcher's own HARNESS_SELFTEST=1 export would otherwise route
+  # ws_record/ws_open_escape_obligations to a PID-keyed sandbox path this
+  # outer harness cannot predict or pre-populate (same fix
+  # harness-hygiene-scan.sh's own self-test already applies for the same
+  # reason — see its WS_LEDGER_DIR).
+  # ================================================================
+
+  # Scenario 38 (bar item "escape used -> obligation opens" + "stop with
+  # unnamed escape -> blocked"): a fresh escape row for THIS session,
+  # gate not named in the terminal marker -> BLOCK (first Stop, cycle 1).
+  _setup_scenario s38
+  HOOKS=$(_build_dispatcher_repo s38)
+  REPO="$tmproot/s38/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  S38_LEDGER="$tmproot/s38/state/workaround-sensor.jsonl"
+  mkdir -p "$(dirname "$S38_LEDGER")"
+  printf '{"ts":"2026-08-04T09:39:34Z","gate":"harness-hygiene-scan","session":"sess-s38","bypass_kind":"waiver-file","command_fingerprint":"file=docs/plans/foo.md","detail":""}\n' > "$S38_LEDGER"
+  export WORKAROUND_SENSOR_LEDGER_PATH="$S38_LEDGER"
+  T38=$(_write_transcript "$tmproot/s38" $'Committed the plan update.\n\nDONE: shipped the change')
+  RC38=$(_run_dispatcher "$HOOKS" "$REPO" "$T38" "sess-s38")
+  unset WORKAROUND_SENSOR_LEDGER_PATH
+  _expect "escape-check-open-and-unnamed-blocks" "$RC38" "2"
+  if grep -q '\[stop-verdict-dispatcher/escape-obligations\]' "$tmproot/last-stdout.txt" 2>/dev/null \
+     && grep -q 'harness-hygiene-scan' "$tmproot/last-stdout.txt" 2>/dev/null; then
+    echo "self-test (escape-check-gap-names-the-gate): PASS" >&2
+    passed=$((passed+1))
+  else
+    echo "self-test (escape-check-gap-names-the-gate): FAIL (expected a [stop-verdict-dispatcher/escape-obligations] gap naming harness-hygiene-scan)" >&2
+    failed=$((failed+1))
+  fi
+
+  # Scenario 39 (bar item "stop with escape named in the marker -> passes"):
+  # SAME open escape, but the terminal marker NAMES the gate -> exit 0.
+  _setup_scenario s39
+  HOOKS=$(_build_dispatcher_repo s39)
+  REPO="$tmproot/s39/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  S39_LEDGER="$tmproot/s39/state/workaround-sensor.jsonl"
+  mkdir -p "$(dirname "$S39_LEDGER")"
+  printf '{"ts":"2026-08-04T09:39:34Z","gate":"harness-hygiene-scan","session":"sess-s39","bypass_kind":"waiver-file","command_fingerprint":"file=docs/plans/foo.md","detail":""}\n' > "$S39_LEDGER"
+  export WORKAROUND_SENSOR_LEDGER_PATH="$S39_LEDGER"
+  T39=$(_write_transcript "$tmproot/s39" $'Used a harness-hygiene-scan waiver for docs/plans/foo.md, a known false positive.\n\nDONE: shipped the change (harness-hygiene-scan waiver used and disclosed above)')
+  RC39=$(_run_dispatcher "$HOOKS" "$REPO" "$T39" "sess-s39")
+  unset WORKAROUND_SENSOR_LEDGER_PATH
+  _expect "escape-check-named-in-marker-passes" "$RC39" "0"
+
+  # Scenario 40 (bar item "second identical stop -> downgrades, no nag
+  # loop"): the SAME open-and-unnamed gap-set as Scenario 38, but Stop is
+  # invoked TWICE for the same session — first blocks (cycle 1), second
+  # downgrades (cycle >=2, ADR 059 D2 block-once-then-ledger) rather than
+  # blocking forever. Reuses stop-hook-retry-guard.sh's own cycle counter
+  # (RETRY_GUARD_STATE_DIR, set per-scenario by _setup_scenario), the SAME
+  # shared mechanism every other gap type in this suite already rides —
+  # no bespoke downgrade logic was written for this check.
+  _setup_scenario s40
+  HOOKS=$(_build_dispatcher_repo s40)
+  REPO="$tmproot/s40/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  S40_LEDGER="$tmproot/s40/state/workaround-sensor.jsonl"
+  mkdir -p "$(dirname "$S40_LEDGER")"
+  printf '{"ts":"2026-08-04T09:39:34Z","gate":"harness-hygiene-scan","session":"sess-s40","bypass_kind":"waiver-file","command_fingerprint":"file=docs/plans/foo.md","detail":""}\n' > "$S40_LEDGER"
+  export WORKAROUND_SENSOR_LEDGER_PATH="$S40_LEDGER"
+  T40=$(_write_transcript "$tmproot/s40" $'Committed the plan update.\n\nDONE: shipped the change')
+  RC40_FIRST=$(_run_dispatcher "$HOOKS" "$REPO" "$T40" "sess-s40")
+  RC40_SECOND=$(_run_dispatcher "$HOOKS" "$REPO" "$T40" "sess-s40")
+  unset WORKAROUND_SENSOR_LEDGER_PATH
+  _expect "escape-check-first-stop-blocks" "$RC40_FIRST" "2"
+  _expect "escape-check-second-identical-stop-downgrades-no-nag-loop" "$RC40_SECOND" "0"
+
+  # Scenario 41 (bar item complement — a gate escape that was NEVER used
+  # this session contributes no gap, proving the check is session-scoped
+  # and does not fire on an empty/absent ledger).
+  _setup_scenario s41
+  HOOKS=$(_build_dispatcher_repo s41)
+  REPO="$tmproot/s41/repo"
+  mkdir -p "$REPO/docs/plans"
+  ( cd "$REPO" && git init -q -b master 2>/dev/null || (git init -q && git checkout -q -b master 2>/dev/null); \
+    git config core.hooksPath ""; git config user.email t@example.com; git config user.name T; git config commit.gpgsign false; \
+    echo seed > seed.txt; git add -A; git commit -q -m seed )
+  T41=$(_write_transcript "$tmproot/s41" $'Nothing unusual this session.\n\nDONE: nothing to report')
+  RC41=$(_run_dispatcher "$HOOKS" "$REPO" "$T41" "sess-s41")
+  _expect "escape-check-no-escape-used-no-gap" "$RC41" "0"
 
   echo "" >&2
   echo "self-test summary: $passed passed, $failed failed" >&2

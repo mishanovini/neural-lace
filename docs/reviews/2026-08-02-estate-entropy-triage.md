@@ -416,3 +416,157 @@ investigation debt this pass time-boxed rather than chased to conclusion.
   `--full` baseline (partial, checks 1-8-in-progress): 38 confirmed, growing as the sweep
   continues. Neither meets the plan's ≤9 bar; the gap is honestly attributed above, not asserted
   away.
+
+## 2026-08-04 — selftest-sweep HARNESS CLASS triage (gated-pipeline-master-2026-08 Task 8
+continuation, REQ-A8)
+
+**Scope:** the 2026-08-03 pass above left the self-test sweep (check 8) largely unswept and named
+14 sweep-layer REDs it did not have time to root-cause (`directives-register-lib.sh`,
+`review-record-push-gate.sh`, `dispatch-chain-gate.sh`, `plan-reviewer.sh`, `scope-enforcement-
+gate-body.sh`, `session-start-digest.sh`, `session-start-auto-install.sh`, `concurrent-ownership-
+gate-body.sh`, `review-record-commit-gate.sh`, `model-pin-gate.sh`, `admission-lib.sh`, `git-
+command-parse.sh`, `self-sync-guard.sh`, `harness-doctor.sh`'s own nonode-shim gap). This pass's
+mission: root-cause the SWEEP RUNNER's own defects (not each suite's own bugs), fix what is
+sweep-layer, and honestly disposition the rest.
+
+**Evidence discipline:** same as above — PROVEN = re-run live this session, cited; HYPOTHESIZED =
+plausible, refuter named.
+
+### Root cause 1 — PROVEN: `dr__resolve_root()` reimplemented (badly) a resolver the harness
+already has
+
+`hooks/lib/directives-register-lib.sh`'s self-test builds its fixture path as
+`${ROOT}/adapters/claude-code/tests/fixtures/directives-register`, where `ROOT` came from a
+private `dr__resolve_root()`: try `git -C <script-dir> rev-parse --show-toplevel`, else climb
+`../../../..` from the script's own directory (sized for the REPO depth `hooks/lib` ->
+`hooks` -> `claude-code` -> `adapters` -> root). The doctor's sweep runs this file from the LIVE
+MIRROR (`~/.claude/hooks/lib/directives-register-lib.sh`), which is NOT a git checkout, so the
+git tier failed; the manual climb then climbed only 4 levels from the live layout's shallower
+`hooks/lib` -> `hooks` -> `.claude` -> `<user>`, landing at the Users-drive root (one directory
+short of the real checkout) — reproduced directly by running the same climb from that path: the
+fixture path formula then appended `adapters/claude-code/tests/fixtures/directives-register`
+beneath that wrong root, reproducing the doctor's exact reported "fixtures missing" error.
+`hooks/lib/nl-paths.sh` already solves exactly this (env-var tier, then the install-time
+`~/.claude/local/nl-repo-path` config-file tier install.sh writes, then git, then a probe list) —
+~20 other hooks already source it; this file did not. **Fix:** `dr__resolve_root()` now delegates
+to `nl_repo_root()` first, falling back to its old git+climb behavior only if `nl-paths.sh` is
+missing. **Re-verified:** ran the lib's self-test from a simulated live-mirror location (a plain
+tmp dir with no git ancestry, `NL_REPO_ROOT` set) — 29/29 PASS; unchanged 29/29 from the normal
+repo location (no regression).
+
+### Root cause 2 — PROVEN: the sweep's target was undisclosed, so a live-mirror-stale RED read as
+a suite regression
+
+`check_selftest_sweep` runs every live hook's `--self-test` against `${live_home}/hooks` — the
+POST-INSTALL mirror, refreshed from `origin/master` by `session-start-auto-install.sh`, not this
+session's own in-flight worktree. On an unmerged branch the live copy can legitimately lag the
+repo copy by hundreds of lines. Measured directly (`cmp`/`wc -l`, this checkout):
+`dispatch-chain-gate.sh` — live 182 lines vs repo 1121 lines (the sweep's reported "5 passed, 1
+failed of 6 scenarios" is the OLD 6-scenario suite; the repo copy is 49/49 today).
+`review-record-push-gate.sh` — live 2096 lines vs repo 2774 lines (explains the sweep's RED
+tailing the "17f backslash-path... run on macOS/Linux" honest-skip line: that line is real output
+from the STALE live copy, not a broken skip-vs-fail rc contract — the repo copy's own
+`self-test: OK (1 skipped)` returns rc 0 as designed). **Fix:** `check_selftest_sweep` now takes
+`repo_root` and, on a failing hook, `cmp -s`s the live copy against the repo copy at the same
+relative path. A genuine divergence downgrades the finding from RED to a WARN that names the
+staleness explicitly (line counts, and the direct-verify command to run); a BYTE-IDENTICAL
+failure stays RED with an explicit "staleness cannot explain this" note, so the fix can never
+silently swallow a real regression. The function's own header comment and an unconditional
+per-run WARN now state the sweep's target plainly. **Re-verified:**
+`harness-doctor.sh --self-test`'s existing check-8 fixtures (red/green/dedup/lib-scope/reentry,
+5 scenarios, all pass repo==live in fixtures so they exercise the byte-identical branch) all
+still PASS — 190/191 total self-test scenarios pass post-fix (see Root cause 3).
+
+**Correction to this task's own working hypothesis:** the dispatch prompt hypothesized this SAME
+cause explains most of the other 12 named REDs. Checked directly (`cmp`) — it does NOT: 6 of them
+(`plan-reviewer.sh`, `review-record-commit-gate.sh`, `model-pin-gate.sh`, `admission-lib.sh`,
+`git-command-parse.sh`, `self-sync-guard.sh`) are BYTE-IDENTICAL between live and repo. Filed as
+`SELFTEST-SWEEP-NOT-STALENESS-2026-08-04` (backlog) with a per-suite disposition table; two of
+the six (`model-pin-gate.sh`, `admission-lib.sh`) reproduce as GREEN on a direct standalone
+re-run (transient, sweep-load-only flakes, same class as the pre-existing
+`MODEL-PIN-GATE-SELFTEST-NONHERMETIC-01` finding); `self-sync-guard.sh` reproduces as a genuine
+4/5 fail, every failure a Windows/NTFS symlink-creation limitation (same class this file's
+2026-08-03 section already named); `git-command-parse.sh` reproduces its EXACT sweep count
+(114 passed, 1 failed, both times) on ONE named scenario ("32KB separator-dense commit took
+697ms — the fast path is not being taken") — a performance-THRESHOLD assertion, not a
+correctness one, and BOTH of this pass's "direct" re-runs executed while a massive concurrent
+`--full` sweep (this same section's own live run) was consuming CPU, so — corrected from this
+section's own earlier draft — this is NOT confirmed non-transient; it may be the same
+CPU-contention class as `model-pin-gate.sh`/`admission-lib.sh`, just not yet tested on a
+genuinely idle machine; `plan-reviewer.sh` and `review-record-commit-gate.sh` remain OPEN, not
+re-run to conclusion this pass (each is a large/slow suite; 987s alone for `plan-reviewer.sh`,
+independently measured elsewhere in this file). Of the 4 REDs that diverge live-vs-repo (9-63
+lines) but were not independently re-run above, the LIVE `--full` run itself (see the Re-measure
+section below) reached one before this write-up: `concurrent-ownership-gate-body.sh` was
+correctly downgraded via the live-vs-repo divergence path (live 1056 lines vs repo 1070 lines) —
+CONFIRMED staleness-explained, not cause-unknown. `scope-enforcement-gate-body.sh`,
+`session-start-digest.sh`, and `session-start-auto-install.sh` still diverge live-vs-repo but the
+`--full` run had not reached them yet at write-up time — their cause remains UNKNOWN, not claimed
+as staleness.
+
+### Root cause 3 — PROVEN: `harness-doctor.sh`'s own nonode-shim symlinked `bash` itself
+
+Fixed per the pre-existing `SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01` backlog row's own proposed
+direction: `_nonode_path()` no longer puts `bash` in its PATH shim, and `_run_quick_nonode()`
+resolves the real interpreter (`${BASH:-$(command -v bash)}`) BEFORE the `PATH="$shim"` override
+takes effect, so the grandchild's own command-name lookup for `bash` never touches the shim.
+**Re-verified:** `harness-doctor.sh --self-test` went from 186 passed/5 failed (before this
+session's edits) to **190 passed/1 failed**. Four of the five previously-crashing jq-parity
+scenarios now PASS outright (`dpp-jq-parity-red`, `dpp-jq-parity-grandfather`, `ngeb-jq-parity-
+red`, `budget-chains-jq-parity-red`). The fifth (`claim-honesty-jq-parity-red`) no longer crashes
+either, but now surfaces a DIFFERENT, genuine finding: the jq and node branches of
+`extract_manifest_gates` produce different output for the same fixture (the jq branch emits an
+extra RED the node branch never does). This is a real, previously-masked bug, not a sweep-runner
+defect — filed as `CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01` (backlog), not fixed here (out of this
+task's sweep-layer scope; needs a side-by-side stream dump of the two branches to root-cause).
+
+### Re-measure
+
+`harness-doctor.sh --self-test`: **186 passed / 5 failed → 190 passed / 1 failed** (the 1 residual
+is the newly-exposed, newly-filed `claim-honesty` jq/node divergence, not a sweep-runner defect).
+
+`harness-doctor.sh --full` before/after RED counts, STATED HONESTLY: the 2026-08-03 pass's own
+baseline (checks 1-8-partial) never reached a full completion — its own record (above) says the
+sweep alone realistically runs 60-120+ minutes on this machine, a measurement this pass
+reproduces (a `--full` run started this session was still executing the self-test sweep after
+significant wall-clock time and did not reach the end of the alphabetical hook list before this
+write-up). **A COMPLETE before/after `--full` RED count was NOT captured this pass** — the same
+structural reason the 2026-08-03 pass names for its own incompleteness (P-14: "doctor self-test
+takes 9-10+ minutes [per hook], so nobody runs it [to completion]"), now additionally true of the
+FIXED sweep, which still has to run every hook's real self-test regardless of how honest its
+failure-classification is. **What WAS captured live, mid-run, as direct proof the fix works
+against the real installed mirror (not just self-test fixtures):** the `--full` run's own output
+shows `dispatch-chain-gate.sh` and `concurrent-ownership-gate-body.sh` — 2 of the 3
+previously-RED suites reached before this write-up — correctly downgraded from RED to a
+`WARN selftest-sweep` line naming the live/repo line-count divergence and the direct-verify
+command, exactly as designed; `harness-doctor.sh --self-test`'s own check-8 fixture suite (5
+scenarios covering red/green/dedup/lib-scope/reentry) independently PASSES, which is the
+structural proof of the same code path. This is DONE (verified structurally + partial runtime
+confirmation), not DONE (fully proven at runtime) — the complete sweep was not exercised to
+completion in this session's time budget. A follow-up session (or this session continued longer)
+should let a `--full` run finish uninterrupted and record the final count.
+
+### Summary of dispositions (counts), this pass
+
+- **ROOT-CAUSED AND FIXED: 3** (`directives-register-lib.sh` path mangling; the sweep's
+  live-vs-repo target disclosure, generically covering `dispatch-chain-gate.sh` and
+  `review-record-push-gate.sh`; `harness-doctor.sh`'s own nonode-shim launcher)
+- **NEWLY EXPOSED, FILED, not fixed (out of sweep-layer scope): 1** (`claim-honesty` jq/node
+  divergence in `extract_manifest_gates`)
+- **CONFIRMED TRANSIENT (direct re-run GREEN, sweep-load-only flake): 2** (`model-pin-gate.sh`,
+  already known; `admission-lib.sh`, newly confirmed this pass)
+- **CONFIRMED STALE-EXPLAINED via the live `--full` run itself: 1** (`concurrent-ownership-
+  gate-body.sh`, live 1056 lines vs repo 1070, correctly downgraded to WARN)
+- **CONFIRMED GENUINE, Windows/NTFS-environmental: 1** (`self-sync-guard.sh`, 4/5, all symlink
+  creation)
+- **REPRODUCIBLE but NOT YET CLASSIFIED transient-vs-genuine (one named performance-threshold
+  scenario, both re-runs contended with this session's own concurrent `--full` sweep): 1**
+  (`git-command-parse.sh`, 114/1 — "32KB separator-dense commit took 697ms")
+- **OPEN, staleness ruled out but cause not yet investigated: 2** (`plan-reviewer.sh`,
+  `review-record-commit-gate.sh`)
+- **OPEN, cause unknown (small live/repo divergence observed, sweep had not reached them at
+  write-up): 3** (`scope-enforcement-gate-body.sh`, `session-start-digest.sh`,
+  `session-start-auto-install.sh`)
+- Backlog rows filed/updated this pass: `SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01` (marked FIXED),
+  `CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01` (new), `SELFTEST-SWEEP-NOT-STALENESS-2026-08-04` (new,
+  supersedes this task's own live-vs-repo hypothesis for 6 of the 10 suites it named).

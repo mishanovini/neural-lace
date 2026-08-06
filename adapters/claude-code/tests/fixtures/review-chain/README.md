@@ -18,13 +18,21 @@ which run against this real, committed repo history.
 - `dispatch-ledger.jsonl` — the fixture dispatch ledger the valid chain's rule
   3 cross-checks against.
 
-**Dispatch-ledger row schema (the shared contract with Task 15 — REQ-B14):**
-`workstreams-emit.sh`'s `--on-builder-complete` writer and
-`review-chain-lib.sh`'s rule-3 reader must agree on exactly this shape:
+**Dispatch-ledger row schema (the shared contract with Task 15 — REQ-B14; two
+fields added by Task 25 / OD-023):** `workstreams-emit.sh`'s
+`--on-builder-complete` writer and `review-chain-lib.sh`'s rule-3 reader
+must agree on exactly this shape:
 
 ```
-{"subagent_type": "<reviewer agent name>", "model": "<model id>", "ts": <unix epoch, number>, "session_id": "<string>", "artifact_ref": "<path the reviewer reviewed, or empty string for the degraded type-only match>"}
+{"subagent_type": "<reviewer agent name>", "model": "<model id>", "ts": <unix epoch, number>, "session_id": "<string>", "artifact_ref": "<path the reviewer reviewed, or empty string for the degraded type-only match>", "task_id": "<id, or empty string if underivable>", "task_id_valid": "<'true'|'false'|'unknown'>"}
 ```
+
+`task_id`/`task_id_valid` (Task 25 / OD-023, gated-pipeline-master-2026-08):
+additive fields consumed by `rc_open_verify_obligations`/`rc_wip_limit_decision`
+(the verify-obligation tracker), NOT by rule 3 above (rule 3 reads only
+subagent_type/ts/artifact_ref — unaffected by this extension). A row written
+before this task simply lacks both keys, which reads back as empty/absent and
+is correctly excluded from obligation tracking.
 
 **Why two commits, not one:** `valid-chain-plan.md`/`valid-chain-design.md`
 were committed first (6bff352d), and the two records + the ledger fixture in

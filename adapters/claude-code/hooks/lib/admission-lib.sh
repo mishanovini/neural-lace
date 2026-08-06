@@ -385,9 +385,16 @@ _adm_scrub() {
 # verifier|reviewer|advocate enum, attributed is "0"|"1" (both already
 # pre-validated by _extract_nl_attribution before reaching here; this
 # allowlist is the second, independent gate, not the only one).
+# attribution_source added Defect B (2026-08-04, operator proposal): closed
+# enum header|derived|derived-partial|none (also pre-validated by
+# workstreams-emit.sh's _derive_attribution before reaching here) — tells a
+# ledger reader HOW MUCH to trust the plan/task values on the same row:
+# "header" is a claim of fact, "derived"/"derived-partial" is a best-effort
+# inference from prompt text or repo state (never a green-chip claim), "none"
+# means neither resolved anything.
 _adm_key_allowed() {
   case "$1" in
-    repo|agent|kind|reason_hint|plan|task|session|role|attributed) return 0 ;;
+    repo|agent|kind|reason_hint|plan|task|session|role|attributed|attribution_source) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -1081,7 +1088,7 @@ _adm_self_test() {
   else fail "torn lines detected"; fi
 
   echo "Scenario 8: SCRUB — disallowed keys dropped, values sanitized (edge 4)"
-  adm_admit emit-feed cmdline=/Users/secret/ProductName repo=neural-lace >/dev/null
+  adm_admit emit-feed cmdline=/tmp/example-bin/ProductName repo=neural-lace >/dev/null
   local last; last="$(tail -1 "$led")"
   case "$last" in
     *cmdline*) fail "disallowed key 'cmdline' leaked into the ledger" ;;
@@ -1099,7 +1106,7 @@ _adm_self_test() {
   esac
 
   echo "Scenario 8b: attribution labels (attribution-pipeline task, 2026-07-29) — plan/task/role/attributed round-trip; a still-disallowed key beside them stays dropped"
-  adm_admit emit-feed plan=attribution-pipeline task=1 role=builder attributed=1 cmdline=/Users/secret/leak >/dev/null
+  adm_admit emit-feed plan=attribution-pipeline task=1 role=builder attributed=1 cmdline=/tmp/example-bin/leak >/dev/null
   last="$(tail -1 "$led")"
   case "$last" in
     *'"plan":"attribution-pipeline"'*'"task":"1"'*'"role":"builder"'*'"attributed":"1"'*)

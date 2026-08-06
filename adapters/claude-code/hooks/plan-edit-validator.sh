@@ -39,6 +39,27 @@
 
 set -e
 
+# CI-triage 2026-08-04 (server-side-enforcement.yml plan-edit-validator job
+# red on Linux, green on this Windows/MSYS2 checkout): PEV_TASK_ID_ALT/
+# PEV_TASK_ID_BOUNDARY below and every pre-existing task-id extraction site
+# in this file rely on `[A-Z]`/`[a-z]` ASCII bracket ranges being exactly
+# the 26-letter alphabet, nothing more. POSIX leaves bracket-range collation
+# order locale-dependent; under a non-C locale (glibc's en_US.UTF-8 and
+# similar reorder the collating sequence) `[A-Z]`/`[a-z]` can match a wider
+# or narrower set of bytes than the ASCII range the grammar's own header
+# comment documents ("capped 1-3 letters so a 4+-letter acronym like WCAG
+# can never false-match"), so a locale mismatch between this Windows
+# checkout (already C/POSIX for byte-range greps under MSYS2 bash) and the
+# GitHub-hosted Ubuntu runner's default locale is a real candidate for the
+# id-shape self-test diverging by platform alone. Pin LC_ALL=C for this
+# entire script (not just the new call sites) so every `[A-Z]`/`[a-z]`
+# range in this file -- old and new -- resolves identically on every
+# platform, matching the ASCII-only intent already documented at each call
+# site. No behavior change on this machine (already effectively C-locale
+# for byte comparisons); closes the hazard class for Linux CI regardless of
+# whether it is THIS run's actual root cause.
+export LC_ALL=C
+
 # ---- WAVE-O O.9: od_backlog_health oracle, guarded source + feature-detect ----
 # Contract C4 (specs-o §O.0.3): observability-derive.sh is owned/built by task
 # O.3 (parallel; O.9 never creates/edits that file — §O.0.1 rule 2). Source it
@@ -87,6 +108,48 @@ GC_MODE="$(declare -F gc_mode >/dev/null 2>&1 && gc_mode "${1:-}" 2>/dev/null ||
 _PEV_ANY_WARN=0
 
 # ============================================================
+# TASK_ID id-shape grammar (HARNESS-GAP-62, amended 2026-08-04) — the
+# SINGLE canonical definition, consulted at every site in this file that
+# must recognize a checkbox line's task-id token: the checkbox-flip
+# AUTHORIZATION extraction (the real chokepoint, below), the WARN-only
+# new-task Docs-impact detector (check_docs_impact_warn), and that
+# function's --self-test replica (selftest_check_docs_impact_warn). Widen
+# THIS constant and all three stay consistent by construction.
+#
+# Measured, not assumed: grounded in a direct sweep of docs/plans/ (active
+# + archive/ + deferred/) plus a sibling project's docs/plans/ elsewhere on
+# this machine (this same global hook also gates that repo's plan files) —
+# see docs/backlog.md HARNESS-GAP-62 for the full census. Four REAL,
+# observed shapes, no `.*`:
+#   1. classic dotted-letter   A.1 / B.2.3          (pre-existing, unchanged)
+#   2. fused letter+digit      T1 / SE3 / RI1 / ORG6 (capped 1-3 letters so
+#      a 4+-letter acronym like WCAG can never false-match)
+#   3. bare numeric            7 / 3.2 / 12.4.1      (THE dominant convention
+#      estate-wide — gated-pipeline-master-2026-08.md and most active plans
+#      in this repo use this and only this)
+#   4. digit+letter sub-id     0a / 10e / 0a.1       (the sibling project's
+#      real, currently-ACTIVE sub-task numbering convention, tasks 0a-0i)
+# Deliberately EXCLUDED (measured, present, but not covered — see the
+# HARNESS-GAP-62 backlog entry for the full reasoning): bold-wrapped bare
+# numeric ("**1.", archive-only, 9 files, none ACTIVE); a bare digit+
+# UPPERCASE-letter reversal ("20R", one archived occurrence); a bare single
+# letter with no digit ("A" alone, one deferred occurrence). None of these
+# recur in any ACTIVE or DEFERRED plan's real task-id position; a future
+# recurrence is a new backlog entry, not a silent regex expansion here.
+PEV_TASK_ID_ALT='[A-Z]+\.[0-9]+(\.[0-9]+)*|[A-Z]{1,3}[0-9]+(\.[0-9]+)*|[0-9]+[a-z](\.[0-9]+)*|[0-9]+(\.[0-9]+)*'
+# Trailing-boundary requirement: whatever follows a candidate id must be a
+# non-alnum char, or end of line — otherwise the "id" is really a prefix of
+# a longer word/number and must NOT match. Without this, alternatives 3/4
+# spuriously extract a prefix of an ordinal word in task prose ("1st" ->
+# "1s", "3rd" -> "3r") — confirmed by direct test before this guard was
+# added. Consumers wrap PEV_TASK_ID_ALT in `(...)` and append this suffix
+# to anchor the id at a real token boundary, then re-run a plain
+# PEV_TASK_ID_ALT extraction against the already-boundary-validated
+# substring to recover just the id (mirrors the pre-existing two-stage
+# grep -oE | grep -oE idiom already used at every call site).
+PEV_TASK_ID_BOUNDARY='[^A-Za-z0-9]|$'
+
+# ============================================================
 # Lock helpers (plan-edit-validator concurrency protection)
 # ============================================================
 #
@@ -126,8 +189,33 @@ acquire_plan_lock() {
 
   # --- Path 1: flock(1) ---
   if command -v flock >/dev/null 2>&1; then
-    # Open fd 9 on the lock file (creating it if needed)
-    exec 9>"$lock_file" 2>/dev/null || {
+    # Open fd 9 on the lock file (creating it if needed).
+    #
+    # CI-triage 2026-08-04 (plan-edit-validator Linux-red, 3rd attempt,
+    # root-caused via a local flock(1) shim forcing this branch — MSYS2/
+    # Windows has no flock binary so this path was NEVER exercised by any
+    # prior local run, which is exactly why it was invisible until CI):
+    # `exec 9>"$lock_file" 2>/dev/null` used to tack `2>/dev/null` directly
+    # onto a bare `exec` (no command, redirections only). Per bash's exec
+    # semantics that makes EVERY listed redirection PERMANENT for the
+    # current shell -- not just fd 9 (intended), but fd 2 as well
+    # (unintended): stderr silently stayed pointed at /dev/null for the
+    # rest of the process. Every self-test scenario below writes its PASS/
+    # FAIL/summary lines via `>&2`, so once F1 took this branch on any
+    # machine with flock installed (every GitHub Actions ubuntu-latest
+    # runner), all subsequent diagnostic output vanished -- reproducing
+    # exactly the observed symptom (zero captured output, real nonzero
+    # exit, since $FAILED and the final `exit` code are ordinary variables/
+    # control flow, unaffected by the silenced stream). Fix: wrap the exec
+    # in a `{ ; }` group and apply `2>/dev/null` to the GROUP instead of to
+    # exec's own redirection list -- this scopes the stderr suppression to
+    # only the group's execution (an ordinary compound-command redirect,
+    # restored once the group exits) while the fd-9 assignment inside
+    # still persists on the shell as intended. Verified empirically: the
+    # old form silences every `>&2` write for the rest of the process; the
+    # new form does not, and a genuine exec-open failure is still caught
+    # by the `||` fallback either way.
+    { exec 9>"$lock_file"; } 2>/dev/null || {
       PLAN_LOCK_FILE=""
       return 1
     }
@@ -139,7 +227,7 @@ acquire_plan_lock() {
       return 0
     fi
     # flock timed out
-    exec 9>&- 2>/dev/null || true
+    { exec 9>&-; } 2>/dev/null || true
     PLAN_LOCK_FILE=""
     return 1
   fi
@@ -205,8 +293,10 @@ release_plan_lock() {
   fi
   case "$PLAN_LOCK_HELD_VIA" in
     flock)
-      # Closing fd 9 releases the flock
-      exec 9>&- 2>/dev/null || true
+      # Closing fd 9 releases the flock. Group-wrapped (see acquire_plan_lock's
+      # comment above) so `2>/dev/null` scopes to this close attempt only,
+      # not a permanent stderr redirect for the rest of the process.
+      { exec 9>&-; } 2>/dev/null || true
       ;;
     pid)
       # Only remove if we still own it
@@ -456,12 +546,17 @@ acquire_plan_lock() {
   if [[ "$PLAN_LOCK_FILE" == "$lock_file" ]]; then return 0; fi
   PLAN_LOCK_FILE="$lock_file"
   if command -v flock >/dev/null 2>&1; then
-    exec 9>"$lock_file" 2>/dev/null || { PLAN_LOCK_FILE=""; return 1; }
+    # Group-wrapped exec (see the real acquire_plan_lock's identical fix,
+    # above, for the full root-cause explanation): a bare `exec 9>file
+    # 2>/dev/null` permanently redirects the WHOLE shell's stderr, not
+    # just this attempt's. This LOCKLIB copy is sourced fresh by each F2
+    # worker subprocess, so it carries the same fix for the same reason.
+    { exec 9>"$lock_file"; } 2>/dev/null || { PLAN_LOCK_FILE=""; return 1; }
     if flock -w "$timeout_s" 9 2>/dev/null; then
       PLAN_LOCK_FD=9; PLAN_LOCK_HELD_VIA="flock"
       echo "$$" >&9 2>/dev/null || true; return 0
     fi
-    exec 9>&- 2>/dev/null || true; PLAN_LOCK_FILE=""; return 1
+    { exec 9>&-; } 2>/dev/null || true; PLAN_LOCK_FILE=""; return 1
   fi
   local waited_ms=0; local total_ms=$((timeout_s * 1000))
   while [[ "$waited_ms" -lt "$total_ms" ]]; do
@@ -491,7 +586,7 @@ acquire_plan_lock() {
 release_plan_lock() {
   if [[ -z "$PLAN_LOCK_FILE" ]]; then return 0; fi
   case "$PLAN_LOCK_HELD_VIA" in
-    flock) exec 9>&- 2>/dev/null || true ;;
+    flock) { exec 9>&-; } 2>/dev/null || true ;;
     pid)
       local holder_pid=""
       holder_pid=$(head -n 1 "$PLAN_LOCK_FILE" 2>/dev/null | tr -d '[:space:]')
@@ -962,13 +1057,17 @@ JSON
     # `|| true` mirrors the fixed production check_docs_impact_warn (nl-issue
     # [24]): unguarded grep-no-match here is only survivable via bash's
     # no-inherit_errexit quirk in $() calls — keep the replica truly a replica.
-    new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null || true)"
+    # Shape + boundary per PEV_TASK_ID_ALT/PEV_TASK_ID_BOUNDARY (HARNESS-
+    # GAP-62, defined near the top of this file — already in scope here,
+    # same process) — keep this replica a byte-for-byte mirror of the real
+    # check_docs_impact_warn's own extraction, same convention as always.
+    new_task_lines="$(echo "$new_content" | grep -E "^[[:space:]]*-[[:space:]]*\\[[[:space:]]*\\][[:space:]]+(${PEV_TASK_ID_ALT})(${PEV_TASK_ID_BOUNDARY})" 2>/dev/null || true)"
     [[ -z "$new_task_lines" ]] && { echo "NONE"; return 0; }
     local any_warned=0
     while IFS= read -r line; do
       [[ -z "$line" ]] && continue
       local tid
-      tid="$(echo "$line" | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)"
+      tid="$(echo "$line" | grep -oE "${PEV_TASK_ID_ALT}" | head -1)"
       [[ -z "$tid" ]] && continue
       if echo "$old_content" | grep -qF "$tid"; then continue; fi
       if ! echo "$line" | grep -qiE 'Docs impact:'; then
@@ -1459,8 +1558,329 @@ JSON
     FAILED=$((FAILED+1))
   fi
 
+  # ============================================================
+  # F25-F27 (2026-08-04, EVENT-NOT-SECOND-SOURCE field-contract addition --
+  # see the block comment above emit_flip_ledger_event's definition) --
+  # the flip-verdict detail string now carries a bare plan slug (no .md)
+  # and an evidence=<file>#task=<id> pointer. Reuses F16's exact fixture
+  # shape (same binshim, same prose evidence) since these assert additive
+  # fields on the SAME emitted line F16 already proves fires correctly.
+  # ============================================================
+
+  # ---- F25: evidence= pointer present and points at the prose evidence
+  # file + this task id (prose/full-level path) ----
+  F25_DIR="$TMPDIR_SELFTEST/f25/docs/plans"
+  mkdir -p "$F25_DIR"
+  printf '# F25 Plan\n\n## Tasks\n\n- [ ] SE.4.5 Do the evidence-pointer thing\n' > "$F25_DIR/f25-plan.md"
+  cat > "$F25_DIR/f25-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: SE.4.5
+Verified at: 2026-08-04T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 8
+EVID
+  F25_LEDGER="$TMPDIR_SELFTEST/f25-ledger.jsonl"
+  rm -f "$F25_LEDGER"
+  F25_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f25-plan.md","old_string":"- [ ] SE.4.5 Do the evidence-pointer thing","new_string":"- [x] SE.4.5 Do the evidence-pointer thing"}}' "$F25_DIR")"
+  set +e
+  F25_OUT="$(printf '%s' "$F25_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F25_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F25=$?
+  set -e
+  F25_EXPECT_EVIDENCE="evidence=${F25_DIR}/f25-plan-evidence.md#task=SE.4.5"
+  if [[ "$RC_F25" -eq 0 ]] \
+     && [[ -f "$F25_LEDGER" ]] \
+     && grep -qF "$F25_EXPECT_EVIDENCE" "$F25_LEDGER"; then
+    echo "self-test (F25) prose-flip-emits-evidence-pointer-to-prose-file: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F25) prose-flip-emits-evidence-pointer-to-prose-file: FAIL (rc=$RC_F25 expected_substring=[$F25_EXPECT_EVIDENCE] out=$F25_OUT ledger=$(cat "$F25_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F26: evidence= pointer present and points at the structured
+  # .evidence.json (mechanical-level path), not the prose file ----
+  F26_DIR="$TMPDIR_SELFTEST/f26/docs/plans"
+  mkdir -p "$F26_DIR/f26-plan-evidence"
+  printf '# F26 Plan\n\n## Tasks\n\n- [ ] SE.4.6 Do the mechanical evidence-pointer thing — Verification: mechanical\n' > "$F26_DIR/f26-plan.md"
+  cat > "$F26_DIR/f26-plan-evidence/SE.4.6.evidence.json" <<JSON
+{
+  "schema_version": 1,
+  "task_id": "SE.4.6",
+  "verdict": "PASS",
+  "commit_sha": "abc9999",
+  "files_modified": ["foo.md"],
+  "mechanical_checks": {"exists:foo.md": {"passed": true}},
+  "timestamp": "2026-08-04T00:00:00Z",
+  "verifier": "write-evidence.sh"
+}
+JSON
+  F26_LEDGER="$TMPDIR_SELFTEST/f26-ledger.jsonl"
+  rm -f "$F26_LEDGER"
+  F26_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f26-plan.md","old_string":"- [ ] SE.4.6 Do the mechanical evidence-pointer thing — Verification: mechanical","new_string":"- [x] SE.4.6 Do the mechanical evidence-pointer thing — Verification: mechanical"}}' "$F26_DIR")"
+  set +e
+  F26_OUT="$(printf '%s' "$F26_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F26_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F26=$?
+  set -e
+  F26_EXPECT_EVIDENCE="evidence=${F26_DIR}/f26-plan-evidence/SE.4.6.evidence.json#task=SE.4.6"
+  if [[ "$RC_F26" -eq 0 ]] \
+     && [[ -f "$F26_LEDGER" ]] \
+     && grep -qF "$F26_EXPECT_EVIDENCE" "$F26_LEDGER"; then
+    echo "self-test (F26) structured-flip-emits-evidence-pointer-to-json-file: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F26) structured-flip-emits-evidence-pointer-to-json-file: FAIL (rc=$RC_F26 expected_substring=[$F26_EXPECT_EVIDENCE] out=$F26_OUT ledger=$(cat "$F26_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F27: plan= is the BARE slug (no docs/plans/ dir, no .md suffix) --
+  # reuses F25's own ledger row (no need for a fresh flip). ----
+  if [[ -f "$F25_LEDGER" ]] && grep -q 'plan=f25-plan ' "$F25_LEDGER" && ! grep -q 'plan=f25-plan.md' "$F25_LEDGER"; then
+    echo "self-test (F27) plan-field-is-bare-slug-not-filename-with-extension: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F27) plan-field-is-bare-slug-not-filename-with-extension: FAIL (ledger=$(cat "$F25_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ============================================================
+  # F28-F32 (HARNESS-GAP-62, amended 2026-08-04) — the widened
+  # PEV_TASK_ID_ALT grammar, exercised end-to-end (real subprocess, real
+  # authorization + real ledger emit) across the id-shape census. F28-F30
+  # are the fixture-per-shape proof the task asked for: bare-numeric (the
+  # dominant real convention), fused letter+digit (a non-SE-prefixed id,
+  # proving the fix generalizes beyond the SE.* series already covered by
+  # F16-F19), and digit+letter sub-id (a sibling project's real "0a"-"0i"
+  # convention, also gated by this same global hook). F31 is the negative
+  # control proving the widening did NOT over-broaden: an ordinal word in
+  # task prose must still BLOCK, never authorize. F32 proves the WARN-only
+  # docs-impact detector was widened consistently, not just the
+  # authorization site.
+  # ============================================================
+
+  # ---- F28: e2e bare-numeric flip authorizes + emits task=9 ----
+  F28_DIR="$TMPDIR_SELFTEST/f28/docs/plans"
+  mkdir -p "$F28_DIR"
+  printf '# F28 Plan\n\n## Tasks\n\n- [ ] 9. Do the bare-numeric flip thing\n' > "$F28_DIR/f28-plan.md"
+  cat > "$F28_DIR/f28-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: 9
+Verified at: 2026-08-04T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 9
+EVID
+  F28_LEDGER="$TMPDIR_SELFTEST/f28-ledger.jsonl"
+  rm -f "$F28_LEDGER"
+  F28_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f28-plan.md","old_string":"- [ ] 9. Do the bare-numeric flip thing","new_string":"- [x] 9. Do the bare-numeric flip thing"}}' "$F28_DIR")"
+  set +e
+  F28_OUT="$(printf '%s' "$F28_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F28_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F28=$?
+  set -e
+  if [[ "$RC_F28" -eq 0 ]] \
+     && [[ -f "$F28_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=9 ' "$F28_LEDGER" \
+     && grep -q 'verdict=PASS' "$F28_LEDGER"; then
+    echo "self-test (F28) e2e-bare-numeric-flip-authorizes-and-emits: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F28) e2e-bare-numeric-flip-authorizes-and-emits: FAIL (rc=$RC_F28 out=$F28_OUT ledger=$(cat "$F28_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F29: e2e fused letter+digit flip (non-SE id) authorizes + emits
+  # task=T5 -- proves the fix generalizes beyond the SE.* series F16-F19
+  # already exercised (those use dotted "SE.4.N", a DIFFERENT shape from
+  # fused "T5"). ----
+  F29_DIR="$TMPDIR_SELFTEST/f29/docs/plans"
+  mkdir -p "$F29_DIR"
+  printf '# F29 Plan\n\n## Tasks\n\n- [ ] T5 Do the fused-letter-digit flip thing\n' > "$F29_DIR/f29-plan.md"
+  cat > "$F29_DIR/f29-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: T5
+Verified at: 2026-08-04T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 7
+EVID
+  F29_LEDGER="$TMPDIR_SELFTEST/f29-ledger.jsonl"
+  rm -f "$F29_LEDGER"
+  F29_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f29-plan.md","old_string":"- [ ] T5 Do the fused-letter-digit flip thing","new_string":"- [x] T5 Do the fused-letter-digit flip thing"}}' "$F29_DIR")"
+  set +e
+  F29_OUT="$(printf '%s' "$F29_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F29_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F29=$?
+  set -e
+  if [[ "$RC_F29" -eq 0 ]] \
+     && [[ -f "$F29_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=T5 ' "$F29_LEDGER" \
+     && grep -q 'verdict=PASS' "$F29_LEDGER"; then
+    echo "self-test (F29) e2e-fused-letter-digit-flip-authorizes-and-emits: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F29) e2e-fused-letter-digit-flip-authorizes-and-emits: FAIL (rc=$RC_F29 out=$F29_OUT ledger=$(cat "$F29_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F30: e2e digit+letter sub-id flip (a sibling project's real
+  # "0a"-"0i" convention) authorizes + emits task=0a. This global hook
+  # also gates that repo's plan files -- see HARNESS-GAP-62's census. ----
+  F30_DIR="$TMPDIR_SELFTEST/f30/docs/plans"
+  mkdir -p "$F30_DIR"
+  printf '# F30 Plan\n\n## Tasks\n\n- [ ] 0a. Do the digit-letter sub-id flip thing\n' > "$F30_DIR/f30-plan.md"
+  cat > "$F30_DIR/f30-plan-evidence.md" <<'EVID'
+EVIDENCE BLOCK
+==============
+Task ID: 0a
+Verified at: 2026-08-04T00:00:00Z
+Verifier: task-verifier agent
+
+Runtime verification: test fixture check
+
+Verdict: PASS
+Confidence: 6
+EVID
+  F30_LEDGER="$TMPDIR_SELFTEST/f30-ledger.jsonl"
+  rm -f "$F30_LEDGER"
+  F30_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f30-plan.md","old_string":"- [ ] 0a. Do the digit-letter sub-id flip thing","new_string":"- [x] 0a. Do the digit-letter sub-id flip thing"}}' "$F30_DIR")"
+  set +e
+  F30_OUT="$(printf '%s' "$F30_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F30_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F30=$?
+  set -e
+  if [[ "$RC_F30" -eq 0 ]] \
+     && [[ -f "$F30_LEDGER" ]] \
+     && grep -q '"gate":"plan-edit-validator".*"event":"flip-verdict".*task=0a ' "$F30_LEDGER" \
+     && grep -q 'verdict=PASS' "$F30_LEDGER"; then
+    echo "self-test (F30) e2e-digit-letter-subid-flip-authorizes-and-emits: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F30) e2e-digit-letter-subid-flip-authorizes-and-emits: FAIL (rc=$RC_F30 out=$F30_OUT ledger=$(cat "$F30_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F31 (negative control): an ordinal word ("1st") opening a NEW
+  # task line's description must NOT be mistaken for a task id -- the
+  # widened grammar must still BLOCK this flip (no evidence exists for
+  # a task literally named "1st" anyway, but the point is TASK_ID must
+  # resolve to something that does NOT spuriously match "1st"'s prefix
+  # "1s", which would risk authorizing against an unrelated task's
+  # evidence). Proves PEV_TASK_ID_BOUNDARY, not just PEV_TASK_ID_ALT. ----
+  F31_DIR="$TMPDIR_SELFTEST/f31/docs/plans"
+  mkdir -p "$F31_DIR"
+  printf '# F31 Plan\n\n## Tasks\n\n- [ ] 1st pass: sanity check the schema\n' > "$F31_DIR/f31-plan.md"
+  F31_LEDGER="$TMPDIR_SELFTEST/f31-ledger.jsonl"
+  rm -f "$F31_LEDGER"
+  F31_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f31-plan.md","old_string":"- [ ] 1st pass: sanity check the schema","new_string":"- [x] 1st pass: sanity check the schema"}}' "$F31_DIR")"
+  set +e
+  F31_OUT="$(printf '%s' "$F31_JSON" | PATH="$F16_BINSHIM:$PATH" SIGNAL_LEDGER_PATH="$F31_LEDGER" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F31=$?
+  set -e
+  if [[ "$RC_F31" -ne 0 ]] \
+     && [[ ! -s "$F31_LEDGER" ]] \
+     && printf '%s' "$F31_OUT" | grep -q 'PLAN EDIT BLOCKED'; then
+    echo "self-test (F31) ordinal-word-new-task-line-still-blocks-no-over-broadening: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F31) ordinal-word-new-task-line-still-blocks-no-over-broadening: FAIL (rc=$RC_F31 out=$F31_OUT ledger=$(cat "$F31_LEDGER" 2>/dev/null))" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ---- F32: check_docs_impact_warn widened consistently -- a NEW
+  # bare-numeric task line with no 'Docs impact:' now WARNs (before this
+  # fix, the old [A-Z]+\.[0-9]+ -only regex never recognized a bare-numeric
+  # line as a task line at all, so this WARN silently never fired for the
+  # estate's dominant convention). Real e2e subprocess, enforce mode
+  # (never blocks) -- asserts the WARN text names the bare-numeric id. ----
+  F32_DIR="$TMPDIR_SELFTEST/f32/docs/plans"
+  mkdir -p "$F32_DIR"
+  printf '# F32 Plan\n\nStatus: DRAFT\n' > "$F32_DIR/f32-plan.md"
+  F32_JSON="$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s/f32-plan.md","old_string":"Status: DRAFT","new_string":"- [ ] 42. New bare-numeric task with no docs field."}}' "$F32_DIR")"
+  set +e
+  F32_OUT="$(printf '%s' "$F32_JSON" | BACKLOG_MD_PATH="$TMPDIR_SELFTEST/empty-backlog-f32.md" CLAUDE_TOOL_INPUT="" bash "${BASH_SOURCE[0]}" 2>&1 >/dev/null)"
+  RC_F32=$?
+  set -e
+  if [[ "$RC_F32" -eq 0 ]] \
+     && printf '%s' "$F32_OUT" | grep -qE "new task '42' has no 'Docs impact:'"; then
+    echo "self-test (F32) docs-impact-warn-widened-for-bare-numeric-new-task: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F32) docs-impact-warn-widened-for-bare-numeric-new-task: FAIL (rc=$RC_F32 out=$F32_OUT)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
+  # ============================================================
+  # F33 (CI-triage 2026-08-04, plan-edit-validator Linux-red root cause,
+  # 3rd attempt) — regression pin: acquire_plan_lock's flock(1) branch
+  # must never leak a permanent stderr redirect onto the calling process.
+  #
+  # `flock` is absent on this checkout (MSYS2/Windows -- `command -v
+  # flock` fails here), so the flock branch is otherwise NEVER exercised
+  # by any local run of this suite. That is exactly why a bare `exec
+  # 9>"$lock_file" 2>/dev/null` (whose redirections, per bash's exec
+  # semantics, persist on the CURRENT SHELL, not just that one attempt --
+  # so `2>/dev/null` silently darkened stderr for the REST of the process)
+  # went undetected through three prior CI-triage rounds: every self-test
+  # PASS/FAIL/summary line below writes via `>&2`, so once F1 took this
+  # branch on any machine with flock installed (every GitHub Actions
+  # ubuntu-latest runner), all subsequent diagnostic output vanished --
+  # zero captured output, a real nonzero exit (the $FAILED tally and final
+  # `exit` are ordinary control flow, unaffected by the silenced stream).
+  #
+  # This scenario forces the flock branch on ANY platform via a temporary
+  # flock(1) stub on PATH, so the regression is caught here regardless of
+  # whether the local machine has a real flock binary. It targets the
+  # REAL, current acquire_plan_lock/release_plan_lock (via `declare -f`,
+  # not a hand-copied duplicate) so it can never silently drift stale.
+  # ============================================================
+  F33_DIR="$TMPDIR_SELFTEST/f33"
+  mkdir -p "$F33_DIR/binshim"
+  cat > "$F33_DIR/binshim/flock" <<'SHIM'
+#!/bin/bash
+# Minimal stand-in: always "succeeds" immediately. This scenario only
+# checks that the CALLER's stderr survives taking the flock branch, not
+# real locking semantics -- F2 above already covers real concurrent-worker
+# serialization behavior with a genuine multi-process contention test.
+exit 0
+SHIM
+  chmod +x "$F33_DIR/binshim/flock"
+  F33_LOCKFUNCS="$F33_DIR/lockfuncs.sh"
+  { declare -f acquire_plan_lock; declare -f release_plan_lock; } > "$F33_LOCKFUNCS"
+  F33_PLAN="$F33_DIR/plan.md"
+  : > "$F33_PLAN"
+  F33_SCRIPT="$F33_DIR/probe.sh"
+  cat > "$F33_SCRIPT" <<PROBE
+#!/bin/bash
+source "$F33_LOCKFUNCS"
+acquire_plan_lock "$F33_PLAN" || exit 9
+echo "F33-STDERR-CANARY" >&2
+release_plan_lock
+PROBE
+  chmod +x "$F33_SCRIPT"
+  set +e
+  F33_OUT="$(PATH="$F33_DIR/binshim:$PATH" bash "$F33_SCRIPT" 2>&1 >/dev/null)"
+  RC_F33=$?
+  set -e
+  if [[ "$RC_F33" -eq 0 ]] && printf '%s' "$F33_OUT" | grep -q "F33-STDERR-CANARY"; then
+    echo "self-test (F33) flock-branch-does-not-leak-permanent-stderr-redirect: PASS" >&2
+    PASSED=$((PASSED+1))
+  else
+    echo "self-test (F33) flock-branch-does-not-leak-permanent-stderr-redirect: FAIL (rc=$RC_F33 out='$F33_OUT' -- missing CANARY means the flock branch's exec silenced stderr for the rest of the process, exactly the 2026-08-04 CI-red bug)" >&2
+    FAILED=$((FAILED+1))
+  fi
+
   echo "" >&2
-  echo "self-test summary: $PASSED passed, $FAILED failed (of 24 scenarios)" >&2
+  echo "self-test summary: $PASSED passed, $FAILED failed (of 33 scenarios)" >&2
   if [[ "$FAILED" -eq 0 ]]; then
     exit 0
   else
@@ -1848,15 +2268,19 @@ check_docs_impact_warn() {
   # whose new fragment contained no task line — the `[[ -z ]] && return`
   # guard below never ran (latent since §F.2b; caught by BACKLOG-LOOP-01's
   # F15 end-to-end scenario, 2026-07-06).
+  # Shape + boundary per PEV_TASK_ID_ALT/PEV_TASK_ID_BOUNDARY (HARNESS-
+  # GAP-62) -- same grammar the checkbox-flip authorization site consults,
+  # so a bare-numeric or digit-letter new task line now gets the same
+  # Docs-impact nudge a classic dotted-letter one always did.
   local new_task_lines
-  new_task_lines="$(echo "$new_content" | grep -E '^[[:space:]]*-[[:space:]]*\[[[:space:]]*\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' 2>/dev/null || true)"
+  new_task_lines="$(echo "$new_content" | grep -E "^[[:space:]]*-[[:space:]]*\\[[[:space:]]*\\][[:space:]]+(${PEV_TASK_ID_ALT})(${PEV_TASK_ID_BOUNDARY})" 2>/dev/null || true)"
   [[ -z "$new_task_lines" ]] && return 0
 
   local warned=0
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     local tid
-    tid="$(echo "$line" | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)"
+    tid="$(echo "$line" | grep -oE "${PEV_TASK_ID_ALT}" | head -1)"
     [[ -z "$tid" ]] && continue
     # Skip if this task ID already existed anywhere in the old content
     # (i.e., this is an edit to existing task text, not a brand-new task).
@@ -1966,6 +2390,64 @@ _pev_check_mode_report_and_exit() {
 # recorded when in_block && t == wanted_id, and each new match OVERWRITES
 # the previous one, so whichever block is LAST in file order wins -- emit
 # happens exactly once, at true END, from the final recorded state.
+#
+# EVENT-NOT-SECOND-SOURCE (2026-08-04, operator directive verbatim: "update
+# the task verifiers to check off the check boxes in two places (plan file
+# and ledger)... they are still keeping track of their single source of
+# truth within the plan file like they normally do, and they additionally
+# are updating the global status at the same time"). This section IS that
+# mechanism -- extended, not duplicated. Framing: the ledger row below is
+# the EVENT ("verifier V passed plan P task N at time T with evidence E");
+# the plan-file checkbox this same authorized `exit 0` allows to proceed is
+# the PROJECTION of that event. A checked box with NO matching ledger row is
+# therefore the honest ANOMALY signal (someone/something flipped the box
+# outside this gate -- a raw git commit, a bypassed hook, a bulk Write) --
+# see `adapters/claude-code/scripts/verify-event-audit.sh`, the read-only
+# detector built for exactly this cross-check; it never fabricates a row for
+# a pre-existing checked box, it reports the absence as its own true state.
+#
+# WRITE ORDER (load-bearing, not incidental): `ledger_emit_typed` below runs
+# and returns BEFORE this function's caller reaches `exit 0`, and the actual
+# file mutation (the Edit tool applying old_string->new_string) only happens
+# AFTER this hook process exits 0 and control returns to the tool executor.
+# So the event is always appended strictly before the checkbox it describes
+# can exist on disk. A crash or kill between the two leaves an event with no
+# checkbox yet (harmless -- "verified, projection pending", recoverable by
+# re-running the Edit) rather than a checkbox with no event (which would be
+# the false-hand-checked anomaly) -- the safer failure direction is free
+# here because it falls straight out of "the gate function returns before
+# the gated tool call is allowed to proceed", not from any extra ordering
+# code this change had to add.
+#
+# MECHANICALLY ENFORCED, not protocol-required: this emit is NOT a step
+# task-verifier's own protocol asks it to remember -- task-verifier never
+# calls anything extra. Every authorized checkbox flip is, by construction,
+# an Edit call that passed through THIS function first (the whole reason
+# this hook exists is "the only entity allowed to flip a checkbox is
+# task-verifier", enforced by intercepting every Edit to a plan file) so the
+# emit opportunity fires on every flip that reaches `exit 0`, with zero
+# chance of a verifier forgetting a step that does not exist for it to
+# forget. What is NOT mechanically guaranteed is that the emit always
+# CAPTURES a task_id: plan-edit-validator's own checkbox-TASK_ID regex
+# (~line 2142, `[A-Z]+\.[0-9]+(\.[0-9]+)*`) requires a dotted letter-prefixed
+# id and does not match this repo's other two live conventions -- bare
+# numeric ("- [x] 7. ...", e.g. every task in
+# docs/plans/gated-pipeline-master-2026-08.md) or fused letter+digit
+# ("- [x] SE3 ...", HARNESS-GAP-62, docs/backlog.md). A flip on either of
+# those never reaches this function at all -- TASK_ID resolves empty,
+# `[[ -n "$TASK_ID" ]]` is false, and the edit falls straight to the PLAN
+# EDIT BLOCKED path a few lines below, never authorized, never emitting.
+# CONFIRMED empirically 2026-08-04 (this change's own build): a fabricated
+# fresh-evidence flip against a synthetic bare-numeric plan is BLOCKED by
+# this exact regex, and `~/.claude/state/signal-ledger.jsonl` on this
+# machine carries ZERO `flip-verdict` rows total despite SE4 having shipped
+# 2026-07-30 -- the mechanism is real and wired, but has not yet fired once
+# in this repo's actual history because the dominant real task-id convention
+# (bare numeric) cannot reach it. See docs/backlog.md HARNESS-GAP-62's
+# 2026-08-04 amendment for the full measurement; fixing the regex itself
+# (a three-way alternation, not a one-line patch, since the documented
+# HARNESS-GAP-62 fix only widens to fused-letter ids) is explicitly OUT OF
+# SCOPE here -- named, not silently worked around.
 
 # _pev_extract_prose_flip_fields <evidence_file> <task_id>
 #   Echoes "verdict|confidence|verifier" for the LAST block matching
@@ -2026,11 +2508,11 @@ _pev_extract_json_flip_fields() {
 }
 
 # flip_ledger_fields <plan_file> <task_id> [level]
-#   Echoes "verdict|confidence|verifier", reading whichever evidence source
-#   ACTUALLY AUTHORIZED this flip -- mirroring the real authorizer's own
-#   preference order for the given `level`, not a single fixed order for
-#   every task (HARNESS-REVIEW FIX, 2026-07-30, REFORMULATE finding 1(b)).
-#   `level` defaults to "full" when omitted/empty.
+#   Echoes "verdict|confidence|verifier|evidence_ref", reading whichever
+#   evidence source ACTUALLY AUTHORIZED this flip -- mirroring the real
+#   authorizer's own preference order for the given `level`, not a single
+#   fixed order for every task (HARNESS-REVIEW FIX, 2026-07-30, REFORMULATE
+#   finding 1(b)). `level` defaults to "full" when omitted/empty.
 #     - mechanical/contract: check_mechanical_or_contract_evidence tries
 #       structured `.evidence.json` FIRST (Path A) and only falls back to
 #       prose with a `Commit:` line (Path B) if the structured file is
@@ -2041,6 +2523,18 @@ _pev_extract_json_flip_fields() {
 #       though the flip was actually authorized by the structured JSON.
 #     - full (default): check_evidence_first tries prose FIRST (Path A) and
 #       falls back to structured (Path B) -- unchanged from before this fix.
+#
+#   `evidence_ref` (2026-08-04, field-contract addition -- see the EVENT-
+#   NOT-SECOND-SOURCE block comment above emit_flip_ledger_event's
+#   definition): "<the file that actually authorized this flip>#task=<task_
+#   id>" -- the evidence-file's own path is already the pointer a reader
+#   needs ("open this file, find the block/entry for this task"); no commit
+#   SHA is threaded through here because the authorizer itself never reads
+#   one (a `Commit:` line is convention inside a prose block, not a
+#   guaranteed field this function's two callees extract) -- inventing one
+#   would be a guess, and the evidence FILE is always genuinely known,
+#   unlike a SHA. "unknown" only when neither source was found at all
+#   (mirrors the sibling verdict/confidence/verifier "unknown" convention).
 flip_ledger_fields() {
   local plan_file="$1" task_id="$2" level="${3:-full}"
   local plan_dir plan_slug structured_file evidence_file
@@ -2051,18 +2545,18 @@ flip_ledger_fields() {
 
   if [[ "$level" == "mechanical" ]] || [[ "$level" == "contract" ]]; then
     if [[ -f "$structured_file" ]]; then
-      _pev_extract_json_flip_fields "$structured_file"
+      printf '%s|%s' "$(_pev_extract_json_flip_fields "$structured_file")" "${structured_file}#task=${task_id}"
       return 0
     fi
     if [[ -f "$evidence_file" ]]; then
       local out_mc
       out_mc="$(_pev_extract_prose_flip_fields "$evidence_file" "$task_id")" || out_mc=""
       if [[ -n "$out_mc" ]]; then
-        printf '%s' "$out_mc"
+        printf '%s|%s' "$out_mc" "${evidence_file}#task=${task_id}"
         return 0
       fi
     fi
-    printf 'unknown|unknown|unknown'
+    printf 'unknown|unknown|unknown|unknown'
     return 0
   fi
 
@@ -2070,33 +2564,57 @@ flip_ledger_fields() {
     local out
     out="$(_pev_extract_prose_flip_fields "$evidence_file" "$task_id")" || out=""
     if [[ -n "$out" ]]; then
-      printf '%s' "$out"
+      printf '%s|%s' "$out" "${evidence_file}#task=${task_id}"
       return 0
     fi
   fi
   if [[ -f "$structured_file" ]]; then
-    _pev_extract_json_flip_fields "$structured_file"
+    printf '%s|%s' "$(_pev_extract_json_flip_fields "$structured_file")" "${structured_file}#task=${task_id}"
     return 0
   fi
-  printf 'unknown|unknown|unknown'
+  printf 'unknown|unknown|unknown|unknown'
 }
 
 # emit_flip_ledger_event <plan_file> <task_id> [level]
 #   Best-effort, never fails the caller (every internal step is guarded).
 #   `level` (VERIFICATION_LEVEL) is threaded through to flip_ledger_fields
 #   so the ledger reads the SAME evidence source the authorizer used.
+#
+#   FIELD CONTRACT (2026-08-04, the `flip-verdict` event's detail string,
+#   consumed by `verify-event-audit.sh` and by the cockpit's per-task stage
+#   chip): a space-separated `key=value` line --
+#     plan=<bare plan slug, no docs/plans/ prefix, no .md suffix>
+#     task=<task id VERBATIM as authored on the checkbox line -- never
+#           normalized here; a reader strips one leading T/t immediately
+#           followed by a digit, same convention as
+#           hooks/lib/review-chain-lib.sh's _rc_norm_task_id and
+#           workstreams-emit.sh's _ledger_task_id_known>
+#     verdict=<PASS|FAIL|... exactly as the evidence source recorded it, or
+#              "unknown" if unreadable>
+#     confidence=<the evidence source's own Confidence: value, or "unknown"
+#                 (the structured .evidence.json schema has no such field --
+#                 that leg always reports "unknown" honestly, never a
+#                 fabricated number)>
+#     verifier=<the evidence source's own Verifier: field, or "unknown">
+#     evidence=<the evidence file/section that authorized this flip, see
+#               flip_ledger_fields's own header comment above>
+#   `ts` and `session_id` are supplied by signal-ledger.sh's own ledger_emit
+#   envelope (every ledger row already carries them; this function does not
+#   duplicate them into detail).
 emit_flip_ledger_event() {
   local plan_file="$1" task_id="$2" level="${3:-full}"
   command -v ledger_emit_typed >/dev/null 2>&1 || return 0
-  local fields v c r
+  local plan_slug fields v c r e
+  plan_slug=$(basename "$plan_file" .md)
   fields="$(flip_ledger_fields "$plan_file" "$task_id" "$level" 2>/dev/null)" || fields=""
-  [[ -z "$fields" ]] && fields="unknown|unknown|unknown"
-  IFS='|' read -r v c r <<< "$fields" || true
+  [[ -z "$fields" ]] && fields="unknown|unknown|unknown|unknown"
+  IFS='|' read -r v c r e <<< "$fields" || true
   [[ -z "$v" ]] && v="unknown"
   [[ -z "$c" ]] && c="unknown"
   [[ -z "$r" ]] && r="unknown"
+  [[ -z "$e" ]] && e="unknown"
   ledger_emit_typed "plan-edit-validator" "flip-verdict" \
-    "plan=$(basename "$plan_file") task=${task_id} verdict=${v} confidence=${c} verifier=${r}" 2>/dev/null || true
+    "plan=${plan_slug} task=${task_id} verdict=${v} confidence=${c} verifier=${r} evidence=${e}" 2>/dev/null || true
   return 0
 }
 
@@ -2138,8 +2656,13 @@ if [[ "$TOOL_NAME" == "Edit" ]]; then
   # a checked box? If yes, this is a checkbox flip.
   if echo "$OLD_STR" | grep -qE '^\s*-\s*\[\s*\]'; then
     if echo "$NEW_STR" | grep -qE '^\s*-\s*\[\s*[xX]\s*\]'; then
-      # Extract the task ID from the new_string (format: - [x] A.1 ...)
-      TASK_ID=$(echo "$NEW_STR" | grep -oE '\[[xX]\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*' | grep -oE '[A-Z]+\.[0-9]+(\.[0-9]+)*' | head -1)
+      # Extract the task ID from the new_string (format: - [x] A.1 ..., or
+      # any of the other three PEV_TASK_ID_ALT shapes -- HARNESS-GAP-62).
+      # Stage 1 anchors on the checkbox marker AND the trailing token
+      # boundary (PEV_TASK_ID_BOUNDARY) so a bare-numeric/digit-letter id
+      # never spuriously eats a prefix of following prose ("1st" -> "1s");
+      # stage 2 re-extracts just the id from that already-validated match.
+      TASK_ID=$(echo "$NEW_STR" | grep -oE "\\[[xX]\\][[:space:]]+(${PEV_TASK_ID_ALT})(${PEV_TASK_ID_BOUNDARY})" | grep -oE "${PEV_TASK_ID_ALT}" | head -1)
 
       # Acquire the per-plan lock so two parallel verifiers serialize on
       # evidence-mtime + checkbox-flip decisions. If the lock cannot be

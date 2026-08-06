@@ -251,11 +251,53 @@
     return b;
   }
 
+  // SNAPSHOT-STALENESS-BEGIN
+  // snapshotStalenessSuffix(payload) — FIX 3 trailer (2026-08-04, per the
+  // orchestrator's own task brief): "a parallel builder is adding
+  // STALENESS + SNAPSHOT-AGE fields to the payload (resolved scan root,
+  // HEAD, behind-count; snapshot derived-at) ... Render a compact
+  // indicator for them IF the fields are present, guarded so it is inert
+  // when absent (they land in a different worktree; you cannot see them)."
+  //
+  // HONESTY NOTE (see the build report for the full statement): the exact
+  // field NAMES below are this session's best-effort guess from that prose
+  // description alone — this worktree cannot see the other builder's actual
+  // server change. Every read here is defensive (firstDefinedField over
+  // several plausible spellings); when NONE of them are present on the
+  // payload this returns '' and setAgeLabel renders exactly what it always
+  // has — inert by construction, never a fabricated placeholder. The
+  // orchestrator must reconcile the guessed names against the real payload
+  // once that worktree lands (state exactly which names were consumed).
+  function firstDefinedField() {
+    for (var i = 0; i < arguments.length; i++) {
+      var v = arguments[i];
+      if (v !== undefined && v !== null && v !== '') return v;
+    }
+    return undefined;
+  }
+  function snapshotStalenessSuffix(payload) {
+    if (!payload) return '';
+    var headSha = firstDefinedField(payload.head_sha, payload.head, payload.git_head);
+    var behind = firstDefinedField(payload.behind_count, payload.commits_behind);
+    var scanRoot = firstDefinedField(payload.scan_root, payload.resolved_scan_root);
+    var snapshotAt = firstDefinedField(payload.snapshot_derived_at, payload.derived_at);
+    var parts = [];
+    if (headSha) parts.push('HEAD ' + String(headSha).slice(0, 8));
+    if (behind !== undefined && Number(behind) > 0) parts.push(behind + ' behind');
+    if (snapshotAt) parts.push('snapshot ' + formatAge(snapshotAt));
+    if (!parts.length) return '';
+    var text = ' — ' + parts.join(', ');
+    if (scanRoot) text += ' (' + scanRoot + ')';
+    return text;
+  }
+  // SNAPSHOT-STALENESS-END
+
   function setAgeLabel() {
     var ageEl = document.querySelector('[data-age-for="roadmap"]');
     if (!ageEl) return;
     ageEl.textContent = 'derived ' + formatAge(lastDerivedAt) +
-      (lastFetchFailed ? ' — STALE (last refresh failed)' : '');
+      (lastFetchFailed ? ' — STALE (last refresh failed)' : '') +
+      snapshotStalenessSuffix(lastPayload);
     ageEl.classList.toggle('stale', lastFetchFailed);
   }
 
@@ -474,6 +516,101 @@
     return shortTaskId(openId) + (isRunning ? ' running' : ' next');
   }
   // TASK-SPAN-END
+
+  // TASK-STAGE-BEGIN
+  // ============================================================
+  // deriveTaskStage(item) — FIX 3c (operator, 2026-08-04, verbatim): "Don't
+  // you think it makes sense to have space in the cockpit that tells us how
+  // much progress has been made on each individual task? If the task gets
+  // to the verification stage, we should probably add that into the
+  // status ... today a task that is BUILT and MERGED but awaiting
+  // task-verifier renders identically to one never started (plain
+  // unchecked row)."
+  //
+  // REWRITE (2026-08-04, adversarial-verifier findings against the chip
+  // FIX 3c originally shipped): the first version of this function
+  // committed two overclaims — a state rendered without a mechanism behind
+  // it (constitution §1):
+  //   OVERCLAIM 1: status.value==='complete' unconditionally returned
+  //     'verified'. True ONLY by the convention that task-verifier is the
+  //     sole checkbox-flipper; nothing in the payload PROVED it, so a
+  //     hand-checked box read 'verified' too.
+  //   OVERCLAIM 2: status.value 'stalled'/'unknown' returned 'building' — an
+  //     active-work claim that directly contradicted the SAME row's own
+  //     exception chip ("stalled — no recent dispatch" / "status unknown —
+  //     ..."), measured live on three real rows.
+  // THE FIX: Task 25's dispatch ledger (roadmap-routes.js's
+  // buildTaskVerifyEvidence) now supplies item.verify_evidence
+  // {has_builder_complete, has_verifier_complete, newest_ts} — REAL,
+  // mechanically-backed per-task evidence this function was missing. Every
+  // token below is now grounded in either that evidence or a genuine
+  // live/heartbeat signal; nothing is asserted "by convention" anymore.
+  //
+  // THE FULL LADDER (checked top to bottom; verify_evidence always present,
+  // defaulting to {false,false,''} — see roadmap-routes.js's own header):
+  //   1. checkbox checked (status.value 'complete'):
+  //        has_verifier_complete -> 'verified' (NOW mechanically backed —
+  //          a real task-verifier-typed ledger row for this exact task).
+  //        else                  -> 'done-unverified' ("done (unverified)")
+  //          — the checkbox is true, but nothing proves a verifier ran;
+  //          NEVER prints 'verified' without the row to back it.
+  //   2. NOT checked, has_builder_complete: 'merged-awaiting-verification'
+  //      — the operator's actual 4th named stage, UNRENDERABLE before the
+  //      ledger existed (roadmap-routes.js's payload had no per-task
+  //      merge signal at all). Checked AHEAD of the live/heartbeat states
+  //      below on purpose: a completed build is the single strongest,
+  //      most specific, ledger-backed fact this function can report — more
+  //      informative than a stale/idle heartbeat guess, and it is exactly
+  //      the common real-world shape (builder finishes, its dispatch then
+  //      goes idle while nobody has re-dispatched the verifier yet).
+  //   3. NOT checked, no builder-complete row:
+  //        status.value 'stalled' or 'unknown' -> THAT SAME value, verbatim
+  //          — fixes overclaim 2 directly: a task the row's OWN exception
+  //          chip already calls stalled/unknown can never ALSO claim
+  //          'building' in this column. Never an active-work claim without
+  //          live evidence.
+  //        status.value 'in-progress', OR running_now/live_sessions.length
+  //          (belt-and-braces — a dispatch that just started, 0 progress
+  //          yet, before status.value has caught up) -> 'building'.
+  //        else -> 'not-started'.
+  // No-ledger-evidence degrade (explicit, not a separate branch): when the
+  // ledger is absent/unreadable, EVERY task's verify_evidence defaults to
+  // {false,false,''} (roadmap-routes.js's own honest-absence contract) —
+  // which this ladder already resolves to the WEAKER label at every step
+  // ('done-unverified' instead of 'verified'; skip straight past step 2 to
+  // step 3) without any special-casing here. Never 'verified', never a
+  // crash.
+  //
+  // Pure (no DOM), self-contained (does not depend on isRunningNow/
+  // hasRunningSession above) so the selftest can execute it standalone in a
+  // `vm` sandbox, same technique as deriveTaskSpanLabel above.
+  //
+  // SCOPE: TASK rows only (taskSpanCell calls this only inside its
+  // item.kind==='task' branch). A PLAN's own pipeline position is already
+  // fully covered by its status chip (column 6) + progress bar (column 4)
+  // + deriveTaskSpanLabel text (this same column, plan branch) — adding
+  // this chip there too would be the exact same-info redundancy Round 12
+  // item 4 already eliminated once (DERIVABLE_STATES gating statusChip).
+  function deriveTaskStage(item) {
+    var v = item && item.status && item.status.value;
+    var ev = (item && item.verify_evidence) || {};
+    if (v === 'complete') return ev.has_verifier_complete ? 'verified' : 'done-unverified';
+    if (ev.has_builder_complete) return 'merged-awaiting-verification';
+    if (v === 'stalled' || v === 'unknown') return v;
+    if (v === 'in-progress') return 'building';
+    var hasLiveEvidence = !!(item && item.running_now) || !!((item && item.live_sessions) || []).length;
+    return hasLiveEvidence ? 'building' : 'not-started';
+  }
+  var TASK_STAGE_LABEL = {
+    'not-started': 'not started',
+    'building': 'building',
+    'verified': 'verified',
+    'done-unverified': 'done (unverified)',
+    'merged-awaiting-verification': 'merged — awaiting verification',
+    'stalled': 'stalled',
+    'unknown': 'status unknown',
+  };
+  // TASK-STAGE-END
 
   // FILTER-MATCH-BEGIN
   // Round 12 item 8: filtering by a task id (e.g. "T3") already returns the
@@ -716,6 +853,12 @@
     } else {
       var chipClass = 'chip rm-status rm-status-' + (st.terminal_label ? 'terminal-' + st.terminal_label : value);
       chip = el('span', chipClass, text);
+      // FIX 3b (operator, 2026-08-04, "cut off at the end of the row"):
+      // the CSS wrap fix (.rm-cell-exception, app.css) is the primary
+      // repair — this title= is a belt-and-braces fallback so the full
+      // text is discoverable via hover even in a viewport narrow enough to
+      // still force wrapping mid-word.
+      chip.title = text;
     }
     return chip;
   }
@@ -833,11 +976,11 @@
     // Round 13 fix 4 (per-task done-state, operator: "why doesn't it show
     // the progress of each task?"): a leaf task that's actually complete
     // gets a leading check glyph. Text (not color-only, WCAG 1.4.1) and
-    // NOT aria-hidden — a task-kind row carries no other done/not-done
-    // text signal of its own (the exception chip is suppressed for the
-    // three derivable states, same as everywhere else in this file), so
-    // this glyph is the one place a screen-reader user hears "done" on an
-    // individual task row.
+    // NOT aria-hidden. UPDATE (FIX 3c, 2026-08-04): this glyph is no longer
+    // the ONLY text signal on a complete task row — taskSpanCell (column 3)
+    // now also renders an explicit "verified" stage chip (deriveTaskStage)
+    // — but it stays as the EARLIEST one, inline with the title itself, so
+    // a screen-reader user hears "done" without needing to reach column 3.
     if (item.kind === 'task' && item.status && item.status.value === 'complete') {
       cell.appendChild(el('span', 'rm-task-check', '✓'));
     }
@@ -880,9 +1023,17 @@
         // bordered-pill treatment every other status signal in this view
         // uses, instead of plain inline text.
         cell.appendChild(el('span', 'chip rm-task-running', 'running'));
-      } else if (isNextTask) {
-        cell.appendChild(el('span', 'rm-task-next', 'next'));
+        return cell;
       }
+      // FIX 3c (operator, 2026-08-04): this column previously rendered
+      // NOTHING here unless the task was also positionally "next" — the
+      // common case (a task that is neither running nor next) was a blank
+      // cell, indistinguishable whether the task was untouched or built and
+      // merged awaiting the verifier. deriveTaskStage (TASK-STAGE-BEGIN
+      // above) now fills it on every task row that reaches this point.
+      var stage = deriveTaskStage(item);
+      cell.appendChild(el('span', 'chip rm-task-stage rm-task-stage-' + stage, TASK_STAGE_LABEL[stage]));
+      if (isNextTask) cell.appendChild(el('span', 'rm-task-next', 'next'));
       return cell;
     }
     // Round 15: the "<id> running" token (deriveTaskSpanLabel) earns the
@@ -915,7 +1066,7 @@
     return cell;
   }
 
-  function exceptionLabelCell(item) { // column 6 (132px): the loud exception chip + descendant roll-up badges
+  function exceptionLabelCell(item) { // column 6 (210px, widened by FIX 3b — was 132px, stale comment fixed 2026-08-04): the loud exception chip + descendant roll-up badges
     var cell = el('span', 'rm-cell rm-cell-exception');
     var chip = statusChip(item); // null for the three derivable states — an empty column 6 means "healthy"
     if (chip) cell.appendChild(chip);
@@ -1571,11 +1722,11 @@
       msCell.appendChild(masterSummaryNode(item));
       sum.appendChild(msCell);
     } else {
-      sum.appendChild(taskSpanCell(item, isNextTask));      // column 3 (190px)
+      sum.appendChild(taskSpanCell(item, isNextTask));      // column 3 (130px, R21-1 — was 190px)
       sum.appendChild(fractionCellForRow(item));            // column 4 (76px)
     }
     sum.appendChild(exceptionGlyphCell(item));              // column 5 (46px)
-    sum.appendChild(exceptionLabelCell(item));              // column 6 (132px)
+    sum.appendChild(exceptionLabelCell(item));              // column 6 (210px, R21-1 — was 132px)
     det.appendChild(sum);
 
     // Round 16 deliverable 5: drag-and-drop + Cmd/Ctrl+ArrowUp/Down

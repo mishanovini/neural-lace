@@ -106,12 +106,46 @@ dr__script_dir() {
 dr__resolve_root() {
   local sd root
   sd="$(dr__script_dir)"
+  # PRIMARY: the shared canonical resolver (lib/nl-paths.sh, ~20 other hooks
+  # already use it — this file skipped it and paid for the gap, gated-
+  # pipeline-master-2026-08 Task 8 doctor triage). nl_repo_root() has an
+  # NL_REPO_ROOT env tier and an install-time ~/.claude/local/nl-repo-path
+  # config-file tier BEFORE it falls back to git — both of which this file's
+  # old git+manual-climb-only implementation lacked. That absence is exactly
+  # why the doctor's self-test sweep (which runs hooks/lib/*.sh from the LIVE
+  # MIRROR at ~/.claude/hooks/lib/, not a git checkout) mis-resolved fixtures:
+  # ~/.claude is not a git repo, so the git tier failed, and the manual climb
+  # below (`../../../..`, sized for the REPO depth hooks/lib -> hooks ->
+  # claude-code -> adapters -> root) climbed only 4 levels from the LIVE
+  # layout's shallower hooks/lib -> hooks -> .claude -> <user>, landing at
+  # the user's home directory's PARENT (one level short of the real
+  # checkout) — reproduced directly by running this climb from the live
+  # path: ROOT resolved to the Users-drive root, and the fixture path
+  # formula then appended "adapters/claude-code/tests/fixtures/directives-
+  # register" beneath that wrong root, so the self-test reported the
+  # fixtures missing at a path that does not exist. nl_repo_root()'s
+  # config-file tier (written by install.sh) resolves correctly from
+  # either location.
+  if [[ -f "${sd}/nl-paths.sh" ]]; then
+    # shellcheck disable=SC1091
+    if source "${sd}/nl-paths.sh" 2>/dev/null && declare -F nl_repo_root >/dev/null 2>&1; then
+      root="$(nl_repo_root)"
+      if [[ -n "$root" ]]; then
+        printf '%s\n' "$root"
+        return 0
+      fi
+    fi
+  fi
+  # FALLBACK (nl-paths.sh missing/unreadable): the old behavior, unchanged.
   root="$(git -C "$sd" rev-parse --show-toplevel 2>/dev/null)"
   if [[ -n "$root" ]]; then
     printf '%s\n' "$root"
     return 0
   fi
   # Manual climb fallback: hooks/lib -> hooks -> claude-code -> adapters -> root
+  # (correct ONLY for the repo-shaped depth; kept as a last resort so a
+  # checkout missing nl-paths.sh degrades to today's behavior rather than
+  # a hard failure).
   root="$(cd "$sd/../../../.." 2>/dev/null && pwd)"
   if [[ -n "$root" ]]; then
     printf '%s\n' "$root"
@@ -348,6 +382,362 @@ dr_entries_for_files() {
 }
 
 # ============================================================
+# PURE-BASH fast path (gated-pipeline-master-2026-08 Task 20; design
+# docs/designs/gated-pipeline-master-2026-08-03.md §4, REQ-B11 carriage
+# channel 3 — doctrine-jit.sh's PostToolUse register walk)
+# ============================================================
+# WHY THIS SECOND CODE PATH EXISTS (fidelity F-5, docs/reviews/2026-08-03-
+# gated-pipeline-plan-fidelity-review.md): dr_entries_for_files above (and
+# dr__stream it's built on) spawns node or jq — on this platform a single jq
+# invocation alone costs ~174ms. doctrine-jit.sh's register walk runs on
+# EVERY Edit/Write/MultiEdit and its Behavioral Contract caps the walk's
+# ADDED latency at <50ms — one jq/node subprocess would blow that budget by
+# 3x on its own. This section is a SECOND reader for the SAME register file,
+# kept in THIS lib (M-3: one parser, one file — not a duplicate
+# implementation living inside doctrine-jit.sh) that uses ZERO subprocess
+# calls: no jq, no node, no grep/awk/sed, not even `sort` on the hot path —
+# every operation below is a bash builtin (`$(< file)` fast-slurp, an
+# IFS-based unquoted-array split, `case` glob matching, `${var#prefix}` /
+# `${var%suffix}` parameter-expansion extraction, plain array/assoc-array
+# ops). It deliberately does NOT use a `while read` line loop or `[[ =~ ]]`
+# regex — both were measured MUCH slower than the slurp+case approach on
+# this platform (see the timing note on _dr__parse_all_bash below); a
+# subprocess-free implementation is necessary but not sufficient to hit the
+# <50ms budget here, the specific bash constructs matter too.
+#
+# It is NOT a general JSON parser. It line-scans the register file
+# exploiting ITS OWN generated pretty-print convention (2-space indent, one
+# JSON field per line; a `"surfaces": [` array is either collapsed to
+# `"surfaces": [],` on one line when empty, or opened on its own line with
+# ONE quoted string per subsequent line and closed by a bare `]` — the exact
+# shape every entry in config/operator-directives.json is written in, and
+# the shape dr_validate above independently confirms is valid JSON). A line
+# this reader cannot make sense of is simply skipped (fail-open — see
+# FAILURE MODES above: this lib never crashes, never fabricates a match).
+#
+# Round-trip self-test below proves this reader agrees with dr_entries_for_
+# files (the node/jq path) on the shared T11/T20 fixture AND on the real
+# committed register for Task 20's own files — the strongest evidence two
+# independent parsers of the same file agree.
+
+# _dr__decode_escapes <raw-json-string-value> — decodes \n \" \\ \t escape
+# sequences to their real characters using bash's GLOBAL pattern
+# substitution (`${var//search/replace}`), not a per-character loop.
+#
+# MEASURED PLATFORM FINDING (T20 evidence): an earlier char-by-char version
+# of this function (index, substring-extract, case-dispatch per character)
+# cost ~60-80ms to decode three ~350-char instructions on this platform —
+# by itself more than the entire <50ms budget. `${var//pat/repl}` does the
+# same work as ONE builtin C-level pass per escape class (5 passes total
+# here) instead of ~1000+ bash-interpreted loop iterations; measured well
+# under 1ms for the same input (T20 evidence timing table).
+#
+# ORDER MATTERS: `\\` (backslash-backslash, one literal backslash) is
+# replaced with a placeholder FIRST, before `\n`/`\"`/`\t` are decoded, and
+# only converted to a real `\` LAST. Decoding `\\` to `\` before handling
+# `\n` would let a genuine `\\` immediately followed by a literal `n` in the
+# source text (backslash, backslash, n) collapse into `\` + `n`, which a
+# later `\n`-pass would then wrongly re-decode as a newline escape — the
+# placeholder indirection is what prevents that misread (verified against
+# OD-020's real `HKLM\\SOFTWARE\\Policies\\Claude` instruction text in the
+# round-trip self-test above, the one real entry in the register that
+# actually exercises `\\`).
+_dr__decode_escapes() {
+  local s="$1" ph=$'\x01'
+  s="${s//\\\\/$ph}"
+  s="${s//\\n/$'\n'}"
+  s="${s//\\\"/\"}"
+  s="${s//\\t/$'\t'}"
+  s="${s//$ph/\\}"
+  printf '%s' "$s"
+}
+
+# _dr__parse_all_bash <register.json> — ONE pure-bash pass over the file.
+#
+# MEASURED PLATFORM FINDING (T20 evidence, this machine): a `while read -r
+# line; do ... done < file` loop combined with `[[ "$line" =~ regex ]]`
+# costs ~270-320ms over this 325-line file — regex compilation/match and the
+# per-line `read` builtin are each measurably expensive on this bash build,
+# NOT just subprocess spawns. `$(< file)` (bash's builtin fast-slurp, which
+# reads the whole file without invoking `cat` or forking), an IFS-based
+# unquoted-array split (`LINES=($content)`, also a builtin, no loop/fork),
+# and `case "$line" in *glob*)` matching instead of `[[ =~ ]]` regex bring
+# the SAME 325-line, same-fields parse down to ~11-15ms (measured 10-run
+# comparison in the T20 evidence file) — the difference is the matching
+# mechanism (fnmatch-style case vs. POSIX-ERE compile+exec), not the data
+# volume. This is why this function reads the way it does; do not
+# "simplify" it back to a read-loop + regex without re-measuring.
+#
+# Side effect: populates four globals (reset first, even on early return, so
+# a stale prior call can never leak into a fresh one):
+#   _DR_BASH_IDS      entry ids, file order
+#   _DR_BASH_STATUS   id -> status
+#   _DR_BASH_NSURF    id -> surface count (string integer, "0" if none)
+#   _DR_BASH_SURF     "<id>::<0-based-index>" -> surface glob string
+#   _DR_BASH_INSTR    id -> RAW (still-escaped) instruction text
+# (Surfaces are stored as indexed composite keys, not a newline-joined
+# string, so no caller ever needs to re-split a string at match time — that
+# re-split, via a `<<<` here-string, is itself another measured-expensive
+# construct on this platform; seen in bench diagnostics during this task's
+# build, not re-included here since the composite-key form removes the need
+# for it entirely.)
+# Missing/unreadable file -> all globals left empty. Never a crash.
+_dr__parse_all_bash() {
+  local path="$1"
+  _DR_BASH_IDS=()
+  declare -gA _DR_BASH_STATUS=()
+  declare -gA _DR_BASH_NSURF=()
+  declare -gA _DR_BASH_SURF=()
+  declare -gA _DR_BASH_INSTR=()
+  [[ -f "$path" ]] || return 0
+
+  local content
+  content="$(< "$path")" || return 0
+  [[ -n "$content" ]] || return 0
+
+  local -a _lines=()
+  local _old_ifs="$IFS"
+  IFS=$'\n'
+  set -f
+  # shellcheck disable=SC2206
+  _lines=($content)
+  set +f
+  IFS="$_old_ifs"
+
+  local id="" status="" instr="" in_surfaces=0 nsurf=0 line v
+
+  for line in "${_lines[@]}"; do
+    line="${line%$'\r'}"
+
+    if [[ "$in_surfaces" -eq 1 ]]; then
+      case "$line" in
+        *']'*)
+          in_surfaces=0
+          ;;
+        *'"'*)
+          v="${line#*\"}"
+          v="${v%\"*}"
+          _DR_BASH_SURF["${id}::${nsurf}"]="$v"
+          nsurf=$((nsurf + 1))
+          ;;
+      esac
+      continue
+    fi
+
+    case "$line" in
+      *'"id":'*'"OD-'*)
+        if [[ -n "$id" ]]; then
+          _DR_BASH_IDS+=("$id")
+          _DR_BASH_STATUS["$id"]="$status"
+          _DR_BASH_NSURF["$id"]="$nsurf"
+          _DR_BASH_INSTR["$id"]="$instr"
+        fi
+        v="${line#*\"id\": \"}"
+        v="${v%\"*}"
+        id="$v"
+        status=""; instr=""; nsurf=0; in_surfaces=0
+        ;;
+      *'"status":'*'"'*)
+        v="${line#*\"status\": \"}"
+        v="${v%\"*}"
+        status="$v"
+        ;;
+      *'"surfaces": [],'*)
+        nsurf=0
+        ;;
+      *'"surfaces": ['*)
+        in_surfaces=1
+        nsurf=0
+        ;;
+      *'"instruction":'*'"'*)
+        v="${line#*\"instruction\": \"}"
+        v="${v%\"*}"
+        instr="$v"
+        ;;
+    esac
+  done
+
+  if [[ -n "$id" ]]; then
+    _DR_BASH_IDS+=("$id")
+    _DR_BASH_STATUS["$id"]="$status"
+    _DR_BASH_NSURF["$id"]="$nsurf"
+    _DR_BASH_INSTR["$id"]="$instr"
+  fi
+  return 0
+}
+
+# dr_entries_for_files_bash <register.json> <file1> [file2 ...]
+# Pure-bash equivalent of dr_entries_for_files, same output contract
+# (sorted, de-duped BINDING ids with >=1 matching surface). Used by the
+# round-trip self-test below to prove the two readers agree; NOT the
+# doctrine-jit hot path (that's dr_register_walk_bash — single file, no
+# `sort` call). This one DOES call `sort -u` for output-contract parity
+# with dr_entries_for_files, which is fine off the per-event hot path.
+dr_entries_for_files_bash() {
+  local path="$1"; shift
+  local -a files=("$@")
+  [[ ${#files[@]} -eq 0 ]] && return 0
+  _dr__parse_all_bash "$path"
+  [[ ${#_DR_BASH_IDS[@]} -eq 0 ]] && return 0
+
+  local -a matched=()
+  local id f p hit n k
+  for id in "${_DR_BASH_IDS[@]}"; do
+    [[ "${_DR_BASH_STATUS[$id]:-}" == "BINDING" ]] || continue
+    n="${_DR_BASH_NSURF[$id]:-0}"
+    [[ "$n" -gt 0 ]] || continue
+    hit=0
+    for f in "${files[@]}"; do
+      for ((k = 0; k < n; k++)); do
+        p="${_DR_BASH_SURF["${id}::${k}"]}"
+        if dr_surface_matches "$f" "$p"; then
+          hit=1
+          break 2
+        fi
+      done
+    done
+    [[ "$hit" -eq 1 ]] && matched+=("$id")
+  done
+  [[ ${#matched[@]} -eq 0 ]] && return 0
+  printf '%s\n' "${matched[@]}" | LC_ALL=C sort -u
+}
+
+# dr_register_walk_bash <register.json> <file>
+# THE doctrine-jit.sh hot-path entry point (channel 3). Single file (the one
+# PostToolUse file_path per event).
+#
+# DELIBERATELY NOT built on _dr__parse_all_bash + dr_entries_for_files_bash's
+# two-pass shape (parse-everything-into-globals, then a separate matching
+# pass) — measured ~13ms slower end-to-end than the single fused pass below
+# (T20 evidence timing table), entirely from populating/reading the
+# _DR_BASH_SURF composite-key assoc array for surfaces that, for a given
+# single file, mostly never need to exist. This function fuses parse +
+# match into ONE pass over the same slurp+IFS-split+case-glob line array:
+# it tests each surface glob against <file> AS IT IS ENCOUNTERED (no
+# storage), short-circuits the rest of an entry's surfaces the moment one
+# hits, and only decodes+emits the instruction for entries that actually
+# matched AND are BINDING. This is a second, narrower reader for the same
+# register shape (still governed by the same self-tests, same fixtures, same
+# fail-open contract as _dr__parse_all_bash above) — kept as a distinct
+# function rather than sharing the general one specifically because THIS is
+# the <50ms-budget call site (F-5) and the general one is not (see the
+# module header "WHY THIS SECOND CODE PATH EXISTS" and the timing note on
+# _dr__parse_all_bash for the platform findings that drove both shapes).
+#
+# For each BINDING entry with >=1 surface matching <file>, sets global
+# DR_REGISTER_WALK_OUT to a text block per matched entry:
+#   ===<id>===
+#   <instruction, decoded to real newlines/quotes/backslashes>
+#   <blank line>
+# NOTE (T20 evidence, fork-cost finding): this SETS A GLOBAL rather than
+# echoing to stdout, deliberately — the caller (doctrine-jit.sh's
+# _compute_register_body) needs the text to build the injected body, and on
+# this platform a SINGLE `$( )` command-substitution fork to capture it
+# turned out to be a measurable fraction of this function's own total cost
+# under concurrent-process load (measured during this task's build: 10-20ms
+# saved per call by avoiding the fork entirely, on a machine observed
+# running 100+ concurrent bash/node/claude processes at build time — see
+# the evidence file's environment note). A global write is a pure-bash
+# assignment; a `$( )` around a function call is always a fork in bash,
+# regardless of what's inside it.
+# DR_REGISTER_WALK_OUT is left "" on no match / missing file / unreadable
+# register — never a crash (same fail-open contract as every other function
+# in this lib).
+dr_register_walk_bash() {
+  local path="$1" file="$2"
+  DR_REGISTER_WALK_OUT=""
+  [[ -n "$file" && -f "$path" ]] || return 0
+
+  local content
+  content="$(< "$path")" || return 0
+  [[ -n "$content" ]] || return 0
+
+  local -a _lines=()
+  local _old_ifs="$IFS"
+  IFS=$'\n'
+  set -f
+  # shellcheck disable=SC2206
+  _lines=($content)
+  set +f
+  IFS="$_old_ifs"
+
+  local id="" status="" instr="" in_surfaces=0 any_hit=0 line v
+
+  _dr__rw_flush() {
+    [[ -z "$id" ]] && return 0
+    if [[ "$status" == "BINDING" && "$any_hit" -eq 1 ]]; then
+      # INLINED _dr__decode_escapes's body rather than calling it via
+      # `$( )` — a command substitution is a fork REGARDLESS of what's
+      # inside it, and this is the hot path a `$( )` here would defeat
+      # (same reasoning as DR_REGISTER_WALK_OUT itself being a global, see
+      # this function's docstring above). _dr__decode_escapes stays as a
+      # standalone function too (self-tested directly, used as a
+      # documented public-ish helper) — this is a deliberate, narrow
+      # duplication of ~5 lines to keep the hot path fork-free, not a
+      # second decode implementation with different semantics.
+      local decoded="$instr" ph=$'\x01'
+      decoded="${decoded//\\\\/$ph}"
+      decoded="${decoded//\\n/$'\n'}"
+      decoded="${decoded//\\\"/\"}"
+      decoded="${decoded//\\t/$'\t'}"
+      decoded="${decoded//$ph/\\}"
+      DR_REGISTER_WALK_OUT="${DR_REGISTER_WALK_OUT}===${id}===
+${decoded}
+
+"
+    fi
+    return 0
+  }
+
+  for line in "${_lines[@]}"; do
+    line="${line%$'\r'}"
+
+    if [[ "$in_surfaces" -eq 1 ]]; then
+      case "$line" in
+        *']'*)
+          in_surfaces=0
+          ;;
+        *'"'*)
+          if [[ "$any_hit" -eq 0 ]]; then
+            v="${line#*\"}"
+            v="${v%\"*}"
+            dr_surface_matches "$file" "$v" && any_hit=1
+          fi
+          ;;
+      esac
+      continue
+    fi
+
+    case "$line" in
+      *'"id":'*'"OD-'*)
+        _dr__rw_flush
+        v="${line#*\"id\": \"}"
+        v="${v%\"*}"
+        id="$v"; status=""; instr=""; any_hit=0; in_surfaces=0
+        ;;
+      *'"status":'*'"'*)
+        v="${line#*\"status\": \"}"
+        v="${v%\"*}"
+        status="$v"
+        ;;
+      *'"surfaces": [],'*)
+        : # empty surfaces — any_hit stays 0, nothing to do
+        ;;
+      *'"surfaces": ['*)
+        in_surfaces=1
+        ;;
+      *'"instruction":'*'"'*)
+        v="${line#*\"instruction\": \"}"
+        v="${v%\"*}"
+        instr="$v"
+        ;;
+    esac
+  done
+  _dr__rw_flush
+  return 0
+}
+
+# ============================================================
 # --self-test (direct-execution guard — same convention as
 # lib/gate-contract-lib.sh and lib/review-chain-lib.sh)
 # ============================================================
@@ -426,6 +816,63 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # a file list that would match OD-902's docs/designs/** surface
   RESULT_DESIGNS="$(dr_entries_for_files "$FIXREG" "docs/designs/some-design.md" | paste -sd, -)"
   _st "entries-for-files-matches-OD-902-only" "OD-902" "$RESULT_DESIGNS"
+
+  # ---- Task 20 (gated-pipeline-master-2026-08, REQ-B11 F-5): PURE-BASH fast
+  # path round-trip against the SAME fixtures, proving the two independent
+  # readers (node/jq-backed dr_entries_for_files vs. subprocess-free
+  # dr_entries_for_files_bash / dr_register_walk_bash) agree. ----
+  RESULT_BASH="$(dr_entries_for_files_bash "$FIXREG" "${FIXFILE_LIST[@]}" | paste -sd, -)"
+  _st "bash-entries-for-files-positive-only-OD-901" "OD-901" "$RESULT_BASH"
+
+  RESULT_BASH_NEG="$(dr_entries_for_files_bash "$FIXREG" "some/unrelated/file.txt" | paste -sd, -)"
+  _st "bash-entries-for-files-no-match" "" "$RESULT_BASH_NEG"
+
+  RESULT_BASH_DESIGNS="$(dr_entries_for_files_bash "$FIXREG" "docs/designs/some-design.md" | paste -sd, -)"
+  _st "bash-entries-for-files-matches-OD-902-only" "OD-902" "$RESULT_BASH_DESIGNS"
+
+  # dr_register_walk_bash (the actual doctrine-jit hot-path call) — single
+  # file, must find OD-901's block (id header + decoded instruction) and
+  # must NOT surface OD-902/903/904 for a hooks/*gate*.sh file. Reads the
+  # DR_REGISTER_WALK_OUT global (not a captured return) — see the
+  # function's own docstring for why it sets a global instead of echoing.
+  dr_register_walk_bash "$FIXREG" "adapters/claude-code/hooks/dispatch-chain-gate.sh"
+  WALK_OUT="$DR_REGISTER_WALK_OUT"
+  if printf '%s' "$WALK_OUT" | grep -q '^===OD-901===$' \
+     && printf '%s' "$WALK_OUT" | grep -q 'fixture binding entry whose surface matches' \
+     && ! printf '%s' "$WALK_OUT" | grep -q 'OD-902\|OD-903\|OD-904'; then
+    echo "self-test (register-walk-bash-single-file-match): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (register-walk-bash-single-file-match): FAIL (got: $WALK_OUT)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  dr_register_walk_bash "$FIXREG" "some/unrelated/file.txt"
+  WALK_OUT_NEG="$DR_REGISTER_WALK_OUT"
+  _st "register-walk-bash-no-match-silent" "" "$WALK_OUT_NEG"
+
+  # decode correctness: escaped backslash + newline + quote round-trip
+  DECODED="$(_dr__decode_escapes 'line1\nHKLM\\\\SOFTWARE\\\\Claude\nquote:\"x\"')"
+  EXPECTED_DECODED="$(printf 'line1\nHKLM\\\\SOFTWARE\\\\Claude\nquote:"x"')"
+  _st "decode-escapes-backslash-newline-quote" "$EXPECTED_DECODED" "$DECODED"
+
+  # ---- real committed register: Task 20's own three wire-checked files
+  # must resolve to exactly the set the T20 fidelity-carriage computation
+  # expects (OD-002/007/008/013/018), PLUS OD-021 (added to the register
+  # after that computation was made — a live demonstration that this
+  # matcher tracks the CURRENT register, not a stale snapshot; see the T20
+  # evidence entry for the carriage-WARN this produces against the plan's
+  # own now-stale Directives: line). ----
+  REALREG="$(dr_default_register_path 2>/dev/null || true)"
+  if [[ -n "$REALREG" && -f "$REALREG" ]]; then
+    REAL_RESULT="$(dr_entries_for_files_bash "$REALREG" \
+      "adapters/claude-code/scripts/dispatch-directives.sh" \
+      "adapters/claude-code/hooks/doctrine-jit.sh" \
+      "adapters/claude-code/doctrine/orchestrator-pattern.md" | paste -sd, -)"
+    _st "real-register-t20-files-match-set" "OD-002,OD-007,OD-008,OD-013,OD-018,OD-021" "$REAL_RESULT"
+  else
+    echo "self-test (real-register-t20-files-match-set): SKIP — real register not resolvable in this environment" >&2
+  fi
 
   # ---- dr_validate negative fixtures (mktemp, never touch the real register) ----
   TMPD=$(mktemp -d 2>/dev/null || mktemp -d -t drlibst)

@@ -23,6 +23,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const http = require('http');
+const { spawnSync } = require('child_process');
 
 process.env.HARNESS_SELFTEST = '1';
 
@@ -96,8 +97,17 @@ async function main() {
   // Round 8: the plan-file DISCOVERY scan root is now independently
   // sandboxable — never the real checkout's docs/plans/.
   process.env.ROADMAP_PLAN_SCAN_ROOT = repoDir;
+  // pid: process.pid (2026-08-04 phantom-running fix) — every fixture
+  // heartbeat meant to render 'running'/'live' now needs a pid that is
+  // GENUINELY alive at test time, since roadmap-routes.js's classification
+  // path is now pid-aware (classifyHeartbeatLiveness). This self-test
+  // process's own pid is alive for the test's entire duration — the
+  // realistic stand-in for "a real dispatcher session's heartbeat carries
+  // its own real, live pid". A small fixed integer (the pre-fix fixture
+  // value) is essentially never a real running process and would now
+  // (correctly) classify crashed.
   fs.writeFileSync(path.join(heartbeatDir, 'sess-op-1.json'), JSON.stringify({
-    schema: 1, session_id: 'sess-op-1', pid: 1, cwd: repoDir, repo_root: repoDir,
+    schema: 1, session_id: 'sess-op-1', pid: process.pid, cwd: repoDir, repo_root: repoDir,
     worktree_root: repoDir, branch: 'fixture', model: 'fixture',
     last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'active',
   }));
@@ -527,7 +537,7 @@ async function main() {
   // Both sessions' heartbeats are FRESH, so the only thing that can stop
   // either rendering "running" is the dispatch timestamp / the task-id join.
   fs.writeFileSync(path.join(heartbeatDir, 'sess-unbindable.json'), JSON.stringify({
-    schema: 1, session_id: 'sess-unbindable', pid: 7, cwd: repoDir, repo_root: repoDir,
+    schema: 1, session_id: 'sess-unbindable', pid: process.pid, cwd: repoDir, repo_root: repoDir,
     worktree_root: repoDir, branch: 'fixture-unbindable', model: 'fixture',
     last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
   }));
@@ -557,6 +567,38 @@ async function main() {
         'My pick: A.\nReply with: "a" or "b".',
     }],
   }));
+
+  // ---- TASK VERIFICATION EVIDENCE fixture (2026-08-04, cockpit stage-chip
+  // mechanization) — a real dispatch-ledger.jsonl, sandboxed via
+  // DISPATCH_LEDGER_PATH (same convention as every other state path above).
+  // demo-plan/1 is CHECKED (t.done) — gets BOTH a builder-complete AND a
+  // verifier-complete row, proving the honest "verified" claim is now
+  // ledger-backed. demo-plan/3 is UNCHECKED and carries no live/heartbeat
+  // evidence at all — gets ONLY a builder-complete row, using a
+  // T-PREFIXED task_id ("T3") to prove the normalization rule in the same
+  // pass as the wiring. demo-plan/2 gets NO ledger row at all, so its
+  // verify_evidence must read the honest empty default (S3b's own
+  // in-progress assertion, above, is unaffected — this is additive).
+  // ONE malformed line + ONE row for an unrelated plan (rich-plan) prove
+  // partial-corruption tolerance and artifact_ref cross-plan isolation in
+  // the SAME ledger file the full-tree read consumes.
+  const dispatchLedgerPath = path.join(tmp, 'dispatch-ledger.jsonl');
+  const nowEpoch = Math.floor(Date.now() / 1000);
+  fs.writeFileSync(dispatchLedgerPath, [
+    JSON.stringify({ subagent_type: 'plan-phase-builder', model: 'fixture', ts: nowEpoch - 200, session_id: 'sess-tve-1', artifact_ref: 'docs/plans/demo-plan.md', task_id: '1', task_id_valid: 'true' }),
+    JSON.stringify({ subagent_type: 'task-verifier', model: 'fixture', ts: nowEpoch - 100, session_id: 'sess-tve-2', artifact_ref: 'docs/plans/demo-plan.md', task_id: '1', task_id_valid: 'true' }),
+    // T-prefixed task_id — the T7-incident normalization (review-chain-
+    // lib.sh's _rc_norm_task_id) — must still match demo-plan's real
+    // (numeric) task id "3".
+    JSON.stringify({ subagent_type: 'plan-phase-builder', model: 'fixture', ts: nowEpoch - 50, session_id: 'sess-tve-3', artifact_ref: 'docs/plans/demo-plan.md', task_id: 'T3', task_id_valid: 'true' }),
+    // Cross-plan isolation: same task_id "1" as demo-plan/1 above, but a
+    // DIFFERENT artifact_ref — must never leak into demo-plan/1's evidence.
+    JSON.stringify({ subagent_type: 'task-verifier', model: 'fixture', ts: nowEpoch - 30, session_id: 'sess-tve-4', artifact_ref: 'docs/plans/rich-plan.md', task_id: '1', task_id_valid: 'true' }),
+    // Partial corruption: one malformed line must not blind the read to
+    // the intact rows above or below it.
+    'not valid json at all {{{',
+  ].join('\n') + '\n');
+  process.env.DISPATCH_LEDGER_PATH = dispatchLedgerPath;
 
   delete require.cache[require.resolve('./roadmap-routes.js')];
   const roadmapRoutes = require('./roadmap-routes.js');
@@ -618,6 +660,24 @@ async function main() {
       topIds.join(','));
     ok('S1d payload carries the single completed-aging tunable (completed_age_days)',
       typeof (r1.json && r1.json.completed_age_days) === 'number');
+    // ---- scan_provenance (2026-08-04 stale-checkout fix, part b — the
+    // non-silence class fix): present on EVERY payload, never conditional.
+    // This fixture sets ROADMAP_PLAN_SCAN_ROOT explicitly, so resolved_via
+    // must say exactly that (an override, not a mainRepoRoot() derivation)
+    // — and repoDir is a plain tmp dir, not a git repo, so head_sha/
+    // behind_origin_master are honestly undeterminable, never fabricated.
+    const prov = r1.json && r1.json.scan_provenance;
+    ok('S1f scan_provenance is present with the pinned shape (root/resolved_via/head_sha/behind_origin_master/checked_at)',
+      !!prov && typeof prov.root === 'string' && typeof prov.resolved_via === 'string' &&
+      typeof prov.head_sha === 'string' && typeof prov.checked_at === 'string' &&
+      (prov.behind_origin_master === null || typeof prov.behind_origin_master === 'number'),
+      JSON.stringify(prov));
+    ok('S1g scan_provenance.root is the SANDBOXED fixture repo, never the real checkout (ROADMAP_PLAN_SCAN_ROOT honored)',
+      prov && path.resolve(prov.root) === path.resolve(repoDir), JSON.stringify(prov));
+    ok('S1h scan_provenance.resolved_via is "env-override" — ROADMAP_PLAN_SCAN_ROOT was set, so this is NOT deriveLib.mainRepoRoot()\'s own worktree/self resolution',
+      prov && prov.resolved_via === 'env-override', JSON.stringify(prov));
+    ok('S1i scan_provenance honestly reports head_sha:\'\'/behind_origin_master:null for this non-git fixture dir — never a fabricated sha or count',
+      prov && prov.head_sha === '' && prov.behind_origin_master === null, JSON.stringify(prov));
     ok('S1e exactly 26 TOP-LEVEL plans (17 pre-R11-fixture-expansion + dangling-child + pinned-master [pinned in] + batch-run + heading-batch + waiting-plan [ROADMAP-WAITING-ON-YOU-SIGNAL-01 round-14 fixture] + stale-dispatch-plan [false-eternal-running fix, 2026-07-30] + corrupt-ts-plan [malformed-is-not-absent fix, 2026-07-30] + unbindable-plan and unbindable-stale-plan [unbindable-attributed-dispatch fix, 2026-08-02]; child-a-fixture and pinned-child-fixture are NESTED, not top-level roots — Critical 3/4) — no more, no less; ancient-ghost-plan is correctly EXCLUDED',
       items.length === 26, topIds.join(','));
     ok('R11 child-a-fixture no longer appears in the TOP-LEVEL list (it renders once, nested under its master)',
@@ -794,6 +854,63 @@ async function main() {
     const demoPlan = findItem(items, 'demo-plan');
     ok('S3d parent with an in-progress child renders in-progress', demoPlan && demoPlan.status.value === 'in-progress');
     ok('S3e progress carries child counts (1 done of 3)', demoPlan && demoPlan.progress && demoPlan.progress.done === 1 && demoPlan.progress.total === 3);
+
+    // ---- TVE: task verification evidence, wired end-to-end through the real
+    // tree (deriveTaskNode -> derivePlanRootNode -> the /api/roadmap payload)
+    // — proves the field is actually ATTACHED to the item the client
+    // receives, not merely correct in isolation (see the direct
+    // buildTaskVerifyEvidence unit tests further below for the isolated
+    // matching-logic proof). ------------------------------------------------
+    ok('TVE1 every task-kind node ALWAYS carries verify_evidence (never null/undefined), even with zero ledger evidence',
+      t1 && t1.verify_evidence && t2 && t2.verify_evidence && t3 && t3.verify_evidence);
+    ok('TVE2 demo-plan/1 (checked) has a builder-complete AND a verifier-complete ledger row -> both flags true',
+      t1.verify_evidence.has_builder_complete === true && t1.verify_evidence.has_verifier_complete === true,
+      JSON.stringify(t1.verify_evidence));
+    ok('TVE3 demo-plan/1\'s verify_evidence.newest_ts is a real ISO8601 timestamp (the newer of the two ledger rows)',
+      /^\d{4}-\d{2}-\d{2}T/.test(t1.verify_evidence.newest_ts || ''));
+    ok('TVE4 demo-plan/2 has NO ledger row at all -> the honest empty default, not a fabricated claim',
+      t2.verify_evidence.has_builder_complete === false && t2.verify_evidence.has_verifier_complete === false && t2.verify_evidence.newest_ts === '',
+      JSON.stringify(t2.verify_evidence));
+    ok('TVE5 demo-plan/3 (unchecked) has ONE builder-complete row written as T-PREFIXED "T3" -> normalizes and matches task id "3": has_builder_complete true, has_verifier_complete false',
+      t3.verify_evidence.has_builder_complete === true && t3.verify_evidence.has_verifier_complete === false,
+      JSON.stringify(t3.verify_evidence));
+    ok('TVE6 a ledger row for a DIFFERENT plan (rich-plan) sharing the same task_id "1" never leaks into demo-plan/1 (already proven true above) NOR does it fabricate evidence for demo-plan\'s OWN task 1 beyond what demo-plan\'s own two rows established (cross-plan artifact_ref isolation)',
+      t1.verify_evidence.has_builder_complete === true && t1.verify_evidence.has_verifier_complete === true);
+    const richT1 = findItem(items, 'rich-plan/1');
+    ok('TVE7 ...and rich-plan/1 itself correctly RECEIVES its own plan-scoped verifier-complete row (proves the isolation is scoping, not a bug that drops the row everywhere)',
+      richT1 && richT1.verify_evidence.has_verifier_complete === true && richT1.verify_evidence.has_builder_complete === false,
+      JSON.stringify(richT1 && richT1.verify_evidence));
+    ok('TVE8 a malformed JSONL line in the SAME ledger file never crashes the request (still ok:true, proven by every other TVE assertion above succeeding against a live GET)',
+      r1.json && r1.json.ok === true);
+
+    // ---- TVE-unit: buildTaskVerifyEvidence/normLedgerTaskId/
+    // readDispatchLedgerRows exercised DIRECTLY (isolated matching-logic
+    // proof, independent of the full tree derivation above) ----------------
+    ok('TVE-U1 normLedgerTaskId strips a leading T/t immediately followed by a digit',
+      roadmapRoutes.normLedgerTaskId('T7') === '7' && roadmapRoutes.normLedgerTaskId('t20') === '20');
+    ok('TVE-U2 normLedgerTaskId leaves a plain numeric/dotted id and a non-digit-prefixed string alone',
+      roadmapRoutes.normLedgerTaskId('7') === '7' && roadmapRoutes.normLedgerTaskId('3.2') === '3.2' && roadmapRoutes.normLedgerTaskId('Trial') === 'Trial');
+    ok('TVE-U3 buildTaskVerifyEvidence: a row with an empty/missing task_id is excluded (never creates a bogus "" key)',
+      Object.keys(roadmapRoutes.buildTaskVerifyEvidence('u-plan', [
+        { subagent_type: 'plan-phase-builder', ts: 100, artifact_ref: 'docs/plans/u-plan.md', task_id: '' },
+        { subagent_type: 'plan-phase-builder', ts: 100, artifact_ref: 'docs/plans/u-plan.md' },
+      ])).length === 0);
+    ok('TVE-U4 buildTaskVerifyEvidence: newest_ts picks the MAX ts among ALL matching rows of EITHER kind, not just the last one written',
+      roadmapRoutes.buildTaskVerifyEvidence('u-plan', [
+        { subagent_type: 'task-verifier', ts: 100, artifact_ref: 'docs/plans/u-plan.md', task_id: '5' },
+        { subagent_type: 'plan-phase-builder', ts: 300, artifact_ref: 'docs/plans/u-plan.md', task_id: '5' },
+        { subagent_type: 'plan-phase-builder', ts: 200, artifact_ref: 'docs/plans/u-plan.md', task_id: '5' },
+      ])['5'].newest_ts === new Date(300 * 1000).toISOString());
+    ok('TVE-U5 readDispatchLedgerRows against a NONEXISTENT file returns [] honestly, never throws',
+      (function () {
+        const saved = process.env.DISPATCH_LEDGER_PATH;
+        process.env.DISPATCH_LEDGER_PATH = path.join(tmp, 'no-such-ledger-file.jsonl');
+        let rows;
+        try { rows = roadmapRoutes.readDispatchLedgerRows(); } finally { process.env.DISPATCH_LEDGER_PATH = saved; }
+        return Array.isArray(rows) && rows.length === 0;
+      })());
+    ok('TVE-U6 taskVerifyEvidenceFor on a task with zero matching rows returns the SAME shape as EMPTY_TASK_VERIFY_EVIDENCE (never null, never throws on an undefined map)',
+      JSON.stringify(roadmapRoutes.taskVerifyEvidenceFor(undefined, '99')) === JSON.stringify(roadmapRoutes.EMPTY_TASK_VERIFY_EVIDENCE));
 
     // ---- S4: derivation-input failure -> unknown(reason), never a guess ----
     const ghostPlan = findItem(items, 'ghost-plan');
@@ -1206,7 +1323,7 @@ async function main() {
     // the real-world shape this fix targets (a live heartbeat the tree
     // cannot attribute to any task).
     fs.writeFileSync(path.join(heartbeatDir, 'sess-unbound-running.json'), JSON.stringify({
-      schema: 1, session_id: 'sess-unbound-running', pid: 3, cwd: repoDir, repo_root: repoDir,
+      schema: 1, session_id: 'sess-unbound-running', pid: process.pid, cwd: repoDir, repo_root: repoDir,
       worktree_root: repoDir, branch: 'fixture-branch', model: 'fixture',
       last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
     }));
@@ -1252,6 +1369,41 @@ async function main() {
       unbound.live_sessions[0].status.label === 'running',
       unbound && JSON.stringify((unbound.live_sessions || []).map((a) => a.status && a.status.label)));
 
+    // ---- R9-7b-8..10: THE PHANTOM-RUNNING FIX (2026-08-04, operator-flagged
+    // Defect A) — a heartbeat whose PID IS VERIFIABLY DEAD but whose
+    // last_activity_ts is only 2h old (well within the quiet grace window,
+    // the EXACT "running (quiet), 2h/17h/22h ago" shape the operator's own
+    // sampled evidence showed for 5 real sessions, all with dead pids). The
+    // pid is a REAL just-exited child process (spawnSync blocks until it has
+    // fully exited), not a guessed-nonexistent integer — the same "just-
+    // exited subshell" proof idiom session-heartbeat-lib.sh's own self-test
+    // uses. Pre-fix (classifyHeartbeatAge, age-only) this heartbeat renders
+    // 'quiet' -> counted as "running, unattributed". Post-fix
+    // (classifyHeartbeatLiveness) the dead pid overrides that verdict to
+    // 'crashed' -> excluded, exactly like the already-covered 30-day-old
+    // sess-unbound-crashed fixture (R9-7b-4), but proven here via a FRESH-
+    // LOOKING timestamp + a dead pid rather than an old timestamp alone —
+    // the one shape R9-7b-4 does NOT cover.
+    const deadChildRt = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+    fs.writeFileSync(path.join(heartbeatDir, 'sess-unbound-phantom.json'), JSON.stringify({
+      schema: 1, session_id: 'sess-unbound-phantom', pid: deadChildRt.pid, cwd: repoDir, repo_root: repoDir,
+      worktree_root: repoDir, branch: 'fixture-phantom', model: 'fixture',
+      last_activity_ts: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2h ago
+      last_event: 'fixture', marker_state: 'none',
+    }));
+    const rPhantom = await httpGet(PORT, '/api/roadmap');
+    const unboundPhantom = rPhantom.json.unbound_sessions;
+    ok('R9-7b-8 THE PHANTOM-RUNNING FIX: a heartbeat 2h old (quiet-window-fresh, age-only would say "running (quiet)") with a PROVEN-DEAD pid is EXCLUDED from the unattributed node — never rendered running',
+      unboundPhantom && !unboundPhantom.live_sessions.some((a) => a.id.indexOf('sess-unbound-phantom') !== -1),
+      unboundPhantom && JSON.stringify(unboundPhantom.live_sessions));
+    ok('R9-7b-9 ...the genuinely-alive sess-unbound-running is UNAFFECTED by the new dead-pid exclusion — still counted, still exactly 1',
+      unboundPhantom && unboundPhantom.live_sessions.length === 1 &&
+      unboundPhantom.live_sessions[0].id.indexOf('sess-unbound-running') !== -1,
+      unboundPhantom && JSON.stringify(unboundPhantom.live_sessions));
+    ok('R9-7b-10 ...and the node title\'s count stays "(1)", not "(2)" — the dead-pid session never inflates the "N running, unattributed" figure the operator reads',
+      unboundPhantom && /\(1\)$/.test(unboundPhantom.title),
+      unboundPhantom && unboundPhantom.title);
+
     // ---- S22g-j + S23d: THE NEGATIVE CASE for the new unbindable path, and
     // the Critical's regression guard. Until this round the new function had
     // NO negative test at all — its header promised "a quiet dispatch is
@@ -1262,7 +1414,7 @@ async function main() {
     // The heartbeat is written HERE, after every assertion above that pins
     // the unattributed population, so none of their coverage is diluted.
     fs.writeFileSync(path.join(heartbeatDir, 'sess-unbindable-stale.json'), JSON.stringify({
-      schema: 1, session_id: 'sess-unbindable-stale', pid: 8, cwd: repoDir, repo_root: repoDir,
+      schema: 1, session_id: 'sess-unbindable-stale', pid: process.pid, cwd: repoDir, repo_root: repoDir,
       worktree_root: repoDir, branch: 'fixture-unbindable-stale', model: 'fixture',
       last_activity_ts: new Date().toISOString(), last_event: 'fixture', marker_state: 'none',
     }));
@@ -1301,7 +1453,7 @@ async function main() {
     const projectsConfigPath = path.join(tmp, 'fixture-projects.json');
     fs.writeFileSync(projectsConfigPath, JSON.stringify({
       // Object form (R17): declares a top-level display group explicitly.
-      'other-project': { root: otherRepoDir, group: 'Pocket Technician' },
+      'other-project': { root: otherRepoDir, group: 'Acme Co' },
       'empty-project': emptyRepoDir,
       // Legacy flat-string form (R17): no group -> honest '(ungrouped)'.
       'flat-project': flatRepoDir,
@@ -1332,8 +1484,8 @@ async function main() {
       selfPlanForGroup && selfPlanForGroup.project_group === 'Neural Lace',
       selfPlanForGroup && selfPlanForGroup.project_group);
     const otherRepoItem = findItem(multiItems, 'other-repo-plan');
-    ok('R17-G2 a configured repo using the OBJECT config form ({root, group}) carries the DECLARED group ("Pocket Technician") on its plans — never a hardcoded default',
-      otherRepoItem && otherRepoItem.project_group === 'Pocket Technician',
+    ok('R17-G2 a configured repo using the OBJECT config form ({root, group}) carries the DECLARED group ("Acme Co") on its plans — never a hardcoded default',
+      otherRepoItem && otherRepoItem.project_group === 'Acme Co',
       otherRepoItem && otherRepoItem.project_group);
     const flatRepoItem = findItem(multiItems, 'flat-project-plan');
     ok('R17-G3 a configured repo using the LEGACY flat-string config form (no group declared) lands its plans in the honest "(ungrouped)" catch-all, never silently defaulted into one of the named groups',

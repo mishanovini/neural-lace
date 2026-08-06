@@ -1,5 +1,5 @@
 # Plan: Requests tab shows nothing — amendment-candidate classification is dead in production
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: code
 Backlog items absorbed: none

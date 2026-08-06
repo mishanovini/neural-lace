@@ -1,5 +1,5 @@
 # Plan: cockpit review-surface extension + shape-only-assertion & live-app-acceptance gap proposal
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: code
 Backlog items absorbed: COCKPIT-NEVER-REVIEWED-01, SHAPE-ONLY-ASSERTIONS-FALSE-GREEN-01, UI-ACCEPTANCE-SANDBOX-ONLY-01
@@ -376,21 +376,30 @@ never receive a cockpit path to act on in the first place.
   both the doctrine and the proposal doc rather than silently absent.
 
 ## Definition of Done
-- [ ] All 6 tasks checked off
-- [ ] All self-tests pass (`review-record-gate-lib.sh` 36/36,
+- [x] All 6 tasks checked off
+- [x] All self-tests pass (`review-record-gate-lib.sh` 36/36,
   `write-review-record.sh` 22/22, `review-record-commit-gate.sh` 62/62,
   `manifest-check.sh` GREEN, product baselines unchanged 499/0, 176/0,
   113/0, 30/0, 47/0)
-- [ ] `harness-doctor.sh --quick` shows no NEW red beyond this session's
+- [x] `harness-doctor.sh --quick` shows no NEW red beyond this session's
   pre-existing baseline; `review-surface-cross-check` GREEN;
   `review-grandfather-integrity` GREEN after task 4's re-bootstrap commit
   (was RED in between the two commits, by design — see Decisions Log)
-- [ ] Proposal doc `docs/harness-improvements/cockpit-review-surface-and-verification-gaps.md`
+- [x] Proposal doc `docs/harness-improvements/cockpit-review-surface-and-verification-gaps.md`
   exists with §10 credentials for all three gap classes
-- [ ] SCRATCHPAD.md updated with final state
-- [ ] Completion report appended to this plan file (at actual closure,
+- [x] SCRATCHPAD.md updated with final state
+- [x] Completion report appended to this plan file (at actual closure,
   by task-verifier/close-plan — see the builder's own return to the
   orchestrator for the interim evidence summary: commits
   `44ef271d54c73014bb413ff4f99b4509bd3d6d6d` (tasks 1-3+5) and the
   follow-up grandfather re-bootstrap commit (task 4), review record
   `docs/reviews/records/2026-07-30-harness-change-review-18003980.json`)
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: all 6 tasks confirmed landed on
+master — `39a3dc3d` (Amendment G surface extension, tasks 1-3+5) and `dd832f67` (grandfather
+re-bootstrap at cutover `44ef271`, task 4); the proposal doc
+`docs/harness-improvements/cockpit-review-surface-and-verification-gaps.md` confirmed present on
+master. Checkboxes above updated to reflect actual landed state; this was a pure bookkeeping
+gap. Status flipped ACTIVE -> COMPLETED.

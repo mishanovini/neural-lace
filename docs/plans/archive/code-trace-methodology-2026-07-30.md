@@ -1,5 +1,5 @@
 # Plan: code-trace methodology — adversarially test the "biased reader" thesis against a 14-defect corpus
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: code
 Backlog items absorbed: none
@@ -174,6 +174,13 @@ method worked before it was invested in 13 more times.
 committed on this branch with a SHA. Per constitution §1 this plan is not
 "shipped" until merged to master; the builder's obligation ends at the commit
 plus an honest report of what is and is not closed.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: `docs/designs/code-trace-methodology.md`
+confirmed on master via `6073905c` "docs(designs): code-trace methodology — 12 of 14 shipped
+defects are statically traceable", matching this plan's sole deliverable. Status flipped
+ACTIVE -> COMPLETED.
 
 ## Systems Engineering Analysis
 The corpus exhibits one dominant failure mode: a cheap mechanical check

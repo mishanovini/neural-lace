@@ -1,5 +1,38 @@
 # Plan: [Task Title]
 Status: ACTIVE
+<!--
+Status values — THE canonical enum lives in
+`adapters/claude-code/schemas/plan-status.schema.json` (machine-readable;
+full field contract there). The 8 values, pre-build -> building -> terminal:
+
+  DRAFT       Being authored; not yet reviewed. Not a commitment to build.
+  PROPOSED    Authored + complete; awaiting reviewer/owner sign-off.
+  ACTIVE      The current locus of work. Default for a new plan.
+  COMPLETED   All planned work shipped. Auto-archived to docs/plans/archive/
+              by plan-lifecycle.sh (close-plan.sh's own last step).
+  SUPERSEDED  Obsoleted by a newer plan/decision before completion.
+              Auto-archived to docs/plans/archive/.
+  DEFERRED    Intentionally paused — work still intended, just not active.
+              Auto-moved to docs/plans/deferred/ (NOT archive/ — ADR 052).
+  ABANDONED   Deliberately dropped; no further work intended.
+              Auto-archived to docs/plans/archive/.
+  REFERENCE   Not an execution plan — a reference/spec-appendix document.
+              Never archived; stays in docs/plans/ permanently.
+
+Status: takes the BARE token only — no parenthetical prose. Qualifying
+context (who deferred it and why, what superseded it, why a spec appendix
+is REFERENCE rather than its own plan) goes on an OPTIONAL `Status-note:`
+line immediately after Status:, e.g.:
+
+  Status: DEFERRED
+  Status-note: operator 2026-07-30 — paused pending accountable-estate T7
+    loe-calibration backfill
+
+Status-note is free prose and is NEVER parsed for machine state by any
+gate, hook, or cockpit derivation — only the bare Status: token drives
+behavior. Omit Status-note entirely when there's no qualifying context to
+record (most plans).
+-->
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: [none | slug-1, slug-2]

@@ -1,8 +1,8 @@
 # Plan — Machine folder reorganization: three roots, every project home
 
-Status: ACTIVE (DEPRIORITIZED — operator 2026-07-30: "the folder cleanup is not a
+Status: DEFERRED (operator 2026-07-30: "the folder cleanup is not a
 priority at all"; no tasks dispatched until the operator raises it. Recorded, not
-dropped.)
+dropped — see Decisions Log D4.)
 Key: ORG
 Mode: code
 rung: 1
@@ -84,3 +84,18 @@ mess and get graduated (close-worktree.sh) or removed, never orphaned.
 - D3 (2026-07-30, decide-and-go): worktrees live inside `.claude/worktrees/` of their
   repo on every machine — that is the existing Mac convention and the sweep tooling
   already assumes it; the Windows scatter is the deviation being repaired.
+- D4 (2026-08-03, drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2):
+  formalized the existing DEPRIORITIZED note as `Status: DEFERRED` (was `ACTIVE
+  (DEPRIORITIZED)`) — same operator directive, same "recorded, not dropped" intent,
+  now using the plan-lifecycle schema's own terminal-but-intended state instead of an
+  ACTIVE-with-parenthetical that the estate census kept mis-flagging as stale-and-
+  neglected. Resume trigger unchanged: next time the operator raises the folder
+  cleanup. No tasks dispatched, no code changed by this drain.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+DEFERRED, not closed: this plan is real, deliberately paused work (operator 2026-07-30), not
+abandoned or landed. Flipped `Status: ACTIVE (DEPRIORITIZED...)` -> `Status: DEFERRED` so the
+plan-lifecycle mechanism routes it to `docs/plans/deferred/` (intended-but-not-active) rather
+than continuing to count against the ACTIVE-plan budget while it sits deliberately idle. Resume
+trigger: operator raises the folder cleanup again (D4 above).

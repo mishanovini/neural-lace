@@ -1,6 +1,6 @@
 <!-- scaffold-created: 2026-07-28T19:49:40Z by start-plan.sh slug=progress-log-placeholder-ask-id-fix -->
 # Plan: Progress Log Placeholder Ask Id Fix
-Status: ACTIVE
+Status: DEFERRED
 Execution Mode: orchestrator
 Mode: code
 Backlog items absorbed: none
@@ -901,3 +901,13 @@ one writer-lib guard); no new architectural layer or user-facing flow.
   in this repo beyond `bash -n` (run, clean).
 - [ ] SCRATCHPAD.md updated with final state
 - [ ] Completion report appended to this plan file
+
+## Drain disposition (gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+DEFERRED, not closed: Tasks 1-3 done and self-tested. Task 4 (real production remap of
+`_id.jsonl`) is deliberately left open per this plan's own Decisions Log, which documents
+`_id.jsonl` no longer existing on the machine with an unresolved provenance gap, and two run
+attempts killed by machine load. Target date (2026-08-15) not yet due. Real, honestly-scoped
+remaining work, not currently being worked (no session active on it at drain time). Status
+flipped ACTIVE -> DEFERRED. Resume trigger: operator/session available to run the remap script
+uninterrupted, or the provenance gap is resolved.

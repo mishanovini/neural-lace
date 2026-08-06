@@ -2,7 +2,14 @@ Last updated: 2026-08-03
 
 # Neural Lace — Harness Backlog
 
-**Last updated:** 2026-07-31 v73 — integration merge (desktop stack + wip/harness-hardening
+**Last updated:** 2026-08-03 v74 — REQ-C2 estate drain (gated-pipeline-master-2026-08 Task 21):
+23 stale ACTIVE plans dispositioned down to 3 honest ACTIVEs (16 COMPLETED, 4 DEFERRED with a
+named resume trigger each, 1 already-DEPRIORITIZED note formalized to DEFERRED — full evidence
+in docs/reviews/2026-08-03-estate-drain-record.md); nl-issues untriaged 170->5 via the mechanized
+supersession sweep; 738 dead/root-caused monitor alerts bulk-acked (doctor-red + sweep-timeout
+classes, both confirmed stopped/tracked-elsewhere); worktree prune EXECUTE list (38 verified-safe
+agent-* worktrees) handed to the orchestrator, not run from this worktree-isolated session. Prior
+— 2026-07-31 v73 — integration merge (desktop stack + wip/harness-hardening
 takeover wave); both prior v72 notes preserved. Desktop v72 — ROADMAP-R11 rows 01-03 (ACTIVE-PATH-EXPANSION,
 L0-FOUR-BUCKET-STRIP, KANBAN-MASTER-CHIPS) found ALREADY BUILT on master @18e8f65 (the
 orchestrator's gap-closures landed in the SAME commit as the R11 hierarchy-renderer build,
@@ -34,6 +41,19 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 
 ## Open work — substantive deferrals
 
+- **PLAN-REVIEWER-CHECK19-3-UNRELATED-FAILURES-01 — `plan-reviewer.sh --self-test` fails 3
+  Check-19 (intended-functionality restatement) scenarios on this machine, unrelated to any
+  gated-pipeline-master-2026-08 Task 25 change** (found 2026-08-03 while re-running this file as a
+  `review-chain-lib.sh` consumer suite; Task 25 made ZERO edits to `plan-reviewer.sh` — `git diff`
+  confirms — and Check 19's own implementation, `adapters/claude-code/hooks/plan-reviewer.sh:1826`
+  onward, references none of the files Task 25 touched). Failures: `ee3
+  check19-pre-existing-warns-not-blocks` ("no WARN emitted"), `ee4
+  check19-draft-to-active-flip-blocks` ("permanent-grandfather bypass is open"), `ee7
+  check19-undecidable-warns-not-blocks` ("no UNDECIDABLE warn emitted"). The Checks 20-22 scenarios
+  in the SAME suite (the actual `review-chain-lib.sh` consumer surface: `c20a`/`c21b`/`c22c`/
+  `c2022d`/`c2022e`) all PASS, confirming this task's own diff is not the cause. Re-derive: `bash
+  adapters/claude-code/hooks/plan-reviewer.sh --self-test 2>&1 | grep -E 'ee[347]\)'`.
+- **STALE-PRE-STOP-VERIFIER-DOC-REFERENCE-01 — doctrine/planning-full.md's "Task Completion — Verifier Mandate" section still names `pre-stop-verifier.sh` as the Stop-hook enforcement mechanism, but that file is now a retired exit-0 shim** (`adapters/claude-code/hooks/pre-stop-verifier.sh:2` — "Retired to attic/ (Wave D.5, ADR 058 D5). Exit-0 shim ..."); the real live enforcement is `stop-verdict-dispatcher.sh` (aggregates work-integrity-gate/session-honesty-gate/bug-persistence-gate + end-manifest validation). Noticed while adding the OD-022 verify-obligation subsection alongside it (gated-pipeline-master-2026-08 Task 25); out of that task's scope to fix. Re-derive: `grep -rn pre-stop-verifier adapters/claude-code/doctrine/*.md`.
 - **TWO-GATES-DEAD-LIVE-BECAUSE-THE-SYNC-NEVER-ADDED-THEIR-BODY-FILES-01 — `scope-enforcement-gate` and `concurrent-ownership-gate` currently FAIL OPEN on Misha-Laptop; their split-out `-body.sh` files were never deployed** (added 2026-08-03; label: `harness-gap`, `priority:high`; fold-in: the blocked-deploy review now in flight). **PROVEN by execution, not inference.** The other machine's Stage 0b work split both gates into a thin entry file plus a `-body.sh` sourced only when the command is relevant. The bodies landed in the repo; they were never copied into `~/.claude/hooks/`. Live result:
   ```
   scope-enforcement-gate.sh  line 230: .../scope-enforcement-gate-body.sh: No such file or directory   -> rc=1
@@ -115,7 +135,11 @@ In flight this session: GAP-08 (`docs/plans/harness-gap-08-spawn-task-report-bac
 - **ESTATE-T9-EVIDENCE-POINTERS-NOISE-01 — close-plan.sh's T9 "Evidence pointers" derivation inherits generate_completion_report's pre-existing high-churn-file noise** (added 2026-07-30 from accountable-estate T9's live acceptance demonstration; label: `harness-gap`, `priority:low`). T9's `generate_closure_outcome_section` deliberately reuses `generate_completion_report`'s EXISTING files-to-modify -> `git log --oneline --no-merges -- <path>` derivation ("one implementation, not two"), but that derivation was already noisy for any plan whose `## Files to Modify/Create` names a high-churn shared file (e.g. `docs/backlog.md`, touched by thousands of unrelated commits repo-wide) — observed live closing `context-watermark-opus5-window.md` for real: its "Evidence pointers" section filled with `sort -u`-ordered (effectively SHA-random, not date-ordered) commits spanning the WHOLE repo's history, none related to that plan's actual W1-W3 work. This is a PRE-EXISTING characteristic (the Completion Report's own "Commits referencing these files" section has the identical noise, confirmed by inspecting the same archived plan), not a T9 regression — T9 inherited it by design (shared derivation) rather than building a second, competing one. **Not fixed here** (T9's own scope discipline: reuse the existing derivation, don't fork a second evidence-pointer algorithm mid-task). **Candidate fixes for a future session:** (a) bound `git log` to commits between the plan's own first-commit and close timestamps (`--since`/`--until`), which would exclude the vast majority of a shared file's unrelated history; (b) exclude known always-touched shared files (`docs/backlog.md`, `SCRATCHPAD.md`, `NEEDS-YOU.md`) from the evidence-pointer file list specifically, while still listing them in the Completion Report's own file list; (c) cap by commit-message keyword/slug relevance rather than a bare `head -N`. **Composes with:** any future rework of `generate_completion_report` itself, since fixing the shared derivation fixes both consumers at once.
 
 - **HARNESS-GAP-57 — anti-vaporware config-control policy doesn't cover the INVERSE shape: a consumed lever with zero producers** (added 2026-07-29 from accountable-estate T7 D-4's live counter-example; label: `harness-gap`, `priority:high`; **disposition: COMPLETED 2026-07-30 → `docs/plans/archive/anti-vaporware-config-controls-generalization.md` (single-task plan, opened per scope-enforcement-gate's own "genuinely separate work gets its own plan" remediation path since 16 unrelated plans were ACTIVE on this branch; task-verifier PASS conf 9 at commit a40da18, reproduced the mutation transcript itself; closed + archived via close-plan.sh at commit 51757e8)**). **Context.** HARNESS-GAP-45 (closed 2026-07-13 via `docs/plans/archive/vaporware-config-controls.md`, 8/8 task-verifier PASS) named the "decorative config control" vaporware class and built its enforcement: the registry-vs-callsite invariant (`doctrine/vaporware-prevention-full.md`), functionality-verifier's config-control protocol, and functionality-auditor's registry-vs-callsite sweep. That enforcement checks ONE direction — does a registry entry (permission ID, feature flag with a UI) have an enforce-mode CONSUMER — and structurally assumes the other half (the producer) is guaranteed, because a UI toggle's producer is the user clicking it. **The gap.** Non-UI config levers — env vars, CLI overrides, caller-set fields read deep in library code — have no such guarantee. `NL_PROTECTED_ORCHESTRATOR`, documented in `hooks/lib/admission-lib.sh` as the tag a "protected downstream orchestrator" must set, was discovered (accountable-estate T7, task-verifier pass 4, D-4, 2026-07-29) to have ZERO producers anywhere in the repo — all 888 live ledger rows carry `protected:0`. It IS consumed (real read site, real branch); nothing ever sets it. Neither functionality-auditor's sweep (no registry+UI surface here) nor functionality-verifier's config-control protocol (no `Verification: full` task ever claimed this flag governs behavior) would have caught it — a task-verifier pass caught it only by reading the comment narratively, and hand-wrote the honest-status annotation now sitting in the file. Nothing made that catch mechanical or repeatable. **What was built.** (1) `scripts/config-control-producer-scan.sh` — a standing, self-testing, bash-3.2-compatible scan (both `/bin/bash` 3.2.57 and `/opt/homebrew/bin/bash` 5.3.15 verified) that classifies every consumed `NL_*`-prefixed lever under `hooks/`+`scripts/` as PRODUCED (real standalone assignment exists) / MARKED (no producer, but an honest-status marker sits within a small line-proximity of ANY mention of the var — anchored on mention, not the syntactic read site, because the real admission-lib.sh annotation sits 566 lines from the functional read and 1 line from the var's own name) / ALLOWLISTED (documented external-producer carve-out) / FLAGGED (none of the above — the vaporware shape). 7/7 self-test scenarios pass under both interpreters, including a golden-pre-fix/golden-post-fix pair reproducing the real admission-lib.sh text verbatim (proves the scan keys on the marker, not the var name) and a live-repo scenario asserting zero FLAGGED against the actual current trees. Mutation-tested: deleting the `NL_CHECKOUT_OVERRIDE` allowlist entry flips the live-repo scenario and overall self-test from PASS to a reported FLAGGED + exit 1; restoring the entry returns both interpreters to GREEN. (2) `config/config-control-allowlist.txt` — the documented external-producer carve-out (7 pre-existing legitimate operator-shell/self-test-only overrides audited against their real read sites and recorded with per-entry justification: `NL_CHECKOUT_OVERRIDE`, `NL_CROSS_REPO_TOUCH_OK`, `NL_EXCLUSIONS_VERIFY_TIMEOUT`, `NL_ISSUES_BACKLOG_PATH`, `NL_ISSUE_CLI_OVERRIDE`, `NL_SELFTEST_EXCLUSIONS_FILE`, `NL_SPAWN_PROCESS_COUNT_OVERRIDE`). (3) Doctrine: `doctrine/vaporware-prevention.md` (compact, new "Its inverse" clause, 2914B, under the 3000B cap) + `doctrine/vaporware-prevention-full.md` (new "The inverse shape" section: definition, originating case, mechanical-check description, why-standing-not-blocking rationale, full constitution §10 fields). (4) `docs/failure-modes.md` FM-038 — new "Generalization — the inverse shape" bullet. (5) `adapters/claude-code/manifest.json` — new `config-control-producer-scan` entry (kind: gate, blocking: false, wired_template: false, `added_after: "2026-07"` — full new-gate-evidence-bar per ADR 059 D4: `golden_scenario`/`fp_expectation`/`retirement_condition`/`honesty_rationale`/`honest_status` all populated); `manifest-check.sh` GREEN at 146 entries; `doctrine/INDEX.md` regenerated via `--gen-index`. **Why standing, not a new blocking hook (constitution §10).** D-2 in the archived GAP-45 plan declined a new gate for the registry-vs-callsite class, reasoning the existing functionality-verifier/task-verifier blocking chain was sufficient until a decorative control shipped past it — that recurrence being the trigger for a future gate. `NL_PROTECTED_ORCHESTRATOR` IS that recurrence, but in a shape (no registry+UI surface) D-2 didn't anticipate, so this ships the mechanical, self-testing check first (invocable standalone or in CI) rather than a new blocking PreToolUse hook, consistent with D-2's spirit: prove the false-positive rate in practice before wiring it to block. **§10 fields (also in the manifest entry and doctrine-full section verbatim):** golden scenario = `NL_PROTECTED_ORCHESTRATOR` pre/post-annotation states (both are `--self-test` scenarios); expected FP rate = 0% against the live repo today (7 pre-existing legitimate overrides accounted for via the allowlist, not suppressed); retirement condition = a FLAGGED verdict proven wrong by a producer-shape this scan's regex can't see escalates to either extending the regex or retiring the static approach in favor of HARNESS-GAP-39's runtime audit-log method for the same "wired but never exercised" class. **Follow-ups (not this task's scope, logged for a future session):** wiring the scan into `harness-doctor.sh --quick` or a CI workflow as an actually-blocking check once its FP rate has stood for a review cycle; the scan's `NL_*`-prefix scope could generalize to other config-lever naming conventions if this class recurs outside that prefix. Cross-ref: HARNESS-GAP-45 (the registry-vs-callsite half this generalizes), HARNESS-GAP-39 (the runtime audit-log alternative named in the retirement condition), `docs/plans/archive/vaporware-config-controls.md` D-2/D-3 (the prior decisions this respects and extends).
-- **HARNESS-GAP-62 — `plan-edit-validator.sh`'s OWN checkbox-flip `TASK_ID` regex still requires a dotted id (`[A-Z]+\.[0-9]+`), never fixed for the `<Key><TaskId>` fused format the cockpit's `plan-parse` was widened to accept in commit a8b114c** (added 2026-07-30 from status-event-ledger SE4's build; label: `harness-gap`, `priority:high`). PROVEN (direct regex test, 2026-07-30): `echo '- [x] SE3 — ...' | grep -oE '\[[xX]\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*'` and the same against `'- [x] RI1. ...'` both empty-match (rc=1); the identical pattern against a classic dotted id (`B.1`) matches correctly. Call sites: `adapters/claude-code/hooks/plan-edit-validator.sh` lines ~927, ~933 (the `check_docs_impact_warn` new-task-line detector, WARN-only) and ~1729 (the REAL checkbox-flip `TASK_ID` extraction that GATES authorization — this is the load-bearing one). Because TASK_ID resolves empty, `[[ -n "$TASK_ID" ]] && check_evidence_first ...` short-circuits false and the flip falls through to PLAN EDIT BLOCKED regardless of how much real evidence exists. **Impact: this blocks the operator's own two currently-ACTIVE fused-id plans from ever being closed via the normal task-verifier flow** — `docs/plans/status-event-ledger.md` (SE1-SE10) and `docs/plans/review-independence.md` (RI1-RI4, several of which already have real commits landed — e.g. `feat(review-independence RI3)` — yet all four checkboxes are still `- [ ]` in the plan file, consistent with this bug rather than incomplete work). Discovered incidentally while building SE4's flip-time ledger-emit self-test (had to prove the emit fires on a REAL authorized flip; a fused-id fixture ("SE4.1") reproduced this exact block, so the test fixtures were switched to the currently-supported dotted form ("SE.4.1") to keep SE4's own scope narrow — this entry is the follow-up, not a silent workaround). **Fix (not attempted here, out of SE3/SE4/SE10's scope):** widen all three call sites to accept EITHER the classic dotted form OR a capped fused prefix, mirroring the cockpit's own guard exactly (`[A-Z]{1,3}[0-9]+` requires 1-3 uppercase letters immediately followed by a digit, so 4+-letter acronyms like `WCAG` still never match) — e.g. `[A-Z]+\.[0-9]+(\.[0-9]+)*|[A-Z]{1,3}[0-9]+(\.[0-9]+)*` — plus a discriminating self-test scenario (mirroring a8b114c's own `plan-parse 23/0` proof) asserting `SE3`/`RI1`-style ids now flip AND `WCAG 2.2`-style prose still does not false-match. This doctrine amendment is also recorded in `doctrine/claims.md`'s new "Status vocabulary lock" section (SE10) as the parse-level lesson: a vocabulary convention isn't real until EVERY consumer's grammar accepts it, not just the one it was first proven in.
+- **HARNESS-GAP-62 — `plan-edit-validator.sh`'s OWN checkbox-flip `TASK_ID` regex still requires a dotted id (`[A-Z]+\.[0-9]+`), never fixed for the `<Key><TaskId>` fused format the cockpit's `plan-parse` was widened to accept in commit a8b114c** (added 2026-07-30 from status-event-ledger SE4's build; label: `harness-gap`, `priority:high`; **disposition: FIXED 2026-08-04, fix(verify-event) commit series, this worktree** — see the AMENDMENT block below for the full fix: `PEV_TASK_ID_ALT`/`PEV_TASK_ID_BOUNDARY` near the top of `plan-edit-validator.sh` now accept all four measured id shapes (classic dotted, fused letter+digit capped 1-3 letters, bare numeric, digit+letter sub-id from a sibling project's real convention) at all three consult sites, plus a standing SILENCE DETECTOR (`verify-event-audit.sh --recent-silence`, wired into `harness-doctor.sh`) so a future regression of this class self-surfaces instead of requiring another manual sweep. `plan-edit-validator` self-test 32/32 (was 27/0), mutation-tested; `verify-event-audit.sh` self-test 10/10 (was 7/0). HARNESS-GAP-63 (the awk double-print bug named below) remains open, unrelated to this fix, out of scope here as originally scoped.). PROVEN (direct regex test, 2026-07-30): `echo '- [x] SE3 — ...' | grep -oE '\[[xX]\][[:space:]]+[A-Z]+\.[0-9]+(\.[0-9]+)*'` and the same against `'- [x] RI1. ...'` both empty-match (rc=1); the identical pattern against a classic dotted id (`B.1`) matches correctly. Call sites: `adapters/claude-code/hooks/plan-edit-validator.sh` lines ~927, ~933 (the `check_docs_impact_warn` new-task-line detector, WARN-only) and ~1729 (the REAL checkbox-flip `TASK_ID` extraction that GATES authorization — this is the load-bearing one). Because TASK_ID resolves empty, `[[ -n "$TASK_ID" ]] && check_evidence_first ...` short-circuits false and the flip falls through to PLAN EDIT BLOCKED regardless of how much real evidence exists. **Impact: this blocks the operator's own two currently-ACTIVE fused-id plans from ever being closed via the normal task-verifier flow** — `docs/plans/status-event-ledger.md` (SE1-SE10) and `docs/plans/review-independence.md` (RI1-RI4, several of which already have real commits landed — e.g. `feat(review-independence RI3)` — yet all four checkboxes are still `- [ ]` in the plan file, consistent with this bug rather than incomplete work). Discovered incidentally while building SE4's flip-time ledger-emit self-test (had to prove the emit fires on a REAL authorized flip; a fused-id fixture ("SE4.1") reproduced this exact block, so the test fixtures were switched to the currently-supported dotted form ("SE.4.1") to keep SE4's own scope narrow — this entry is the follow-up, not a silent workaround). **Fix (not attempted here, out of SE3/SE4/SE10's scope):** widen all three call sites to accept EITHER the classic dotted form OR a capped fused prefix, mirroring the cockpit's own guard exactly (`[A-Z]{1,3}[0-9]+` requires 1-3 uppercase letters immediately followed by a digit, so 4+-letter acronyms like `WCAG` still never match) — e.g. `[A-Z]+\.[0-9]+(\.[0-9]+)*|[A-Z]{1,3}[0-9]+(\.[0-9]+)*` — plus a discriminating self-test scenario (mirroring a8b114c's own `plan-parse 23/0` proof) asserting `SE3`/`RI1`-style ids now flip AND `WCAG 2.2`-style prose still does not false-match. This doctrine amendment is also recorded in `doctrine/claims.md`'s new "Status vocabulary lock" section (SE10) as the parse-level lesson: a vocabulary convention isn't real until EVERY consumer's grammar accepts it, not just the one it was first proven in.
+
+  **AMENDMENT 2026-08-04 (discovered while extending SE4's flip-verdict event with an evidence pointer + bare plan-slug field, per operator directive "check off the check boxes in two places (plan file and ledger)"):** the gap is WORSE than originally scoped — it also blocks the DOMINANT real convention, bare-numeric ids with no letter prefix at all (`- [x] 1. ...`, `- [x] 7. ...`), used throughout `docs/plans/gated-pipeline-master-2026-08.md` and most other active plans in this repo. PROVEN directly (2026-08-04): a synthetic plan with `- [ ] 1. Do the thing` + a fresh, fully valid prose evidence block (Task ID: 1, Runtime verification: present, Verdict: PASS) fed through the real `plan-edit-validator.sh` as a real `Edit` payload is BLOCKED (`PLAN EDIT BLOCKED`, exit 1) — `TASK_ID` resolves empty against `[A-Z]+\.[0-9]+(\.[0-9]+)*` exactly as the fused-id case does, for the same reason (no letter at all, let alone the fused-prefix shape). The previously-proposed fix (`[A-Z]+\.[0-9]+(\.[0-9]+)*|[A-Z]{1,3}[0-9]+(\.[0-9]+)*`) does NOT cover this case either — neither alternative matches a token with zero letters. **Consequence, also PROVEN:** `$HOME/.claude/state/signal-ledger.jsonl` on this machine carries ZERO `flip-verdict` rows in total, despite SE4 having shipped 2026-07-30 — the flip-time ledger-emit mechanism is real, wired, and mechanically enforced for the id shapes it can parse, but has not fired once in this repo's actual history because the dominant real task-id convention (bare numeric) never reaches it. Confirmed independently by `adapters/claude-code/scripts/verify-event-audit.sh --sweep docs/plans` (built in the same session): **926 currently-checked tasks** across `docs/plans/**/*.md` (active + `archive/` + `deferred/`), **0** with a matching `flip-verdict` event on record. **Fix (still not attempted here, out of this session's scope too — it is authorization-path surgery, high blast radius, deliberately not bundled with an additive ledger-field change):** a true fix needs a THIRD alternative in the regex (or a differently-shaped grammar entirely) for bare numeric/dotted-numeric ids with no letter prefix, e.g. `[0-9]+(\.[0-9]+)*` added to the alternation — plus self-test coverage proving all three shapes (`A.1`, `SE3`, `7`) now authorize and flip while non-id prose (`WCAG 2.2`) still does not false-match. Until this lands, `verify-event-audit.sh`'s reported "no verification event on record" count should be read as "the ledger has not yet been given the chance to record this," not as a claim that these 926 tasks were verified without evidence — the evidence-first checkbox-flip authorization itself (rule 3's own gate, unaffected by any of this) still ran and still required real evidence for every one of them; only the SEPARATE, ADDITIVE ledger-event side-channel is silent.
+
+  **LANDED 2026-08-04 (fix(verify-event) commit series, this worktree).** Id-shape census across `docs/plans` (active + `archive/` + `deferred/`, 2144 checkbox tokens after stripping bold-wrapper/sentence-punctuation noise) plus a sibling project's `docs/plans` elsewhere on this machine (this same global hook also gates that repo — 4445 tokens) grounded a FOUR-alternative regex, not the three originally proposed: bare numeric (`7`/`3.2`, 863 occurrences, the dominant estate convention), fused letter+digit capped 1-3 letters (`T1`/`SE3`/`RI1`/`ORG6`, 210), classic dotted-letter (`A.1`, 176, pre-existing/unchanged), and — found only via the cross-repo sweep, not present in any neural-lace ACTIVE plan — digit+letter sub-id (`0a`/`10e`/`0a.1`, that sibling project's real currently-ACTIVE plan convention, tasks `0a`-`0i`). Deliberately excluded (measured, present, but archive-only or single-occurrence, not in any ACTIVE/DEFERRED plan): bold-wrapped bare numeric (`**1.`, 9 archived files), a bare digit+UPPERCASE reversal (`20R`, 1 archived occurrence), a bare single letter with no digit (`A`, 1 deferred occurrence). A trailing-boundary requirement (`PEV_TASK_ID_BOUNDARY`) prevents the widened bare-numeric/digit-letter alternatives from false-matching an ordinal-word prefix in task prose (`1st` -> `1s`) — confirmed by direct test before the guard existed. Fixed consistently at all three consult sites named above (the authorization extraction; `check_docs_impact_warn`'s WARN-only new-task detector; that function's `--self-test` replica) via one shared `PEV_TASK_ID_ALT` constant. Authorization-vs-emission: NOT an independent asymmetry in this codebase — `emit_flip_ledger_event` is only ever reachable AFTER authorization succeeds (both consult the SAME extracted `TASK_ID` variable), so widening the one shared extraction chokepoint fixes both by construction; no separate "emit even when authorization fails" pathway exists or was built (that would require inventing a new, noisier event type on every rejected edit, out of proportion to this fix). Self-tests: `plan-edit-validator.sh` F28-F32 (one real e2e subprocess flip per new shape + a negative ordinal-word boundary control + the docs-impact-warn consistency fix), 32/32 total (was 27/0); mutation-tested (reverting `PEV_TASK_ID_ALT` to the pre-fix narrow form turns exactly F28/F29/F30/F32 red, F1-F27+F31 stay green). **Class fix (not just the instance):** `verify-event-audit.sh --recent-silence [<root>] [<since>] [<min-flips>]` is a new standing SILENCE DETECTOR — diffs `git log -p` over the window for added checked-checkbox lines against ledger `flip-verdict` events in the same window, WARNs only on TOTAL silence (>= min-flips recent flips AND zero matching events, default 3/7-days) so a future regression of this class self-surfaces instead of requiring another manual `--sweep`. Wired into `harness-doctor.sh` (`check_verify_event_silence`, WARN-only, degrades silently if git/script unavailable) so it fires on every `--quick` run automatically; confirmed firing live against this repo at build time (`recent_flips=109 has_event=0` — the exact pre-fix silence, since newly-authorized flips need time to accumulate ledger rows before the window clears). `verify-event-audit.sh` self-test 10/10 (was 7/0, scenarios 8-10 added, using real scratch git repos with real commits). Manifest: `plan-edit-validator` entry's `honest_status` updated to retire the stale "KNOWN PRE-EXISTING GAPS: HARNESS-GAP-62" claim; new `verify-event-silence` manifest entry (`kind: pattern`, `blocking: false`, full §10 fields). `manifest-check.sh` GREEN, 166 entries. HARNESS-GAP-63 (the awk double-print bug) remains open and unrelated — out of scope here as originally scoped.
 
 - **HARNESS-GAP-63 — `check_evidence_first`'s prose-path awk double-prints "MATCH" (breaking the caller's exact-string comparison) whenever an EARLIER same-task-id block already satisfies it and a LATER block for the same task follows** (added 2026-07-30 from the harness-change-review REFORMULATE closure on `plan-edit-validator.sh`'s SE4 flip-ledger-emit code; label: `harness-gap`, `priority:medium`). PROVEN (direct awk repro, 2026-07-30): a two-block evidence.md where block 1 has `Task ID: X` + a `Runtime verification:` line (satisfying `in_block && task_id==wanted_id && has_runtime`) followed by a SECOND `EVIDENCE BLOCK` header for the same task prints `MATCH` TWICE — the main-body action's `print "MATCH"; exit 0` still runs the `END` rule afterward (POSIX awk semantics: `exit` outside `END` still executes `END` once), and `END`'s own condition re-evaluates true against the pre-reset state. The caller (`check_evidence_first`, `adapters/claude-code/hooks/plan-edit-validator.sh` ~L1429-1458) does `if [[ "$result" == "MATCH" ]]` — an exact-string comparison — so a genuinely-authorized flip (real evidence exists) is wrongly BLOCKED the moment a plan's evidence file accumulates 2+ same-task-id blocks where an earlier one already has a `Runtime verification:` line, exactly the FAIL-then-fix-then-PASS re-verification shape this repo produces routinely (see 3404bd1's T7 FLIP history). Confirmed the double-print reproduces with the exact awk body verbatim; NOT fixed here (out of the SE4 flip-EMIT finding's scope, which only touches the ledger-reporting awk in `_pev_extract_prose_flip_fields`, a structurally-similar but functionally distinct parser this task DID fix for the analogous first-match-wins bug). **Workaround used to keep this task's own F18 self-test fixture authorizable:** the fixture's first (stale) block omits `Runtime verification:` so it never satisfies `check_evidence_first`'s own condition, side-stepping the block without altering `check_evidence_first`'s code. **Fix (future session):** either replace the bare `exit 0` with a flag + `next` so the main loop consumes remaining input without letting `END` re-fire (mirroring the `record_if_match()`/`found` pattern this task's `_pev_extract_prose_flip_fields` fix now uses), or add a guard in `END` (`if (!printed) ...`). Add a self-test scenario asserting a real authorized flip against a two-same-id-block evidence file with an EARLY runtime-verification-bearing block succeeds (rc=0), not just that the ledger reports the right verdict once it does.
   (HARNESS-GAP-63 sibling, comprehension-review 2026-07-30): check_mechanical_or_contract_evidence's Path-B awk (plan-edit-validator.sh ~:1502-1513) carries the IDENTICAL print-MATCH-then-exit-0-then-END double-print shape — widen GAP-63's fix to both awks (sweep: rg -n 'print "MATCH"; exit 0' adapters/claude-code/hooks/plan-edit-validator.sh).
@@ -3222,9 +3246,46 @@ the declared name, and never the absence of a declaration.**
    branches multiplies Actions minutes by the ~20-branches/day worktree churn. Recommend
    `push: branches-ignore: [worktree-*, harness/active-sessions/*]` if adopted at all.
 
-## SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 — harness-doctor.sh's own P-14 jq-parity self-test
-cannot exercise its nonode fallback on Windows/MSYS2 (added 2026-08-03, gated-pipeline-master-
-2026-08 Task 8 doctor triage; label: `harness-gap`, `priority:medium`).
+## SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01 — FIXED 2026-08-04 (shim launcher only; see
+CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01 below for a genuine bug this fix unmasked) — harness-
+doctor.sh's own P-14 jq-parity self-test could not exercise its nonode fallback on Windows/
+MSYS2 (added 2026-08-03, gated-pipeline-master-2026-08 Task 8 doctor triage; label:
+`harness-gap`, `priority:medium`).
+
+**Fix landed (gated-pipeline-master-2026-08 Task 8 continuation, 2026-08-04):** per this entry's
+own proposed direction — `_nonode_path()` (harness-doctor.sh, self-test section) no longer
+symlinks `bash` into the shim, and `_run_quick_nonode()` resolves the real interpreter via
+`${BASH:-$(command -v bash)}` BEFORE the `PATH="$shim"` override, so the grandchild's own
+command-name lookup never touches the shim's PATH. **Re-verified: 4 of the 5 previously-crashing
+scenarios now PASS** (`dpp-jq-parity-red`, `dpp-jq-parity-grandfather`, `ngeb-jq-parity-red`,
+`budget-chains-jq-parity-red`) — `harness-doctor.sh --self-test` went from 186 passed/5 failed to
+190 passed/1 failed. The 5th (`claim-honesty-jq-parity-red`) no longer crashes either, but now
+fails with a DIFFERENT, genuine finding — see the new entry below; the "independently confirmed
+the doctor's jq branches themselves are fine... no divergence found... by inspection" claim
+originally in this entry is WRONG for `claim-honesty` specifically (inspection missed it because
+the shim crash had never let the jq branch actually run before now).
+
+## CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01 — `extract_manifest_gates`'s jq fallback and node branch
+produce different output for the same manifest fixture (added 2026-08-04, gated-pipeline-
+master-2026-08 Task 8 doctor triage continuation, exposed by fixing SELFTEST-SWEEP-NONODE-SHIM-
+WINDOWS-01 above; label: `harness-gap`, `priority:medium`).
+
+**Symptom, PROVEN (`harness-doctor.sh --self-test`, scenario `claim-honesty-jq-parity-red`):**
+against the self-test's `wired-gate` fixture, the node branch of `extract_manifest_gates`
+(harness-doctor.sh:656-664) emits ONE claim-honesty RED (`manifest gate 'pending-gate' has
+wired_template false and no honest_status`); the jq branch (harness-doctor.sh:665-672) emits
+THAT SAME RED plus a SECOND one the node branch never produces: `manifest gate 'wired-gate'
+claims wired_template true but hook 'wired-gate.sh' does not appear in live settings.json — run
+install`. The two branches are supposed to be byte-identical (`_assert_node_jq_parity`'s whole
+purpose, harness-doctor.sh ~4410-4420) — this is a real divergence, not a fixture artifact (the
+same fixture drives both branches in the same self-test run).
+
+**Not root-caused here (out of this task's sweep-layer scope):** HYPOTHESIZED (refuter: diff the
+raw `GATE`/`GH` stream lines the two branches emit for the `wired-gate` entry, byte for byte,
+against harness-doctor.sh:656-672's two implementations) — the jq form's boolean/array handling
+of `wired_template`/`hooks` for this entry shape differs from the node form's, causing check_claim_
+honesty's live-settings.json cross-check (harness-doctor.sh:710-727) to fire on the jq branch
+only. Needs a side-by-side stream dump to confirm before touching either jq or node expression.
 
 **Symptom:** `harness-doctor.sh --self-test` reports 5 failing scenarios (`dpp-jq-parity-red`,
 `dpp-jq-parity-grandfather`, `ngeb-jq-parity-red`, `claim-honesty-jq-parity-red`,
@@ -3283,6 +3344,75 @@ boundary. Not chased further (would require reading model-pin-gate.sh's fixture-
 in depth); flagged so a future pass hermeticizes the tier-state input for these two scenarios
 rather than reading `adapters/claude-code/config/model-policy.json`'s live state.
 
+## SELFTEST-SWEEP-NOT-STALENESS-2026-08-04 — six selftest-sweep REDs are NOT explained by
+live-vs-repo staleness, contra this task's own working hypothesis (added 2026-08-04,
+gated-pipeline-master-2026-08 Task 8 doctor triage continuation; label: `harness-gap`,
+`priority:low`).
+
+**Context:** this session's dispatch hypothesized that most of the 14 selftest-sweep REDs named
+in the 2026-08-03 pass (`plan-reviewer.sh`, `scope-enforcement-gate-body.sh`,
+`session-start-digest.sh`, `session-start-auto-install.sh`, `concurrent-ownership-gate-body.sh`,
+`review-record-commit-gate.sh`, `model-pin-gate.sh`, `admission-lib.sh`, `git-command-parse.sh`,
+`self-sync-guard.sh`) share dispatch-chain-gate.sh's PROVEN root cause: the sweep runs the LIVE
+mirror copy (`~/.claude/hooks/...`), which lags an in-flight/unmerged branch's repo copy.
+`harness-doctor.sh`'s `check_selftest_sweep` was fixed this session (see the T8 commit) to
+detect this via `cmp -s` and downgrade a genuinely-diverged failure from RED to a disclosed WARN.
+
+**PROVEN by direct `cmp` on this checkout, same session:** `dispatch-chain-gate.sh` (182 live
+lines vs 1121 repo lines) and `review-record-push-gate.sh` (2096 vs 2774) ARE explained by
+staleness — confirmed massively diverged. But six of the ten named above are **byte-identical**
+between the live mirror and the repo copy at the same relative path: `plan-reviewer.sh`,
+`review-record-commit-gate.sh`, `model-pin-gate.sh`, `adapters/claude-code/hooks/lib/admission-
+lib.sh`, `adapters/claude-code/hooks/lib/git-command-parse.sh`, `adapters/claude-code/hooks/lib/
+self-sync-guard.sh` (`cmp` exit 0 on every pair, checked directly). Staleness cannot be the cause
+for these six — whatever fails, fails identically regardless of which copy runs.
+`scope-enforcement-gate-body.sh` / `session-start-digest.sh` / `session-start-auto-install.sh` /
+`concurrent-ownership-gate-body.sh` DO diverge (9-63 lines) but far less than the two proven
+cases; not independently re-run this session (time-boxed), so their sweep REDs remain of
+UNKNOWN cause pending a direct re-run.
+
+**Per-suite disposition of the six byte-identical ones:**
+- `model-pin-gate.sh` — already covered by `MODEL-PIN-GATE-SELFTEST-NONHERMETIC-01` above; the
+  byte-identity finding here is consistent with (does not refute) that entry's non-hermetic-
+  tier-state HYPOTHESIS.
+- `self-sync-guard.sh` — PROVEN (direct re-run this session): 4 passed, 5 failed. Every failure
+  is a symlink-creation assertion (`ln: failed to create symbolic link '.../dangling.json': No
+  such file or directory`) — the SAME class this file's 2026-08-03 section already names as
+  "Windows-specific self-test friction" (nonode-shim symlink, NTFS-reserved-character fixtures).
+  HYPOTHESIZED: Windows/NTFS symlink-creation limitation in the fixture, not a doctor-sweep
+  defect (refuter: run on macOS/Linux — if it also fails there, the cause is a genuine fixture
+  bug, not environmental).
+- `adapters/claude-code/hooks/lib/admission-lib.sh` — PROVEN (direct re-run this session): **80
+  passed, 0 failed, full GREEN.** The sweep's own "79/1" does not reproduce directly — same
+  TRANSIENT-not-durable pattern as `model-pin-gate.sh` above (byte-identical live/repo copy,
+  passes standalone, fails under sweep load). Not chased further; likely a shared-resource/
+  timing sensitivity common to self-tests run back-to-back inside a ~50+-suite sweep, not a
+  defect in the lib itself.
+- `adapters/claude-code/hooks/lib/git-command-parse.sh` — PROVEN (direct re-run this session,
+  identified): **114 passed, 1 failed, both times — same single scenario**: `FAIL: 32KB
+  separator-dense commit took 697ms — the fast path is not being taken`. This is a PERFORMANCE
+  THRESHOLD assertion, not a correctness one. HYPOTHESIZED (refuter: re-run alone on an idle
+  machine — if it passes, timing-sensitivity is confirmed; if it still fails at ~700ms, the fast
+  path genuinely regressed and this becomes a real perf bug): both of this session's "direct"
+  re-runs executed WHILE a massive concurrent `harness-doctor.sh --full` sweep (and, for the
+  first re-run, ANOTHER self-test) were consuming CPU on the same machine — i.e. NEITHER run was
+  actually on an idle machine, so this may be the SAME transient/CPU-contention class as
+  `model-pin-gate.sh`/`admission-lib.sh` above, not a genuinely-reproducible defect. Correcting
+  this entry's own earlier (wrong) claim that this was "NOT transient" — that claim compared two
+  contended runs to the sweep's own contended run, which proves nothing about idle-machine
+  behavior. OPEN — needs a genuinely idle-machine re-run to classify.
+- `plan-reviewer.sh`, `review-record-commit-gate.sh` — direct re-run attempted this session but
+  not concluded within the time budget (both are large/slow suites; `plan-reviewer.sh` alone is
+  independently measured elsewhere in this file at ~987s). OPEN, not yet investigated — same
+  disposition the 2026-08-03 pass already gave both; this entry additionally rules out staleness
+  as their cause.
+
+**Why not chased further here:** this task's mission was the SWEEP-LAYER defects (path mangling,
+skip-vs-fail rc contract, live-vs-repo disclosure) plus fixes "you cannot fix cheaply" get
+dispositioned, not root-caused. These six are per-suite genuine-or-flaky failures requiring
+individual, potentially lengthy (10-15+ min per suite) investigation — out of proportion for this
+pass. Flagged so a future pass runs each to a direct conclusion.
+
 ## NL-ISSUES-TRIAGE-20260803 — nl-issue triage escalation (auto-filed)
 
 **Severity:** P3 (nagging, not blocking)
@@ -3338,3 +3468,195 @@ rubric the renderer ignores. Fix lands in `adapters/claude-code/scripts/needs-yo
 itself is generator-owned, never hand-edited). Audit agent: Audience Content Reviewer →
 docs/reviews/2026-08-03-needs-you-readability-review.md + a same-day triaged digest the operator
 can actually read.
+
+## SESSION-SCOPED-VERIFY-OBLIGATIONS-2026-08-04 — scope stop-side obligations to the stopping session
+(label: `harness-gap`, `stage-2-successor`; from harness-reviewer F5 on gated-pipeline T25)
+
+The verify-obligation stop check scopes by plan references in the final message — simultaneously
+over-inclusive (any session linking a plan with open machine-wide obligations gets gapped once;
+the ledger is $HOME-global and artifact_ref carries no repo qualifier) and under-inclusive (no
+link → no check). The rows ALREADY carry session_id: scoping obligations to rows whose
+session_id matches the stopping session removes both directions in one move. Non-blocking today
+(block-once + cheap marker remedy bound the erosion; disclosed in the gate artifacts).
+
+## BASH-SOURCE-DIR-RESOLUTION-FRAGILITY-SWEEP-2026-08-04 — estate-wide `${BASH_SOURCE[0]%/*}` audit
+(label: `harness-gap`; from harness-reviewer F4 on gated-pipeline T25)
+
+`dispatch-chain-gate.sh:42`'s `_dcg_dir` resolution breaks under slash-less/backslash invocation
+(lib sourcing fails; pre-T25 the suite false-greened vacuously — now guarded loud, exit 3). The
+same `${BASH_SOURCE[0]%/*}` idiom exists across the estate; sweep query:
+`rg -n 'BASH_SOURCE\[0\]%/\*' adapters/claude-code/` — triage each hit for a sourcing-failure
+guard or `cd`-based resolution. T25 guarded its own entry points only.
+
+- **COCKPIT-AUDITOR-STILL-PULLS-01 — the background drift auditor still shells on a fixed 120s clock tick, not on real change** (added 2026-08-02 from the workstreams-ui cockpit-server subprocess-storm fix; label: `harness-gap`, `priority:low`; fold-in: the next auditor.js touch, or a dedicated push-conversion pass). The storm fix (`neural-lace/workstreams-ui/server/state-watch.js`) converted the DeriveCache's six `nl <sub> --json` panes from a pure 30s poll to push (fs.watch + debounce, anti-entropy floor raised to 5min) — the golden-case measurement it fixed named `nl.sh status --json` specifically (45/93 live bash processes). `neural-lace/workstreams-ui/server/auditor.js` (Task 12's background drift auditor) is a SEPARATE poller on its own 120s `AUDITOR_CADENCE_MS` timer, shelling `progress-log.sh emit` / `ask-registry.sh set-status` / `merge-scan-lib.sh scan-repo` — already relaxed relative to the old 30s pane cadence and already single-flighted (`_cycleInFlight`, mirrors DeriveCache's own guard), but still PULL: it re-shells every 120s regardless of whether the ask-registry/plan files/git state it audits actually changed. Converting it to the same push+floor pattern (watch `ASK_REGISTRY_STATE_DIR`, plan files, `.git/refs`) is a natural follow-on, deliberately deferred here for scope/time — it was not part of the measured golden case and touching it would have widened this fix beyond the confirmed storm source. **Re-derive:** `grep -n "DEFAULT_CADENCE_MS\|_cycleInFlight" neural-lace/workstreams-ui/server/auditor.js`.
+
+- **COCKPIT-ASK-DETAIL-CLASSIFY-SESSIONS-PER-REQUEST-01 — `GET /api/ask/<id>` shells `hb_classify` once per request, uncached** (added 2026-08-02 from the same subprocess-storm fix; label: `harness-gap`, `priority:low`; fold-in: opportunistic, if ask-detail views become a hot path). `buildAskDetailPayload` (`neural-lace/workstreams-ui/server/server.js`) calls `deriveLib.classifySessions(sessionIds)` (`neural-lace/workstreams-ui/server/derive-lib.js`) on EVERY request, which spawns a bash login shell sourcing `session-heartbeat-lib.sh` and calling `hb_classify` per session id. NOT converted in this fix: `web/asks.js` only fetches `/api/ask/<id>` on first expand (not polled — confirmed by grep, no `setInterval`/SSE-driven refetch of the detail endpoint), so this is bounded by user click-rate rather than a clock or a change-storm, unlike the confirmed golden-case source. A short-TTL cache or single-flight-per-session-set would still be a legitimate small hardening if this view becomes hot. **Re-derive:** `grep -n "classifySessions" neural-lace/workstreams-ui/server/server.js neural-lace/workstreams-ui/server/derive-lib.js`.
+
+- **COCKPIT-SERVER-SELFTEST-FLAKY-ASK-FIXTURE-01 — `server.selftest.js` intermittently crashes mid-suite in the ask/dispatch-provenance fixture section, PRE-EXISTING and unrelated to the subprocess-storm fix** (added 2026-08-02 from the same fix's verification pass; label: `harness-gap`, `priority:medium`; fold-in: next touch of the ask-fixture setup in `server.selftest.js`). **PROVEN pre-existing:** reproduced identically on UNMODIFIED baseline code (git stash of every storm-fix change, two separate runs) — run 1 crashed `Error: ENOENT ... dispatch-provenance/fixture-marker__1.json` at the fixture-write step; run 2 crashed `TypeError: Cannot read properties of undefined (reading 'asks')` later in the same section, both around the S23+ ask-registry/dispatch-provenance scenarios. Two DIFFERENT crash points across two runs of the SAME unmodified code confirms a timing/race bug in the ask-fixture setup (likely a directory-creation race ahead of a synchronous write), not a deterministic break — and not something the storm fix touched (every scenario through S26b, including the DeriveCache-heavy S6b/S6c/S17/S22, passed cleanly both before and after this fix in every run). **Re-derive:** `node neural-lace/workstreams-ui/server/server.selftest.js` a few times in a row and compare crash points/lines.
+
+## HYGIENE-GATE-ESCAPE-ACCOUNTABILITY-FOLLOWUPS-2026-08-04 — honest residuals from the hygiene-gate self-service-escape fix
+(label: `harness-gap`; from the hygiene-gate incident fix, harness-hygiene-scan.sh Defects 1-2 + workaround-sensor-lib.sh/stop-verdict-dispatcher.sh/session-start-digest.sh Defect 3-4)
+
+Three named, disclosed-not-hidden gaps in the same-turn-visible + Stop-blocking escape-obligation
+mechanism (`ws_open_escape_obligations`, `_svd_escape_naming_check`):
+
+1. **Same-turn NOTICE (Defect 4 item c) is wired at harness-hygiene-scan.sh's own `ws_record` call
+   sites only.** The four OTHER existing `ws_record` callers (`concurrent-ownership-gate-body.sh`,
+   `dispatch-chain-gate.sh`, `review-record-push-gate.sh`, `scope-enforcement-gate-body.sh`) have
+   their escapes tracked generically by `ws_open_escape_obligations`/the Stop-side check (any
+   `bypass_kind` row opens an obligation regardless of which gate wrote it), but do NOT yet print
+   an in-turn "this opened an obligation" notice at their own waiver-honored call sites — an agent
+   using one of those gates' escapes only learns about the obligation at the NEXT Stop, not in the
+   same turn. Fold-in: one small edit per call site, same one-line `printf ... >&2` pattern
+   harness-hygiene-scan.sh now uses.
+2. **FIXED auto-close (`_ws_escape_gate_fixed`) only re-verifies `gate=="harness-hygiene-scan"`**
+   (the one caller with an honest `--check <file>` re-verification mode this lib knows how to
+   drive). Every other gate's escapes can never auto-close via re-scan — they fall through to
+   requiring an `escape-obligation-ack-*.txt` marker, or stay open indefinitely. This is a
+   deliberate fail-closed scoping choice (documented in the lib's own header), not an oversight,
+   but it means e.g. a `concurrent-ownership-gate` escape has no "the lock cleared itself" path.
+3. **`manifest.json`'s `harness-hygiene-scan` entry is not updated** with the new
+   `escape-obligations` Stop check, the `bypass-24h` digest feed, or the operator-waiver marker
+   class — the manifest's enforcement inventory is stale for this gate until a future pass reconciles
+   it. **Re-derive:** `grep -n '"id": "harness-hygiene-scan"' adapters/claude-code/manifest.json`.
+
+C-round additions (harness-reviewer REFORMULATE on `b8c9fe0a`, 2026-08-04 — C1 required fix +
+condition, F7-F10 minors named-not-fixed by the reviewer's own instruction):
+
+4. **C1 residual — the two push-time CI jobs are still whole-file, not delta-scoped.**
+   `.github/workflows/secret-backstop.yml:133` and `server-side-enforcement.yml:118` both invoke
+   `bash adapters/claude-code/hooks/harness-hygiene-scan.sh "${changed[@]}"` (explicit changed-file
+   args = MODE="files" = whole-file scan, PROVEN by reading both files directly) on every
+   `push`/`pull_request`, with no waiver-marker channel (a fresh CI checkout has no
+   `.claude/state/`). The messaging fix (this same commit) now tells the truth about this instead of
+   claiming a nonexistent "periodic full-tree scan" catches pre-existing debt. Deliberately NOT
+   attempted in the same series: editing GitHub Actions YAML that cannot be exercised from this
+   environment ("cannot run Actions live from this environment" — the workflow's own header) risks
+   silently weakening the real security backstop, a worse outcome than leaving it whole-file and
+   honestly documented. **Concrete fix shape for the next session:** give
+   `harness-hygiene-scan.sh` a base-ref delta mode analogous to `_hhs_build_delta_view` (which
+   already accepts a rename-source 4th arg) but driven by `git diff <base_sha>..<head_sha> -U0`
+   instead of `--cached`; wire both workflow `run:` blocks to pass `BASE_SHA`/`HEAD_SHA` through to
+   a new `--diff-range <base> <head>` flag instead of relying on MODE="files" whole-file reads.
+   **Re-derive:** `grep -n "harness-hygiene-scan.sh \"\${changed\[@\]}\"" .github/workflows/*.yml`.
+5. **F7 — vaporware "weekly" backstop docs conflict.** Some harness doc(s) describe a
+   scheduled/weekly full-tree hygiene audit that does not exist as a live mechanism (only the
+   manually-invoked `/harness-review` skill wraps `--full-tree`, and it is not on any schedule per
+   `adapters/claude-code/config/schedule-manifest.json`). Sweep `grep -rn -i "weekly.*hygiene|periodic.*full-tree|required check|branch.protection requires" adapters/claude-code/ .github/ docs/` and correct or retire each claim. WIDENED 2026-08-04 (delta re-review): the class includes unverified-enforcement-semantics claims — "REQUIRED check" asserted without querying live branch protection; one shipped in the C-round itself, one pre-existed in server-side-enforcement.yml (both fixed at merge).|periodic.*full-tree" adapters/claude-code/` and correct or retire each claim.
+6. **F8 — unbounded ledger scan on the Stop path.** `ws_open_escape_obligations` (called from
+   `_svd_escape_naming_check` on every Stop) reads the ENTIRE `workaround-sensor.jsonl` via `cat`
+   with no line cap, unlike `session-start-digest.sh`'s own `feed_bypass_surface` (`tail -n 1000`).
+   On a long-lived machine the ledger grows unboundedly; bound the read (e.g. `tail -n N` before the
+   per-line filter) the same way the digest feed already does.
+7. **F9 — the ack directory is not named in the Stop-time block message.** `_svd_escape_naming_check`'s
+   gap message points at "lib/workaround-sensor-lib.sh" for the marker spec but never states the
+   concrete directory (`dirname "$(_workaround_sensor_path)"`, i.e. normally
+   `$HOME/.claude/state/`) an operator or agent would need to actually find/write
+   `escape-obligation-ack-*.txt` into. Name the resolved directory in the gap message.
+8. **F10 — a waiver-coverage ledger row fires even when nothing was actually suppressed.**
+   The regular-waiver / operator-waiver `ws_record`/`ledger_emit` calls in harness-hygiene-scan.sh
+   fire whenever `regular_waived`/`operator_waived` is true for a file, regardless of whether Layer
+   2/3 (`check_heuristics`/`check_addendum_lint`) would have found ANYTHING to suppress on that
+   file — a waiver marker naming a file that turns out to have zero matches still logs a
+   "waiver used" ledger row and opens/refreshes an escape obligation. Scope the log/obligation to
+   files where a suppression genuinely occurred (track whether Layer 2/3 would have matched before
+   deciding whether to log).
+
+
+## GREEN-RUNNING-CHIP-MERGE-PENDING-2026-08-05 — built, browser-verified, NOT yet on master
+(label: `cockpit`, `operator-priority`; owner: next session, FIRST task)
+
+The operator's repeatedly-requested green "currently building" highlight is BUILT and proven,
+but sits unmerged in worktree `agent-aa9a284a346ee2a14`, branch `worktree-agent-aa9a284a346ee2a14`:
+  - `c8df1d2c` — three-way conflict resolution (plan-status schema + manifest + plan-edit-validator)
+  - `5c95b277` — the green feature itself
+PROVEN by its builder: field `running_now` (stamped by `stampRunningNow`, roadmap-routes.js),
+CSS `.rm-title-running` (`--running: #4ade80`); new SINK 1b in workstreams-emit.sh emits
+`task_started` with sentinel `task_id="(plan-only)"` for plan-only headers; four pinned
+scenarios PINNED4-1..4 each mutation-killed; live browser DOM check found exactly 3
+`.rm-title-running` elements at rgb(74,222,128) weight 700 against the real running server.
+Suites: workstreams-emit 161/0, roadmap-routes 175/0, cockpit 593/0, manifest GREEN.
+
+WHY NOT MERGED: its base (df0eade8) predates master's exec-stderr fix (ab4480be) and flap guard
+(c043b6ec). The merge conflicts in plan-edit-validator.sh's self-test block — HEAD's F33
+(exec-redirection regression pin) vs the branch's G1-G9 (Status-validation scenarios) — and git
+splits the region MID-SCENARIO, so a naive union produces a syntactically invalid script
+(verified: "line 3287: syntax error: unexpected end of file"). Merge was aborted; master is
+clean and green at c043b6ec (plan-edit-validator 33/33).
+
+HOW TO FINISH: rebase `worktree-agent-aa9a284a346ee2a14` onto current master, or hand-merge the
+self-test block keeping BOTH F33 and G1-G9 intact as whole scenarios (check the final
+"of N scenarios" count matches the real total), then re-run plan-edit-validator --self-test,
+roadmap-routes.selftest.js, cockpit.selftest.js, and manifest-check before pushing.
+
+## NL-ISSUES-TRIAGE-20260805 — nl-issue triage escalation (auto-filed)
+
+**Severity:** P3 (nagging, not blocking)
+**Trigger:** 17 untriaged nl-issue entries (threshold >5) or oldest untriaged entry is 20d old (threshold >7d).
+**Action:** run `nl-issue.sh --list --untriaged` and triage each entry with `--triage <n> <backlog|task|wontfix> <ref-or-reason>`.
+**Filed:** auto-filed by nl-issue.sh --digest-feed; idempotent per day (id above).
+
+## AUTO-MODE-ASK-RULES-BECOME-SILENT-DENIALS-2026-08-05 — three `ask` permission rules read as
+hard denials in auto mode, and the block message misdiagnoses them (label: `harness-gap`,
+`operator-decision`)
+
+**PROVEN today:** `~/.claude/settings.json` `permissions.ask` contains exactly three entries —
+`Bash(SUPABASE_ACCESS_TOKEN=* supabase db push:*)`, `Bash(npx supabase db push:*)`,
+`Bash(supabase db push:*)`. In an autonomous (no-human-in-loop) session an `ask` rule cannot
+prompt, so it resolves as a DENIAL. `permissions.allow` already contains `Bash(*)`, but the
+more-specific `ask` pattern wins, so the broad allow is irrelevant.
+
+**Why it matters:** the denial surfaces as "Blocked by the Claude Code auto mode classifier …
+the user can add a Bash permission rule to their settings" — generic boilerplate that sends the
+operator to add an allow rule they ALREADY have (`Bash(*)`). Two sessions' worth of operator
+friction traced to this: the operator explicitly authorized `apply parts migration`, and the
+apply still could not run. The true remedy is to MOVE the pattern from `ask` to `allow` (or
+delete it), not to add anything.
+
+**Also blocked, mechanism NOT yet confirmed as an ask-rule:** `gh api -X PATCH
+repos/<owner>/<repo>/branches/master/protection/...` (branch-protection mutation) and mass
+config rewrites (the 51 `.env.local` repoint). These may be classifier-semantic denials rather
+than settings-driven — verify before advising the operator on those two.
+
+**Durability note (operator directive 2026-08-04, "solutions should be everlasting"):** the
+repo template `adapters/claude-code/settings.json.template` carries `permissions.allow` (6
+entries) but NO `ask`/`deny` block — so the three ask rules are MACHINE-LOCAL only and would not
+follow to another machine. Any decision here should land in the template to be durable, and the
+template→live sync path for `permissions` (as opposed to hook wirings) needs confirming — it was
+not verified in this session.
+
+## MODEL-LIMIT-INFERENCE-BAN-2026-08-05 — Claude must never infer capacity limits from failures
+(label: `harness-gap`, `operator-directive`, `repeat-offense`; operator has raised this at least
+twice: "I'm sick and tired of Claude making assumptions about what the limits are and making
+decisions based on those assumptions")
+
+**The incident (2026-08-05, PROVEN):** two `architecture-reviewer`/`harness-reviewer` agents —
+both Fable-pinned — died with "You've hit your monthly spend limit". From those two data points
+the session concluded "agent dispatch is blocked", repeated it as fact across FOUR turns, and
+listed it in Needs-from-you as a hard blocker. It was false: the operator's usage panel showed
+Fable weekly 100%, all-models 88%, 5-hour 6%. A `sonnet`-pinned agent dispatched immediately
+afterward worked on the first try. Cost: four turns of self-imposed paralysis on a merge sweep
+that could have been running, plus operator time correcting it.
+
+**Root cause:** an unavailable-data problem answered by inference instead of by a probe. There
+is NO machine-readable limits source reachable from a session — checked 2026-08-05:
+`~/.claude/stats-cache.json` carries `modelUsage`/`dailyModelTokens` (consumption only, no
+headroom, no reset times); the `claude` CLI exposes no usage subcommand (agents/auth/doctor/
+install/mcp/plugin/setup-token/update); no state file carries rate/quota/reset fields. The
+percentages and resets exist only in the app UI, which the operator can see and the session
+cannot.
+
+**The mechanism (build this — it is a RULE, since the data is unavailable):**
+1. BAN THE INFERENCE. A model-tier failure is evidence about THAT MODEL ONLY. Never generalize
+   one model's exhaustion to "agents are blocked", "dispatch is unavailable", or any capacity
+   claim. Report exactly what happened: "<N> <model>-pinned agents failed with <verbatim error>".
+2. PROBE, DON'T ASSUME. The definitive test is cheap and takes seconds: dispatch one agent
+   explicitly pinned to a DIFFERENT model (`model: sonnet`/`opus`) and observe. Do this BEFORE
+   reporting any capacity limitation, not after the operator objects.
+3. ASK THE ONE WHO CAN SEE. When capacity genuinely matters, the operator's usage panel is the
+   authoritative source and the session's is not — say "Fable-pinned agents are failing; can you
+   check the usage panel?" rather than asserting a state.
+4. NEVER PUT AN INFERRED LIMIT IN "Needs from you" AS BLOCKING. A blocker must be observed, not
+   deduced.
+Durable home: this is operator-directive material (register + doctrine), NOT machine-local
+memory — the operator's standing requirement is that solutions survive across machines.

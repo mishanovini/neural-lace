@@ -737,9 +737,29 @@ _run_on_spawn() {
   # attribution for headered spawns instead of fixing them -- so the spawn
   # surface gets the same authoritative path the builder surface has.
   local sp_plan sp_task sp_role sp_attributed
-  IFS='|' read -r sp_plan sp_task sp_role sp_attributed <<<"$(_extract_nl_attribution "$(_dispatch_text "$input")")"
+  local sp_dtext; sp_dtext=$(_dispatch_text "$input")
+  IFS='|' read -r sp_plan sp_task sp_role sp_attributed <<<"$(_extract_nl_attribution "$sp_dtext")"
+
+  # DERIVED FALLBACK (Defect B, 2026-08-04) -- SAME merge rule
+  # _run_on_builder_dispatch applies (see that function's own comment): a
+  # real header always wins; otherwise _derive_attribution's free-text/
+  # repo-active-plan tiers, with any partial header field still overriding.
+  # REGRESSION FIX (caught by PL4/PL4b/PL4c after the _emit_dispatch_provenance
+  # de-dup refactor below): this surface's SINK 2 marker resolution now
+  # requires the caller to pass the already-computed plan/task -- omitting
+  # this block would silently stop writing a marker for every non-headered
+  # spawn, exactly the free-text-derivable shape PL4/PL4b exercise.
+  local sp_final_plan="$sp_plan" sp_final_task="$sp_task"
+  if [[ "$sp_attributed" != "1" ]]; then
+    local sp_d_plan sp_d_task sp_d_source
+    IFS='|' read -r sp_d_plan sp_d_task sp_d_source <<<"$(_derive_attribution "$sp_dtext")"
+    [[ -n "$sp_plan" ]] && sp_d_plan="$sp_plan"
+    [[ -n "$sp_task" ]] && sp_d_task="$sp_task"
+    sp_final_plan="$sp_d_plan"; sp_final_task="$sp_d_task"
+  fi
   _emit_dispatch_provenance "$input" "$sid" "$child_id" \
-    "$sp_plan" "$sp_task" "$sp_role" "$sp_attributed" "$spawn_is_new" || true
+    "$sp_plan" "$sp_task" "$sp_role" "$sp_attributed" "$spawn_is_new" \
+    "$sp_final_plan" "$sp_final_task" || true
 
   # ---- WAVE-O O.1 EMIT: spawn-dispatched (contract C2) --------------------
   # ONE marked emit line, per specs-o §O.1 deliverable 3. Never blocks
@@ -2003,6 +2023,118 @@ _self_test() {
     echo "FAIL: DL7 expected artifact_ref='' ($(cat "$dl7_ledger" 2>/dev/null))"; fail=$((fail+1))
   fi
 
+  # DL8-DL10 (gated-pipeline-master-2026-08 Task 25 / OD-022 -- task_id
+  # extraction for verify-obligation tracking). DL8: NL-ATTRIBUTION header
+  # wins over free-text.
+  local dl8_ledger="$tmp/dl-8-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl8_ledger" CONV_TREE_STATE_PATH="$tmp/dl-8.json" CLAUDE_SESSION_ID="sess-dl-8" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build Task 25","prompt":"NL-ATTRIBUTION: plan=gated-pipeline-master-2026-08 task=25 role=builder\nBuild Task 25 of docs/plans/gated-pipeline-master-2026-08.md (also mentions Task 99 in passing)."},"tool_response":"DONE","session_id":"sess-dl-8"}' >/dev/null 2>&1
+  if [[ -f "$dl8_ledger" ]] && jq -e '.task_id=="25"' "$dl8_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL8 NL-ATTRIBUTION task= wins over a free-text 'Task 99' mention elsewhere in the prompt"; pass=$((pass+1))
+  else
+    echo "FAIL: DL8 expected task_id=25 ($(cat "$dl8_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DL9: no header -> free-text "Task N" fallback.
+  local dl9_ledger="$tmp/dl-9-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl9_ledger" CONV_TREE_STATE_PATH="$tmp/dl-9.json" CLAUDE_SESSION_ID="sess-dl-9" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"Build Task 15 of docs/plans/gated-pipeline-master-2026-08.md, no attribution header here."},"tool_response":"DONE","session_id":"sess-dl-9"}' >/dev/null 2>&1
+  if [[ -f "$dl9_ledger" ]] && jq -e '.task_id=="15"' "$dl9_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL9 free-text 'Task N' fallback used when no NL-ATTRIBUTION header is present"; pass=$((pass+1))
+  else
+    echo "FAIL: DL9 expected task_id=15 ($(cat "$dl9_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DL10: a mis-authored header (task=T7, the 2026-08-03 incident shape)
+  # lands VERBATIM -- the writer does NOT normalize; normalization is a
+  # reader-side defense (rc_open_verify_obligations).
+  local dl10_ledger="$tmp/dl-10-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl10_ledger" CONV_TREE_STATE_PATH="$tmp/dl-10.json" CLAUDE_SESSION_ID="sess-dl-10" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=gated-pipeline-master-2026-08 task=T7 role=builder\nBuild it."},"tool_response":"DONE","session_id":"sess-dl-10"}' >/dev/null 2>&1
+  if [[ -f "$dl10_ledger" ]] && jq -e '.task_id=="T7"' "$dl10_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL10 a mis-authored task=T7 header lands verbatim (writer never normalizes -- reader does)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL10 expected task_id=T7 ($(cat "$dl10_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DL11: --open-verify-obligations CLI mode round-trips against a row this
+  # SAME writer just produced (shared fixture/contract, same convention as
+  # review-chain-lib.sh's own Scenario 11).
+  local dl11_ledger="$tmp/dl-11-ledger.jsonl"
+  DISPATCH_LEDGER_PATH="$dl11_ledger" CONV_TREE_STATE_PATH="$tmp/dl-11.json" CLAUDE_SESSION_ID="sess-dl-11" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=dl11-fixture task=4 role=builder\nBuild Task 4 of docs/plans/dl11-fixture.md."},"tool_response":"DONE","session_id":"sess-dl-11"}' >/dev/null 2>&1
+  local dl11_out
+  dl11_out="$(DISPATCH_LEDGER_PATH="$dl11_ledger" bash "$SELF" --open-verify-obligations dl11-fixture 2>&1)"
+  if printf '%s' "$dl11_out" | grep -q '^4$' && printf '%s' "$dl11_out" | grep -q 'open_verify_obligations=1 plan=dl11-fixture'; then
+    echo "PASS: DL11 --open-verify-obligations round-trips against the writer's own row (task 4 open, count=1)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL11 expected task 4 open + count=1 ($dl11_out)"; fail=$((fail+1))
+  fi
+
+  # DL12-DL14 (OD-023, operator directive 2026-08-03: task ids must be
+  # deterministic, never guessed -- emit-time validation against the
+  # referenced plan's own task list).
+  local dl_taskval_dir="$tmp/dl-taskval"
+  mkdir -p "$dl_taskval_dir/docs/plans"
+  cat >"$dl_taskval_dir/docs/plans/dl-taskval-fixture.md" <<'TVEOF'
+# Plan: task-id validation fixture
+Status: ACTIVE
+
+## Tasks
+
+- [x] 1. First task
+- [ ] 7. Seventh task
+- [ ] 25. Twenty-fifth task
+TVEOF
+
+  # DL12: a T-prefixed id (T7) normalizes to a KNOWN id -> task_id_valid=true,
+  # verbatim task_id stored, no WARN.
+  local dl12_ledger="$tmp/dl-12-ledger.jsonl" dl12_err
+  dl12_err=$( cd "$dl_taskval_dir" && DISPATCH_LEDGER_PATH="$dl12_ledger" CONV_TREE_STATE_PATH="$tmp/dl-12.json" CLAUDE_SESSION_ID="sess-dl-12" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=dl-taskval-fixture task=T7 role=builder\nBuild Task 7 of docs/plans/dl-taskval-fixture.md."},"tool_response":"DONE","session_id":"sess-dl-12"}' 2>&1 >/dev/null )
+  if [[ -f "$dl12_ledger" ]] && jq -e '.task_id=="T7" and .task_id_valid=="true"' "$dl12_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL12 T-prefixed id (T7) normalizes against the plan's task list and validates true"; pass=$((pass+1))
+  else
+    echo "FAIL: DL12 expected task_id=T7 task_id_valid=true ($(cat "$dl12_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  if printf '%s' "$dl12_err" | grep -q "WARN"; then
+    echo "FAIL: DL12 a KNOWN (post-normalization) task id must NOT emit a WARN"; fail=$((fail+1))
+  else
+    echo "PASS: DL12 no spurious WARN for a known, T-prefixed id"; pass=$((pass+1))
+  fi
+
+  # DL13: an id absent from the plan's task list -> row is STILL WRITTEN
+  # (writer semantics: never lose data), flagged task_id_valid=false, WARN
+  # on stderr names the plan's real id set.
+  local dl13_ledger="$tmp/dl-13-ledger.jsonl" dl13_err
+  dl13_err=$( cd "$dl_taskval_dir" && DISPATCH_LEDGER_PATH="$dl13_ledger" CONV_TREE_STATE_PATH="$tmp/dl-13.json" CLAUDE_SESSION_ID="sess-dl-13" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=dl-taskval-fixture task=999 role=builder\nBuild Task 999 of docs/plans/dl-taskval-fixture.md."},"tool_response":"DONE","session_id":"sess-dl-13"}' 2>&1 >/dev/null )
+  if [[ -f "$dl13_ledger" ]] && jq -e '.task_id=="999" and .task_id_valid=="false"' "$dl13_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL13 unknown id 999 -> row written anyway (never lose data), flagged task_id_valid=false"; pass=$((pass+1))
+  else
+    echo "FAIL: DL13 expected task_id=999 task_id_valid=false ($(cat "$dl13_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  if printf '%s' "$dl13_err" | grep -q "WARN" && printf '%s' "$dl13_err" | grep -q "1,7,25"; then
+    echo "PASS: DL13 WARN names the plan's real id set (1,7,25)"; pass=$((pass+1))
+  else
+    echo "FAIL: DL13 expected a WARN naming known ids 1,7,25 (stderr: $dl13_err)"; fail=$((fail+1))
+  fi
+
+  # DL14: a valid numeric id, no T prefix -> clean (valid=true, no WARN).
+  local dl14_ledger="$tmp/dl-14-ledger.jsonl" dl14_err
+  dl14_err=$( cd "$dl_taskval_dir" && DISPATCH_LEDGER_PATH="$dl14_ledger" CONV_TREE_STATE_PATH="$tmp/dl-14.json" CLAUDE_SESSION_ID="sess-dl-14" \
+    bash "$SELF" --on-builder-complete <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build","prompt":"NL-ATTRIBUTION: plan=dl-taskval-fixture task=25 role=builder\nBuild Task 25 of docs/plans/dl-taskval-fixture.md."},"tool_response":"DONE","session_id":"sess-dl-14"}' 2>&1 >/dev/null )
+  if [[ -f "$dl14_ledger" ]] && jq -e '.task_id=="25" and .task_id_valid=="true"' "$dl14_ledger" >/dev/null 2>&1; then
+    echo "PASS: DL14 valid numeric id 25 -> clean row, task_id_valid=true"; pass=$((pass+1))
+  else
+    echo "FAIL: DL14 expected task_id=25 task_id_valid=true ($(cat "$dl14_ledger" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  if printf '%s' "$dl14_err" | grep -q "WARN"; then
+    echo "FAIL: DL14 a valid numeric id must NOT emit a WARN"; fail=$((fail+1))
+  else
+    echo "PASS: DL14 no WARN for a clean valid numeric id"; pass=$((pass+1))
+  fi
+
   # ================================================================
   # PL1-PL6 (ask-rooted-workstreams-p1 Task 3 -- dispatch emission splice):
   # task_started progress-log emission + dispatch-provenance marker, spliced
@@ -2804,20 +2936,38 @@ PLANEOF
     echo "FAIL: NLA1c expected plan/task/role/attributed=1 in governor ledger $ledger_nla1"; fail=$((fail+1))
     [[ -n "$ledger_nla1" ]] && cat "$ledger_nla1"
   fi
+  if [[ -n "$ledger_nla1" ]] && grep -q '"attribution_source":"header"' "$ledger_nla1" 2>/dev/null; then
+    echo "PASS: NLA1d (Defect B) a real header -> attribution_source=header (the derivation tiers are never consulted, let alone override it)"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA1d expected attribution_source=header in $ledger_nla1"; fail=$((fail+1))
+    [[ -n "$ledger_nla1" ]] && cat "$ledger_nla1"
+  fi
 
   # NLA2: NO header (an ORDINARY pre-existing dispatch, e.g. BD1's own
   # prompt shape) -> attributed=0 in the governor ledger row, a WARN line
-  # logged, and the pre-existing free-text-heuristic behavior is completely
-  # unaffected (no plan/task label written at all -- honest absence, never
-  # a guess).
+  # logged, and — with NL_ATTRIBUTION_DERIVE_ROOT pointed at a directory
+  # with NO docs/plans at all (Defect B, 2026-08-04: isolates this scenario
+  # from whatever the REAL checkout's own active-plan count happens to be at
+  # test time — this repo carries 3 simultaneously-ACTIVE plans as of
+  # 2026-08-04, which the ambiguity rule would already reject, but pinning
+  # the root here makes that independent of when this suite runs) — the
+  # derivation fallback ALSO finds nothing: attribution_source=none,
+  # plan/task/role labels stay absent (honest absence, never a guess).
   local adm_nla2="$tmp/adm-nla2"
   ADM_STATE_DIR="$adm_nla2" CONV_TREE_STATE_PATH="$tmp/nla-2.json" CLAUDE_SESSION_ID="sess-nla-2" \
+    NL_ATTRIBUTION_DERIVE_ROOT="$tmp/nla2-no-plans-root" \
     bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"subagent_type":"plan-phase-builder","description":"Build the widget","prompt":"long body, no header, no plan reference"},"session_id":"sess-nla-2"}' >/dev/null 2>&1
   local ledger_nla2; ledger_nla2=$(ls "$adm_nla2"/ledger/*.jsonl 2>/dev/null | head -n1)
   if [[ -n "$ledger_nla2" ]] && grep -q '"attributed":"0"' "$ledger_nla2" 2>/dev/null && ! grep -q '"plan":"' "$ledger_nla2" 2>/dev/null; then
     echo "PASS: NLA2 no header -> attributed=0, and plan/task/role labels are absent (empty values dropped by adm_admit itself, never a guessed value)"; pass=$((pass+1))
   else
     echo "FAIL: NLA2 expected attributed=0 with no plan/task/role labels in $ledger_nla2"; fail=$((fail+1))
+    [[ -n "$ledger_nla2" ]] && cat "$ledger_nla2"
+  fi
+  if [[ -n "$ledger_nla2" ]] && grep -q '"attribution_source":"none"' "$ledger_nla2" 2>/dev/null; then
+    echo "PASS: NLA2c (Defect B) attribution_source=none when neither the prompt nor the (sandboxed, empty) repo yields a plan"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA2c expected attribution_source=none in $ledger_nla2"; fail=$((fail+1))
     [[ -n "$ledger_nla2" ]] && cat "$ledger_nla2"
   fi
   if grep -qE 'WARN unattributed builder dispatch.*session=sess-nla-2' "$LOG_FILE" 2>/dev/null; then
@@ -2833,15 +2983,28 @@ PLANEOF
   # way back to the free-text heuristic rather than trusting a
   # half-populated header (this prompt's free text also names no plan, so
   # the net effect mirrors PL3: no task_started emitted).
+  # NL_ATTRIBUTION_DERIVE_ROOT sandboxed here too (Defect B, 2026-08-04),
+  # same rationale as NLA2 -- even though the merge rule below makes the
+  # header's own partial plan value win regardless of what the ambient
+  # derivation tier finds, this suite's own REAL-SCENARIO discipline (file
+  # header) is "never touch the real checkout's own docs/plans/", so this
+  # scenario must not depend on it either, even incidentally.
   local plog_nla3="$tmp/pl-nla3" adm_nla3="$tmp/adm-nla3"
   PROGRESS_LOG_STATE_DIR="$plog_nla3" ADM_STATE_DIR="$adm_nla3" \
     CONV_TREE_STATE_PATH="$tmp/nla-3.json" CLAUDE_SESSION_ID="sess-nla-3" \
+    NL_ATTRIBUTION_DERIVE_ROOT="$tmp/nla3-no-plans-root" \
     bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"prompt":"NL-ATTRIBUTION: plan=orphan-plan role=builder\nno task= token in this header"},"session_id":"sess-nla-3"}' >/dev/null 2>&1
   local ledger_nla3; ledger_nla3=$(ls "$adm_nla3"/ledger/*.jsonl 2>/dev/null | head -n1)
   if [[ -n "$ledger_nla3" ]] && grep -q '"attributed":"0"' "$ledger_nla3" 2>/dev/null && grep -q '"plan":"orphan-plan"' "$ledger_nla3" 2>/dev/null; then
     echo "PASS: NLA3 partial header (plan without task) -> attributed=0 but the parsed plan value is still recorded"; pass=$((pass+1))
   else
     echo "FAIL: NLA3 expected attributed=0 with plan=orphan-plan in $ledger_nla3"; fail=$((fail+1))
+    [[ -n "$ledger_nla3" ]] && cat "$ledger_nla3"
+  fi
+  if [[ -n "$ledger_nla3" ]] && grep -q '"attribution_source":"derived-partial"' "$ledger_nla3" 2>/dev/null; then
+    echo "PASS: NLA3c (Defect B) attribution_source=derived-partial -- the partial header's OWN plan value wins over (and matches) the merge rule's output, task stays unresolved"; pass=$((pass+1))
+  else
+    echo "FAIL: NLA3c expected attribution_source=derived-partial in $ledger_nla3"; fail=$((fail+1))
     [[ -n "$ledger_nla3" ]] && cat "$ledger_nla3"
   fi
   if [[ ! -d "$plog_nla3" || -z "$(ls -A "$plog_nla3" 2>/dev/null)" ]]; then
@@ -2861,6 +3024,163 @@ PLANEOF
   else
     echo "FAIL: NLA4 expected attributed=1 with NO role label for role=hacker in $ledger_nla4"; fail=$((fail+1))
     [[ -n "$ledger_nla4" ]] && cat "$ledger_nla4"
+  fi
+
+  # ================================================================
+  # DERV1-DERV5 (Defect B, 2026-08-04, operator proposal adopted verbatim:
+  # "should we just add a built-in identifier into every background task
+  # that gets kicked off so that it's automatically always identified in
+  # the appropriate plan or section?"). The DERIVED fallback tier — when no
+  # valid header is present, plan/task attribution is now INFERRED from
+  # context the hook already has (prompt text, then the dispatching
+  # session's own repo) rather than collapsing straight to "none". Recorded
+  # via attribution_source on the SAME governor ledger row NLA1-4 already
+  # exercise (header|derived|derived-partial|none) — see
+  # _derive_attribution's own header comment (above _extract_task_id) for
+  # the full three-tier rule.
+  # ================================================================
+
+  # DERV1: no header, but the prompt names BOTH a plan doc AND a task
+  # number (the pre-existing free-text tier, matching logic UNCHANGED) —
+  # now labeled attribution_source=derived rather than silently landing as
+  # attributed=0 with no further signal at all.
+  local adm_derv1="$tmp/adm-derv1"
+  ADM_STATE_DIR="$adm_derv1" CONV_TREE_STATE_PATH="$tmp/derv-1.json" CLAUDE_SESSION_ID="sess-derv-1" \
+    NL_ATTRIBUTION_DERIVE_ROOT="$tmp/derv1-unused-root" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Sweep","prompt":"Please review docs/plans/derv-plan.md and check on Task 4 status."},"session_id":"sess-derv-1"}' >/dev/null 2>&1
+  local ledger_derv1; ledger_derv1=$(ls "$adm_derv1"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_derv1" ]] && grep -q '"attribution_source":"derived"' "$ledger_derv1" 2>/dev/null \
+      && grep -q '"plan":"derv-plan"' "$ledger_derv1" 2>/dev/null && grep -q '"task":"4"' "$ledger_derv1" 2>/dev/null; then
+    echo "PASS: DERV1 no header, prompt names plan+task -> attribution_source=derived with the matching plan/task"; pass=$((pass+1))
+  else
+    echo "FAIL: DERV1 expected attribution_source=derived plan=derv-plan task=4 in $ledger_derv1"; fail=$((fail+1))
+    [[ -n "$ledger_derv1" ]] && cat "$ledger_derv1"
+  fi
+  if [[ -n "$ledger_derv1" ]] && grep -q '"attributed":"0"' "$ledger_derv1" 2>/dev/null; then
+    echo "PASS: DERV1b attributed= (the STRICT header-only flag) stays 0 -- a derived id is never confused with a real header, even though attribution_source now shows a confident guess"; pass=$((pass+1))
+  else
+    echo "FAIL: DERV1b expected attributed=0 (strict flag unaffected by derivation) in $ledger_derv1"; fail=$((fail+1))
+  fi
+
+  # DERV1c: THE CRITICAL REGRESSION GUARD -- a derived attribution_source
+  # must NEVER emit task_started (SINK 1, the cockpit's GREEN chip). This is
+  # the exact invariant ROADMAP-FALSE-ETERNAL-RUNNING-01 fixed; Defect B's
+  # derivation tier must not resurrect it.
+  local plog_derv1c="$tmp/pl-derv1c"
+  PROGRESS_LOG_STATE_DIR="$plog_derv1c" CONV_TREE_STATE_PATH="$tmp/derv-1c.json" CLAUDE_SESSION_ID="sess-derv-1c" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Sweep","prompt":"Please review docs/plans/derv-plan.md and check on Task 4 status."},"session_id":"sess-derv-1c"}' >/dev/null 2>&1
+  if [[ ! -d "$plog_derv1c" || -z "$(ls -A "$plog_derv1c" 2>/dev/null)" ]]; then
+    echo "PASS: DERV1c a fully-derived (plan+task) dispatch STILL emits no task_started -- derivation feeds the governor ledger and the correlation marker only, never the green chip"; pass=$((pass+1))
+  else
+    echo "FAIL: DERV1c CRITICAL -- derived attribution leaked into task_started (plog=$(ls -A "$plog_derv1c" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # DERV2: dispatch-provenance marker (SINK 2) also picks up the derived
+  # plan/task -- proves the widening actually reaches the correlation
+  # marker, not just the governor ledger's diagnostic field.
+  local dp_derv2="$tmp/dp-derv2"
+  DISPATCH_PROVENANCE_STATE_DIR="$dp_derv2" CONV_TREE_STATE_PATH="$tmp/derv-2.json" CLAUDE_SESSION_ID="sess-derv-2" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Sweep","prompt":"Please review docs/plans/derv-plan.md and check on Task 4 status."},"session_id":"sess-derv-2"}' >/dev/null 2>&1
+  local dpfile_derv2; dpfile_derv2=$(ls "$dp_derv2"/*.json 2>/dev/null | head -n1)
+  if [[ -n "$dpfile_derv2" ]] && grep -q '"plan_slug":"derv-plan"' "$dpfile_derv2" 2>/dev/null && grep -q '"task_id":"4"' "$dpfile_derv2" 2>/dev/null; then
+    echo "PASS: DERV2 the dispatch-provenance correlation marker (SINK 2) also carries the derived plan/task -- the widening reaches the hint tier, not just the ledger"; pass=$((pass+1))
+  else
+    echo "FAIL: DERV2 expected dispatch-provenance marker plan_slug=derv-plan task_id=4 in $dpfile_derv2"; fail=$((fail+1))
+    [[ -n "$dpfile_derv2" ]] && cat "$dpfile_derv2"
+  fi
+
+  # DERV3: no header, prompt names NOTHING -- but the sandboxed repo root
+  # has EXACTLY ONE plan carrying `Status: ACTIVE` -> attribution_source=
+  # derived-partial (plan inferred from repo state, task NEVER fabricated --
+  # knowing "one active plan" says nothing about which of ITS tasks this
+  # dispatch is for).
+  local derv3_root="$tmp/derv3-root"
+  mkdir -p "$derv3_root/docs/plans"
+  cat >"$derv3_root/docs/plans/only-active-plan.md" <<'EOF'
+# Plan: Only Active
+
+Status: ACTIVE
+
+## Tasks
+
+- [ ] 1. x
+EOF
+  local adm_derv3="$tmp/adm-derv3"
+  ADM_STATE_DIR="$adm_derv3" CONV_TREE_STATE_PATH="$tmp/derv-3.json" CLAUDE_SESSION_ID="sess-derv-3" \
+    NL_ATTRIBUTION_DERIVE_ROOT="$derv3_root" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Sweep","prompt":"no plan or task mentioned anywhere in this prompt at all"},"session_id":"sess-derv-3"}' >/dev/null 2>&1
+  local ledger_derv3; ledger_derv3=$(ls "$adm_derv3"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_derv3" ]] && grep -q '"attribution_source":"derived-partial"' "$ledger_derv3" 2>/dev/null \
+      && grep -q '"plan":"only-active-plan"' "$ledger_derv3" 2>/dev/null && ! grep -q '"task":"' "$ledger_derv3" 2>/dev/null; then
+    echo "PASS: DERV3 no text signal, but the repo has exactly ONE Status:ACTIVE plan -> attribution_source=derived-partial, plan inferred, task correctly left UNRESOLVED (never fabricated)"; pass=$((pass+1))
+  else
+    echo "FAIL: DERV3 expected attribution_source=derived-partial plan=only-active-plan with no task in $ledger_derv3"; fail=$((fail+1))
+    [[ -n "$ledger_derv3" ]] && cat "$ledger_derv3"
+  fi
+
+  # DERV4: same shape as DERV3 but the repo directory exists with NO
+  # docs/plans/*.md carrying ACTIVE at all -> none (the zero-candidates
+  # path, a DISTINCT code branch from NLA2's nonexistent-directory path --
+  # both must land on the same honest "none" answer).
+  local derv4_root="$tmp/derv4-root"
+  mkdir -p "$derv4_root/docs/plans"
+  cat >"$derv4_root/docs/plans/done-plan.md" <<'EOF'
+# Plan: Done
+
+Status: COMPLETED
+
+## Tasks
+
+- [x] 1. x
+EOF
+  local adm_derv4="$tmp/adm-derv4"
+  ADM_STATE_DIR="$adm_derv4" CONV_TREE_STATE_PATH="$tmp/derv-4.json" CLAUDE_SESSION_ID="sess-derv-4" \
+    NL_ATTRIBUTION_DERIVE_ROOT="$derv4_root" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Sweep","prompt":"no plan or task mentioned anywhere in this prompt at all"},"session_id":"sess-derv-4"}' >/dev/null 2>&1
+  local ledger_derv4; ledger_derv4=$(ls "$adm_derv4"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_derv4" ]] && grep -q '"attribution_source":"none"' "$ledger_derv4" 2>/dev/null && ! grep -q '"plan":"' "$ledger_derv4" 2>/dev/null; then
+    echo "PASS: DERV4 a repo with docs/plans/ but ZERO Status:ACTIVE plans -> none (the completed-only plan is correctly never matched)"; pass=$((pass+1))
+  else
+    echo "FAIL: DERV4 expected attribution_source=none with no plan label in $ledger_derv4"; fail=$((fail+1))
+    [[ -n "$ledger_derv4" ]] && cat "$ledger_derv4"
+  fi
+
+  # DERV5: THE AMBIGUITY GUARD -- two SIMULTANEOUSLY-ACTIVE plans in the
+  # repo -> none, NEVER a guessed pick between them. This is the operator's
+  # own explicit rule ("never fabricate a task id ... an honest partial
+  # beats a guess") applied one level up: an ambiguous PLAN signal must
+  # contribute nothing too, not silently resolve to "whichever sorts first"
+  # (glob order is filesystem-dependent and NOT a defensible tie-break).
+  local derv5_root="$tmp/derv5-root"
+  mkdir -p "$derv5_root/docs/plans"
+  cat >"$derv5_root/docs/plans/active-a.md" <<'EOF'
+# Plan: Active A
+
+Status: ACTIVE
+
+## Tasks
+
+- [ ] 1. x
+EOF
+  cat >"$derv5_root/docs/plans/active-b.md" <<'EOF'
+# Plan: Active B
+
+Status: ACTIVE
+
+## Tasks
+
+- [ ] 1. x
+EOF
+  local adm_derv5="$tmp/adm-derv5"
+  ADM_STATE_DIR="$adm_derv5" CONV_TREE_STATE_PATH="$tmp/derv-5.json" CLAUDE_SESSION_ID="sess-derv-5" \
+    NL_ATTRIBUTION_DERIVE_ROOT="$derv5_root" \
+    bash "$SELF" --on-builder-dispatch <<<'{"tool_name":"Task","tool_input":{"description":"Sweep","prompt":"no plan or task mentioned anywhere in this prompt at all"},"session_id":"sess-derv-5"}' >/dev/null 2>&1
+  local ledger_derv5; ledger_derv5=$(ls "$adm_derv5"/ledger/*.jsonl 2>/dev/null | head -n1)
+  if [[ -n "$ledger_derv5" ]] && grep -q '"attribution_source":"none"' "$ledger_derv5" 2>/dev/null && ! grep -q '"plan":"' "$ledger_derv5" 2>/dev/null; then
+    echo "PASS: DERV5 TWO simultaneously-ACTIVE plans -> attribution_source=none, NEVER a guessed pick between them (the operator's own never-fabricate rule, applied to plan derivation)"; pass=$((pass+1))
+  else
+    echo "FAIL: DERV5 expected attribution_source=none (ambiguous, never guessed) in $ledger_derv5"; fail=$((fail+1))
+    [[ -n "$ledger_derv5" ]] && cat "$ledger_derv5"
   fi
 
   # NLA-STOP1: the END trigger. --on-stop reads the STOPPING session's OWN
@@ -3493,6 +3813,110 @@ _extract_task_id() {
 }
 
 # ============================================================================
+# ATTRIBUTION DERIVATION (Defect B, 2026-08-04 — operator proposal, adopted
+# verbatim: "should we just add a built-in identifier into every background
+# task that gets kicked off so that it's automatically always identified in
+# the appropriate plan or section?"). Today attribution depends on the
+# NL-ATTRIBUTION header being HAND-TYPED into a dispatch prompt — pure
+# reliance-on-memory, the weakest control rung, and it had already failed
+# twice in one session before this fix (T-prefixed ids no plan contains;
+# sessions attributed to nothing). This section adds a DERIVED fallback tier
+# for when no valid header is present, so attribution degrades gracefully
+# instead of collapsing to nothing.
+#
+# SCOPE, STATED EXACTLY: this fallback feeds TWO things only — (a) the
+# diagnostic `attribution_source` field + best-effort plan/task VALUES on
+# the governor ledger row (adm_admit emit-feed, below), and (b) SINK 2's
+# pre-existing free-text-fallback tier inside _emit_dispatch_provenance
+# (the dispatch-provenance correlation marker — already a "hint", never a
+# green-chip claim). It NEVER reaches SINK 1 (task_started, the cockpit's
+# GREEN chip) — that stays HEADER-AUTHORITATIVE ONLY, unchanged, per the
+# hard-won ROADMAP-FALSE-ETERNAL-RUNNING-01 rule directly above this block:
+# free-text/inferred attribution turning a chip green is the EXACT defect
+# class that fix closed (an ACCEPTANCE task no agent could be running got
+# marked started from prose). Widening SINK 1 to accept a derived id would
+# resurrect it. A derived id is diagnostic evidence, not a claim of fact.
+# ============================================================================
+
+# _derive_attribution_root — resolves the repo root the single-active-plan
+# fallback (below) scans. NL_ATTRIBUTION_DERIVE_ROOT is an explicit
+# override, honored ALWAYS (not gated to HARNESS_SELFTEST — this mirrors
+# ROADMAP_PLAN_SCAN_ROOT/DISPATCH_DIRECTIVES_ROOT's own unconditional-override
+# convention elsewhere in this repo, so a caller who genuinely wants a
+# different scan root in production is never blocked by a test-only gate);
+# absent that, `git rev-parse --show-toplevel` from this hook's own
+# inherited cwd — the dispatching orchestrator session's cwd, since a
+# PreToolUse hook always runs as a subprocess of that session. Empty on any
+# resolution failure (not a git dir, git unavailable) — never a throw, never
+# a guess.
+_derive_attribution_root() {
+  if [[ -n "${NL_ATTRIBUTION_DERIVE_ROOT:-}" ]]; then
+    printf '%s' "$NL_ATTRIBUTION_DERIVE_ROOT"; return 0
+  fi
+  git rev-parse --show-toplevel 2>/dev/null
+}
+
+# _derive_active_plan_slug <repo_root> — the ONE plan slug carrying
+# `Status: ACTIVE` under <repo_root>/docs/plans/*.md (archive/ excluded — an
+# archived plan is not what "the current work" means), or EMPTY when 0 or
+# >=2 plans match. NEVER guesses among multiple candidates: this repo's own
+# real docs/plans/ carries 3 simultaneously-ACTIVE plans as of 2026-08-04
+# (measured), so "pick one" would be exactly the fabrication the operator's
+# own directive forbids ("never fabricate ... an honest partial beats a
+# guess") — ambiguous is reported as absent, same as zero.
+_derive_active_plan_slug() {
+  local root="$1"
+  [[ -n "$root" && -d "$root/docs/plans" ]] || { printf ''; return 0; }
+  local f matched="" count=0
+  for f in "$root"/docs/plans/*.md; do
+    [[ -f "$f" ]] || continue
+    if grep -qm1 '^Status: ACTIVE[[:space:]]*$' "$f" 2>/dev/null; then
+      count=$((count + 1))
+      matched="$f"
+    fi
+  done
+  [[ "$count" -eq 1 ]] || { printf ''; return 0; }
+  local base; base="$(basename -- "$matched")"
+  printf '%s' "${base%.md}"
+}
+
+# _derive_attribution <text> -> plan|task|source ('|'-joined, same
+# convention as _extract_nl_attribution) — the FALLBACK used only when
+# _extract_nl_attribution found no valid header. THREE-TIER, in decreasing
+# confidence order:
+#   1. free-text prompt scrape — _extract_plan_slug / _extract_task_id
+#      (PRE-EXISTING, unchanged): the prompt itself names
+#      `docs/plans/<slug>.md` and/or "Task N".
+#   2. single-active-plan-in-repo (NEW, _derive_active_plan_slug above) —
+#      used ONLY when tier 1 named no plan at all. Can only ever supply a
+#      PLAN, never a task: knowing "this repo has exactly one active plan"
+#      says nothing about WHICH of that plan's tasks this dispatch targets,
+#      so task is always empty on this tier — fabricating one would violate
+#      the operator's own explicit "never fabricate a task id" rule.
+#   3. none — neither tier found anything.
+# source is exactly one of: derived (plan AND task both resolved, tier 1
+# only — tier 2 can never produce this), derived-partial (plan resolved,
+# task could not be), none (neither resolved).
+_derive_attribution() {
+  local text="$1"
+  local plan task
+  plan=$(_extract_plan_slug "$text")
+  task=$(_extract_task_id "$text")
+  if [[ -z "$plan" ]]; then
+    local root; root=$(_derive_attribution_root)
+    plan=$(_derive_active_plan_slug "$root")
+    task=""
+  fi
+  local source="none"
+  if [[ -n "$plan" && -n "$task" ]]; then
+    source="derived"
+  elif [[ -n "$plan" ]]; then
+    source="derived-partial"
+  fi
+  printf '%s|%s|%s' "$plan" "$task" "$source"
+}
+
+# ============================================================================
 # NL-ATTRIBUTION header (attribution-pipeline task, 2026-07-29 — operator
 # directive: "how do we ensure we don't keep running into this same damn
 # issue of you reporting something that's complete false" -- the START
@@ -3943,6 +4367,19 @@ _emit_dispatch_provenance() {
   local input="$1" sid="$2" child_id="$3"
   local h_plan="${4:-}" h_task="${5:-}" h_role="${6:-}" h_attributed="${7:-0}"
   local first_dispatch="${8:-1}"
+  # final_plan_in/final_task_in (Defect B, 2026-08-04): the CALLER's
+  # already-computed derivation result (header value when h_attributed=1,
+  # else whatever _derive_attribution + the partial-header merge produced —
+  # see _run_on_builder_dispatch/_run_on_spawn). Passed through rather than
+  # RE-DERIVED here so this function spends at most the ONE git spawn
+  # _derive_attribution_root needs, not a second one on top of it — "ONE
+  # parse of the dispatch text, reused by every downstream sink" (the
+  # NL-ATTRIBUTION header parse's own stated principle, applied to the
+  # derivation tier too). Both default to "" for any pre-existing caller
+  # that has not been updated to pass them (none exist in this repo as of
+  # this commit, but the positional-optional convention this file already
+  # uses throughout is preserved).
+  local final_plan_in="${9:-}" final_task_in="${10:-}"
 
   # (b) REPLAY GATE -- applies to BOTH sinks. A PreToolUse fire for a
   # dispatch identity this session already recorded is a transcript replay,
@@ -3972,15 +4409,26 @@ _emit_dispatch_provenance() {
     fi
   fi
 
-  # ---- SINK 2: dispatch-provenance marker (resolution UNCHANGED) ---------
+  # ---- SINK 2: dispatch-provenance marker (correlation hint — WIDENED,
+  # 2026-08-04, Defect B) ---------------------------------------------------
+  # Pre-existing header-then-free-text resolution, now extended with the
+  # SAME single-active-plan-in-repo fallback tier _derive_attribution adds
+  # for the governor ledger (see that function's own header — this sink was
+  # always the "looser hint, never a green-chip claim" tier per the TWO
+  # SINKS ARE NOT THE SAME SIGNAL block above, so widening its inference is
+  # the correct side of that line, exactly as the pre-existing comment
+  # already argued for the free-text tier this extends rather than replaces).
+  # Uses final_plan_in/final_task_in (the caller's ALREADY-computed result,
+  # header-partial-merge already applied there) rather than re-deriving —
+  # see this function's own header for why (no second git spawn).
   local slug task_id
   if [[ "$h_attributed" == "1" ]]; then
     slug="$h_plan"
     task_id="$h_task"
   else
-    slug=$(_extract_plan_slug "$text")
+    slug="$final_plan_in"
     [[ -z "$slug" ]] && return 0
-    task_id=$(_extract_task_id "$text")
+    task_id="$final_task_in"
   fi
   local ask_id; ask_id=$(_resolve_ask_id_for_plan_slug "$slug")
 
@@ -4036,7 +4484,38 @@ _run_on_builder_dispatch() {
   # (governor ledger, dispatch-provenance marker, WARN counter) so they can
   # never disagree with each other about what this dispatch claims.
   local h_plan h_task h_role h_attributed
-  IFS='|' read -r h_plan h_task h_role h_attributed <<<"$(_extract_nl_attribution "$(_dispatch_text "$input")")"
+  local dtext; dtext=$(_dispatch_text "$input")
+  IFS='|' read -r h_plan h_task h_role h_attributed <<<"$(_extract_nl_attribution "$dtext")"
+
+  # DERIVED FALLBACK (Defect B, 2026-08-04): an EXPLICIT header always wins
+  # (attribution_source=header) — _derive_attribution is consulted ONLY when
+  # none was found. final_plan/final_task feed the governor ledger's
+  # diagnostic fields ONLY (never SINK 1/task_started — see the
+  # ATTRIBUTION DERIVATION block's header comment above _derive_attribution
+  # for why that boundary is load-bearing, not incidental).
+  local final_plan="$h_plan" final_task="$h_task" attribution_source="none"
+  if [[ "$h_attributed" == "1" ]]; then
+    attribution_source="header"
+  else
+    local d_plan d_task d_source
+    IFS='|' read -r d_plan d_task d_source <<<"$(_derive_attribution "$dtext")"
+    # A PARTIAL header (h_plan and/or h_task parsed, but attributed=0
+    # because the OTHER field was missing) is a stronger signal than
+    # free-text/repo inference — an operator who typed `plan=X` meant it,
+    # even if `task=` was left off. Whatever the header itself parsed wins
+    # over the derivation tiers; source is then recomputed from whichever
+    # fields actually ended up populated, by either signal.
+    [[ -n "$h_plan" ]] && d_plan="$h_plan"
+    [[ -n "$h_task" ]] && d_task="$h_task"
+    if [[ -n "$d_plan" && -n "$d_task" ]]; then
+      d_source="derived"
+    elif [[ -n "$d_plan" ]]; then
+      d_source="derived-partial"
+    else
+      d_source="none"
+    fi
+    final_plan="$d_plan"; final_task="$d_task"; attribution_source="$d_source"
+  fi
 
   local lib; lib=$(_resolve_state_lib)
   local events
@@ -4064,6 +4543,15 @@ _run_on_builder_dispatch() {
   # _adm_key_allowed enum gates role/attributed same as plan/task; empty
   # values are dropped by adm_admit itself, so an absent header contributes
   # only attributed=0 (honest, never guessed).
+  #
+  # attribution_source= (Defect B, 2026-08-04): plan=/task= now carry
+  # final_plan/final_task (header value when attributed=1, else whatever
+  # _derive_attribution resolved, possibly empty) — attribution_source is
+  # the field that tells a reader HOW MUCH to trust them: "header" is a
+  # claim of fact, "derived"/"derived-partial" is a best-effort inference
+  # (never a claim SINK 1 acts on), "none" means neither resolved anything.
+  # attributed= is UNCHANGED (still strictly "a valid header was present")
+  # so no existing consumer of that field is affected by this addition.
   (
     # SUBSHELL, not brace group (round-3 review M1: 4th sibling of the same
     # containment sweep — a set -u abort inside the lib escapes
@@ -4072,7 +4560,8 @@ _run_on_builder_dispatch() {
     source "$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)/lib/admission-lib.sh" 2>/dev/null \
       && declare -F adm_admit >/dev/null 2>&1 \
       && adm_admit emit-feed kind="$([[ "${bg:-0}" == "1" ]] && printf bg || printf fg)" \
-           plan="$h_plan" task="$h_task" role="$h_role" attributed="$h_attributed" >/dev/null 2>&1
+           plan="$final_plan" task="$final_task" role="$h_role" attributed="$h_attributed" \
+           attribution_source="$attribution_source" >/dev/null 2>&1
   ) || true
 
   # Builder correlation ledger (observability + reconciler hint):
@@ -4203,16 +4692,21 @@ _run_on_builder_dispatch() {
     local prior_warns; prior_warns=$(grep -c 'WARN unattributed builder dispatch' "$LOG_FILE" 2>/dev/null | tr -d ' \n')
     [[ -n "$prior_warns" ]] || prior_warns=0
     warn_count=$((prior_warns + 1))
-    _log "WARN unattributed builder dispatch (no NL-ATTRIBUTION header) item=$item_id title=\"$title\" session=$sid — unattributed dispatch #$warn_count in this log file (running total across ALL sessions, not this one; restarts if the log is rotated or truncated) (doctrine/orchestrator-pattern.md names the header MANDATORY; this WARN never blocks the dispatch)"
+    # attribution_source/derived plan+task appended (Defect B, 2026-08-04):
+    # the substring "WARN unattributed builder dispatch" itself is UNCHANGED
+    # (both the counter grep two lines up and NLA2b's own self-test
+    # assertion match on it) — this only adds visibility into whether the
+    # fallback derivation compensated, and with what confidence.
+    _log "WARN unattributed builder dispatch (no NL-ATTRIBUTION header) item=$item_id title=\"$title\" session=$sid — unattributed dispatch #$warn_count in this log file (running total across ALL sessions, not this one; restarts if the log is rotated or truncated) (doctrine/orchestrator-pattern.md names the header MANDATORY; this WARN never blocks the dispatch) attribution_source=$attribution_source derived_plan=$final_plan derived_task=$final_task"
   fi
-  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid plan=$h_plan task=$h_task role=$h_role attributed=$h_attributed replay=$replay_field${warn_count:+ warn_count=$warn_count}"
+  _log "builder-dispatch item=$item_id node=$child_id tool=$tool bg=$bg title=\"$title\" session=$sid plan=$final_plan task=$final_task role=$h_role attributed=$h_attributed attribution_source=$attribution_source replay=$replay_field${warn_count:+ warn_count=$warn_count}"
 
   # ask-rooted-workstreams-p1 Task 3: best-effort task_started progress-log
   # emission + dispatch-provenance marker (see the TWO SINKS block above
   # that function for the full contract). Header fields AND the replay
   # signal are passed through: task_started is emitted ONLY for a
   # header-attributed dispatch on its first fire.
-  _emit_dispatch_provenance "$input" "$sid" "$child_id" "$h_plan" "$h_task" "$h_role" "$h_attributed" "$dispatch_is_new" || true
+  _emit_dispatch_provenance "$input" "$sid" "$child_id" "$h_plan" "$h_task" "$h_role" "$h_attributed" "$dispatch_is_new" "$final_plan" "$final_task" || true
 
   # ---- WAVE-O O.1 EMIT: bg-task-started (contract C2) --------------------
   # ONE marked emit line, per specs-o §O.1 deliverable 3. Scoped HONESTLY:
@@ -4264,7 +4758,21 @@ _run_on_builder_dispatch() {
 # Row schema (the fixture contract quoted in
 # adapters/claude-code/tests/fixtures/review-chain/README.md and
 # hooks/lib/review-chain-lib.sh's own header, both citing THIS writer):
-#   {"subagent_type":"<...>","model":"<...>","ts":<epoch>,"session_id":"<...>","artifact_ref":"<path-or-empty>"}
+#   {"subagent_type":"<...>","model":"<...>","ts":<epoch>,"session_id":"<...>","artifact_ref":"<path-or-empty>","task_id":"<id-or-empty>"}
+#
+# `task_id` (ADDITIVE field, gated-pipeline-master-2026-08 Task 25 / OD-022
+# — verify-obligation tracking): best-effort, SAME resolution order as the
+# dispatch-provenance marker's SINK 2 (see _emit_dispatch_provenance above):
+# the dispatch's NL-ATTRIBUTION `task=` value when the header is present,
+# else the free-text "Task N" scrape (_extract_task_id). Backward-compatible
+# — every row written before this change simply lacks the key, which reads
+# back as "" via `// empty` and is correctly excluded from obligation
+# tracking (hooks/lib/review-chain-lib.sh's rc_open_verify_obligations: a
+# row that cannot be attributed to a task can never open OR close an
+# obligation). Stored VERBATIM, never normalized here — a mis-authored
+# header (`task=T7` instead of `task=7`, the 2026-08-03 incident) lands
+# as-is; every READER normalizes a leading T/t defensively instead
+# (rc_open_verify_obligations' own header comment has the full rationale).
 #
 # ALWAYS-EXIT-0 WRITER CONTRACT (same as every other emit path in this
 # file): an unwritable ledger degrades to a logged line, never a failure —
@@ -4307,26 +4815,91 @@ _dispatch_ledger_model() {
   printf ''
 }
 
-# _dispatch_ledger_append <input-json> <subagent_type> <session_id> --
-# appends ONE JSONL row (see schema above) to $DISPATCH_LEDGER_PATH. Never
-# blocks the caller and never itself exits the process.
+# _ledger_known_task_ids <plan-path> -- prints every top-level task id from
+# a plan's own `## Tasks` checkbox list ("- [ ] N. ..." / "- [x] N. ..." --
+# the exact convention every plan in docs/plans/ uses, incl. this plan's own
+# Task 25 line), one per line. Empty output (never an error) when the plan
+# cannot be read -- a caller degrades to "cannot validate", never a false
+# WARN against a file it could not open.
+_ledger_known_task_ids() {
+  local plan_path="$1"
+  [[ -n "$plan_path" && -f "$plan_path" ]] || return 0
+  grep -oE '^- \[[ xX]\][[:space:]]+[0-9]+(\.[0-9]+)?\.' "$plan_path" 2>/dev/null \
+    | sed -E 's/^- \[[ xX]\][[:space:]]+//; s/\.$//'
+}
+
+# _ledger_task_id_known <plan-path> <task-id> -- rc 0 iff task-id (after the
+# SAME T/t-normalization rule as review-chain-lib.sh's _rc_norm_task_id --
+# duplicated as a one-liner here, not sourced: this writer's established
+# convention is never depending on a sibling hook/lib at its hot PostToolUse
+# call site) appears in the plan's own task list.
+_ledger_task_id_known() {
+  local plan_path="$1" tid="$2" norm known
+  [[ -n "$tid" ]] || return 1
+  norm="$tid"
+  [[ "$norm" =~ ^[Tt][0-9] ]] && norm="${norm:1}"
+  known="$(_ledger_known_task_ids "$plan_path")"
+  [[ -n "$known" ]] || return 1
+  printf '%s\n' "$known" | grep -qxF "$norm"
+}
+
+# _dispatch_ledger_append <input-json> <subagent_type> <session_id>
+#   [<task_id>] -- appends ONE JSONL row (see schema above) to
+# $DISPATCH_LEDGER_PATH. Never blocks the caller and never itself exits the
+# process.
+#
+# task_id VALIDATION (OD-023, operator directive 2026-08-03: "Claude should
+# never have to wonder what the right thing to call something is" —
+# triggered by the same T7-authoring incident OD-022's own header cites).
+# When task_id is non-empty and artifact_ref resolves to a real plan file
+# (relative to cwd, else the repo root — this hook's documented invocation
+# convention is cwd==repo-root, same assumption dispatch-chain-gate.sh's
+# --check already makes), the id is checked against that plan's OWN task
+# list. An id NOT found there NEVER loses the row (writer semantics: data
+# first) — it is written with `task_id_valid:"false"` PLUS a stderr WARN
+# naming the plan's real id set, so the mistake is loud at the moment it
+# happens rather than silently corrupting obligation tracking later.
+# task_id_valid is "true" (found), "false" (plan resolved, id not in its
+# list), or "unknown" (task_id empty, or the plan file could not be
+# resolved — never guessed either way).
 _dispatch_ledger_append() {
-  local input="$1" subagent="$2" sid="$3"
+  local input="$1" subagent="$2" sid="$3" task_id="${4:-}"
   [[ -n "$subagent" ]] || return 0
   _have jq || { _log "dispatch-ledger: no jq — degraded, no row written"; return 0; }
   local model artifact_ref ts row dir
   model="$(_dispatch_ledger_model "$input" "$subagent")"
   artifact_ref="$(_extract_artifact_ref "$(_dispatch_text "$input")")"
   ts=$(date +%s 2>/dev/null || echo 0)
-  row=$(jq -cn --arg st "$subagent" --arg m "$model" --argjson ts "$ts" --arg sid "$sid" --arg ar "$artifact_ref" \
-    '{subagent_type:$st, model:$m, ts:$ts, session_id:$sid, artifact_ref:$ar}' 2>/dev/null)
+
+  local task_id_valid="unknown"
+  if [[ -n "$task_id" && -n "$artifact_ref" ]]; then
+    local plan_path="$artifact_ref" repo_root
+    if [[ ! -f "$plan_path" ]]; then
+      repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+      [[ -n "$repo_root" ]] && plan_path="$repo_root/$artifact_ref"
+    fi
+    if [[ -f "$plan_path" ]]; then
+      if _ledger_task_id_known "$plan_path" "$task_id"; then
+        task_id_valid="true"
+      else
+        task_id_valid="false"
+        local known_ids
+        known_ids="$(_ledger_known_task_ids "$plan_path" | tr '\n' ',' | sed 's/,$//')"
+        _log "dispatch-ledger: task_id='$task_id' not found in ${plan_path}'s task list (known ids: ${known_ids:-<none>}) -- row written anyway (writer semantics: never lose data), flagged task_id_valid=false"
+        echo "[dispatch-ledger] WARN: task_id='$task_id' is not one of ${plan_path}'s real task ids (known: ${known_ids:-<none>}) -- OD-023 (2026-08-03): task ids must be deterministic, never guessed" >&2
+      fi
+    fi
+  fi
+
+  row=$(jq -cn --arg st "$subagent" --arg m "$model" --argjson ts "$ts" --arg sid "$sid" --arg ar "$artifact_ref" --arg tid "$task_id" --arg tidv "$task_id_valid" \
+    '{subagent_type:$st, model:$m, ts:$ts, session_id:$sid, artifact_ref:$ar, task_id:$tid, task_id_valid:$tidv}' 2>/dev/null)
   if [[ -z "$row" ]]; then
     _log "dispatch-ledger: row build failed (jq) — degraded, no row written"
     return 0
   fi
   dir="$(dirname "$DISPATCH_LEDGER_PATH")"
   if mkdir -p "$dir" 2>/dev/null && printf '%s\n' "$row" >>"$DISPATCH_LEDGER_PATH" 2>/dev/null; then
-    _log "dispatch-ledger row appended type=$subagent artifact_ref=${artifact_ref:-<empty>} path=$DISPATCH_LEDGER_PATH"
+    _log "dispatch-ledger row appended type=$subagent artifact_ref=${artifact_ref:-<empty>} task_id_valid=$task_id_valid path=$DISPATCH_LEDGER_PATH"
   else
     _log "dispatch-ledger unwritable ($DISPATCH_LEDGER_PATH) — degraded, no row written (writer contract: never fails the hook)"
   fi
@@ -4376,12 +4949,62 @@ _run_on_builder_complete() {
     # ONLY — see the block comment above _dispatch_ledger_append for why.
     local ledger_subagent
     ledger_subagent=$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // empty' 2>/dev/null)
-    _dispatch_ledger_append "$input" "$ledger_subagent" "$sid"
+    # task_id (Task 25 / OD-022 addition): NL-ATTRIBUTION header first (same
+    # parse SINK 2 already computes for the dispatch-provenance marker),
+    # free-text "Task N" scrape as fallback -- same two-tier resolution, not
+    # a third parser (M-3).
+    local ledger_h_task ledger_task_id
+    IFS='|' read -r _ ledger_h_task _ _ <<<"$(_extract_nl_attribution "$(_dispatch_text "$input")")"
+    ledger_task_id="$ledger_h_task"
+    [[ -z "$ledger_task_id" ]] && ledger_task_id=$(_extract_task_id "$(_dispatch_text "$input")")
+    _dispatch_ledger_append "$input" "$ledger_subagent" "$sid" "$ledger_task_id"
   fi
   local ef; ef=$(mktemp 2>/dev/null || echo "/tmp/cte-bdc-$$.json")
   printf '%s' "$events" >"$ef"
   _emit_dual "$lib" "$ef"
   rm -f "$ef" 2>/dev/null || true
+  exit 0
+}
+
+# ----------------------------------------------------------------------------
+# --open-verify-obligations <plan-slug>  (Task 25 / OD-022 query mode)
+#   Read-only: prints one open task id per line, then a summary line to
+#   stderr. Sources hooks/lib/review-chain-lib.sh's rc_open_verify_obligations
+#   (the ONE dispatch-ledger reader — M-3) rather than re-parsing
+#   $DISPATCH_LEDGER_PATH here. DELIBERATE, DISCLOSED exception to this
+#   file's own "never depend on a sibling hook at runtime" convention (see
+#   _dispatch_ledger_model's header comment): that convention protects the
+#   WRITER's PostToolUse reliability contract from a sibling hook's own
+#   failure mode; this is a read-only CLI query mode invoked on demand, not
+#   a hot hook body, and the ledger-reading logic already canonically lives
+#   in review-chain-lib.sh (rule 3) — sourcing it here keeps ONE
+#   implementation instead of a second, silently-driftable parser.
+#   Always exits 0 (a query, never a gate) — a caller (dispatch-chain-gate.sh
+#   calls rc_wip_limit_decision directly, already sourcing the same lib; this
+#   CLI mode is for anything OUTSIDE that process, e.g. a human or a script)
+#   parses the printed `open_verify_obligations=<N>` line or task-id list.
+# ----------------------------------------------------------------------------
+_run_open_verify_obligations() {
+  local slug="${1:-}"
+  if [[ -z "$slug" ]]; then
+    echo "usage: workstreams-emit.sh --open-verify-obligations <plan-slug>" >&2
+    exit 0
+  fi
+  local lib_dir; lib_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/lib" 2>/dev/null && pwd)"
+  local lib="$lib_dir/review-chain-lib.sh"
+  if [[ ! -f "$lib" ]]; then
+    echo "workstreams-emit.sh --open-verify-obligations: review-chain-lib.sh not found at $lib -- degraded, cannot query" >&2
+    exit 0
+  fi
+  # RC_LEDGER_PATH and DISPATCH_LEDGER_PATH are two names for the SAME file
+  # (Task 15's writer / Task 1's reader, resolved to the same default
+  # independently) — force agreement so a caller that overrides ONE (e.g. a
+  # self-test sandbox) is honored on both sides.
+  export RC_LEDGER_PATH="$DISPATCH_LEDGER_PATH"
+  # shellcheck source=./lib/review-chain-lib.sh
+  source "$lib"
+  rc_open_verify_obligations "$slug"
+  echo "open_verify_obligations=${RC_OPEN_OBLIGATIONS_COUNT} plan=${slug}" >&2
   exit 0
 }
 
@@ -4406,6 +5029,8 @@ case "$MODE" in
   # worktree→main-checkout sink resolution without a live GUI server.
   --resolve-gui-sink)  trap - ERR; _resolve_gui_state_path; printf '\n'; exit 0 ;;
   --resolve-gate-sink) trap - ERR; _resolve_gate_state_path; printf '\n'; exit 0 ;;
+  # Verify-obligation query (Task 25 / OD-022):
+  --open-verify-obligations) _run_open_verify_obligations "${2:-}" ;;
   *)
     # Unknown / no mode: never block. (A misconfigured wiring must not break
     # the orchestrator — writer, not gate.)

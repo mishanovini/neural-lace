@@ -24,8 +24,27 @@ jobs:
     # this runs in CI and tighten this back down if it is much lower.
     timeout-minutes: 30
     steps:
+      # fetch-depth: 0 (2026-08-04 CI triage, run 30870970472): several hook
+      # self-tests (dispatch-chain-gate.sh's "valid-chain-exit-zero", via
+      # review-chain-lib.sh's rc_file_first_commit_epoch/rc_record_head_
+      # commit_epoch) shell out to `git log --follow` over the checked-out
+      # repo's REAL history to compute a fixture's first-commit epoch. The
+      # actions/checkout@v5 default (fetch-depth: 1) leaves exactly ONE
+      # commit in the local object graph; git treats that shallow boundary
+      # as a rootless commit, so `git log -- <any tracked file>` reports
+      # EVERY file as "introduced" by that one boundary commit — collapsing
+      # rule 3's comparison window to a single instant (lo==hi==the
+      # boundary commit's own timestamp) regardless of the file's true
+      # history. PROVEN locally: a `git clone --depth 1` reproduces the
+      # exact CI failure (`self-test (valid-chain-exit-zero): FAIL`,
+      # window `[1785809388,1785809388]`, both bounds the boundary commit);
+      # the identical suite passes 40/40 against a full-history checkout.
+      # Full history removes the collapse at the source — no hook logic
+      # changed.
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Show shell + tool versions
         run: |
@@ -121,22 +140,40 @@ jobs:
             # `bash "$hook" --self-test` line below) — a stdin-draining bug in
             # gh-merge-canonical-gate.sh's "empty input" self-test fixture silently
             # truncated every run of this loop to ~30 of 83 discovered hooks, alphabetically
-            # stopping just before "h" (harness-doctor.sh is next). Now that the loop
-            # actually reaches it: 5 of 185 self-test scenarios FAIL, all the SAME shape —
-            # "jq branch produced NOTHING on a fixture that must report (silent no-op)" —
-            # for checks deterministic-process-proof (x2: dpp-jq-parity-red, dpp-jq-parity-
-            # grandfather), new-gate-evidence-bar (ngeb-jq-parity-red), claim-honesty
-            # (claim-honesty-jq-parity-red), budget-chains (budget-chains-jq-parity-red).
-            # HYPOTHESIZED: a jq-version-dependent expression (bash-vs-jq parity check) that
-            # this machine's jq happens to satisfy differently than the fixture assumes —
-            # UNVERIFIED, needs a session with context on the jq-parity harness (out of scope
-            # here — harness-doctor.sh is ~7000 lines and this is unrelated to either CI
-            # workflow this session was dispatched to fix). ALSO independently documented as
-            # extremely slow (~9 min standalone) in docs/reviews/2026-08-02-estate-entropy-
-            # triage.md — a second, pre-existing, already-tracked concern this allowlisting
-            # does not address. Tracking: nl-issue owed for "harness-doctor.sh --self-test:
-            # 5 jq-parity scenarios (dpp/ngeb/claim-honesty/budget-chains) fail cold in CI,
-            # newly-visible after the 2026-08-03 hooks-selftest.yml stdin-drain fix."
+            # stopping just before "h" (harness-doctor.sh is next). Originally 5 of 185
+            # self-test scenarios FAILed here, all the same shape — "jq branch produced
+            # NOTHING on a fixture that must report (silent no-op)".
+            #
+            # UPDATE 2026-08-04 (CI-red triage, root-caused — docs/backlog.md
+            # SELFTEST-SWEEP-NONODE-SHIM-WINDOWS-01): the "produced NOTHING" symptom was NOT
+            # a jq-expression bug. `_nonode_path()`'s PATH-shim used to symlink `bash` itself;
+            # a bash prefix-assignment (`PATH="$shim" bash ...`) re-resolves the command name
+            # through that shim, and a bare-symlinked `bash.exe` fails to load its companion
+            # DLLs on Windows/MSYS2 — the grandchild crashed before the check under test ever
+            # ran, so its (empty) output correctly-but-misleadingly read as "produced NOTHING".
+            # Fixed: `bash` removed from the shim; `_run_quick_nonode` resolves the REAL
+            # interpreter via `$BASH`/`command -v bash` BEFORE the PATH override. Re-verified
+            # end to end (`harness-doctor.sh --self-test`, this repo): 4 of the 5 scenarios now
+            # PASS — dpp-jq-parity-red, dpp-jq-parity-grandfather, ngeb-jq-parity-red,
+            # budget-chains-jq-parity-red. All three checks' jq expressions were independently
+            # re-verified correct standalone (ran directly against each scenario's exact
+            # fixture manifest/settings.json, byte-identical to the expected RED line) — there
+            # was never a jq-logic defect in these four.
+            #
+            # ONE scenario still fails, a GENUINE, DIFFERENT bug the shim fix exposed rather
+            # than caused: claim-honesty-jq-parity-red — extract_manifest_gates's jq branch
+            # emits an extra RED line the node branch does not, for the same fixture (real
+            # divergence, not a fixture artifact). Tracked in docs/backlog.md
+            # CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01; a separate session owns landing that fix as
+            # of this triage (2026-08-04). harness-doctor.sh stays in this allowlist for that
+            # one remaining scenario only — REMOVE this entry once
+            # CLAIM-HONESTY-JQ-NODE-DIVERGENCE-01 is resolved and `harness-doctor.sh
+            # --self-test` exits 0 (no other scenario may regress silently behind this entry —
+            # if `--self-test` output ever names a FAILED scenario other than
+            # claim-honesty-jq-parity-red, that is a new regression, not this tracked gap).
+            # ALSO independently documented as extremely slow (~9 min standalone) in
+            # docs/reviews/2026-08-02-estate-entropy-triage.md — a second, pre-existing,
+            # already-tracked concern this allowlisting does not address.
             "harness-doctor.sh"
           )
 
@@ -214,8 +251,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # fetch-depth: 0 — same shallow-clone-collapses-git-log-history class
+      # as the `hooks` job above; this job's *.sh tests are equally capable
+      # of shelling out to git-history-dependent helpers.
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Configure git identity
         run: |
@@ -246,6 +288,13 @@ jobs:
           KNOWN_FAILING_TESTS=(
             "acceptance-loop-self-test.sh"
             "agent-teams-self-test.sh"
+            # Machine-relative latency benchmark (asserts a 5ms/dispatch hot-path
+            # budget; its own header records 19-70ms baselines) — flakes on shared
+            # CI runners by construction. Owner: accountable-estate stream (it
+            # landed the file 2026-08-03). Tracked: nl-issue BENCH-ADMISSION-CI
+            # 2026-08-04. Remove when the bench gains a CI-aware mode or moves
+            # out of the CI-run tests/ set.
+            "bench-admission-hotpath.sh"
           )
 
           is_known_failing_test() {

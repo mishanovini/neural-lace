@@ -1,6 +1,6 @@
 # Plan — Model-Awareness Knowledge (Fable is top-tier + separately budgeted)
 
-Status: ACTIVE
+Status: COMPLETED
 Mode: docs
 Owner: interactive session (2026-07-24)
 Backlog items absorbed: none
@@ -38,4 +38,12 @@ separate, reviewed change — this plan does not itself modify any always-loaded
 - 2026-07-29: adapters/claude-code/hooks/model-pin-gate.sh — exhausted-tier reroute backstop: blocks a dispatch still pinned to a tier marked unavailable, naming the override.
 - 2026-07-29: adapters/claude-code/hooks/session-start-digest.sh — SessionStart reconcile splice so the borrow ends by itself when the budget resets (operator: "Opus is a fallback, not the primary option").
 - 2026-07-29: adapters/claude-code/doctrine/model-selection.md — corrected: the previous text claimed "runtime applies the fallback", which no code implements.
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: Task 1 (lesson) done; the follow-up
+task's actual deliverable (`doctrine/model-selection.md` correction + `model-availability.sh`
+fallback mechanism) confirmed on master via `46d9f3c6` and file presence, matching the
+In-flight-scope-updates note above (already documents this landing 2026-07-29). No further
+build work needed. Status flipped ACTIVE -> COMPLETED.
 - 2026-07-29: adapters/claude-code/doctrine/model-selection-full.md — same correction, with the three verified facts and the real procedure.

@@ -72,7 +72,7 @@ UI states + a11y bindings + findability; badge law at the renderer; badge-storm 
 event-triggered coord publish (writer-lib dirty marker + full-cycle floor) + person grouping;
 the four absorbed UI-polish items; needs-you cold-reader lint warn→block ON THE
 INTERACTIVE/MODEL-INVOKED ADD PATH ONLY (mechanical callers store-and-quarantine — A1).
-OUT: Circuit P1 (own plan; the propose/partial-accept surface ships there, landing on THIS
+OUT: the product-repo P1 plan (own plan; the propose/partial-accept surface ships there, landing on THIS
 surface's Requests/Roadmap); the chat sign-off Stop-gate (harness plan, nl-issue filed); INLINE
 Inbox answering (v1 = pointer + copyable reply stub; inline is the pending-decision follow-on).
 ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's activation).
@@ -588,8 +588,8 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
   into task 9's own line above.
 - 2026-07-30: `docs/backlog.md` — Round 15 files one follow-up:
   `ROADMAP-MULTI-PROJECT-CONFIG-NOT-SET-01` (the Roadmap's own multi-repo scan has no
-  per-machine config on this machine; Circuit's plans never reach the Roadmap tree even though
-  the Docs browser already knows about Circuit) — found live while verifying the ledger's R9-8
+  per-machine config on this machine; that repo's plans never reach the Roadmap tree even though
+  the Docs browser already knows about it) — found live while verifying the ledger's R9-8
   row, not part of the round's own dispatched scope.
 - 2026-07-30: `.gitignore` — a single-file re-include (`!docs/reviews/cockpit-ui-requirements-ledger.md`)
   for the new standing ledger above: the repo's own `docs/reviews/*` convention gitignores
@@ -716,7 +716,7 @@ ABSORBS: `docs/plans/cockpit-ui-polish.md` (flip it SUPERSEDED on this plan's ac
    come from?" answerable cold in <60s (C6).
 
 ## Out-of-scope scenarios
-Circuit's propose/partial-accept meeting-items surface (Circuit P1 ships it; this plan's
+the product repo's propose/partial-accept meeting-items surface (the product-repo P1 plan ships it; this plan's
 Requests view is where approved items land). The chat sign-off Stop-gate (separate harness
 work). Inline Inbox answering (v1 ships pointer + copyable stub; see the PENDING decision).
 
@@ -877,8 +877,8 @@ Task 1 first, alone: the derived status of ONE real archived plan rendering corr
   structural) + 12 MET(selftest) + 4 MET(carried) + 1 PARTIAL + 3 SUPERSEDED + 1 UNBUILT + 0
   REGRESSED. Live-verified gap found IN THE COURSE of building the ledger (not previously
   tracked): `ROADMAP-MULTI-PROJECT-CONFIG-NOT-SET-01` — the Roadmap's own multi-repo scan has no
-  per-machine config on this machine, so Circuit's real plans never reach the Roadmap even
-  though the Docs browser already knows about Circuit; logged to backlog.
+  per-machine config on this machine, so that repo's real plans never reach the Roadmap even
+  though the Docs browser already knows about it; logged to backlog.
   (6) BUILD-ORDER BANDING (coordinator mid-round, operator verbatim: "the Workstreams UI still
   doesn't actually represent the actual order of building, at least not at the plan level"):
   `roadmap.js#bandPlanItems` (new pure function, real-execution vm-sandbox tested) splits each

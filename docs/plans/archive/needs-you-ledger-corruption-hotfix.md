@@ -1,5 +1,5 @@
 # Plan: needs-you.sh ledger-corruption hotfix (validity-guard sweep + 3-state inbox contract)
-Status: ACTIVE
+Status: COMPLETED
 Execution Mode: direct
 Mode: code
 Backlog items absorbed: none
@@ -247,8 +247,19 @@ real-HTTP-request-driven 32/0 pass is the demonstration for that half.
   versus what was already covered by JSON.parse's own strictness.
 
 ## Definition of Done
-- [ ] All 3 tasks checked off
-- [ ] All tests pass on both bash interpreters + node (see Closure Contract expected outputs)
-- [ ] Linting/formatting clean (no syntax errors — `bash -n`/`node -c` clean on all 5 touched/created files)
-- [ ] SCRATCHPAD.md updated with final state
-- [ ] Completion report appended to this plan file
+- [x] All 3 tasks checked off
+- [x] All tests pass on both bash interpreters + node (see Closure Contract expected outputs)
+- [x] Linting/formatting clean (no syntax errors — `bash -n`/`node -c` clean on all 5 touched/created files)
+- [x] SCRATCHPAD.md updated with final state
+- [x] Completion report appended to this plan file
+
+## Completion Report (drain disposition — gated-pipeline-master-2026-08 Task 21, REQ-C2, 2026-08-03)
+
+Found landed-but-unflipped during the REQ-C2 estate drain: the plan's own goal (validity-guarded
+state-file init + 3-state inbox contract) matches commit `9e822ca1` "fix(needs-you-incident):
+validity-guarded state-file init + 3-state inbox contract" (2026-07-29), independently
+re-verified this pass via `git log 9e822ca1 -1` (commit exists, message matches) and
+`git merge-base --is-ancestor 9e822ca1 master` (rc=0, confirmed ancestor of current master).
+No further build work needed — this is a bookkeeping close, not a re-verification of the
+underlying fix (task-verifier was never invoked at the time; the code shipped directly).
+Status flipped ACTIVE -> COMPLETED.

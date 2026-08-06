@@ -4,8 +4,9 @@ name: Server-side enforcement
 # biggest security gap. The hook chain is only as strong as its non-
 # bypassability." This workflow runs the same local hooks server-side
 # so a `git commit --no-verify` or `git push --no-verify` can no longer
-# slip past the perimeter — branch-protection requires this check to
-# pass before merge.
+# slip past the perimeter — the run goes RED on failure (red CI is
+# stop-and-fix in this harness; NOT branch-protection-required as of
+# 2026-08-04 — only pr-template-check's validate is a required check).
 
 on:
   push:
@@ -187,6 +188,18 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
+        with:
+          # fetch-depth: 0 (2026-08-04 CI triage, run 30953086873): this job
+          # was the one actions/checkout@v5 step in this file WITHOUT an
+          # explicit fetch-depth, defaulting to a depth-1 (shallow) clone.
+          # a6745d51 already proved the exact same shallow-boundary class
+          # in hooks-selftest.yml -- a depth-1 checkout collapses git-log
+          # -based history reads to the single boundary commit. This hook
+          # sources observability-derive.sh (git-log-dependent helpers) at
+          # every invocation; matching hooks-selftest.yml's fix here closes
+          # the identical latent hazard rather than leaving this job the
+          # one shallow outlier among its four siblings in this file.
+          fetch-depth: 0
 
       - name: Configure git identity
         run: |
@@ -195,7 +208,24 @@ jobs:
 
       - name: Run plan-edit-validator.sh --self-test
         shell: bash
-        run: bash adapters/claude-code/hooks/plan-edit-validator.sh --self-test
+        run: |
+          set +e
+          # Capture combined output so a hard crash BEFORE any scenario
+          # prints (the 2026-08-04 red gave zero scenario-level diagnostics
+          # in the job log) still leaves a full transcript + explicit PASS/
+          # FAIL/summary grep behind, instead of just the bare exit code.
+          bash adapters/claude-code/hooks/plan-edit-validator.sh --self-test > /tmp/pev-selftest.log 2>&1
+          code=$?
+          echo "----- plan-edit-validator.sh --self-test: full output -----"
+          cat /tmp/pev-selftest.log
+          echo "----- end full output (exit $code) -----"
+          if [[ $code -ne 0 ]]; then
+            echo "::error::plan-edit-validator.sh --self-test exited $code"
+            echo "----- FAIL-only lines -----"
+            grep -E 'FAIL|self-test summary|error|Error' /tmp/pev-selftest.log || echo "(no FAIL/summary/error lines matched -- script likely crashed before any scenario ran; see full output above)"
+            exit "$code"
+          fi
+          echo "plan-edit-validator self-test: PASS"
 
   pr-template-redundancy:
     name: PR-template validator (already wired separately; re-run here for atomicity)

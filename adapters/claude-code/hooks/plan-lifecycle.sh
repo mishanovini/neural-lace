@@ -11,10 +11,14 @@
 #
 #   2. Auto-archival on terminal status. When an Edit or Write
 #      changes the plan's `Status:` field from a non-terminal value
-#      (ACTIVE / DEFERRED, etc.) to a terminal value (COMPLETED /
-#      DEFERRED / ABANDONED / SUPERSEDED), execute `git mv` to move
-#      the plan file (and its `<slug>-evidence.md` companion if it
-#      exists) into `docs/plans/archive/`. Emit a system message
+#      (DRAFT / PROPOSED / ACTIVE) to a terminal-and-archiving value
+#      (COMPLETED / SUPERSEDED / ABANDONED / DEFERRED — see
+#      adapters/claude-code/schemas/plan-status.schema.json's
+#      `statuses[].lifecycle.triggers_archival`, the source of truth for
+#      this list), execute `git mv` to move the plan file (and its
+#      `<slug>-evidence.md` companion if it exists) into
+#      `docs/plans/archive/` (or `docs/plans/deferred/` for DEFERRED —
+#      `lifecycle.archive_subdir`, ADR 052). Emit a system message
 #      pointing readers at the new path.
 #
 # This is a PostToolUse hook. PostToolUse runs AFTER the tool already
@@ -89,6 +93,31 @@ SCRIPT_NAME="plan-lifecycle.sh"
 # BASH_SOURCE[0] at call time.
 _PL_HOOK_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 
+# THE canonical plan-status enum + lifecycle data (plan-status-schema-and-
+# doctrine task, 2026-08-04). Sibling of this hooks/ dir under adapters/
+# claude-code/ — same relative layout in the source repo AND the installed
+# ~/.claude/ copy, since install.sh syncs hooks/ and schemas/ wholesale
+# (see that file's schemas/ sync step). is_terminal_status() and the
+# archive-vs-deferred destination split below read THIS file via `jq`
+# instead of each carrying their own hardcoded status list. `jq` was
+# chosen over a generated bash include + staleness check: jq is already a
+# pervasive dependency across this codebase's hooks (see the `command -v
+# jq` guard pattern in agent-design-gate.sh, bug-persistence-gate.sh,
+# claude-md-hygiene-gate.sh, and dozens more), so reading the schema
+# directly costs nothing a generated artifact wouldn't also cost, while a
+# generated include adds a SECOND file that must be regenerated on every
+# schema edit and a staleness gate whose own false-negative would be a
+# brand-new failure class this hook doesn't otherwise have — one source
+# of truth beats a derived one that can silently drift.
+# PLAN_STATUS_SCHEMA_OVERRIDE: test-only injection point (matches this
+# codebase's `_OVERRIDE` env-var convention — see LOCAL_EDIT_STATE_DIR_OVERRIDE,
+# CRNTW_STATE_DIR_OVERRIDE, LIVE_DIR_OVERRIDE). --self-test uses it to point
+# at a fixture schema with deliberately mutated lifecycle data, proving
+# is_terminal_status()/archive_subdir_for_status() actually consult the
+# schema's live content rather than coincidentally matching the hardcoded
+# fallback (Scenario 22 below). Not a documented production knob.
+_PL_STATUS_SCHEMA="${PLAN_STATUS_SCHEMA_OVERRIDE:-$_PL_HOOK_DIR/../schemas/plan-status.schema.json}"
+
 # ---------- helpers ----------------------------------------------------
 
 # Normalize a path for matching: forward slashes only.
@@ -96,9 +125,14 @@ normalize_path() {
   printf '%s' "$1" | tr '\\' '/'
 }
 
-# Extract the Status value from a content blob (stdin). Returns
-# uppercase token (ACTIVE / COMPLETED / DEFERRED / ABANDONED /
-# SUPERSEDED / etc.) or empty if no Status line.
+# Extract the Status value from a content blob (stdin). Returns the
+# uppercase token — one of the 8 canonical values in
+# adapters/claude-code/schemas/plan-status.schema.json (DRAFT / PROPOSED /
+# ACTIVE / COMPLETED / SUPERSEDED / DEFERRED / ABANDONED / REFERENCE) in
+# the common case, but this awk scan does not itself validate against
+# that enum — it returns whatever uppercase token follows `Status:`,
+# unrecognized values included, and leaves recognition to
+# is_terminal_status() below. Empty if no Status line.
 #
 # We only look at the first matching line (plan files have one Status
 # field at the top).
@@ -114,12 +148,49 @@ extract_status() {
 }
 
 # Returns 0 if the given status string is a terminal status, else 1.
-# Terminal statuses trigger archival.
+# Terminal statuses trigger archival. Schema-driven: reads
+# `.statuses[] | select(.token==<status>) | .lifecycle.triggers_archival`
+# from _PL_STATUS_SCHEMA when `jq` is available and the schema file
+# exists and parses; every OTHER outcome (no jq, schema missing, schema
+# unreadable/malformed, or the token simply isn't found — e.g. an
+# unrecognized freelanced status this hook has never had an opinion on)
+# falls through to the hardcoded set below, which is the exact behavior
+# this hook shipped with before the schema existed. A PostToolUse hook
+# must never crash or silently make the WRONG archival move over a
+# missing dependency, so "can't reach the schema" degrades to "behave
+# exactly like before", never to "guess" or "abort".
 is_terminal_status() {
+  if command -v jq >/dev/null 2>&1 && [ -f "$_PL_STATUS_SCHEMA" ]; then
+    local hit
+    hit=$(jq -r --arg t "$1" '.statuses[]? | select(.token == $t) | .lifecycle.triggers_archival' "$_PL_STATUS_SCHEMA" 2>/dev/null)
+    case "$hit" in
+      true) return 0 ;;
+      false) return 1 ;;
+    esac
+    # empty/malformed jq output — fall through to the hardcoded fallback.
+  fi
   case "$1" in
     COMPLETED|DEFERRED|ABANDONED|SUPERSEDED) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+# archive_subdir_for_status <status> — echoes the docs/plans/ subdirectory
+# a terminal status archives into: "archive" for genuinely-done work
+# (COMPLETED/SUPERSEDED/ABANDONED), "deferred" for DEFERRED specifically
+# (ADR 052 — paused-but-still-intended work gets its own plan-level
+# backlog, distinct from archive/). Schema-driven the same way as
+# is_terminal_status(above); only meaningful when is_terminal_status "$1"
+# is true — callers guard accordingly and never call this for a
+# non-terminal status.
+archive_subdir_for_status() {
+  if command -v jq >/dev/null 2>&1 && [ -f "$_PL_STATUS_SCHEMA" ]; then
+    local hit
+    hit=$(jq -r --arg t "$1" '.statuses[]? | select(.token == $t) | (.lifecycle.archive_subdir // empty)' "$_PL_STATUS_SCHEMA" 2>/dev/null)
+    if [ -n "$hit" ]; then printf '%s\n' "$hit"; return 0; fi
+  fi
+  # Fallback: pre-schema hardcoded rule — DEFERRED is the only non-"archive" dest.
+  if [ "$1" = "DEFERRED" ]; then printf 'deferred\n'; else printf 'archive\n'; fi
 }
 
 # Resolve the toplevel of the git repo CONTAINING the given file path —
@@ -718,7 +789,7 @@ EOF
   if [ -z "$file_repo_root" ]; then return 0; fi
 
   # Compute target path. Keep the same basename.
-  # DESTINATION SPLIT (ADR 051 / Misha 2026-06-04): DEFERRED is terminal for
+  # DESTINATION SPLIT (ADR 052 / Misha 2026-06-04): DEFERRED is terminal for
   # EDITING (no more edits expected → the plan rests) but NOT done for BUILDING
   # (the work is still intended). So DEFERRED routes to docs/plans/deferred/ —
   # the "intended but not currently active" category, a plan-level backlog —
@@ -726,7 +797,7 @@ EOF
   # → archive/.
   local repo_root archive_dir archive_path base evidence_src evidence_dest dest_subdir
   repo_root="$file_repo_root"
-  if [ "$post_status" = "DEFERRED" ]; then dest_subdir="deferred"; else dest_subdir="archive"; fi
+  dest_subdir=$(archive_subdir_for_status "$post_status")
   archive_dir="$repo_root/docs/plans/$dest_subdir"
   base=$(basename "$rel")
   archive_path="$archive_dir/$base"
@@ -1647,6 +1718,83 @@ EOP
   fi
   if [ -f docs/plans/case21.md ]; then
     echo "FAIL scenario 21: source file still present after a MultiEdit-driven archival." >&2
+    exit 1
+  fi
+
+  # ---- Scenario 22 (plan-status-schema-and-doctrine task, 2026-08-04):
+  # PLAN_STATUS_SCHEMA_OVERRIDE proves is_terminal_status()/
+  # archive_subdir_for_status() actually CONSULT live schema content at
+  # call time, rather than coincidentally matching their hardcoded
+  # fallback (which would make every scenario above pass even if the
+  # schema-reading code were dead). The fixture below flips two facts
+  # relative to the real production schema: (a) COMPLETED no longer
+  # triggers archival — a real terminal token that normally DOES — and
+  # (b) DEFERRED's archive_subdir becomes "archive" instead of
+  # "deferred". A hook that silently fell back to hardcoded logic would
+  # fail both 22a and 22b.
+  FIXTURE_SCHEMA="$TMP/fixture-plan-status.schema.json"
+  jq '(.statuses[] | select(.token=="COMPLETED") | .lifecycle.triggers_archival) |= false
+      | (.statuses[] | select(.token=="DEFERRED") | .lifecycle.archive_subdir) |= "archive"' \
+    "$_PL_HOOK_DIR/../schemas/plan-status.schema.json" > "$FIXTURE_SCHEMA"
+
+  # 22a: under the fixture, flipping to COMPLETED must NOT archive.
+  cat > docs/plans/case22a.md <<'EOP'
+# Plan: Case 22a (schema-driven no-archive)
+Status: ACTIVE
+EOP
+  git add docs/plans/case22a.md
+  git commit -q -m "plan: case22a"
+  cat > docs/plans/case22a.md <<'EOP'
+# Plan: Case 22a (schema-driven no-archive)
+Status: COMPLETED
+EOP
+  EDIT22A_INPUT=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$TMP/docs/plans/case22a.md")
+  OUT22A=$(CLAUDE_TOOL_INPUT="$EDIT22A_INPUT" PLAN_STATUS_SCHEMA_OVERRIDE="$FIXTURE_SCHEMA" bash "$_PL_HOOK_DIR/plan-lifecycle.sh" 2>&1 || true)
+  if [ -f docs/plans/archive/case22a.md ] || [ ! -f docs/plans/case22a.md ]; then
+    echo "FAIL scenario 22a: fixture schema sets COMPLETED.triggers_archival=false, but the plan was archived anyway -- is_terminal_status() is not reading the schema. Got:" >&2
+    echo "$OUT22A" >&2
+    exit 1
+  fi
+
+  # 22b: under the SAME fixture, flipping to DEFERRED must land in
+  # archive/, NOT deferred/.
+  cat > docs/plans/case22b.md <<'EOP'
+# Plan: Case 22b (schema-driven destination)
+Status: ACTIVE
+EOP
+  git add docs/plans/case22b.md
+  git commit -q -m "plan: case22b"
+  cat > docs/plans/case22b.md <<'EOP'
+# Plan: Case 22b (schema-driven destination)
+Status: DEFERRED
+EOP
+  EDIT22B_INPUT=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$TMP/docs/plans/case22b.md")
+  OUT22B=$(CLAUDE_TOOL_INPUT="$EDIT22B_INPUT" PLAN_STATUS_SCHEMA_OVERRIDE="$FIXTURE_SCHEMA" bash "$_PL_HOOK_DIR/plan-lifecycle.sh" 2>&1 || true)
+  if [ ! -f docs/plans/archive/case22b.md ] || [ -f docs/plans/deferred/case22b.md ]; then
+    echo "FAIL scenario 22b: fixture schema sets DEFERRED.archive_subdir=archive, but the plan did not land in archive/ -- archive_subdir_for_status() is not reading the schema. Got:" >&2
+    echo "$OUT22B" >&2
+    exit 1
+  fi
+
+  # 22c: sanity — WITHOUT the override, the real production schema still
+  # governs (DEFERRED -> deferred/), proving the override is genuinely
+  # test-only and default (production) behavior is untouched by its
+  # existence.
+  cat > docs/plans/case22c.md <<'EOP'
+# Plan: Case 22c (no override -- real schema governs)
+Status: ACTIVE
+EOP
+  git add docs/plans/case22c.md
+  git commit -q -m "plan: case22c"
+  cat > docs/plans/case22c.md <<'EOP'
+# Plan: Case 22c (no override -- real schema governs)
+Status: DEFERRED
+EOP
+  EDIT22C_INPUT=$(printf '{"tool_name":"Edit","tool_input":{"file_path":"%s"}}' "$TMP/docs/plans/case22c.md")
+  OUT22C=$(CLAUDE_TOOL_INPUT="$EDIT22C_INPUT" bash "$_PL_HOOK_DIR/plan-lifecycle.sh" 2>&1 || true)
+  if [ ! -f docs/plans/deferred/case22c.md ]; then
+    echo "FAIL scenario 22c: without PLAN_STATUS_SCHEMA_OVERRIDE, DEFERRED must route to deferred/ per the real production schema. Got:" >&2
+    echo "$OUT22C" >&2
     exit 1
   fi
 

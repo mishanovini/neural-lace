@@ -34,6 +34,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { execFileSync, spawnSync } = require('child_process');
 const projects = require('../config/projects.js');
 
 // ============================================================
@@ -64,12 +65,145 @@ function heartbeatStateDir() {
 
 // mainRepoRoot() — best-effort "this repo's root" for resolving plan files
 // (and, in server.js, NEEDS-YOU.md/operator-todo.md/backlog.md) when a
-// per-ask `repo` field is absent/unreachable. config/projects.js's
-// selfRepoRoot() already computes exactly this (the conv-tree-ui repo root,
-// worktree-pool-aware) — reused rather than re-derived (no git dependency at
-// read time).
+// per-ask `repo` field is absent/unreachable.
+//
+// STALE-CHECKOUT FIX (2026-08-04 operator complaint: "the status still shows
+// a lot of things not complete"). config/projects.js's selfRepoRoot() only
+// answers "where do the RUNNING SERVER's own files live" — a pure __dirname
+// climb, no git awareness. When the cockpit is launched from a git
+// WORKTREE of this repo (this harness's own standard per-builder-session
+// pattern — a worktree under a pool dir, or an operator-maintained stable
+// worktree like `workstreams-ui-server`), that self-path is whichever
+// commit that worktree's branch happens to be checked out at — which can
+// sit dozens of commits behind origin/master indefinitely (observed:
+// 36 commits behind, 11/25 plan-progress checkboxes rendered instead of
+// 24/25). The operator's own repo-root convention already distinguishes
+// "self" from "the main checkout" for exactly this reason — see
+// adapters/claude-code/hooks/lib/nl-paths.sh's nl_main_checkout_root()
+// (bash-only; this is the Node equivalent of the SAME git-common-dir
+// technique, applied to THIS repo's own worktree, not the neural-lace
+// harness meta-repo nl-paths.sh resolves).
+//
+// A linked worktree's `git rev-parse --git-dir` differs from
+// `--git-common-dir` (the worktree's own gitdir lives under
+// `<main>/.git/worktrees/<name>`; the COMMON dir is always `<main>/.git`).
+// When they differ, the main checkout's root is `dirname(git-common-dir)` —
+// deterministic, no config file or registry lookup needed, and correct even
+// for a worktree the operator created by hand today. When they're equal
+// (self already IS a normal, non-worktree checkout, or git is unavailable/
+// this isn't a git dir at all), self stands unchanged — SAME behavior as
+// before this fix for every non-worktree deployment.
+//
+// ROADMAP_PLAN_SCAN_ROOT (roadmap-routes.js/inbox-routes.js) and every
+// other mainRepoRoot() consumer's own env overrides are UNCHANGED — this
+// function is a fallback, evaluated only when no override applies; those
+// call sites' `process.env.X || deriveLib.mainRepoRoot()` short-circuit
+// means this new git spawn never fires in a sandboxed self-test that sets
+// its own override (roadmap-routes.selftest.js / inbox-routes.selftest.js).
+//
+// PROCESS-LIFETIME CACHE (not a TTL): a running server's OWN file location
+// and worktree topology cannot change while it is running, so this is
+// computed at most ONCE per process and memoized forever after — not
+// re-spawned per request, never a poll. See gitInfoCacheGet below for the
+// (bounded-TTL, request-triggered-not-timer-driven) sibling cache used for
+// the staleness signal, which DOES need periodic refresh since HEAD/
+// origin-master genuinely change while the process runs.
+function gitFieldSync(args, cwd) {
+  try {
+    return String(execFileSync('git', args, {
+      cwd: cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000,
+    })).trim();
+  } catch (_) { return ''; } // no git binary / not a git dir / any spawn failure -> honest '', never a throw
+}
+
+// deriveCanonicalRoot(self, gitDirRaw, commonDirRaw) — the PURE decision
+// (no spawn, no I/O) extracted so it is unit-testable without faking git or
+// this process's own real checkout location. `gitDirRaw`/`commonDirRaw` are
+// whatever `git rev-parse --git-dir`/`--git-common-dir` printed (possibly
+// relative, possibly '' on failure) for cwd=self.
+function deriveCanonicalRoot(self, gitDirRaw, commonDirRaw) {
+  if (!gitDirRaw || !commonDirRaw) return { root: self, redirectedFromWorktree: false };
+  let gitDirAbs, commonDirAbs;
+  try {
+    gitDirAbs = path.resolve(self, gitDirRaw);
+    commonDirAbs = path.resolve(self, commonDirRaw);
+  } catch (_) { return { root: self, redirectedFromWorktree: false }; }
+  if (gitDirAbs === commonDirAbs) return { root: self, redirectedFromWorktree: false };
+  // Linked worktree: the main checkout's root is the parent of the COMMON
+  // .git dir (every linked worktree's git-dir lives under
+  // <main>/.git/worktrees/<name>; the common dir is always <main>/.git).
+  return { root: path.dirname(commonDirAbs), redirectedFromWorktree: true };
+}
+
+let _canonicalRootCache = null; // { root, redirectedFromWorktree, selfRoot } | null
+function resolveCanonicalRepoRoot() {
+  if (_canonicalRootCache) return _canonicalRootCache;
+  let self;
+  try { self = projects.selfRepoRoot(); } catch (_) { self = process.cwd(); }
+  const gitDirRaw = gitFieldSync(['rev-parse', '--git-dir'], self);
+  const commonDirRaw = gitFieldSync(['rev-parse', '--git-common-dir'], self);
+  const decided = deriveCanonicalRoot(self, gitDirRaw, commonDirRaw);
+  _canonicalRootCache = { root: decided.root, redirectedFromWorktree: decided.redirectedFromWorktree, selfRoot: self };
+  return _canonicalRootCache;
+}
+
 function mainRepoRoot() {
-  try { return projects.selfRepoRoot(); } catch (_) { return process.cwd(); }
+  try { return resolveCanonicalRepoRoot().root; } catch (_) { return process.cwd(); }
+}
+
+// mainRepoRootInfo() — the SAME resolution as mainRepoRoot(), plus the
+// bookkeeping a caller needs to render an honest staleness signal (roadmap-
+// routes.js's `scan_provenance` payload field, part (b) of this fix): did
+// this actually redirect away from the running server's own worktree, and
+// what was that raw self-path. Never used to change resolution — purely
+// descriptive.
+function mainRepoRootInfo() {
+  try { return resolveCanonicalRepoRoot(); } catch (_) {
+    const cwd = process.cwd();
+    return { root: cwd, redirectedFromWorktree: false, selfRoot: cwd };
+  }
+}
+
+// ------------------------------------------------------------------------
+// repoHeadInfo(root) — NON-SILENCE staleness signal (part (b) of the
+// 2026-08-04 fix): the resolved scan root alone doesn't tell an operator
+// whether ITS OWN checkout is behind origin/master — a worktree pinned to
+// an old branch is exactly as stale as the bug this fix closes, just one
+// hop further out. `{ head_sha, behind_origin_master, checked_at }`, every
+// field best-effort (never throws): head_sha:'' / behind_origin_master:null
+// when undeterminable (not a git dir, no git binary, no local
+// `origin/master` ref at all — this NEVER fetches, so a machine that hasn't
+// fetched in a while sees "behind" as of its last fetch, not live network
+// state; still strictly more honest than the prior total silence).
+//
+// REQUEST-TRIGGERED TTL CACHE, not a timer poll (state-watch.js's own
+// header draws exactly this line: "a TTL/timer poll, however infrequent, is
+// still PULL — cost scales with clock ticks, not with change rate"). This
+// cache never runs on its own; it only (re)computes the FIRST time a
+// request asks after the previous value has aged past the TTL — cost scales
+// with REQUEST rate past expiry, never with wall-clock ticks while the
+// cockpit sits idle. Two git spawns per cache miss (rev-parse + rev-list),
+// bounded to at most one miss per TTL window per distinct root.
+function gitInfoTtlMs() {
+  const raw = process.env.COCKPIT_GIT_INFO_TTL_MS;
+  if (raw === undefined || raw === '') return 60000;
+  const n = Number(raw);
+  return isNaN(n) || n < 0 ? 60000 : n;
+}
+const _gitInfoCache = {}; // root -> { data, at }
+function repoHeadInfo(root) {
+  const now = Date.now();
+  const cached = _gitInfoCache[root];
+  if (cached && (now - cached.at) < gitInfoTtlMs()) return cached.data;
+  const headSha = gitFieldSync(['rev-parse', 'HEAD'], root);
+  let behind = null;
+  if (headSha) {
+    const countRaw = gitFieldSync(['rev-list', '--count', 'HEAD..origin/master'], root);
+    if (/^\d+$/.test(countRaw)) behind = Number(countRaw);
+  }
+  const data = { head_sha: headSha, behind_origin_master: behind, checked_at: new Date(now).toISOString() };
+  _gitInfoCache[root] = { data: data, at: now };
+  return data;
 }
 
 // readJsonlLines(file) — best-effort JSONL reader: a missing file or a
@@ -812,11 +946,104 @@ function activityThresholdsMs() {
 // exactly what keeps a merely-quiet heartbeat from flapping to
 // "stalled: crashed" (F6's AV-pressure scenario). Only a heartbeat OLDER
 // than the activity window renders 'crashed'.
+//
+// STAYS AGE-ONLY, DELIBERATELY (2026-08-04): this function's own boundary
+// self-test scenarios below pin its pure-age contract directly. Every
+// CALLER that needs pid-awareness now goes through classifyHeartbeatLiveness
+// (immediately below), which wraps this function rather than changing it.
 function classifyHeartbeatAge(ageMs, th) {
   if (ageMs == null || isNaN(ageMs)) return 'crashed'; // no usable age -> never a guessed "live"
   if (ageMs <= th.activeMs) return 'live';
   if (ageMs <= th.activityWindowMs) return 'quiet';
   return 'crashed';
+}
+
+// pidAliveNode(pid) -> true | false | null
+//
+// PHANTOM-RUNNING FIX (2026-08-04, operator-flagged Defect A): an
+// IN-PROCESS liveness check — process.kill(pid, 0) — NOT a subprocess
+// spawn. This is a materially DIFFERENT mechanism from
+// session-heartbeat-lib.sh's `_hb_pid_alive` (`kill -0`/`ps -p` run from an
+// MSYS/Git-Bash shell, which that lib's own header documents as UNRELIABLE
+// for a foreign native-Windows pid — MSYS's pid table does not reliably see
+// arbitrary Windows pids). Node's process.kill on Windows goes through
+// libuv's uv_kill, which calls OpenProcess + GetExitCodeProcess against the
+// REAL Windows process table directly — no MSYS pid-table indirection.
+//
+// VERIFIED, not assumed (constitution §1 — a platform-liveness claim needs
+// evidence, not a plausible-sounding mechanism description): tested against
+// the operator's own 5 cited phantom-running pids (13964, 601406, 1045527,
+// 209068, 723121) — every one threw ESRCH here, matching an independent
+// `Get-Process -Id <pid>` (native PowerShell, no MSYS involvement at all)
+// finding no such process for all five. Also verified a genuinely-exited
+// Node child's own pid correctly reports dead immediately after exit (no
+// reap-delay false-positive window observed).
+//
+//   true  — process.kill(pid, 0) did not throw: the pid names a live,
+//           signalable process.
+//   false — threw ESRCH ("no such process"): PROVEN dead. The only value
+//           this function's callers may treat as positive dead-evidence.
+//   null  — inconclusive: pid is not a positive integer (missing/zero/
+//           negative/non-numeric — a heartbeat schema this old reader
+//           cannot use), OR the call threw EPERM (the process EXISTS but
+//           this process lacks permission to signal it — that is evidence
+//           of life, not death, so EPERM maps to true, not null), OR any
+//           other unrecognized errno. Callers must NEVER treat null as
+//           "dead" — an inconclusive check changes nothing, and the
+//           age-based verdict stands exactly as it did before this fix.
+function pidAliveNode(pid) {
+  const n = Number(pid);
+  if (!Number.isInteger(n) || n <= 0) return null;
+  try {
+    process.kill(n, 0);
+    return true;
+  } catch (err) {
+    if (err && err.code === 'ESRCH') return false;
+    if (err && err.code === 'EPERM') return true; // exists, just not signalable by us
+    return null; // inconclusive — never assert dead without ESRCH
+  }
+}
+
+// classifyHeartbeatLiveness(hb, nowMs, th, pidCheckFn) -> 'live' | 'quiet' | 'crashed'
+//
+// THE REAL fix for the phantom-running defect (operator, 2026-08-04): "the
+// cockpit renders '13 running, unattributed' / 'running (quiet), 2h/17h/
+// 22h ago' for sessions whose PID is verifiably dead — liveness must be
+// VERIFIED, not inferred from a file's existence." classifyHeartbeatAge
+// alone cannot do this (by design — see its own header): a heartbeat file
+// written at SessionStart and never updated again (the session died before
+// ever reaching a Stop-time touch) sits inside the activityWindowMs grace
+// window for HOURS, rendering 'quiet' (still "running" to every consumer)
+// even though the process backing it has been gone the whole time.
+//
+// THE RULE (pid existence + the existing age/staleness bound, combined):
+// age-classify first; if age ALONE already says 'crashed', pid evidence is
+// moot (already the worst verdict, and a heartbeat this old skips the pid
+// check entirely — no cost paid for the common ancient-and-already-reaped
+// case). Only when age says 'live' or 'quiet' — i.e. exactly the case that
+// can currently lie — do we pay the one cheap in-process pidAliveNode call.
+// A PROVEN-dead pid (false) overrides the age verdict to 'crashed'
+// regardless of how fresh last_activity_ts looks, because pid death is
+// unambiguous positive evidence with NO grace period needed (unlike the
+// activityWindowMs bound, which exists to tolerate a genuinely-alive
+// process going quiet for a while — an AV throttle, a rate-limit pause).
+// An inconclusive check (null: no usable pid, or a non-ESRCH/EPERM errno)
+// changes NOTHING — the age-only verdict stands, so every existing
+// quiet-grace-window guarantee this module's callers depend on is
+// unaffected for every heartbeat this check cannot speak to.
+//
+// pidCheckFn is an injectable override (default pidAliveNode) purely so the
+// self-test can simulate ESRCH/alive/inconclusive without needing a real OS
+// process for every scenario; every production caller omits it.
+function classifyHeartbeatLiveness(hb, nowMs, th, pidCheckFn) {
+  const check = typeof pidCheckFn === 'function' ? pidCheckFn : pidAliveNode;
+  const ts = hb && hb.last_activity_ts ? Date.parse(hb.last_activity_ts) : NaN;
+  const ageMs = isNaN(ts) ? NaN : nowMs - ts;
+  const ageCls = classifyHeartbeatAge(ageMs, th);
+  if (ageCls === 'crashed') return 'crashed'; // already the worst verdict — no pid check needed
+  const alive = check(hb && hb.pid);
+  if (alive === false) return 'crashed'; // PROVEN-dead pid overrides a fresh/quiet timestamp
+  return ageCls; // alive===true, or null (inconclusive) -> trust the age verdict, unchanged
 }
 
 // sessionActivityForIds(sessionIds, heartbeats, nowMs, th) -> 'live' |
@@ -846,20 +1073,28 @@ function classifyHeartbeatAge(ageMs, th) {
 // valid heartbeat on a DIFFERENT attached session) always wins over a
 // corrupt record for an unrelated session; 'invalid' fires only when the
 // corrupt record is the ONLY evidence found.
-function sessionActivityForIds(sessionIds, heartbeats, nowMs, th) {
+// PHANTOM-RUNNING FIX (2026-08-04): tracks the freshest matching HEARTBEAT
+// RECORD, not just its timestamp (the pre-fix shape), so the pid it carries
+// reaches classifyHeartbeatLiveness below — a dead-pid session attached to
+// an item must downgrade that item's own crashed signal exactly the same
+// way it downgrades the unattributed-sessions node (roadmap-routes.js).
+// `pidCheckFn` threads straight through to classifyHeartbeatLiveness (see
+// its header) — production callers omit it; only the self-test injects one.
+function sessionActivityForIds(sessionIds, heartbeats, nowMs, th, pidCheckFn) {
   const ids = {};
   (sessionIds || []).forEach((sid) => { if (sid) ids[sid] = true; });
   if (!Object.keys(ids).length) return 'no-heartbeat';
-  let freshest = null;
+  let freshestHb = null;
+  let freshestTs = null;
   let sawInvalidRecord = false;
   (heartbeats || []).forEach((hb) => {
     if (!hb || !ids[hb.session_id]) return;
     const ts = Date.parse(hb.last_activity_ts);
     if (isNaN(ts)) { sawInvalidRecord = true; return; }
-    if (freshest === null || ts > freshest) freshest = ts;
+    if (freshestTs === null || ts > freshestTs) { freshestTs = ts; freshestHb = hb; }
   });
-  if (freshest === null) return sawInvalidRecord ? 'invalid' : 'no-heartbeat';
-  return classifyHeartbeatAge(nowMs - freshest, th);
+  if (freshestTs === null) return sawInvalidRecord ? 'invalid' : 'no-heartbeat';
+  return classifyHeartbeatLiveness(freshestHb, nowMs, th, pidCheckFn);
 }
 
 // deriveStalledReason(signals) -> one of STALLED_REASONS | null
@@ -1153,6 +1388,10 @@ module.exports = {
   dispatchProvenanceStateDir,
   heartbeatStateDir,
   mainRepoRoot,
+  // canonical-root resolution + staleness signal (2026-08-04 stale-checkout fix)
+  mainRepoRootInfo,
+  deriveCanonicalRoot,
+  repoHeadInfo,
   // registry / event / marker readers
   readJsonlLines,
   readAskRegistry,
@@ -1187,6 +1426,8 @@ module.exports = {
   ATTENTION_PRECEDENCE,
   activityThresholdsMs,
   classifyHeartbeatAge,
+  pidAliveNode,
+  classifyHeartbeatLiveness,
   sessionActivityForIds,
   deriveStalledReason,
   deriveItemStatus,
@@ -1220,6 +1461,47 @@ async function selfTest() {
     classifyHeartbeatAge(TH.activityWindowMs + 1, TH) === 'crashed');
   ok('1f. classifyHeartbeatAge: no usable age (NaN) -> crashed, never a guessed live',
     classifyHeartbeatAge(NaN, TH) === 'crashed' && classifyHeartbeatAge(null, TH) === 'crashed');
+
+  // ---- pidAliveNode + classifyHeartbeatLiveness (2026-08-04 phantom-running
+  // fix, operator-flagged Defect A). A genuinely-dead pid is obtained by
+  // spawning a real child process and letting spawnSync block until it has
+  // fully exited — by the time spawnSync returns, that pid is PROVABLY dead
+  // (same "just-exited subshell" reliability idiom
+  // session-heartbeat-lib.sh's own --self-test uses for its bash-side
+  // equivalent), so this is a real OS-level proof, not a guessed-nonexistent
+  // large integer.
+  const deadChild = spawnSync(process.execPath, ['-e', 'process.exit(0)']);
+  const deadPid = deadChild.pid;
+  ok('1g. pidAliveNode: this process\'s OWN pid -> true (alive)', pidAliveNode(process.pid) === true, String(process.pid));
+  ok('1h. pidAliveNode: a REAL, just-exited child pid -> false (PROVEN dead via ESRCH)', pidAliveNode(deadPid) === false, String(deadPid));
+  ok('1i. pidAliveNode: non-numeric/zero/negative/missing pid -> null (inconclusive, never a guessed death)',
+    pidAliveNode('not-a-pid') === null && pidAliveNode(0) === null && pidAliveNode(-5) === null && pidAliveNode(undefined) === null);
+
+  const nowL = Date.now();
+  const hbFreshOwnPid = { last_activity_ts: new Date(nowL).toISOString(), pid: process.pid };
+  const hbFreshDeadPid = { last_activity_ts: new Date(nowL).toISOString(), pid: deadPid };
+  // Just past the active boundary, well within the activity window — the
+  // exact "running (quiet), 2h/17h/22h ago" shape the operator reported.
+  const hbQuietDeadPid = { last_activity_ts: new Date(nowL - (TH.activeMs + 60 * 1000)).toISOString(), pid: deadPid };
+  const hbAncientAlivePid = { last_activity_ts: new Date(nowL - (TH.activityWindowMs + 60 * 1000)).toISOString(), pid: process.pid };
+  ok('1j. classifyHeartbeatLiveness: fresh timestamp + ALIVE pid -> live (unchanged from age-only)',
+    classifyHeartbeatLiveness(hbFreshOwnPid, nowL, TH) === 'live');
+  // THE CORE FIX: a timestamp that age-alone classifies 'live' or 'quiet'
+  // (exactly the operator's reported "running (quiet), 2h/17h/22h ago"
+  // shape) must render 'crashed' once the pid is PROVEN dead — this is the
+  // one assertion set that a revert-the-fix mutation (classifyHeartbeatLiveness
+  // returning classifyHeartbeatAge(...) unchanged) breaks; see the
+  // mutation-test note in this task's report.
+  ok('1k. classifyHeartbeatLiveness: FRESH timestamp (age says live) + PROVEN-dead pid -> crashed, never "running" (THE phantom-running fix)',
+    classifyHeartbeatLiveness(hbFreshDeadPid, nowL, TH) === 'crashed');
+  ok('1l. classifyHeartbeatLiveness: QUIET-window timestamp (age says quiet, the exact "2h/17h/22h ago" shape) + PROVEN-dead pid -> crashed',
+    classifyHeartbeatLiveness(hbQuietDeadPid, nowL, TH) === 'crashed');
+  ok('1m. classifyHeartbeatLiveness: an ALREADY-crashed-by-age timestamp + an ALIVE pid stays crashed — pid evidence never resurrects an ancient heartbeat, and the pid check is SKIPPED entirely once age alone is conclusive',
+    classifyHeartbeatLiveness(hbAncientAlivePid, nowL, TH) === 'crashed');
+  ok('1n. classifyHeartbeatLiveness: fresh timestamp + INCONCLUSIVE pid check (injected pidCheckFn returning null) -> the age verdict stands unchanged (live), an inconclusive check never downgrades',
+    classifyHeartbeatLiveness({ last_activity_ts: new Date(nowL).toISOString(), pid: 999 }, nowL, TH, () => null) === 'live');
+  ok('1o. classifyHeartbeatLiveness: quiet timestamp + INCONCLUSIVE pid check -> stays quiet, preserving the existing AV-throttle/rate-limit grace window this module\'s callers depend on',
+    classifyHeartbeatLiveness({ last_activity_ts: new Date(nowL - (TH.activeMs + 60 * 1000)).toISOString(), pid: 999 }, nowL, TH, () => null) === 'quiet');
 
   // ---- sessionActivityForIds.
   const now = Date.parse('2026-07-19T12:00:00Z');
@@ -1672,6 +1954,150 @@ async function selfTest() {
     if (savedArDir21 === undefined) delete process.env.ASK_REGISTRY_STATE_DIR;
     else process.env.ASK_REGISTRY_STATE_DIR = savedArDir21;
     try { fs.rmSync(tmp21, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+  }
+
+  // ========================================================================
+  // 2026-08-04 STALE-CHECKOUT FIX — mainRepoRoot() worktree-canonicalization
+  // (deriveCanonicalRoot's pure decision logic) + repoHeadInfo's staleness
+  // signal (roadmap-routes.js's scan_provenance payload field, part b).
+  // ========================================================================
+
+  // ---- 22. deriveCanonicalRoot: PURE decision logic, no git/fs involved —
+  // covers the shapes real git output can take without depending on this
+  // process's own actual checkout topology (that's covered by 22e below,
+  // against a REAL independently-recomputed oracle). Every path literal
+  // below is deliberately a leading-slash absolute path — Node's
+  // path.isAbsolute() treats a leading '/' as absolute on win32 too
+  // (drive-relative to whatever drive path.resolve runs on), so these
+  // assertions are CWD-independent on every platform, never a hidden
+  // dependency on this test process's own working directory.
+  const dcAbs = deriveCanonicalRoot('/repo/.claude/worktrees/pool/wt1', '/repo/.git/worktrees/wt1', '/repo/.git');
+  ok('22. deriveCanonicalRoot: ABSOLUTE linked-worktree shape (git-dir != git-common-dir — what this repo\'s own git actually prints, confirmed directly against this checkout) redirects root to dirname(git-common-dir), the MAIN checkout — never self',
+    dcAbs.root === path.resolve('/repo') && dcAbs.redirectedFromWorktree === true, JSON.stringify(dcAbs));
+  const nonWtSelf = path.resolve('/repo');
+  const dcSelf = deriveCanonicalRoot(nonWtSelf, '.git', '.git');
+  ok('22b. deriveCanonicalRoot: ordinary non-worktree checkout (git-dir === git-common-dir, git\'s normal relative ".git" printing) leaves root as self — UNCHANGED behavior for every non-worktree deployment',
+    dcSelf.root === nonWtSelf && dcSelf.redirectedFromWorktree === false, JSON.stringify(dcSelf));
+  const dcNoGit = deriveCanonicalRoot(nonWtSelf, '', '');
+  ok('22c. deriveCanonicalRoot: git unavailable / not a git dir at all (empty git-dir/git-common-dir, the gitFieldSync fail-open shape) -> self, never a throw or a guessed redirect',
+    dcNoGit.root === nonWtSelf && dcNoGit.redirectedFromWorktree === false, JSON.stringify(dcNoGit));
+  // 22d. RELATIVE-shape variant (in case a future/older git version ever
+  // prints git-dir/git-common-dir relative to self rather than absolute) —
+  // same decision, resolved via plain relative segments against self.
+  const relSelf = path.resolve('/pool/wf-ghi789');
+  const dcRel = deriveCanonicalRoot(relSelf, '../.git/worktrees/wf-ghi789', '../.git');
+  ok('22d. deriveCanonicalRoot: RELATIVE git-dir/git-common-dir (resolved against self) redirects identically to the absolute-shape case above',
+    dcRel.root === path.resolve('/pool') && dcRel.redirectedFromWorktree === true, JSON.stringify(dcRel));
+
+  // ---- 22e. mainRepoRoot(): REAL-ORACLE check against THIS PROCESS'S OWN
+  // actual checkout — independently re-derives the expected canonical root
+  // via the exact same git primitives, RIGHT HERE in the test (not asserted
+  // against a fixture), so this passes honestly whether the suite happens
+  // to run from a linked worktree (this build's own dev environment — the
+  // operator's exact bug shape) or from an ordinary non-worktree checkout
+  // (CI, a plain clone) — either way, the library's answer must match an
+  // independently-computed ground truth, not a hardcoded expectation.
+  {
+    const realSelf = projects.selfRepoRoot();
+    const realGd = gitFieldSync(['rev-parse', '--git-dir'], realSelf);
+    const realGcd = gitFieldSync(['rev-parse', '--git-common-dir'], realSelf);
+    const expected = deriveCanonicalRoot(realSelf, realGd, realGcd);
+    ok('22e. mainRepoRoot(): matches an INDEPENDENTLY-RECOMPUTED oracle (same git-dir/git-common-dir primitives, evaluated fresh here) for THIS process\'s real checkout — proves the fix against ground truth, not a fixture',
+      path.resolve(mainRepoRoot()) === path.resolve(expected.root),
+      JSON.stringify({ got: mainRepoRoot(), expectedRoot: expected.root, realSelf, realGd, realGcd }));
+    ok('22f. mainRepoRootInfo(): redirectedFromWorktree/selfRoot agree with the same independently-recomputed oracle',
+      mainRepoRootInfo().redirectedFromWorktree === expected.redirectedFromWorktree &&
+      path.resolve(mainRepoRootInfo().selfRoot) === path.resolve(realSelf),
+      JSON.stringify(mainRepoRootInfo()));
+  }
+
+  // ---- 23. repoHeadInfo: real fixture git repos (mirrors auditor.js's own
+  // spawnSync git fixture technique).
+  {
+    const { spawnSync } = require('child_process');
+    const tmp23 = fs.mkdtempSync(path.join(os.tmpdir(), 'derive-lib-gitinfo-st-'));
+    const savedTtl = process.env.COCKPIT_GIT_INFO_TTL_MS;
+    try {
+      process.env.COCKPIT_GIT_INFO_TTL_MS = '0'; // always-fresh for scenarios 23a-23d; 23e re-sets its own TTL
+      const repo23 = path.join(tmp23, 'repo');
+      fs.mkdirSync(repo23, { recursive: true });
+      spawnSync('git', ['init', '-q'], { cwd: repo23 });
+      spawnSync('git', ['config', 'core.hooksPath', ''], { cwd: repo23 });
+      spawnSync('git', ['config', 'user.email', 't@example.test'], { cwd: repo23 });
+      spawnSync('git', ['config', 'user.name', 'T'], { cwd: repo23 });
+      fs.writeFileSync(path.join(repo23, 'f.txt'), 'one\n');
+      spawnSync('git', ['add', '.'], { cwd: repo23 });
+      spawnSync('git', ['commit', '-q', '-m', 'c1'], { cwd: repo23 });
+      const sha1 = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo23, encoding: 'utf8' }).stdout.trim();
+
+      // 23a. No origin/master ref at all yet -> behind_origin_master:null,
+      // head_sha still populated (a genuine local-only checkout, honest
+      // "undeterminable" rather than a guessed 0).
+      const gi23a = repoHeadInfo(repo23);
+      ok('23a. repoHeadInfo: real repo, no local origin/master ref -> head_sha populated, behind_origin_master:null (undeterminable, never guessed 0)',
+        gi23a.head_sha === sha1 && gi23a.behind_origin_master === null, JSON.stringify(gi23a));
+
+      // 23b. origin/master == HEAD -> behind_origin_master:0.
+      spawnSync('git', ['update-ref', 'refs/remotes/origin/master', sha1], { cwd: repo23 });
+      const gi23b = repoHeadInfo(repo23);
+      ok('23b. repoHeadInfo: local origin/master ref equals HEAD -> behind_origin_master:0 (up to date)',
+        gi23b.behind_origin_master === 0, JSON.stringify(gi23b));
+
+      // 23c. HEAD moves 2 commits behind origin/master (the exact shape of
+      // the operator's real bug: a worktree pinned to an old commit while
+      // origin/master has moved on) -> behind_origin_master:2.
+      fs.appendFileSync(path.join(repo23, 'f.txt'), 'two\n');
+      spawnSync('git', ['commit', '-q', '-am', 'c2'], { cwd: repo23 });
+      fs.appendFileSync(path.join(repo23, 'f.txt'), 'three\n');
+      spawnSync('git', ['commit', '-q', '-am', 'c3'], { cwd: repo23 });
+      const sha3 = spawnSync('git', ['rev-parse', 'HEAD'], { cwd: repo23, encoding: 'utf8' }).stdout.trim();
+      spawnSync('git', ['update-ref', 'refs/remotes/origin/master', sha3], { cwd: repo23 });
+      spawnSync('git', ['reset', '-q', '--hard', sha1], { cwd: repo23 }); // HEAD back to c1; origin/master stays at c3
+      const gi23c = repoHeadInfo(repo23);
+      ok('23c. repoHeadInfo: HEAD reset 2 commits behind a local origin/master ref -> behind_origin_master:2, head_sha reflects the ROLLED-BACK HEAD (this IS the operator\'s exact bug shape)',
+        gi23c.head_sha === sha1 && gi23c.behind_origin_master === 2, JSON.stringify(gi23c));
+
+      // 23d. A directory that is not a git repo at all -> both fields
+      // honestly undeterminable, never a throw.
+      const nonGitDir = path.join(tmp23, 'not-a-repo');
+      fs.mkdirSync(nonGitDir, { recursive: true });
+      const gi23d = repoHeadInfo(nonGitDir);
+      ok('23d. repoHeadInfo: not a git directory at all -> head_sha:\'\', behind_origin_master:null, no throw',
+        gi23d.head_sha === '' && gi23d.behind_origin_master === null, JSON.stringify(gi23d));
+
+      // 23e. TTL cache: a long TTL must NOT re-spawn git on every call — a
+      // commit landing AFTER the first read stays invisible until the TTL
+      // expires (request-triggered, not a background timer — see
+      // repoHeadInfo's own header). Verified by mutating the repo between
+      // two reads and asserting the SECOND read is still the stale cached
+      // value while checked_at is byte-identical (proof it truly did not
+      // re-spawn, not just coincidentally recomputed the same numbers).
+      process.env.COCKPIT_GIT_INFO_TTL_MS = '60000';
+      const repo23e = path.join(tmp23, 'repo-ttl');
+      fs.mkdirSync(repo23e, { recursive: true });
+      spawnSync('git', ['init', '-q'], { cwd: repo23e });
+      spawnSync('git', ['config', 'core.hooksPath', ''], { cwd: repo23e });
+      spawnSync('git', ['config', 'user.email', 't@example.test'], { cwd: repo23e });
+      spawnSync('git', ['config', 'user.name', 'T'], { cwd: repo23e });
+      fs.writeFileSync(path.join(repo23e, 'f.txt'), 'one\n');
+      spawnSync('git', ['add', '.'], { cwd: repo23e });
+      spawnSync('git', ['commit', '-q', '-m', 'c1'], { cwd: repo23e });
+      const giFirst = repoHeadInfo(repo23e);
+      fs.appendFileSync(path.join(repo23e, 'f.txt'), 'two\n');
+      spawnSync('git', ['commit', '-q', '-am', 'c2'], { cwd: repo23e });
+      const giSecond = repoHeadInfo(repo23e);
+      ok('23e. repoHeadInfo: within the TTL window, a SECOND call after a new commit lands still returns the FIRST cached snapshot (identical checked_at + head_sha) — request-triggered bounded cache, not a live re-derive per call, matching state-watch.js\'s push-not-timer-poll discipline',
+        giSecond.checked_at === giFirst.checked_at && giSecond.head_sha === giFirst.head_sha,
+        JSON.stringify({ first: giFirst, second: giSecond }));
+      process.env.COCKPIT_GIT_INFO_TTL_MS = '0';
+      const giThird = repoHeadInfo(repo23e);
+      ok('23f. repoHeadInfo: TTL=0 forces a fresh read -> the new commit is now visible (proves the cache genuinely gates on TTL, not on the root string alone)',
+        giThird.head_sha !== giFirst.head_sha, JSON.stringify({ first: giFirst, third: giThird }));
+    } finally {
+      if (savedTtl === undefined) delete process.env.COCKPIT_GIT_INFO_TTL_MS;
+      else process.env.COCKPIT_GIT_INFO_TTL_MS = savedTtl;
+      try { fs.rmSync(tmp23, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+    }
   }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
