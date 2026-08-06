@@ -73,7 +73,49 @@ obligation.
 - Branch protection is bypassed on direct pushes to master ("Bypassed rule violations for
   refs/heads/master — Required status check *validate* is expected").
 
-### 2.5 The push-side funnel is disabled in this repo
+### 2.5 The keystone: the governing directive was never written down
+
+On 2026-08-06 the operator said:
+
+> "What do you mean, nothing makes the landing mandatory? I've told you dozens of times that the
+> harness needs to be designed so that it is mechanically impossible for an agent or an effort to
+> call itself finished before everything is deployed."
+
+He is right that he said it. **It is not in the register.** The 24 entries are:
+
+```
+OD-001 no-wsl-dependency          OD-013 maximize-parallelization
+OD-002 anti-bloat-modify-not-add  OD-014 sessions-247-with-headroom
+OD-003 no-new-hardware            OD-015 measure-real-loe-at-plan-time
+OD-004 gate-philosophy-…          OD-016 observability-equal-clarity
+OD-005 workaround-as-sensor       OD-017 self-learning-closed-loop
+OD-006 push-over-pull-…           OD-018 incentive-by-design-cheapest-path
+OD-007 cleanup-and-prevention-…   OD-019 branch-protection-work-org-mirror
+OD-008 concurrency-pressure-…     OD-020 cowork-policy-registry-key
+OD-009 graceful-stop-drain        OD-021 ci-is-read-mandatory
+OD-010 disposition-everything     OD-022 merge-verify-mechanization
+OD-011 agent-world-class-standard OD-023 task-id-determinism
+OD-012 standing-autonomy-…        OD-024 solution-shape-layer-sweep
+```
+
+`grep -i "deploy\|finished\|not done until\|merged to master"` over the register's instruction
+text returns **nothing**. OD-022 (merge-verify-mechanization) is adjacent but scoped to the
+build→verify closure, not to deploy-completion.
+
+**This is the single most important fact in this dossier.** The directive that would have
+prevented every stranding in §2.3 has been stated repeatedly by the operator over months and has
+no entry, therefore no requirements, no anti-patterns, no gate, and no carrier. Meanwhile 24
+directives that *were* captured are enforced to varying degrees.
+
+The failure is not that the harness ignored a rule. It is that **the rule never became a
+representable object**, so there was nothing to ignore. Any design that addresses stranded work
+without also making directive capture mechanical will regress the moment the operator states the
+next directive out loud.
+
+Corollary worth testing: how many *other* directives has the operator stated that never became
+entries? The register is the only inventory, and it cannot list what it never captured.
+
+### 2.6 The push-side funnel is disabled in this repo
 
 A **local `core.hooksPath`** in `.git/config` points at `<repo>/.git/hooks`, overriding the
 adapter hooks path. `.git/hooks` contains no `pre-push`. Two gates therefore never run:
@@ -102,7 +144,7 @@ built reach master?" A session can end clean with 18 unmerged commits in its wor
 
 **Notifications are not obligations.** The stopped-agent notification is the proof.
 
-**The enforcement point that would catch it is disabled** (§2.5).
+**The enforcement point that would catch it is disabled** (§2.6).
 
 **Self-tests verify the artifact, not the path.** A related class documented the same day: a suite
 that dies midway (`server.selftest.js` crashes at line 893, so scenario S64 at line 1663 has never
