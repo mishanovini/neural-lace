@@ -3624,3 +3624,39 @@ entries) but NO `ask`/`deny` block — so the three ask rules are MACHINE-LOCAL 
 follow to another machine. Any decision here should land in the template to be durable, and the
 template→live sync path for `permissions` (as opposed to hook wirings) needs confirming — it was
 not verified in this session.
+
+## MODEL-LIMIT-INFERENCE-BAN-2026-08-05 — Claude must never infer capacity limits from failures
+(label: `harness-gap`, `operator-directive`, `repeat-offense`; operator has raised this at least
+twice: "I'm sick and tired of Claude making assumptions about what the limits are and making
+decisions based on those assumptions")
+
+**The incident (2026-08-05, PROVEN):** two `architecture-reviewer`/`harness-reviewer` agents —
+both Fable-pinned — died with "You've hit your monthly spend limit". From those two data points
+the session concluded "agent dispatch is blocked", repeated it as fact across FOUR turns, and
+listed it in Needs-from-you as a hard blocker. It was false: the operator's usage panel showed
+Fable weekly 100%, all-models 88%, 5-hour 6%. A `sonnet`-pinned agent dispatched immediately
+afterward worked on the first try. Cost: four turns of self-imposed paralysis on a merge sweep
+that could have been running, plus operator time correcting it.
+
+**Root cause:** an unavailable-data problem answered by inference instead of by a probe. There
+is NO machine-readable limits source reachable from a session — checked 2026-08-05:
+`~/.claude/stats-cache.json` carries `modelUsage`/`dailyModelTokens` (consumption only, no
+headroom, no reset times); the `claude` CLI exposes no usage subcommand (agents/auth/doctor/
+install/mcp/plugin/setup-token/update); no state file carries rate/quota/reset fields. The
+percentages and resets exist only in the app UI, which the operator can see and the session
+cannot.
+
+**The mechanism (build this — it is a RULE, since the data is unavailable):**
+1. BAN THE INFERENCE. A model-tier failure is evidence about THAT MODEL ONLY. Never generalize
+   one model's exhaustion to "agents are blocked", "dispatch is unavailable", or any capacity
+   claim. Report exactly what happened: "<N> <model>-pinned agents failed with <verbatim error>".
+2. PROBE, DON'T ASSUME. The definitive test is cheap and takes seconds: dispatch one agent
+   explicitly pinned to a DIFFERENT model (`model: sonnet`/`opus`) and observe. Do this BEFORE
+   reporting any capacity limitation, not after the operator objects.
+3. ASK THE ONE WHO CAN SEE. When capacity genuinely matters, the operator's usage panel is the
+   authoritative source and the session's is not — say "Fable-pinned agents are failing; can you
+   check the usage panel?" rather than asserting a state.
+4. NEVER PUT AN INFERRED LIMIT IN "Needs from you" AS BLOCKING. A blocker must be observed, not
+   deduced.
+Durable home: this is operator-directive material (register + doctrine), NOT machine-local
+memory — the operator's standing requirement is that solutions survive across machines.
