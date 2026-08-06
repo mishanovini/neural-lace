@@ -328,9 +328,18 @@ cmd_restore() { cmd_reconcile "${2:---quiet}" >/dev/null 2>&1; cmd_reconcile; }
 # resolve — THE QUERY-ONLY RESOLVER (operator directive 2026-08-05: "the
 # review agents are supposed to default to Fable and fall back to Opus ...
 # implement it mechanically"). apply/reconcile above answer the same
-# question but MUTATE agents/*.md; this answers it as a pure query so a
-# CALLER (dispatch-directives.sh, a gate's block message) can print "use
-# THIS model right now" without touching any file.
+# question but MUTATE agents/*.md; this NEVER touches agents/*.md -- that
+# is the "query-only" contract this name promises. HONEST CAVEAT (2026-08-06
+# remediation, harness-change-review Minor): it is not a PURE function in the
+# stricter sense -- cmd_is_exhausted, which this calls once per chain tier,
+# self-cleans an EXPIRED marker file as a read-time side effect (the same
+# behavior scenario 4 of this file's own self-test already asserts). That
+# mutation is confined to the model-availability state dir (never
+# agents/*.md), is idempotent, and only ever removes a marker that was
+# already stale -- so the "no file this caller has to worry about" guarantee
+# for dispatch-directives.sh / a gate's block message still holds. Recorded
+# here because a comment claiming stronger purity than the code delivers is
+# exactly the kind of overclaim constitution section 1 forbids.
 #
 # Walks the FULL declared chain (config/model-policy.json's agents.<name>
 # .chain, or categories.<cat>.chain if no per-agent chain exists) and
@@ -342,7 +351,15 @@ cmd_restore() { cmd_reconcile "${2:---quiet}" >/dev/null 2>&1; cmd_reconcile; }
 # usage: resolve --agent <agent-name> | --category <category-name>
 # stdout on success (rc 0):
 #   RESOLVED_MODEL=<tier>
-#   RESOLVED_REASON=<human-readable: which tiers were skipped and why>
+#   RESOLVED_REASON=<human-readable: which tiers were skipped and why -- may
+#     embed whatever free-text reason a marker was stored with; NEVER print
+#     this verbatim into a dispatch prompt, see RESOLVED_SKIPPED below>
+#   RESOLVED_SKIPPED=<comma-separated tier NAMES only that were skipped
+#     because they were exhausted, empty if chain[0] was fresh -- added
+#     2026-08-06 (harness-change-review C2) so a caller that wants to name
+#     WHICH tiers were skipped without re-emitting arbitrary stored reason
+#     text has a field that is provably just the closed tier vocabulary
+#     (fable|opus|sonnet|haiku|mythos), never free text>
 # stderr + rc 2 on failure -- NEVER a silent default (operator directive:
 # "sick and tired of Claude making assumptions ... based on those
 # assumptions" applies here too -- an unresolvable chain must be LOUD, not
@@ -392,13 +409,15 @@ cmd_resolve() {
   done < <(printf '%s' "$chain_json" | jq -r '.[]' 2>/dev/null)
   [[ "${#chain[@]}" -gt 0 ]] || { echo "model-availability resolve: FAIL -- empty chain for ${mode#--} '${name}' -- refusing to silently default" >&2; return 2; }
 
-  local t skipped_msg=""
+  local t skipped_msg="" skipped_names=""
   for t in "${chain[@]}"; do
     if cmd_is_exhausted "$t"; then
       skipped_msg="${skipped_msg}${skipped_msg:+; }'${t}' observed exhausted (reason: $(cmd_reason "$t"))"
+      skipped_names="${skipped_names}${skipped_names:+,}${t}"
       continue
     fi
     echo "RESOLVED_MODEL=${t}"
+    echo "RESOLVED_SKIPPED=${skipped_names}"
     if [[ -z "$skipped_msg" ]]; then
       echo "RESOLVED_REASON=chain[0] '${t}' fresh, using primary"
     else
@@ -494,10 +513,28 @@ _ma_self_test() {
   else
     fail "resolve fresh-chain: rc=$RC9 out='$OUT9'"
   fi
+  # 2026-08-06: RESOLVED_SKIPPED must be EMPTY (no colon-suffix, just the
+  # bare key) when chain[0] was fresh -- a caller must be able to tell
+  # "nothing was skipped" apart from "something was skipped" without
+  # parsing RESOLVED_REASON's free text.
+  if printf '%s' "$OUT9" | grep -q '^RESOLVED_SKIPPED=$'; then
+    pass "resolve --category review, nothing exhausted -> RESOLVED_SKIPPED is empty"
+  else
+    fail "resolve fresh-chain RESOLVED_SKIPPED not empty: out='$OUT9'"
+  fi
 
   echo "Scenario 10: resolve -- chain[0] observed-exhausted WITHIN TTL -> chain[1] chosen with reason"
   cmd_mark_exhausted fable --reason "self-test: within TTL" --hours 1 >/dev/null 2>&1
   OUT10="$(cmd_resolve --category review)"; RC10=$?
+  # RESOLVED_SKIPPED must name ONLY the tier ('fable'), never the free-text
+  # reason string ("self-test: within TTL") -- proves the field a caller can
+  # safely echo into a dispatch prompt carries closed-vocabulary tier names
+  # only (2026-08-06, harness-change-review C2 defense-in-depth).
+  if [[ "$RC10" -eq 0 ]] && printf '%s' "$OUT10" | grep -q '^RESOLVED_SKIPPED=fable$'; then
+    pass "resolve --category review, fable exhausted -> RESOLVED_SKIPPED=fable (tier name only, no free text)"
+  else
+    fail "resolve within-TTL RESOLVED_SKIPPED: rc=$RC10 out='$OUT10'"
+  fi
   if [[ "$RC10" -eq 0 ]] && printf '%s' "$OUT10" | grep -q '^RESOLVED_MODEL=opus$' && printf '%s' "$OUT10" | grep -qi "RESOLVED_REASON=.*fable.*exhausted"; then
     pass "resolve --category review, fable exhausted -> RESOLVED_MODEL=opus, reason names fable"
   else

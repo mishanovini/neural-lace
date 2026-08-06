@@ -273,17 +273,34 @@ run() {
   # docs/backlog.md MODEL-LIMIT-INFERENCE-BAN-2026-08-05). Printed here so
   # the resolved model is the copy-paste default in the dispatch prompt,
   # not a judgment call the orchestrator has to make.
+  #
+  # 2026-08-06 remediation (harness-change-review C2, PROVEN SELF-
+  # REFERENTIAL TRIGGER INJECTION): this used to print RESOLVED_REASON
+  # verbatim -- an arbitrary, caller-supplied free-text field (whatever
+  # string a mark-exhausted --reason carried) -- straight into the NEXT
+  # dispatch's prompt. A TRUE spend-limit death on one tier could seed a
+  # FALSE positive on the very next dispatch one hop later, because the
+  # reason text (which could itself contain the exhaustion trigger phrase)
+  # got echoed forward. Fix: print ONLY the resolved tier plus RESOLVED_
+  # SKIPPED, a field model-availability.sh's resolve provably restricts to
+  # the closed tier vocabulary (fable|opus|sonnet|haiku|mythos) -- never the
+  # raw stored reason, regardless of what it contains.
   local category; category="$(role_category "$role")"
   if [[ -n "$category" ]]; then
     local ma_script="$root/adapters/claude-code/scripts/model-availability.sh"
     if [[ -f "$ma_script" ]]; then
-      local resolve_out resolve_rc rmodel rreason
+      local resolve_out resolve_rc rmodel rskipped cause
       resolve_out="$(bash "$ma_script" resolve --category "$category" 2>&1)"
       resolve_rc=$?
       if [[ "$resolve_rc" -eq 0 ]]; then
         rmodel="$(printf '%s\n' "$resolve_out" | grep '^RESOLVED_MODEL=' | head -1 | cut -d= -f2-)"
-        rreason="$(printf '%s\n' "$resolve_out" | grep '^RESOLVED_REASON=' | head -1 | cut -d= -f2-)"
-        echo "model: ${rmodel}  # ${rreason}"
+        rskipped="$(printf '%s\n' "$resolve_out" | grep '^RESOLVED_SKIPPED=' | head -1 | cut -d= -f2-)"
+        if [[ -z "$rskipped" ]]; then
+          cause="primary tier"
+        else
+          cause="fallback (skipped: ${rskipped})"
+        fi
+        echo "model: ${rmodel}  # ${cause}"
       else
         echo "[dispatch-directives] WARN: model resolution failed for role '${role}' (category '${category}'): ${resolve_out}" >&2
       fi
@@ -550,6 +567,26 @@ EOF
     PASSED=$((PASSED + 1))
   else
     echo "self-test (s11-model-line-falls-back-when-fable-exhausted): FAIL (got: $OUT11)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- S12 (2026-08-06, harness-change-review C2 defense-in-depth): the
+  # printed model line NEVER echoes the raw stored reason text, even when
+  # that text itself contains the spend-limit trigger phrase (the exact
+  # self-referential-injection shape that let a TRUE positive on one tier
+  # seed a FALSE positive on the next dispatch one hop later). Only the
+  # tier name may appear. ----
+  bash "$TMPD/adapters/claude-code/scripts/model-availability.sh" mark-exhausted fable \
+    --reason "observed: You have hit your monthly spend limit for Fable 5" --hours 1 >/dev/null 2>&1
+  OUT12="$(bash "$SELF" "$TMPD/docs/plans/fixture-plan.md" 99 reviewer 2>/dev/null)"
+  bash "$TMPD/adapters/claude-code/scripts/model-availability.sh" clear fable >/dev/null 2>&1
+  if printf '%s' "$OUT12" | grep -q '^model: opus' \
+     && printf '%s' "$OUT12" | grep -qi 'fable' \
+     && ! printf '%s' "$OUT12" | grep -qi 'hit your monthly spend limit'; then
+    echo "self-test (s12-model-line-never-echoes-raw-reason-text): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s12-model-line-never-echoes-raw-reason-text): FAIL (got: $OUT12)" >&2
     FAILED=$((FAILED + 1))
   fi
 

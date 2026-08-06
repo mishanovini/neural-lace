@@ -87,10 +87,13 @@ _mpg_tier_exhausted() {
 # Print the reroute-required block to stderr. <tier> is the exhausted tier;
 # <source> is a one-clause description of WHERE it came from (frontmatter pin
 # vs explicit model:) that reads naturally as "<source>, but '<tier>' is
-# currently marked UNAVAILABLE...". Relies on _MPG_FB/_MPG_REASON already set
-# by _mpg_tier_exhausted.
+# currently marked UNAVAILABLE...". <atype> (optional, third arg) is the
+# subagent_type in scope at the call site — used ONLY to ask the resolver
+# whether the FULL declared chain (not just this one hop) still has
+# something available. Relies on _MPG_FB/_MPG_REASON already set by
+# _mpg_tier_exhausted.
 _mpg_print_exhausted_block() {
-  local tier="$1" source="$2"
+  local tier="$1" source="$2" atype="${3:-}"
   {
     echo "================================================================"
     echo "MODEL-PIN GATE — PINNED TIER IS EXHAUSTED, REROUTE REQUIRED"
@@ -109,7 +112,40 @@ _mpg_print_exhausted_block() {
       echo "     (chain[1] for this agent in config/model-policy.json — the"
       echo "      fallback the policy already documents.)"
     else
-      echo "FIX: re-dispatch with an explicit model that is available."
+      # fallback-for only matches when <tier> IS chain[0] of some category,
+      # so an empty _MPG_FB does not necessarily mean the WHOLE chain is
+      # exhausted — try the full resolver (walks every hop) before
+      # concluding that. 2026-08-06 remediation: the prior text here
+      # ("re-dispatch with an explicit model that is available") named NO
+      # model at all when this branch fired, which is exactly the case
+      # (whole chain exhausted, or a 1-element chain like build's [sonnet])
+      # where the operator most needs a concrete next step.
+      local ma resolve_out resolve_rc rmodel
+      ma="$(dirname "$0")/../scripts/model-availability.sh"
+      [ -f "$ma" ] || ma="$HOME/.claude/scripts/model-availability.sh"
+      resolve_out=""; resolve_rc=1
+      if [ -n "$atype" ] && [ -f "$ma" ]; then
+        resolve_out="$(bash "$ma" resolve --agent "$atype" 2>&1)"; resolve_rc=$?
+      fi
+      if [ "$resolve_rc" -eq 0 ]; then
+        rmodel="$(printf '%s\n' "$resolve_out" | grep '^RESOLVED_MODEL=' | head -1 | cut -d= -f2-)"
+        echo "FIX: re-dispatch this agent with an explicit model:"
+        echo "     model: ${rmodel}"
+        echo "     (resolved from config/model-policy.json's full chain for '${atype}'.)"
+      else
+        echo "FIX: the entire declared chain for this agent is currently marked"
+        echo "     exhausted — the chain walked and why:"
+        if [ -n "$resolve_out" ]; then
+          printf '%s\n' "$resolve_out" | sed 's/^/     /'
+        else
+          echo "     (chain unresolvable — no '${atype:-<agent>}' entry in config/model-policy.json)"
+        fi
+        echo ""
+        echo "     Options, in order:"
+        echo "     1. If a tier is available again, clear its marker (always available):"
+        echo "        bash ~/.claude/scripts/model-availability.sh clear <tier>"
+        echo "     2. Or re-dispatch once you know a specific model is available."
+      fi
     fi
     echo ""
     echo "If '${tier}' is available again:"
@@ -174,7 +210,7 @@ run_gate() {
   # the frontmatter path. One exhaustion check now covers both surfaces).
   if [ -n "$model" ] && [ "$model" != "null" ]; then
     if _mpg_tier_exhausted "$model"; then
-      _mpg_print_exhausted_block "$model" "This ${tool} spawn passes explicit model: ${model}"
+      _mpg_print_exhausted_block "$model" "This ${tool} spawn passes explicit model: ${model}" "$atype"
       return 2
     fi
     return 0
@@ -212,7 +248,7 @@ run_gate() {
     local pinned_tier
     pinned_tier="$(_mpg_frontmatter_model "$def")"
     if [ -n "$pinned_tier" ] && _mpg_tier_exhausted "$pinned_tier"; then
-      _mpg_print_exhausted_block "$pinned_tier" "agents/${atype}.md pins model: ${pinned_tier}"
+      _mpg_print_exhausted_block "$pinned_tier" "agents/${atype}.md pins model: ${pinned_tier}" "$atype"
       return 2
     fi
     return 0                                         # frontmatter pins it → allow
@@ -293,7 +329,59 @@ run_gate() {
 # cheap (the next reroute-block or --observe hit still catches it), a false
 # mark is not (it would silently steer every subsequent dispatch off a tier
 # that was never actually exhausted).
+#
+# ----------------------------------------------------------------------------
+# 2026-08-06 REMEDIATION (harness-change-review; both Critical, both PROVEN
+# by replaying this session's own real transcripts against the v1 splice):
+#
+# C1 — UNANCHORED MATCH marked HEALTHY tiers exhausted. v1 grepped
+# _MPG_EXHAUSTION_PATTERN unanchored against the ENTIRE tool_response, so the
+# phrase appearing in a *prompt echo* (an Agent launch-ack is an OBJECT
+# carrying the echoed `prompt`) or an agent's own foreground *report* text
+# fired it exactly like a real death. Replaying the real toolUseResult of a
+# SUCCESSFUL opus dispatch (whose launch-ack object's `.prompt` happened to
+# quote this very bug's description) marked opus exhausted; replaying a
+# builder dispatch marked sonnet — and categories.build.chain is [sonnet]
+# only, a total builder lockout. Evidence (90-transcript corpus): all 13 TRUE
+# deaths are STRING results BEGINNING "Error: Agent terminated early due to
+# an API error:"; both FALSE positives were launch-ack OBJECTS carrying a
+# `prompt` key. Fix below implements BOTH discriminators (either alone kills
+# both FPs while keeping all 13 TPs):
+#   1. ignore tool_response ENTIRELY (never even stringify it) when it is an
+#      object carrying a `prompt` key — that shape is a launch-ack, never a
+#      terminal death.
+#   2. require the response to BEGIN WITH the literal death-signature prefix
+#      "Error: Agent terminated early due to an API error" before the
+#      exhaustion phrase is even searched for.
+#
+# C2 — SELF-REFERENTIAL TRIGGER INJECTION. v1's `--reason "observed:
+# ${matched}"` stored the VERBATIM matched trigger text; model-availability.sh
+# resolve echoes it in RESOLVED_REASON; dispatch-directives.sh printed that
+# straight into the NEXT dispatch's prompt — so a TRUE positive on one tier
+# could seed a FALSE positive on the next tier one dispatch later. Fix: never
+# persist or re-emit the matched text — mark-exhausted below is given a FIXED
+# token (tier + UTC timestamp only), and dispatch-directives.sh (separately
+# fixed) now prints only the resolved tier + a closed-vocabulary cause code,
+# never the raw stored reason string, so even an unrelated future reason
+# value with unexpected content can never leak into a dispatch prompt.
+# ----------------------------------------------------------------------------
 _MPG_EXHAUSTION_PATTERN='hit your monthly spend limit'
+_MPG_DEATH_PREFIX='Error: Agent terminated early due to an API error'
+
+# Best-effort: does <text> name one of the known tiers? Real spend-limit
+# error text names the model that died (e.g. "...spend limit for Fable
+# 5..."), so a plain case-insensitive substring search is enough to recover
+# it — this is intentionally the SAME closed tier vocabulary _ma_tier_ok
+# already enforces, not a free-text guess. Echoes the first match, empty if
+# none.
+_mpg_parse_model_from_text() {
+  local text_lc t
+  text_lc="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+  for t in fable opus sonnet haiku mythos; do
+    case "$text_lc" in *"$t"*) printf '%s' "$t"; return 0 ;; esac
+  done
+  return 0
+}
 
 run_observe() {
   local input="${CLAUDE_TOOL_INPUT:-}"
@@ -305,24 +393,84 @@ run_observe() {
   tool="$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null || true)"
   case "$tool" in Task|Agent) ;; *) return 0 ;; esac
 
+  local atype atype_lc
+  atype="$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // .tool_input.agentType // ""' 2>/dev/null || true)"
+  # 'fork' always inherits the parent model and can never be pinned or
+  # model-overridden -- mirrors run_gate's identical exemption (line ~223)
+  # so a death on a fork spawn is never mis-attributed to whatever tier the
+  # PARENT happened to be running on.
+  atype_lc="$(printf '%s' "$atype" | tr '[:upper:]' '[:lower:]')"
+  [ "$atype_lc" = "fork" ] && return 0
+
+  # DISCRIMINATOR 2 (object-with-prompt-key, C1 fix): a launch-ack for an
+  # in-flight or successfully-launched dispatch is an OBJECT carrying a
+  # `prompt` key (the echoed dispatch prompt) -- never the terminal STRING a
+  # real API-error death produces. Check the RAW type BEFORE ever
+  # stringifying tool_response, so the echoed prompt's own text (which may
+  # quote the exhaustion phrase verbatim, as this remediation's own dispatch
+  # prompt does) is never substring-matched at all.
+  local rtype
+  rtype="$(printf '%s' "$input" | jq -r '(.tool_response // "") | type' 2>/dev/null || true)"
+  if [ "$rtype" = "object" ]; then
+    local has_prompt
+    has_prompt="$(printf '%s' "$input" | jq -r '(.tool_response | has("prompt"))' 2>/dev/null || true)"
+    [ "$has_prompt" = "true" ] && return 0
+  fi
+
   local response
   response="$(printf '%s' "$input" | jq -r '(.tool_response // "") | if type=="string" then . else tostring end' 2>/dev/null || true)"
   [ -z "$response" ] && return 0
 
+  # DISCRIMINATOR 1 (anchored prefix, C1 fix): a real death's tool_response
+  # is a STRING that BEGINS WITH the literal error signature -- never a
+  # foreground agent's own REPORT text or an echoed prompt that happens to
+  # mention the phrase in prose. Both discriminators are required: each of
+  # this session's two PROVEN false positives defeats only ONE of them.
+  case "$response" in
+    "${_MPG_DEATH_PREFIX}"*) : ;;
+    *) return 0 ;;
+  esac
+  local after_prefix="${response#*"${_MPG_DEATH_PREFIX}"}"
+
   local matched
-  matched="$(printf '%s' "$response" | grep -io -- "${_MPG_EXHAUSTION_PATTERN}[^\"]*" | head -1)"
+  matched="$(printf '%s' "$after_prefix" | grep -io -- "${_MPG_EXHAUSTION_PATTERN}[^\"]*" | head -1)"
   [ -z "$matched" ] && return 0    # no verbatim match -> record NOTHING (never infer)
 
-  local atype model
-  atype="$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // .tool_input.agentType // ""' 2>/dev/null || true)"
-  model="$(printf '%s' "$input" | jq -r '.tool_input.model // ""' 2>/dev/null || true)"
+  # AUTHORITATIVE identity over re-derivation: the tier that actually ran is
+  # stated by the platform itself -- a `resolvedModel` field when the event
+  # carries one, or the model NAME inside the error text (real errors say
+  # "...for Fable 5..."/"...Opus...") -- never re-derived SOLELY from
+  # frontmatter, which only proves what SHOULD have run, not what DID.
+  # Frontmatter / the explicit `model:` on the spawn is consulted as a
+  # FALLBACK only when no authoritative source names a tier. If an
+  # authoritative source IS present and it DISAGREES with the fallback,
+  # that is a genuine ambiguity this hook cannot resolve -- record NOTHING
+  # rather than pick a side.
+  local declared_model text_model authoritative_model
+  declared_model="$(printf '%s' "$input" | jq -r '.resolvedModel // .tool_input.resolvedModel // ""' 2>/dev/null || true)"
+  [ "$declared_model" = "null" ] && declared_model=""
+  text_model="$(_mpg_parse_model_from_text "$response")"
+  authoritative_model="${declared_model:-$text_model}"
 
-  if [ -z "$model" ] || [ "$model" = "null" ]; then
+  local spawn_model
+  spawn_model="$(printf '%s' "$input" | jq -r '.tool_input.model // ""' 2>/dev/null || true)"
+  [ "$spawn_model" = "null" ] && spawn_model=""
+  if [ -z "$spawn_model" ]; then
     local agents_dir def
     agents_dir="${MODEL_PIN_AGENTS_DIR:-$HOME/.claude/agents}"
     [ -d "$agents_dir" ] || agents_dir="$(dirname "$0")/../agents"
     def="$(_resolve_agent_def "$atype" "$agents_dir")"
-    [ -n "$def" ] && model="$(_mpg_frontmatter_model "$def")"
+    [ -n "$def" ] && spawn_model="$(_mpg_frontmatter_model "$def")"
+  fi
+
+  local model
+  if [ -n "$authoritative_model" ]; then
+    if [ -n "$spawn_model" ] && [ "$spawn_model" != "$authoritative_model" ]; then
+      return 0    # authoritative source disagrees with frontmatter/explicit -> never guess
+    fi
+    model="$authoritative_model"
+  else
+    model="$spawn_model"
   fi
   [ -z "$model" ] && return 0      # can't identify which tier ran -> never guess
 
@@ -331,7 +479,33 @@ run_observe() {
   [ -f "$ma" ] || ma="$HOME/.claude/scripts/model-availability.sh"
   [ -f "$ma" ] || return 0
 
-  bash "$ma" mark-exhausted "$model" --reason "observed: ${matched}" >&2
+  # Escalating TTL: a SECOND auto-observed death on a tier that is STILL
+  # within a previous marker's window means dispatches keep landing on an
+  # already-known-bad tier; re-marking at the same 4h base just resets the
+  # clock forever without ever holding. Escalate to 12h so the fallback
+  # sticks through a fuller cycle -- a FRESH first observation still gets
+  # only the 4h base, so this does not lengthen the blast radius of a
+  # one-off false mark.
+  local hours=4
+  bash "$ma" is-exhausted "$model" >/dev/null 2>&1 && hours=12
+
+  # C2 fix: never persist or re-emit the matched trigger text. Store a FIXED
+  # token + tier + UTC timestamp only -- this is the ONLY thing written to
+  # the reason field a downstream dispatch prompt could ever echo.
+  local ts; ts="$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
+  bash "$ma" mark-exhausted "$model" --hours "$hours" \
+    --reason "observed: API spend-limit error at ${ts}" >&2
+
+  # Visible signal + audit (2026-08-06 remediation: the mark previously went
+  # to stderr only, easy to miss). Emit the clear-with instruction on stdout
+  # and append a one-line audit row, both sandboxable via env override so
+  # --self-test never touches real machine state.
+  echo "MODEL-AVAILABILITY: marked ${model} exhausted (auto-observed) — clear with: model-availability.sh clear ${model}"
+  local audit_log
+  audit_log="${MODEL_AVAIL_AUDIT_LOG:-$HOME/.claude/state/model-availability-audit.log}"
+  mkdir -p "$(dirname "$audit_log")" 2>/dev/null
+  printf '%s\ttier=%s\thours=%s\tauto-observed\ttool=%s\tsubagent_type=%s\n' \
+    "$ts" "$model" "$hours" "$tool" "${atype:-<none>}" >> "$audit_log" 2>/dev/null
   return 0
 }
 
@@ -466,16 +640,31 @@ run_self_test() {
     rm -rf "$obsdir" 2>/dev/null
   }
 
-  _rc_observe "spend-limit response, frontmatter-pinned agent → marks the pinned tier" \
-    '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: You have hit your monthly spend limit for Fable 5. Please switch models."}' \
+  # 2026-08-06 remediation: the positive fixtures below now carry the REAL
+  # anchored prefix "Error: Agent terminated early due to an API error:"
+  # proven (90-transcript corpus) to begin all 13 real deaths -- a fixture
+  # that used to pass with just the bare exhaustion phrase would now
+  # (correctly) mark nothing, since that shape is exactly what a launch-ack
+  # echo or an agent's own report can also contain (see the two FP negatives
+  # below).
+  _rc_observe "anchored death, frontmatter-pinned agent, no tier named in text → marks the pinned tier (frontmatter fallback)" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit. Please switch models."}' \
     "fable"
-  # Real production wording carries an apostrophe — prove the pattern
-  # matches the VERBATIM string, not just the sanitized test fixture above.
-  REALISTIC_JSON='{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"You'"'"'ve hit your monthly spend limit for Fable 5 — switch models to continue this chat."}'
-  _rc_observe "realistic verbatim spend-limit error (with apostrophe) → marks the pinned tier" \
+  # Real production wording carries an apostrophe AND names the tier in the
+  # error text -- prove the pattern matches the VERBATIM string AND that the
+  # authoritative text-parsed tier (fable) AGREEING with the frontmatter
+  # fallback (fable) still marks correctly.
+  REALISTIC_JSON='{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: Agent terminated early due to an API error: You'"'"'ve hit your monthly spend limit for Fable 5 — switch models to continue this chat."}'
+  _rc_observe "realistic verbatim spend-limit error (apostrophe + tier named, agrees with frontmatter) → marks the pinned tier" \
     "$REALISTIC_JSON" "fable"
-  _rc_observe "spend-limit response, explicit model on the spawn → marks the explicit tier" \
-    '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent","model":"opus"},"tool_response":"You have hit your monthly spend limit"}' \
+  _rc_observe "anchored death, explicit model on the spawn, no tier named in text → marks the explicit tier" \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent","model":"opus"},"tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit"}' \
+    "opus"
+  _rc_observe "AUTHORITATIVE text names a DIFFERENT tier than the frontmatter pin → disagreement → marks NOTHING (never guesses which is right)" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit for Opus 5 — switch models."}' \
+    ""
+  _rc_observe "resolvedModel field present (no frontmatter/explicit model in play) → marks the resolvedModel tier" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"unpinned-agent"},"resolvedModel":"opus","tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit"}' \
     "opus"
   _rc_observe "normal completion (no error string) → marks nothing" \
     '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"DONE, all tests pass"}' \
@@ -484,11 +673,78 @@ run_self_test() {
     '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: rate limited, try again later"}' \
     ""
   _rc_observe "non-Task/Agent tool → marks nothing" \
-    '{"tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":"You have hit your monthly spend limit"}' \
+    '{"tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit"}' \
     ""
-  _rc_observe "unresolvable agent (unknown type, no explicit model) → marks nothing, never guesses" \
-    '{"tool_name":"Task","tool_input":{"subagent_type":"does-not-exist"},"tool_response":"You have hit your monthly spend limit"}' \
+  _rc_observe "unresolvable agent (unknown type, no explicit model), anchored death → marks nothing, never guesses" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"does-not-exist"},"tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit"}' \
     ""
+  _rc_observe "fork subagent_type → exempt, never marked even against a real death shape" \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"fork"},"tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit"}' \
+    ""
+
+  # --- C1 FP-replay proof: the two REAL corpus shapes that produced false
+  # positives under the v1 (unanchored) matcher. Both must now mark NOTHING.
+  _rc_observe "PROVEN FP #1 (launch-ack OBJECT whose .prompt echoes the phrase) → marks NOTHING" \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"pinned-agent"},"tool_response":{"prompt":"Investigate the C1 defect where a launch-ack containing the phrase '"'"'hit your monthly spend limit'"'"' falsely marked a healthy tier exhausted.","status":"launched"}}' \
+    ""
+  _rc_observe "PROVEN FP #2 (foreground STRING agent REPORT mentioning the phrase, no death prefix) → marks NOTHING" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Verdict: DONE\nSummary: fixed the false positive where a report mentioning \"hit your monthly spend limit\" in prose wrongly marked a tier exhausted."}' \
+    ""
+
+  # --- C2 proof: the reason PERSISTED never carries the matched trigger
+  # text, only the fixed token -- so nothing downstream (dispatch-
+  # directives.sh, a future resolve call) can ever re-emit attacker/self-
+  # controllable content, regardless of what the underlying error said.
+  _rc_observe_reason() { # <name> <json> <expect-tier>
+    local name="$1" json="$2" expect="$3" obsdir got_reason
+    obsdir="$(mktemp -d 2>/dev/null)" || { echo "  FAIL $name (mktemp)"; fail=$((fail+1)); return; }
+    CLAUDE_TOOL_INPUT="$json" MODEL_PIN_AGENTS_DIR="$fix/agents" MODEL_AVAIL_STATE_DIR="$obsdir" \
+      bash "$SELF" --observe >/dev/null 2>&1
+    got_reason="$(MODEL_AVAIL_STATE_DIR="$obsdir" bash "$ma_path" reason "$expect" 2>/dev/null || true)"
+    if printf '%s' "$got_reason" | grep -q "^observed: API spend-limit error at " \
+       && ! printf '%s' "$got_reason" | grep -qi "hit your monthly spend limit"; then
+      echo "  ok   $name (reason='$got_reason')"; pass=$((pass+1))
+    else
+      echo "  FAIL $name (reason='$got_reason' -- must be the fixed token, never the verbatim trigger)"; fail=$((fail+1))
+    fi
+    rm -rf "$obsdir" 2>/dev/null
+  }
+  _rc_observe_reason "stored reason is the FIXED token, never the verbatim matched trigger text" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit for Fable 5, upgrade to keep going."}' \
+    "fable"
+
+  # --- Escalating TTL: a SECOND auto-observed death on a tier STILL within
+  # the first marker's window escalates 4h -> 12h; a FRESH first
+  # observation stays at 4h.
+  ESC_JSON='{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: Agent terminated early due to an API error: You have hit your monthly spend limit"}'
+  ESCDIR="$(mktemp -d 2>/dev/null)"
+  CLAUDE_TOOL_INPUT="$ESC_JSON" MODEL_PIN_AGENTS_DIR="$fix/agents" MODEL_AVAIL_STATE_DIR="$ESCDIR" bash "$SELF" --observe >/dev/null 2>&1
+  FIRST_HOURS="$(cut -f2 "$ESCDIR/fable" 2>/dev/null)"
+  if [ "$FIRST_HOURS" = "4" ]; then echo "  ok   fresh auto-mark uses the 4h base"; pass=$((pass+1))
+  else echo "  FAIL fresh auto-mark hours: got '$FIRST_HOURS', expected 4"; fail=$((fail+1)); fi
+  CLAUDE_TOOL_INPUT="$ESC_JSON" MODEL_PIN_AGENTS_DIR="$fix/agents" MODEL_AVAIL_STATE_DIR="$ESCDIR" bash "$SELF" --observe >/dev/null 2>&1
+  SECOND_HOURS="$(cut -f2 "$ESCDIR/fable" 2>/dev/null)"
+  if [ "$SECOND_HOURS" = "12" ]; then echo "  ok   second auto-mark within the first marker's window escalates to 12h"; pass=$((pass+1))
+  else echo "  FAIL escalated auto-mark hours: got '$SECOND_HOURS', expected 12"; fail=$((fail+1)); fi
+  rm -rf "$ESCDIR" 2>/dev/null
+
+  # --- Visible signal + audit: the stdout line names the clear command, and
+  # an audit row is appended (sandboxed via MODEL_AVAIL_AUDIT_LOG so this
+  # never touches the real machine-wide audit log).
+  AUDIT_LOG="$(mktemp -u 2>/dev/null)"
+  AUDDIR="$(mktemp -d 2>/dev/null)"
+  AUDIT_OUT="$(CLAUDE_TOOL_INPUT="$ESC_JSON" MODEL_PIN_AGENTS_DIR="$fix/agents" MODEL_AVAIL_STATE_DIR="$AUDDIR" MODEL_AVAIL_AUDIT_LOG="$AUDIT_LOG" bash "$SELF" --observe 2>/dev/null)"
+  if printf '%s' "$AUDIT_OUT" | grep -q "^MODEL-AVAILABILITY: marked fable exhausted (auto-observed) — clear with: model-availability.sh clear fable$"; then
+    echo "  ok   auto-mark emits the clear-with signal on stdout"; pass=$((pass+1))
+  else
+    echo "  FAIL stdout signal missing/wrong: '$AUDIT_OUT'"; fail=$((fail+1))
+  fi
+  if [ -f "$AUDIT_LOG" ] && grep -q "tier=fable" "$AUDIT_LOG" 2>/dev/null; then
+    echo "  ok   audit row appended to the (sandboxed) audit log"; pass=$((pass+1))
+  else
+    echo "  FAIL audit row not found in '$AUDIT_LOG'"; fail=$((fail+1))
+  fi
+  rm -rf "$AUDDIR" "$AUDIT_LOG" 2>/dev/null
 
   rm -rf "$fix" 2>/dev/null
   echo ""
