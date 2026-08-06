@@ -218,7 +218,34 @@ run_gate() {
     return 0                                         # frontmatter pins it → allow
   fi
 
-  # Silent-inherit path → BLOCK.
+  # Silent-inherit path → BLOCK. Try to name the ONE model to pass (operator
+  # directive 2026-08-05: "the fix should be one obvious line, not a
+  # research task") by resolving this atype's declared chain via
+  # model-availability.sh resolve — the SAME resolver the reroute block
+  # above and dispatch-directives.sh now use, so there is one place that
+  # walks a chain, not three. Falls back to the generic fable|opus|sonnet|
+  # haiku text when atype is unresolvable (unknown/typo'd type, or a type
+  # with no chain declared at all) — resolution failing is exactly the
+  # "unknown/empty chain → loud failure, never a silent default" case, so
+  # the generic text (not a guessed model) is the correct degraded form.
+  local fix1_line="  1. Pass an explicit model on the spawn (model: fable|opus|sonnet|haiku) per"
+  local fix1_line2="     config/model-policy.json — chain[0] for this agent's category."
+  if [ -n "$atype" ]; then
+    local ma resolve_out resolve_rc rmodel
+    ma="$(dirname "$0")/../scripts/model-availability.sh"
+    [ -f "$ma" ] || ma="$HOME/.claude/scripts/model-availability.sh"
+    if [ -f "$ma" ]; then
+      resolve_out="$(bash "$ma" resolve --agent "$atype" 2>/dev/null)"
+      resolve_rc=$?
+      if [ "$resolve_rc" -eq 0 ]; then
+        rmodel="$(printf '%s\n' "$resolve_out" | grep '^RESOLVED_MODEL=' | head -1 | cut -d= -f2-)"
+        if [ -n "$rmodel" ]; then
+          fix1_line="  1. Pass an explicit model on the spawn: model: ${rmodel}"
+          fix1_line2="     (resolved from config/model-policy.json's chain for '${atype}')."
+        fi
+      fi
+    fi
+  fi
   {
     echo "================================================================"
     echo "MODEL-PIN GATE — SUBAGENT SPAWN BLOCKED"
@@ -230,14 +257,82 @@ run_gate() {
     echo "  subagent_type: ${atype:-<none>}"
     echo ""
     echo "Fix ONE of:"
-    echo "  1. Pass an explicit model on the spawn (model: fable|opus|sonnet|haiku) per"
-    echo "     config/model-policy.json — chain[0] for this agent's category."
+    echo "$fix1_line"
+    echo "$fix1_line2"
     echo "  2. Pin the agent: add a 'model:' frontmatter line to agents/${atype:-<type>}.md."
     echo ""
     echo "Policy: adapters/claude-code/config/model-policy.json  ·  doctrine/model-selection.md"
     echo "This gate: ~/.claude/hooks/model-pin-gate.sh (source: adapters/claude-code/hooks/model-pin-gate.sh)"
   } >&2
   return 2
+}
+
+# ============================================================================
+# --observe (PostToolUse Task|Agent) — OBSERVE, DON'T ASSUME.
+#
+# Operator directive 2026-08-05 (docs/backlog.md MODEL-LIMIT-INFERENCE-BAN-
+# 2026-08-05): "I'm sick and tired of Claude making assumptions about what
+# the limits are and making decisions based on those assumptions." There is
+# no machine-readable limits source, so exhaustion state must come from a
+# REAL failure string, never an inference from "an agent died" or "this
+# feels slow."
+#
+# This runs AFTER a Task/Agent dispatch completes (PostToolUse, not the
+# run_gate() PreToolUse path above). If the dispatch's tool_response carries
+# the VERBATIM spend-limit error, this records which TIER ACTUALLY RAN
+# (explicit model: on the spawn, else the resolved agent's own frontmatter
+# pin — reusing _resolve_agent_def/_mpg_frontmatter_model already defined
+# above, no second parser) as exhausted via model-availability.sh
+# mark-exhausted. That is the SAME state file the PreToolUse reroute above,
+# the silent-inherit fix1_line resolution above, and dispatch-directives.sh's
+# resolve call all read — one write path, three read paths.
+#
+# Never blocks (always rc 0): the dispatch already finished: this hook only
+# RECORDS what happened. If the tier can't be identified, or the response
+# doesn't contain the verbatim error string, it records NOTHING — a miss is
+# cheap (the next reroute-block or --observe hit still catches it), a false
+# mark is not (it would silently steer every subsequent dispatch off a tier
+# that was never actually exhausted).
+_MPG_EXHAUSTION_PATTERN='hit your monthly spend limit'
+
+run_observe() {
+  local input="${CLAUDE_TOOL_INPUT:-}"
+  [ -z "$input" ] && input="$(cat 2>/dev/null || true)"
+  [ -z "$input" ] && return 0
+  command -v jq >/dev/null 2>&1 || return 0
+
+  local tool
+  tool="$(printf '%s' "$input" | jq -r '.tool_name // ""' 2>/dev/null || true)"
+  case "$tool" in Task|Agent) ;; *) return 0 ;; esac
+
+  local response
+  response="$(printf '%s' "$input" | jq -r '(.tool_response // "") | if type=="string" then . else tostring end' 2>/dev/null || true)"
+  [ -z "$response" ] && return 0
+
+  local matched
+  matched="$(printf '%s' "$response" | grep -io -- "${_MPG_EXHAUSTION_PATTERN}[^\"]*" | head -1)"
+  [ -z "$matched" ] && return 0    # no verbatim match -> record NOTHING (never infer)
+
+  local atype model
+  atype="$(printf '%s' "$input" | jq -r '.tool_input.subagent_type // .tool_input.agentType // ""' 2>/dev/null || true)"
+  model="$(printf '%s' "$input" | jq -r '.tool_input.model // ""' 2>/dev/null || true)"
+
+  if [ -z "$model" ] || [ "$model" = "null" ]; then
+    local agents_dir def
+    agents_dir="${MODEL_PIN_AGENTS_DIR:-$HOME/.claude/agents}"
+    [ -d "$agents_dir" ] || agents_dir="$(dirname "$0")/../agents"
+    def="$(_resolve_agent_def "$atype" "$agents_dir")"
+    [ -n "$def" ] && model="$(_mpg_frontmatter_model "$def")"
+  fi
+  [ -z "$model" ] && return 0      # can't identify which tier ran -> never guess
+
+  local ma
+  ma="$(dirname "$0")/../scripts/model-availability.sh"
+  [ -f "$ma" ] || ma="$HOME/.claude/scripts/model-availability.sh"
+  [ -f "$ma" ] || return 0
+
+  bash "$ma" mark-exhausted "$model" --reason "observed: ${matched}" >&2
+  return 0
 }
 
 run_self_test() {
@@ -263,6 +358,11 @@ run_self_test() {
   printf -- '---\nname: Unpinned Display\ntools: Read\n---\nbody\n' > "$fix/agents/unpinned-display.md"
   # Fence-scoping: a body line starting `model:` must NOT count as pinned.
   printf -- '---\nname: body-model-agent\ntools: Read\n---\nmodel: not-in-frontmatter\n' > "$fix/agents/body-model-agent.md"
+  # A KNOWN agent name (present in the real config/model-policy.json's
+  # agents{} map, chain=[fable,opus]) whose frontmatter is genuinely
+  # unpinned — the case the new fix1_line resolution names a specific
+  # model for, vs. the generic text for a truly unknown/typo'd type.
+  printf -- '---\nname: task-verifier\ntools: Read\n---\nbody\n' > "$fix/agents/task-verifier.md"
 
   _rc() { # <expected-rc> <name> <json>
     local exp="$1" name="$2" json="$3" got
@@ -323,6 +423,73 @@ run_self_test() {
   bash "$ma_path" clear fable >/dev/null 2>&1
   _rc 0 "explicit model:fable + fable cleared → allow" '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent","model":"fable"}}'
 
+  # --- Silent-inherit block now NAMES the resolved model for a KNOWN,
+  # genuinely-unpinned agent type (operator directive 2026-08-05: "one
+  # obvious line, not a research task"). Uses the REAL config/model-
+  # policy.json (task-verifier's declared chain is [fable,opus]) against
+  # the sandboxed, empty MODEL_AVAIL_STATE_DIR exported above -> fable is
+  # fresh -> resolves to fable.
+  #
+  # Needle is the "(resolved from ...)" clause, NOT bare "model: fable" --
+  # mutation-testing this assertion (2026-08-05) proved "model: fable" is a
+  # SUBSTRING of the generic fallback text "model: fable|opus|sonnet|haiku",
+  # so a bare-substring needle stayed green even with the resolver call
+  # gutted entirely. The "(resolved from ...)" clause only ever appears on
+  # the resolved path, so it is the actual discriminator.
+  _rc_msg 2 "known-but-unpinned agent → BLOCK naming its resolved chain[0] model" \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"task-verifier"}}' \
+    "resolved from config/model-policy.json's chain for 'task-verifier'"
+  # An UNKNOWN/typo'd agent type must still fall back to the generic
+  # fable|opus|sonnet|haiku text — resolution failing (no chain declared)
+  # must never be papered over with a guessed model.
+  _rc_msg 2 "unknown agent type → BLOCK with generic policy text (no chain to resolve)" \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"does-not-exist"}}' "fable|opus|sonnet|haiku"
+
+  # --- --observe (PostToolUse): OBSERVE, DON'T ASSUME. Each scenario runs
+  # against its OWN empty MODEL_AVAIL_STATE_DIR (never the suite-wide $fix
+  # one, so a mark from one scenario can't leak into the next) and asserts
+  # the exhaustion marker file itself, not just an rc (rc is always 0 for
+  # --observe — it never blocks).
+  _rc_observe() { # <name> <json> <expected-marked-tier-or-empty>
+    local name="$1" json="$2" expect="$3" obsdir got_files
+    obsdir="$(mktemp -d 2>/dev/null)" || { echo "  FAIL $name (mktemp)"; fail=$((fail+1)); return; }
+    CLAUDE_TOOL_INPUT="$json" MODEL_PIN_AGENTS_DIR="$fix/agents" MODEL_AVAIL_STATE_DIR="$obsdir" \
+      bash "$SELF" --observe >/dev/null 2>&1
+    got_files="$(ls -1 "$obsdir" 2>/dev/null)"
+    if [ -n "$expect" ]; then
+      if [ -f "$obsdir/$expect" ]; then echo "  ok   $name (marked '$expect')"; pass=$((pass+1))
+      else echo "  FAIL $name (expected '$expect' marked; dir has: ${got_files:-<empty>})"; fail=$((fail+1)); fi
+    else
+      if [ -z "$got_files" ]; then echo "  ok   $name (nothing marked)"; pass=$((pass+1))
+      else echo "  FAIL $name (unexpectedly marked: $got_files)"; fail=$((fail+1)); fi
+    fi
+    rm -rf "$obsdir" 2>/dev/null
+  }
+
+  _rc_observe "spend-limit response, frontmatter-pinned agent → marks the pinned tier" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: You have hit your monthly spend limit for Fable 5. Please switch models."}' \
+    "fable"
+  # Real production wording carries an apostrophe — prove the pattern
+  # matches the VERBATIM string, not just the sanitized test fixture above.
+  REALISTIC_JSON='{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"You'"'"'ve hit your monthly spend limit for Fable 5 — switch models to continue this chat."}'
+  _rc_observe "realistic verbatim spend-limit error (with apostrophe) → marks the pinned tier" \
+    "$REALISTIC_JSON" "fable"
+  _rc_observe "spend-limit response, explicit model on the spawn → marks the explicit tier" \
+    '{"tool_name":"Agent","tool_input":{"subagent_type":"unpinned-agent","model":"opus"},"tool_response":"You have hit your monthly spend limit"}' \
+    "opus"
+  _rc_observe "normal completion (no error string) → marks nothing" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"DONE, all tests pass"}' \
+    ""
+  _rc_observe "unrelated error text → marks nothing (never infer from a DIFFERENT error)" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"pinned-agent"},"tool_response":"Error: rate limited, try again later"}' \
+    ""
+  _rc_observe "non-Task/Agent tool → marks nothing" \
+    '{"tool_name":"Bash","tool_input":{"command":"ls"},"tool_response":"You have hit your monthly spend limit"}' \
+    ""
+  _rc_observe "unresolvable agent (unknown type, no explicit model) → marks nothing, never guesses" \
+    '{"tool_name":"Task","tool_input":{"subagent_type":"does-not-exist"},"tool_response":"You have hit your monthly spend limit"}' \
+    ""
+
   rm -rf "$fix" 2>/dev/null
   echo ""
   echo "model-pin-gate self-test: $pass passed, $fail failed"
@@ -331,5 +498,6 @@ run_self_test() {
 
 SELF="$0"
 if [ "${1:-}" = "--self-test" ]; then run_self_test; exit $?; fi
+if [ "${1:-}" = "--observe" ]; then run_observe; exit $?; fi
 run_gate
 exit $?

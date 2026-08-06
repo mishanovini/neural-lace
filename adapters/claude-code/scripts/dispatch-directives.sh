@@ -219,6 +219,24 @@ role_valid() {
   return 1
 }
 
+# role_category <role> — maps the dispatch ROLE (builder|verifier|reviewer|
+# advocate, the doctrine's closed set) to the model-policy.json CATEGORY it
+# should resolve against. verifier/reviewer/advocate all dispatch review-
+# category agents (task-verifier, code-reviewer, end-user-advocate, ...) so
+# they share the review chain (fable -> opus); builder dispatches plan-
+# phase-builder (build chain, sonnet-only). Operator directive 2026-08-05:
+# "the review agents are supposed to default to Fable and fall back to
+# Opus ... implement it mechanically" -- this mapping is what lets a bare
+# role (the only thing the orchestrator names at dispatch time) resolve to
+# a concrete model without the orchestrator hand-picking one.
+role_category() {
+  case "$1" in
+    builder) echo "build" ;;
+    verifier|reviewer|advocate) echo "review" ;;
+    *) echo "" ;;
+  esac
+}
+
 run() {
   local plan_arg="$1" task_num="$2" role="${3:-builder}"
   local root plan
@@ -246,6 +264,34 @@ run() {
   # standard processes are generated here, never hand-typed into a dispatch
   # prompt. This is the FIRST line of stdout, always.
   echo "NL-ATTRIBUTION: plan=${slug} task=${task_num} role=${role}"
+
+  # THE resolved model — operator directive 2026-08-05: "implement it
+  # mechanically" (Fable default, Opus fallback). role_category maps this
+  # dispatch's role to a model-policy.json category; model-availability.sh
+  # resolve walks that category's chain, skipping any tier a REAL observed
+  # failure has marked exhausted (never an assumption — see
+  # docs/backlog.md MODEL-LIMIT-INFERENCE-BAN-2026-08-05). Printed here so
+  # the resolved model is the copy-paste default in the dispatch prompt,
+  # not a judgment call the orchestrator has to make.
+  local category; category="$(role_category "$role")"
+  if [[ -n "$category" ]]; then
+    local ma_script="$root/adapters/claude-code/scripts/model-availability.sh"
+    if [[ -f "$ma_script" ]]; then
+      local resolve_out resolve_rc rmodel rreason
+      resolve_out="$(bash "$ma_script" resolve --category "$category" 2>&1)"
+      resolve_rc=$?
+      if [[ "$resolve_rc" -eq 0 ]]; then
+        rmodel="$(printf '%s\n' "$resolve_out" | grep '^RESOLVED_MODEL=' | head -1 | cut -d= -f2-)"
+        rreason="$(printf '%s\n' "$resolve_out" | grep '^RESOLVED_REASON=' | head -1 | cut -d= -f2-)"
+        echo "model: ${rmodel}  # ${rreason}"
+      else
+        echo "[dispatch-directives] WARN: model resolution failed for role '${role}' (category '${category}'): ${resolve_out}" >&2
+      fi
+    else
+      echo "[dispatch-directives] WARN: model-availability.sh not found at $ma_script -- cannot resolve model for role '${role}'" >&2
+    fi
+  fi
+
   echo ""
 
   local register="${DISPATCH_DIRECTIVES_REGISTER:-$root/adapters/claude-code/config/operator-directives.json}"
@@ -327,8 +373,15 @@ run_self_test() {
   # "unbound variable" error at exit.
   trap 'rm -rf "${TMPD:-}"' EXIT
 
-  mkdir -p "$TMPD/docs/plans" "$TMPD/adapters/claude-code/config" "$TMPD/adapters/claude-code/hooks/lib"
+  mkdir -p "$TMPD/docs/plans" "$TMPD/adapters/claude-code/config" "$TMPD/adapters/claude-code/hooks/lib" "$TMPD/adapters/claude-code/scripts"
   cp "$SCRIPT_DIR/../hooks/lib/directives-register-lib.sh" "$TMPD/adapters/claude-code/hooks/lib/directives-register-lib.sh" 2>/dev/null
+  # For the model: line (S9-S11 below): a REAL copy of model-availability.sh
+  # and model-policy.json, run against a SANDBOXED exhaustion-state dir (set
+  # via MODEL_AVAIL_STATE_DIR below) so the self-test never reads or writes
+  # the operator's live model-availability markers — same discipline
+  # model-pin-gate.sh's own self-test uses for the identical dependency.
+  cp "$SCRIPT_DIR/model-availability.sh" "$TMPD/adapters/claude-code/scripts/model-availability.sh" 2>/dev/null
+  cp "$SCRIPT_DIR/../config/model-policy.json" "$TMPD/adapters/claude-code/config/model-policy.json" 2>/dev/null
 
   # Reuse the T11 shared round-trip fixture register (per its own README:
   # "Task 20 consumes this lib — schema agreed HERE via the shared fixture
@@ -373,6 +426,7 @@ EOF
 
   export DISPATCH_DIRECTIVES_ROOT="$TMPD"
   export DISPATCH_DIRECTIVES_REGISTER="$TMPD/adapters/claude-code/config/operator-directives.json"
+  export MODEL_AVAIL_STATE_DIR="$TMPD/state-model-avail"
 
   # ---- S1: NL-ATTRIBUTION header is the FIRST line, correct slug/task/role ----
   OUT="$(bash "$SELF" "$TMPD/docs/plans/fixture-plan.md" 99 2>/dev/null)"
@@ -461,6 +515,41 @@ EOF
     PASSED=$((PASSED + 1))
   else
     echo "self-test (s8-no-tagged-files-directives-none): FAIL (rc=$RC8 got: $OUT8)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- S9: role=builder resolves category "build" -> chain[0] "sonnet"
+  # (nothing exhausted in this sandboxed MODEL_AVAIL_STATE_DIR) ----
+  OUT9="$(bash "$SELF" "$TMPD/docs/plans/fixture-plan.md" 99 builder 2>/dev/null)"
+  if printf '%s' "$OUT9" | grep -q '^model: sonnet'; then
+    echo "self-test (s9-model-line-builder-role-resolves-sonnet): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s9-model-line-builder-role-resolves-sonnet): FAIL (got: $OUT9)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- S10: role=reviewer resolves category "review" -> chain[0] "fable"
+  # (operator directive 2026-08-05: review defaults to Fable) ----
+  OUT10="$(bash "$SELF" "$TMPD/docs/plans/fixture-plan.md" 99 reviewer 2>/dev/null)"
+  if printf '%s' "$OUT10" | grep -q '^model: fable'; then
+    echo "self-test (s10-model-line-reviewer-role-resolves-fable): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s10-model-line-reviewer-role-resolves-fable): FAIL (got: $OUT10)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- S11: fable marked exhausted (real failure simulated) -> reviewer
+  # role falls back to opus, and the printed reason names fable ----
+  bash "$TMPD/adapters/claude-code/scripts/model-availability.sh" mark-exhausted fable --reason "s11 probe" --hours 1 >/dev/null 2>&1
+  OUT11="$(bash "$SELF" "$TMPD/docs/plans/fixture-plan.md" 99 reviewer 2>/dev/null)"
+  bash "$TMPD/adapters/claude-code/scripts/model-availability.sh" clear fable >/dev/null 2>&1
+  if printf '%s' "$OUT11" | grep -q '^model: opus' && printf '%s' "$OUT11" | grep -qi 'fable'; then
+    echo "self-test (s11-model-line-falls-back-when-fable-exhausted): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s11-model-line-falls-back-when-fable-exhausted): FAIL (got: $OUT11)" >&2
     FAILED=$((FAILED + 1))
   fi
 
