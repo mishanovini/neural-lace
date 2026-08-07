@@ -279,6 +279,36 @@ run() {
       echo "### ${id}"
       dr_get_field "$register" "$id" instruction
       echo ""
+      # ---- elaboration carriage (Task: directives-elaboration-layer,
+      # operator proposal 2026-08-04) — intent + requirements + anti_
+      # patterns in compact form, printed right after the verbatim
+      # instruction so a dispatch prompt carries both. Node/jq backed
+      # (dr_has_elaboration / dr_get_elaboration_field) — this script runs
+      # once per orchestrator dispatch decision, not once per Edit, so it
+      # is not the <50ms F-5 hot path (that budget applies only to
+      # doctrine-jit.sh's PostToolUse register walk). Silent when the
+      # entry has no elaboration — additive only, never required.
+      if dr_has_elaboration "$register" "$id"; then
+        echo "[ELABORATION -- interpretation, not verbatim; on conflict the Rule above wins; reviewed_by: $(dr_get_elaboration_field "$register" "$id" reviewed_by)]"
+        echo "Intent: $(dr_get_elaboration_field "$register" "$id" intent)"
+        local req_lines
+        req_lines="$(dr_get_elaboration_field "$register" "$id" requirements)"
+        if [[ -n "$req_lines" ]]; then
+          echo "Requirements:"
+          printf '%s\n' "$req_lines" | while IFS= read -r r; do
+            [[ -n "$r" ]] && echo "  - $r"
+          done
+        fi
+        local antip_lines
+        antip_lines="$(dr_get_elaboration_field "$register" "$id" anti_patterns)"
+        if [[ -n "$antip_lines" ]]; then
+          echo "Anti-patterns:"
+          printf '%s\n' "$antip_lines" | while IFS= read -r a; do
+            [[ -n "$a" ]] && echo "  - $a"
+          done
+        fi
+        echo ""
+      fi
     done <<< "$matched"
   fi
 
@@ -461,6 +491,22 @@ EOF
     PASSED=$((PASSED + 1))
   else
     echo "self-test (s8-no-tagged-files-directives-none): FAIL (rc=$RC8 got: $OUT8)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- S9: elaboration carriage (Task: directives-elaboration-layer,
+  # operator proposal 2026-08-04) — OD-901's fixture elaboration prints
+  # right after its instruction block, using the SAME OUT ($OUT from S1,
+  # which already ran task 99 against fixture-plan.md and matched OD-901). ----
+  if printf '%s' "$OUT" | grep -q '\[ELABORATION' \
+     && printf '%s' "$OUT" | grep -q 'Intent: Fixture intent paragraph' \
+     && printf '%s' "$OUT" | grep -q '  - Fixture requirement one\.' \
+     && printf '%s' "$OUT" | grep -q '  - Fixture anti-pattern one\.' \
+     && printf '%s' "$OUT" | grep -q 'reviewed_by: pending-operator'; then
+    echo "self-test (s9-elaboration-carriage-printed): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s9-elaboration-carriage-printed): FAIL (got: $OUT)" >&2
     FAILED=$((FAILED + 1))
   fi
 

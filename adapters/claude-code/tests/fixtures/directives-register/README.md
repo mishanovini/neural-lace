@@ -11,7 +11,14 @@ fixture for Task 20; read these two files.
   `adapters/claude-code/config/operator-directives.json`) covering every
   branch `dr_entries_for_files` must get right:
   - `OD-901` — BINDING, surface `adapters/claude-code/hooks/*gate*.sh`
-    matches `fixture-files.txt` → MUST be returned.
+    matches `fixture-files.txt` → MUST be returned. Also carries a well-formed
+    `elaboration` object (Task: directives-elaboration-layer, operator
+    proposal 2026-08-04) — the shared fixture for elaboration-carriage
+    round-trip coverage (`dr_has_elaboration`, `dr_get_elaboration_field`,
+    `dr_register_walk_bash`'s compact intent/requirements/anti_patterns
+    block, and `dispatch-directives.sh`'s printed elaboration section).
+    OD-902/903/904 deliberately carry NO elaboration field, proving the
+    optional-field contract in both directions (present vs. absent).
   - `OD-902` — BINDING, surface `docs/designs/**` does not match → MUST NOT
     be returned.
   - `OD-903` — SUPERSEDED, surface identical to OD-901's (would match) → MUST
