@@ -35,6 +35,8 @@ _(add your own free-form to-do items in this section — never overwritten)_
 - [x] AUTO: decision waiting on operator — "### Attribution gate on subagent dispatch — keep or veto (tier 2)" (needs-you `NY-1785556662-b3bd`, tier 2, session `unknown`) — see NEEDS-YOU.md
 - [x] AUTO: decision waiting on operator — "### Mac mini only: its ~/.claude/settings.json wires a dead hook (tier 2)" (needs-you `NY-1785556714-1055`, tier 2, session `unknown`) — see NEEDS-YOU.md
 - [x] AUTO: decision waiting on operator — "### Add doctrine/ to the review-record surface? (tier 1)" (needs-you `NY-1785556770-1313`, tier 1, session `unknown`) — see NEEDS-YOU.md
-- [ ] AUTO: decision waiting on operator — "DEC-4 (gated-pipeline plan T10): ratify the resident maintenance daemon so NL-Maintenance can be registered on this machine." (needs-you `NY-1785771976-caeb`, tier 2, session `unknown`) — see NEEDS-YOU.md
+- [x] AUTO: decision waiting on operator — "DEC-4 (gated-pipeline plan T10): ratify the resident maintenance daemon so NL-Maintenance can be registered on this machine." (needs-you `NY-1785771976-caeb`, tier 2, session `unknown`) — see NEEDS-YOU.md
 - [ ] AUTO: decision waiting on operator — "Decision needed: retire or re-purpose the pinned ws-ui-server checkout." (needs-you `NY-1785773673-38e7`, tier 2, session `91fafb0e`) — see NEEDS-YOU.md
+- [x] AUTO: decision waiting on operator — "Should we ratify the maintenance daemon so scheduled upkeep runs?" (needs-you `NY-1785870200-282a`, tier untiered, session `demo-pass`) — see NEEDS-YOU.md
+- [x] AUTO: decision waiting on operator — "Should the two CI safety scans be made mandatory gates on GitHub, so a red run actually blocks code from landing?" (needs-you `NY-1785884421-c728`, tier untiered, session `unknown`) — see NEEDS-YOU.md
 <!-- AUTO:END -->

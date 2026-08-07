@@ -1,8 +1,8 @@
 {
-  "generated_at": "2026-07-31T00:06:30Z",
-  "plans_total": 167,
+  "generated_at": "2026-08-03T16:50:38Z",
+  "plans_total": 173,
   "coverage": {
-    "wall_clock_pct": 100,
+    "wall_clock_pct": 98.3,
     "builder_sessions_pct": 1.2,
     "tokens_pct": 0
   },
@@ -30,11 +30,11 @@
     },
     {
       "class": "general-multi-file",
-      "count": 64,
+      "count": 65,
       "task_count": {
         "p50": 4,
         "p90": 13,
-        "n": 64
+        "n": 65
       },
       "wall_clock_days": {
         "p50": 0.03,
@@ -51,32 +51,32 @@
     },
     {
       "class": "harness-mechanism",
-      "count": 94,
+      "count": 98,
       "task_count": {
-        "p50": 4,
+        "p50": 3,
         "p90": 13,
-        "n": 94
+        "n": 98
       },
       "wall_clock_days": {
-        "p50": 0.03,
-        "p90": 6.62,
-        "n": 94
+        "p50": 0.04,
+        "p90": 6.90,
+        "n": 97
       },
       "builder_sessions": {
         "p50": 1,
         "p90": 1,
         "n": 2,
-        "coverage_pct": 2.1
+        "coverage_pct": 2
       },
       "concentration_flag": false
     },
     {
       "class": "schema-migration",
-      "count": 4,
+      "count": 5,
       "task_count": {
         "p50": 0,
-        "p90": 0,
-        "n": 4
+        "p90": 11,
+        "n": 5
       },
       "wall_clock_days": {
         "p50": 0.24,
@@ -514,6 +514,18 @@
       "has_evidence": true
     },
     {
+      "slug": "cockpit-orphan-treekill-hotfix-2026-08-03",
+      "mode": "code",
+      "class": "general-multi-file",
+      "task_count": 2,
+      "wall_clock_days": null,
+      "first_commit": null,
+      "last_commit": null,
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
+    },
+    {
       "slug": "cockpit-ui-polish",
       "mode": "build",
       "class": "general-multi-file",
@@ -830,9 +842,9 @@
       "mode": "code",
       "class": "harness-mechanism",
       "task_count": 11,
-      "wall_clock_days": 0.00,
+      "wall_clock_days": 0.06,
       "first_commit": "2026-07-30T17:03:00-07:00",
-      "last_commit": "2026-07-30T17:06:06-07:00",
+      "last_commit": "2026-07-30T18:26:45-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
@@ -917,6 +929,18 @@
       "wall_clock_days": 0.03,
       "first_commit": "2026-05-06T03:02:23-07:00",
       "last_commit": "2026-05-06T03:40:51-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
+    },
+    {
+      "slug": "document-freshness-system",
+      "mode": null,
+      "class": "schema-migration",
+      "task_count": 25,
+      "wall_clock_days": null,
+      "first_commit": null,
+      "last_commit": null,
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
@@ -1102,6 +1126,18 @@
       "has_evidence": false
     },
     {
+      "slug": "harness-execution-redesign-2026-08",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 1,
+      "wall_clock_days": 0.71,
+      "first_commit": "2026-08-02T14:17:07-07:00",
+      "last_commit": "2026-08-03T07:12:51-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
+    },
+    {
       "slug": "harness-gap-08-spawn-task-report-back",
       "mode": "code",
       "class": "harness-mechanism",
@@ -1270,6 +1306,18 @@
       "has_evidence": true
     },
     {
+      "slug": "limit-resume-watchdog-2026-07-30",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 1,
+      "wall_clock_days": 0.00,
+      "first_commit": "2026-07-30T15:37:30-07:00",
+      "last_commit": "2026-07-30T15:37:30-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
       "slug": "master-drift-autocorrection-2026-07",
       "mode": "design",
       "class": "harness-mechanism",
@@ -1421,6 +1469,18 @@
       "wall_clock_days": 0.00,
       "first_commit": "2026-06-01T20:14:45-07:00",
       "last_commit": "2026-06-01T20:14:45-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
+      "slug": "orphaned-worktree-guard-reformulation",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 0,
+      "wall_clock_days": 103.63,
+      "first_commit": "2026-04-18T17:29:13-07:00",
+      "last_commit": "2026-07-31T08:33:31-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
@@ -1640,6 +1700,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
+    },
+    {
+      "slug": "public-release-hardening",
+      "mode": null,
+      "class": "harness-mechanism",
+      "task_count": 49,
+      "wall_clock_days": null,
+      "first_commit": null,
+      "last_commit": null,
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
     },
     {
       "slug": "register-driven-session-enforcement-2026-06-13",
