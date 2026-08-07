@@ -77,9 +77,51 @@ fix, not a rounding error — this hook runs on every matching tool call.
 
 ## Q2 — Second-principal verify and merge the plan-inventory fix (the cockpit sync fix)
 
-Branch `fix/cross-machine-plan-inventory-single-derivation`, built on Office_PC in worktree
-`.claude/worktrees/wf_4671371c-69c-2`. **It is not pushed** — Office_PC must push it before you
-can see it; if `git ls-remote origin` does not list it, ask.
+**PUSHED 2026-08-06 at `349e1470`.** `git fetch origin fix/cross-machine-plan-inventory-single-derivation`.
+
+**Status: all three adversarial verifiers returned MERGE-WITH-NAMED-RESIDUALS** (2 CONFIRMED,
+1 DOWNGRADE) after a remediation round. Each re-verified against a **real running server on real
+live data**, not unit assertions. The live outage in Q3 is fixed on this branch and one verifier
+states plainly that it "should not wait." Your job is second-principal verification and the
+merge — plus the residuals below, which are real and were caught by the verifiers, not the
+builder.
+
+**Residual R1 — a new defect, ~1 line, fix before or immediately after merge.**
+`peer-view.js:277-280` (`planStateReasonOf`) returns *"exported by an older client that predates
+named plan states — no claim either way about this plan"* unconditionally for any schema<2 row,
+and `web/asks.js` attaches it as the `title` tooltip. So the laptop's row now renders visible
+text **"18/18 done"** while its hover text says **"no claim either way."** Verified in the real
+browser DOM. The reason string was written for the old two-state world; the three-state fix left
+it attached to a branch that now *does* make a claim. Same false-statement class the fix exists
+to remove, pointing the other way.
+
+**Residual R2 — the cost disclosure in the commit bodies is wrong; do not quote it.** The builder
+measured inside the worktree, which lacks the machine-local `config/projects.json`, so it saw 29
+plans / 51,586 B instead of production's 99 plans / 151,121 B. Corrected, measured by a verifier
+over 5 runs each: exporter wall time master 838 ms median → branch **3,258 ms (3.9x master)**, not
+the 852 ms / 1.6x the commit claims. Loose-object growth is **4.47x** (2,695 → 12,059 B/cycle),
+projecting **~36.5 MB/week and ~1,898 MB/year** across three hosts at the 600 s floor ceiling —
+roughly double what the commit body discloses. The builder's inability to reproduce the reviewer's
+12,069 B figure was the missing `projects.json`, not a method disagreement.
+
+**Residual R3 — a second undisclosed N+1, worth ~1,184 ms of that 3,258 ms.**
+`export-state.js:172` calls `deriveLib.projectDocRefFor` per plan, which re-reads and re-parses
+`config/projects.json` 99 times per cycle. Memoizing `loadProjects` alone measured a **74x**
+speedup on that segment (1,184 ms → 16 ms). Cheap, isolated, and it makes the residual cost over
+master mostly-the-feature rather than mostly-waste.
+
+**Residual R4 — same defect class as everything else in this handoff, found in this branch's own
+fix.** The exporter timeout added to `coord-sync.sh` falls back to unbounded where no `timeout`
+binary exists — which is the macOS host, **your machine** — and its self-test scores that
+fallback as PASS. A guard that is absent on one platform while its test reports green is exactly
+Part D's subject. Also: five other suites (including `cockpit.selftest.js`) still exit silently
+on a mid-run crash; only `server.selftest.js` was fixed.
+
+Minor: test XM-SCAN-1's prose describes the live laptop row, but after the builder's own
+`peer-view.js` fix that row reports `scan_coverage: null`; the assertion body is correct, only its
+description is stale.
+
+Note the live cockpit on `:7733` keeps returning 500 until it is **restarted** after merge.
 
 What it does: the cockpit and the cross-machine exporter derived the plan inventory from two
 different sources (the cockpit scanned `docs/plans/`; the exporter folded the ask registry, which
