@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260808-4edc4e8b",
+  "created_at": "2026-08-08T07:20:11Z",
+  "verdict": "REFORMULATE",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/plans/secret-scan-placeholder-allowlist-2026-08.md",
+  "change_ref": {
+    "commit_sha": "08624a4c8671512365fbea76e5c433e34739b7f2",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/git-hooks/pre-commit",
+      "blob_sha": "f71be9d74bb724c250e660303e706d9d8c601793"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-push-scan.sh",
+      "blob_sha": "37247f1f26a7c30762cb4f23fb406b68ecab5318"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PUSH BLOCKED: sensitive patterns detected -- [adapters/claude-code/hooks/pre-push-scan.sh] AWS Access Key ID. Reproduced rc=1: the push scanner blocks pushing its own commit 08624a4c because the new --self-test embeds a real-shaped AKIA+16 fixture key in pre-push-scan.sh, and pre-push (unlike pre-commit's SAFE_FILES) does NOT content-exempt the scanner files. Second Major (PROVEN): a single short line (AKIA / A / sk-) in ~/.claude/sensitive-patterns-allowlist.local silently disables an entire pattern class in BOTH scanners -- no min-length/exact-value guard.",
+    "findings_summary": "REFORMULATE. Core scrub-then-retest is sound and PROVEN: self-test 4/4; placeholder-only allowed, clean real key blocked, real-key-beside-placeholder blocked in BOTH scanners; overlap constructions (placeholder + appended chars) leak NO usable AWS key (every valid key needs its own AKIA prefix; scrub removes only exact placeholder occurrences); the set -e '|| true' fix is correct and necessary (proven: an unmasked no-match grep aborts under set -e; the real-key block still prints its banner, not an abort); default ALLOWLIST_VALUES and scrub semantics ARE in sync across both files; pre-commit SAFE_FILES exempts scanner files so their literals do not self-trip at commit time. NO Critical: under the shipped default config no real credential passes either scanner. TWO Major defects before land -- (1) pre-push does NOT content-exempt the scanner files (only pre-commit does), yet the new self-test embeds a real-shaped AKIA+16 fixture key in pre-push-scan.sh, so the push scanner BLOCKS pushing its own commit 08624a4c (PROVEN rc=1) -- this re-introduces the exact legitimate-push-block class the plan exists to eliminate. Fix: add pre-push-scan.sh|pre-commit|credential-push-blocked.sh to pre-push is_content_scan_exempt (mirror pre-commit SAFE_FILES), or synthesize the fixture key at runtime so no literal key lives in source. (2) The per-machine allowlist loader has no minimum-length or exact-value guard: a single short line (AKIA/A/sk-) silently disables an ENTIRE pattern class in BOTH scanners -- real credentials then pass with no warning (PROVEN). Fix: enforce a length floor (>=16) and/or exact-value semantics, and warn-to-stderr on skipped entries. Minor: the two loaders' comment-skip logic differs (regex vs case) and neither strips a trailing CR, so a CRLF local allowlist file silently fails to scrub on Windows."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "dbe36e21-81e7-4735-bb9a-915b5b2a6376"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
