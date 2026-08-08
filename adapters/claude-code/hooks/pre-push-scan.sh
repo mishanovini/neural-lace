@@ -21,6 +21,45 @@
 #   - Reads refs from stdin in git pre-push format:
 #     <local_ref> <local_sha> <remote_ref> <remote_sha>
 
+# ============================================================
+# --self-test: fixture repo in mktemp -d; proves the allowlist scrub
+# passes documented placeholders, still blocks real-shaped credentials
+# (even beside a placeholder on one line), and still blocks sensitive
+# filenames. Runs in seconds — the scan cost scales with range size.
+# ============================================================
+if [ "${1:-}" = "--self-test" ]; then
+  export HARNESS_SELFTEST=1
+  SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  PASSED=0; FAILED=0
+  _st() { # <label> <expected-rc> <actual-rc>
+    if [ "$2" = "$3" ]; then echo "self-test ($1): PASS" >&2; PASSED=$((PASSED+1));
+    else echo "self-test ($1): FAIL (expected rc $2, got $3)" >&2; FAILED=$((FAILED+1)); fi
+  }
+  TMPD="$(mktemp -d 2>/dev/null || mktemp -d -t ppscan)"
+  trap 'rm -rf "$TMPD"' EXIT
+  # Fixture commits use --no-verify: they run inside a throwaway mktemp
+  # repo, and the global commit-time scanner must not decide these
+  # scenarios — the unit under test is THIS hook's push-time verdict.
+  ( cd "$TMPD" && git init -q . && git -c user.email=t@t -c user.name=t commit -q --no-verify --allow-empty -m base ) || { echo "self-test: cannot build fixture repo" >&2; exit 1; }
+  _scenario() { # <label> <expected-rc> <file> <content>
+    ( cd "$TMPD" \
+      && printf '%s\n' "$4" > "$3" \
+      && git add "$3" \
+      && git -c user.email=t@t -c user.name=t commit -q --no-verify -m "s: $1" \
+      && echo "refs/heads/t $(git rev-parse HEAD) refs/heads/t $(git rev-parse HEAD~1)" \
+         | bash "$SELF" origin fixture-url >/dev/null 2>&1 )
+    _st "$1" "$2" "$?"
+  }
+  _scenario "placeholder-only-allowed"      0 "a.txt" "docs use AKIAIOSFODNN7EXAMPLE as the example key"
+  _scenario "real-shaped-key-blocked"       1 "b.txt" "leak: AKIAABCDEFGHIJKLMNOP"
+  _scenario "key-beside-placeholder-blocked" 1 "c.txt" "both: AKIAABCDEFGHIJKLMNOP and AKIAIOSFODNN7EXAMPLE"
+  _scenario "sensitive-filename-blocked"    1 ".env" "APP_MODE=prod"
+  echo "" >&2
+  echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2
+  [ "$FAILED" -gt 0 ] && exit 1
+  exit 0
+fi
+
 remote="$1"
 url="$2"
 
@@ -126,6 +165,51 @@ if [ -f "$POINTER_FILE" ]; then
 fi
 
 # ============================================================
+# Documented-placeholder allowlist (2026-08-08, class:
+# already-public-fixture-reflagged-on-branch-catch-up).
+#
+# These values are RESERVED BY THEIR VENDORS for documentation and can
+# never be live credentials (AKIAIOSFODNN7EXAMPLE is AWS's published
+# example Access Key ID). The repo uses them deliberately as secret-scan
+# fixtures (tests/secret-backstop-fixture-check.sh,
+# hooks/harness-hygiene-scan.sh) — see the archived plan
+# docs/plans/archive/secret-scan-ci-backstop-skip.md, which gave the CI
+# backstop the same exemption. Without this, any stale branch whose
+# catch-up range re-adds those already-public files blocks its own backup
+# push (observed 2026-08-08: a 19-branch backup push blocked after a
+# 119-minute scan on exactly these three fixture files).
+#
+# Semantics: SCRUB-THEN-RETEST, not line-skip — allowlisted values are
+# replaced with a sentinel and the pattern re-tested, so a line carrying
+# BOTH a placeholder and a real credential still blocks.
+# Extend per-machine via ~/.claude/sensitive-patterns-allowlist.local
+# (one exact value per line, # comments allowed).
+# ============================================================
+
+ALLOWLIST_VALUES=(
+  "AKIAIOSFODNN7EXAMPLE"
+  "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+)
+
+if [ -f "$HOME/.claude/sensitive-patterns-allowlist.local" ]; then
+  while IFS= read -r av_line; do
+    [ -z "$av_line" ] && continue
+    [[ "$av_line" =~ ^[[:space:]]*# ]] && continue
+    ALLOWLIST_VALUES+=("$av_line")
+  done < "$HOME/.claude/sensitive-patterns-allowlist.local"
+fi
+
+# scrub_allowlisted <line> — prints the line with every allowlisted value
+# replaced by a sentinel that matches no credential pattern.
+scrub_allowlisted() {
+  local line="$1" v
+  for v in "${ALLOWLIST_VALUES[@]}"; do
+    line="${line//"$v"/<DOC-PLACEHOLDER>}"
+  done
+  printf '%s\n' "$line"
+}
+
+# ============================================================
 # Safelist: file paths whose CONTENT is exempt from pattern scanning.
 # (filename is still checked against sensitive filename patterns)
 # ============================================================
@@ -174,8 +258,20 @@ scan_file_content() {
     local desc="${entry%%|*}"
     local regex="${entry#*|}"
     if echo "$file_diff" | grep -qE "$regex"; then
-      local matched_line
-      matched_line=$(echo "$file_diff" | grep -E "$regex" | head -1 | cut -c1-120)
+      # Scrub-then-retest: drop matches that exist ONLY because of a
+      # documented placeholder value; a line carrying a real credential
+      # alongside a placeholder still re-matches after the scrub.
+      local matched_line=""
+      local ml scrubbed
+      while IFS= read -r ml; do
+        [ -z "$ml" ] && continue
+        scrubbed=$(scrub_allowlisted "$ml")
+        if echo "$scrubbed" | grep -qE "$regex"; then
+          matched_line=$(printf '%s' "$ml" | cut -c1-120)
+          break
+        fi
+      done < <(echo "$file_diff" | grep -E "$regex")
+      [ -z "$matched_line" ] && continue
       BLOCKED=1
       BLOCKED_REASONS+="
   [$file] $desc

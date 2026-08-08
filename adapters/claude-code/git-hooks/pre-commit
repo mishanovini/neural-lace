@@ -125,6 +125,30 @@ done
 # Exclude scanner files themselves (they contain pattern definitions, not real credentials)
 SAFE_FILES="pre-commit|pre-push-scan\.sh|credential-push-blocked\.sh|sensitive-patterns\.local\.example"
 
+# Documented-placeholder allowlist (2026-08-08) — same class fix as
+# pre-push-scan.sh, kept in sync with it: values vendors RESERVE for
+# documentation (AWS's published example key) that the repo uses as
+# secret-scan fixtures. Scrub-then-retest: a line carrying BOTH a
+# placeholder and a real credential still blocks after the scrub.
+ALLOWLIST_VALUES=(
+  "AKIAIOSFODNN7EXAMPLE"
+  "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+)
+if [ -f "$HOME/.claude/sensitive-patterns-allowlist.local" ]; then
+  while IFS= read -r av_line; do
+    [ -z "$av_line" ] && continue
+    case "$av_line" in \#*) continue ;; esac
+    ALLOWLIST_VALUES+=("$av_line")
+  done < "$HOME/.claude/sensitive-patterns-allowlist.local"
+fi
+scrub_allowlisted() {
+  local line="$1" v
+  for v in "${ALLOWLIST_VALUES[@]}"; do
+    line="${line//"$v"/<DOC-PLACEHOLDER>}"
+  done
+  printf '%s\n' "$line"
+}
+
 if [ -n "$STAGED_FILES" ]; then
   # Get the staged diff (only added lines), excluding scanner files
   STAGED_DIFF=$(git diff --cached --diff-filter=ACMR -U0 -- $(echo "$STAGED_FILES" | grep -vE "$SAFE_FILES") 2>/dev/null)
@@ -133,8 +157,22 @@ if [ -n "$STAGED_FILES" ]; then
   ALL_PATTERNS=("${PATTERNS[@]}" "${EXTRA_PATTERNS[@]}")
 
   for pattern in "${ALL_PATTERNS[@]}"; do
-    # Only check added lines (lines starting with +, excluding +++ headers)
-    MATCHES=$(echo "$STAGED_DIFF" | grep -E '^\+[^+]' | grep -E "$pattern" 2>/dev/null | head -3)
+    # Only check added lines (lines starting with +, excluding +++ headers).
+    # Scrub-then-retest: matches surviving placeholder-scrubbing are real.
+    # `|| true`: the pipeline ends in grep, whose rc-1-on-no-match would
+    # kill the whole hook under set -e (the old code's trailing `head -3`
+    # masked that; observed as a silent commit abort, 2026-08-08).
+    RAW_MATCHES=$(echo "$STAGED_DIFF" | grep -E '^\+[^+]' | grep -E "$pattern" 2>/dev/null || true)
+    MATCHES=""
+    if [ -n "$RAW_MATCHES" ]; then
+      while IFS= read -r rml; do
+        [ -z "$rml" ] && continue
+        if scrub_allowlisted "$rml" | grep -qE "$pattern"; then
+          MATCHES="${MATCHES}${rml}"$'\n'
+        fi
+      done <<< "$RAW_MATCHES"
+      MATCHES=$(printf '%s' "$MATCHES" | head -3)
+    fi
     if [ -n "$MATCHES" ]; then
       echo ""
       echo "================================================================"
