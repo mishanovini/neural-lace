@@ -33,7 +33,8 @@ blocking at both commit time and push time.
 ## Problem
 
 The repo deliberately carries AWS's published example key
-(`AKIAIOSFODNN7EXAMPLE`) as secret-scan fixtures
+(the access-key ID spelled out in both scanners' `ALLOWLIST_VALUES`) as
+secret-scan fixtures
 (`adapters/claude-code/tests/secret-backstop-fixture-check.sh`,
 `adapters/claude-code/hooks/harness-hygiene-scan.sh`, archived plan
 `docs/plans/archive/secret-scan-ci-backstop-skip.md` gave CI the same
