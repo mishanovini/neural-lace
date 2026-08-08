@@ -50,10 +50,29 @@ if [ "${1:-}" = "--self-test" ]; then
          | bash "$SELF" origin fixture-url >/dev/null 2>&1 )
     _st "$1" "$2" "$?"
   }
+  # FAKE_KEY is COMPOSED at runtime from adjacent string literals so no
+  # source line of this file matches the AWS pattern — the push scanner
+  # deliberately does NOT exempt scanner files (unlike pre-commit's
+  # SAFE_FILES), keeping push-time as the strict last line of defense;
+  # a literal here would block this file's own push
+  # (review hcr-20260808-4edc4e8b finding 1).
+  FAKE_KEY="AKIA""ABCDEFGHIJKLMNOP"
   _scenario "placeholder-only-allowed"      0 "a.txt" "docs use AKIAIOSFODNN7EXAMPLE as the example key"
-  _scenario "real-shaped-key-blocked"       1 "b.txt" "leak: AKIAABCDEFGHIJKLMNOP"
-  _scenario "key-beside-placeholder-blocked" 1 "c.txt" "both: AKIAABCDEFGHIJKLMNOP and AKIAIOSFODNN7EXAMPLE"
+  _scenario "real-shaped-key-blocked"       1 "b.txt" "leak: ${FAKE_KEY}"
+  _scenario "key-beside-placeholder-blocked" 1 "c.txt" "both: ${FAKE_KEY} and AKIAIOSFODNN7EXAMPLE"
   _scenario "sensitive-filename-blocked"    1 ".env" "APP_MODE=prod"
+  # Over-scrub guard (finding 2): a malicious/careless SHORT local
+  # allowlist entry ("AKIA") must NOT neuter detection — the loader skips
+  # it (with a WARN) and the real-shaped key still blocks.
+  mkdir -p "$TMPD/home/.claude"
+  printf 'AKIA\n' > "$TMPD/home/.claude/sensitive-patterns-allowlist.local"
+  ( cd "$TMPD" \
+    && printf '%s\n' "short-allowlist probe: ${FAKE_KEY}" > d.txt \
+    && git add d.txt \
+    && git -c user.email=t@t -c user.name=t commit -q --no-verify -m "s: over-scrub-guard" \
+    && echo "refs/heads/t $(git rev-parse HEAD) refs/heads/t $(git rev-parse HEAD~1)" \
+       | HOME="$TMPD/home" bash "$SELF" origin fixture-url >/dev/null 2>&1 )
+  _st "short-allowlist-entry-cannot-neuter-detection" 1 "$?"
   echo "" >&2
   echo "self-test summary: ${PASSED} passed, ${FAILED} failed" >&2
   [ "$FAILED" -gt 0 ] && exit 1
@@ -193,8 +212,17 @@ ALLOWLIST_VALUES=(
 
 if [ -f "$HOME/.claude/sensitive-patterns-allowlist.local" ]; then
   while IFS= read -r av_line; do
+    av_line="${av_line%$'\r'}"
     [ -z "$av_line" ] && continue
     [[ "$av_line" =~ ^[[:space:]]*# ]] && continue
+    # Over-scrub guard (review hcr-20260808-4edc4e8b finding 2): a short
+    # entry like "AKIA" would scrub the shared prefix out of REAL
+    # credentials and silently disable the whole pattern class. Skip
+    # loudly instead of loading.
+    if [ "${#av_line}" -lt 16 ]; then
+      echo "[pre-push-scan] WARN: allowlist entry shorter than 16 chars SKIPPED (over-scrub guard): '${av_line}'" >&2
+      continue
+    fi
     ALLOWLIST_VALUES+=("$av_line")
   done < "$HOME/.claude/sensitive-patterns-allowlist.local"
 fi

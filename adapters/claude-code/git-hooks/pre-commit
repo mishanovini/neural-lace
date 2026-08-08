@@ -136,8 +136,16 @@ ALLOWLIST_VALUES=(
 )
 if [ -f "$HOME/.claude/sensitive-patterns-allowlist.local" ]; then
   while IFS= read -r av_line; do
+    av_line="${av_line%$'\r'}"
     [ -z "$av_line" ] && continue
-    case "$av_line" in \#*) continue ;; esac
+    [[ "$av_line" =~ ^[[:space:]]*# ]] && continue
+    # Over-scrub guard (review hcr-20260808-4edc4e8b finding 2), kept in
+    # sync with pre-push-scan.sh: short entries would scrub shared
+    # prefixes out of REAL credentials. Skip loudly.
+    if [ "${#av_line}" -lt 16 ]; then
+      echo "[pre-commit] WARN: allowlist entry shorter than 16 chars SKIPPED (over-scrub guard): '${av_line}'" >&2
+      continue
+    fi
     ALLOWLIST_VALUES+=("$av_line")
   done < "$HOME/.claude/sensitive-patterns-allowlist.local"
 fi
