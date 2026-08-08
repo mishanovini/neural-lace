@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260808-30306cd0",
+  "created_at": "2026-08-08T06:41:49Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "nl-issues:GEN-DIRECTIVES-VIEW-DELIMITER-INJECTION-CRITICAL",
+  "change_ref": {
+    "commit_sha": "14aed36b7f65d83c2c233ea450b24fb8969104e1",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/config/operator-directives.json",
+      "blob_sha": "44c13a2fb71684d7f8a5f8d71d390c444bfd05ca"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "dr_validate rc=0; [gen-directives-view] GREEN -- committed doc matches a fresh regen; OD-022 reviewed_by=pending-operator, OD-023 reviewed_by=pending-operator, OD-024 reviewed_by=pending-operator; word-diff deletions limited to trailing-comma re-emissions (escape.\" -> escape.\", / quietly).\" -> quietly).\",)",
+    "findings_summary": "PASS. Data-only diff at blob 44c13a2f verified: (1) dr_validate rc=0 with the delimiter-injection badfield guard confirmed present and toothed (badOf checks CR/LF in id/title/status/source/surfaces/supersedes + elaboration scalars/arrays, pipe in positionally-parsed fields, CR in instruction). (2) Independent jq scans PROVEN clean: zero CR anywhere, zero LF outside instruction fields, zero pipes in id/title/status/surfaces/supersedes, zero pipes in elaboration values, no duplicate ids. (3) gen-directives-view.sh --check GREEN; rendered Summary (24 total / 24 BINDING / 0 SUPERSEDED / 2 operator-only) matches independent counts; M-line consumption is prefix-strip so embedded pipes cannot truncate. (4) All three elaborations carry reviewed_by=pending-operator; commit d146661d operator-approved refers to the MERGE directive, data claims no interpretation sign-off - Operator Ruling honored. (5) OD-024 shape valid: 4-line instruction, status BINDING, unique id; enforcement field honestly declares PATTERN-RUNG with the missing mechanism-rung gate named as unbuilt. Cited infrastructure verified on disk: dispatch-chain-gate.sh check-wip-limit, stop-verdict-dispatcher.sh _svd_obligation_check, rc_open_verify_obligations, workstreams-emit.sh _dispatch_ledger_append, Solution-shape protocol in orchestrator-pattern.md:18 + -full.md:343. (6) Word-diff PROVEN: only mutations to pre-existing lines are two trailing commas; no entry/field deletions. Minor advisory (non-blocking): dr_validate does not constrain reviewed_by to a value vocabulary (only CR/LF-checked); a fabricated sign-off value would rely on this review layer to catch - consider a vocabulary check (pending-operator|operator:<date>) as class-level hardening."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "unknown-session"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
