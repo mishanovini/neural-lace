@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260808-0bd372a8",
+  "created_at": "2026-08-08T07:34:40Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/plans/secret-scan-placeholder-allowlist-2026-08.md",
+  "change_ref": {
+    "commit_sha": "0d40d08a325cbdf0c13f19ed29f7ce078f87f56a",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/git-hooks/pre-commit",
+      "blob_sha": "a92d3c6cc05bd58a4eb40f8ccf877babcf7be7ae"
+    },
+    {
+      "path": "adapters/claude-code/hooks/pre-push-scan.sh",
+      "blob_sha": "3254a6235d796c41e3b4314f2c05cae199693a61"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "self-test summary: 5 passed, 0 failed. [pre-push-scan] WARN: allowlist entry shorter than 16 chars SKIPPED (over-scrub guard): 'sk-'. Full pending range origin/master..HEAD (5733c053..0d40d08a) through the revised push hook returns rc 0 (was rc 1 in hcr-20260808-4edc4e8b finding 1).",
+    "findings_summary": "PASS. Remediation of commit 0d40d08a (blobs pre-push-scan.sh 3254a623, pre-commit a92d3c6c) verified; all three prior findings from hcr-20260808-4edc4e8b are fixed and PROVEN in BOTH scanners. Finding 1 (push scanner self-blocked on its own fixture key): the self-test FAKE_KEY is now composed at runtime from adjacent string literals so no source line matches the AWS pattern (grep AKIA+16 over the source returns only the scrubbed placeholder); the full pending range origin/master..HEAD now pushes rc 0 (was rc 1). The push scanner deliberately keeps ZERO scanner-file exemptions, documented in-file as strict-last-line-of-defense (commit-time trusts pattern-defining files via SAFE_FILES; push-time trusts nothing) -- I ACCEPT this resolution of my sync concern; it is a more defensible posture than mirroring the exemption, and the runtime-composed-fixture convention keeps the source clean. Finding 2 (short local-allowlist entry could neuter a whole pattern class): both loaders now enforce a 16-char minimum and skip shorter entries with a loud stderr WARN; retest with a short entry no longer reproduces -- a real-shaped AWS key still BLOCKS with 'AKIA' and 'A' entries loaded, and a real 48-char OpenAI key still BLOCKS with 'sk-' loaded (the guard skips it and prints the WARN); self-test s5 covers this (5/5). A user can still allowlist a specific full-length exact value they trust (exact-value scoped, by design; a 16-char entry cannot be a shared cross-key substring beyond the 4-char AKIA prefix, so no class-disable). Finding 3 (loader drift): both loaders now strip a trailing CR and use the same regex comment-skip -- a CRLF-encoded 20-char local value now scrubs correctly in both. Re-verified still-sound behaviors: placeholder-only allowed, clean real key blocked, real-key-beside-placeholder blocked, overlap/suffix constructions leak no usable key, set -e '|| true' path completes on no-match and the real block still prints its banner. Portability floor OK (only bash-3.2-safe constructs: string-length, %-suffix-strip, [[ =~ ]]). No Critical, no Major, no Minor open: no real credential passes either scanner under default config, and the documented per-machine extension is now guarded."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "dbe36e21-81e7-4735-bb9a-915b5b2a6376"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
