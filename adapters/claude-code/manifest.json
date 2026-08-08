@@ -3660,7 +3660,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "gated-pipeline T11 (REQ-B1/B4): canonical register (21 entries: 19 general incl. OD-021 ci-is-read-mandatory + 2 operator_only) + the ONE parser (dr_* API). --self-test 22/22 incl. the shared round-trip fixture Task 20/14 consume. NOT yet wired to the three carriage consumers (Check 21 consumes via plan-reviewer since T14; dispatch-directives.sh + doctrine-jit walk land at T20); a sourced lib with no hook wiring of its own."
+      "honest_status": "gated-pipeline T11 (REQ-B1/B4): canonical register (24 entries incl. 3 with elaboration) + the ONE parser (dr_* API). --self-test 47/47 (node and jq engines) incl. the shared round-trip fixture Tasks 20/14 consume and the delimiter-injection guard scenarios (2026-08-07: dr__stream E-line badfield flags CR/LF in any value and '|' in positionally-parsed fields; dr_validate rejects them; jq -r output CR-stripped for Windows jq builds). All three carriage consumers wired (Check 21 via plan-reviewer T14; dispatch-directives.sh + doctrine-jit walk T20), and dr_validate now HAS a caller: dispatch-directives.sh validates the register before computing carriage. A sourced lib with no hook wiring of its own."
     },
     {
       "id": "gen-directives-view",
@@ -3676,7 +3676,7 @@
       },
       "blocking": false,
       "budget_class": "none",
-      "honest_status": "scripts/gen-directives-view.sh (T11) -- regenerates docs/operator-directives.md from the register (manifest->INDEX precedent); --check is the drift predicate; --self-test 6/6; manual + doctor-invokable, no doctor predicate wired yet."
+      "honest_status": "scripts/gen-directives-view.sh (T11) -- regenerates docs/operator-directives.md from the register (manifest->INDEX precedent); --check is the drift predicate; --self-test 10/10 on both engines (2026-08-07: delimiter-injection guard -- per-scalar trailing-remainder M records, CR/LF rejected before any emit, pipe-in-intent and newline-forgery scenarios s7/s8; --gen renders to a tempfile so a rejected register never truncates the committed doc); manual + doctor-invokable, no doctor predicate wired yet."
     }
   ]
 }

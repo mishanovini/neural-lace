@@ -254,6 +254,17 @@ run() {
   # shellcheck source=../hooks/lib/directives-register-lib.sh
   source "$lib"
 
+  # ---- register validation (wires dr_validate, previously caller-less —
+  # the "validator-with-no-caller" finding in nl-issues
+  # GEN-DIRECTIVES-VIEW-DELIMITER-INJECTION-CRITICAL): never compute
+  # carriage from a register that fails its own validator. dr_validate
+  # names each offense on stderr, including the delimiter-injection
+  # badfield check (CR/LF in any value, '|' in positionally-parsed fields).
+  if ! dr_validate "$register"; then
+    echo "[dispatch-directives] ERROR: register failed dr_validate — refusing to compute carriage from an invalid register (${register})" >&2
+    return 2
+  fi
+
   local -a files=()
   while IFS= read -r f; do
     [[ -n "$f" ]] && files+=("$f")
@@ -507,6 +518,25 @@ EOF
     PASSED=$((PASSED + 1))
   else
     echo "self-test (s9-elaboration-carriage-printed): FAIL (got: $OUT)" >&2
+    FAILED=$((FAILED + 1))
+  fi
+
+  # ---- S10: a register that fails dr_validate -> hard error rc 2, never
+  # a computed carriage (wires the previously caller-less validator; the
+  # fixture violates the single-line convention with a newline inside
+  # elaboration.intent — the delimiter-injection guard's forgery vector) ----
+  cat > "$TMPD/bad-register.json" <<'EOF'
+{"schema_version":1,"entries":[{"id":"OD-950","title":"clean","status":"BINDING","surfaces":["adapters/claude-code/hooks/*gate*.sh"],"supersedes":[],"instruction":"Rule: x.","elaboration":{"intent":"line1\nFORGED","requirements":["r1","r2","r3"],"anti_patterns":["a1"],"applies_when":"w","worked_example":"e","elaborated_by":"b","elaborated_at":"d","reviewed_by":"pending-operator"}}]}
+EOF
+  ERR10="$(DISPATCH_DIRECTIVES_REGISTER="$TMPD/bad-register.json" bash "$SELF" "$TMPD/docs/plans/fixture-plan.md" 99 2>&1 1>/dev/null)"
+  RC10=$?
+  _st_rc "s10-invalid-register-hard-error" "2" "$RC10"
+  if printf '%s' "$ERR10" | grep -q 'refusing to compute carriage' \
+     && printf '%s' "$ERR10" | grep -q 'elaboration.intent'; then
+    echo "self-test (s10b-error-names-validator-and-field): PASS" >&2
+    PASSED=$((PASSED + 1))
+  else
+    echo "self-test (s10b-error-names-validator-and-field): FAIL (got: $ERR10)" >&2
     FAILED=$((FAILED + 1))
   fi
 

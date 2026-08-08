@@ -218,7 +218,11 @@ dr__have_jq() { command -v jq >/dev/null 2>&1; }
 
 # dr__stream <register.json> — normalized pipe-delimited extraction, the
 # gen-architecture-doc.sh extract_stream convention. One E line per entry
-# (id/status/operator_only/n_surfaces/n_supersedes/instruction_line_count),
+# (id/status/operator_only/n_surfaces/n_supersedes/instruction_line_count/
+# badfield — badfield is the delimiter-injection flag: the first field whose
+# value violates the single-line convention, as "<field>:crlf|cr|pipe", or
+# empty when the entry is clean; dr_validate turns a non-empty badfield into
+# a named ERROR so a dirty register cannot validate),
 # one S line per (id, surface) pair, one U line per (id, supersedes) pair,
 # and (Task: directives-elaboration-layer) one M line per entry that
 # carries a well-formed `elaboration` object —
@@ -230,11 +234,15 @@ dr__have_jq() { command -v jq >/dev/null 2>&1; }
 # streamed here (it contains embedded newlines that would break the
 # one-line-per-record contract) — dr_get_field fetches it via a dedicated
 # single-entry extraction; elaboration.intent/applies_when/worked_example/
-# elaborated_by/elaborated_at/reviewed_by are single-line-only BY
-# AUTHORING CONVENTION (no embedded \n, no literal `|`) so dr_get_elaboration_
-# field can fetch them the same way, and M-line length counts here are a
-# cheap proxy for "field is present and non-empty" without needing to
-# stream the text itself.
+# elaborated_by/elaborated_at/reviewed_by are single-line-only — an
+# authoring convention now MECHANICALLY ENFORCED via the E-line badfield
+# above (CR/LF banned in every value; '|' additionally banned in id/title/
+# status/surfaces/supersedes, the fields some consumer parses positionally).
+# dr_get_elaboration_field fetches scalar text via dedicated single-entry
+# extraction, and M-line length counts here are a cheap proxy for "field is
+# present and non-empty" without needing to stream the text itself.
+# (gen-directives-view.sh independently guards its own richer text stream
+# at its own emit point — two layers, same rule.)
 dr__stream() {
   local path="$1"
   [[ -f "$path" ]] || return 2
@@ -245,6 +253,42 @@ let m;
 try { m = JSON.parse(fs.readFileSync(process.argv[1], "utf8")); }
 catch (e) { process.exit(3); }
 const entries = Array.isArray(m.entries) ? m.entries : [];
+// badfield: first single-line-convention violation, "<field>:crlf|cr|pipe",
+// or "" when clean. CR/LF is banned in every value (a newline terminates a
+// stream record and lets the remainder forge new records); a pipe char is
+// banned in the fields some consumer parses positionally (id/title/status/
+// surfaces/supersedes). LF is legal only inside the instruction field
+// (line-split by every consumer); a CR there is still flagged.
+// NOTE: this whole script rides a bash single-quoted string — no
+// apostrophes or backticks in comments here.
+const badOf = (e) => {
+  const crlf = (v) => typeof v === "string" && /[\r\n]/.test(v);
+  const pipe = (v) => typeof v === "string" && v.includes("|");
+  for (const [f, v] of [["id", e.id], ["title", e.title], ["status", e.status]]) {
+    if (crlf(v)) return f + ":crlf";
+    if (pipe(v)) return f + ":pipe";
+  }
+  if (crlf(e.source)) return "source:crlf";
+  for (const s of (Array.isArray(e.surfaces) ? e.surfaces : [])) {
+    if (crlf(s)) return "surfaces:crlf";
+    if (pipe(s)) return "surfaces:pipe";
+  }
+  for (const u of (Array.isArray(e.supersedes) ? e.supersedes : [])) {
+    if (crlf(u)) return "supersedes:crlf";
+    if (pipe(u)) return "supersedes:pipe";
+  }
+  if (typeof e.instruction === "string" && /\r/.test(e.instruction)) return "instruction:cr";
+  const el = (e.elaboration && typeof e.elaboration === "object") ? e.elaboration : null;
+  if (el) {
+    for (const f of ["intent", "applies_when", "worked_example", "elaborated_by", "elaborated_at", "reviewed_by"])
+      if (crlf(el[f])) return "elaboration." + f + ":crlf";
+    for (const r of (Array.isArray(el.requirements) ? el.requirements : []))
+      if (crlf(r)) return "elaboration.requirements:crlf";
+    for (const n of (Array.isArray(el.anti_patterns) ? el.anti_patterns : []))
+      if (crlf(n)) return "elaboration.anti_patterns:crlf";
+  }
+  return "";
+};
 for (const e of entries) {
   const id = e.id || "";
   const status = e.status || "";
@@ -253,7 +297,7 @@ for (const e of entries) {
   const supersedes = Array.isArray(e.supersedes) ? e.supersedes : [];
   const instr = typeof e.instruction === "string" ? e.instruction : "";
   const lines = instr.length ? instr.split("\n").length : 0;
-  console.log(["E", id, status, opOnly, surfaces.length, supersedes.length, lines].join("|"));
+  console.log(["E", id, status, opOnly, surfaces.length, supersedes.length, lines, badOf(e)].join("|"));
   for (const s of surfaces) console.log(["S", id, s].join("|"));
   for (const u of supersedes) console.log(["U", id, u].join("|"));
   const el = (e.elaboration && typeof e.elaboration === "object") ? e.elaboration : null;
@@ -269,13 +313,35 @@ for (const e of entries) {
   elif dr__have_jq; then
     jq -e . "$path" >/dev/null 2>&1 || return 3
     jq -r '
+def badfield($e):
+  [ ( [["id", ($e.id // "")], ["title", ($e.title // "")], ["status", ($e.status // "")]][]
+      | (if (.[1] | tostring | test("[\r\n]")) then "\(.[0]):crlf"
+         elif (.[1] | tostring | test("\\|")) then "\(.[0]):pipe"
+         else empty end) ),
+    (if (($e.source // "") | tostring | test("[\r\n]")) then "source:crlf" else empty end),
+    ( ($e.surfaces // [])[] | tostring
+      | (if test("[\r\n]") then "surfaces:crlf" elif test("\\|") then "surfaces:pipe" else empty end) ),
+    ( ($e.supersedes // [])[] | tostring
+      | (if test("[\r\n]") then "supersedes:crlf" elif test("\\|") then "supersedes:pipe" else empty end) ),
+    (if (($e.instruction // "") | tostring | test("\r")) then "instruction:cr" else empty end),
+    ( ($e.elaboration // {}) as $el |
+      ( ( ["intent","applies_when","worked_example","elaborated_by","elaborated_at","reviewed_by"][] ) as $f
+        | (if (($el[$f] // "") | tostring | test("[\r\n]")) then "elaboration.\($f):crlf" else empty end) ),
+      ( ($el.requirements // [])[] | tostring
+        | (if test("[\r\n]") then "elaboration.requirements:crlf" else empty end) ),
+      ( ($el.anti_patterns // [])[] | tostring
+        | (if test("[\r\n]") then "elaboration.anti_patterns:crlf" else empty end) )
+    )
+  ] | .[0] // "";
 (.entries // [])[] as $e |
 ([ "E", ($e.id // ""), ($e.status // ""),
    ((($e.operator_only // false) | if . then "1" else "0" end)),
    (($e.surfaces // []) | length | tostring),
    (($e.supersedes // []) | length | tostring),
-   ((($e.instruction // "") | split("\n") | length) | tostring)
+   ((($e.instruction // "") | split("\n") | length) | tostring),
+   badfield($e)
  ] | join("|")),
+
 ((($e.surfaces // [])[]) | "S|\($e.id)|\(.)"),
 ((($e.supersedes // [])[]) | "U|\($e.id)|\(.)"),
 (if ($e.elaboration != null) then
@@ -290,8 +356,12 @@ for (const e of entries) {
       (($e.elaboration.reviewed_by // "") | length | tostring)
     ] | join("|"))
  else empty end)
-' "$path" 2>/dev/null
-    return $?
+' "$path" 2>/dev/null | tr -d '\r'
+    # tr strips the CRs Windows jq builds append to every -r output line
+    # (they would make badfield read as "\r" and break numeric-field
+    # arithmetic); values themselves cannot legitimately contain CR — the
+    # badfield guard rejects them. PIPESTATUS keeps jq's own exit code.
+    return "${PIPESTATUS[0]}"
   fi
   return 2
 }
@@ -323,7 +393,7 @@ dr_validate() {
   fi
 
   local errors=0
-  while IFS='|' read -r tag id status oponly nsurf nsup ilines; do
+  while IFS='|' read -r tag id status oponly nsurf nsup ilines badfield; do
     [[ "$tag" == "E" ]] || continue
     if [[ ! "$id" =~ ^OD-[0-9]{3}$ ]]; then
       echo "[directives-register] ERROR: entry id '${id}' does not match ^OD-[0-9]{3}\$" >&2
@@ -338,6 +408,22 @@ dr_validate() {
       errors=$((errors + 1))
     elif [[ "$ilines" -gt 5 ]]; then
       echo "[directives-register] ERROR: entry ${id} instruction is ${ilines} lines (must be <=5)" >&2
+      errors=$((errors + 1))
+    fi
+    # ---- delimiter-injection guard (harness-review REJECT 2026-08-07):
+    # badfield is dr__stream's "<field>:crlf|cr|pipe" flag. A value with an
+    # embedded newline can terminate a stream record and forge new ones
+    # downstream; a '|' in a positionally-parsed field shifts every field
+    # after it. Reject at validation so the dirty state never travels.
+    if [[ -n "${badfield:-}" ]]; then
+      local bf_field="${badfield%%:*}" bf_kind="${badfield##*:}" bf_why
+      case "$bf_kind" in
+        crlf) bf_why="an embedded CR/LF" ;;
+        cr)   bf_why="an embedded CR" ;;
+        pipe) bf_why="an embedded '|'" ;;
+        *)    bf_why="a disallowed character (${bf_kind})" ;;
+      esac
+      echo "[directives-register] ERROR: entry ${id} field ${bf_field} contains ${bf_why} — values are single-line; '|' is banned in id/title/status/surfaces/supersedes (delimiter-injection guard)" >&2
       errors=$((errors + 1))
     fi
   done <<< "$stream"
@@ -402,7 +488,7 @@ const e = (m.entries || []).find(x => x.id === process.argv[2]);
 process.stdout.write(e && typeof e.instruction === "string" ? e.instruction : "");
 ' "$path" "$id" 2>/dev/null
       elif dr__have_jq; then
-        jq -r --arg id "$id" '(.entries[] | select(.id==$id) | .instruction) // ""' "$path" 2>/dev/null
+        jq -r --arg id "$id" '(.entries[] | select(.id==$id) | .instruction) // ""' "$path" 2>/dev/null | tr -d '\r'
       fi
       ;;
     surfaces)
@@ -456,7 +542,7 @@ const f = process.argv[3];
 process.stdout.write(el && typeof el[f] === "string" ? el[f] : "");
 ' "$path" "$id" "$field" 2>/dev/null
       elif dr__have_jq; then
-        jq -r --arg id "$id" --arg f "$field" '(.entries[] | select(.id==$id) | .elaboration[$f]) // ""' "$path" 2>/dev/null
+        jq -r --arg id "$id" --arg f "$field" '(.entries[] | select(.id==$id) | .elaboration[$f]) // ""' "$path" 2>/dev/null | tr -d '\r'
       fi
       ;;
     requirements|anti_patterns)
@@ -472,7 +558,7 @@ const arr = el && Array.isArray(el[f]) ? el[f] : [];
 for (const v of arr) console.log(v);
 ' "$path" "$id" "$field" 2>/dev/null
       elif dr__have_jq; then
-        jq -r --arg id "$id" --arg f "$field" '(.entries[] | select(.id==$id) | .elaboration[$f] // [])[]' "$path" 2>/dev/null
+        jq -r --arg id "$id" --arg f "$field" '(.entries[] | select(.id==$id) | .elaboration[$f] // [])[]' "$path" 2>/dev/null | tr -d '\r'
       fi
       ;;
     *)
@@ -506,7 +592,7 @@ dr_entries_for_files() {
   [[ -z "$stream" ]] && return 0
 
   local -a binding_ids=()
-  while IFS='|' read -r tag id status oponly nsurf nsup ilines; do
+  while IFS='|' read -r tag id status oponly nsurf nsup ilines badfield; do
     [[ "$tag" == "E" ]] || continue
     [[ "$status" == "BINDING" ]] || continue
     [[ "$nsurf" -gt 0 ]] || continue
@@ -1032,6 +1118,25 @@ if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]] && [[ "${1:-}" == "--self-test" ]]; t
   # ---- round-trip fixture: dr_validate ----
   dr_validate "$FIXREG" >/dev/null 2>&1
   _st "round-trip-fixture-validates" "0" "$?"
+
+  # ---- delimiter-injection guard (harness-review REJECT 2026-08-07):
+  # a register value violating the single-line convention must FAIL
+  # validation with the offending field named. ----
+  VTMP="$(mktemp -d 2>/dev/null || mktemp -d -t drlibvalst)"
+  trap 'rm -rf "${VTMP:-}"' EXIT
+  cat > "$VTMP/bad-intent.json" <<'EOF'
+{"schema_version":1,"entries":[{"id":"OD-950","title":"clean","status":"BINDING","surfaces":["docs/**"],"supersedes":[],"instruction":"Rule: x.","elaboration":{"intent":"line1\nFORGED","requirements":["r1","r2","r3"],"anti_patterns":["a1"],"applies_when":"w","worked_example":"e","elaborated_by":"b","elaborated_at":"d","reviewed_by":"pending-operator"}}]}
+EOF
+  ERR_BI="$(dr_validate "$VTMP/bad-intent.json" 2>&1 >/dev/null)"
+  RC_BI=$?
+  _st_rc "validate-rejects-newline-in-elaboration-intent" "1" "$RC_BI"
+  _st "validate-names-the-offending-field" "1" "$(printf '%s' "$ERR_BI" | grep -q 'elaboration.intent' && echo 1 || echo 0)"
+
+  cat > "$VTMP/bad-title.json" <<'EOF'
+{"schema_version":1,"entries":[{"id":"OD-951","title":"evil|title","status":"BINDING","surfaces":["docs/**"],"supersedes":[],"instruction":"Rule: x."}]}
+EOF
+  dr_validate "$VTMP/bad-title.json" >/dev/null 2>&1
+  _st_rc "validate-rejects-pipe-in-title" "1" "$?"
 
   # ---- round-trip fixture: dr_entry_ids ----
   IDS="$(dr_entry_ids "$FIXREG" | LC_ALL=C sort | paste -sd, -)"
