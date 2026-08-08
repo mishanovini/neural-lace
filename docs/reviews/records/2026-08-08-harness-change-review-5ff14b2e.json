@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260808-5ff14b2e",
+  "created_at": "2026-08-08T04:48:17Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "nl-issues:GEN-DIRECTIVES-VIEW-DELIMITER-INJECTION-CRITICAL",
+  "change_ref": {
+    "commit_sha": "943628fbacc1f8223fd45b30299686b14273d406",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/lib/directives-register-lib.sh",
+      "blob_sha": "4623141f0318b96f1498aa10ef917b96b23ebaee"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "6c66269855ba2251b7500fc67b598f930caf07ab"
+    },
+    {
+      "path": "adapters/claude-code/scripts/dispatch-directives.sh",
+      "blob_sha": "7e041c6e5d8623726b7a6b5896697cfa03dbf724"
+    },
+    {
+      "path": "adapters/claude-code/scripts/gen-directives-view.sh",
+      "blob_sha": "48a8256868223cf6df70584eec019c08e638a37f"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "A/B scenario test: OLD (pre-fix) script E|-injection forgery => rc=0, forged section rendered ('62:### OD-999 — FORGED ENTRY'); NEW (fixed) script same register => '[gen-directives-view] ERROR: entry OD-500 field elaboration.intent contains CR/LF — refusing to render (delimiter-injection guard)', 'render failed (rc=4) — left untouched'. Self-tests: gen-directives-view 10/10, directives-register-lib 47/47, dispatch-directives 13/13 on BOTH node and jq engines. --check GREEN and byte-identical on the real 24-entry register on both engines. dr_validate rc=0 on the real register (no dispatch over-fire). Independent fixtures: pipe-in-intent renders literally with reviewed_by=pending-operator intact (no forged APPROVED); newline/CR/pipe in title/instruction/requirements/supersedes all hard-error rc=4 with named field, committed doc UNCHANGED. node vs jq render byte-identical (same md5).",
+    "findings_summary": "PASS — Mechanism-class fix, no Critical/Major. The delimiter-injection Critical is closed: forgery reproduced on pre-fix code (rc=0, forged '### OD-999 ... Status: BINDING' section via newline-injected E| record) and blocked on fixed code (rc=4, doc untouched). Fix is sound on two axes: (1) per-scalar trailing-remainder M records + start-anchored index()==1 prefix parse means embedded '|' renders literally and cannot shift into the reviewed_by position; (2) CR/LF rejected in every value before any emit, killing newline record-forgery. Guard validates before emit; --gen writes via tempfile so a rejected register never truncates the public doc; run_check errors (rc2) not false GREEN/RED. All 8-field E-line consumers updated in-repo; PIPESTATUS correctly returns jq rc after tr -d CR pipes. dr_validate now HAS a caller (dispatch-directives.sh run(), self-test S10). FP rate low: real 24-entry register all clean, dr_validate rc=0 on it, banned chars are already-broken in positional/case-glob consumers. Two MINOR advisories (non-blocking): (a) gen-view allows '|' in surfaces (trailing-remainder-safe) while dr_validate bans it (dr__stream parses S positionally) — intentional per-consumer scoping, dispatch fail-closed, but one register file has two validity verdicts; (b) jq vs node reject-message wording differs slightly for pipe-in-embedded-field (both rc=4, both name the field). One HYPOTHESIZED out-of-scope residual: dispatch-directives.sh's OWN runtime invocation is orchestrator-doctrine-driven, not hook-enforced — pre-existing, not worsened here."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "harness-reviewer-subagent-dbe36e21"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
