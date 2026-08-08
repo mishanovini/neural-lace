@@ -44,7 +44,18 @@ FAIL=0
 # own SDK docs specifically so tooling/tests can reference "an AWS-key-
 # shaped string" without planting anything real. See DEC-2 in
 # docs/plans/secret-scan-ci-backstop-skip.md.
+#
+# SINCE 2026-08-08 (docs/plans/secret-scan-placeholder-allowlist-2026-08.md)
+# both scanners ALLOWLIST this value (scrub-then-retest), so it now drives
+# the allowlist-green scenario below, NOT the red scenario.
 FIXTURE_AWS_KEY="AKIAIOSFODNN7EXAMPLE"
+
+# The red scenario needs a real-shaped key that is NOT allowlisted. It is
+# COMPOSED at runtime from adjacent string literals so no source line of
+# this file matches AKIA[0-9A-Z]{16} — the push scanner does not exempt
+# tests/, and a matching literal here would block this file's own push
+# (the exact class review hcr-20260808-4edc4e8b finding 1 named).
+REAL_SHAPED_KEY="AKIA""ABCDEFGHIJKLMNOP"
 
 ZERO_SHA="0000000000000000000000000000000000000000"
 
@@ -80,7 +91,7 @@ run_red_scenario() {
     cd "$sandbox" || exit 1
     git checkout -q -b feature-with-secret
     printf 'aws_secret_access_key = "%s"\naws_access_key_id = "%s"\n' \
-      "not-a-real-secret-value-000000000000000" "$FIXTURE_AWS_KEY" > config.txt
+      "not-a-real-secret-value-000000000000000" "$REAL_SHAPED_KEY" > config.txt
     git add config.txt
     git commit -q -m "add config (planted fixture secret)"
   ) >/dev/null 2>&1
@@ -117,6 +128,47 @@ run_red_scenario() {
     return
   fi
   echo "PASS (red-scenario): pre-push-scan.sh blocked the planted fixture AWS key (exit 1, named config.txt)"
+  PASS=$((PASS + 1))
+}
+
+# ---------------------------------------------------------------------------
+# Scenario 1b (ALLOWLIST-GREEN): a branch planting ONLY the documented
+# placeholder. Since the 2026-08-08 allowlist (scrub-then-retest), the
+# scanner must ALLOW it (exit 0) — this locks the allowlist behavior into
+# the same oracle that proves the red path still fires.
+# ---------------------------------------------------------------------------
+
+run_allowlist_green_scenario() {
+  local sandbox base_sha
+  sandbox=$(setup_sandbox_repo)
+  base_sha=$(cd "$sandbox" && git rev-parse HEAD)
+
+  (
+    cd "$sandbox" || exit 1
+    git checkout -q -b feature-with-placeholder
+    printf 'docs example: aws_access_key_id = "%s"\n' "$FIXTURE_AWS_KEY" > docs.txt
+    git add docs.txt
+    git commit -q -m "add docs (documented placeholder only)"
+  ) >/dev/null 2>&1
+
+  local head_sha
+  head_sha=$(cd "$sandbox" && git rev-parse HEAD)
+
+  local stdin_line="refs/heads/feature-with-placeholder $head_sha refs/heads/master $base_sha"
+  local out rc
+  out=$(cd "$sandbox" && printf '%s\n' "$stdin_line" | bash "$PRE_PUSH_SCAN" origin "https://example.invalid/repo.git" 2>&1)
+  rc=$?
+
+  rm -rf "$sandbox"
+
+  if [ "$rc" -ne 0 ]; then
+    echo "FAIL (allowlist-green-scenario): expected pre-push-scan.sh exit 0 on documented placeholder, got $rc" >&2
+    echo "output was:" >&2
+    echo "$out" >&2
+    FAIL=$((FAIL + 1))
+    return
+  fi
+  echo "PASS (allowlist-green-scenario): pre-push-scan.sh allowed the documented placeholder (exit 0)"
   PASS=$((PASS + 1))
 }
 
@@ -214,6 +266,7 @@ run_hygiene_red_scenario() {
 # ---------------------------------------------------------------------------
 
 run_red_scenario
+run_allowlist_green_scenario
 run_green_scenario
 run_hygiene_red_scenario
 

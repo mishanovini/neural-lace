@@ -4,6 +4,32 @@ Status: ACTIVE
 Owner: session dbe36e21 (cross-account takeover, 2026-08-08)
 Rung: 1
 
+## Goal
+
+Backup pushes of stale branches complete without tripping the secret scan
+on AWS's documentation placeholder, while real-shaped credentials keep
+blocking at both commit time and push time.
+
+## Intended Functionality
+
+- **Outcome (operator's terms):** backing up my branches actually works
+  again — a push of the stranded branches reaches the remotes instead of
+  dying on a "secret" that is just AWS's documentation example, while
+  anything that looks like a REAL credential still gets stopped.
+- **Observation:** the previously-blocked backup push completes and the
+  branches are visible on the remote (`git ls-remote origin` lists them);
+  staging or pushing a real-shaped key is still blocked with a banner.
+- **Deterministic pass/fail:** `git push` of the previously-blocked
+  branches exits 0 and every pushed ref appears in `git ls-remote origin`;
+  `pre-push-scan.sh --self-test` reports 5 passed, 0 failed (its s2
+  real-key scenario asserts exit 1); `secret-backstop-fixture-check.sh`
+  reports 4 passed, 0 failed.
+- **Explicitly NOT included:** scan runtime (the ~2h cost is ledgered, not
+  fixed here); the CI backstop workflow itself; the pt/master divergence.
+- **Human dependencies:** none required. INTENDED (optional): the operator
+  may extend the allowlist per machine via
+  `~/.claude/sensitive-patterns-allowlist.local` (16-char minimum enforced).
+
 ## Problem
 
 The repo deliberately carries AWS's published example key
@@ -56,6 +82,11 @@ list changes; review-record gates.
 Modify:
 - `adapters/claude-code/hooks/pre-push-scan.sh` (T1)
 - `adapters/claude-code/git-hooks/pre-commit` (T1)
+- `adapters/claude-code/tests/secret-backstop-fixture-check.sh` (T1 — the CI
+  backstop's red scenario planted the documented placeholder, which the
+  allowlist now correctly allows; red scenario re-planted with a
+  runtime-composed real-shaped key, and a new allowlist-green scenario
+  locks the placeholder-allowed behavior into the same oracle)
 
 Create:
 - `docs/plans/secret-scan-placeholder-allowlist-2026-08.md` (this plan) (T1)
