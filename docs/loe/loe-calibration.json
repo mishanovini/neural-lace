@@ -1,24 +1,24 @@
 {
-  "generated_at": "2026-08-03T16:50:38Z",
-  "plans_total": 173,
+  "generated_at": "2026-08-09T07:20:25Z",
+  "plans_total": 190,
   "coverage": {
-    "wall_clock_pct": 98.3,
-    "builder_sessions_pct": 1.2,
+    "wall_clock_pct": 98.9,
+    "builder_sessions_pct": 1.1,
     "tokens_pct": 0
   },
   "classes": [
     {
       "class": "design-only",
-      "count": 5,
+      "count": 6,
       "task_count": {
-        "p50": 2,
+        "p50": 0,
         "p90": 4,
-        "n": 5
+        "n": 6
       },
       "wall_clock_days": {
         "p50": 0.48,
-        "p90": 2.34,
-        "n": 5
+        "p90": 4.00,
+        "n": 6
       },
       "builder_sessions": {
         "p50": null,
@@ -30,16 +30,16 @@
     },
     {
       "class": "general-multi-file",
-      "count": 65,
+      "count": 68,
       "task_count": {
-        "p50": 4,
+        "p50": 3,
         "p90": 13,
-        "n": 65
+        "n": 68
       },
       "wall_clock_days": {
-        "p50": 0.03,
-        "p90": 8.31,
-        "n": 64
+        "p50": 0.06,
+        "p90": 10.92,
+        "n": 68
       },
       "builder_sessions": {
         "p50": null,
@@ -51,37 +51,37 @@
     },
     {
       "class": "harness-mechanism",
-      "count": 98,
+      "count": 110,
       "task_count": {
-        "p50": 3,
+        "p50": 4,
         "p90": 13,
-        "n": 98
+        "n": 110
       },
       "wall_clock_days": {
-        "p50": 0.04,
-        "p90": 6.90,
-        "n": 97
+        "p50": 0.07,
+        "p90": 6.91,
+        "n": 109
       },
       "builder_sessions": {
         "p50": 1,
         "p90": 1,
         "n": 2,
-        "coverage_pct": 2
+        "coverage_pct": 1.8
       },
       "concentration_flag": false
     },
     {
       "class": "schema-migration",
-      "count": 5,
+      "count": 6,
       "task_count": {
         "p50": 0,
         "p90": 11,
-        "n": 5
+        "n": 6
       },
       "wall_clock_days": {
-        "p50": 0.24,
-        "p90": 13.52,
-        "n": 4
+        "p50": 13.52,
+        "p90": 13.93,
+        "n": 5
       },
       "builder_sessions": {
         "p50": null,
@@ -89,7 +89,7 @@
         "n": 0,
         "coverage_pct": 0
       },
-      "concentration_flag": true
+      "concentration_flag": false
     }
   ],
   "per_plan": [
@@ -518,12 +518,24 @@
       "mode": "code",
       "class": "general-multi-file",
       "task_count": 2,
-      "wall_clock_days": null,
-      "first_commit": null,
-      "last_commit": null,
+      "wall_clock_days": 0.04,
+      "first_commit": "2026-08-03T09:01:33-07:00",
+      "last_commit": "2026-08-03T09:59:07-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
+    },
+    {
+      "slug": "cockpit-review-surface-and-verification-gaps",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 6,
+      "wall_clock_days": 4.29,
+      "first_commit": "2026-07-30T13:29:35-07:00",
+      "last_commit": "2026-08-03T20:33:07-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
     },
     {
       "slug": "cockpit-ui-polish",
@@ -548,6 +560,18 @@
       "builder_sessions": 3,
       "tokens": null,
       "has_evidence": true
+    },
+    {
+      "slug": "code-trace-methodology-2026-07-30",
+      "mode": "code",
+      "class": "general-multi-file",
+      "task_count": 0,
+      "wall_clock_days": 4.07,
+      "first_commit": "2026-07-30T18:46:56-07:00",
+      "last_commit": "2026-08-03T20:33:07-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
     },
     {
       "slug": "concurrent-ownership-gate-2026-07-12",
@@ -593,6 +617,18 @@
       "wall_clock_days": 0.00,
       "first_commit": "2026-07-21T04:24:01-07:00",
       "last_commit": "2026-07-21T04:24:01-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
+      "slug": "context-watermark-window-class-fix",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 0,
+      "wall_clock_days": 5.45,
+      "first_commit": "2026-07-29T09:44:49-07:00",
+      "last_commit": "2026-08-03T20:33:07-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
@@ -934,6 +970,18 @@
       "has_evidence": true
     },
     {
+      "slug": "doctrine-review-surface-measurement-2026-07-30",
+      "mode": "design",
+      "class": "design-only",
+      "task_count": 0,
+      "wall_clock_days": 4.00,
+      "first_commit": "2026-07-30T20:34:09-07:00",
+      "last_commit": "2026-08-03T20:33:07-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
       "slug": "document-freshness-system",
       "mode": null,
       "class": "schema-migration",
@@ -1049,6 +1097,18 @@
       "wall_clock_days": 0.01,
       "first_commit": "2026-05-27T02:29:04-07:00",
       "last_commit": "2026-05-27T02:45:35-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
+      "slug": "flat-skills-directory-form-migration",
+      "mode": null,
+      "class": "schema-migration",
+      "task_count": 5,
+      "wall_clock_days": 22.73,
+      "first_commit": "2026-07-12T03:05:51-07:00",
+      "last_commit": "2026-08-03T20:33:07-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
@@ -1282,6 +1342,18 @@
       "has_evidence": false
     },
     {
+      "slug": "intended-functionality-stage-0-2026-07-30",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 8,
+      "wall_clock_days": 4.17,
+      "first_commit": "2026-07-30T16:51:01-07:00",
+      "last_commit": "2026-08-03T20:54:49-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
       "slug": "land-cfr-gate-2026-06-10",
       "mode": "code",
       "class": "harness-mechanism",
@@ -1316,6 +1388,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
+    },
+    {
+      "slug": "macos-portability-2026-07",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 6,
+      "wall_clock_days": 5.54,
+      "first_commit": "2026-07-29T08:01:11-07:00",
+      "last_commit": "2026-08-03T20:54:49-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
     },
     {
       "slug": "master-drift-autocorrection-2026-07",
@@ -1354,6 +1438,18 @@
       "has_evidence": false
     },
     {
+      "slug": "model-awareness-knowledge-2026-07-24",
+      "mode": "docs",
+      "class": "general-multi-file",
+      "task_count": 1,
+      "wall_clock_days": 10.92,
+      "first_commit": "2026-07-23T22:51:10-07:00",
+      "last_commit": "2026-08-03T20:54:49-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
       "slug": "model-enforcement-2026-07-14",
       "mode": "code",
       "class": "harness-mechanism",
@@ -1373,6 +1469,18 @@
       "wall_clock_days": 0.00,
       "first_commit": "2026-07-13T18:12:05-07:00",
       "last_commit": "2026-07-13T18:12:05-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
+      "slug": "needs-you-ledger-corruption-hotfix",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 5,
+      "wall_clock_days": 5.42,
+      "first_commit": "2026-07-29T10:33:11-07:00",
+      "last_commit": "2026-08-03T20:33:07-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
@@ -1445,6 +1553,18 @@
       "wall_clock_days": 8.31,
       "first_commit": "2026-07-03T19:20:09-07:00",
       "last_commit": "2026-07-12T02:53:35-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
+    },
+    {
+      "slug": "operator-requirement-ledger",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 0,
+      "wall_clock_days": 5.51,
+      "first_commit": "2026-07-29T08:43:27-07:00",
+      "last_commit": "2026-08-03T20:54:49-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
@@ -1762,6 +1882,18 @@
       "has_evidence": false
     },
     {
+      "slug": "requests-tab-visibility-fix-2026-07-30",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 6,
+      "wall_clock_days": 4.31,
+      "first_commit": "2026-07-30T13:25:25-07:00",
+      "last_commit": "2026-08-03T20:54:49-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
       "slug": "revert-mirror-action-workflow",
       "mode": "code",
       "class": "general-multi-file",
@@ -1769,6 +1901,30 @@
       "wall_clock_days": 12.54,
       "first_commit": "2026-05-28T11:58:11-07:00",
       "last_commit": "2026-06-10T00:59:35-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
+      "slug": "review-gate-identity-anchor-2026-07-30",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 5,
+      "wall_clock_days": 4.04,
+      "first_commit": "2026-07-30T19:38:10-07:00",
+      "last_commit": "2026-08-03T20:33:07-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
+      "slug": "review-independence",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 5,
+      "wall_clock_days": 107.14,
+      "first_commit": "2026-04-18T17:29:13-07:00",
+      "last_commit": "2026-08-03T20:54:49-07:00",
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
@@ -1858,6 +2014,18 @@
       "has_evidence": false
     },
     {
+      "slug": "secret-scan-placeholder-allowlist-2026-08",
+      "mode": null,
+      "class": "harness-mechanism",
+      "task_count": 0,
+      "wall_clock_days": 1.00,
+      "first_commit": "2026-08-08T00:03:38-07:00",
+      "last_commit": "2026-08-09T00:09:05-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
+    },
+    {
       "slug": "session-end-protocol-enforcer",
       "mode": "code",
       "class": "harness-mechanism",
@@ -1892,6 +2060,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": false
+    },
+    {
+      "slug": "supervisor-tick",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 6,
+      "wall_clock_days": 11.92,
+      "first_commit": "2026-07-22T22:55:42-07:00",
+      "last_commit": "2026-08-03T20:54:49-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
     },
     {
       "slug": "taskcreate-workstreams-binding",
@@ -1942,6 +2122,18 @@
       "has_evidence": false
     },
     {
+      "slug": "verification-dispatch-directive",
+      "mode": "code",
+      "class": "general-multi-file",
+      "task_count": 5,
+      "wall_clock_days": 6.01,
+      "first_commit": "2026-07-28T20:33:17-07:00",
+      "last_commit": "2026-08-03T20:54:49-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": true
+    },
+    {
       "slug": "wim-deploy-age-guard-fix",
       "mode": "code",
       "class": "general-multi-file",
@@ -1988,6 +2180,18 @@
       "builder_sessions": null,
       "tokens": null,
       "has_evidence": true
+    },
+    {
+      "slug": "workstreams-debounce-and-sentinel-tests-hotfix-2026-07-29",
+      "mode": "code",
+      "class": "harness-mechanism",
+      "task_count": 5,
+      "wall_clock_days": 4.91,
+      "first_commit": "2026-07-29T22:47:15-07:00",
+      "last_commit": "2026-08-03T20:33:07-07:00",
+      "builder_sessions": null,
+      "tokens": null,
+      "has_evidence": false
     },
     {
       "slug": "workstreams-phase-1-2",
