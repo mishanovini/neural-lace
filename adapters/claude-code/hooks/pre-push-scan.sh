@@ -267,45 +267,77 @@ is_content_scan_exempt() {
 BLOCKED=0
 BLOCKED_REASONS=""
 
-scan_file_content() {
-  local range="$1"
-  local file="$2"
+# ============================================================
+# SINGLE-PASS content scan (2026-08-08 performance rewrite).
+#
+# The previous implementation spawned `git diff <range> -- <file>` PER
+# FILE and then ran every pattern as its own grep PER FILE — thousands
+# of subprocesses on a large catch-up range. Measured cost: 119m46s for
+# one 19-branch backup push, and leaked hook processes accumulated
+# 16-23 CPU-HOURS each when their git parent died mid-push. This pass
+# runs ONE `git diff` for the whole range, tags every added line with
+# its file, and runs ONE combined-alternation grep over the stream;
+# the per-pattern loop (for attribution + scrub-then-retest) runs only
+# on the rare lines the combined grep already matched.
+#
+# Block/allow parity with the old code: a push is blocked iff some
+# added line of a non-exempt file still matches some pattern after
+# placeholder-scrubbing — identical decision rule, ~100x fewer
+# subprocesses.
+# ============================================================
 
-  # Skip if exempt
-  if is_content_scan_exempt "$file"; then
-    return 0
-  fi
+# Combined alternation of every pattern, built once. Each pattern is
+# wrapped in (...) so alternation cannot bleed across patterns.
+COMBINED_REGEX=""
+for entry in "${ALL_PATTERNS[@]}"; do
+  COMBINED_REGEX="${COMBINED_REGEX:+$COMBINED_REGEX|}(${entry#*|})"
+done
 
-  # Get the added lines only for this file (reduces false positives from context)
-  local file_diff
-  file_diff=$(git diff "$range" -- "$file" 2>/dev/null | grep -E "^\+" | grep -Ev "^\+\+\+" || echo "")
+# scan_range_content <range> <ref-label>
+# Emits BLOCKED/BLOCKED_REASONS for every (file, pattern) pair with a
+# surviving match in the range's added lines. The ref label rides the
+# report so a multi-ref push names WHICH ref carried the hit
+# (previously only the file was named — a 19-ref block forced manual
+# per-branch range replication to find the culprit).
+scan_range_content() {
+  local range="$1" ref_label="$2"
+  # "file<TAB>+line" for every added line; f reset on /dev/null so
+  # deleted-file hunks cannot inherit the previous filename. Streamed to
+  # a TEMP FILE, never a bash variable: capturing a 30MB range diff in a
+  # variable measured ~10s per shuffle on MSYS and strips null bytes.
+  local tagged_file
+  tagged_file="$(mktemp 2>/dev/null || mktemp -t ppscan-tagged)"
+  git diff "$range" 2>/dev/null \
+    | awk '/^\+\+\+ \/dev\/null/{f=""} /^\+\+\+ b\//{f=substr($0,7)} /^\+/ && !/^\+\+\+/{if (f!="") print f "\t" $0}' \
+    > "$tagged_file"
 
-  [ -z "$file_diff" ] && return 0
+  local hits
+  hits=$(grep -aE "$COMBINED_REGEX" "$tagged_file" || true)
+  rm -f "$tagged_file"
+  [ -z "$hits" ] && return 0
 
-  for entry in "${ALL_PATTERNS[@]}"; do
-    local desc="${entry%%|*}"
-    local regex="${entry#*|}"
-    if echo "$file_diff" | grep -qE "$regex"; then
-      # Scrub-then-retest: drop matches that exist ONLY because of a
-      # documented placeholder value; a line carrying a real credential
-      # alongside a placeholder still re-matches after the scrub.
-      local matched_line=""
-      local ml scrubbed
-      while IFS= read -r ml; do
-        [ -z "$ml" ] && continue
-        scrubbed=$(scrub_allowlisted "$ml")
-        if echo "$scrubbed" | grep -qE "$regex"; then
-          matched_line=$(printf '%s' "$ml" | cut -c1-120)
-          break
-        fi
-      done < <(echo "$file_diff" | grep -E "$regex")
-      [ -z "$matched_line" ] && continue
-      BLOCKED=1
-      BLOCKED_REASONS+="
-  [$file] $desc
-    $matched_line"
+  local seen=""
+  local mfile mline scrubbed entry desc regex
+  while IFS=$'\t' read -r mfile mline; do
+    [ -z "$mfile" ] && continue
+    if is_content_scan_exempt "$mfile"; then
+      continue
     fi
-  done
+    scrubbed=$(scrub_allowlisted "$mline")
+    for entry in "${ALL_PATTERNS[@]}"; do
+      desc="${entry%%|*}"
+      regex="${entry#*|}"
+      if printf '%s\n' "$scrubbed" | grep -qE "$regex"; then
+        # one report line per (file, pattern) pair, like the old output
+        case "$seen" in *"|$mfile|$desc|"*) continue ;; esac
+        seen="${seen}|$mfile|$desc|"
+        BLOCKED=1
+        BLOCKED_REASONS+="
+  [$mfile] $desc (ref: ${ref_label})
+    $(printf '%s' "$mline" | cut -c1-120)"
+      fi
+    done
+  done <<< "$hits"
 }
 
 while read -r local_ref local_sha remote_ref remote_sha; do
@@ -341,20 +373,25 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   # Files being added/modified
   files=$(git diff --name-only "$range" 2>/dev/null || echo "")
 
-  # Scan each file
+  # Sensitive filename check (runs even on exempt files). Pure-bash
+  # [[ =~ ]] on purpose: the old `echo | grep` pair spawned TWO processes
+  # per (file, pattern) — 11,400 spawns on a 1,140-file range, ~20-40
+  # minutes on MSYS where process spawn costs ~50-100ms (the dominant
+  # cost of the measured 119m scan; the same script is fast on Linux CI,
+  # which is why the cost hid). bash regex is ERE, same dialect.
   for file in $files; do
-    # Sensitive filename check (runs even on exempt files)
     for fpat in "${SENSITIVE_FILE_PATTERNS[@]}"; do
-      if echo "$file" | grep -qE "$fpat"; then
+      if [[ "$file" =~ $fpat ]]; then
         BLOCKED=1
         BLOCKED_REASONS+="
-  [$file] sensitive filename pattern"
+  [$file] sensitive filename pattern (ref: ${local_ref})"
       fi
     done
-
-    # Content scan (skipped on exempt files)
-    scan_file_content "$range" "$file"
   done
+
+  # Content scan — single pass over the whole range (exempt files are
+  # skipped per matched line inside scan_range_content)
+  scan_range_content "$range" "$local_ref"
 done
 
 # ============================================================
