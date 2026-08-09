@@ -2004,6 +2004,21 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/hooks/pre-push-scan.sh",
+      "blob_sha": "d8f7edbc406de1fe3878693bb93d1c96abfd7c92",
+      "record_id": "hcr-20260809-45a064f2",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-09T06:56:51Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
       "path": "adapters/claude-code/hooks/pre-push-test-gate.sh",
       "blob_sha": "fa72b810a7491568fa6797d0ac8e1a2f2798ad69",
       "record_id": "hcr-20260724-63b76ebb",

@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260809-45a064f2",
+  "created_at": "2026-08-09T06:56:51Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/plans/secret-scan-placeholder-allowlist-2026-08.md",
+  "change_ref": {
+    "commit_sha": "f283e8e01091a0ae940c4241b1d31736c210adfe",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/pre-push-scan.sh",
+      "blob_sha": "d8f7edbc406de1fe3878693bb93d1c96abfd7c92"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "PARITY VERIFIED. self-test summary: 5 passed, 0 failed. secret-backstop-fixture-check: 4 passed, 0 failed. Timing on the real ws-ui-server-stable range (1150 commits / 1140 files): elapsed 9s at bash integer resolution (~= claimed 8.2s; was the measured 119m46s), rc 0. All 20 built-in credential patterns block end-to-end via the real hook; clean control allowed; documented placeholder allowed while real-key-beside-placeholder blocks. awk tagger correct: '[my config.txt] AWS Access Key ID (ref: refs/heads/master)' proves a spaced filename is tagged and attributed correctly; deletion-then-file attributes to the right file (the /dev/null reset works); binary hunks do not crash or mistag. Filename dialect bash [[ =~ ]] vs grep -E: 0 mismatches across 290 comparisons.",
+    "findings_summary": "PASS. Mechanism-class performance rewrite of pre-push-scan.sh's scan engine (blob d8f7edbc); the block/allow DECISION RULE is preserved and I verified parity across every axis the change touches. No real credential the old engine caught can now pass (PROVEN): all 20 built-in patterns block end-to-end through the real hook in a fixture repo, placeholder-scrub parity holds (placeholder-only allowed, real key alone / real+placeholder blocked), and the negative control is allowed. Performance goal met (PROVEN): the real 1150-commit/1140-file ws-ui range scans in ~9s (bash integer clock; consistent with the claimed 8.2s) versus the measured 119m46s, and now returns rc 0. Adversarial focus results: (1) EXEMPTION semantics moved but preserved -- an AWS key inside business-patterns.txt is ALLOWED (content-exempt via per-line is_content_scan_exempt), while the SENSITIVE_FILE_PATTERNS check still fires on all files (a .env blocks and the report names the ref). (2) awk tagger: spaced filenames tagged+attributed correctly (BETTER than the old word-splitting engine); deletion-then-file attributes the key to the correct file (the '/^\\+\\+\\+ /dev/null/{f=\"\"}' reset prevents stale-filename inheritance); binary hunks neither crash nor mistag. (3) combined-alternation grep -aE compiles (no rc-2) and any per-pattern attribution blocks; a line matching multiple patterns yields a sane single report line; a key-shaped FILENAME with clean content is correctly ALLOWED because attribution re-tests content only. (4) filename-pattern dialect parity is exact: bash [[ =~ ]] and grep -E agree on 0/290 mismatches over the 10 SENSITIVE_FILE_PATTERNS (including the \\.env(\\.local|...)?$ anchor case). (5) Tab/temp: no temp-file leak (delta 0 across a scan; tagged file is rm'd unconditionally). Self-test 5/5, fixture-check 4/4. NON-BLOCKING residuals (Minor): (a) non-ASCII / quoted-path filenames have their CONTENT unscanned under git's default quotePath=true (the awk +++ b/ matcher does not match the quoted '+++ \"b/...' header) -- HYPOTHESIZED benign and explicitly NOT a regression: the old engine's 'for file in $files' also missed quoted-path files (verified empirically both ways), and literal-tab filenames are not creatable on the Windows/MSYS target; worth a future nl-issue, not a block. (b) 'range_is_single' is a dead variable (also present pre-rewrite) -- cosmetic. No Critical, no Major."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "harness-reviewer-dbe36e21-r4"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
