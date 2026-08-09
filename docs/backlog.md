@@ -1,8 +1,34 @@
-Last updated: 2026-08-03
+Last updated: 2026-08-09
 
 # Neural Lace — Harness Backlog
 
-**Last updated:** 2026-08-03 v74 — REQ-C2 estate drain (gated-pipeline-master-2026-08 Task 21):
+**Last updated:** 2026-08-09 v75 — takeover session dbe36e21 (cross-account): injection
+Critical remediated + deployed (943628fb, 4 PASS records); secret-scan placeholder
+allowlist + MSYS perf rewrite landed (119m→8.2s, plan secret-scan-placeholder-allowlist-
+2026-08 closing); all 19 unbacked-up branches verified at exact local SHA on BOTH
+remotes. New rows below (SCAN-*, WATCHDOG-01, EVIDENCE-GATE-PARSER-01, WRITE-EVIDENCE-
+CWD-01); machine ledger (nl-issues) carries the full narrative.
+
+## Session dbe36e21 rows (2026-08-09)
+
+- **SCAN-QUOTEDPATH-01** (low, from review hcr-20260809-45a064f2): pre-push-scan's
+  content pass skips files whose diff headers are quotePath-quoted (non-ASCII paths) —
+  pre-existing parity with the old engine, named residual. Fix: `-c core.quotePath=false`
+  on the range diff + extend the awk tagger (Amendment H rule 3 names this class). Also
+  delete dead var `range_is_single`.
+- **WATCHDOG-01** (high, operator-directed 2026-08-08, awaiting OD approval — ask
+  registered): background-work watchdog — declared time budgets + progress signals on
+  every dispatch; NL-Maintenance samples ps/task outputs; breaches become session-blocking
+  obligations, orphans (PPID=1 hook processes) auto-killed. Verbatim in nl-issues.
+- **EVIDENCE-GATE-PARSER-01** (low): evidence-before-fix gate's citation parser rejects
+  compliant `## Root cause (evidenced)` sections (backtick command + `command:` token +
+  file:line all present, still WARNs "no citation-shaped token") — fired on 3 compliant
+  commits this session.
+- **WRITE-EVIDENCE-CWD-01** (low): write-evidence.sh capture writes `<slug>-evidence/`
+  relative to CWD while close-plan.sh reads `docs/plans/<slug>-evidence/` — the printed
+  remediation command produces invisible evidence; resolve against the plan's dir.
+
+**Prior — 2026-08-03 v74 — REQ-C2 estate drain (gated-pipeline-master-2026-08 Task 21):
 23 stale ACTIVE plans dispositioned down to 3 honest ACTIVEs (16 COMPLETED, 4 DEFERRED with a
 named resume trigger each, 1 already-DEPRIORITIZED note formalized to DEFERRED — full evidence
 in docs/reviews/2026-08-03-estate-drain-record.md); nl-issues untriaged 170->5 via the mechanized
