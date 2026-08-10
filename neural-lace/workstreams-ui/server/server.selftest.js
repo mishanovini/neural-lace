@@ -1463,9 +1463,9 @@ async function main() {
     const t17GateLanding = JSON.parse(JSON.stringify(t17CleanLanding));
     // 2026-08-10: the identifier moved from narrative_excerpt (now
     // position-exempt operator-authored ask copy, like summary) to
-    // drift_badges — a genuinely machine-composed, still-guarded field —
-    // preserving this scenario's intent: the anti-noise scan still fails
-    // a payload leaking identifiers through guarded positions.
+    // repo — a still-guarded scalar field — preserving this scenario's
+    // intent: the anti-noise scan still fails a payload leaking
+    // identifiers through guarded positions.
     t17GateLanding.groups[0].asks[0].repo = 'blocked by task-completed-evidence-gate';
     const t17GateCheck = payloadSchema.validateLanding(t17GateLanding);
     ok('S51 Task17a ANTI-NOISE: a landing payload carrying a gate/hook identifier in a guarded field FAILS validateLanding (the check the doctor predicate mirrors off the wire)',
