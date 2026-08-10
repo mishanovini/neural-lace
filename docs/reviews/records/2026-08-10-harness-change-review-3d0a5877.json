@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260810-3d0a5877",
+  "created_at": "2026-08-10T06:21:31Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/handoffs/2026-08-06-cross-machine-process-and-cockpit-handoff.md",
+  "change_ref": {
+    "commit_sha": "65038f74979579f99851116a71d1fa68167eee4b",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/coord-sync.sh",
+      "blob_sha": "4e5c8298b045e5da8197b60f87956ce956b10be7"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "timeout (GNU coreutils) 8.32 at /usr/bin/timeout; empirically rc=124 on a killed child and rc-passthrough (7) on success. Self-test 31 passed, 2 failed -- the 2 are the documented pre-existing HALT scenarios 12a/12b, PROVEN pre-existing by running the full pre-merge tree at 51bfe572: 27 passed, SAME 2 failures, so the delta added exactly the four new Scenario-13 checks and regressed nothing. Live cycles.log: outcome=pushed export_rc=0 at 05:47:36Z, 06:05:46Z, 06:08:38Z, 06:12:36Z -- the bounded code is running in production now.",
+    "findings_summary": "PASS. The +83/-1 delta wraps the exporter invocation in a 60s timeout bound with a loud rc=124 degradation path; correctness verified on this platform and no regression found. (1) PROVEN: detection is command -v timeout; this machine has GNU coreutils 8.32 timeout, and I verified rc=124-on-kill plus rc-passthrough semantics empirically. (2) PROVEN no regression: the bounded branch preserves the identical exporter invocation (EXPORT_DIR env, same node call, same 2>&1 capture, same export_rc flow); rc=124 rides the existing exporter rc log line plus a WARN that names both the bound and the env var that raises it; the COORD_SYNC_EXPORTER_CMD path deliberately bypasses the bound (documented in-diff, keeps other selftest stubs unaffected); the no-timeout fallback is the byte-identical original unbounded call. (3) PROVEN: self-test 31/2 where both failures are the handoff-documented HALT scenarios 12a/12b -- re-ran the FULL pre-merge tree at 51bfe572 and got 27/2 with the identical two failures, proving the delta contributed exactly its four new Scenario-13 checks (hung exporter killed under bound in <20s; loud warn; rc=124 surfaces on the log line; fast exporter under the bound untouched -- the last being precisely the false-positive guard a new bound needs) and zero regressions. (4) PROVEN live: cycles.log shows repeated outcome=pushed export_rc=0 cycles through tonight (05:47Z through 06:12Z, ~13s durations), so the exact reviewed code is healthy in production via the daemon. R4 (unbounded fallback where no timeout binary exists, scored as a labeled SKIP-pass) is out of scope per the ledgered follow-up and NOT blocking on this machine (binary present); I concur with its acceptance -- the fallback direction is defensible (losing the bound is degradation, losing the export is outage) and the prescribed loud-fallback follow-up matches the nl-maintenance portable-timeout WARN pattern this repo already ships. Design note in favor: the 60s bound is ~50x the measured 1.2s cost, so the over-fire surface is negligible and Scenario 13c pins it. No findings."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "harness-reviewer-dbe36e21-r4"
+  },
+  "independence": "pathway",
+  "payload": {}
+}

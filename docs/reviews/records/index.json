@@ -3474,6 +3474,21 @@
     },
     {
       "path": "adapters/claude-code/scripts/coord-sync.sh",
+      "blob_sha": "4e5c8298b045e5da8197b60f87956ce956b10be7",
+      "record_id": "hcr-20260810-3d0a5877",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:21:31Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "adapters/claude-code/scripts/coord-sync.sh",
       "blob_sha": "5a9ba6b8be22d9ab4f17111d1ef7de56f272b018",
       "record_id": "frc-20260720-01301d50",
       "kind": "fix-root-cause",
