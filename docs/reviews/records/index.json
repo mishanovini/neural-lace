@@ -4664,6 +4664,21 @@
       "independence": "pathway"
     },
     {
+      "path": "neural-lace/workstreams-ui/server/server.selftest.js",
+      "blob_sha": "a95c83ce57803444cc68207b6e981e9220eefe55",
+      "record_id": "hcr-20260810-27ad7958",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:13:04Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
       "path": "neural-lace/workstreams-ui/server/verbatim-resolver.js",
       "blob_sha": "a35f62010d7c69832d2456bf9c9e842e4584490d",
       "record_id": "hcr-20260730-61174097",
