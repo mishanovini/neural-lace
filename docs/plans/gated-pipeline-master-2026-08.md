@@ -510,8 +510,13 @@ Modify:
 
 ## In-flight scope updates
 - 2026-08-06: `docs/handoffs/2026-08-06-cross-machine-process-and-cockpit-handoff.md` — Task 8's
-  remaining REDs require a **second-principal review runner** on a machine other than the builder's,
-  and nothing carried the needed context there. Git master is the only channel reaching all three
+  remaining REDs require a **second-principal review runner**, and nothing carried the needed
+  context there. CORRECTED 2026-08-10 (operator, reaffirming ADR-067 of 2026-07-29): the
+  "on a machine other than the builder's" qualifier this note originally carried is VOID —
+  review independence is the PATHWAY (a fresh adversarial reviewer session that did not author
+  the work, via review-queue/review-runner), never machine locality. Any machine, including the
+  builder's, satisfies Task 8 by dispatching the adversarial reviewer through the deterministic
+  pipe. See docs/decisions/067-review-independence-same-session-pathway.md. Git master is the only channel reaching all three
   machines (the coordination repo carries a near-empty payload — see the doc's Part C), so the
   handoff is a committed artifact rather than pasted text. It also records two live enforcement
   gaps found while writing it: the local `core.hooksPath` override that disables the pre-push

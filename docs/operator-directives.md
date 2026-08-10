@@ -17,8 +17,8 @@ this view is regenerated, not edited.
 
 | Metric | Count |
 |---|---|
-| Total entries | 24 |
-| BINDING | 24 |
+| Total entries | 25 |
+| BINDING | 25 |
 | SUPERSEDED | 0 |
 | Operator-only (no code surface) | 2 |
 
@@ -518,4 +518,46 @@ this view is regenerated, not edited.
 > *Elaborated by plan-phase-builder (session 4a470c8c, directives-elaboration-layer task) on 2026-08-04.*
 
 *Source: operator directive 2026-08-04 (session 4a470c8c), 'THE COMPREHENSIVE-SOLUTIONS DIRECTIVE'*
+
+### OD-025 — review-independence-is-pathway-not-machine
+
+**Status:** BINDING
+
+**Surfaces:**
+- `adapters/claude-code/scripts/review-runner.sh`
+- `adapters/claude-code/scripts/review-queue.sh`
+- `adapters/claude-code/config/review-instructions.md`
+- `docs/handoffs/**`
+- `docs/plans/**`
+
+**Instruction:**
+
+> Review independence is the PATHWAY, never the machine: an adversarial reviewer agent in a fresh session that did not author the work, dispatched through the deterministic review pipe (queue -> claim -> versioned instructions -> runner-committed record).
+> No process, plan, handoff, or dispatch may REQUIRE a review to run on a different machine; machine locality adds nothing and is at most an optional truthful annotation on the record.
+> Deferring or delegating a review to another machine for independence, while an adversarial reviewer is dispatchable locally, violates this directive.
+
+**Elaboration:**
+
+> **Interpretation — correct me if wrong.** This section interprets the
+> verbatim Instruction above; it does not replace it, and on any conflict
+> the verbatim Instruction wins. Review status: `reviewed_by: pending-operator`.
+>
+> *Intent:* Reviews are trustworthy because of WHO reviews (an adversarial agent that did not author the work) and HOW the verdict travels (the deterministic pipe), not WHERE it runs -- every subagent dispatch already gets a fresh context on any machine.
+>
+> *Applies when:* Any review, verification, or merge whose independence is being designed, requested, or cited -- and any handoff/plan text that scopes one.
+>
+> *Requirements:*
+> - A second-principal review requirement is satisfiable on the building machine by dispatching the adversarial reviewer through review-queue/review-runner.
+> - The authoring SESSION never claims or finalizes its own review record (mechanical: session-id self-claim refusal).
+> - Machine locality may be recorded truthfully on a record but nothing may block, defer, or delegate on it.
+> - Any text that states a machine-locality review requirement is corrected on discovery and traced to this entry.
+>
+> *Anti-patterns (violates the directive while superficially complying):*
+> - Stalling work as blocked-on-another-machine for review independence while an adversarial reviewer agent is dispatchable locally (the 2026-08-09 cockpit-Q2 stall: a 3-verdict branch sat unmerged for days behind a void machine requirement).
+>
+> *Worked example:* Q2 (cockpit plan-inventory fix): built on Office_PC, three adversarial MERGE verdicts, then stalled behind a second-machine requirement -- ADR-067 already ruled the pathway sufficient; the correct move was a locally dispatched fresh adversarial reviewer plus the merge, on the same machine that built it.
+>
+> *Elaborated by session dbe36e21 (cross-account takeover) on 2026-08-10.*
+
+*Source: operator 2026-07-29 (verbatim in ADR-067) reaffirmed verbatim 2026-08-10 (nl-issues); docs/decisions/067-review-independence-same-session-pathway.md*
 

@@ -77,6 +77,15 @@ fix, not a rounding error — this hook runs on every matching tool call.
 
 ## Q2 — Second-principal verify and merge the plan-inventory fix (the cockpit sync fix)
 
+**CORRECTED 2026-08-10 (operator directive, reaffirming ADR-067 of 2026-07-29 —
+`docs/decisions/067-review-independence-same-session-pathway.md`):** this section's framing
+that the verification must happen on "a machine other than Office_PC" is WRONG and VOID.
+Review independence is the PATHWAY — a fresh adversarial reviewer session that did not author
+the work, dispatched through the deterministic review-queue/review-runner pipe — never the
+machine. ANY machine, including the one that built the branch, satisfies the second-principal
+requirement that way. The operator has stated this repeatedly; treat any machine-locality
+review requirement anywhere in this document as superseded.
+
 **PUSHED 2026-08-06 at `349e1470`.** `git fetch origin fix/cross-machine-plan-inventory-single-derivation`.
 
 **Status: all three adversarial verifiers returned MERGE-WITH-NAMED-RESIDUALS** (2 CONFIRMED,
@@ -466,8 +475,10 @@ parser bugs in the prototype; it is **OPEN / HYPOTHESIZED**, not a result.
 - [`docs/plans/gated-pipeline-master-2026-08.md`](../plans/gated-pipeline-master-2026-08.md)
   (design: [`docs/designs/gated-pipeline-master-2026-08-03.md`](../designs/gated-pipeline-master-2026-08-03.md)):
   24 of 25 tasks verified. The remainder needs a **second-principal review runner** — a review
-  executed on a machine other than the one that built the work. **That is a job for your
-  machine**, and the one piece the originating session cannot do for itself.
+  executed by a principal that did not author the work. CORRECTED 2026-08-10 (ADR-067): the
+  original text here required "a machine other than the one that built the work" — that
+  machine-locality requirement is VOID; a fresh adversarial reviewer session through the
+  review-runner pipe satisfies it on any machine, including the originating one.
 - **Fable's weekly quota is exhausted** (100%, resets Sat 08:00). Do not pin `model: fable`.
   The declared chain is `["fable","opus"]`; the resolver that walks it is built and tested
   (72/72) but not yet on master.
