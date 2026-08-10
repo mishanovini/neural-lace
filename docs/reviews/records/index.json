@@ -3974,6 +3974,21 @@
     },
     {
       "path": "adapters/claude-code/scripts/nl-maintenance.sh",
+      "blob_sha": "906ac7eb50d5487ba186a5711fce2a2d9296613a",
+      "record_id": "hcr-20260810-6b830942",
+      "kind": "harness-change-review",
+      "verdict": "REFORMULATE",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T04:25:41Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "adapters/claude-code/scripts/nl-maintenance.sh",
       "blob_sha": "9c99df4bfd47f8ffc95d1833d10a4a52ce5cd150",
       "record_id": "hcr-20260806-2d100453",
       "kind": "harness-change-review",

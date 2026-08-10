@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260810-6b830942",
+  "created_at": "2026-08-10T04:25:41Z",
+  "verdict": "REFORMULATE",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "nl-issues:NL-MAINTENANCE-DEADLY-EMBRACE",
+  "change_ref": {
+    "commit_sha": "daa633f1668123ed5fe7dbf466faafa4bf0a9d02",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/scripts/nl-maintenance.sh",
+      "blob_sha": "906ac7eb50d5487ba186a5711fce2a2d9296613a"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "nl-maintenance.sh:152 still reads 'it fires on a fixed OS-scheduled cadence of 300s (install-maintenance-task.ps1 -WatchdogIntervalSeconds, matching NM_WATCHDOG_STALE_SECONDS)' while the SAME FILE's line 813 (this diff) now sets the default to 900 -- the 'matching' claim is false at runtime. manifest.json:3597 honest_status likewise still claims 'matching NM_WATCHDOG_STALE_SECONDS' and 'both 30-140x inside the 300s stale threshold, so a healthy daemon should trigger ZERO watchdog relaunches' -- a claim the incident itself refuted (health-tick measured 301s > 300s). Self-test 71/71; runtime behavior verified sound.",
+    "findings_summary": "REFORMULATE. The RUNTIME change is correct and fully verified -- every named remediation is real and no behavioral defect found. PROVEN: self-test 71/71; jobs ARE bounded (_nm_run_job uses nl_run_bounded 600, portable-timeout.sh IS sourced at line 113, and an empirical probe enforced a 1s bound at rc=124 in ~2s), so the worst legitimate heartbeat gap mid-tick is ~600s + seconds of dashboard refresh, leaving >=300s margin under the new 900s threshold -- a healthy-but-slow daemon can no longer be killed mid-tick, which is exactly the deadly-embrace fix, while a wedged JOB is killed by its own 600s bound and the tick resumes heartbeating. Honest detection regression: a genuinely wedged/dead DAEMON is now detected in <=900s stale + <=300s cadence (~20 min worst) vs ~10 min before -- acceptable for a maintenance daemon and stated here explicitly. HALT interaction clean (PROVEN by code path): the new tick-start/between-job heartbeats run only AFTER the sf_halt_active drain check returns halted:true, and run_watchdog reads only generated_at_epoch, never halted. Concurrent-fire guard intact: sf_guard nl-maintenance-watchdog-relaunch 60s still dedups overlapping fires, and with mid-tick heartbeats overlapping fires during a slow first tick now see a FRESH heartbeat and return before any relaunch decision. S15b STOP/CONT: PROVEN on MSYS by probe -- SIGSTOP genuinely suspends (writes ceased), a STOPped process's cmdline stays readable (S15b's identity check passed with the daemon STOPped), and TERM-while-STOPped queues until CONT delivers it -- the fixture's cleanup TERM at line 1359 correctly comes AFTER the unconditional kill -CONT at 1351 (script is set -u, not set -e, so CONT always runs). ONE MAJOR (the REFORMULATE): the diff changed the 300->900 constant but not the three mechanism-claim texts that state the old invariant -- (1) nl-maintenance.sh:152 'matching NM_WATCHDOG_STALE_SECONDS' is now false IN THE SAME FILE the diff edits; (2) manifest.json:3597 honest_status says 'matching NM_WATCHDOG_STALE_SECONDS' and '300s stale threshold' and 'healthy daemon should trigger ZERO watchdog relaunches' -- the incident PROVED that last claim false at 300s (health-tick 301s), so the enforcement inventory currently documents a refuted justification (constitution s10: mechanism claims must be true at runtime); (3) the flap-guard derivation ('N and the window are DERIVED, not guessed') now derives from outdated inputs: with tick-start heartbeats a crash-looping daemon looks fresh ~900s per cycle, so relaunch spacing rises from [300,600)s to [900,1200)s and the 4-in-3600s trip now takes up to ~60 min (was ~30) -- still trips by construction since 3 gaps < 3600s strictly (PROVEN arithmetic), but schtask jitter pushing spacing past 1200s could marginally delay/evade it (HYPOTHESIZED; refuter: flap-restarts.log timestamps after a forced crash-loop). Required fix: update the two comment/manifest texts to the 900 default and either re-derive or explicitly re-ratify NM_FLAP_WINDOW_SECONDS/NM_FLAP_THRESHOLD against the new spacing. TWO MINORS (non-blocking): (a) if portable-timeout.sh ever fails to load, the line-115 fallback runs jobs UNBOUNDED and a wedged job then starves the heartbeat until a 900s watchdog kill and eventual flap-stop -- fail-safe outcome, worth a WARN log in the fallback; (b) if the self-test process dies in the narrow window between kill -STOP (1347) and kill -CONT (1351), the spawned daemon persists as a suspended zero-CPU orphan with any TERM queued -- consider a trap or kill -CONT in the scenario's cleanup path."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "harness-reviewer-dbe36e21-r4"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
