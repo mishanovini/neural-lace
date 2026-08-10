@@ -986,7 +986,9 @@ async function main() {
       payloadSchema.validateLanding(cleanLanding).ok, JSON.stringify(payloadSchema.validateLanding(cleanLanding).errors));
 
     const gateIdentifierLanding = JSON.parse(JSON.stringify(cleanLanding));
-    gateIdentifierLanding.groups[0].asks[0].narrative_excerpt = 'blocked by workstreams-state-gate.sh';
+    // 2026-08-10: fixture moved off narrative_excerpt (now position-exempt
+    // operator-authored ask copy, like summary) to repo — still guarded.
+    gateIdentifierLanding.groups[0].asks[0].repo = 'blocked by workstreams-state-gate.sh';
     const gateCheck = payloadSchema.validateLanding(gateIdentifierLanding);
     ok('S27a NEGATIVE FIXTURE (required by plan): a payload with a gate/hook identifier field FAILS validateLanding',
       gateCheck.ok === false && gateCheck.errors.some((e) => /gate\/hook identifier/.test(e)),
@@ -1459,9 +1461,14 @@ async function main() {
       payloadSchema.validateLanding(t17CleanLanding).ok, JSON.stringify(payloadSchema.validateLanding(t17CleanLanding).errors));
 
     const t17GateLanding = JSON.parse(JSON.stringify(t17CleanLanding));
-    t17GateLanding.groups[0].asks[0].narrative_excerpt = 'blocked by task-completed-evidence-gate';
+    // 2026-08-10: the identifier moved from narrative_excerpt (now
+    // position-exempt operator-authored ask copy, like summary) to
+    // drift_badges — a genuinely machine-composed, still-guarded field —
+    // preserving this scenario's intent: the anti-noise scan still fails
+    // a payload leaking identifiers through guarded positions.
+    t17GateLanding.groups[0].asks[0].repo = 'blocked by task-completed-evidence-gate';
     const t17GateCheck = payloadSchema.validateLanding(t17GateLanding);
-    ok('S51 Task17a ANTI-NOISE: a landing payload carrying a gate/hook identifier FAILS validateLanding (the check the doctor predicate mirrors off the wire)',
+    ok('S51 Task17a ANTI-NOISE: a landing payload carrying a gate/hook identifier in a guarded field FAILS validateLanding (the check the doctor predicate mirrors off the wire)',
       t17GateCheck.ok === false && t17GateCheck.errors.some((e) => /gate\/hook identifier/.test(e)),
       JSON.stringify(t17GateCheck.errors));
 
@@ -2085,8 +2092,8 @@ async function main() {
     s71eLanding.groups[0].asks[0].summary = REAL_ASK_TITLE;
     s71eLanding.groups[0].asks[0].narrative_excerpt = 'blocked by harness-doctor.sh';
     const s71e = payloadSchema.validateLanding(s71eLanding);
-    ok('S71e NEGATIVE FIXTURE: a `.sh` identifier in the SIBLING `narrative_excerpt` on the very same ask card still FAILS validateLanding — the exemption did not widen to the card, only to its title',
-      s71e.ok === false && s71e.errors.some((e) => /gate\/hook identifier/.test(e) && /narrative_excerpt/.test(e)),
+    ok('S71e (contract INVERTED 2026-08-10, R0): a `.sh` identifier in the card `narrative_excerpt` now PASSES — the excerpt is buildAskCard\'s copy of operator-authored ask-event prose (a real 2026-08-09 DECIDE ask naming close-plan 500\'d the landing through this field); same positional carve-out + length cap as the title. Positionality is still proven by S71d ($.narrative[].summary stays guarded).',
+      s71e.ok === true,
       JSON.stringify(s71e.errors));
 
     const s71fLanding = JSON.parse(JSON.stringify(cleanLanding));

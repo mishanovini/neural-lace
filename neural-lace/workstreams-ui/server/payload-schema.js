@@ -231,12 +231,24 @@ const DENYLIST_EXEMPT_PATHS = new Set([
   '$.groups[].asks[].summary',  // landing: an ask CARD title (buildAskCard)
   '$.completed.asks[].summary', // landing: a completed ask card title (same builder)
   '$.summary',                  // detail: the ask's own title (buildAskDetailPayload)
+  // narrative_excerpt (2026-08-10, R0 of the merge verification): the card
+  // excerpt is buildAskCard's copy of the ask's LAST EVENT text
+  // (server.js narrativeSummary(lastEvent)) — which for operator asks IS
+  // operator-authored prose, not machine-composed status copy as the
+  // original carve-out assumed. PROVEN by outage: a real 2026-08-09
+  // DECIDE ask legitimately naming close-plan 500'd the whole landing
+  // through this one field. Same operator-authored-copy rationale, same
+  // positional scoping, same DENYLIST_EXEMPT_MAX_LEN compensating cap as
+  // `summary`. $.narrative[].summary (the detail page's full event list)
+  // stays GUARDED — positionality is still proven by S71d.
+  '$.groups[].asks[].narrative_excerpt',
+  '$.completed.asks[].narrative_excerpt',
 ]);
 
 // Cheap pre-filter: only these key names can EVER be path-exempt, so the
 // path normalization below runs for a handful of values rather than for
 // every string in a ~200 KB payload.
-const PATH_EXEMPT_CANDIDATE_KEYS = new Set(['summary']);
+const PATH_EXEMPT_CANDIDATE_KEYS = new Set(['summary', 'narrative_excerpt']);
 
 function normalizeWalkPath(pathLabel) {
   return pathLabel.replace(/\[\d+\]/g, '[]');

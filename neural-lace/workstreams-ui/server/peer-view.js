@@ -277,6 +277,14 @@ function planStateOf(p, schemaVersion) {
 
 function planStateReasonOf(p, schemaVersion) {
   if (schemaVersion < PLAN_INVENTORY_SCHEMA_VERSION) {
+    // R1 (merge verification 2026-08-10): a legacy row that carries REAL
+    // task counts must not hover-claim "no claim either way" under a
+    // visible "18/18 done" — the no-claim caveat applies only to the
+    // plan-STATE label, and only the countless case is truly unknown.
+    const pct = p && p.plan_progress;
+    if (pct && typeof pct.total === 'number' && pct.total > 0) {
+      return 'exported by an older client that predates named plan states — the task counts are real; only the plan-state label is unavailable';
+    }
     return 'exported by an older client that predates named plan states — no claim either way about this plan';
   }
   if (typeof p.plan_state === 'string' && p.plan_state) return String(p.plan_state_reason || '');
