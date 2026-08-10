@@ -126,8 +126,126 @@ const HREF_KEYS = new Set(['evidence_link', 'raw_link']);
 // truncation — truncating would just hide the size problem from the
 // caller instead of surfacing it).
 // ----------------------------------------------------------------------
-const DENYLIST_EXEMPT_KEYS = new Set(['description']);
+// cross-machine-plan-inventory (2026-08-06) adds TWO more, for the same
+// reason and with the same length cap:
+//
+// `plan_slug` — a plan slug is a FILENAME STEM, i.e. the plan's identity,
+// not rendered status copy. Plan filenames in this repo routinely and
+// legitimately name the mechanisms they are about, so the denylist fires on
+// ordinary, correct slugs: measured on this machine, 4 of 29 discovered
+// plans trip it purely on `-gate` (e.g. "review-gate-identity-anchor-
+// 2026-07-30"). Before this round only a couple of plans reached the
+// landing payload, so the collision was rare enough to look like noise; the
+// shared disk-scan inventory now ships every eligible plan, which would
+// make an unrecoverable /api/asks 500 the STEADY STATE for every machine
+// with a peer. Note this widens nothing the operator cannot already see:
+// GET /api/roadmap renders these very slugs and is not schema-validated at
+// all (server.js validates only /api/asks and /api/ask/<id>).
+//
+// `plan_state_reason` — the NAMED reason a plan could not be read. It
+// quotes the offending artifact verbatim (an unrecognized `Status:` value,
+// a resolver path), which is the whole point of naming the absence; running
+// the identifier scan over it would force this module to choose between an
+// honest reason string and a servable payload.
+//
+// `path` — the same argument as `plan_slug`, one level down. `path` appears
+// ONLY inside the {project, path} doc-ref shape (plan_doc, doc_ref,
+// link_refs, verbatim_doc_ref, evidence_doc_ref), where it is a filesystem
+// LOCATOR the operator clicks through to — not status copy. It is a
+// derived filename, so it inherits every identifier its file name contains:
+// "docs/plans/review-gate-identity-anchor-2026-07-30.md" trips the `-gate`
+// pattern purely because the plan it points at is about a gate. Note the
+// module header already carves `path` out of HREF_KEYS for exactly this
+// "it is a resolver argument, not rendered prose" reason; this is the same
+// carve-out against the other of the two orthogonal scans.
+const DENYLIST_EXEMPT_KEYS = new Set(['description', 'plan_slug', 'plan_state_reason', 'path']);
 const DENYLIST_EXEMPT_MAX_LEN = 2000;
+
+// ----------------------------------------------------------------------
+// DENYLIST_EXEMPT_PATHS — an exemption scoped by POSITION, not by key name
+// (cross-machine-plan-inventory remediation, 2026-08-06).
+//
+// THE OUTAGE THIS FIXES. `/api/asks` returned 500 on this machine's real
+// data with:
+//   gate/hook identifier leaked at $.groups[8].asks[0].summary
+//   (matched /\.sh\b/i): "Fix divergence between node and jq implementations
+//   of claim-honesty check in harness-doctor.sh self-test."
+// and `/api/ask/ask-auto-0833ef2dd72e6eca` returned 500 on the SAME string
+// at `$.summary`. Both endpoints were dead; the landing view was blank.
+//
+// WHY A NEW MECHANISM RATHER THAN `DENYLIST_EXEMPT_KEYS.add('summary')`.
+// The key `summary` carries TWO DIFFERENT THINGS in these payloads:
+//   1. `$.groups[].asks[].summary` / `$.completed.asks[].summary` /
+//      `$.summary` — the ASK'S OWN TITLE (server.js's buildAskCard and
+//      buildAskDetailPayload, both `reg.summary` off the folded ask
+//      registry). This is the NAME OF A UNIT OF WORK.
+//   2. `$.narrative[].summary` — a per-EVENT narrative line
+//      (server.js:1100, `narrativeSummary(e)`), machine-composed status
+//      copy about what a mechanism did. This is exactly the noise the
+//      anti-noise law exists to keep off the surface, and it is already
+//      locked by a negative fixture (S70b).
+// A key-scoped exemption cannot tell them apart — adding 'summary' to
+// DENYLIST_EXEMPT_KEYS would silently un-guard the narrative channel too.
+// The walk already builds a JSON path; keying the exemption off that path
+// (with array indices normalized to `[]`) separates the two roles exactly.
+//
+// WHY THE ASK TITLE IS THE `plan_slug` ARGUMENT, ONE LEVEL UP. An ask title
+// is the ask's IDENTITY — the operator's (or the distiller's) name for a
+// unit of work — in a repo whose work is largely ABOUT harness mechanisms.
+// Naming the subject is the whole job of a title, so every one of the five
+// denylist patterns can appear in a correct one: `.sh` (measured: 1 of 106
+// real ask summaries on this machine today), `-gate` (the branch already
+// had to exempt `plan_slug` for this, 4 of 29 plans), a hook lifecycle
+// name, an `od_*` oracle, a mechanism token like `close-plan`. This is the
+// SAME class the `plan_slug` block above documents, and the same class the
+// header's "needs-you" carve-out documents: when a pattern collides with a
+// legitimate operator-facing NAME, the name wins and the pattern is scoped
+// away from it — the pattern itself is never weakened.
+//
+// WHY NOT NARROW `/\.sh\b/i` INSTEAD. There is no lexical difference
+// between a leak ("blocked by workstreams-state-gate.sh") and a legitimate
+// title ("fix harness-doctor.sh self-test") — the discriminator is the
+// FIELD'S ROLE, not the string. Any narrowing that lets the title through
+// also lets the leak through, in EVERY field, which is disabling the
+// pattern with extra steps. Scoping by role costs one field and keeps the
+// pattern at full strength everywhere else.
+//
+// WHAT THE DENYLIST STILL CATCHES AFTER THIS CHANGE. All five patterns
+// still run, unmodified, against every string in both payloads except the
+// four DENYLIST_EXEMPT_KEYS and the three paths below. On the real landing
+// payload measured here that is 3,300+ string values across 29 key names,
+// including every machine-composed status field the anti-noise law was
+// written for: `narrative_excerpt` (the ask card's progress line —
+// negative fixtures S27a/S51/S71e), `$.narrative[].summary` (the event
+// narrative — S70b/S71d), `message` and `divergence_class` and
+// `detail_ref` (drift badges), `state_label`, `provenance_label`, `label`,
+// `people_map_error`, `status`, `error`, `person`, `role`, `state`,
+// `discovery`, `plan_state`, `projects_config`, `source`, `branch`,
+// `host`, `repo`, `project`. Only the ask TITLE moved.
+//
+// The DENYLIST_EXEMPT_MAX_LEN cap applies here for the same compensating
+// reason it applies to `description`: the denylist no longer bounds this
+// field's content, so raw size still does.
+// ----------------------------------------------------------------------
+const DENYLIST_EXEMPT_PATHS = new Set([
+  '$.groups[].asks[].summary',  // landing: an ask CARD title (buildAskCard)
+  '$.completed.asks[].summary', // landing: a completed ask card title (same builder)
+  '$.summary',                  // detail: the ask's own title (buildAskDetailPayload)
+]);
+
+// Cheap pre-filter: only these key names can EVER be path-exempt, so the
+// path normalization below runs for a handful of values rather than for
+// every string in a ~200 KB payload.
+const PATH_EXEMPT_CANDIDATE_KEYS = new Set(['summary']);
+
+function normalizeWalkPath(pathLabel) {
+  return pathLabel.replace(/\[\d+\]/g, '[]');
+}
+
+function isDenylistExemptPath(key, pathLabel) {
+  if (!PATH_EXEMPT_CANDIDATE_KEYS.has(key)) return false;
+  return DENYLIST_EXEMPT_PATHS.has(normalizeWalkPath(pathLabel));
+}
 
 function isAbsoluteHref(value) {
   if (typeof value !== 'string' || value === '') return true; // empty is a legitimate "no link yet"
@@ -177,6 +295,40 @@ const LANDING_ALLOWED_KEYS = new Set([
   'sessions', 'session_id', 'role', 'last_heartbeat_at', 'label',
   'last_refreshed_at', 'source',
   // ----------------------------------------------------------------------
+  // `path` — THE MISSING KEY (fixed 2026-08-06, cross-machine-plan-
+  // inventory). `plan_doc` has been on this list since the peer block
+  // shipped, but its own `{project, path}` members were never added, and
+  // `project` only validated by coincidence (it is on the list already, as
+  // a GROUP field). So the moment ANY peer exported a populated plan_doc,
+  // the recursive walk hit `$.peers.entries[i].plans[j].plan_doc.path`,
+  // reported "unknown field (not in allowlist)", and server.js:1243 turned
+  // that into a 500 on /api/asks — blanking the cockpit's entire landing
+  // view, on every OTHER machine, as soon as one machine synced a real
+  // plan record. This was already firing before this round's change
+  // (reproduced against the live plan-export/ clone), and it is the reason
+  // `path` is listed here rather than in some new block: the DETAIL
+  // allowlist has carried `path` for exactly this shape all along.
+  'path',
+  // ----------------------------------------------------------------------
+  // Shared plan-inventory fields (cross-machine-plan-inventory). The peer
+  // plans block is now the disk-scan inventory, so each row additionally
+  // carries whether it is archived, HOW it was discovered ('scan' vs
+  // 'ask-link' — deliberately not named `source`, which already means
+  // something unrelated above), and the NAMED read state.
+  //
+  // `plan_state` is the named-absence label ('parsed' | 'ineligible' |
+  // 'unresolvable' | 'absent' | 'damaged' | 'legacy-unlabelled' |
+  // 'unknown'); `tasks`/`plan_progress` are null for every value except
+  // 'parsed', which is what keeps an unreadable plan from rendering as a
+  // healthy 0/0. `unknown_rows` is the aggregate's count of rows it could
+  // not read. `scan_coverage` names what this host actually scanned, so
+  // the per-machine multi-repo difference (config/projects.json is
+  // gitignored and machine-local) is a DECLARED state rather than
+  // something the operator infers from a short list.
+  'archived', 'discovery', 'plan_state', 'plan_state_reason', 'unknown_rows',
+  'scan_coverage', 'repos', 'projects_config', 'completed_age_days',
+  'stale_links_omitted',
+  // ----------------------------------------------------------------------
   // Person-grouping fields (cockpit-roadmap-redesign Task 7, round 5) —
   // peer-view.js#computePeerView: `person` on each peer entry (a mapped
   // display name or the literal named state 'unassigned'), `persons` =
@@ -204,6 +356,11 @@ const DETAIL_ALLOWED_KEYS = new Set([
   // reason plan_doc does — a {project, path} pair is not an href.
   'doc_ref', 'link_refs', 'verbatim_doc_ref', 'evidence_doc_ref',
   'artifacts', 'sha',
+  // cross-machine-plan-inventory: computePlanRows now carries the NAMED
+  // read state onto every plan row it emits (this payload's `plan_rows`),
+  // and aggregatePlanProgress reports how many rows it could not read
+  // instead of folding them in as zeros.
+  'plan_state', 'plan_state_reason', 'unknown_rows',
   'sessions', 'role', 'state', 'resumed_from', 'task_id',
   'drift_badges',
   // drift-badge fields (Task 12) — see LANDING_ALLOWED_KEYS comment above.
@@ -242,7 +399,12 @@ function walk(node, allowedKeys, pathLabel, errors) {
         // is bounded instead by a raw length cap. Over-cap is a validation
         // ERROR (never a silent truncation — truncating would hide the
         // size problem rather than surface it).
-        if (DENYLIST_EXEMPT_KEYS.has(key)) {
+        // DENYLIST_EXEMPT_PATHS is the SAME carve-out scoped by POSITION
+        // instead of by key name — see its definition for why the ask
+        // TITLE (`$.groups[].asks[].summary`, `$.summary`) needs it while
+        // the identically-named event line (`$.narrative[].summary`) must
+        // stay scanned. Both routes land in the same length-capped branch.
+        if (DENYLIST_EXEMPT_KEYS.has(key) || isDenylistExemptPath(key, here)) {
           if (val.length > DENYLIST_EXEMPT_MAX_LEN) {
             errors.push('exempt field exceeds max length (' + DENYLIST_EXEMPT_MAX_LEN + ' chars) at ' + here + ': ' + val.length + ' chars');
           }
@@ -284,4 +446,5 @@ module.exports = {
   HREF_KEYS,
   DENYLIST_EXEMPT_KEYS,
   DENYLIST_EXEMPT_MAX_LEN,
+  DENYLIST_EXEMPT_PATHS,
 };

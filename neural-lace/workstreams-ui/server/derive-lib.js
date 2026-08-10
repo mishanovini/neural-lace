@@ -221,10 +221,86 @@ function readJsonlLines(file) {
 
 function readAskRegistry() { return readJsonlLines(askRegistryFile()); }
 
+// ----------------------------------------------------------------------
+// readAskEvents(askId) — MEMOIZED on (path, mtimeMs, size).
+//
+// THE N+1 THIS REMOVES (measured 2026-08-06, not guessed). Both plan-
+// inventory loops — export-state.js#derivePlanRecords and
+// roadmap-routes.js#buildRoadmapPayload — call eventsForSlug once per
+// discovered plan, and eventsForSlug ends with `readAskEvents('')`: the
+// shared UNLINKED lane, which for a scan-discovered plan with no ask is the
+// only source of task_started/task_done. On this machine:
+//     plans discovered      : 29
+//     distinct event lanes  : 1
+//     unlinked.jsonl        : 6,201,740 bytes / 12,959 events
+//     ONE readAskEvents('') : 117.5 ms
+//     => 29 x 6.2 MB = 179.9 MB of JSON re-parsed per export cycle
+// which profiled as 2,453.9 ms of the exporter's ~3.4 s total — 72% of the
+// wall time, spent reading the SAME 6.2 MB file 29 times. The cockpit's
+// Roadmap payload runs the identical loop over ~99 items.
+//
+// WHY MEMOIZE RATHER THAN HOIST AN INDEX INTO THE TWO LOOPS. Hoisting
+// would fix these two call sites and leave the next loop to rediscover the
+// cost; and it would mean two more places that know how lanes are joined,
+// in a change whose entire thesis is that no second derivation remains.
+// The cache sits under the ONE function every lane read already goes
+// through, so every present and future caller gets it.
+//
+// STALENESS. The key is (mtimeMs, size), so any append invalidates it — a
+// long-lived server picks up a new event on the next read, exactly as
+// before. The cost of a hit is one fs.statSync in place of a multi-MB
+// read+parse.
+//
+// MEMORY. Bounded to READ_CACHE_MAX_ENTRIES least-recently-used files.
+// This matters only in the server (the exporter is a short-lived process
+// that exits); with 115 lane files totalling 13 MB on disk, the ceiling is
+// the 8 largest of them.
+//
+// MUTATION. Returns a SHALLOW COPY: server.js sorts the returned array in
+// place (`deriveLib.readAskEvents(askId).sort(...)`), which would otherwise
+// reorder the cached array under every other reader. The event OBJECTS are
+// shared — callers read them and must not mutate them, which is already
+// true of every caller today.
+// ----------------------------------------------------------------------
+const READ_CACHE_MAX_ENTRIES = 8;
+const _eventReadCache = new Map(); // path -> { key, rows }  (Map = insertion-ordered = LRU order)
+// Counters, exported as eventReadCacheStats(). A performance fix needs an
+// oracle that can actually go RED: "it got faster" is not an assertion a
+// suite can hold, but "the second read of an unchanged file did not touch
+// the disk" is. `disk_reads` is the number that mattered — 29 before.
+const _eventReadStats = { hits: 0, disk_reads: 0 };
+function eventReadCacheStats() { return { hits: _eventReadStats.hits, disk_reads: _eventReadStats.disk_reads }; }
+function resetEventReadCache() {
+  _eventReadCache.clear();
+  _eventReadStats.hits = 0;
+  _eventReadStats.disk_reads = 0;
+}
+
+function readAskEventsCached(file) {
+  let st;
+  try { st = fs.statSync(file); } catch (_) { return []; }
+  const key = st.mtimeMs + ':' + st.size;
+  const hit = _eventReadCache.get(file);
+  if (hit && hit.key === key) {
+    _eventReadStats.hits++;
+    _eventReadCache.delete(file);
+    _eventReadCache.set(file, hit); // refresh LRU position
+    return hit.rows.slice();
+  }
+  _eventReadStats.disk_reads++;
+  const rows = readJsonlLines(file);
+  _eventReadCache.delete(file);
+  _eventReadCache.set(file, { key: key, rows: rows });
+  while (_eventReadCache.size > READ_CACHE_MAX_ENTRIES) {
+    _eventReadCache.delete(_eventReadCache.keys().next().value);
+  }
+  return rows.slice();
+}
+
 function readAskEvents(askId) {
   const dir = progressLogStateDir();
   const file = path.join(dir, (askId || 'unlinked') + '.jsonl');
-  return readJsonlLines(file);
+  return readAskEventsCached(file);
 }
 
 // ----------------------------------------------------------------------
@@ -346,6 +422,76 @@ const planParse = require('./plan-parse.js');
 function countPlanTasks(absPath) {
   const r = planParse.loadPlanFile(absPath);
   return r.ok ? r.tasks : null;
+}
+
+// ----------------------------------------------------------------------
+// resolvePlanTasks(repo, slug, opts) -> {state, reason, absPath, tasks}
+//
+// THE NAMED-ABSENCE RESOLVER (cross-machine-plan-inventory, defect 2).
+//
+// WHY THIS EXISTS: countPlanTasks above collapses THREE distinct upstream
+// failures into a single `null` (`r.ok ? r.tasks : null`), and its one
+// caller then collapsed that `null` into `[]` (`(planTasks || [])`), at
+// which point aggregatePlanProgress counted over the empty array and
+// returned a fully-formed, healthy-looking {done:0, in_flight:0,
+// not_started:0, total:0}. Four upstream states — file unresolvable, file
+// vanished (ENOENT race), file unreadable (permission/IO), and a genuine
+// zero-checkbox plan — became ONE indistinguishable "healthy zero" that the
+// exporter shipped with rc 0. plan-parse.js:422-439 ALREADY makes the
+// honest absent/damaged distinction; it was being discarded one line later.
+//
+// THE INVARIANT (this is the entire point):
+//     `tasks` is an Array IF AND ONLY IF `state === 'parsed'`.
+//     For every other state `tasks` is null — NEVER [].
+// A consumer that reaches for `tasks.length` without first branching on
+// state gets a TypeError at the exact line that would otherwise have
+// fabricated a zero. The wrong state cannot be spelled, so it needs no
+// gate, no reviewer and no per-session check to stay out.
+//
+// States:
+//   'parsed'       — resolved, read, parsed. tasks = Array (MAY legitimately
+//                    be [] — a real plan with zero checkboxes is a HEALTHY
+//                    zero and must stay distinguishable from all of these).
+//   'unresolvable' — resolvePlanAbsPath found the file under NEITHER
+//                    <repo>/docs/plans/ NOR <repo>/docs/plans/archive/, for
+//                    neither the ask's repo nor mainRepoRoot(). tasks = null.
+//   'absent'       — resolved, then ENOENT on read (vanished mid-derivation).
+//   'damaged'      — resolved, non-ENOENT read failure (permission/IO).
+//   'ineligible'   — the scan produced a named scanIssue (unrecognized
+//                    Status: token, destroyed header, unparseable body).
+//                    Supplied by the caller via opts.scanIssue; the file's
+//                    bytes may be perfectly readable, but this derivation
+//                    declines to bucket it confidently.
+// `reason` is '' if and only if state === 'parsed'.
+// ----------------------------------------------------------------------
+function resolvePlanTasks(repo, slug, opts) {
+  const options = opts || {};
+  // An explicit scanIssue from the file scan outranks re-deriving: the scan
+  // already read the bytes and made a named judgement about them.
+  if (options.scanIssue) {
+    return { state: 'ineligible', reason: String(options.scanIssue), absPath: options.absPath || null, tasks: null };
+  }
+  const absPath = options.absPath || resolvePlanAbsPath(repo, slug);
+  if (!absPath) {
+    return {
+      state: 'unresolvable',
+      reason: 'no plan file at docs/plans/ or docs/plans/archive/ under repo "' + String(repo || '') + '" or the main repo root',
+      absPath: null, tasks: null,
+    };
+  }
+  const r = planParse.loadPlanFile(absPath);
+  if (r.ok) return { state: 'parsed', reason: '', absPath: absPath, tasks: r.tasks };
+  // loadPlanFile's own honest distinction (its `reason` field is literally
+  // 'absent' | 'damaged' — plan-parse.js:423-431), preserved here instead of
+  // being discarded by countPlanTasks's `r.ok ? r.tasks : null`.
+  const st = r.reason === 'absent' ? 'absent' : 'damaged';
+  return {
+    state: st,
+    reason: st === 'absent'
+      ? 'plan file resolved but vanished before it could be read (' + absPath + ')'
+      : 'plan file resolved but unreadable: ' + String(r.error || 'unknown read failure'),
+    absPath: absPath, tasks: null,
+  };
 }
 
 // resolvePlanAbsPath(repo, slug) — the ask's own `repo` first (its plans
@@ -567,11 +713,17 @@ function computePlanRows(reg, events, getBadgesForAsk) {
   });
   const askBadges = badgesFn(reg.ask_id);
   return slugs.map((slug) => {
-    const absPath = resolvePlanAbsPath(reg.repo, slug);
-    const planTasks = absPath ? countPlanTasks(absPath) : null;
+    // NAMED ABSENCE (defect 2): resolvePlanTasks keeps the four distinct
+    // failure states apart instead of laundering all of them into `[]`.
+    // The old line here was `const tasks = (planTasks || []).map(...)`,
+    // which turned "no such plan file" into a task list byte-identical to
+    // a genuine zero-checkbox plan.
+    const res = resolvePlanTasks(reg.repo, slug);
+    const absPath = res.absPath;
+    const planTasks = res.tasks;
     const startedSet = startedByPlan[slug] || {};
     const doneMap = doneEvByPlan[slug] || {};
-    const tasks = (planTasks || []).map((t) => {
+    const tasks = planTasks === null ? null : planTasks.map((t) => {
       const inFlight = !t.done && !!startedSet[t.id] && !doneMap[t.id];
       const rowBadges = askBadges.filter((b) => b.plan_slug === slug && b.task_id === t.id);
       const evLink = doneMap[t.id] || '';
@@ -585,20 +737,449 @@ function computePlanRows(reg, events, getBadgesForAsk) {
         drift_badges: rowBadges, description: clampTaskDescription(t.description),
       };
     });
-    return { plan_slug: slug, plan_doc: projectDocRefFor(absPath), tasks: tasks };
+    return {
+      plan_slug: slug,
+      plan_doc: projectDocRefFor(absPath),
+      // The invariant, carried onto the row: tasks is an Array iff
+      // plan_state === 'parsed'.
+      plan_state: res.state,
+      plan_state_reason: res.reason,
+      tasks: tasks,
+    };
   });
 }
 
+// aggregatePlanProgress(planRows) -> {done, in_flight, not_started, total,
+// unknown_rows}
+//
+// NAMED ABSENCE, reader half (defect 2). Rows whose `tasks` is not an array
+// are rows this derivation genuinely could not read — they are COUNTED, in
+// `unknown_rows`, never folded into the totals as if they contributed zero
+// work. Before this change such a row silently contributed 0/0 and the
+// caller could not tell an unreadable plan from an empty one.
+//
+// SINGLE-ROW CONTRACT: called with exactly one non-parsed row (the
+// exporter's per-plan call), this returns null — there is no honest
+// progress number for a plan whose task list could not be read, and
+// fabricating {0,0,0,0} is precisely the bug. Multi-row calls still return
+// an aggregate over the rows that ARE readable, plus the unknown_rows
+// count, so a mixed set never silently under-reports.
 function aggregatePlanProgress(planRows) {
-  let done = 0, inFlight = 0, total = 0;
-  planRows.forEach((row) => {
+  let done = 0, inFlight = 0, total = 0, unknownRows = 0;
+  const rows = planRows || [];
+  rows.forEach((row) => {
+    if (!row || !Array.isArray(row.tasks)) { unknownRows++; return; }
     row.tasks.forEach((t) => {
       total++;
       if (t.done) done++;
       else if (t.in_flight) inFlight++;
     });
   });
-  return { done: done, in_flight: inFlight, not_started: total - done - inFlight, total: total };
+  if (rows.length === 1 && unknownRows === 1) return null;
+  return {
+    done: done, in_flight: inFlight, not_started: total - done - inFlight, total: total,
+    unknown_rows: unknownRows,
+  };
+}
+
+// ======================================================================
+// THE SHARED PLAN INVENTORY (cross-machine-plan-inventory, defect 1)
+//
+// WHY THIS LIVES HERE AND NOT IN roadmap-routes.js
+// ------------------------------------------------
+// Before this block, the cockpit and the cross-machine exporter derived
+// their plan inventories from TWO DIFFERENT SOURCES and could never agree:
+//
+//   COCKPIT  — scanned plan FILES from disk (roadmap-routes.js's
+//              discoverPlanFiles), seeing every eligible plan document.
+//   EXPORTER — folded the ASK REGISTRY and appended plan slugs ONLY from
+//              records with record_type "plan_linked" (see foldAskRegistry
+//              below). The live registry carries a handful of those across
+//              a thousand-plus lines, so the export contained a handful of
+//              plans BY CONSTRUCTION — and the sole writer of plan_linked
+//              is guarded on an ask id, so any plan started without one was
+//              never linked at all.
+//
+// Three machines therefore each rendered an independent local derivation
+// and never agreed, while the transport underneath was perfectly healthy.
+// The fix is ONE derivation both consumers read — not a checker that
+// notices the divergence afterward.
+//
+// This module, not roadmap-routes.js, is the right home for it. The
+// exporter's binding constraint A4 (see export-state.js's header) is that
+// it re-derives from LOCAL DISK ONLY and never through the HTTP server
+// module. roadmap-routes.js is a ROUTE module — it owns `handle(req, res)`
+// and, by its own header, is "the Roadmap view's server surface"; adding an
+// http dependency to it some future day would be an ordinary, unremarkable
+// edit that the exporter would then silently inherit. THIS module's header
+// carries the standing contract that makes that unrepresentable rather than
+// merely currently-absent: "ZERO side effects at require time — no
+// listen(), no timers, no child spawns until a function is actually
+// called." The exporter also already requires this module, so unifying here
+// adds NO new require edge for a future author to get wrong.
+//
+// roadmap-routes.js now re-exports every name below as a pass-through, so
+// its own 165-test suite drives this code unchanged and is the pre-existing
+// oracle proving the move was behavior-identical.
+// ======================================================================
+
+// COMPLETED_AGE_DAYS — the archive recency window. This is the bound that
+// already keeps the inventory finite (it holds hundreds of archived plan
+// files down to the few dozen with recent evidence). It is surfaced in the
+// export's provenance so the ceiling is LEGIBLE rather than incidental.
+const COMPLETED_AGE_DAYS = Number(process.env.ROADMAP_COMPLETED_AGE_DAYS) || 7;
+
+// planScanRoot() -> string. Sandboxable like every other state path in this
+// codebase — a dedicated override so tests never touch the real checkout's
+// docs/plans/. Name kept verbatim across the move so the env var's
+// documented meaning is unchanged.
+function planScanRoot() {
+  return process.env.ROADMAP_PLAN_SCAN_ROOT || mainRepoRoot();
+}
+
+// ----------------------------------------------------------------------
+// repoRootFromAbsPath(absPath) — the repo root a plan file belongs to: the
+// path before `/docs/plans[/archive]/<file>`. Returns '' (never a guess)
+// for anything that is not shaped like a plan file.
+//
+// COLLAPSED HERE 2026-08-06. This lived in TWO places with two DIFFERENT
+// regexes — export-state.js's `/^(.*)\/docs\/plans\/(?:archive\/)?[^/]+$/`
+// and roadmap-routes.js's looser `/^(.*)\/docs\/plans\//`. They diverge on
+// a path nested deeper than one level under docs/plans/ (the strict one
+// returns '', the loose one returns a root). That is unreachable today —
+// scanPlanDir is a flat readdirSync over exactly two directories, so every
+// absPath either module can pass in is `<root>/docs/plans/<slug>.md` or
+// `<root>/docs/plans/archive/<slug>.md` — but a SECOND copy of a
+// repo-identity rule inside a change whose whole thesis is that no second
+// derivation remains is the defect the change exists to remove.
+//
+// The STRICT form wins: it encodes the shape scanPlanDir actually produces
+// and answers '' for anything else rather than inventing a root. Both
+// modules now re-export this one function object (=== identity), the same
+// way discoverPlanFiles/scanPlanDir/isEligiblePlanStatus already do —
+// asserted in export-state.js's self-test scenario 12.
+// ----------------------------------------------------------------------
+function repoRootFromAbsPath(absPath) {
+  if (!absPath) return '';
+  const norm = String(absPath).replace(/\\/g, '/');
+  const m = /^(.*)\/docs\/plans\/(?:archive\/)?[^/]+$/.exec(norm);
+  return m ? m[1] : '';
+}
+
+const PLAN_STATUS_EXCLUDE_RE = /^(REFERENCE|NORMATIVE)\b/i;
+function isEligiblePlanStatus(statusText) {
+  const t = String(statusText || '').trim();
+  if (!t) return false; // no Status: header at all -> evidence dump / stub, not a plan
+  return !PLAN_STATUS_EXCLUDE_RE.test(t);
+}
+
+// The harness's own terminal-status enum. A Status: value outside it is not
+// a confident bucket — see scanPlanDir's unrecognized-status handling.
+const KNOWN_PLAN_STATUS_TOKENS = { ACTIVE: true, COMPLETED: true, DEFERRED: true, ABANDONED: true, SUPERSEDED: true };
+function planStatusToken(statusText) {
+  const m = /^([A-Za-z][A-Za-z0-9_-]*)/.exec(String(statusText || '').trim());
+  return m ? m[1].toUpperCase() : '';
+}
+
+// PLAN_BODY_CORRUPTION_RE — control/binary bytes (outside the common
+// whitespace \t\n\r already handled by line-splitting) anywhere in a
+// scanned plan's body are a strong corruption signal: a genuine markdown
+// plan is prose + task lines, never raw binary/control bytes. Used ONLY as
+// the second half of the "zero tasks AND unparseable structure" test in
+// scanPlanDir — never applied when tasks parsed successfully.
+const PLAN_BODY_CORRUPTION_RE = /[\x00-\x08\x0E-\x1F\x7F]/;
+
+// scanPlanDir(dir, opts) -> [{slug, absPath, archived, mtimeMs, scanIssue?}]
+// for every eligible top-level *.md file directly inside `dir`
+// (non-recursive — a subdirectory like fragments/ or archive/ is never
+// descended into here; archive/ is scanned as its own explicit pass).
+//
+// `opts.cutoffMs` gates aging on POSITIVE, worktree-independent recency
+// EVIDENCE — `opts.recentSlugs[slug]` true (an ask-link or progress-log
+// event genuinely timestamped inside the window). mtime is NOT trustworthy
+// here: a fresh checkout rewrites every mtime. The one real caller
+// (discoverPlanFiles) ALWAYS supplies recentSlugs when it supplies
+// cutoffMs, so evidence is unconditionally required whenever aging is being
+// gated at all — no mtime fallback path.
+function scanPlanDir(dir, opts) {
+  const options = opts || {};
+  const out = [];
+  let ents;
+  try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return out; }
+  ents.forEach((e) => {
+    if (!e.isFile() || !/\.md$/i.test(e.name)) return;
+    const abs = path.join(dir, e.name);
+    let stat;
+    try { stat = fs.statSync(abs); } catch (_) { return; } // vanished mid-scan race — genuinely gone, not this file's fault
+    const slug = e.name.replace(/\.md$/i, '');
+    if (typeof options.cutoffMs === 'number' && !(options.recentSlugs && options.recentSlugs[slug])) {
+      return; // aging is gated here and this slug has no recency evidence
+    }
+    let text;
+    try {
+      text = fs.readFileSync(abs, 'utf8');
+    } catch (err) {
+      // The file EXISTS (readdirSync/statSync both succeeded) but could not
+      // be read — a genuine permission/race failure, never silently skipped
+      // the way an ineligible-status file legitimately is below.
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan file unreadable (' + (err && err.code ? err.code : String(err)) + ')' });
+      return;
+    }
+    const statusText = planParse.parsePlanStatus(text);
+    if (!isEligiblePlanStatus(statusText)) {
+      // A file with NO Status: header is normally not an independent plan —
+      // evidence stubs, fragments, reference docs — and stays excluded.
+      // But ABSENT header + the binary-corruption signature is the one
+      // combination whose likeliest story is "a plan whose header was
+      // destroyed", and that must never simply vanish. Recognized-but-
+      // ineligible statuses (REFERENCE/NORMATIVE) keep their unconditional
+      // exclusion — their header survived, so their author's intent is
+      // legible.
+      if (!statusText && PLAN_BODY_CORRUPTION_RE.test(text)) {
+        out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+          scanIssue: 'plan parse failed (no Status header + corrupt content — header destroyed?)' });
+      }
+      return;
+    }
+    // The Status: header survives but its value is outside the known enum —
+    // e.g. corruption landed "Status: WHAT" where a real token belongs.
+    // Never a confident bucket for a status this derivation cannot read.
+    if (!KNOWN_PLAN_STATUS_TOKENS[planStatusToken(statusText)]) {
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan parse failed (unrecognized Status: "' + statusText.trim() + '")' });
+      return;
+    }
+    // A KNOWN status token survives, but the body is BOTH taskless AND
+    // shows the corruption signature. A genuinely fresh plan stub (zero
+    // tasks, ordinary prose, no `## Tasks` yet) is NOT flagged here.
+    if (planParse.parseTasks(text).length === 0 && PLAN_BODY_CORRUPTION_RE.test(text)) {
+      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
+        scanIssue: 'plan parse failed (unparseable body — zero tasks, corrupt content)' });
+      return;
+    }
+    out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs });
+  });
+  return out;
+}
+
+// newestLinkTs(links) — the MOST RECENT created_ts among every ask linking
+// a slug. Recency-gating needs "has ANYONE referenced this lately", so the
+// newest link is the right signal — one old ask plus one fresh one still
+// counts as recent.
+function newestLinkTs(links) {
+  const tss = (links || []).map((a) => a.created_ts).filter(Boolean).sort();
+  return tss.length ? tss[tss.length - 1] : '';
+}
+
+// recentSlugsFromAskLinks(planAskLinks, cutoffMs) -> {slug: true} for every
+// slug whose NEWEST linking ask is inside the aging window —
+// registry-timestamp-based, so it holds regardless of file mtime/worktree
+// checkout state.
+function recentSlugsFromAskLinks(planAskLinks, cutoffMs) {
+  const set = {};
+  Object.keys(planAskLinks || {}).forEach((slug) => {
+    const newest = newestLinkTs(planAskLinks[slug]);
+    const ms = newest ? Date.parse(newest) : NaN;
+    if (!isNaN(ms) && ms >= cutoffMs) set[slug] = true;
+  });
+  return set;
+}
+
+// recentSlugsFromEvents(cutoffMs) -> {slug: true} for every plan slug with a
+// task_started/task_done event inside the window, sourced from the shared
+// "unlinked" progress-log lane — the SAME data source an unlinked plan's own
+// status derivation already reads (eventsForSlug), so this is a real recency
+// signal for genuinely-active archived plans with no ask attached.
+function recentSlugsFromEvents(cutoffMs) {
+  const set = {};
+  readAskEvents('').forEach((e) => {
+    if (!e || !e.plan_slug || !e.ts) return;
+    const ms = Date.parse(e.ts);
+    if (!isNaN(ms) && ms >= cutoffMs) set[e.plan_slug] = true;
+  });
+  return set;
+}
+
+// configuredRepoRoots() -> [{key, root, group}] — the OTHER repos whose
+// docs/plans this machine also scans, from config/projects.json.
+//
+// PER-MACHINE DIFFERENCE, NAMED NOT SILENT: that config file is gitignored
+// and machine-local, so a machine without one legitimately scans only its
+// own repo. A malformed/absent config is an honest zero-length list (never
+// a crash, never a silent guess) — and because coverage genuinely differs
+// per machine, the exporter surfaces this list plus a loaded/absent/
+// malformed token in provenance.scan, so a short list reads as a DECLARED
+// state rather than something the operator has to infer.
+//
+// Each entry supports two forms — a flat string ("AcmeApp": "/abs/path", no
+// group) and an object form ({root, group}) declaring the display group.
+// `group` is read straight from the file, never defaulted or guessed.
+function configuredRepoRoots() {
+  const cfgPath = process.env.ROADMAP_PROJECTS_CONFIG ||
+    path.join(__dirname, '..', 'config', 'projects.json');
+  let raw;
+  try { raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch (_) { return []; }
+  const out = [];
+  Object.keys(raw || {}).forEach((key) => {
+    if (key === '_comment') return;
+    const val = raw[key];
+    if (typeof val === 'string' && val) { out.push({ key: key, root: val, group: '' }); return; }
+    if (val && typeof val === 'object' && typeof val.root === 'string' && val.root) {
+      out.push({ key: key, root: val.root, group: (typeof val.group === 'string' ? val.group : '') });
+    }
+  });
+  return out;
+}
+
+// configuredRepoRootsState() -> 'loaded' | 'absent' | 'malformed' — the
+// NAMED state of the gitignored, machine-local config/projects.json, so the
+// per-machine scan-coverage difference is declared instead of inferred.
+// configuredRepoRoots() above degrades BOTH "no file" and "unparseable
+// file" to the same empty list; this is the distinction that silent catch
+// throws away.
+function configuredRepoRootsState() {
+  const cfgPath = process.env.ROADMAP_PROJECTS_CONFIG ||
+    path.join(__dirname, '..', 'config', 'projects.json');
+  let text;
+  try { text = fs.readFileSync(cfgPath, 'utf8'); } catch (_) { return 'absent'; }
+  try { JSON.parse(text); } catch (_) { return 'malformed'; }
+  return 'loaded';
+}
+
+// planAskLinkIndex(folded) -> {slug: [{ask_id, repo, created_ts}]}
+//
+// The MINIMAL discovery-relevant projection of foldAskRegistry(), built so
+// the EXPORTER can drive the same discoverPlanFiles the cockpit drives
+// without needing roadmap-routes' richer, render-flavored fold (which also
+// carries title/rank/status_ts that discovery never reads).
+//
+// discoverPlanFiles touches exactly three fields of each link — `ask_id`,
+// `repo`, and `created_ts` (via newestLinkTs) — plus the dismissed filter
+// applied here. All three exist on foldAskRegistry's records, which is why
+// no new fold is needed. roadmap-routes keeps passing its own richer index:
+// a SUPERSET of this shape, read-compatible by construction.
+function planAskLinkIndex(folded) {
+  const registry = folded || foldAskRegistry();
+  const bySlug = {};
+  Object.keys(registry).forEach((askId) => {
+    const reg = registry[askId] || {};
+    if (reg.status === 'dismissed') return; // same exclusion the roadmap fold applies
+    (reg.plan_slugs || []).forEach((slug) => {
+      if (!slug) return;
+      (bySlug[slug] = bySlug[slug] || []).push({
+        ask_id: askId, repo: reg.repo || '', created_ts: reg.created_ts || '',
+      });
+    });
+  });
+  return bySlug;
+}
+
+// discoverPlanFiles(scanRoot, planAskLinks, opts) -> {files, ghostCount}
+//   files: [{slug, absPath, archived, mtimeMs, scanIssue?, discovery}]
+//
+// THE ONE INVENTORY. The UNION of (1) scanRoot's own docs/plans/*.md,
+// (2) scanRoot's docs/plans/archive/*.md within the completed-aging window,
+// (3) every configured repo's same two directories, and (4) every ask-linked
+// plan slug resolved against ITS OWN ask's repo (cross-repo plan-linking,
+// preserved) not already captured above.
+//
+// Deduped by SLUG, not absolute path: a slug is the roadmap node's own
+// identity, and a registry `repo` field can be recorded in a different path
+// STYLE than this process's own resolution (a POSIX-style /c/Users/... string
+// written by a git-bash session vs this Node process's C:\Users\...).
+//
+// `opts.completedAgeDays` and `opts.repoRoots` are injectable so the env/
+// config reads stay NAMED at each call site rather than buried — that is what
+// lets the exporter declare its scan coverage in provenance.
+//
+// `ghostCount` counts ask-linked slugs with no readable file and no recent
+// evidence — omitted from `files`, never silently dropped: the caller
+// surfaces it as a named aggregate.
+function discoverPlanFiles(scanRoot, planAskLinks, opts) {
+  const options = opts || {};
+  const ageDays = typeof options.completedAgeDays === 'number' ? options.completedAgeDays : COMPLETED_AGE_DAYS;
+  const links = planAskLinks || {};
+  const seenSlugs = {};
+  const out = [];
+  const cutoffMs = Date.now() - ageDays * 86400000;
+  let ghostCount = 0;
+  // Worktree-independent recency evidence — computed ONCE, threaded into the
+  // archive scan's aging gate.
+  const recentSlugs = Object.assign({}, recentSlugsFromAskLinks(links, cutoffMs), recentSlugsFromEvents(cutoffMs));
+
+  // Scan THIS repo first (self — preserves the exact prior single-repo
+  // behavior/order when zero repos are configured), then every EXPLICITLY-
+  // configured repo, same aging/ghost rules, deduped by slug (first-seen
+  // wins — self takes precedence on a same-slug collision across repos).
+  const configured = Array.isArray(options.repoRoots) ? options.repoRoots : configuredRepoRoots();
+  const repoRoots = [{ key: 'self', root: scanRoot }].concat(configured);
+  repoRoots.forEach((r) => {
+    scanPlanDir(path.join(r.root, 'docs', 'plans'), { archived: false }).forEach((pf) => {
+      if (seenSlugs[pf.slug]) return;
+      seenSlugs[pf.slug] = true; pf.discovery = 'scan'; out.push(pf);
+    });
+    scanPlanDir(path.join(r.root, 'docs', 'plans', 'archive'), { archived: true, cutoffMs: cutoffMs, recentSlugs: recentSlugs }).forEach((pf) => {
+      if (seenSlugs[pf.slug]) return;
+      seenSlugs[pf.slug] = true; pf.discovery = 'scan'; out.push(pf);
+    });
+  });
+
+  Object.keys(links).forEach((slug) => {
+    if (seenSlugs[slug]) return;
+    const slugLinks = links[slug];
+    let repo = scanRoot;
+    for (let i = 0; i < slugLinks.length; i++) { if (slugLinks[i].repo) { repo = slugLinks[i].repo; break; } }
+    // resolvePlanAbsPath returns null when the file exists at NEITHER
+    // docs/plans/ NOR docs/plans/archive/ under this repo — a genuinely
+    // missing linked plan (the "ghost-plan" case). Synthesize the expected
+    // path in that case so the read below honestly fails ENOENT.
+    const abs = planParse.resolvePlanAbsPath(repo, slug) || path.join(repo, 'docs', 'plans', slug + '.md');
+    let stat, text;
+    try { stat = fs.statSync(abs); text = fs.readFileSync(abs, 'utf8'); }
+    catch (_) {
+      // The linked plan genuinely can't be read. RECENT -> still surface as
+      // an unknown root (current work going dark must never look identical
+      // to "never linked"). ANCIENT -> excluded, counted in ghostCount.
+      const newest = newestLinkTs(slugLinks);
+      const newestMs = newest ? Date.parse(newest) : NaN;
+      const isRecent = !isNaN(newestMs) && newestMs >= cutoffMs;
+      if (!isRecent) { ghostCount++; return; }
+      seenSlugs[slug] = true;
+      out.push({ slug: slug, absPath: abs, archived: /[\\/]archive[\\/]/.test(abs), mtimeMs: 0, discovery: 'ask-link' });
+      return;
+    }
+    const archived = /[\\/]archive[\\/]/.test(abs);
+    // Same evidence-gated aging rule as scanPlanDir.
+    if (archived && !recentSlugs[slug]) return;
+    if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
+    seenSlugs[slug] = true;
+    out.push({ slug: slug, absPath: abs, archived: archived, mtimeMs: stat.mtimeMs, discovery: 'ask-link' });
+  });
+  return { files: out, ghostCount: ghostCount };
+}
+
+// eventsForSlug(slug, linkedAsks) -> [event]
+//
+// MOVED WITH THE INVENTORY DELIBERATELY. computePlanRows derives `in_flight`
+// from whatever events array its caller hands it — for the per-ask path,
+// one ask's lane. This function concats EVERY linked ask's lane PLUS the
+// shared unlinked orphan lane (readAskEvents('')) and filters by slug. For a
+// scan-discovered plan with no ask at all, that orphan lane is the ONLY
+// source of task_started/task_done. If the exporter joined per-ask while the
+// cockpit joined per-slug, "one derivation" would still be a lie about
+// in_flight even after the inventory itself was unified.
+function eventsForSlug(slug, linkedAsks) {
+  const seenAskIds = {};
+  let all = [];
+  (linkedAsks || []).forEach((a) => {
+    if (seenAskIds[a.ask_id]) return;
+    seenAskIds[a.ask_id] = true;
+    all = all.concat(readAskEvents(a.ask_id));
+  });
+  all = all.concat(readAskEvents(''));
+  return all.filter((e) => e && e.plan_slug === slug && e.task_id)
+    .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
 }
 
 // classifySessions(sessionIds) — reuses hooks/lib/session-heartbeat-lib.sh's
@@ -1396,6 +1977,8 @@ module.exports = {
   readJsonlLines,
   readAskRegistry,
   readAskEvents,
+  eventReadCacheStats,
+  resetEventReadCache,
   foldAskRegistry,
   readDispatchProvenanceMarkers,
   buildSessions,
@@ -1406,6 +1989,27 @@ module.exports = {
   projectDocRefFor,
   computePlanRows,
   aggregatePlanProgress,
+  // named-absence resolver (cross-machine-plan-inventory defect 2) —
+  // INVARIANT: tasks is an Array iff state === 'parsed'
+  resolvePlanTasks,
+  // THE SHARED PLAN INVENTORY (defect 1) — one derivation, two consumers
+  // (roadmap-routes.js re-exports every one of these as a pass-through, so
+  // its own suite is the pre-existing oracle for the move).
+  COMPLETED_AGE_DAYS,
+  planScanRoot,
+  isEligiblePlanStatus,
+  repoRootFromAbsPath,
+  planStatusToken,
+  KNOWN_PLAN_STATUS_TOKENS,
+  scanPlanDir,
+  newestLinkTs,
+  recentSlugsFromAskLinks,
+  recentSlugsFromEvents,
+  configuredRepoRoots,
+  configuredRepoRootsState,
+  planAskLinkIndex,
+  discoverPlanFiles,
+  eventsForSlug,
   // task description clamp (Task 8, cockpit-roadmap-redesign)
   TASK_DESC_PREVIEW_MAX_LEN,
   clampTaskDescription,
@@ -2097,6 +2701,78 @@ async function selfTest() {
       if (savedTtl === undefined) delete process.env.COCKPIT_GIT_INFO_TTL_MS;
       else process.env.COCKPIT_GIT_INFO_TTL_MS = savedTtl;
       try { fs.rmSync(tmp23, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+    }
+  }
+
+  // ====================================================================
+  // Scenario 24 (2026-08-06 remediation) — readAskEvents is MEMOIZED, and
+  // the memo is correct.
+  //
+  // THE COST THIS BOUNDS, measured on this machine before the fix:
+  //   plans discovered      : 29
+  //   distinct event lanes  : 1
+  //   unlinked.jsonl        : 6,201,740 bytes / 12,959 events
+  //   => 29 x 6.2 MB = 179.9 MB of JSON re-parsed per export cycle,
+  //      profiled at 2,453.9 ms of the exporter's ~3.4 s (72%).
+  // The exporter and the cockpit's Roadmap both run this loop.
+  //
+  // "It got faster" is not an assertion a suite can hold. `disk_reads` is:
+  // N calls against an unchanged file must cost exactly ONE.
+  // ====================================================================
+  {
+    const tmp24 = fs.mkdtempSync(path.join(os.tmpdir(), 'dl-evcache-'));
+    const saved24 = process.env.PROGRESS_LOG_STATE_DIR;
+    try {
+      process.env.PROGRESS_LOG_STATE_DIR = tmp24;
+      const ev = (o) => JSON.stringify(Object.assign({
+        v: 1, ts: '2026-08-01T00:00:00Z', ask_id: '', type: 'task_done',
+        plan_slug: 'p1', task_id: '1', sha: '', evidence_link: '', needs_you_id: '',
+      }, o));
+      const lane = path.join(tmp24, 'unlinked.jsonl');
+      fs.writeFileSync(lane, [ev({ task_id: '1' }), ev({ task_id: '2' })].join('\n') + '\n');
+
+      resetEventReadCache();
+      const first = readAskEvents('');
+      for (let i = 0; i < 28; i++) readAskEvents('');   // the other 28 plans in the loop
+      const s24 = eventReadCacheStats();
+      ok('24a. 29 reads of an UNCHANGED event lane cost exactly ONE disk read (28 cache hits) — this is the N+1 that made the exporter re-parse the same 6.2 MB file once per discovered plan',
+        s24.disk_reads === 1 && s24.hits === 28, JSON.stringify(s24));
+      ok('24b. the memoized read returns the same data as the uncached one (2 events)',
+        first.length === 2 && readAskEvents('').length === 2, JSON.stringify(first));
+
+      // Staleness: an append MUST be visible. A cache that cannot see a new
+      // event is worse than the N+1 it replaced.
+      fs.appendFileSync(lane, ev({ task_id: '3' }) + '\n');
+      const after = readAskEvents('');
+      const s24b = eventReadCacheStats();
+      ok('24c. an APPEND invalidates the memo — the new event is visible on the very next read, and it cost a real disk read (the key is mtime+size, not the path alone)',
+        after.length === 3 && s24b.disk_reads === 2, JSON.stringify({ len: after.length, stats: s24b }));
+
+      // Array-level mutation isolation: server.js sorts the returned array
+      // in place. That must not reorder what every other reader sees.
+      const a = readAskEvents('');
+      a.reverse();
+      a.push({ v: 1, ts: 'x', task_id: 'injected' });
+      const b = readAskEvents('');
+      ok('24d. the returned array is a COPY — a caller sorting/mutating it in place (server.js does exactly this) cannot corrupt the cached rows for every other reader',
+        b.length === 3 && b[0].task_id === '1' && !b.some((e) => e.task_id === 'injected'),
+        JSON.stringify(b.map((e) => e.task_id)));
+
+      // Bounded memory: the LRU cap must actually evict.
+      resetEventReadCache();
+      for (let i = 0; i < 12; i++) {
+        fs.writeFileSync(path.join(tmp24, 'lane' + i + '.jsonl'), ev({ task_id: String(i) }) + '\n');
+        readAskEvents('lane' + i);
+      }
+      readAskEvents('lane0'); // evicted long ago -> must be a disk read, not a hit
+      const s24c = eventReadCacheStats();
+      ok('24e. the cache is BOUNDED — after 12 distinct lanes the oldest is evicted, so re-reading it costs a disk read (13 reads, 0 hits). An unbounded cache would pin every lane file in the long-lived server',
+        s24c.disk_reads === 13 && s24c.hits === 0, JSON.stringify(s24c));
+    } finally {
+      if (saved24 === undefined) delete process.env.PROGRESS_LOG_STATE_DIR;
+      else process.env.PROGRESS_LOG_STATE_DIR = saved24;
+      resetEventReadCache();
+      try { fs.rmSync(tmp24, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
     }
   }
 

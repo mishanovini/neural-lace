@@ -26,6 +26,75 @@ function ok(name, cond, detail) {
   else { FAILED++; console.log('  FAIL: ' + name + (detail ? ' (' + detail + ')' : '')); }
 }
 
+// ----------------------------------------------------------------------
+// EXPECTED_SCENARIOS — the completeness oracle (2026-08-06 remediation).
+//
+// WHAT WENT WRONG WITHOUT IT. On master this suite died mid-run at the
+// S26c assertion (`TypeError: Cannot read properties of undefined (reading
+// 'asks')` — /api/asks was 500-ing, so `landingAfterDismiss.json.completed`
+// was undefined). 61 scenarios had PASSED, 8 had FAILED, and 107 NEVER RAN
+// — including S64, the one scenario that drives GET /api/asks over real
+// HTTP and asserts the payload-schema verdict. The crash handler printed a
+// stack trace and exited 1, but it printed NO summary line at all, so the
+// output's last ~40 lines were an unbroken wall of PASS. Nothing in the
+// output said how much of the suite had not executed. A suite that stops
+// early must say so in the same line a reader looks at for the verdict.
+//
+// HOW THE EXPECTED COUNT IS DERIVED. By reading THIS file's own source and
+// counting `ok(` call sites at statement position. That is deliberate: a
+// hand-maintained constant rots the first time someone adds a scenario and
+// forgets to bump it, and a rotted oracle is worse than none. Today the
+// derivation is exact (every `ok(` in this file is a straight-line call in
+// main()).
+//
+// FALSE-POSITIVE MODE + RETIREMENT. If a future scenario is ever added
+// inside a loop or a conditional, the derived count stops matching the
+// executed count and the completeness check below fires on a fully-green
+// run. That is a real false positive, and the fix is to make the
+// derivation explicit for that call site (or, if looped scenarios become
+// normal here, to replace this derivation entirely) — the message says so.
+// It is deliberately preferred over the alternative failure mode, which is
+// the one that actually bit: a suite reporting a clean pass over a
+// fraction of its scenarios.
+// ----------------------------------------------------------------------
+const EXPECTED_SCENARIOS = (() => {
+  try {
+    const src = fs.readFileSync(__filename, 'utf8');
+    const m = src.match(/^[ \t]*ok\(/gm);
+    return m ? m.length : 0;
+  } catch (_) { return 0; }
+})();
+
+// finalReport(mode, err) — the ONE place a verdict line is printed, so the
+// crash path cannot silently skip it. `never_ran` is the number the master
+// crash never told anyone.
+function finalReport(mode, err) {
+  const ran = PASSED + FAILED;
+  const neverRan = EXPECTED_SCENARIOS > ran ? (EXPECTED_SCENARIOS - ran) : 0;
+  console.log('');
+  if (mode === 'crash') {
+    console.log('  FATAL: the suite CRASHED and stopped early — every scenario after this point never executed.');
+    console.error(err && err.stack ? err.stack : String(err));
+    console.log('self-test summary: ' + PASSED + ' passed, ' + FAILED + ' failed, ' +
+      neverRan + ' NEVER EXECUTED (of ' + EXPECTED_SCENARIOS + ' declared) — SUITE CRASHED, THIS IS NOT A PASS');
+    process.exit(1);
+  }
+  if (ran !== EXPECTED_SCENARIOS) {
+    // Ran to completion but did not execute every declared scenario (an
+    // early `return`, a swallowed branch, or a looped/conditional `ok(`
+    // call site the derivation above cannot see — see FALSE-POSITIVE MODE).
+    console.log('  FAIL: scenario-completeness check — ' + ran + ' scenarios executed but ' +
+      EXPECTED_SCENARIOS + ' `ok(` call sites are declared in ' + path.basename(__filename) + '. ' +
+      'Either the run skipped scenarios, or a call site is inside a loop/conditional and the ' +
+      'static derivation of EXPECTED_SCENARIOS needs updating for it.');
+    FAILED++;
+  }
+  console.log('self-test summary: ' + PASSED + ' passed, ' + FAILED + ' failed, ' +
+    (EXPECTED_SCENARIOS - ran > 0 ? (EXPECTED_SCENARIOS - ran) + ' never executed, ' : '') +
+    EXPECTED_SCENARIOS + ' declared');
+  process.exit(FAILED === 0 ? 0 : 1);
+}
+
 // NOTE (Node >=19 keep-alive footgun): every helper below passes
 // `agent: false` so each request opens a FRESH socket and sends
 // `Connection: close`. Node 19 flipped http.globalAgent's default to
@@ -1682,13 +1751,51 @@ async function main() {
     fs.utimesSync(fetchHeadFixture, fiveMinAgo, fiveMinAgo);
 
     // fresh peer, unmerged branch (build/peer-feature): 1 done + 1 in-flight task.
+    //
+    // SCHEMA 2 (cross-machine-plan-inventory). This fixture is deliberately
+    // the SHAPE THAT USED TO 500 THE COCKPIT, because every unit suite goes
+    // green while it does: export-state's self-test never builds a landing
+    // payload, and peer-view's calls computePeerView directly, bypassing
+    // validateLanding entirely. The failure only ever appeared on a LIVE
+    // cockpit serving /api/asks with a real peer file present — i.e. on the
+    // second machine to sync — which is exactly the cross-machine scenario
+    // the whole change exists to fix. This scenario is the only place that
+    // catches it, so the fixture carries all three landmines at once:
+    //
+    //   1. a POPULATED plan_doc {project, path}. `path` was missing from
+    //      payload-schema's LANDING_ALLOWED_KEYS, so the recursive walk
+    //      failed on plan_doc.path and server.js turned that into a 500 —
+    //      blanking the cockpit's landing view. This was ALREADY happening
+    //      in production before this round (one peer had a populated
+    //      plan_doc); it is fixed, and this fixture keeps it fixed.
+    //   2. a plan_slug containing "-gate", which the anti-noise denylist
+    //      matches (/[a-z0-9_-]*-gate\b/i). Plan slugs are FILENAME STEMS
+    //      and routinely name mechanisms; measured on a real machine, 4 of
+    //      29 plans trip this. Now that the export ships the whole scanned
+    //      inventory rather than a couple of ask-linked slugs, an
+    //      un-exempted plan_slug would make the 500 the steady state.
+    //   3. a NON-PARSED row, carrying the named-absence fields end to end.
     fs.writeFileSync(path.join(peerExportDir, 'host-fresh.json'), JSON.stringify({
-      schema_version: 1,
-      provenance: { hostname: 'host-fresh', branch: 'build/peer-feature', head_sha: 'deadbeef1234', dirty: false },
+      schema_version: 2,
+      provenance: {
+        hostname: 'host-fresh', branch: 'build/peer-feature', head_sha: 'deadbeef1234', dirty: false,
+        scan: {
+          root: '/peer/repo', projects_config: 'loaded', completed_age_days: 7, stale_links_omitted: 3,
+          repo_roots: [{ key: 'self', root: '/peer/repo', present: true }, { key: 'other', root: '/peer/other', present: false }],
+        },
+      },
       plans: [{
-        repo: '/peer/repo', plan_slug: 'peer-fixture-plan', plan_doc: null,
+        repo: '/peer/repo', plan_slug: 'peer-fixture-plan',
+        plan_doc: { project: 'peer-project', path: 'docs/plans/peer-fixture-plan.md' },
+        archived: false, discovery: 'scan', plan_state: 'parsed', plan_state_reason: '',
         tasks: [{ id: '1', done: true, in_flight: false, evidence_link: '' }, { id: '2', done: false, in_flight: true, evidence_link: '' }],
-        progress: { done: 1, in_flight: 1, not_started: 0, total: 2 },
+        progress: { done: 1, in_flight: 1, not_started: 0, total: 2, unknown_rows: 0 },
+      }, {
+        repo: '/peer/repo', plan_slug: 'review-gate-identity-anchor-2026-07-30',
+        plan_doc: { project: 'peer-project', path: 'docs/plans/review-gate-identity-anchor-2026-07-30.md' },
+        archived: true, discovery: 'ask-link', plan_state: 'unresolvable',
+        plan_state_reason: 'no plan file at docs/plans/ or docs/plans/archive/ under repo "/peer/repo"',
+        tasks: null, progress: null,
       }],
       sessions: [{ session_id: 'peer-sess-1', role: 'dispatcher', resumed_from: '', plan_slug: 'peer-fixture-plan', task_id: '2', last_heartbeat_at: new Date().toISOString(), branch: 'build/peer-feature', repo_root: '/peer/repo', worktree_root: '/peer/repo' }],
       exported_at: new Date().toISOString(), content_hash: 'fixturehash1',
@@ -1697,9 +1804,19 @@ async function main() {
     // unreachable peer: keepalive stopped 2h ago (well past the 80min default bound).
     const unreachableFile = path.join(peerExportDir, 'host-unreachable.json');
     fs.writeFileSync(unreachableFile, JSON.stringify({
+      // Deliberately left at schema_version 1 with an OLD-SHAPE plan row
+      // (no plan_state at all): a machine that has not yet run the new
+      // exporter. The reader must NOT default that to 'parsed' — doing so
+      // would re-launder the exact bug being fixed — so it renders as the
+      // named 'legacy-unlabelled' and self-heals on that host's next cycle.
       schema_version: 1,
       provenance: { hostname: 'host-unreachable', branch: 'master', head_sha: 'aaa000', dirty: false },
-      plans: [], sessions: [],
+      plans: [{
+        repo: '/old/repo', plan_slug: 'legacy-shape-plan', plan_doc: null,
+        tasks: [{ id: '1', done: true, in_flight: false, evidence_link: '' }],
+        progress: { done: 1, in_flight: 0, not_started: 0, total: 1 },
+      }],
+      sessions: [],
       exported_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), content_hash: 'fixturehash2',
     }));
     const twoHoursAgoUnreach = new Date(Date.now() - 2 * 60 * 60 * 1000);
@@ -1721,9 +1838,17 @@ async function main() {
     const peerLanding = await httpGet(PORT, '/api/asks');
     ok('S64 GET /api/asks (real HTTP) still returns ok:true + 200 with the peers block wired in (payload-schema validation passes)',
       peerLanding.status === 200 && peerLanding.json && peerLanding.json.ok === true && !!peerLanding.json.peers,
-      JSON.stringify(peerLanding.json && peerLanding.json.peers));
+      // Dump the SCHEMA DIAGNOSTICS on failure, not the (absent) peers
+      // block: the only way this assertion fails is a validateLanding
+      // rejection turned into a 500 by server.js, and the diagnostics name
+      // the exact JSON path of the offending key. Printing `peers` here just
+      // printed `undefined` and cost a debugging round trip.
+      'status=' + peerLanding.status + ' body=' + JSON.stringify(peerLanding.json).slice(0, 900));
 
-    const peers = peerLanding.json.peers;
+    // Never dereference through a failed response — a 500 body has no
+    // `peers`, and the resulting TypeError used to abort the whole suite
+    // mid-run (every scenario after this point silently never executed).
+    const peers = (peerLanding.json && peerLanding.json.peers) || { has_data: false, entries: [], persons: [] };
     ok('S64b peers.has_data is true (real peer data present)', peers.has_data === true);
     ok('S64c exactly 2 peer entries (fresh + unreachable) — self and the corrupt file are NOT among them',
       peers.entries.length === 2, JSON.stringify(peers.entries.map((e) => e.host)));
@@ -1731,6 +1856,45 @@ async function main() {
       !peers.entries.some((e) => e.host === 'host-self-test'));
     ok('S64e the corrupt file was skipped WITHOUT throwing (no host-corrupt entry, and the request still succeeded)',
       !peers.entries.some((e) => e.host === 'host-corrupt'));
+
+    // ---- S64f-S64j (cross-machine-plan-inventory, 2026-08-06): the
+    // schema-2 peer shape survives a REAL /api/asks round trip. Every
+    // assertion here is a 500-or-not question in disguise: validateLanding
+    // runs inside server.js before the payload reaches the wire, so a key
+    // this suite forgets to exercise is a blank cockpit landing page in
+    // production, on a machine other than the one that shipped the field.
+    const fresh64 = peers.entries.find((e) => e.host === 'host-fresh') || {};
+    const freshPlans64 = fresh64.plans || [];
+    const docRow64 = freshPlans64.find((p) => p.plan_slug === 'peer-fixture-plan');
+    ok('S64f a POPULATED plan_doc {project, path} survives validateLanding — `path` was missing from LANDING_ALLOWED_KEYS, which 500-ed /api/asks (and blanked the cockpit) for any peer carrying a real plan doc',
+      peerLanding.status === 200 && docRow64 && docRow64.plan_doc &&
+      docRow64.plan_doc.path === 'docs/plans/peer-fixture-plan.md',
+      JSON.stringify(docRow64 && docRow64.plan_doc));
+    const gateRow64 = freshPlans64.find((p) => /-gate\b/.test(p.plan_slug || ''));
+    ok('S64g a plan_slug matching the gate/hook denylist ("review-gate-identity-anchor-2026-07-30") is SERVED, not rejected — a slug is a filename identity, not status prose, and the scanned inventory ships these routinely',
+      peerLanding.status === 200 && !!gateRow64, JSON.stringify(freshPlans64.map((p) => p.plan_slug)));
+    ok('S64h a NON-PARSED peer plan row keeps its NAMED absence across the wire: plan_state set, reason non-empty, tasks null and plan_progress null — never a fabricated healthy 0/0',
+      gateRow64 && gateRow64.plan_state === 'unresolvable' && gateRow64.tasks === null &&
+      gateRow64.plan_progress === null && (gateRow64.plan_state_reason || '').length > 0,
+      JSON.stringify(gateRow64));
+    const legacyEntry64 = peers.entries.find((e) => e.host === 'host-unreachable');
+    const legacyRow64 = (legacyEntry64 && legacyEntry64.plans || [])[0];
+    ok('S64i a schema_version:1 peer (an un-upgraded machine) renders plan_state "legacy-unlabelled" — NOT defaulted to "parsed", which would re-launder the very bug the version bump exists to fix',
+      legacyRow64 && legacyRow64.plan_state === 'legacy-unlabelled' &&
+      (legacyRow64.plan_state_reason || '').length > 0,
+      JSON.stringify(legacyRow64));
+    ok('S64j scan_coverage names what each peer actually scanned (repo count + projects_config state + aging ceiling + omitted stale links), so a per-machine multi-repo difference is DECLARED rather than inferred from a short plan list',
+      fresh64.scan_coverage && fresh64.scan_coverage.repos === 1 &&
+      fresh64.scan_coverage.projects_config === 'loaded' &&
+      fresh64.scan_coverage.completed_age_days === 7 &&
+      fresh64.scan_coverage.stale_links_omitted === 3 &&
+      // 2026-08-06 remediation: a peer that shipped no scan block reports
+      // scan_coverage NULL (an honest "not reported"), where this used to
+      // assert a zero-filled record with projects_config 'unknown'. That
+      // zero-fill rendered on screen as "scanned 0 repos" — a fabricated
+      // MEASUREMENT, the same defect class as the fabricated healthy 0/0.
+      legacyEntry64 && legacyEntry64.scan_coverage === null,
+      JSON.stringify({ fresh: fresh64.scan_coverage, legacy: legacyEntry64 && legacyEntry64.scan_coverage }));
 
     const freshEntry = peers.entries.find((e) => e.host === 'host-fresh');
     ok('S65 fresh peer renders state fresh-ish with an age label',
@@ -1778,6 +1942,35 @@ async function main() {
     delete process.env.EXPORT_HOSTNAME;
 
     // ========================================================================
+    // Scenario 71g/71h (2026-08-06 remediation) — THE END-TO-END GOLDEN
+    // SCENARIO for the live 500. Every ask fixture in this suite was titled
+    // "Fixture ask <n>", so no fixture title ever named a shell script and
+    // the suite stayed green while BOTH real endpoints were dead. This
+    // seeds an ask whose title is the VERBATIM real-world one and drives
+    // the REAL HTTP surface (not just payload-schema.js in isolation), so
+    // the schema check server.js actually runs at serve time is the thing
+    // under test.
+    // ========================================================================
+    const REAL_TITLE_FIXTURE = 'Fix divergence between node and jq implementations of claim-honesty check in harness-doctor.sh self-test.';
+    fs.appendFileSync(path.join(arStateDir, 'ask-registry.jsonl'), [
+      regLine({ ask_id: 'ask-fix-8', record_type: 'created', ts: '2026-07-06T00:00:00Z', repo: fixtureRepoDir, project: 'demo-project', summary: REAL_TITLE_FIXTURE, status: 'active' }),
+    ].join('\n') + '\n');
+
+    const landingRealTitle = await httpGet(PORT, '/api/asks');
+    const demoGroupRealTitle = landingRealTitle.json && (landingRealTitle.json.groups || []).find((g) => g.project === 'demo-project');
+    const cardRealTitle = demoGroupRealTitle && demoGroupRealTitle.asks.find((a) => a.ask_id === 'ask-fix-8');
+    ok('S71g GET /api/asks (real HTTP) returns 200 ok:true with an ask whose TITLE names a shell script — the production case that returned 500 "gate/hook identifier leaked at $.groups[8].asks[0].summary" and blanked the whole landing view',
+      landingRealTitle.status === 200 && landingRealTitle.json && landingRealTitle.json.ok === true &&
+      !!cardRealTitle && cardRealTitle.summary === REAL_TITLE_FIXTURE,
+      JSON.stringify(landingRealTitle.json && (landingRealTitle.json.diagnostics || landingRealTitle.json.error || (cardRealTitle && cardRealTitle.summary))));
+
+    const detailRealTitle = await httpGet(PORT, '/api/ask/ask-fix-8');
+    ok('S71h GET /api/ask/<id> (real HTTP) returns 200 ok:true for the SAME ask — the detail endpoint 500-ed on the identical string at $.summary, a second live outage the landing diagnostics never named',
+      detailRealTitle.status === 200 && detailRealTitle.json && detailRealTitle.json.ok === true &&
+      detailRealTitle.json.summary === REAL_TITLE_FIXTURE,
+      JSON.stringify(detailRealTitle.json && (detailRealTitle.json.diagnostics || detailRealTitle.json.error)));
+
+    // ========================================================================
     // Scenario 70 (cockpit-v2-push-materialized-store Task 6 — payload
     // `description` carve-out): direct payload-schema.js checks, in the same
     // "DELIBERATELY SELF-CONTAINED" style as the S27/S50 blocks above (no
@@ -1792,10 +1985,21 @@ async function main() {
     ok('S70 a `description` field containing a real hook/script identifier (plan-lifecycle.sh) PASSES validateAskDetail (the Task 6 carve-out)',
       s70.ok, JSON.stringify(s70.errors));
 
-    const sameStringInSummary = JSON.parse(JSON.stringify(cleanDetail));
-    sameStringInSummary.summary = 'fix the plan-lifecycle.sh PostToolUse matcher so a MultiEdit routes through';
-    const s70a = payloadSchema.validateAskDetail(sameStringInSummary);
-    ok('S70a NEGATIVE FIXTURE: the IDENTICAL string in `summary` (not `description`) still FAILS validateAskDetail — the exemption is scoped BY KEY, not by content',
+    // NOTE (2026-08-06 remediation): this fixture used to put the string in
+    // `$.summary` — the ask's own TITLE — which is now path-exempt (see
+    // DENYLIST_EXEMPT_PATHS and S71* below for why). It is re-pointed at
+    // `waiting_items[].message`, which is machine-composed status prose and
+    // therefore still fully scanned; the CLAIM it locks ("the exemption is
+    // scoped by field, never by content") is unchanged, and S71d below
+    // additionally locks that the SAME key name at a DIFFERENT position
+    // (`$.narrative[].summary`) is still scanned.
+    const sameStringInMessage = JSON.parse(JSON.stringify(cleanDetail));
+    sameStringInMessage.waiting_items = [{
+      needs_you_id: 'NY-x', defect: true, session_id: 's', raw_link: 'file:///c/x/NEEDS-YOU.md',
+      message: 'fix the plan-lifecycle.sh PostToolUse matcher so a MultiEdit routes through',
+    }];
+    const s70a = payloadSchema.validateAskDetail(sameStringInMessage);
+    ok('S70a NEGATIVE FIXTURE: the IDENTICAL string in `waiting_items[].message` (not `description`) still FAILS validateAskDetail — the exemption is scoped BY FIELD, not by content',
       s70a.ok === false && s70a.errors.some((e) => /gate\/hook identifier/.test(e)),
       JSON.stringify(s70a.errors));
 
@@ -1824,6 +2028,72 @@ async function main() {
     const s70d = payloadSchema.validateAskDetail(atCapDetail);
     ok('S70d a `description` at EXACTLY the cap length PASSES (boundary check: cap is inclusive)',
       s70d.ok, JSON.stringify(s70d.errors));
+
+    // ========================================================================
+    // Scenario 71 (2026-08-06 remediation — DENYLIST_EXEMPT_PATHS, the ask
+    // TITLE carve-out). This is the LIVE OUTAGE this block exists to lock:
+    // /api/asks and /api/ask/<id> both returned 500 on this machine's real
+    // data because one real ask is titled "Fix divergence between node and
+    // jq implementations of claim-honesty check in harness-doctor.sh
+    // self-test." — a correct title for a real unit of work, rejected by
+    // the `/\.sh\b/i` pattern. The VERBATIM real string is used below so
+    // this fixture is the production case, not a paraphrase of it.
+    //
+    // The exemption is POSITIONAL, and both halves are asserted: the ask
+    // title passes (S71/S71a/S71b), while the identically-NAMED event line
+    // `$.narrative[].summary` and the ask card's `narrative_excerpt` still
+    // FAIL (S71d/S71e) — those are machine-composed status copy, which is
+    // what the anti-noise law is actually for.
+    // ========================================================================
+    const REAL_ASK_TITLE = 'Fix divergence between node and jq implementations of claim-honesty check in harness-doctor.sh self-test.';
+
+    const s71Landing = JSON.parse(JSON.stringify(cleanLanding));
+    s71Landing.groups[0].asks[0].summary = REAL_ASK_TITLE;
+    const s71 = payloadSchema.validateLanding(s71Landing);
+    ok('S71 the REAL production ask title naming a shell script PASSES validateLanding at $.groups[].asks[].summary (the exact string that 500-ed /api/asks and blanked the landing view)',
+      s71.ok, JSON.stringify(s71.errors));
+
+    const s71aLanding = JSON.parse(JSON.stringify(cleanLanding));
+    s71aLanding.completed.asks = [JSON.parse(JSON.stringify(cleanLanding.groups[0].asks[0]))];
+    s71aLanding.completed.asks[0].summary = REAL_ASK_TITLE;
+    s71aLanding.completed.count = 1;
+    const s71a = payloadSchema.validateLanding(s71aLanding);
+    ok('S71a the same title PASSES at $.completed.asks[].summary (a completed ask card is the same builder, so the carve-out must cover both landing positions)',
+      s71a.ok, JSON.stringify(s71a.errors));
+
+    const s71bDetail = JSON.parse(JSON.stringify(cleanDetail));
+    s71bDetail.summary = REAL_ASK_TITLE;
+    const s71b = payloadSchema.validateAskDetail(s71bDetail);
+    ok('S71b the same title PASSES at $.summary on the DETAIL payload — /api/ask/<id> 500-ed on this string too, a second live outage the landing diagnostics never named',
+      s71b.ok, JSON.stringify(s71b.errors));
+
+    const s71cDetail = JSON.parse(JSON.stringify(cleanDetail));
+    s71cDetail.summary = 'x'.repeat(payloadSchema.DENYLIST_EXEMPT_MAX_LEN + 1);
+    const s71c = payloadSchema.validateAskDetail(s71cDetail);
+    ok('S71c NEGATIVE FIXTURE: an ask title over the ' + payloadSchema.DENYLIST_EXEMPT_MAX_LEN + '-char cap FAILS — the length cap is the compensating constraint for the path exemption, exactly as for `description`',
+      s71c.ok === false && s71c.errors.some((e) => /exceeds max length/.test(e)),
+      JSON.stringify(s71c.errors));
+
+    const s71dDetail = JSON.parse(JSON.stringify(cleanDetail));
+    s71dDetail.narrative = [{ ts: '2026-07-01T00:00:00Z', summary: 'blocked by workstreams-state-gate.sh', evidence_link: '' }];
+    const s71d = payloadSchema.validateAskDetail(s71dDetail);
+    ok('S71d NEGATIVE FIXTURE: the SAME key name `summary` at a DIFFERENT position ($.narrative[].summary — machine-composed event copy) is STILL scanned and FAILS — proves the carve-out is positional, not a blanket un-guarding of the key',
+      s71d.ok === false && s71d.errors.some((e) => /gate\/hook identifier/.test(e)),
+      JSON.stringify(s71d.errors));
+
+    const s71eLanding = JSON.parse(JSON.stringify(cleanLanding));
+    s71eLanding.groups[0].asks[0].summary = REAL_ASK_TITLE;
+    s71eLanding.groups[0].asks[0].narrative_excerpt = 'blocked by harness-doctor.sh';
+    const s71e = payloadSchema.validateLanding(s71eLanding);
+    ok('S71e NEGATIVE FIXTURE: a `.sh` identifier in the SIBLING `narrative_excerpt` on the very same ask card still FAILS validateLanding — the exemption did not widen to the card, only to its title',
+      s71e.ok === false && s71e.errors.some((e) => /gate\/hook identifier/.test(e) && /narrative_excerpt/.test(e)),
+      JSON.stringify(s71e.errors));
+
+    const s71fLanding = JSON.parse(JSON.stringify(cleanLanding));
+    s71fLanding.groups[0].asks[0].summary = 'blocked by the PreToolUse work-integrity-gate; see od_harness_health';
+    const s71f = payloadSchema.validateLanding(s71fLanding);
+    ok('S71f an ask title naming a gate, a hook lifecycle and an oracle fn ALSO passes — the carve-out is the whole class (a title names its subject), not a `.sh` special case, so the other four patterns cannot 500 the landing view from this field either',
+      s71f.ok, JSON.stringify(s71f.errors));
 
   } finally {
     server.close();
@@ -1887,12 +2157,15 @@ async function main() {
     }
   }
 
-  console.log('');
-  console.log('self-test summary: ' + PASSED + ' passed, ' + FAILED + ' failed');
-  process.exit(FAILED === 0 ? 0 : 1);
 }
 
-main().catch((err) => {
-  console.error('self-test crashed:', err);
-  process.exit(1);
-});
+// finalReport is called from HERE, never from inside main(), so the verdict
+// line cannot be skipped by an early `return` deep in the suite either —
+// that path used to exit 0 with NO summary at all, which reads as a pass.
+main().then(
+  () => finalReport('done'),
+  (err) => {
+    console.error('self-test crashed:', err && err.message ? err.message : String(err));
+    finalReport('crash', err);
+  }
+);

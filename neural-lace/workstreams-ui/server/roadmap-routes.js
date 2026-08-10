@@ -205,7 +205,7 @@ const deriveLib = require('./derive-lib.js');
 const planParse = require('./plan-parse.js');
 
 const WEB_DIR = path.join(__dirname, '..', 'web');
-const COMPLETED_AGE_DAYS = Number(process.env.ROADMAP_COMPLETED_AGE_DAYS) || 7;
+const COMPLETED_AGE_DAYS = deriveLib.COMPLETED_AGE_DAYS; // MOVED to derive-lib.js (one constant, both consumers)
 
 // The roll-up attention classes, in the pinned precedence order
 // (adjudication (b) + delta R4: precedence governs display ORDER only —
@@ -321,269 +321,37 @@ function buildPlanAskLinks(byAsk) {
 }
 
 // ----------------------------------------------------------------------
-// Plan-file discovery (8A) — which files root the tree. See the header
-// note for the full rationale of each filter.
-// ----------------------------------------------------------------------
-function planScanRoot() {
-  // Sandboxable like every other state path in this codebase (ASK_REGISTRY_
-  // STATE_DIR etc.) — a dedicated override so tests never touch the real
-  // checkout's docs/plans/.
-  return process.env.ROADMAP_PLAN_SCAN_ROOT || deriveLib.mainRepoRoot();
-}
-
-const PLAN_STATUS_EXCLUDE_RE = /^(REFERENCE|NORMATIVE)\b/i;
-function isEligiblePlanStatus(statusText) {
-  const t = String(statusText || '').trim();
-  if (!t) return false; // no Status: header at all -> evidence dump / stub, not a plan
-  return !PLAN_STATUS_EXCLUDE_RE.test(t);
-}
-
-// ----------------------------------------------------------------------
-// ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 / ROADMAP-SUPERSEDED-RENDERS-
-// PENDING-01 (2026-07-29 round 14) shared vocabulary — the harness's own
-// terminal-status enum (ADR 052 + plan-lifecycle.sh's extract_status:
-// "ACTIVE / COMPLETED / DEFERRED / ABANDONED / SUPERSEDED / etc.") is the
-// only set of Status: tokens this derivation trusts enough to run the
-// normal task-count ladder on unconditionally. Anything else surviving
-// past isEligiblePlanStatus (a real Status: line, just not one of these —
-// e.g. binary corruption landing "Status: WHAT" in place of a real token)
-// is NOT a confident bucket (C5) — see scanPlanDir's read-failure/unknown-
-// status handling below.
-// ----------------------------------------------------------------------
-const KNOWN_PLAN_STATUS_TOKENS = { ACTIVE: true, COMPLETED: true, DEFERRED: true, ABANDONED: true, SUPERSEDED: true };
-function planStatusToken(statusText) {
-  const m = /^([A-Za-z][A-Za-z0-9_-]*)/.exec(String(statusText || '').trim());
-  return m ? m[1].toUpperCase() : '';
-}
-// PLAN_BODY_CORRUPTION_RE — control/binary bytes (outside the common
-// whitespace \t\n\r already handled by line-splitting) anywhere in a
-// scanned plan's body are a strong corruption signal: a genuine markdown
-// plan is prose + task lines, never raw binary/control bytes. Used ONLY
-// as the second half of the "zero tasks AND unparseable structure" test
-// in scanPlanDir — never applied when tasks parsed successfully (a normal
-// plan's continuation-line text can legitimately contain unusual but
-// PRINTABLE punctuation, which this never flags).
-const PLAN_BODY_CORRUPTION_RE = /[\x00-\x08\x0E-\x1F\x7F]/;
-
-// scanPlanDir(dir, opts) -> [{slug, absPath, archived, mtimeMs}] for every
-// eligible top-level *.md file directly inside `dir` (non-recursive — a
-// subdirectory like fragments/ or archive/ itself is never descended into
-// by this call; archive/ is scanned via ITS OWN separate call).
+// Plan-file discovery (8A) — which files root the tree.
 //
-// AGING GATE (opts.cutoffMs, archive/ only): file MTIME IS NOT a trustworthy
-// recency signal here — a git-worktree checkout (this harness's own
-// standard per-builder-session workflow, `~/.claude/doctrine/orchestrator-
-// pattern.md`) resets EVERY file's mtime to checkout time regardless of
-// when its content was actually authored/archived. A whole-corpus live-data
-// check (2026-07-21) found this made a naive "mtime within window" gate a
-// complete no-op in a fresh worktree: all 227 archived files read as "0.5
-// days old" (the worktree's own checkout time), producing ~154 stale roots
-// on a page meant to show "what I'm working on right now" — and an
-// mtime-OR-evidence gate does not fix this either, since a falsely-fresh
-// mtime ALREADY satisfies the gate on its own, so adding more ways to ALSO
-// pass changes nothing. The actual fix: an archived plan is included ONLY
-// on POSITIVE, worktree-independent recency EVIDENCE — `opts.recentSlugs
-// [slug]` true (an ask-link or progress-log event genuinely timestamped
-// inside the window; see recentSlugsFromAskLinks/recentSlugsFromEvents
-// below). The one real caller (discoverPlanFiles) ALWAYS supplies
-// recentSlugs when it supplies cutoffMs, so evidence is unconditionally
-// required whenever aging is being gated at all — no mtime fallback path.
-function scanPlanDir(dir, opts) {
-  const options = opts || {};
-  const out = [];
-  let ents;
-  try { ents = fs.readdirSync(dir, { withFileTypes: true }); } catch (_) { return out; }
-  ents.forEach((e) => {
-    if (!e.isFile() || !/\.md$/i.test(e.name)) return;
-    const abs = path.join(dir, e.name);
-    let stat;
-    try { stat = fs.statSync(abs); } catch (_) { return; } // vanished mid-scan race — genuinely gone, not this file's fault
-    const slug = e.name.replace(/\.md$/i, '');
-    if (typeof options.cutoffMs === 'number' && !(options.recentSlugs && options.recentSlugs[slug])) {
-      return; // aging is gated here and this slug has no recency evidence
-    }
-    let text;
-    try {
-      text = fs.readFileSync(abs, 'utf8');
-    } catch (err) {
-      // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (c): the file EXISTS
-      // (readdirSync/statSync above both succeeded) but could not be
-      // read — a genuine permission/race failure, never silently skipped
-      // the way an ineligible-status file legitimately is below. Matches
-      // the registry-linked path's own `damaged` handling (derivePlanRootNode
-      // via planParse.loadPlanFile) — surfaced as an unknown root instead
-      // of vanishing from the tree.
-      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
-        scanIssue: 'plan file unreadable (' + (err && err.code ? err.code : String(err)) + ')' });
-      return;
-    }
-    const statusText = planParse.parsePlanStatus(text);
-    if (!isEligiblePlanStatus(statusText)) {
-      // ROADMAP-STATUSLESS-CORRUPT-VANISH-01 (advocate re-run S7 residual,
-      // 2026-07-30): a file with NO Status: header is normally not an
-      // independent plan — evidence stubs, fragments, reference docs — and
-      // stays excluded; flagging every header-less .md would flood the tree
-      // (Round 14's correct rationale). But ABSENT header + the
-      // binary-corruption signature in the body is the one combination whose
-      // likeliest story is "a plan whose header was destroyed", and C5
-      // forbids exactly this rendering: vanishing. Recognized-but-ineligible
-      // statuses (REFERENCE/NORMATIVE) keep their unconditional exclusion —
-      // their header survived, so their author's intent is legible.
-      if (!statusText && PLAN_BODY_CORRUPTION_RE.test(text)) {
-        out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
-          scanIssue: 'plan parse failed (no Status header + corrupt content — header destroyed?)' });
-      }
-      return;
-    }
-
-    // ROADMAP-CORRUPT-PLAN-CONFIDENT-BUCKET-01 (a): the Status: header
-    // survives but its value is outside the known enum (see
-    // KNOWN_PLAN_STATUS_TOKENS above) — e.g. binary corruption landed
-    // "Status: WHAT" where a real token belongs. The OLD code let this
-    // through as an eligible plan and zero parseable tasks then defaulted
-    // it to a confident "not-started" (live repro: fx-corrupt2). Never a
-    // confident bucket for a status this derivation doesn't recognize.
-    if (!KNOWN_PLAN_STATUS_TOKENS[planStatusToken(statusText)]) {
-      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
-        scanIssue: 'plan parse failed (unrecognized Status: "' + statusText.trim() + '")' });
-      return;
-    }
-
-    // A KNOWN status token survives, but the body is BOTH taskless AND
-    // shows the binary/control-byte corruption signature — never
-    // legitimate markdown prose. A genuinely fresh plan stub (zero tasks,
-    // ordinary prose, no `## Tasks` written yet) is NOT flagged here —
-    // only the corruption signature, so this never guesses on a plan that
-    // is merely new.
-    if (planParse.parseTasks(text).length === 0 && PLAN_BODY_CORRUPTION_RE.test(text)) {
-      out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs,
-        scanIssue: 'plan parse failed (unparseable body — zero tasks, corrupt content)' });
-      return;
-    }
-
-    out.push({ slug: slug, absPath: abs, archived: !!options.archived, mtimeMs: stat.mtimeMs });
-  });
-  return out;
-}
-
-// recentSlugsFromAskLinks(planAskLinks, cutoffMs) -> {slug: true, ...} for
-// every slug whose NEWEST linking ask is inside the aging window —
-// registry-timestamp-based, so it holds regardless of file mtime/worktree
-// checkout state.
-function recentSlugsFromAskLinks(planAskLinks, cutoffMs) {
-  const set = {};
-  Object.keys(planAskLinks).forEach((slug) => {
-    const newest = newestLinkTs(planAskLinks[slug]);
-    const ms = newest ? Date.parse(newest) : NaN;
-    if (!isNaN(ms) && ms >= cutoffMs) set[slug] = true;
-  });
-  return set;
-}
-
-// recentSlugsFromEvents(cutoffMs) -> {slug: true, ...} for every plan slug
-// with a task_started/task_done event inside the window, sourced from the
-// shared "unlinked" progress-log lane (progress-log-lib.sh's own
-// documented orphan-lane fallback for events with no ask_id) — the SAME
-// data source an unlinked plan's own status derivation already reads
-// (eventsForSlug), so this is a real recency signal for genuinely-active
-// archived/historical plans with no ask attached, not a new mechanism.
-function recentSlugsFromEvents(cutoffMs) {
-  const set = {};
-  deriveLib.readAskEvents('').forEach((e) => {
-    if (!e || !e.plan_slug || !e.ts) return;
-    const ms = Date.parse(e.ts);
-    if (!isNaN(ms) && ms >= cutoffMs) set[e.plan_slug] = true;
-  });
-  return set;
-}
-
-// newestLinkTs(links) — the MOST RECENT created_ts among every ask that
-// links a slug (distinct from planFallbackAddedTs's EARLIEST, which is the
-// right signal for build-order; recency-gating below needs "has ANYONE
-// referenced this slug lately", so the newest link is the right signal —
-// one old ask plus one fresh one still counts as "recent").
-function newestLinkTs(links) {
-  const tss = (links || []).map((a) => a.created_ts).filter(Boolean).sort();
-  return tss.length ? tss[tss.length - 1] : '';
-}
-
-// discoverPlanFiles(scanRoot, planAskLinks) -> { files: [{slug, absPath,
-// archived, mtimeMs}], ghostCount }
-// the UNION of (1) scanRoot's own docs/plans/*.md, (2) scanRoot's docs/
-// plans/archive/*.md within the completed-aging window, and (3) every
-// ask-linked plan slug resolved against ITS OWN ask's repo (cross-repo
-// plan-linking, preserved) not already captured by (1)/(2). Deduped by
-// SLUG, not absolute path: a slug is the roadmap node's own identity
-// (`id: pf.slug`), and a registry `repo` field can be recorded in a
-// different path STYLE than this process's own path.win32 resolution
-// (e.g. a POSIX-style `/c/Users/...` string written by a git-bash session,
-// vs this Node process's `C:\Users\...`) — deduping by the resolved
-// absPath STRING let the same real plan slip through twice under two
-// textually-different-but-filesystem-equivalent paths (found via a real-
-// data live check, 2026-07-21: `ask-rooted-workstreams-p1` rendered
-// twice). Deduping by slug is also simply the correct invariant regardless
-// of that specific cause: two entries sharing one `id` would corrupt
-// client-side expand-state keying (openSet[item.id]) and DOM lookups
-// (data-item-id) even if the path-string mismatch above were fixed some
-// other way.
+// MOVED (cross-machine-plan-inventory): the scan itself now lives in
+// derive-lib.js so the cockpit and the cross-machine EXPORTER read ONE
+// derivation instead of two that could never agree (the exporter used to
+// derive its inventory from ask-registry "plan_linked" records alone and
+// therefore shipped a couple of plans BY CONSTRUCTION, while this file
+// scanned every plan document on disk). derive-lib.js is the right home
+// because its own header carries the standing no-side-effects-at-require
+// contract the exporter depends on, and the exporter already requires it —
+// so unifying there adds no new require edge. THIS file is a route module
+// that owns handle(req, res); a future http dependency added here would
+// otherwise be silently inherited by the exporter.
 //
-// GHOST BOUNDING (found via the SAME real-data live check, 2026-07-21): an
-// ask-linked slug whose file cannot be resolved/read at all (moved,
-// archived-and-pruned, renamed, or from years of registry history) used to
-// surface UNCONDITIONALLY as an `unknown` root — every plan_linked record
-// the registry has EVER accumulated, forever. Against the real
-// ~/.claude/state/ask-registry.jsonl this produced ~154 stale ghost roots
-// out of 164 total (only ~10 are genuine current plans). C5's "never
-// silently drop a derivation failure" is right for a plan that goes dark
-// WHILE IT IS STILL CURRENT WORK; it is wrong applied to years of history.
-// The fix bounds a ghost by RECENCY, reusing the SAME completed_age_days
-// window (one tunable, same knob as archive aging and I2 collapse): a
-// ghost whose NEWEST linking ask is within the window still renders as an
-// honest `unknown` root (the real C5 signal — "this active-looking work
-// went dark"); an ancient ghost is EXCLUDED from the roots entirely but
-// COUNTED (never a silent drop — the caller surfaces one honest aggregate
-// line, never 150+ individual dead roots). The originating ask itself
-// stays fully visible in the Requests tab regardless (unchanged).
-// configuredRepoRoots() -> [{key, root}] — R9-8: EXPLICIT machine-local
-// repo config only (config/projects.json, the SAME two-layer convention
-// config/projects.js already established for the Docs browser: the
-// tracked config/projects.example.json is a generic placeholder; the real,
-// gitignored config/projects.json carries real absolute paths).
-//
-// Deliberately does NOT call config/projects.js's own loadProjects() here:
-// that function's auto-discovery ALSO pulls in every sibling repo under
-// ~/claude-projects with a docs/ dir, which would silently expand the
-// Roadmap's repo scan far beyond "configured repos" (R9-8's own wording)
-// the instant ANY sibling repo happens to exist on the machine — R9-8's
-// own binding rule is "keep the single-repo behavior as the zero-config
-// default", so this reads the raw JSON directly and stays scoped to repos
-// the operator actually configured. A malformed/absent config file is an
-// honest zero-length list (never a crash, never a silent guess).
-// R17 (operator 2026-07-30, decision A — multi-project grouping): each
-// entry supports TWO forms — the pre-existing flat string (`"AcmeApp":
-// "/abs/path"`, no group — those plans land in the honest '(ungrouped)'
-// display bucket, see projectGroupFor below) AND a new object form
-// (`"AcmeApp": { "root": "...", "group": "Acme Co" }`) that
-// additionally declares which top-level DISPLAY GROUP the repo's plans
-// belong to. `group` is deliberately read straight from the config file,
-// never defaulted/guessed here — the operator's own binding rule for this
-// round ("default group... for the example repo is NOT hardcoded").
-function configuredRepoRoots() {
-  const cfgPath = process.env.ROADMAP_PROJECTS_CONFIG ||
-    path.join(__dirname, '..', 'config', 'projects.json');
-  let raw;
-  try { raw = JSON.parse(fs.readFileSync(cfgPath, 'utf8')); } catch (_) { return []; }
-  const out = [];
-  Object.keys(raw || {}).forEach((key) => {
-    if (key === '_comment') return;
-    const val = raw[key];
-    if (typeof val === 'string' && val) { out.push({ key: key, root: val, group: '' }); return; }
-    if (val && typeof val === 'object' && typeof val.root === 'string' && val.root) {
-      out.push({ key: key, root: val.root, group: (typeof val.group === 'string' ? val.group : '') });
-    }
-  });
-  return out;
-}
+// Every name below is a PASS-THROUGH re-export, kept at its original name
+// so this file's own self-test suite drives the moved code unchanged
+// and is the pre-existing oracle proving the move was behavior-identical.
+// ----------------------------------------------------------------------
+const planScanRoot = deriveLib.planScanRoot;
+const isEligiblePlanStatus = deriveLib.isEligiblePlanStatus;
+const KNOWN_PLAN_STATUS_TOKENS = deriveLib.KNOWN_PLAN_STATUS_TOKENS;
+const planStatusToken = deriveLib.planStatusToken;
+const scanPlanDir = deriveLib.scanPlanDir;
+const recentSlugsFromAskLinks = deriveLib.recentSlugsFromAskLinks;
+const recentSlugsFromEvents = deriveLib.recentSlugsFromEvents;
+const newestLinkTs = deriveLib.newestLinkTs;
+
+// configuredRepoRoots — MOVED to derive-lib.js with the rest of the scan
+// (see the pass-through block above). Re-exported here at its original
+// name; the exporter needs the same list to declare its scan coverage.
+const configuredRepoRoots = deriveLib.configuredRepoRoots;
 
 // projectGroupFor(projectKey) -> the top-level DISPLAY GROUP a plan's
 // project belongs to. The self repo's group is intrinsic ('Neural Lace' —
@@ -617,80 +385,11 @@ function projectGroupFor(projectKey) {
   return UNGROUPED_PROJECT_GROUP;
 }
 
-function discoverPlanFiles(scanRoot, planAskLinks) {
-  const seenSlugs = {};
-  const out = [];
-  const cutoffMs = Date.now() - COMPLETED_AGE_DAYS * 86400000;
-  let ghostCount = 0;
-  // Worktree-independent recency evidence (see scanPlanDir's header note) —
-  // computed ONCE per request, threaded into the archive/ scan's aging gate
-  // alongside (never instead of) mtime.
-  const recentSlugs = Object.assign({}, recentSlugsFromAskLinks(planAskLinks, cutoffMs), recentSlugsFromEvents(cutoffMs));
-
-  // R9-8: scan THIS repo first (self — preserves the exact prior
-  // single-repo behavior/order when zero repos are configured), then every
-  // EXPLICITLY-configured repo's own docs/plans + docs/plans/archive, same
-  // aging/ghost rules, deduped by slug (first-seen wins — self takes
-  // precedence on a same-slug collision across repos). A configured repo
-  // with no docs/plans/ at all renders NOTHING for it (scanPlanDir already
-  // degrades an unreadable directory to an empty array — honest absence,
-  // never synthesized).
-  const repoRoots = [{ key: 'self', root: scanRoot }].concat(configuredRepoRoots());
-  repoRoots.forEach((r) => {
-    scanPlanDir(path.join(r.root, 'docs', 'plans'), { archived: false }).forEach((pf) => {
-      if (seenSlugs[pf.slug]) return;
-      seenSlugs[pf.slug] = true; out.push(pf);
-    });
-    scanPlanDir(path.join(r.root, 'docs', 'plans', 'archive'), { archived: true, cutoffMs: cutoffMs, recentSlugs: recentSlugs }).forEach((pf) => {
-      if (seenSlugs[pf.slug]) return;
-      seenSlugs[pf.slug] = true; out.push(pf);
-    });
-  });
-
-  Object.keys(planAskLinks).forEach((slug) => {
-    if (seenSlugs[slug]) return;
-    const links = planAskLinks[slug];
-    let repo = scanRoot;
-    for (let i = 0; i < links.length; i++) { if (links[i].repo) { repo = links[i].repo; break; } }
-    // resolvePlanAbsPath returns null when the file exists at NEITHER
-    // docs/plans/ NOR docs/plans/archive/ under this repo — a genuinely
-    // missing linked plan (the "ghost-plan" case), not merely an unreadable
-    // one. Synthesize the expected docs/plans/<slug>.md path in that case
-    // so the read below honestly fails ENOENT.
-    const abs = planParse.resolvePlanAbsPath(repo, slug) || path.join(repo, 'docs', 'plans', slug + '.md');
-    let stat, text;
-    try { stat = fs.statSync(abs); text = fs.readFileSync(abs, 'utf8'); }
-    catch (_) {
-      // The linked plan file genuinely can't be read (missing/moved/
-      // permission error). RECENT (newest linking ask inside the aging
-      // window, or an undated link — no evidence either way defaults to
-      // the safer, less-noisy "ancient" bucket) -> still surface as an
-      // `unknown` root (C5: current work going dark must never look
-      // identical to "never linked"). ANCIENT -> excluded from roots,
-      // counted in ghostCount (never rendered, never silently dropped).
-      const newest = newestLinkTs(links);
-      const newestMs = newest ? Date.parse(newest) : NaN;
-      const isRecent = !isNaN(newestMs) && newestMs >= cutoffMs;
-      if (!isRecent) { ghostCount++; return; }
-      seenSlugs[slug] = true;
-      out.push({ slug: slug, absPath: abs, archived: /[\\/]archive[\\/]/.test(abs), mtimeMs: 0 });
-      return;
-    }
-    const archived = /[\\/]archive[\\/]/.test(abs);
-    // Same evidence-gated aging rule as scanPlanDir (mtime is not
-    // trustworthy — see that function's header note): a readable-but-
-    // archived linked plan needs real recency evidence, not just a fresh
-    // (possibly checkout-reset) mtime. `newest` (this slug's OWN newest
-    // linking ask, already computed above) already covers the ask-link
-    // half of recentSlugs; recentSlugsFromEvents covers the progress-log
-    // half — checking the shared recentSlugs set gets both for free.
-    if (archived && !recentSlugs[slug]) return; // no recency evidence -> ancient archived linked plan stays out
-    if (!isEligiblePlanStatus(planParse.parsePlanStatus(text))) return;
-    seenSlugs[slug] = true;
-    out.push({ slug: slug, absPath: abs, archived: archived, mtimeMs: stat.mtimeMs });
-  });
-  return { files: out, ghostCount: ghostCount };
-}
+// discoverPlanFiles — MOVED to derive-lib.js (see the pass-through block
+// above). Re-exported at its original name so this file's suite is the
+// oracle for the move; the exporter now calls the SAME function, which is
+// the whole point (one inventory, two consumers).
+const discoverPlanFiles = deriveLib.discoverPlanFiles;
 
 // ----------------------------------------------------------------------
 // Plan-rank overlay — the INTERIM per-PLAN build-order store (a UI-state
@@ -1400,18 +1099,12 @@ function deriveTaskNode(slug, t, startedTs, doneTs, sessionsByTask, fromRequests
 // this is how a plan with NO linked ask still gets real task_started/
 // task_done derivation (no new event mechanism invented; this lane already
 // exists and is where such events land today).
-function eventsForSlug(slug, linkedAsks) {
-  const seenAskIds = {};
-  let all = [];
-  (linkedAsks || []).forEach((a) => {
-    if (seenAskIds[a.ask_id]) return;
-    seenAskIds[a.ask_id] = true;
-    all = all.concat(deriveLib.readAskEvents(a.ask_id));
-  });
-  all = all.concat(deriveLib.readAskEvents(''));
-  return all.filter((e) => e && e.plan_slug === slug && e.task_id)
-    .sort((a, b) => String(a.ts).localeCompare(String(b.ts)));
-}
+// MOVED to derive-lib.js with the inventory — deliberately. If the exporter
+// joined events per-ask while this file joined per-slug (which additionally
+// reads the shared UNLINKED orphan lane, the only in_flight source for a
+// scan-discovered plan with no ask), "one derivation" would still be a lie
+// about in_flight even after the inventory itself was unified.
+const eventsForSlug = deriveLib.eventsForSlug;
 
 function planFallbackAddedTs(pf, linkedAsks) {
   const tss = (linkedAsks || []).map((a) => a.created_ts).filter(Boolean).sort();
@@ -1892,15 +1585,16 @@ function absorbChildPlanRollUps(node) {
 // children on the live tree, never 'renderer supports parent-plan'").
 // ----------------------------------------------------------------------
 
-// repoRootFromAbsPath(absPath) -> the repo root a plan file lives under
-// (the part of its path before `/docs/plans/...`), used to re-resolve a
-// SAME-PROJECT parent-plan reference directly, bypassing discovery filters
-// entirely (the pinning case below).
-function repoRootFromAbsPath(absPath) {
-  if (!absPath) return '';
-  const m = String(absPath).replace(/\\/g, '/').match(/^(.*)\/docs\/plans\//);
-  return m ? m[1] : '';
-}
+// repoRootFromAbsPath(absPath) -> the repo root a plan file lives under,
+// used to re-resolve a SAME-PROJECT parent-plan reference directly,
+// bypassing discovery filters entirely (the pinning case below).
+//
+// RE-EXPORTED from derive-lib.js (2026-08-06), not re-implemented: this
+// module and export-state.js each carried a copy with a DIFFERENT regex.
+// See derive-lib.js's block for the divergence, why it was unreachable,
+// and why the strict form won. Same `===`-identity re-export as
+// discoverPlanFiles/scanPlanDir/isEligiblePlanStatus above.
+const repoRootFromAbsPath = deriveLib.repoRootFromAbsPath;
 
 // pinDanglingActiveMasters(items, ...) — Critical 4(1): "a master with ANY
 // non-terminal child is PINNED on the tree regardless of its own

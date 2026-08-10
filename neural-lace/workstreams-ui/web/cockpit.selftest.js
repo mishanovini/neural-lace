@@ -3615,6 +3615,236 @@ ok('CDFH-16 ALL FOUR in-page doc openers render through the shared window.MdRend
       /docBody\.innerHTML = window\.MdRender\.renderMarkdown\(j\.content\)/.test(s);
   }));
 
+// ============================================================
+// XM-PROGRESS — cross-machine plan inventory, RENDER BEHAVIOUR
+// (2026-08-06 remediation of cross-machine-plan-inventory defect 2).
+//
+// WHY THIS SECTION EXISTS. The named-absence change added two new branches
+// to asks.js — one in renderPlanBlock (local drill-down), one in
+// renderPeerPlanRow (peers section) — and this suite stayed at 593/0 both
+// before AND after, because nothing here executes either function. The
+// second branch shipped a real operator-facing regression: it gated on
+// `p.plan_state === 'parsed'`, so EVERY schema-1 peer row rendered "not
+// readable on that machine (legacy-unlabelled)" even with fully populated
+// progress. All three of this operator's hosts are schema-1 today, so the
+// live wire had the laptop's `ask-rooted-workstreams-p1` — 18 tasks, 18
+// done — displaying as unreadable.
+//
+// These assertions EXECUTE the real function bodies in the fake DOM (the
+// CDFH technique documented above; that block's own comment is the reason:
+// "A source-regex assertion here would be exactly the weak check that let
+// this class survive two previous fixes"). Fixtures are the REAL rows off
+// this machine's /api/asks peers block, copied verbatim, not invented.
+// ============================================================
+function collectClassText(node, cls, out) {
+  out = out || [];
+  if (!node || typeof node !== 'object') return out;
+  if (typeof node.className === 'string' && node.className.split(/\s+/).indexOf(cls) !== -1) {
+    out.push({ text: node.textContent, className: node.className, title: node.title || '' });
+  }
+  (node.children || []).forEach(function (c) { collectClassText(c, cls, out); });
+  return out;
+}
+
+const planBlockSrc = extractMarkedBlock(asksJs, '// PLAN-BLOCK-BEGIN', '// PLAN-BLOCK-END');
+const peerRowSrc = extractMarkedBlock(asksJs, '// PEER-PLAN-ROW-BEGIN', '// PEER-PLAN-ROW-END');
+ok('XM-PROGRESS-0 selftest can locate BOTH extraction anchors in asks.js (source-execution harness precondition)',
+  !!planBlockSrc && !!peerRowSrc);
+
+function runRender(src, callExpr) {
+  if (!src) return { __error: 'extraction anchors missing' };
+  const opened = [];
+  const sandbox = {
+    document: makeLinkFakeDom(),
+    openPlanDocModal: function (p, d) { opened.push(p + '/' + d); },
+    // renderPlanBlock's only other outside call; irrelevant to the branch
+    // under test, and its own behaviour is already covered by CDFH-1..16.
+    absoluteLinkNode: function (v) {
+      const n = makeLinkFakeDom().createElement('span'); n.textContent = String(v || ''); return n;
+    },
+    __opened: opened,
+  };
+  vmMod.createContext(sandbox);
+  try { vmMod.runInContext(src + '\nvar __result = (' + callExpr + ');', sandbox); }
+  catch (err) { return { __error: String(err) }; }
+  return { node: sandbox.__result, opened: opened };
+}
+// The peer harness runs the plan block FIRST so TASK_STATUS_LABEL /
+// taskStatusOf are the real ones, never a stub that could drift.
+function runPeerRow(rowJson) {
+  return runRender(planBlockSrc + '\n' + peerRowSrc, 'renderPeerPlanRow(' + JSON.stringify(rowJson) + ')');
+}
+function runPlanBlock(rowJson) {
+  return runRender(planBlockSrc, 'renderPlanBlock(' + JSON.stringify(rowJson) + ')');
+}
+function progressTextOf(r) {
+  const hits = collectClassText(r.node, 'peer-plan-progress');
+  return hits.length === 1 ? hits[0] : { text: '<' + hits.length + ' progress nodes>', className: '', title: '' };
+}
+
+// ---- the VERBATIM live rows off this machine's /api/asks peers block ----
+const LIVE_LAPTOP_ROW = {
+  plan_slug: 'ask-rooted-workstreams-p1', plan_doc: null, repo: '',
+  plan_state: 'legacy-unlabelled',
+  plan_state_reason: 'exported by an older client that predates named plan states — no claim either way about this plan',
+  plan_progress: { done: 18, in_flight: 0, not_started: 0, total: 18 },
+  tasks: [], provenance_label: 'from Misha-Laptop, master',
+};
+LIVE_LAPTOP_ROW.tasks = []; // task detail is not what this section asserts
+const LIVE_MACMINI_PARTIAL_ROW = {
+  plan_slug: 'review-independence', plan_doc: null, repo: '',
+  plan_state: 'legacy-unlabelled',
+  plan_state_reason: 'exported by an older client that predates named plan states — no claim either way about this plan',
+  plan_progress: { done: 0, in_flight: 0, not_started: 4, total: 4 },
+  tasks: [], provenance_label: 'from Mishas-Mac-mini.local, master',
+};
+const LIVE_MACMINI_ZERO_ROW = {
+  plan_slug: 'intended-functionality-outcome-gate', plan_doc: null, repo: '',
+  plan_state: 'legacy-unlabelled',
+  plan_state_reason: 'exported by an older client that predates named plan states — no claim either way about this plan',
+  plan_progress: { done: 0, in_flight: 0, not_started: 0, total: 0 },
+  tasks: [], provenance_label: 'from Mishas-Mac-mini.local, master',
+};
+
+ok('XM-PROGRESS-1 THE REGRESSION: the live schema-1 laptop row (18 of 18 done) renders "18/18 done" — NOT "not readable on that machine". A populated plan_progress is real data no matter which client version shipped it; calling it unreadable is a false claim in the opposite direction',
+  (function () {
+    const p = progressTextOf(runPeerRow(LIVE_LAPTOP_ROW));
+    return p.text === '18/18 done' && !/peer-plan-unread\b/.test(p.className);
+  })());
+
+ok('XM-PROGRESS-2 the same row still carries its provenance caveat on hover (the un-upgraded-client reason is available, it just no longer replaces the numbers) and is class-marked peer-plan-legacy',
+  (function () {
+    const p = progressTextOf(runPeerRow(LIVE_LAPTOP_ROW));
+    return /predates named plan states/.test(p.title) && /peer-plan-legacy\b/.test(p.className);
+  })());
+
+ok('XM-PROGRESS-3 a live schema-1 row with work still outstanding renders its real split ("0/4 done"), not a collapsed or unreadable state',
+  progressTextOf(runPeerRow(LIVE_MACMINI_PARTIAL_ROW)).text === '0/4 done');
+
+ok('XM-PROGRESS-4 in-flight counts survive the legacy path too ("2/5 done, 1 in-flight")',
+  progressTextOf(runPeerRow(Object.assign({}, LIVE_MACMINI_PARTIAL_ROW, {
+    plan_progress: { done: 2, in_flight: 1, not_started: 2, total: 5 },
+  }))).text === '2/5 done, 1 in-flight');
+
+ok('XM-PROGRESS-5 a schema-2 `parsed` row renders its progress unchanged (the pre-existing happy path is not disturbed)',
+  progressTextOf(runPeerRow({
+    plan_slug: 'good-plan', plan_state: 'parsed', plan_state_reason: '',
+    plan_progress: { done: 1, in_flight: 0, not_started: 0, total: 1 }, tasks: [], provenance_label: 'x',
+  })).text === '1/1 done');
+
+ok('XM-PROGRESS-6 a schema-2 GENUINELY EMPTY plan (parsed, total 0) still renders "0/0 done" — emptiness is a real, claimable state and must stay distinguishable from absence',
+  progressTextOf(runPeerRow({
+    plan_slug: 'empty-but-real', plan_state: 'parsed', plan_state_reason: '',
+    plan_progress: { done: 0, in_flight: 0, not_started: 0, total: 0 }, tasks: [], provenance_label: 'x',
+  })).text === '0/0 done');
+
+ok('XM-PROGRESS-7 a schema-2 UNRESOLVABLE row (plan_progress null) is the ONLY shape that says "not readable on that machine", and it names the state and carries the reason on hover',
+  (function () {
+    const p = progressTextOf(runPeerRow({
+      plan_slug: 'gone-plan', plan_state: 'unresolvable',
+      plan_state_reason: 'no plan file at docs/plans/ or docs/plans/archive/',
+      plan_progress: null, tasks: null, provenance_label: 'x',
+    }));
+    return p.text === 'not readable on that machine (unresolvable)' &&
+      /peer-plan-unread\b/.test(p.className) && /no plan file at/.test(p.title);
+  })());
+
+ok('XM-PROGRESS-8 the AMBIGUOUS legacy shape (schema-1, total 0) claims NEITHER "0/0 done" NOR "not readable" — master\'s exporter turned an unreadable plan into tasks:[] + all-zero progress, so an empty plan and a missing one are byte-identical in a schema-1 export and neither claim is provable',
+  (function () {
+    const p = progressTextOf(runPeerRow(LIVE_MACMINI_ZERO_ROW));
+    return p.text === 'no task claim from that machine (legacy-unlabelled)' &&
+      /peer-plan-unclaimed\b/.test(p.className) &&
+      p.text.indexOf('0/0 done') === -1 && p.text.indexOf('not readable') === -1;
+  })());
+
+ok('XM-PROGRESS-9 a row with no plan_state at all (a shape older than every label) degrades to the named "unknown" state, never to a crash and never to a fabricated zero',
+  (function () {
+    const r = runPeerRow({ plan_slug: 'x', plan_progress: null, tasks: null, provenance_label: '' });
+    if (r.__error) return false;
+    return progressTextOf(r).text === 'not readable on that machine (unknown)';
+  })());
+
+// ---- renderPlanBlock: the LOCAL drill-down branch, also zero-coverage ----
+ok('XM-PROGRESS-10 renderPlanBlock: a local row whose plan could not be read (tasks null) says so and names the state + reason — this branch had no coverage at all',
+  (function () {
+    const r = runPlanBlock({
+      plan_slug: 'gone', plan_doc: null, tasks: null,
+      plan_state: 'unresolvable', plan_state_reason: 'no plan file at docs/plans/ or docs/plans/archive/',
+    });
+    if (r.__error) return false;
+    const hits = collectClassText(r.node, 'ask-plan-unreadable');
+    return hits.length === 1 &&
+      /plan file could not be read \(unresolvable\)/.test(hits[0].text) &&
+      /no plan file at/.test(hits[0].text) &&
+      collectClassText(r.node, 'ask-plan-empty').length === 0;
+  })());
+
+ok('XM-PROGRESS-11 renderPlanBlock: a local row that is GENUINELY empty (tasks []) still says "no tasks found for this plan" and does NOT take the unreadable branch — the whole point of the split is that these two stay different',
+  (function () {
+    const r = runPlanBlock({ plan_slug: 'empty', plan_doc: null, tasks: [], plan_state: 'parsed', plan_state_reason: '' });
+    if (r.__error) return false;
+    return collectClassText(r.node, 'ask-plan-empty').length === 1 &&
+      collectClassText(r.node, 'ask-plan-empty')[0].text === 'no tasks found for this plan' &&
+      collectClassText(r.node, 'ask-plan-unreadable').length === 0;
+  })());
+
+ok('XM-PROGRESS-12 renderPlanBlock: a populated local row renders its task rows and takes neither absence branch',
+  (function () {
+    const r = runPlanBlock({
+      plan_slug: 'real', plan_doc: null, plan_state: 'parsed', plan_state_reason: '',
+      tasks: [{ id: '1', done: true, in_flight: false }, { id: '2', done: false, in_flight: true }],
+    });
+    if (r.__error) return false;
+    return collectClassText(r.node, 'ask-task-row').length === 2 &&
+      collectClassText(r.node, 'ask-plan-unreadable').length === 0 &&
+      collectClassText(r.node, 'ask-plan-empty').length === 0;
+  })());
+
+// ---- scan_coverage: rendered, not just allowlisted -----------------------
+// `grep -rn scan_coverage web/` returned 0 hits before this change: the
+// field was computed by peer-view.js, allowlisted by payload-schema.js and
+// consumed by nothing. These EXECUTE the render path rather than proving a
+// string exists.
+const scanCovSrc = extractMarkedBlock(asksJs, '// SCAN-COVERAGE-BEGIN', '// SCAN-COVERAGE-END');
+ok('XM-SCAN-0 selftest can locate the SCAN-COVERAGE extraction anchors in asks.js',
+  !!scanCovSrc);
+function runPeerEntry(entryJson) {
+  return runRender(planBlockSrc + '\n' + peerRowSrc + '\n' +
+    'function renderPeerSessionRow(s){var n=document.createElement("div");n.className="peer-session-row";return n;}\n' +
+    scanCovSrc, 'renderPeerEntry(' + JSON.stringify(entryJson) + ')');
+}
+const LIVE_PEER_ENTRY = {
+  host: 'Misha-Laptop', state: 'estate-unchanged', state_label: 'estate unchanged',
+  scan_coverage: { repos: 0, projects_config: 'unknown', completed_age_days: 0, stale_links_omitted: 0 },
+  plans: [LIVE_LAPTOP_ROW], sessions: [],
+};
+ok('XM-SCAN-1 a peer entry RENDERS its scan_coverage line — the live laptop row reports "scanned 0 repos · projects config: unknown", so a host with a shorter plan list is a DECLARED difference on screen instead of one the operator has to infer',
+  (function () {
+    const r = runPeerEntry(LIVE_PEER_ENTRY);
+    if (r.__error) return false;
+    const hits = collectClassText(r.node, 'peer-scan-coverage');
+    return hits.length === 1 && hits[0].text === 'scanned 0 repos · projects config: unknown';
+  })());
+
+ok('XM-SCAN-2 a richer coverage record renders every declared part, with `malformed` surfaced verbatim rather than collapsed into a healthy-looking default',
+  (function () {
+    const r = runPeerEntry(Object.assign({}, LIVE_PEER_ENTRY, {
+      scan_coverage: { repos: 1, projects_config: 'malformed', completed_age_days: 7, stale_links_omitted: 5 },
+    }));
+    if (r.__error) return false;
+    const hits = collectClassText(r.node, 'peer-scan-coverage');
+    return hits.length === 1 &&
+      hits[0].text === 'scanned 1 repo · projects config: malformed · completed plans aged out after 7d · 5 stale plan links omitted';
+  })());
+
+ok('XM-SCAN-3 a peer that shipped NO scan_coverage at all says so — never an invented "scanned 0 repos" that would read as a real measurement',
+  (function () {
+    const r = runPeerEntry(Object.assign({}, LIVE_PEER_ENTRY, { scan_coverage: undefined }));
+    if (r.__error) return false;
+    const hits = collectClassText(r.node, 'peer-scan-coverage');
+    return hits.length === 1 && hits[0].text === 'scan coverage not reported by that machine';
+  })());
+
 console.log('');
 console.log('self-test summary: ' + pass + ' passed, ' + fail + ' failed');
 process.exit(fail === 0 ? 0 : 1);

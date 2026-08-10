@@ -185,6 +185,25 @@ if command -v nl_workstreams_ui >/dev/null 2>&1; then
   [[ -n "$_ui_dir" ]] && _EXPORTER_JS_DEFAULT="$_ui_dir/server/export-state.js"
 fi
 EXPORTER_JS="${COORD_SYNC_EXPORTER_JS:-$_EXPORTER_JS_DEFAULT}"
+# EXPORTER_TIMEOUT_SECONDS — a hard ceiling on the exporter step. This call
+# had NO bound: whatever export-state.js cost, this cycle paid, and a
+# scheduled task fires it repeatedly.
+#
+# Measured on this machine 2026-08-06 (5 runs each, wall clock):
+#   master exporter (2 plans shipped)              ~0.70 s
+#   cross-machine-plan-inventory branch (29 plans) ~3.40 s
+#   ... after removing the readAskEvents N+1        ~1.20 s
+# The remaining 1.7x over master is the FEATURE (29 plans exported instead
+# of 2), not overhead. This timeout is not the fix for that cost — the N+1
+# removal was; it is the bound that keeps an unforeseen future cost (a much
+# larger progress log, a stalled filesystem, a network-mounted repo root)
+# from turning one slow cycle into an unbounded one. A timeout kill is a
+# LOUD degradation: rc=124 flows into the existing `exporter: rc=` log line
+# and the cycle continues to the push step, exactly as any other exporter
+# failure does. 60s is ~50x the measured cost — wide enough that a healthy
+# machine can never hit it, narrow enough that a wedged one does not sit
+# through the 600s floor.
+EXPORTER_TIMEOUT_SECONDS="${COORD_SYNC_EXPORTER_TIMEOUT_SECONDS:-60}"
 
 _log()  { printf '[coord-sync] %s\n' "$*" >&2; }
 _warn() { printf '[coord-sync] WARN: %s\n' "$*" >&2; }
@@ -439,7 +458,18 @@ _run_cycle() {
   if [ -n "${COORD_SYNC_EXPORTER_CMD:-}" ]; then
     export_out=$(bash -c "$COORD_SYNC_EXPORTER_CMD" 2>&1); export_rc=$?
   elif [ -n "$EXPORTER_JS" ] && [ -f "$EXPORTER_JS" ]; then
-    export_out=$(EXPORT_DIR="$export_dir" node "$EXPORTER_JS" 2>&1); export_rc=$?
+    # Bounded (see EXPORTER_TIMEOUT_SECONDS above). `timeout` is absent on
+    # some minimal environments, so fall back to the UNBOUNDED call rather
+    # than skipping the export entirely — losing the bound is a degradation,
+    # losing the export is an outage.
+    if command -v timeout >/dev/null 2>&1; then
+      export_out=$(EXPORT_DIR="$export_dir" timeout "$EXPORTER_TIMEOUT_SECONDS" node "$EXPORTER_JS" 2>&1); export_rc=$?
+      if [ "$export_rc" -eq 124 ]; then
+        _warn "exporter exceeded ${EXPORTER_TIMEOUT_SECONDS}s and was killed — this cycle publishes no fresh plan export (raise COORD_SYNC_EXPORTER_TIMEOUT_SECONDS if this is legitimate work)"
+      fi
+    else
+      export_out=$(EXPORT_DIR="$export_dir" node "$EXPORTER_JS" 2>&1); export_rc=$?
+    fi
   else
     _warn "exporter script not found (resolved: '${EXPORTER_JS:-<empty>}') — skipping export step this cycle"
     export_rc=127
@@ -981,6 +1011,58 @@ _self_test() {
   local out12c; out12c="$(_s12_run)"
   [ -f "$s12_state/cycles.log" ]
   _ck "Scenario 12c: HALT cleared -> next tick runs a normal cycle (cycle-log row written)" $?
+
+  # ======== Scenario 13 (2026-08-06 remediation): the exporter step is
+  # TIME-BOUNDED. This call had no ceiling — whatever export-state.js cost,
+  # every cycle paid, on a scheduled task. These drive the EXPORTER_JS path
+  # (not COORD_SYNC_EXPORTER_CMD, which deliberately bypasses the bound so
+  # the other scenarios' stubs stay unaffected). ========
+  if command -v timeout >/dev/null 2>&1; then
+    local s13_state="$tmproot/s13-state"
+    mkdir -p "$s13_state"
+    local s13_slow="$tmproot/s13-slow-exporter.js"
+    printf 'setTimeout(function(){}, 30000);\n' > "$s13_slow"
+    printf 'selftest-event\n' > "$s13_state/dirty"
+    local s13_t0 s13_t1 s13_out
+    s13_t0=$(date +%s)
+    s13_out=$(
+      export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s13-clone" COORD_BRANCH="main"
+      export STATE_DIR="$s13_state" COORD_SYNC_FLOOR_SECONDS=999999
+      export COORD_SYNC_EXPORTER_JS="$s13_slow" COORD_SYNC_EXPORTER_TIMEOUT_SECONDS=2
+      unset COORD_SYNC_EXPORTER_CMD
+      export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+      bash "$SELF_PATH" 2>&1
+    )
+    s13_t1=$(date +%s)
+    [ $(( s13_t1 - s13_t0 )) -lt 20 ]
+    _ck "Scenario 13a: a hung exporter is KILLED at the timeout instead of running to completion (a 30s exporter under a 2s bound returns in well under 20s)" $?
+    printf '%s' "$s13_out" | grep -qi "exporter exceeded"
+    _ck "Scenario 13a2: the timeout kill is LOUD — the cycle warns, naming the bound and the env var that raises it (never a silent no-export)" $?
+    printf '%s' "$s13_out" | grep -q "exporter: rc=124"
+    _ck "Scenario 13b: the kill surfaces as rc=124 on the existing exporter log line (degrades like any other exporter failure, cycle continues to push)" $?
+
+    # A FAST exporter under the same bound must be untouched — the timeout
+    # is a ceiling, never a delay.
+    # NOTE: the marker path is derived INSIDE node from __dirname rather than
+    # interpolated from bash. On Windows/MSYS a bash "/tmp/..." path is not a
+    # path node can open (it resolves to C:\tmp\...), so interpolating one
+    # here fails for reasons that have nothing to do with the bound.
+    local s13_fast="$tmproot/s13-fast-exporter.js" s13_ran="$tmproot/s13-ran"
+    printf '%s\n' 'require("fs").writeFileSync(require("path").join(__dirname, "s13-ran"), "ran");' > "$s13_fast"
+    printf 'selftest-event\n' > "$s13_state/dirty"
+    s13_out=$(
+      export COORD_REPO_URL="$bare" COORD_CLONE_DIR="$tmproot/s13-clone" COORD_BRANCH="main"
+      export STATE_DIR="$s13_state" COORD_SYNC_FLOOR_SECONDS=999999
+      export COORD_SYNC_EXPORTER_JS="$s13_fast" COORD_SYNC_EXPORTER_TIMEOUT_SECONDS=60
+      unset COORD_SYNC_EXPORTER_CMD
+      export COORD_SYNC_PUSH_CMD="true" COORD_SYNC_PULL_CMD="true"
+      bash "$SELF_PATH" 2>&1
+    )
+    [ -f "$s13_ran" ] && printf '%s' "$s13_out" | grep -q "exporter: rc=0"
+    _ck "Scenario 13c: a normal exporter under the bound runs to completion untouched (rc=0) — the ceiling never becomes a delay or a false kill" $?
+  else
+    _ck "Scenario 13: SKIPPED — no \`timeout\` binary on this machine, so coord-sync deliberately falls back to the UNBOUNDED call (losing the bound is a degradation; losing the export would be an outage)" 0
+  fi
 
   rm -rf "$tmproot" 2>/dev/null || true
   echo "[self-test] coord-sync: $pass passed, $fail failed"

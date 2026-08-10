@@ -40,7 +40,21 @@ const crypto = require('crypto');
 const { execFileSync, spawn } = require('child_process');
 const deriveLib = require('./derive-lib.js');
 
-const SCHEMA_VERSION = 1;
+// SCHEMA_VERSION 2 (cross-machine-plan-inventory): the plans block is now
+// the SHARED disk-scan inventory (derive-lib.discoverPlanFiles — the same
+// derivation the cockpit's Roadmap reads) instead of the ask-registry
+// "plan_linked" fold, and every plan row carries a NAMED plan_state.
+//
+// The bump is load-bearing, not cosmetic. A version-2 reader seeing a
+// version-1 export must NOT default the missing plan_state to 'parsed' —
+// that would re-launder the exact bug this change removes (an unreadable
+// plan reappearing as a healthy 0/0). peer-view.js renders any
+// schema_version < 2 plan row as the named state 'legacy-unlabelled'
+// instead. Old readers are safe in the other direction by construction:
+// peer-view's projection is an explicit field pick, so fields it does not
+// know about are dropped rather than mishandled. Self-heals within one
+// sync cycle per host.
+const SCHEMA_VERSION = 2;
 
 // A3ii (BINDING): refresh `exported_at` at least every 60min even when the
 // derived content hash is UNCHANGED. Without this, a peer that has gone
@@ -83,47 +97,126 @@ function provenance() {
     branch: gitField(['rev-parse', '--abbrev-ref', 'HEAD'], root),
     head_sha: gitField(['rev-parse', 'HEAD'], root),
     dirty: gitDirty(root),
+    scan: scanProvenance(),
   };
 }
 
-// derivePlanRecords() — folds the WHOLE ask registry (fail-open: no
-// registry file -> {} -> []), computing plan rows per ask via derive-lib's
-// computePlanRows — the SAME event-log join server.js's own /api/ask/<id>
-// uses (F1: in_flight is the join RESULT computed NOW, a point-in-time
-// snapshot; re-running the join at read time on the peer would need the
-// peer to have this machine's progress-log/ask-registry files, which is
-// exactly what the export is standing in for). No getBadgesForAsk is
-// passed — drift-badge propagation into the export is Task 7's concern
-// (C3b), out of this task's scope; rows here simply carry no badges.
+// scanProvenance() — WHAT THIS HOST ACTUALLY SCANNED, as a declared state.
 //
-// Re-keyed from per-ask to per-(repo, slug): the plan file + its task
-// events are ground truth regardless of which ask discovered them, so if
-// more than one ask links the same plan, the first one folded wins (stable
-// because foldAskRegistry's own iteration order is insertion order over
-// Object.keys, which for a single export run is deterministic) — a
-// duplicate is redundant data, not a conflict to resolve.
-function derivePlanRecords() {
-  const registry = deriveLib.foldAskRegistry();
-  const byKey = {};
-  Object.keys(registry).forEach((askId) => {
-    const reg = registry[askId];
-    reg.ask_id = askId;
-    const events = deriveLib.readAskEvents(askId);
-    const rows = deriveLib.computePlanRows(reg, events);
-    rows.forEach((row) => {
-      const key = (reg.repo || '') + '|' + row.plan_slug;
-      if (byKey[key]) return; // first-wins — see header note above
-      byKey[key] = {
-        repo: reg.repo || '',
-        plan_slug: row.plan_slug,
-        plan_doc: row.plan_doc,
-        tasks: row.tasks.map((t) => ({ id: t.id, done: t.done, in_flight: t.in_flight, evidence_link: t.evidence_link })),
-        progress: deriveLib.aggregatePlanProgress([row]),
-      };
-    });
-  });
-  return Object.keys(byKey).sort().map((k) => byKey[k]);
+// config/projects.json is gitignored and machine-local, so multi-repo
+// coverage genuinely DIFFERS per machine: a host without that file scans
+// only its own repo and is entirely correct to do so. The requirement is
+// that the difference is NAMED, never silent — an operator comparing three
+// hosts must be able to read "this host scans 1 repo (projects_config:
+// absent)" instead of inferring absence from a short list.
+//
+// `projects_config` is the distinction configuredRepoRoots() itself throws
+// away: its catch degrades BOTH "no file" and "unparseable file" to the same
+// empty list. `completed_age_days` names the archive-recency ceiling that is
+// what actually bounds this payload's size — legible rather than incidental.
+function scanProvenance() {
+  const scanRoot = deriveLib.planScanRoot();
+  const roots = [{ key: 'self', root: scanRoot }].concat(deriveLib.configuredRepoRoots());
+  return {
+    root: scanRoot,
+    projects_config: deriveLib.configuredRepoRootsState(),
+    completed_age_days: deriveLib.COMPLETED_AGE_DAYS,
+    repo_roots: roots.map((r) => ({
+      key: r.key, root: r.root,
+      present: fs.existsSync(path.join(r.root, 'docs', 'plans')),
+    })),
+  };
 }
+
+// derivePlanRecords() -> {records, ghost_count}
+//
+// THE FIX (cross-machine-plan-inventory, defect 1). This used to fold the
+// ask registry and emit one record per ask-linked plan slug. derive-lib's
+// foldAskRegistry appends plan_slugs ONLY from records with record_type
+// "plan_linked", and the sole writer of those is guarded on an ask id — so
+// any plan started without one was never linked, and this export contained
+// a couple of plans BY CONSTRUCTION while the cockpit next to it scanned
+// every plan document on disk. Three machines each rendered an independent
+// local derivation and never agreed.
+//
+// It now drives the SAME derive-lib.discoverPlanFiles the cockpit's Roadmap
+// drives, off the SAME planScanRoot, joined with the SAME eventsForSlug.
+// One derivation, two consumers — divergence is not detected, it is
+// unrepresentable, because there is no second derivation left to diverge.
+//
+// A4 (BINDING) is respected and, if anything, reinforced: every read here
+// still goes through derive-lib.js's pure local-disk functions. Nothing in
+// this file requires server.js — nor roadmap-routes.js, which is a route
+// module owning handle(req, res); the shared scan was moved INTO derive-lib
+// precisely so this file never needs an edge to an HTTP surface.
+//
+// `repo` comes from repoRootFromAbsPath(the scanned file's own path), NOT
+// from a registry `repo` field — that field is empty on the live sentinel
+// records and is the direct cause of today's hollow rows.
+function derivePlanRecords() {
+  const folded = deriveLib.foldAskRegistry();
+  const links = deriveLib.planAskLinkIndex(folded);
+  const scanRoot = deriveLib.planScanRoot();
+  const discovered = deriveLib.discoverPlanFiles(scanRoot, links);
+
+  const records = discovered.files.map((pf) => {
+    const linkedAsks = links[pf.slug] || [];
+    // The named-absence resolver: `tasks` is an Array if and only if
+    // state === 'parsed'. A scanIssue from the scan (unrecognized Status:
+    // token, destroyed header, unreadable file) is carried straight through
+    // as 'ineligible' rather than being re-derived or silently zeroed.
+    const res = deriveLib.resolvePlanTasks('', pf.slug, { absPath: pf.absPath, scanIssue: pf.scanIssue });
+    const rec = {
+      plan_slug: pf.slug,
+      repo: repoRootFromAbsPath(pf.absPath),
+      plan_doc: deriveLib.projectDocRefFor(pf.absPath),
+      archived: !!pf.archived,
+      // NAMED, never inferred by the reader. Deliberately NOT called
+      // `source`: that key already exists in the landing payload's
+      // allowlist with an unrelated meaning (my_coord_refresh.source), so a
+      // plan-record `source` would validate cleanly while silently
+      // overloading it.
+      discovery: pf.discovery === 'ask-link' ? 'ask-link' : 'scan',
+      plan_state: res.state,
+      plan_state_reason: res.reason,
+      tasks: null,
+      progress: null,
+    };
+    if (res.state !== 'parsed') return rec; // INVARIANT: tasks/progress stay null
+    // Same event join the cockpit runs — every linked ask's lane PLUS the
+    // shared unlinked orphan lane, which for a scan-discovered plan with no
+    // ask is the ONLY source of task_started/task_done.
+    const events = deriveLib.eventsForSlug(pf.slug, linkedAsks);
+    const started = {}; const doneEv = {};
+    events.forEach((e) => {
+      if (!e || !e.task_id) return;
+      if (e.type === 'task_started') started[e.task_id] = true;
+      if (e.type === 'task_done') doneEv[e.task_id] = e.evidence_link || '';
+    });
+    rec.tasks = res.tasks.map((t) => ({
+      id: t.id,
+      done: t.done,
+      in_flight: !t.done && !!started[t.id] && !doneEv[t.id],
+      evidence_link: doneEv[t.id] || '',
+    }));
+    rec.progress = deriveLib.aggregatePlanProgress([{ tasks: rec.tasks }]);
+    return rec;
+  }).sort((a, b) => a.plan_slug.localeCompare(b.plan_slug));
+
+  // ghostCount is surfaced as a NAMED aggregate (the same one the cockpit
+  // already shows) — ask-linked slugs with no readable file and no recent
+  // evidence are excluded from the inventory but never silently dropped.
+  return { records: records, ghost_count: discovered.ghostCount };
+}
+
+// repoRootFromAbsPath — the repo root a scanned plan file belongs to.
+// RE-EXPORTED from derive-lib.js, not re-implemented: this used to be a
+// local copy whose regex differed from roadmap-routes.js's copy (see
+// derive-lib.js's own block for the divergence and why the strict form
+// won). Importing it from derive-lib preserves A4 exactly — derive-lib is
+// pure local-disk reads, it is roadmap-routes.js (a route module owning
+// handle(req, res)) that this file must not depend on.
+const repoRootFromAbsPath = deriveLib.repoRootFromAbsPath;
 
 // deriveSessionsBlock() — A3c (BINDING): RAW `last_heartbeat_at` per
 // session, role/plan metadata folded in, NEVER a baked live/stale/crashed
@@ -162,10 +255,16 @@ function deriveSessionsBlock() {
 }
 
 function buildPayload() {
+  const planned = derivePlanRecords();
+  const prov = provenance();
+  // The named aggregate for ask-linked slugs that resolved to nothing and
+  // had no recent evidence — excluded from the inventory, never silently
+  // dropped. Same figure the cockpit's own Roadmap surfaces.
+  prov.scan.stale_links_omitted = planned.ghost_count;
   return {
     schema_version: SCHEMA_VERSION,
-    provenance: provenance(),
-    plans: derivePlanRecords(),
+    provenance: prov,
+    plans: planned.records,
     sessions: deriveSessionsBlock(),
   };
 }
@@ -238,6 +337,10 @@ module.exports = {
   runExport, buildPayload, contentHash, stableStringify, provenance,
   derivePlanRecords, deriveSessionsBlock, exportFilePath, hostname,
   KEEPALIVE_MS,
+  // Re-exported so the "ONE derivation" claim is MECHANICALLY checkable
+  // (=== identity against derive-lib's own object), the same way the plan
+  // scan's functions already are — see this file's self-test.
+  repoRootFromAbsPath,
 };
 
 // ============================================================================
@@ -258,6 +361,14 @@ async function selfTest() {
   const ENV_KEYS = [
     'ASK_REGISTRY_STATE_DIR', 'PROGRESS_LOG_STATE_DIR', 'DISPATCH_PROVENANCE_STATE_DIR',
     'HEARTBEAT_STATE_DIR', 'EXPORT_HOSTNAME',
+    // cross-machine-plan-inventory: the exporter now derives its plan
+    // inventory by SCANNING docs/plans from disk (the same derivation the
+    // cockpit reads) instead of folding ask-registry "plan_linked" records.
+    // That makes the plan scan root a state path this suite must sandbox
+    // like every other one — without these two, every scenario below would
+    // read the developer's REAL checkout and the fixtures would be drowned
+    // in a hundred live plans.
+    'ROADMAP_PLAN_SCAN_ROOT', 'ROADMAP_PROJECTS_CONFIG',
   ];
   ENV_KEYS.forEach((k) => { savedEnv[k] = process.env[k]; });
 
@@ -267,15 +378,24 @@ async function selfTest() {
     const plDir = path.join(dir, 'pl');
     const dpDir = path.join(dir, 'dp');
     const hbDir = path.join(dir, 'hb');
+    // The scan root every scenario's plan fixtures already live under.
+    const repoDir = path.join(dir, 'repo');
     fs.mkdirSync(arDir, { recursive: true });
     fs.mkdirSync(plDir, { recursive: true });
     fs.mkdirSync(dpDir, { recursive: true });
     fs.mkdirSync(hbDir, { recursive: true });
+    fs.mkdirSync(path.join(repoDir, 'docs', 'plans'), { recursive: true });
     process.env.ASK_REGISTRY_STATE_DIR = arDir;
     process.env.PROGRESS_LOG_STATE_DIR = plDir;
     process.env.DISPATCH_PROVENANCE_STATE_DIR = dpDir;
     process.env.HEARTBEAT_STATE_DIR = hbDir;
-    return { dir, arDir, plDir, dpDir, hbDir };
+    process.env.ROADMAP_PLAN_SCAN_ROOT = repoDir;
+    // Point the multi-repo config at a path that does not exist, so the
+    // sandbox scans exactly one repo and `projects_config` reports the
+    // NAMED 'absent' state rather than picking up this machine's real
+    // (gitignored, machine-local) config/projects.json.
+    process.env.ROADMAP_PROJECTS_CONFIG = path.join(dir, 'no-projects.json');
+    return { dir, arDir, plDir, dpDir, hbDir, repoDir };
   }
 
   function regLine(fields) {
@@ -300,7 +420,14 @@ async function selfTest() {
     const slug = 'fixture-plan';
     const planAbsPath = path.join(planRepoRoot, 'docs', 'plans', slug + '.md');
     fs.writeFileSync(planAbsPath, [
+      // A `Status:` header is what makes a docs/plans/*.md file an actual
+      // PLAN rather than an evidence stub or fragment. The exporter now
+      // applies the SAME eligibility rule the cockpit's Roadmap applies (one
+      // derivation, defect 1), so this fixture has to be a well-formed plan
+      // — the old registry-fold exporter accepted anything an ask happened
+      // to link, which is part of why the two views could never agree.
       '# Plan: Fixture', '',
+      'Status: ACTIVE', '',
       '- [x] 1. Task one done.',
       '- [ ] 2. Task two dispatched, in-flight.',
       '- [ ] 3. Task three not started.', '',
@@ -339,7 +466,7 @@ async function selfTest() {
       payload1.sessions.some((s) => s.session_id === 'sess-a' && s.plan_slug === slug && s.task_id === '2'),
       JSON.stringify(payload1.sessions));
     ok('1d. provenance stamps schema_version/hostname/exported_at/content_hash',
-      payload1.schema_version === 1 && payload1.provenance.hostname === 'host-a' &&
+      payload1.schema_version === 2 && payload1.provenance.hostname === 'host-a' &&
       typeof payload1.exported_at === 'string' && typeof payload1.content_hash === 'string',
       JSON.stringify({ schema_version: payload1.schema_version, provenance: payload1.provenance }));
 
@@ -499,12 +626,176 @@ async function selfTest() {
     ok('8. (A4 trap) exporter succeeds and writes a real export while a LIVE cockpit server holds the port — proves no require(./server.js), no EADDRINUSE interference',
       serverWasUp && !r8err && payload8 && Array.isArray(payload8.plans) && payload8.provenance.hostname === 'host-server-up',
       'serverWasUp=' + serverWasUp + ' err=' + String(r8err && r8err.message) + ' payload=' + JSON.stringify(payload8 && payload8.provenance));
+
+    // ==================================================================
+    // Scenarios 9-13 — cross-machine-plan-inventory (2026-08-06).
+    // ==================================================================
+
+    // ---- Scenario 9: THE DEFECT ITSELF. The export's plan inventory is
+    // the DISK SCAN, not the ask-registry "plan_linked" fold.
+    //
+    // Fixture: 120 well-formed plan files on disk, of which exactly TWO are
+    // ask-linked. The old exporter emitted one record per plan_linked
+    // record and would therefore ship 2 while the cockpit beside it showed
+    // 120 — which is precisely why three machines never agreed. Both
+    // numbers are asserted, so this fails loudly in EITHER direction: too
+    // few (the fold came back) or a scan that silently disagrees with the
+    // cockpit's own.
+    const s9 = sandbox('s9-inventory');
+    const PLAN_COUNT = 120;
+    const s9PlansDir = path.join(s9.repoDir, 'docs', 'plans');
+    for (let i = 1; i <= PLAN_COUNT; i++) {
+      const n = String(i).padStart(3, '0');
+      fs.writeFileSync(path.join(s9PlansDir, 'scanned-plan-' + n + '.md'), [
+        '# Plan: scanned ' + n, '', 'Status: ACTIVE', '',
+        '- [x] 1. First task.',
+        '- [ ] 2. Second task.', '',
+      ].join('\n'));
+    }
+    fs.writeFileSync(path.join(s9.arDir, 'ask-registry.jsonl'), [
+      regLine({ ask_id: 'ask-9', record_type: 'created', ts: '2026-07-01T00:00:00Z', repo: s9.repoDir, project: 'demo', summary: 'only two plans are linked', status: 'active' }),
+      regLine({ ask_id: 'ask-9', record_type: 'plan_linked', ts: '2026-07-01T00:01:00Z', plan_slug: 'scanned-plan-001' }),
+      regLine({ ask_id: 'ask-9', record_type: 'plan_linked', ts: '2026-07-01T00:02:00Z', plan_slug: 'scanned-plan-002' }),
+    ].join('\n') + '\n');
+    process.env.EXPORT_HOSTNAME = 'host-inventory';
+    const r9 = runExport(path.join(s9.dir, 'export'));
+    const payload9 = JSON.parse(fs.readFileSync(r9.file, 'utf8'));
+    const linkedCount9 = Object.keys(deriveLib.planAskLinkIndex(deriveLib.foldAskRegistry())).length;
+    ok('9. THE FIX: the export carries the whole SCANNED plan inventory (' + PLAN_COUNT + ' plans on disk), not the ' + linkedCount9 + ' the ask-registry "plan_linked" fold would have produced',
+      payload9.plans.length === PLAN_COUNT && linkedCount9 === 2,
+      'exported=' + payload9.plans.length + ' plan_linked=' + linkedCount9);
+
+    // ---- Scenario 9b: ONE DERIVATION, not two that agree by luck. The
+    // exporter's slug set is compared against the SAME derive-lib scan the
+    // cockpit's Roadmap route drives (roadmap-routes.js re-exports it as a
+    // pass-through). Set equality, not just a matching count.
+    const cockpitScan9 = deriveLib.discoverPlanFiles(
+      deriveLib.planScanRoot(), deriveLib.planAskLinkIndex(deriveLib.foldAskRegistry()));
+    const exportSlugs9 = payload9.plans.map((p) => p.plan_slug).sort().join(',');
+    const cockpitSlugs9 = cockpitScan9.files.map((f) => f.slug).sort().join(',');
+    ok('9b. the exporter and the cockpit read ONE derivation: identical slug SETS from derive-lib.discoverPlanFiles (' + cockpitScan9.files.length + ' files), never two inventories that could drift',
+      exportSlugs9 === cockpitSlugs9 && cockpitScan9.files.length === PLAN_COUNT,
+      'export=' + payload9.plans.length + ' cockpit=' + cockpitScan9.files.length);
+
+    // ---- Scenario 9c: a scan-discovered plan with NO ask is fully
+    // populated — real repo, real plan_doc, real tasks. Today's live export
+    // ships hollow rows (repo:"", plan_doc:null, tasks:[]) precisely because
+    // it read `repo` off a registry record instead of the file's own path.
+    const unlinked9 = payload9.plans.find((p) => p.plan_slug === 'scanned-plan-099');
+    // `repo` is derived from the scanned file's OWN absolute path, never
+    // from a registry `repo` field — that field is empty on the live
+    // sentinel records and is the direct cause of today's hollow rows.
+    // NOTE on plan_doc: it resolves through config/projects.js, which maps
+    // absolute paths to CONFIGURED projects and has no env override, so a
+    // throwaway temp repo legitimately resolves to null here. Real plan_doc
+    // population is exercised by the end-to-end run against this machine's
+    // actual checkout, not by this sandbox.
+    ok('9c. a scan-discovered plan with NO linked ask is fully populated from the FILE (real repo path + real tasks + real progress), never today\'s hollow row',
+      unlinked9 && unlinked9.repo === s9.repoDir.replace(/\\/g, '/') &&
+      Array.isArray(unlinked9.tasks) && unlinked9.tasks.length === 2 &&
+      unlinked9.discovery === 'scan' && unlinked9.archived === false &&
+      unlinked9.progress.done === 1 && unlinked9.progress.total === 2,
+      JSON.stringify(unlinked9));
+
+    // ---- Scenario 10: NAMED ABSENCE. An ask-linked plan slug whose file
+    // does not exist anywhere must export a NAMED state, never a
+    // fully-formed, healthy-looking 0/0.
+    //
+    // This is the exact laundering that used to happen: resolvePlanAbsPath
+    // returned null -> countPlanTasks was skipped -> `(planTasks || [])`
+    // produced [] -> aggregatePlanProgress counted over [] and returned
+    // {done:0, in_flight:0, not_started:0, total:0}, which the exporter
+    // shipped with rc 0. Absence was byte-identical to emptiness.
+    const s10 = sandbox('s10-named-absence');
+    // A REAL, healthy, genuinely EMPTY plan (zero checkboxes) sits beside
+    // the missing one. The whole point of the invariant is that these two
+    // stay distinguishable, so both are asserted together.
+    fs.writeFileSync(path.join(s10.repoDir, 'docs', 'plans', 'genuinely-empty.md'),
+      ['# Plan: genuinely empty', '', 'Status: ACTIVE', '', 'No tasks written yet.', ''].join('\n'));
+    fs.writeFileSync(path.join(s10.arDir, 'ask-registry.jsonl'), [
+      regLine({ ask_id: 'ask-10', record_type: 'created', ts: new Date().toISOString(), repo: s10.repoDir, project: 'demo', summary: 'links a plan that does not exist', status: 'active' }),
+      regLine({ ask_id: 'ask-10', record_type: 'plan_linked', ts: new Date().toISOString(), plan_slug: 'no-such-plan-anywhere' }),
+    ].join('\n') + '\n');
+    process.env.EXPORT_HOSTNAME = 'host-absence';
+    const r10 = runExport(path.join(s10.dir, 'export'));
+    const payload10 = JSON.parse(fs.readFileSync(r10.file, 'utf8'));
+    const missing10 = payload10.plans.find((p) => p.plan_slug === 'no-such-plan-anywhere');
+    ok('10. an UNRESOLVABLE plan file exports a NAMED absence (plan_state + reason, tasks:null, progress:null) — never a fabricated healthy 0/0',
+      missing10 && missing10.plan_state !== 'parsed' && missing10.tasks === null &&
+      missing10.progress === null && typeof missing10.plan_state_reason === 'string' &&
+      missing10.plan_state_reason.length > 0,
+      JSON.stringify(missing10));
+    const empty10 = payload10.plans.find((p) => p.plan_slug === 'genuinely-empty');
+    ok('10b. ...and a GENUINELY empty plan is still a healthy zero (parsed, tasks:[], progress 0/0) — the two states stay distinguishable, which is the entire point',
+      empty10 && empty10.plan_state === 'parsed' && Array.isArray(empty10.tasks) &&
+      empty10.tasks.length === 0 && empty10.progress && empty10.progress.total === 0,
+      JSON.stringify(empty10));
+    ok('10c. THE INVARIANT holds across every row of a real export: `tasks` is an Array if and only if plan_state === "parsed"',
+      payload10.plans.every((p) => Array.isArray(p.tasks) === (p.plan_state === 'parsed')) &&
+      payload9.plans.every((p) => Array.isArray(p.tasks) === (p.plan_state === 'parsed')),
+      JSON.stringify(payload10.plans.map((p) => [p.plan_slug, p.plan_state, Array.isArray(p.tasks)])));
+
+    // ---- Scenario 11: an INELIGIBLE plan (readable bytes, but a Status:
+    // value outside the harness's own enum) is named too, rather than being
+    // bucketed confidently or vanishing. 12 real files on this machine
+    // carry exactly this shape.
+    const s11 = sandbox('s11-ineligible');
+    fs.writeFileSync(path.join(s11.repoDir, 'docs', 'plans', 'weird-status.md'),
+      ['# Plan: weird status', '', 'Status: SHIPPED TO PRODUCTION 2026-07-30', '', '- [ ] 1. A task.', ''].join('\n'));
+    process.env.EXPORT_HOSTNAME = 'host-ineligible';
+    const r11 = runExport(path.join(s11.dir, 'export'));
+    const payload11 = JSON.parse(fs.readFileSync(r11.file, 'utf8'));
+    const weird11 = payload11.plans.find((p) => p.plan_slug === 'weird-status');
+    ok('11. a plan whose Status: value is outside the known enum exports plan_state:"ineligible" with the offending value QUOTED — never a confident bucket, never a silent drop',
+      weird11 && weird11.plan_state === 'ineligible' && weird11.tasks === null &&
+      weird11.progress === null && /SHIPPED TO PRODUCTION/.test(weird11.plan_state_reason),
+      JSON.stringify(weird11));
+
+    // ---- Scenario 12: the per-machine multi-repo difference is a DECLARED
+    // state. config/projects.json is gitignored and machine-local, so a Mac
+    // with no config legitimately scans one repo — the operator must be able
+    // to READ that, not infer it from a short plan list.
+    ok('12. provenance.scan NAMES what this host scanned (root, projects_config state, the aging ceiling, per-repo presence, omitted stale links) so a per-machine coverage difference is declared, never silent',
+      payload11.provenance.scan &&
+      payload11.provenance.scan.projects_config === 'absent' &&
+      payload11.provenance.scan.completed_age_days === deriveLib.COMPLETED_AGE_DAYS &&
+      Array.isArray(payload11.provenance.scan.repo_roots) &&
+      payload11.provenance.scan.repo_roots.length === 1 &&
+      payload11.provenance.scan.repo_roots[0].present === true &&
+      typeof payload11.provenance.scan.stale_links_omitted === 'number',
+      JSON.stringify(payload11.provenance.scan));
   } finally {
     ENV_KEYS.forEach((k) => {
       if (savedEnv[k] === undefined) delete process.env[k];
       else process.env[k] = savedEnv[k];
     });
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (_) { /* best-effort cleanup */ }
+  }
+
+  // ====================================================================
+  // Scenario 12 (2026-08-06 remediation) — ONE repo-identity rule.
+  // repoRootFromAbsPath was DUPLICATED with two different regexes, one
+  // here and one in roadmap-routes.js. Unreachable today (scanPlanDir is a
+  // flat readdirSync over two directories, so every absPath is one level
+  // deep), but a second copy of a repo-identity rule inside a change whose
+  // whole thesis is "no second derivation remains" is the defect itself.
+  // Asserted the same way the plan scan's own collapse was: `===` on the
+  // function object, which no amount of copy-paste can fake.
+  // ====================================================================
+  {
+    const rr = require('./roadmap-routes.js');
+    ok('12a. export-state and derive-lib share the IDENTICAL repoRootFromAbsPath function object (===), not a copy that happens to agree',
+      module.exports.repoRootFromAbsPath === deriveLib.repoRootFromAbsPath);
+    ok('12b. roadmap-routes shares that SAME object too — all three modules, one repo-identity rule',
+      rr.repoRootFromAbsPath === deriveLib.repoRootFromAbsPath &&
+      rr.repoRootFromAbsPath === module.exports.repoRootFromAbsPath);
+    ok('12c. the surviving rule is the STRICT one: it resolves the two shapes scanPlanDir actually produces (plain + archived) and answers \'\' for a deeper path rather than inventing a root — the exact case the two copies disagreed on',
+      deriveLib.repoRootFromAbsPath('C:/r/docs/plans/x.md') === 'C:/r' &&
+      deriveLib.repoRootFromAbsPath('C:/r/docs/plans/archive/x.md') === 'C:/r' &&
+      deriveLib.repoRootFromAbsPath('C:\\r\\docs\\plans\\x.md') === 'C:/r' &&
+      deriveLib.repoRootFromAbsPath('C:/r/docs/plans/a/b/x.md') === '' &&
+      deriveLib.repoRootFromAbsPath('C:/r/notes/x.md') === '' &&
+      deriveLib.repoRootFromAbsPath('') === '');
   }
 
   console.log('\n' + passed + ' passed, ' + failed + ' failed');
