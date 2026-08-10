@@ -26,8 +26,13 @@ git config core.hooksPath "$TEMP_DIR/no-hooks"
 
 # Create a file with a fake AWS credential
 # Note: credential is constructed at runtime to avoid triggering the pre-push
-# scanner on THIS file. The pattern prefix "AKIA" is what the scanner detches.
-FAKE_KEY="AKI""AIOSFODNN7EXAMPLE"
+# scanner on THIS file. The pattern prefix "AKIA" is what the scanner detects.
+# Deliberately NOT the AWS documentation placeholder: since 2026-08-10 both
+# scanners ALLOWLIST that value (scrub-then-retest, plan
+# secret-scan-placeholder-allowlist-2026-08), so planting it stopped proving
+# the block path — this golden test went red exactly that way. A real-shaped
+# key that is not vendor-reserved is what must always block.
+FAKE_KEY="AKIA""ABCDEFGHIJKLMNOP"
 echo "AWS_ACCESS_KEY_ID=$FAKE_KEY" > leaked.txt
 git add leaked.txt
 git commit -q -m "initial"

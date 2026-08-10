@@ -278,3 +278,29 @@ check (comparing live wiring against the template) makes this mechanically enfor
 manually verified. Task 1 ships the template fix and this runbook note; it does not mutate any
 machine's live settings.json (worktree-isolated builds should never touch machine-wide state
 outside the repo).
+
+## Flap-stop — the watchdog's own crash-loop guard (full detail)
+
+`nl-maintenance.sh`'s `--watchdog` carries a guard SEPARATE from HALT/drain: if it
+relaunches the daemon `NM_FLAP_THRESHOLD` times (default 4) inside
+`NM_FLAP_WINDOW_SECONDS` (default 5400s since the 2026-08-10 re-derivation), it STOPS
+resurrecting, writes `state/nl-maintenance/flap-state.json` (a death certificate with
+`death_outcome: resurrection_halted` / `death_cause: flap_threshold_exceeded`), and every
+later fire is a log-only no-op until the ONE explicit `nl-maintenance.sh --reset-flap`.
+
+Unlike HALT (an operator's deliberate, reversible-by-file-delete stop gesture), a
+flap-stop is the watchdog's OWN automatic response to a daemon that cannot stay up — it
+means something is actively crash-looping, not that anyone asked it to stop.
+`harness-doctor.sh`'s `maintenance-daemon-flap` check REDs while tripped (never silent).
+
+Derivation of the numbers (2026-08-10, deadly-embrace fix — full arithmetic in
+`nl-maintenance.sh`'s header above `_nm_flap_window_seconds`): the watchdog task FIRES
+every 300s but ACTS only on heartbeat staleness ≥ `NM_WATCHDOG_STALE_SECONDS` (default
+900s — a single bounded job may legitimately run 600s between per-job heartbeat writes).
+With tick-start + per-job heartbeats, crash-loop relaunches space at [900, 1200)s, so 4
+relaunches span 2700-3600s; the window is 5400s so the trip stays guaranteed with 50%
+margin against schtask jitter. A true flap trips in ~45-60 minutes. HISTORY: the original
+3600s window was derived against a 300s stale threshold and "a healthy daemon triggers
+ZERO relaunches" — refuted 2026-08-10 when a healthy daemon recovering from a 31h outage
+ran a >300s first tick and was term-killed mid-recovery four times into a flap-stop (the
+deadly embrace the per-job heartbeats fix).
