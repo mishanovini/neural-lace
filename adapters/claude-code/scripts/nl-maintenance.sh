@@ -719,12 +719,21 @@ _nm_tick_body() {
   fi
 
   local id cadence
+  # Heartbeat BEFORE and BETWEEN jobs, not only at tick end (2026-08-10
+  # deadly-embrace fix): after an outage every job is due, the first tick
+  # runs them serially (observed 82s + 121s + 301s + ...), the heartbeat
+  # stays stale past the watchdog threshold, and the watchdog KILLS the
+  # recovering daemon mid-tick — four rounds, then flap-stop. Observed as
+  # 4 verified-cmdline term-kills in tick.jsonl. Freshness must signal
+  # LOOP liveness, not whole-tick completion.
+  _nm_write_heartbeat false
   while IFS= read -r id; do
     [[ -z "$id" ]] && continue
     cadence="$(_nm_job_field "$id" declared_cadence_seconds)"
     [[ -z "$cadence" || "$cadence" == "null" ]] && cadence=300
     if _nm_job_due "$id" "$cadence"; then
       _nm_run_job "$id"
+      _nm_write_heartbeat false
     fi
   done < <(_nm_job_ids)
 
@@ -795,7 +804,13 @@ run_daemon() {
 # Mirrors ensure-cockpit.sh's contract exactly: HARNESS_SELFTEST=1 stubs
 # BEFORE any real spawn, always returns 0, tolerate-absent everywhere.
 # ----------------------------------------------------------------------
-_nm_watchdog_stale_seconds() { printf '%s' "${NM_WATCHDOG_STALE_SECONDS:-300}"; }
+# Default raised 300 -> 900 (2026-08-10, same deadly-embrace fix as the
+# between-job heartbeats in _nm_tick_body): a single job can legitimately
+# run past 300s (health-tick measured 301s), during which no heartbeat can
+# be written — the watchdog would kill a healthy daemon mid-job. 900s
+# covers the longest observed job with margin while still catching a
+# genuinely dead daemon within 15 minutes.
+_nm_watchdog_stale_seconds() { printf '%s' "${NM_WATCHDOG_STALE_SECONDS:-900}"; }
 
 # _nm_pid_cmdline <pid> — best-effort full command line for <pid>. Tries
 # /proc/<pid>/cmdline first (present under MSYS2/Git-Bash on Windows and on
@@ -1323,9 +1338,17 @@ EOF
   done
   local s15b_pid; s15b_pid="$(cat "$s15b_state/daemon.pid" 2>/dev/null | tr -d '[:space:]')"
   if [[ "$s15b_pid" =~ ^[0-9]+$ ]] && kill -0 "$s15b_pid" 2>/dev/null; then
+    # SUSPEND the daemon before staling the heartbeat (2026-08-10): the
+    # tick body now refreshes the heartbeat at tick start and between
+    # jobs (the deadly-embrace fix), so a running daemon could overwrite
+    # the injected stale heartbeat before run_watchdog reads it — a race
+    # this fixture loses nondeterministically. A STOPped process still
+    # has a readable cmdline for the identity check, but cannot write.
+    kill -STOP "$s15b_pid" 2>/dev/null
     printf '{"schema":1,"generated_at":"2000-01-01T00:00:00Z","generated_at_epoch":1,"pid":1,"halted":false}' > "$s15b_state/daemon.heartbeat.json"
     NL_MAINT_STATE_DIR="$s15b_state" SF_DISABLE=1 HARNESS_SELFTEST=1 \
       bash -c "source '$self_abs'; run_watchdog" >/dev/null 2>&1
+    kill -CONT "$s15b_pid" 2>/dev/null
     local s15b_log; s15b_log="$(cat "$s15b_state/logs/tick.jsonl" 2>/dev/null)"
     _contains "$s15b_log" '"action":"watchdog-kill"' "S15b verified-identity branch actually fired (real spawned process's real cmdline matched)"
     _contains "$s15b_log" '"death_outcome":"would_signal_selftest_stub"' "S15b death_outcome reflects HARNESS_SELFTEST honestly (no real signal was sent)"
