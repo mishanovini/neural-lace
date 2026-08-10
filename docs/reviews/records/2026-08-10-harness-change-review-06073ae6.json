@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260810-06073ae6",
+  "created_at": "2026-08-10T06:03:35Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/handoffs/2026-08-06-cross-machine-process-and-cockpit-handoff.md",
+  "change_ref": {
+    "commit_sha": "5a5616b8814b285f4f1b5b91c4f74c1bc93212f1",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "neural-lace/workstreams-ui/server/derive-lib.js",
+      "blob_sha": "71cf6f2480e6d3c49d8dbfceba70132b844e5ff6"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/export-state.js",
+      "blob_sha": "217d7a1e20a10a99c884131de83ef62b2cdf54e4"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/payload-schema.js",
+      "blob_sha": "396a97e33c1563a0b1fd39a1d6b466e249725431"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/peer-view.js",
+      "blob_sha": "036ff0b29ae01aedd5b7bf37090a232ba88143cf"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/roadmap-routes.js",
+      "blob_sha": "7bc51cf3121e63b30cdd1d88d1f9a3762404c371"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/server.selftest.js",
+      "blob_sha": "6118f38dfab712ea38da928cfe0f4c2c93e1df1c"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/asks.js",
+      "blob_sha": "f94160fa2e20ad92b10228e09952264df6e6d581"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/cockpit.selftest.js",
+      "blob_sha": "c3bc025cd5172a378aa2af08b7baf1d1dd900f56"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "git diff 349e1470..HEAD -- neural-lace/workstreams-ui touches exactly 3 files (payload-schema.js +14/-1, peer-view.js +8, server.selftest.js +17/-5) -- nothing smuggled. Enforcement code payload-schema.js:419-422: path-exempt values land in the SAME branch as key-exempt -- denylist scan skipped but 'exempt field exceeds max length (2000 chars)' is a hard validation error, so the cap DOES apply to narrative_excerpt. Suites: server 190/0 (declared 190), export-state 22/0, peer-view 42/1 (#14 identical at branch tip 349e1470 -- pre-existing), cockpit 610/0, roadmap-routes 165/0. Live: curl :7733/api/asks -> HTTP 200 ok:true on real data.",
+    "findings_summary": "PASS. Scope-focused harness-change review of the 8-blob Amendment G surface at 5a5616b8; branch content itself carries four prior verdicts and was not re-reviewed wholesale. (1) DELTA PROVEN CLEAN: the branch-tip-to-HEAD diff under workstreams-ui is exactly the three described files, R0+R1+fixture moves, nothing smuggled. (2) R0 adversarial: (a) PROVEN the DENYLIST_EXEMPT_MAX_LEN=2000 cap applies to path-exempt values -- read the enforcement (payload-schema.js:419-422), both exemption routes land in the same length-capped branch and over-cap is a hard error, never truncation; (b) the widened surface leaks at most harness-mechanism NAMES (the denylist is anti-noise only: .sh filenames, od_* oracle names, -gate suffixes, hook lifecycle names, mechanism tokens -- no secret patterns), in exactly two positional card slots, capped at 2000 chars; the refuted-premise justification is PROVEN (provenance verified at server.js:1020 narrative_excerpt = narrativeSummary(lastEvent); the 2026-08-09 outage ask naming close-plan matches the mechanism-token pattern). Honest residual (HYPOTHESIZED benign): lastEvent may also be machine-appended rather than operator-authored, and such events ride the same exemption -- bounded by the cap, by the anti-noise-only denylist, and by S71d keeping the detail page's full event list guarded; refuter would be a machine event writer that routinely emits identifier-laden last events into ask registries; (c) PROVEN S71d still asserts $.narrative[].summary FAILS -- positionality holds. (3) R1 PROVEN: only rows with typeof total==='number' && total>0 get the new truthful reason; the countless case keeps the exact old no-claim string, whose only occurrence outside selftests is the producer itself (no exact-match consumers to break). (4) Fixture moves honest: S27a and S51 now plant identifiers in , and the green suite's ok===false assertions prove repo is genuinely scanned (an unguarded repo would fail the suite); S71e's inverted assertion states the inversion, the outage justification, and the surviving S71d positionality proof in its own label. (5) Suites re-run by me: 190/0 declared-agreeing, 22/0, 42/1 with #14 PROVEN pre-existing (identical failure on the extracted branch-tip tree), 610/0, 165/0. (6) Live oracle re-run: :7733/api/asks HTTP 200 ok:true with real groups (was 500). ONE MINOR (PROVEN, non-blocking): the new S51 comment says the identifier moved to 'drift_badges -- a genuinely machine-composed, still-guarded field' but the code sets  -- comment/code mismatch introduced by this diff (the assertion LABEL 'in a guarded field' remains accurate); fix by correcting the comment to name repo, or repointing the fixture at drift_badges to match. Class: comment-drift-in-same-diff; sweep: compare every field name in fixture comments vs the adjacent assignment in server.selftest.js. No Critical, no Major."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "harness-reviewer-dbe36e21-r4"
+  },
+  "independence": "pathway",
+  "payload": {}
+}

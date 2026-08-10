@@ -4541,6 +4541,66 @@
       "independence": null
     },
     {
+      "path": "neural-lace/workstreams-ui/server/derive-lib.js",
+      "blob_sha": "71cf6f2480e6d3c49d8dbfceba70132b844e5ff6",
+      "record_id": "hcr-20260810-06073ae6",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:03:35Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/export-state.js",
+      "blob_sha": "217d7a1e20a10a99c884131de83ef62b2cdf54e4",
+      "record_id": "hcr-20260810-06073ae6",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:03:35Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/payload-schema.js",
+      "blob_sha": "396a97e33c1563a0b1fd39a1d6b466e249725431",
+      "record_id": "hcr-20260810-06073ae6",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:03:35Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/peer-view.js",
+      "blob_sha": "036ff0b29ae01aedd5b7bf37090a232ba88143cf",
+      "record_id": "hcr-20260810-06073ae6",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:03:35Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
       "path": "neural-lace/workstreams-ui/server/requests-routes.js",
       "blob_sha": "737c0d2e8f7a8374352c28bf8641ee09487229cd",
       "record_id": "hcr-20260730-28112fca",
@@ -4564,6 +4624,21 @@
     },
     {
       "path": "neural-lace/workstreams-ui/server/roadmap-routes.js",
+      "blob_sha": "7bc51cf3121e63b30cdd1d88d1f9a3762404c371",
+      "record_id": "hcr-20260810-06073ae6",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:03:35Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/roadmap-routes.js",
       "blob_sha": "ea934ff07b391e72f5d93767098ec3914d7da6a8",
       "record_id": "hcr-20260803-110426f8",
       "kind": "harness-change-review",
@@ -4572,6 +4647,21 @@
       "created_at": "2026-08-03T03:08:56Z",
       "reviewer_principal": null,
       "independence": null
+    },
+    {
+      "path": "neural-lace/workstreams-ui/server/server.selftest.js",
+      "blob_sha": "6118f38dfab712ea38da928cfe0f4c2c93e1df1c",
+      "record_id": "hcr-20260810-06073ae6",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:03:35Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
     },
     {
       "path": "neural-lace/workstreams-ui/server/verbatim-resolver.js",
@@ -4605,6 +4695,36 @@
       "created_at": "2026-08-03T03:08:56Z",
       "reviewer_principal": null,
       "independence": null
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/asks.js",
+      "blob_sha": "f94160fa2e20ad92b10228e09952264df6e6d581",
+      "record_id": "hcr-20260810-06073ae6",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:03:35Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "neural-lace/workstreams-ui/web/cockpit.selftest.js",
+      "blob_sha": "c3bc025cd5172a378aa2af08b7baf1d1dd900f56",
+      "record_id": "hcr-20260810-06073ae6",
+      "kind": "harness-change-review",
+      "verdict": "PASS",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-08-10T06:03:35Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "harness-reviewer-dbe36e21-r4"
+      },
+      "independence": "pathway"
     },
     {
       "path": "neural-lace/workstreams-ui/web/requests.js",
