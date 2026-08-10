@@ -1,0 +1,41 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260810-2ddf26d2",
+  "created_at": "2026-08-10T04:58:13Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-fable-5",
+  "plan_ref": "docs/decisions/067-review-independence-same-session-pathway.md",
+  "change_ref": {
+    "commit_sha": "c1b769ed4464692a0216cc3805f901f090d3f170",
+    "branch": "master"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/config/operator-directives.json",
+      "blob_sha": "3b07eff8a08d8ef84cf1e514dade5c6e818b993f"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "71d2193d1832d0c8c6e576a6a3de3103834ed310"
+    },
+    {
+      "path": "adapters/claude-code/scripts/nl-maintenance.sh",
+      "blob_sha": "931b5bf84e34885c84bd1878e34a207c0dcb4764"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "self-test summary: 71 passed, 0 failed. dr_validate: PASS. [gen-directives-view] GREEN -- committed doc matches a fresh regen. nl-issues ledger 2026-08-10T04:37:21Z carries the operator verbatim ('there is not a single reason to require a review to be a different machine... Review needs to be from an adversarial agent') matching OD-025's source claim. manifest honest_status now reads 'the two no longer match by design' and 'the old healthy-daemon-ZERO-relaunches justification is retired as refuted', citing review hcr-20260810-6b830942.",
+    "findings_summary": "PASS. Both commits verified finding-by-finding against my REFORMULATE hcr-20260810-6b830942; all three Majors and both Minors are genuinely remediated, and the OD-025 register addition is valid, honest, and consistent with both ADR-067 and the operator's stronger 2026-08-10 verbatim. PROVEN: (1) Major 1 -- the flap-derivation header is fully re-derived: fires-at-300s vs acts-at-900s is now stated as DELIBERATE non-matching with the reason (600s single-job bound, per-job heartbeats), crash-loop spacing [900,1200)s, and honest trip-latency (~45-60 min vs old ~20). (2) Major 2 -- manifest.json honest_status rewritten to the re-derived truth and the incident-refuted 'healthy daemon triggers ZERO relaunches within 300s' justification is explicitly retired with the incident and my review cited. (3) Major 3 -- NM_FLAP_WINDOW_SECONDS default is now 5400 in code with the arithmetic in the comment: 4 relaunches span 3 gaps of [900,1200)s = 2700-3600s, so 5400 guarantees the trip with 50% margin (evasion now requires spacing >=1800s, 50% beyond the design range -- my HYPOTHESIZED jitter evasion is closed). (4) Minor a -- the portable-timeout-absent fallback now WARNs loudly to stderr; verified no spurious WARN when the lib is present (clean source emits nothing) and the WARN sits inside the function-absent branch by construction. (5) Minor b -- S15b cleanup sends kill -CONT before TERM, so the queued-TERM-on-suspended-orphan path I proved on MSYS is drained in every reachable cleanup path; the only residue is a hard crash of the self-test process itself inside the 4-line STOP->CONT window (instance-only Minor, would need an EXIT trap; non-blocking). (6) Fixture follow-through correct: S19f pins window_seconds:5400; S20 pins NM_FLAP_WINDOW_SECONDS=3600 explicitly BECAUSE it tests pruning mechanics, with the reasoning documented in-file (its -5000/-4000 seeds would be legitimately in-window under 5400). Self-test 71/71 re-run on the remediated blob. (7) OD-025: dr_validate PASS; gen-directives-view.sh --check GREEN (committed view matches regen); reviewed_by is 'pending-operator' (no claimed sign-off); instruction is 3 lines (<=5); enforcement field honestly self-labels PATTERN-RUNG and names the two real mechanical halves (session-id self-claim refusal, RI3 doctor REDs) without theater; the entry preserves ADR-067's cross-machine-as-optional-truthful-annotation tier while the operative rule matches the operator's 2026-08-10 verbatim, which I located in the nl-issues ledger (04:37:21Z) -- source claim PROVEN, no overclaim. Carrier corrections (gated-pipeline plan note, 2026-08-06 handoff) accurately void the machine-locality qualifier and trace to ADR-067. No Critical, no Major; one instance-only Minor noted above."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "harness-reviewer-dbe36e21-r4"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
