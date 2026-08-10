@@ -112,6 +112,10 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
 # shellcheck source=lib/portable-timeout.sh
 { source "$SCRIPT_DIR/../hooks/lib/portable-timeout.sh" 2>/dev/null; } || true
 if ! declare -F nl_run_bounded >/dev/null 2>&1; then
+  # Fallback runs jobs UNBOUNDED -- a wedged job then starves the per-job
+  # heartbeats until the 900s watchdog threshold and ends in a term-kill.
+  # Loud so the degraded mode is visible in daemon.stdout.log, not silent.
+  echo "[nl-maintenance] WARN: portable-timeout.sh unavailable -- jobs run UNBOUNDED this process (wedged jobs will be caught only by the watchdog)" >&2
   nl_run_bounded() { local s="${1:-}"; shift 2>/dev/null || true; "$@"; }
 fi
 
@@ -147,30 +151,39 @@ _nm_flap_state_path()    { printf '%s/flap-state.json' "$(_nm_state_dir)"; }
 # watchdog keeps resurrecting it -- burning CPU, masking a real bug, and
 # reporting healthy). N and the window are DERIVED, not guessed:
 #
-#   - The watchdog is the ONLY thing that can ever trigger a relaunch, and
-#     it fires on a fixed OS-scheduled cadence of 300s (install-maintenance-
-#     task.ps1 -WatchdogIntervalSeconds, matching NM_WATCHDOG_STALE_SECONDS).
-#     That makes 1 relaunch / 300s a HARD architectural ceiling -- a daemon
-#     that crashes on every single start can never restart more than
-#     3600/300 = 12 times inside any rolling hour, by construction.
-#   - A HEALTHY pass is far cheaper than that 300s budget: measured on this
+#   - The watchdog is the ONLY thing that can ever trigger a relaunch. It
+#     FIRES on a fixed OS-scheduled cadence of 300s (install-maintenance-
+#     task.ps1 -WatchdogIntervalSeconds) but only ACTS on a heartbeat
+#     staler than NM_WATCHDOG_STALE_SECONDS (default 900s -- the two
+#     deliberately do NOT match since the 2026-08-10 deadly-embrace fix:
+#     check often, act only on genuine staleness; a single legitimate
+#     bounded job can run up to 600s with no heartbeat write in between).
+#     With tick-start heartbeats, even a daemon that crashes on every
+#     start leaves a fresh heartbeat behind, so consecutive relaunches
+#     space at [900, 1200)s (staleness threshold + up to one 300s task
+#     cadence) -- at most 4 relaunches inside any rolling 3600s, by
+#     construction.
+#   - A HEALTHY pass is far cheaper than these budgets: measured on this
 #     machine, one real `_nm_tick_body` (job execution + first-time
-#     dashboard write) took 9.6s wall-clock, and a same-machine repeat pass
-#     with nothing newly due (pure scheduling overhead: job-table jq reads +
-#     heartbeat write, dashboard skipped inside its own TTL) took 2.1s --
-#     both 30-140x inside the 300s stale threshold. That margin means a
-#     genuinely healthy daemon should trigger ZERO watchdog relaunches in
-#     ordinary operation; the only legitimate (non-bug) causes are rare,
-#     isolated events -- a machine sleep/hibernate spanning >300s, or an
-#     operator manually killing the daemon while debugging.
+#     dashboard write) took 9.6s wall-clock, and a repeat pass with
+#     nothing newly due took 2.1s. The exception is recovery-after-outage:
+#     a first tick with EVERY job due measured 82s+121s+301s+... serially
+#     -- which is exactly why heartbeats are written per-job and the
+#     staleness threshold exceeds the 600s single-job bound; under the
+#     old 300s threshold the watchdog term-killed healthy recovering
+#     daemons mid-tick (observed 2026-08-10, 4 kills then flap-stop).
 #   - NM_FLAP_THRESHOLD defaults to 4 restarts inside NM_FLAP_WINDOW_SECONDS
-#     (default 3600s = 1h): comfortably above what any plausible isolated
-#     legitimate event (or even two) could ever produce in an hour, yet at
-#     less than half the 12/hour architectural ceiling a real flapping bug
-#     hits -- so a true flap trips within ~4 watchdog cycles (~20 minutes)
-#     rather than being allowed to churn silently for the full window.
+#     (default 5400s = 90min): 4 genuine crash-loop relaunches span 3 gaps
+#     of [900, 1200)s = 2700-3600s, so a 3600s window sat exactly on the
+#     boundary and schtask jitter could push spacing past it; 5400s keeps
+#     the trip guaranteed with 50% margin. A true flap therefore trips in
+#     roughly 45-60 minutes -- slower than the old ~20 (the cost of
+#     per-job heartbeats making crash-loops look briefly alive), still
+#     strictly bounded, and far above what any isolated legitimate event
+#     (sleep/hibernate spanning >900s, operator kill while debugging)
+#     could produce.
 # ----------------------------------------------------------------------
-_nm_flap_window_seconds() { printf '%s' "${NM_FLAP_WINDOW_SECONDS:-3600}"; }
+_nm_flap_window_seconds() { printf '%s' "${NM_FLAP_WINDOW_SECONDS:-5400}"; }
 _nm_flap_threshold()      { printf '%s' "${NM_FLAP_THRESHOLD:-4}"; }
 
 # _nm_flap_stopped — rc 0 iff a flap-stop is currently tripped
@@ -1356,6 +1369,10 @@ EOF
   else
     echo "FAIL: S15b could not resolve a live spawned daemon pid within the wait window" >&2; fail=$((fail+1))
   fi
+  # CONT before TERM: if the scenario died inside the STOP->CONT window,
+  # the daemon is still suspended and a TERM would sit queued forever on
+  # a zero-CPU orphan; CONT is harmless when already running.
+  [[ "$s15b_pid" =~ ^[0-9]+$ ]] && kill -CONT "$s15b_pid" 2>/dev/null
   [[ "$s15b_pid" =~ ^[0-9]+$ ]] && kill "$s15b_pid" 2>/dev/null
   kill "$s15b_bg" 2>/dev/null
   wait "$s15b_bg" 2>/dev/null
@@ -1441,7 +1458,7 @@ EOF
   local s19_json; s19_json="$(cat "$s19_state/flap-state.json" 2>/dev/null)"
   _contains "$s19_json" '"restart_count":4' "S19d death certificate names the real restart count"
   _contains "$s19_json" '"threshold":4' "S19e death certificate names the real threshold"
-  _contains "$s19_json" '"window_seconds":3600' "S19f death certificate names the real window"
+  _contains "$s19_json" '"window_seconds":5400' "S19f death certificate names the real window (5400s default since the 2026-08-10 re-derivation)"
   local s19_log; s19_log="$(cat "$s19_state/logs/tick.jsonl" 2>/dev/null)"
   _contains "$s19_log" '"action":"watchdog-flap-stop"' "S19g tick log carries the flap-stop action"
   _contains "$s19_log" '"death_outcome":"resurrection_halted"' "S19h tick log death_outcome is the flap-specific value (never reuses the kill-branch's term_signal_sent)"
@@ -1468,11 +1485,15 @@ EOF
   mkdir -p "$s20_state"
   printf '{"schema":1,"generated_at":"2000-01-01T00:00:00Z","generated_at_epoch":1,"pid":1,"halted":false}' > "$s20_state/daemon.heartbeat.json"
   local s20_now; s20_now="$(date +%s)"
-  # Seed 3 restart epochs OLDER than the window (default 3600s) -- if the
-  # window never decayed, this fire would be the 4th and would trip. They
-  # must instead be pruned away, leaving only this fire's own entry.
+  # Seed 3 restart epochs OLDER than the window -- if the window never
+  # decayed, this fire would be the 4th and would trip. They must instead
+  # be pruned away, leaving only this fire's own entry. The window is
+  # PINNED to 3600s here (the env override) because this scenario tests
+  # the PRUNING MECHANISM, not the shipped default (5400s since the
+  # 2026-08-10 re-derivation -- under which -5000/-4000 would be
+  # legitimately in-window).
   printf '%s\n%s\n%s\n' "$((s20_now - 7200))" "$((s20_now - 5000))" "$((s20_now - 4000))" > "$s20_state/flap-restarts.log"
-  local s20_out; s20_out="$(NL_MAINT_STATE_DIR="$s20_state" SF_DISABLE=1 HARNESS_SELFTEST=1 bash -c "source '$self_abs'; run_watchdog" 2>&1)"
+  local s20_out; s20_out="$(NL_MAINT_STATE_DIR="$s20_state" NM_FLAP_WINDOW_SECONDS=3600 SF_DISABLE=1 HARNESS_SELFTEST=1 bash -c "source '$self_abs'; run_watchdog" 2>&1)"
   _contains "$s20_out" "would relaunch" "S20a restarts aged out of the window are pruned -- this fire is treated as restart #1, not #4, so resurrection proceeds"
   _not_contains "$s20_out" "FLAP DETECTED" "S20b the guard never trips off aged-out restarts"
   if [[ -f "$s20_state/flap-state.json" ]]; then
