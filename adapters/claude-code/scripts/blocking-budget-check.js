@@ -53,6 +53,14 @@ const UNIT_MAP = {
   'plan-deletion-protection': 'commit-boundary',
   'claude-md-hygiene': 'commit-boundary',
   'vaporware-volume': 'commit-boundary',
+  // gh-commit-author-identity (PR #67, GH-COMMIT-IDENTITY-01, 2026-09):
+  // fires ONLY on a git-commit-shaped Bash command (its own raw-payload
+  // prefilter exits immediately on anything else) — definitionally this
+  // same unit's class per the header note above. Independent review
+  // (M2, PR #67) measured 16/14 on this PR's base commit and 17/14 on
+  // its head with this row absent (a new standalone unit); this row
+  // folds it back in so the PR consumes no net-new budget unit.
+  'gh-commit-author-identity': 'commit-boundary',
   // agent-teams unit: spawn/task validation (#12; workstreams-state-gate is the
   // same spawn-validation class — counted here, formal fold deferred to F-wave)
   'agent-teams': 'agent-teams',

@@ -29,8 +29,8 @@ must carry the identity of the GitHub account logged in FOR THE REPO BEING COMMI
 never whatever "user email" value Claude Code's own session context hands the agent for
 authorship.
 
-**Golden scenario (why now):** 2026-09-21, Circuit PR #1871 — fixer subagents committed
-with author set to the session's context email; the repo's own git config was already
+**Golden scenario (why now):** 2026-09-21, on a downstream project's PR — fixer subagents
+committed with author set to the session's context email; the repo's own git config was already
 correct, so the override must have been passed explicitly. Vercel maps commit emails to
 Vercel users and blocked the deploy over the mismatch (~1hr cost). The session's context
 email has since changed to yet another address, so the risk is structural, not a one-off.
@@ -103,15 +103,91 @@ construction — named as an accepted residual, not silently absent).
       commands that placed `-c` in an invalid post-subcommand position, which is not
       something real git accepts either — both are test-harness bugs, not gate bugs;
       documented in the C-Round Record below).
-- [ ] `harness-reviewer` PASS review-record — NOT run by this (authoring) session per
-      `docs/plans/review-independence.md`: the authoring session's only legal interaction
-      with the review queue is the MECHANICAL auto-enqueue that fires as a side effect of
-      committing (`review-record-commit-gate.sh`'s `rq_auto_enqueue_uncovered` splice,
-      advisory-only since the 2026-07-30 demotion — it never blocks the commit, it only
-      enqueues + prints a non-blocking notice). A separately-invoked session/process is
-      the one that may claim + review + record a verdict. This task's own dispatch says
-      exactly this: "if not, say so — the orchestrator will run it."
+- [x] Independent review of head `f9b9b3cb` (a genuinely separate session, per
+      `docs/plans/review-independence.md`) returned **REFORMULATE** (PR #67's review
+      comment, 2026-09-28 — see the PR's own comment thread for the exact text and
+      permalink; not reproduced here so this file does not have to embed a full GitHub
+      URL naming the personal account this PR happens to be opened against). Findings
+      M1-M4 (major, all PROVEN against real repos/transcripts) + m1-m7 (minor). Fixed in
+      this same PR, same session that fixed the CI reds above (see the Review-Fix Round
+      below for what changed per finding, with self-test evidence for each).
+- [ ] A FRESH `harness-reviewer` PASS on the new head — NOT run by this (authoring)
+      session per `docs/plans/review-independence.md`: the authoring session's only
+      legal interaction with the review queue is the MECHANICAL auto-enqueue that fires
+      as a side effect of committing. A separately-invoked session/process is the one
+      that may claim + review + record a verdict.
 - [ ] Merge to master (explicitly NOT done by this task — "Open a PR; do NOT merge").
+
+## Review-Fix Round (independent review REFORMULATE, 2026-09-28)
+
+Fixed in this PR, same session, in response to the independent review comment linked
+above. Every fix ships with a pinned self-test regression case; combined self-test after
+all fixes: 27/27 (gate) + 12/12 (identity lib) + 9/9 (account lib) = 48/48.
+
+- [x] **M1 (major, PROVEN)** — identity overrides on `merge`/`cherry-pick`/`revert`/
+      `pull`/`rebase`/`am` passed the gate (only `commit`/`commit-tree` were checked).
+      Widened `_gcia_analyze_segment`'s target-verb set; `--author` stays scoped to
+      `commit` only (no other verb accepts that flag). Also had to widen BOTH raw-payload
+      prefilters (the top-of-file one added for m4, and the pre-existing one inside
+      `_gcia_run`) past the literal substring `"commit"` — a real bug this fix's own
+      first self-test run caught (all six new verb-coverage cases initially failed at
+      rc=0 because the prefilter silently skipped them before the parser ever ran).
+- [x] **M2 (major, PROVEN)** — this gate counted as a new standalone blocking-budget
+      unit (16/14 on base `4ff107f4`, 17/14 on head). Added
+      `'gh-commit-author-identity': 'commit-boundary'` to `UNIT_MAP` in
+      `blocking-budget-check.js`; re-measured at 16/14, net-zero contribution.
+- [x] **M3 (major, PROVEN)** — on a machine whose `~/.claude/local/accounts.config.json`
+      still holds only the shipped placeholder entries, owner->account resolution always
+      fails and the gh-API rung never fires, with nothing saying so; the doctrine also
+      named the wrong reason for the fallback. Fixed: `gia_resolve_expected_email` now
+      emits a signal-ledger `warn` naming the unmapped owner when a real github.com
+      remote owner has no accounts.config.json entry; manifest `honest_status` and
+      `doctrine/git-full.md` now state the dependency explicitly and no longer claim
+      the affected account by name (the affected account varies by machine/token
+      lifecycle — verify with `gia_gh_primary_email <account>` directly rather than
+      trusting a name in a doc). Populating the config file is an explicit machine-config
+      action left to the operator, not done by this code.
+- [x] **M4 (major, PROVEN false positive)** — a repo with NO github.com remote (a
+      scratch/throwaway `git init` fixture) got its commit checked against whatever this
+      MACHINE's global `~/.gitconfig` happened to hold. Fixed: `_gcia_evaluate` now
+      fails open completely (no check, no auto-set) when the target has no resolvable
+      github.com remote owner. Self-test reproduces the exact false-positive shape,
+      including a sandboxed "global" config the ORIGINAL self-test suite never
+      populated (which is why this escaped it originally).
+- [x] **m1 (minor, PROVEN)** — named + partially closed bypasses: `env NAME=VALUE git
+      commit` (closed: strips the leading `env` token so the existing assignment-scan
+      handles it) and `git config user.email X && git commit` (closed: tracks a plain
+      `git config user.email|user.name` SET across segments in the same command, folded
+      into a later commit-creating segment unless that segment carries its own explicit
+      override, which still wins). `bash -c '...'`, `--config-env=`, and
+      `GIT_CONFIG_COUNT`/`KEY_N`/`VALUE_N` are named as accepted residuals (not closed —
+      cost vs. realistic likelihood) in the hook header and doctrine, not silently absent.
+- [x] **m2 (minor, PROVEN)** — a NAME-only override (`-c user.name=`, no email mismatch)
+      blocked, adding false-positive surface with no attribution benefit (Vercel/GitHub
+      attribute by email). Changed to WARN (signal ledger), never block.
+- [x] **m3 (minor, measured)** — no negative cache on a failed `gh api user/emails`
+      lookup meant every commit in an unmapped/unauthorized-scope repo re-spawned both
+      `gh auth token` and `gh api`. Added a 5-minute negative cache, independent of the
+      24h positive-cache TTL.
+- [x] **m4 (minor, measured)** — the per-Bash-call cost of sourcing 5 libraries landed on
+      every call, including non-commit ones. Moved the raw-payload verb-substring
+      prefilter to run BEFORE any `source` line.
+- [x] **m5 (minor, HYPOTHESIZED)** — the block message's FIX text claimed dropping the
+      override always yields "git's own default identity resolution", which is false
+      when the expected value came from the gh API and differs from the repo's own
+      config. Reworded to name the actual resolved value + its source and point at
+      fixing the repo's config specifically when it differs.
+- [x] **m6 (minor, HYPOTHESIZED)** — the auto-set side effect's "never a silent side
+      effect" claim rested on a stderr note that PreToolUse does not guarantee surfaces
+      to the agent on a non-blocking exit. Reworded to name the signal ledger as the
+      reliable record and the stderr note as a best-effort courtesy.
+- [x] **m7 (minor)** — `fp_expectation` cited only self-test pass counts, not a measured
+      false-positive rate. Ran an independent grep-based replay of local session
+      transcripts (methodology + exact command recorded in the manifest field): 22
+      co-occurring Bash-tool-use lines across 3 distinct files, the same order of
+      magnitude as the review's own independently-run replay (25 matches across 6
+      files) and directly overlapping on one cited session (`dbe36e21`). Recorded in
+      `fp_expectation`, replacing the self-test-only framing.
 
 ## Files to Modify/Create
 - `adapters/claude-code/hooks/gh-commit-author-identity-gate.sh` — new PreToolUse gate.
@@ -122,6 +198,9 @@ construction — named as an accepted residual, not silently absent).
 - `adapters/claude-code/settings.json.template` — new standalone `PreToolUse`/`Bash` wiring.
 - `adapters/claude-code/doctrine/git.md` — compact pointer line.
 - `adapters/claude-code/doctrine/git-full.md` — detail section.
+- `adapters/claude-code/scripts/blocking-budget-check.js` — M2 fix (independent review):
+  added `gh-commit-author-identity` to `UNIT_MAP`'s `commit-boundary` class so this gate
+  consumes no net-new blocking-budget unit.
 - `docs/plans/gh-commit-author-identity-2026-09-27.md` — this plan.
 
 ## Assumptions
@@ -188,13 +267,24 @@ Pinned self-test scenarios (all currently GREEN, evidence in the C-Round Record 
   cache reuse across two invocations).
 - `bash adapters/claude-code/manifest.json` — validated as well-formed JSON (`node -e
   "JSON.parse(...)"`).
-- `harness-doctor.sh --quick` — run against the live mirror pre-merge; the only
+- `harness-doctor.sh --quick` — run against the live mirror pre-merge; the
   attributable findings are the EXPECTED "template-live-drift"/"manifest-freshness"
   RED pair naming this exact change (self-resolving once reviewed + installed — the
   `review-before-deploy` gate correctly refused to install an unreviewed change locally,
   which is the mechanism working as designed, not a defect); every other RED/WARN in that
   run predates this change (`workstreams-state-gate.sh` live/template drift,
   `docs/harness-architecture.md` drift, a stale `NEEDS-YOU.md`) and is unrelated to it.
+  **CORRECTED (M2, PR #67 independent review, PROVEN):** this claim was
+  incomplete — `node adapters/claude-code/scripts/blocking-budget-check.js` measured
+  16/14 on this PR's base commit (`4ff107f4`, already over the ADR 058 D5 budget,
+  pre-existing and unrelated to this PR) and 17/14 on this PR's head BEFORE the fix
+  below, because `gh-commit-author-identity` counted as a new standalone
+  `commit-boundary`-class unit with no `UNIT_MAP` entry. Fixed by adding
+  `'gh-commit-author-identity': 'commit-boundary'` to `UNIT_MAP` in
+  `blocking-budget-check.js` (this gate fires ONLY on git-commit-shaped Bash
+  commands, definitionally the same class every other `commit-boundary` member
+  already is) — re-measured at 16/14 on this PR's head after the fix, i.e. net-zero
+  budget contribution, matching the base exactly.
 
 ## Definition of Done
 - [x] All three touched/new self-test suites green (33/33 combined assertions).

@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # gh-commit-author-identity-gate.sh — PreToolUse (matcher "Bash"): BLOCK a
-# `git commit` / `git commit-tree` whose command overrides author/committer
-# identity to something other than the identity expected for the repo it
-# targets.
+# commit-creating git invocation (`commit`, `commit-tree`, `merge`,
+# `cherry-pick`, `revert`, `pull`, `rebase`, `am`) whose command overrides
+# author/committer EMAIL to something other than the identity expected for
+# the repo it targets, on a repo with a resolvable github.com remote.
 #
 # ============================================================
 # WHY THIS EXISTS (GH-COMMIT-IDENTITY-01, operator directive 2026-09-27,
 # golden scenario)
 # ============================================================
 #
-# 2026-09-21, Circuit PR #1871: fixer subagents committed with author
+# 2026-09-21, on a downstream project's PR: fixer subagents committed with author
 # `<session-context-email>@example.test` — the session's "user email" context
 # value that Claude Code hands every agent "for authorship." The repo's own
 # git config was already correct (a real, project-specific address in
@@ -29,26 +30,37 @@
 # ============================================================
 # WHAT IT BLOCKS
 # ============================================================
-# A `git commit` or `git commit-tree` invocation (working-tree commits AND
-# raw commit-object writes — commit-tree is explicitly in scope even though
-# hooks/lib/git-command-parse.sh's own gcp_resolve_commit_target deliberately
-# excludes it for ITS callers; this gate needs the broader match, so it
-# tokenizes and walks each git segment itself rather than reusing that
-# function's IS_COMMIT verdict) that overrides identity via ANY of:
+# A `git commit`, `commit-tree`, `merge`, `cherry-pick`, `revert`, `pull`,
+# `rebase`, or `am` invocation (M1, PR #67 review, PROVEN: a real downstream
+# project transcript ran `git -c user.name=… -c user.email=… merge -q --no-ff
+# origin/master -m "Merge origin/master"`, and that project's own merge
+# procedure makes merge the MOST FREQUENT commit-creating path, not an
+# edge case — commit-tree is separately in scope even though
+# hooks/lib/git-command-parse.sh's own gcp_resolve_commit_target
+# deliberately excludes it for ITS callers; this gate tokenizes and walks
+# each git segment itself rather than reusing that function's IS_COMMIT
+# verdict) that overrides identity via ANY of:
 #   - `--author=<name> <email>` (or separated `--author <value>`) whose
-#     <email> does not match the expected email
-#   - `-c user.email=<val>` (separated or glued `-c<key>=<val>`) mismatch
-#   - `-c user.name=<val>` mismatch against the repo's OWN current
-#     `git config user.name` (see the lib header: there is no independent
-#     "expected name" oracle, so a name override is judged against what the
-#     repo is already configured to use)
-#   - `GIT_AUTHOR_EMAIL=` / `GIT_COMMITTER_EMAIL=` / `GIT_AUTHOR_NAME=` /
-#     `GIT_COMMITTER_NAME=`, whether set as a command-scoped prefix on the
-#     commit segment itself (`FOO=bar git commit`) or via an earlier
-#     `export FOO=bar` segment in the SAME command (these persist for the
-#     rest of that one shell process, exactly like a real shell) — but NOT
-#     an env var exported in a DIFFERENT, earlier Bash tool call (a named,
-#     accepted residual: this hook only ever sees one command at a time).
+#     <email> does not match the expected email — `commit` ONLY; none of
+#     the other verbs above accept `--author`
+#   - `-c user.email=<val>` (separated or glued `-c<key>=<val>`) mismatch,
+#     on ANY of the verbs above (`-c` is a global git flag)
+#   - `GIT_AUTHOR_EMAIL=` / `GIT_COMMITTER_EMAIL=`, whether set as a
+#     command-scoped prefix on the commit-creating segment itself
+#     (`FOO=bar git commit`), via an earlier `export FOO=bar` segment in
+#     the SAME command, or via an `env FOO=bar git commit` prefix — but
+#     NOT an env var exported in a DIFFERENT, earlier Bash tool call (a
+#     named, accepted residual: this hook only ever sees one command at a
+#     time)
+#   - a plain `git config user.email <val>` (or `--local`/`--worktree`
+#     scoped) SET earlier in the SAME command, persisting into a LATER
+#     commit-creating segment with no override of its own (m1, PR #67
+#     review: "the likely path when an agent answers git's 'please tell
+#     me who you are' prompt") — an explicit override on the commit
+#     segment itself still wins, matching git's own last-wins semantics
+#
+# `-c user.name=<val>` / `GIT_AUTHOR_NAME=` / `GIT_COMMITTER_NAME=` are
+# checked too, but NEVER block on their own (see WHAT IT ALLOWS below).
 #
 # The target repo is resolved the same way git itself would (`-C`,
 # `--work-tree`, `--git-dir`, accumulated `cd`/`pushd`, in that priority),
@@ -58,9 +70,17 @@
 # ============================================================
 # WHAT IT ALLOWS
 # ============================================================
-#   - Any commit with no identity override at all (the overwhelming case).
+#   - Any commit-creating command with no identity override at all (the
+#     overwhelming case), and any command NOT in the verb list above
+#     (`git status`, `git log --author=…`, etc — never touched).
 #   - An override that MATCHES the expected identity (case-insensitive on
 #     email — not an override in effect, just spelling it out explicitly).
+#   - A NAME-only mismatch (`-c user.name=`, `GIT_AUTHOR_NAME=`,
+#     `GIT_COMMITTER_NAME=`) with no accompanying EMAIL mismatch (m2, PR
+#     #67 review: Vercel and GitHub attribute commits by EMAIL, not
+#     display name — blocking on name alone adds false-positive surface
+#     with no attribution benefit). Still visible: logged as a
+#     signal-ledger `warn`, never silently dropped.
 #   - `GIT_COMMIT_IDENTITY_GATE_ACK=1` present anywhere in the same
 #     resolution chain that fed a candidate override (command-scoped prefix,
 #     or an earlier `export`) — the ONE sanctioned escape, for the genuine
@@ -70,38 +90,121 @@
 #     preemptively by an agent to talk itself past this gate. Every ack use
 #     is logged (ledger event "waiver"), so a pattern of acks is visible to
 #     later review, not silently invisible.
-#   - When NO expected identity is resolvable at all (the repo's owner
-#     account also lacks the gh API `user` scope AND the repo carries no
-#     git config identity of its own) -> fails OPEN. There is no ground
-#     truth to check an override against, and never never fabricates one to
-#     check against (see the lib's noreply-never-used guarantee).
+#   - A target directory with NO resolvable github.com remote owner at all
+#     (M4, PR #67 review, PROVEN false positive: a throwaway `git init`
+#     scratch/fixture repo with its own local identity was compared
+#     against whatever this MACHINE's global `~/.gitconfig` happened to
+#     hold — there is no repo-level GitHub identity to enforce there).
+#     Fails OPEN completely: no check, no auto-set.
+#   - When a github.com remote owner IS resolvable but NO expected email
+#     can be resolved for it (the owner is not mapped in this machine's
+#     `~/.claude/local/accounts.config.json`, AND the repo carries no git
+#     config identity of its own) -> fails OPEN. There is no ground truth
+#     to check an override against, and never fabricates one to check
+#     against (see the lib's noreply-never-used guarantee). NOTE (M3, PR
+#     #67 review): the gh-API rung requires that config file to carry a
+#     REAL owner->account mapping — on a machine where it still holds only
+#     the shipped placeholder entries, every resolution falls to the
+#     git-config fallback rung, and this is surfaced as a signal-ledger
+#     `warn` (not silent) rather than assumed to be the gh-API path.
 #
 # ============================================================
 # OPTIONAL SIDE EFFECT (operator's call, documented rationale)
 # ============================================================
-# When a commit/commit-tree segment carries NO override at all, and the
+# When a commit-creating segment carries NO override at all, and the
 # target repo has NO `user.email` configured at ANY level (neither local nor
 # global), and an expected email WAS resolved via the gh API (not the
 # fallback — the fallback rung requires config to already exist, so by
 # construction it cannot fire here) -> this gate sets `user.email` on that
-# repo, ONCE, and prints a non-blocking note (never a silent side effect).
+# repo, ONCE, and logs a signal-ledger `warn` plus a best-effort stderr note.
 # Rationale: an unconfigured worktree committing under whatever ambient
 # identity git falls back to (which can be wrong, or can error outright) is
 # the exact same class of problem this gate exists to prevent, just via a
 # different path (an ABSENT identity instead of an OVERRIDDEN one) — fixing
 # it once, quietly, at the point where the correct value is already in hand,
-# is cheaper than blocking every future commit from that worktree.
+# is cheaper than blocking every future commit from that worktree. m6 (PR
+# #67 review): the stderr note is a best-effort courtesy, not a guarantee —
+# PreToolUse stderr on a non-blocking (exit 0) path is not guaranteed
+# visible to the agent transcript. The signal ledger, not the stderr note,
+# is the reliable record.
 #
 # ============================================================
 # NEVER BLOCKS ON:
 # ============================================================
-#   - non-commit, non-commit-tree commands (fast substring prefilter)
+#   - a command matching NONE of the commit-creating verb substrings
+#     ("commit", "merge", "cherry-pick", "revert", "pull", "rebase", " am")
+#     anywhere in the RAW payload text, checked BEFORE sourcing any
+#     library (m4, PR #67 review: this hook fires on every Bash call, so
+#     the non-matching fast path must stay cheap). " am" (space-prefixed)
+#     is deliberately loose — "am" alone is too short/common a substring
+#     to check precisely with a case pattern, so this errs toward a
+#     FALSE POSITIVE (occasionally sourcing libraries for an unrelated
+#     command containing the word "am", e.g. a commit message reading "I
+#     am done") rather than a FALSE NEGATIVE (ever skipping a real `git
+#     am`) — resolves toward DETECTION, not silence, the same posture
+#     git-command-parse.sh's own prefilter documents. A command matching
+#     one of these substrings is NOT guaranteed to actually BE one of
+#     these verbs (that precise determination is the tokenizer/parser
+#     below); this is a cheap superset filter, not the real check.
+#   - a target directory with no resolvable github.com remote owner (M4)
 #   - internal limitation (no jq available for payload parsing when
 #     CLAUDE_TOOL_INPUT/stdin carries no usable command text; no git binary)
+#
+# ============================================================
+# NAMED RESIDUALS (m1, PR #67 review — NOT closed, deliberately, cost vs.
+# realistic likelihood; each is a real bypass, named rather than hidden)
+# ============================================================
+#   - `bash -c '…git commit --author=…'` — an arbitrarily-quoted nested
+#     shell command is not recursively re-parsed. Same class of gap
+#     git-command-parse.sh's own obfuscated-verb prefilter already
+#     documents for its callers.
+#   - `git --config-env=user.email=SOME_ENV_VAR_NAME commit` — the
+#     EFFECTIVE value lives in whatever `$SOME_ENV_VAR_NAME` resolves to
+#     at runtime, which is only visible to this hook when that SPECIFIC
+#     var name happens to also be one of the 4 tracked GIT_* vars set
+#     earlier in the same command (it usually is not).
+#   - `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email
+#     GIT_CONFIG_VALUE_0=<val> git commit` — git's alternate indexed
+#     config-injection mechanism; not parsed.
 #
 # Self-test: bash gh-commit-author-identity-gate.sh --self-test
 
 set -u
+
+_GCIA_ARGV1="${1:-}"
+
+# ============================================================
+# m4 (PR #67 review, 2026-09-28): cheapest possible prefilter, BEFORE
+# sourcing anything. This hook fires on EVERY Bash tool call. Reading the
+# raw payload and checking for any commit-creating-verb substring before
+# loading 5 library files (jq parse + sourcing cost) means the
+# overwhelmingly common non-matching call pays almost nothing. Measured
+# before this fix: a non-commit call like `ls -la` cost ~0.5-1.1s with this
+# hook wired, vs ~0.5-0.76s for the comparable gh-account-autoswitch.sh.
+# A raw substring check on the WHOLE payload is a safe superset of
+# checking just the parsed .tool_input.command field: if none of these
+# substrings is anywhere in the raw text, none can be inside a substring
+# of that text either. MUST list every verb M1 added (merge/cherry-pick/
+# revert/pull/rebase/am) — checking only "commit" here would silently
+# skip those verbs entirely (the exact bug this comment now documents so
+# it is not reintroduced by only adding a verb inside the parser below
+# without also widening this prefilter). Only the plain (no-arg)
+# invocation path reads stdin here — --self-test/--help never touch it,
+# exactly as before this change.
+# ============================================================
+if [ -z "$_GCIA_ARGV1" ]; then
+  if [ -n "${GCIA_CMD:-}" ]; then
+    _GCIA_RAW="$GCIA_CMD"
+  elif [ -n "${CLAUDE_TOOL_INPUT:-}" ]; then
+    _GCIA_RAW="$CLAUDE_TOOL_INPUT"
+  else
+    _GCIA_RAW="$(cat 2>/dev/null || true)"
+  fi
+  case "$_GCIA_RAW" in
+    *commit*|*merge*|*cherry-pick*|*revert*|*pull*|*rebase*|*' am'*) : ;;
+    *) exit 0 ;;
+  esac
+fi
 
 _GCIA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 # shellcheck disable=SC1091
@@ -118,13 +221,15 @@ _GCIA_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 # ============================================================
 # Payload reading — mirrors gh-account-autoswitch.sh's shape (the real
 # PreToolUse stdin JSON: .tool_input.command / .cwd), plus CLAUDE_TOOL_INPUT
-# env-var and GCIA_CMD/GCIA_CWD self-test overrides.
+# env-var and GCIA_CMD/GCIA_CWD self-test overrides. The raw payload was
+# already read by the m4 prefilter above (for the plain invocation path);
+# this just hands it to the JSON-field extractors below instead of
+# re-reading stdin a second time (which would hang — stdin is consumed
+# exactly once).
 # ============================================================
 
 _gcia_read_payload() {
-  if [ -z "${GCIA_CMD:-}" ] && [ -z "${CLAUDE_TOOL_INPUT:-}" ]; then
-    _GCIA_PAYLOAD="$(cat 2>/dev/null || true)"
-  fi
+  _GCIA_PAYLOAD="${_GCIA_RAW:-}"
 }
 
 _gcia_command() {
@@ -208,6 +313,65 @@ _gcia_maybe_export() {
   return 0
 }
 
+# m1 (PR #67 review): `env NAME=VALUE... cmd` is functionally identical to
+# a command-scoped prefix (`NAME=VALUE cmd`) but gcp_strip_env_assignments_var
+# does not recognize it — the literal word "env" has no `=`, so it never
+# matched the leading-assignment scan. If the segment starts with a bare
+# "env" token, strip it and let the SAME assignment-stripping logic the
+# caller already runs handle the NAME=VALUE pairs that follow, exactly as
+# it already does for a plain command-scoped prefix. Does not attempt to
+# parse env's OWN flags (`env -i ...`) — a named, accepted narrowing.
+_gcia_strip_env_prefix() { # <segment> -> stdout: segment with "env " stripped
+  local seg="$1" rest
+  case "$seg" in
+    env|env[[:space:]]*)
+      rest="${seg#env}"
+      rest="${rest#"${rest%%[![:space:]]*}"}"
+      printf '%s' "$rest"
+      ;;
+    *) printf '%s' "$seg" ;;
+  esac
+}
+
+# m1 (PR #67 review): recognize a plain `git config user.email <value>` /
+# `git config user.name <value>` SET — not --get/--unset/--list — optionally
+# scoped `--local`/`--worktree`. This is "the likely path when an agent
+# answers git's 'please tell me who you are' prompt": a config SET followed
+# by a plain `git commit` in the same command carries no override on the
+# commit segment itself, so without this the identity change is invisible
+# to the gate. `--global`/`--system` scope is deliberately NOT recognized —
+# a machine-wide config change is a different, larger-blast-radius action
+# outside this per-repo gate's scope. Also deliberately narrow: does not
+# handle `-C`/global `-c` flags glued onto the `git config` invocation
+# itself (a named, accepted simplification — the plain form is the
+# overwhelmingly common shape). Sets _GCIA_CFGSET_KEY/_GCIA_CFGSET_VAL and
+# returns 0 on a match; returns 1 (no output vars touched) otherwise.
+_gcia_maybe_config_set() { # <segment starting with "git">
+  local seg="$1"
+  gcp_tokenize_segment "$seg"
+  local n=${#GCP_SEG_TOKENS[@]} i
+  [ "$n" -ge 4 ] || return 1
+  [ "${GCP_SEG_TOKENS[0]}" = "git" ] || return 1
+  [ "${GCP_SEG_TOKENS[1]}" = "config" ] || return 1
+  i=2
+  while [ "$i" -lt "$n" ]; do
+    case "${GCP_SEG_TOKENS[$i]}" in
+      --local|--worktree) i=$((i+1)) ;;
+      *) break ;;
+    esac
+  done
+  [ "$i" -lt "$n" ] || return 1
+  case "${GCP_SEG_TOKENS[$i]}" in
+    user.email) _GCIA_CFGSET_KEY="user.email" ;;
+    user.name) _GCIA_CFGSET_KEY="user.name" ;;
+    *) return 1 ;;
+  esac
+  i=$((i+1))
+  [ "$i" -lt "$n" ] || return 1
+  _GCIA_CFGSET_VAL="${GCP_SEG_TOKENS[$i]}"
+  return 0
+}
+
 # ============================================================
 # Per-git-segment analysis. Extends gcp_analyze_git_segment (which stops the
 # instant it sees the subcommand word, and treats commit-tree as NOT a
@@ -268,8 +432,19 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
     i=$((i+1))
   done
 
+  # M1 (PR #67 review, PROVEN): identity overrides on every OTHER
+  # commit-creating subcommand passed the gate — a real downstream project
+  # session transcript ran `git -c user.name=… -c user.email=… merge -q
+  # --no-ff origin/master -m "Merge origin/master"`, and that project's own
+  # merge procedure ("merge origin/master into the branch") makes merge commits
+  # the most frequent commit-creating path of all, not an edge case. `-c`
+  # is a GLOBAL git flag (already captured in phase 1 above regardless of
+  # subcommand), so the fix is simply widening which subcommands count as
+  # identity-bearing. `--author` stays commit-only below — none of these
+  # other verbs accept that flag (cherry-pick preserves original
+  # authorship automatically; git itself errors on `--author` elsewhere).
   case "$sub" in
-    commit|commit-tree) _GCIA_IS_TARGET=1 ;;
+    commit|commit-tree|merge|cherry-pick|revert|pull|rebase|am) _GCIA_IS_TARGET=1 ;;
     *) return 0 ;;
   esac
 
@@ -279,18 +454,22 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
   else _GCIA_TARGET_DIR="$base"
   fi
 
-  # Phase 2: subcommand-level flags — only --author matters here.
-  i=$((i+1))
-  while [ "$i" -lt "$n" ]; do
-    tok="${GCP_SEG_TOKENS[$i]}"
-    case "$tok" in
-      --author=?*) _GCIA_AUTHOR_VAL="${tok#--author=}" ;;
-      --author)
-        i=$((i+1)); [ "$i" -lt "$n" ] && _GCIA_AUTHOR_VAL="${GCP_SEG_TOKENS[$i]}"
-        ;;
-    esac
+  # Phase 2: subcommand-level flags — only --author matters here, and only
+  # for `commit` itself (see the M1 note above: no other verb in scope
+  # accepts --author).
+  if [ "$sub" = "commit" ]; then
     i=$((i+1))
-  done
+    while [ "$i" -lt "$n" ]; do
+      tok="${GCP_SEG_TOKENS[$i]}"
+      case "$tok" in
+        --author=?*) _GCIA_AUTHOR_VAL="${tok#--author=}" ;;
+        --author)
+          i=$((i+1)); [ "$i" -lt "$n" ] && _GCIA_AUTHOR_VAL="${GCP_SEG_TOKENS[$i]}"
+          ;;
+      esac
+      i=$((i+1))
+    done
+  fi
   return 0
 }
 
@@ -305,6 +484,20 @@ _gcia_evaluate() { # <target_dir> <cfg_email> <cfg_name> <author_val>
   local target_dir="$1" cfg_email="$2" cfg_name="$3" author_val="$4"
   _GCIA_VIOLATION=0
   _GCIA_AUTO_SET_NOTE=""
+
+  # M4 (PR #67 review, PROVEN false positive): a repo with NO resolvable
+  # github.com remote owner has no GitHub ground truth to check against.
+  # Without this guard, a throwaway `git init` scratch/fixture repo with
+  # its own local throwaway identity got compared against whatever this
+  # MACHINE's global ~/.gitconfig happens to hold — not "the account
+  # logged in for the repo" (there is no repo-level GH identity at all,
+  # so there is nothing this gate can legitimately enforce). Fail open
+  # completely: no check, no auto-set. A real transcript escaped this
+  # only because the cwd could not be resolved when the hook ran — this
+  # closes that gap structurally rather than by accident.
+  if [ -z "$(gh_owner_from_cwd_remote "$target_dir" 2>/dev/null)" ]; then
+    return 0
+  fi
 
   gia_resolve_expected_email "$target_dir"
   local expected_email="$GIA_EMAIL" expected_source="$GIA_EMAIL_SOURCE"
@@ -343,16 +536,27 @@ _gcia_evaluate() { # <target_dir> <cfg_email> <cfg_name> <author_val>
     bad_kind="GIT_COMMITTER_EMAIL"; bad_val="$_GCIA_ENV_COMMITTER_EMAIL"
   fi
 
+  # m2 (PR #67 review): a NAME-only mismatch is WARNED, never BLOCKED.
+  # Vercel and GitHub attribute commits by EMAIL, not display name — the
+  # directive this gate exists for ("use the email that's logged into
+  # GH") is about email specifically, and blocking on a name mismatch adds
+  # false-positive surface with no attribution benefit. Still visible
+  # (signal ledger), never silent; only reached when no EMAIL-based
+  # bad_kind was already set above (an email mismatch always wins).
   if [ -z "$bad_kind" ] && { [ -n "$cfg_name" ] || [ -n "${_GCIA_ENV_AUTHOR_NAME:-}" ] || [ -n "${_GCIA_ENV_COMMITTER_NAME:-}" ]; }; then
     gia_resolve_expected_name "$target_dir"
     local expected_name="$GIA_NAME"
     if [ -n "$expected_name" ]; then
+      local name_bad_kind="" name_bad_val=""
       if [ -n "$cfg_name" ] && [ "$cfg_name" != "$expected_name" ]; then
-        bad_kind="-c user.name"; bad_val="$cfg_name"
+        name_bad_kind="-c user.name"; name_bad_val="$cfg_name"
       elif [ -n "${_GCIA_ENV_AUTHOR_NAME:-}" ] && [ "${_GCIA_ENV_AUTHOR_NAME}" != "$expected_name" ]; then
-        bad_kind="GIT_AUTHOR_NAME"; bad_val="$_GCIA_ENV_AUTHOR_NAME"
+        name_bad_kind="GIT_AUTHOR_NAME"; name_bad_val="$_GCIA_ENV_AUTHOR_NAME"
       elif [ -n "${_GCIA_ENV_COMMITTER_NAME:-}" ] && [ "${_GCIA_ENV_COMMITTER_NAME}" != "$expected_name" ]; then
-        bad_kind="GIT_COMMITTER_NAME"; bad_val="$_GCIA_ENV_COMMITTER_NAME"
+        name_bad_kind="GIT_COMMITTER_NAME"; name_bad_val="$_GCIA_ENV_COMMITTER_NAME"
+      fi
+      if [ -n "$name_bad_kind" ] && declare -F ledger_emit >/dev/null 2>&1; then
+        ledger_emit "gh-commit-author-identity" "warn" "name-only override ${name_bad_kind}=${name_bad_val} != expected ${expected_name} for ${target_dir} (not blocked — attribution is by email, not name)"
       fi
     fi
   fi
@@ -383,8 +587,8 @@ _gcia_evaluate() { # <target_dir> <cfg_email> <cfg_name> <author_val>
 _gcia_block() {
   local what why fix escape
   what="this commit sets identity via ${_GCIA_VIOLATION_DETAIL}, which does not match the identity expected for ${_GCIA_VIOLATION_TARGET} (${_GCIA_VIOLATION_EXPECTED}, resolved via ${_GCIA_VIOLATION_SOURCE})"
-  why="Commits from Claude agents must carry the identity of the GitHub account logged in for the repo being committed to — never whatever email/name Claude Code's own session context hands the agent. A mismatch has already blocked a production deploy (Vercel maps commit emails to Vercel users; Circuit PR #1871, 2026-09-21, ~1hr cost)."
-  fix="drop the override so the commit uses ${_GCIA_VIOLATION_EXPECTED} (git's own default identity resolution for ${_GCIA_VIOLATION_TARGET})"
+  why="Commits from Claude agents must carry the identity of the GitHub account logged in for the repo being committed to — never whatever email/name Claude Code's own session context hands the agent. A mismatch has already blocked a production deploy (Vercel maps commit emails to Vercel users; a downstream project's PR, 2026-09-21, ~1hr cost)."
+  fix="drop the override so the commit resolves to ${_GCIA_VIOLATION_EXPECTED} (resolved via ${_GCIA_VIOLATION_SOURCE}) — if ${_GCIA_VIOLATION_TARGET}'s own \`git config user.email\` differs from this value, fix the config there instead of relying on an inline override"
   escape="GIT_COMMIT_IDENTITY_GATE_ACK=1 prefixed to the SAME command — only after the user in this conversation explicitly authorized committing under that other identity; never set it preemptively (constitution section 7)"
   {
     echo "================================================================"
@@ -414,7 +618,14 @@ _gcia_run() {
   local cmd cwd
   cmd="$(_gcia_command)"
   [ -n "$cmd" ] || { exit 0; }
-  case "$cmd" in *commit*) : ;; *) exit 0 ;; esac
+  # M1 (PR #67 review): this second prefilter (on the PARSED command,
+  # after JSON extraction) must match the SAME verb-substring set as the
+  # raw-payload prefilter near the top of this file — a narrower pattern
+  # here would silently re-introduce the exact bug that prefilter's own
+  # comment now warns against (only checking "commit" here skipped
+  # merge/cherry-pick/revert/pull/rebase/am entirely, even though the raw
+  # prefilter had already let them through).
+  case "$cmd" in *commit*|*merge*|*cherry-pick*|*revert*|*pull*|*rebase*|*' am'*) : ;; *) exit 0 ;; esac
   case "$cmd" in *git*) : ;; *) exit 0 ;; esac
   command -v git >/dev/null 2>&1 || { exit 0; }
 
@@ -426,11 +637,23 @@ _gcia_run() {
   gcp_split_command "$cmd"
   local n=${#GCP_SEGMENTS[@]} i seg cd_target="" j
   local violation=0 auto_note=""
+  # m1 (PR #67 review): a plain `git config user.email X` earlier in the
+  # SAME command persists into a later commit-creating segment exactly
+  # like a real shell would apply it — tracked here the same way cd_target
+  # is tracked across segments.
+  local cfg_track_email="" cfg_track_name=""
 
   for ((i=0; i<n; i++)); do
     seg="${GCP_SEGMENTS[$i]}"
     seg="${seg#"${seg%%[![:space:]]*}"}"
     seg="${seg%"${seg##*[![:space:]]}"}"
+    [ -n "$seg" ] || continue
+
+    # m1 (PR #67 review): `env NAME=VALUE... cmd` — strip the leading
+    # "env" token so the assignment-stripping call below sees the exact
+    # same NAME=VALUE shape it already handles for a bare command-scoped
+    # prefix.
+    seg="$(_gcia_strip_env_prefix "$seg")"
     [ -n "$seg" ] || continue
 
     GCP_ASSIGN_NAMES=(); GCP_ASSIGN_VALUES=()
@@ -458,10 +681,26 @@ _gcia_run() {
       *) continue ;;
     esac
 
+    if _gcia_maybe_config_set "$GCP_STRIPPED"; then
+      case "$_GCIA_CFGSET_KEY" in
+        user.email) cfg_track_email="$_GCIA_CFGSET_VAL" ;;
+        user.name) cfg_track_name="$_GCIA_CFGSET_VAL" ;;
+      esac
+      continue
+    fi
+
     _gcia_analyze_segment "$GCP_STRIPPED" "$base"
     [ "$_GCIA_IS_TARGET" = "1" ] || continue
 
-    _gcia_evaluate "$_GCIA_TARGET_DIR" "$_GCIA_CFG_EMAIL" "$_GCIA_CFG_NAME" "$_GCIA_AUTHOR_VAL"
+    # m1: fold in a tracked earlier `git config user.email/name` SET only
+    # when this segment carries no explicit override of its own — an
+    # explicit -c/--author/env override on the commit segment itself
+    # always takes precedence, matching git's own last-wins semantics.
+    local eff_cfg_email="$_GCIA_CFG_EMAIL" eff_cfg_name="$_GCIA_CFG_NAME"
+    [ -n "$eff_cfg_email" ] || eff_cfg_email="$cfg_track_email"
+    [ -n "$eff_cfg_name" ] || eff_cfg_name="$cfg_track_name"
+
+    _gcia_evaluate "$_GCIA_TARGET_DIR" "$eff_cfg_email" "$eff_cfg_name" "$_GCIA_AUTHOR_VAL"
     if [ "$_GCIA_VIOLATION" = "1" ]; then
       violation=1
       break
@@ -559,7 +798,7 @@ STUB
   }
 
   # -------- override blocked --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   _run 'git commit -m "x" --author="Someone <wrong@example.test>"' "$gr"
   if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q '\[GATE:WHAT\]' && printf '%s' "$OUT" | grep -q 'acct-work@example.test' && printf '%s' "$OUT" | grep -q 'wrong@example.test'; then
     echo "  override-blocked (--author mismatch): PASS"; pass=$((pass+1))
@@ -568,7 +807,7 @@ STUB
   fi
 
   # -------- matching override allowed --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   _run 'git commit -m "x" --author="Someone <acct-work@example.test>"' "$gr"
   if [ "$RC" = "0" ]; then
     echo "  matching-override-allowed (--author matches expected): PASS"; pass=$((pass+1))
@@ -577,7 +816,7 @@ STUB
   fi
 
   # -------- no override allowed (+ auto-set side effect) --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   git -C "$gr" config --unset user.email 2>/dev/null || true
   _run 'git commit -m "plain commit, no override"' "$gr"
   local set_email; set_email="$(git -C "$gr" config --get user.email 2>/dev/null)"
@@ -588,7 +827,7 @@ STUB
   fi
 
   # -------- scope-missing fallback (gh api 404-equivalent) --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   git -C "$gr" config user.email "fallback@example.test"
   unset STUB_EMAIL_FOR_TOKEN_tok_work   # token resolves but user/emails fails
   _run 'git -c user.email=wrong@example.test commit -m "x"' "$gr"
@@ -600,7 +839,7 @@ STUB
   export STUB_EMAIL_FOR_TOKEN_tok_work="acct-work@example.test"
 
   # -------- noreply-never-used (nothing resolvable at all -> allow, never guess) --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   local gr3="$tmp/repo-unknown"; mkdir -p "$gr3"
   ( cd "$gr3" && HOME="$tmp/emptyhome" git init -q 2>/dev/null \
       && git remote add origin "https://github.com/unknown-org/x.git" 2>/dev/null )
@@ -614,7 +853,7 @@ STUB
   fi
 
   # -------- commit-tree explicitly in scope --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   local a_blob a_tree
   a_tree="$(git -C "$gr" write-tree 2>/dev/null || echo "4b825dc642cb6eb9a060e54bf8d69288fbee4904")"
   _run "git -c user.email=wrong@example.test commit-tree ${a_tree} -m x" "$gr"
@@ -624,17 +863,17 @@ STUB
     echo "  commit-tree recognized as identity-bearing: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
   fi
 
-  # -------- -c user.name mismatch (against repo's OWN configured name) --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  # -------- -c user.name mismatch: m2 (PR #67 review) WARNS, never BLOCKS --------
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative "$SIGNAL_LEDGER_PATH"
   _run 'git -c user.name="Wrong Name" commit -m x' "$gr"
-  if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q 'Wrong Name' && printf '%s' "$OUT" | grep -q 'user.name'; then
-    echo "  -c user.name mismatch blocked: PASS"; pass=$((pass+1))
+  if [ "$RC" = "0" ] && grep -q 'name-only override' "$SIGNAL_LEDGER_PATH" 2>/dev/null && grep -q 'Wrong Name' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "  -c user.name mismatch WARNS (not blocked) + logs ledger: PASS"; pass=$((pass+1))
   else
-    echo "  -c user.name mismatch blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+    echo "  -c user.name mismatch WARNS (not blocked) + logs ledger: FAIL (rc=$RC out=[$OUT] ledger=$(cat "$SIGNAL_LEDGER_PATH" 2>/dev/null))"; fail=$((fail+1))
   fi
 
   # -------- glued -c form --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   _run 'git -cuser.email=wrong@example.test commit -m x' "$gr"
   if [ "$RC" = "2" ]; then
     echo "  glued -c<key>=<val> form parsed and blocked: PASS"; pass=$((pass+1))
@@ -643,7 +882,7 @@ STUB
   fi
 
   # -------- env var via command-scoped prefix --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   _run 'GIT_AUTHOR_EMAIL=wrong@example.test git commit -m x' "$gr"
   if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q 'GIT_AUTHOR_EMAIL'; then
     echo "  GIT_AUTHOR_EMAIL command-scoped prefix blocked: PASS"; pass=$((pass+1))
@@ -652,7 +891,7 @@ STUB
   fi
 
   # -------- env var via earlier export segment --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   _run 'export GIT_COMMITTER_EMAIL=wrong@example.test && git commit -m x' "$gr"
   if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q 'GIT_COMMITTER_EMAIL'; then
     echo "  export in an earlier segment blocked: PASS"; pass=$((pass+1))
@@ -661,7 +900,7 @@ STUB
   fi
 
   # -------- ack escape allows through, and is logged as a waiver --------
-  rm -f "$GIA_STATE_DIR"/*.txt "$SIGNAL_LEDGER_PATH"
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative "$SIGNAL_LEDGER_PATH"
   _run 'GIT_COMMIT_IDENTITY_GATE_ACK=1 GIT_AUTHOR_EMAIL=wrong@example.test git commit -m x' "$gr"
   if [ "$RC" = "0" ] && grep -q '"gate":"gh-commit-author-identity"' "$SIGNAL_LEDGER_PATH" 2>/dev/null && grep -q '"event":"waiver"' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
     echo "  GIT_COMMIT_IDENTITY_GATE_ACK=1 escape allows through + logs waiver: PASS"; pass=$((pass+1))
@@ -672,7 +911,7 @@ STUB
   # -------- -C target dir resolution: wrong-account identity used against a
   # DIFFERENT repo than cwd, resolved via -C, must be judged against THAT
   # repo's expected identity --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   _run "git -C ${gr2} commit -m x --author=\"X <acct-work@example.test>\"" "$gr"
   if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q 'acct-personal@example.test'; then
     echo "  -C target dir drives expected-identity lookup: PASS"; pass=$((pass+1))
@@ -681,7 +920,7 @@ STUB
   fi
 
   # -------- non-commit command -> no-op, no gh calls --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   calls="$tmp/calls-status.txt"; : > "$calls"
   RC=0
   GCIA_CMD='git status' GCIA_CWD="$gr" GIA_STUB_CALLS="$calls" bash "$SELF" >/dev/null 2>&1 || RC=$?
@@ -692,7 +931,7 @@ STUB
   fi
 
   # -------- unparseable --author value fails closed (ambiguous identity) --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   _run 'git commit -m x --author=not-an-email-shape' "$gr"
   if [ "$RC" = "2" ]; then
     echo "  unparseable --author value fails closed: PASS"; pass=$((pass+1))
@@ -701,7 +940,7 @@ STUB
   fi
 
   # -------- cache reused across two commits in the sweep (no repeated gh api calls) --------
-  rm -f "$GIA_STATE_DIR"/*.txt
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
   calls="$tmp/calls-cache.txt"; : > "$calls"
   GCIA_CMD='git commit -m x' GCIA_CWD="$gr" GIA_STUB_CALLS="$calls" bash "$SELF" >/dev/null 2>&1
   GCIA_CMD='git commit -m x --author="A <acct-work@example.test>"' GCIA_CWD="$gr" GIA_STUB_CALLS="$calls" bash "$SELF" >/dev/null 2>&1
@@ -710,6 +949,133 @@ STUB
     echo "  cache reused across invocations (1 gh-api call for 2 commits): PASS"; pass=$((pass+1))
   else
     echo "  cache reused across invocations (1 gh-api call for 2 commits): FAIL (calls=$n_calls)"; fail=$((fail+1))
+  fi
+
+  # ============================================================
+  # M1 (PR #67 review, PROVEN): commit-creating verbs beyond commit/commit-tree
+  # ============================================================
+
+  # A verbatim-shaped real transcript: `-c user.name=/-c user.email=` on a
+  # `merge` invocation, a downstream project's own most-frequent
+  # commit-creating path.
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git -c user.name="Someone" -c user.email=wrong@example.test merge -q --no-ff origin/master -m "Merge origin/master"' "$gr"
+  if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q 'wrong@example.test'; then
+    echo "  M1 merge -c user.email mismatch blocked: PASS"; pass=$((pass+1))
+  else
+    echo "  M1 merge -c user.email mismatch blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'GIT_COMMITTER_EMAIL=wrong@example.test git cherry-pick abc1234' "$gr"
+  if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q 'GIT_COMMITTER_EMAIL'; then
+    echo "  M1 cherry-pick env override blocked: PASS"; pass=$((pass+1))
+  else
+    echo "  M1 cherry-pick env override blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git -c user.email=wrong@example.test revert --no-edit HEAD' "$gr"
+  if [ "$RC" = "2" ]; then
+    echo "  M1 revert -c user.email mismatch blocked: PASS"; pass=$((pass+1))
+  else
+    echo "  M1 revert -c user.email mismatch blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git -c user.email=wrong@example.test pull --no-rebase origin master' "$gr"
+  if [ "$RC" = "2" ]; then
+    echo "  M1 pull -c user.email mismatch blocked: PASS"; pass=$((pass+1))
+  else
+    echo "  M1 pull -c user.email mismatch blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git -c user.email=wrong@example.test rebase origin/master' "$gr"
+  if [ "$RC" = "2" ]; then
+    echo "  M1 rebase -c user.email mismatch blocked: PASS"; pass=$((pass+1))
+  else
+    echo "  M1 rebase -c user.email mismatch blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git -c user.email=wrong@example.test am /tmp/patch.mbox' "$gr"
+  if [ "$RC" = "2" ]; then
+    echo "  M1 am -c user.email mismatch blocked: PASS"; pass=$((pass+1))
+  else
+    echo "  M1 am -c user.email mismatch blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  # Non-regression: plain merge/pull/cherry-pick with NO override, and a
+  # read-only `git log --author=` (not commit-creating), all still allowed.
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git merge origin/master' "$gr"
+  if [ "$RC" = "0" ]; then
+    echo "  M1 plain merge (no override) allowed: PASS"; pass=$((pass+1))
+  else
+    echo "  M1 plain merge (no override) allowed: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git log --author=someone@example.test' "$gr"
+  if [ "$RC" = "0" ]; then
+    echo "  M1 git log --author= (read-only, not commit-creating) allowed: PASS"; pass=$((pass+1))
+  else
+    echo "  M1 git log --author= (read-only, not commit-creating) allowed: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  # ============================================================
+  # M4 (PR #67 review, PROVEN false positive): no github.com remote -> fail open
+  # ============================================================
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  # Sandbox a "global" git config holding SOME address, simulating a real
+  # operator machine's ~/.gitconfig — the exact condition that let this
+  # false positive escape a self-test suite that never populates one.
+  git config --global user.email "global-fallback@example.test" 2>/dev/null
+  git config --global user.name "Global Fallback" 2>/dev/null
+  local scratch="$tmp/scratch-no-remote"; mkdir -p "$scratch"
+  ( cd "$scratch" && git init -q 2>/dev/null && git config user.email "t@t.example" && git config user.name "t" )
+  _run 'git -c user.email=totally-different@example.test -c user.name=other commit --allow-empty -m base' "$scratch"
+  if [ "$RC" = "0" ]; then
+    echo "  M4 no-github-remote scratch repo fails open (never blocked): PASS"; pass=$((pass+1))
+  else
+    echo "  M4 no-github-remote scratch repo fails open (never blocked): FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  # ============================================================
+  # m1 (PR #67 review): two closable named bypasses
+  # ============================================================
+
+  # `env NAME=VALUE cmd` prefix (distinct from a bare command-scoped prefix).
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'env GIT_AUTHOR_EMAIL=wrong@example.test git commit -m x' "$gr"
+  if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q 'GIT_AUTHOR_EMAIL'; then
+    echo "  m1 'env NAME=VALUE git commit' prefix blocked: PASS"; pass=$((pass+1))
+  else
+    echo "  m1 'env NAME=VALUE git commit' prefix blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  # `git config user.email X && git commit` — the "please tell me who you
+  # are" shape: no override on the commit segment itself, but an earlier
+  # config SET in the same command should still be caught.
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git config user.email wrong@example.test && git commit -m x' "$gr"
+  if [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -q 'user.email' && printf '%s' "$OUT" | grep -q 'wrong@example.test'; then
+    echo "  m1 'git config user.email X && git commit' persistence blocked: PASS"; pass=$((pass+1))
+  else
+    echo "  m1 'git config user.email X && git commit' persistence blocked: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  # An explicit override on the commit segment ITSELF still wins over an
+  # earlier tracked config-set (git's own last-wins semantics) — here the
+  # tracked config is WRONG but the commit's own -c MATCHES, so it must
+  # be ALLOWED, proving the commit segment's own override takes priority.
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  _run 'git config user.email wrong@example.test && git -c user.email=acct-work@example.test commit -m x' "$gr"
+  if [ "$RC" = "0" ]; then
+    echo "  m1 explicit commit-segment override wins over tracked config-set: PASS"; pass=$((pass+1))
+  else
+    echo "  m1 explicit commit-segment override wins over tracked config-set: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
   fi
 
   unset HARNESS_SELFTEST SIGNAL_LEDGER_PATH GHBLIND_ACCOUNTS GIA_GH_CMD GIA_STATE_DIR \

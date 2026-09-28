@@ -153,20 +153,29 @@ When a PR/squash-merge serves an active plan, add a trailer line `plan: <slug>` 
 must carry the identity of the GitHub account that is logged in FOR THE REPO BEING
 COMMITTED TO — never whatever "user email" value Claude Code's own session context hands
 the agent for authorship. Those are different things, and conflating them is a proven,
-costly failure mode: 2026-09-21, Circuit PR #1871 — a fixer subagent committed with the
-session's context email as the author. The repo's OWN git config was already correct, so
-the override must have been passed explicitly. Vercel maps commit emails to Vercel users
-and blocked the deploy over the mismatch (~1hr cost). The session's context email has
-since changed to yet another address — this is a structural, recurring risk, not a
-one-off to patch by hand.
+costly failure mode: 2026-09-21, on a downstream project's PR, a fixer subagent committed
+with the session's context email as the author. The repo's OWN git config was already
+correct, so the override must have been passed explicitly. Vercel maps commit emails to
+Vercel users and blocked the deploy over the mismatch (~1hr cost). The session's context
+email has since changed to yet another address — this is a structural, recurring risk,
+not a one-off to patch by hand.
 
 **Mechanism:** `hooks/gh-commit-author-identity-gate.sh` (PreToolUse, matcher `Bash`)
-BLOCKS a `git commit` / `git commit-tree` invocation whose command overrides
-author/committer identity (`--author=`, `-c user.email=`/`-c user.name=`,
-`GIT_AUTHOR_EMAIL=`/`GIT_COMMITTER_EMAIL=`/`GIT_AUTHOR_NAME=`/`GIT_COMMITTER_NAME=`, via a
-command-scoped prefix OR an earlier `export` in the same command) to anything OTHER than
-the identity expected for the repo the commit actually targets (resolved via `-C`,
-`--work-tree`, `--git-dir`, or an accumulated `cd`/`pushd`, exactly like git itself would).
+BLOCKS a commit-creating git invocation — `commit`, `commit-tree`, `merge`, `cherry-pick`,
+`revert`, `pull`, `rebase`, or `am` (widened from `commit`/`commit-tree` alone per M1, a
+2026-09-28 independent review finding, PROVEN: a real transcript ran an identity-overridden
+`merge`, and merge is this estate's own most-frequent commit-creating path, not an edge
+case) — whose command overrides author/committer EMAIL (`--author=` — `commit` only;
+`-c user.email=`; `GIT_AUTHOR_EMAIL=`/`GIT_COMMITTER_EMAIL=`, via a command-scoped prefix,
+an earlier `export`, an `env NAME=VALUE` prefix, or a persisted `git config user.email`
+SET earlier in the same command — m1, same review) to anything OTHER than the identity
+expected for the repo the commit actually targets (resolved via `-C`, `--work-tree`,
+`--git-dir`, or an accumulated `cd`/`pushd`, exactly like git itself would). A NAME-only
+override (`-c user.name=`, `GIT_AUTHOR_NAME=`/`GIT_COMMITTER_NAME=`) WARNS instead of
+blocking (m2, same review: Vercel/GitHub attribute commits by email, not display name).
+Enforced only when the target has a resolvable github.com remote owner — a repo with none
+(a scratch/throwaway `git init` fixture, for example) fails open completely, never checked
+(M4, same review, PROVEN false positive).
 
 **Expected identity resolution** (`hooks/lib/gh-commit-identity-lib.sh`): the target repo's
 remote owner maps to a gh CLI account (`gh_account_for_owner`, the SAME owner->account
@@ -174,13 +183,20 @@ mapping `gh-account-autoswitch.sh`/`gh-account-blindness-hint.sh` already use �
 duplicated); that account's PRIMARY VERIFIED EMAIL via `gh api user/emails`, read through
 `gh auth token -u <account>` so the check never has the side effect of switching the
 active `gh` account just to answer a read-only question. Cached 24h per account under
-`~/.claude/state/gh-emails/`. If that API call fails for ANY reason (no `gh`, account not
-stored, or — the live case on this machine as of 2026-09-27 — the stored token lacks the
-`user` scope and 404s) -> falls back to the repo's OWN effective `git config user.email`.
-**NEVER a `users.noreply.github.com` guess** at any point in the chain — an unresolvable
-identity means the gate has no ground truth to check against and fails OPEN, rather than
-fabricate one (a synthesized guess is exactly as likely to be wrong as the session email
-this mechanism exists to replace).
+`~/.claude/state/gh-emails/`; a FAILED lookup is separately negative-cached for 5 minutes
+so a repeatedly-failing account does not re-pay the lookup cost on every commit (m3, same
+review). **This rung REQUIRES `~/.claude/local/accounts.config.json` to carry the
+operator's real owner->account entries** (M3, same review, PROVEN): on a machine where
+that file still holds only the shipped placeholder entries, owner->account resolution
+returns empty for every real owner and every lookup silently falls through to the
+git-config rung below — a signal-ledger `warn` now names the unmapped owner so that
+degradation is visible rather than indistinguishable from the gh-API path having run.
+If the API call fails for ANY reason (no `gh`, account not stored/mapped, or the stored
+token lacks the `user` scope and 404s) -> falls back to the repo's OWN effective
+`git config user.email`. **NEVER a `users.noreply.github.com` guess** at any point in the
+chain — an unresolvable identity means the gate has no ground truth to check against and
+fails OPEN, rather than fabricate one (a synthesized guess is exactly as likely to be
+wrong as the session email this mechanism exists to replace).
 
 **Escape:** `GIT_COMMIT_IDENTITY_GATE_ACK=1` prefixed to the same command — for the
 genuine case of committing on someone else's behalf (e.g. preserving original authorship
@@ -190,14 +206,26 @@ in-conversation say-so; never set preemptively by an agent. Every use is logged
 
 **Side effect (optional, non-blocking):** when a commit carries NO override and the target
 repo has no `user.email` configured at any level, and the gh API resolved one -> the gate
-sets it once, repo-locally, and prints a note. An unconfigured worktree committing under
-whatever ambient identity git falls back to is the same class of problem via a different
-path (an ABSENT identity instead of an OVERRIDDEN one); fixing it once at the point the
-correct value is already in hand is cheaper than blocking every future commit from that
-worktree.
+sets it once, repo-locally, and logs a signal-ledger `warn` plus a best-effort stderr note
+(the note is a courtesy, not a guarantee — PreToolUse stderr on a non-blocking exit is not
+guaranteed visible to the agent transcript; the ledger is the reliable record, m6, same
+review). An unconfigured worktree committing under whatever ambient identity git falls
+back to is the same class of problem via a different path (an ABSENT identity instead of
+an OVERRIDDEN one); fixing it once at the point the correct value is already in hand is
+cheaper than blocking every future commit from that worktree.
 
-**Known, accepted residual:** an env var exported in an EARLIER, separate Bash tool call
-(not the same command as the commit) is invisible to this gate — it only ever sees one
-command at a time. Self-test: `bash hooks/gh-commit-author-identity-gate.sh --self-test`.
+**Performance:** a raw-payload substring prefilter (checking for any commit-creating-verb
+substring) runs BEFORE sourcing any library, so the overwhelming majority of non-matching
+Bash calls pay almost nothing (m4, same review).
+
+**Named, accepted residuals** (m1, same review — not closed, cost vs. realistic
+likelihood): an env var exported in a DIFFERENT, EARLIER Bash tool call (not the same
+command) is invisible to this gate by construction; `bash -c '...git commit...'` (a
+nested shell command is not recursively re-parsed); `git --config-env=user.email=VAR`
+(the effective value lives in an arbitrarily-named env var this hook cannot generally
+observe); and git's `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_N`/`GIT_CONFIG_VALUE_N` indexed
+config-injection mechanism. Self-test: `bash hooks/gh-commit-author-identity-gate.sh
+--self-test` (27/27) + `bash hooks/lib/gh-commit-identity-lib.sh --self-test` (12/12) +
+`bash hooks/lib/gh-account-lib.sh --self-test` (9/9).
 
 **Why:** incident 2026-06-18 — a silent git-auth failure produced a stale checkout that deployed with a green "success" result, masking that the intended commit never actually reached production. The preflight script exists specifically to catch this class of failure before it recurs.

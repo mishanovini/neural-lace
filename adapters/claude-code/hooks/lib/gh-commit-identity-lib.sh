@@ -28,24 +28,44 @@
 # RESOLUTION CHAIN (email) — never synthesizes a noreply guess
 # ============================================================
 #   1. Resolve the target repo's remote owner (gh_owner_from_cwd_remote,
-#      hooks/lib/gh-account-lib.sh).
+#      hooks/lib/gh-account-lib.sh). No github.com remote at all -> the
+#      CALLER (the gate) fails open before this function even runs the
+#      rest of this chain (M4, PR #67 review) — see the gate's own header.
 #   2. Map owner -> the gh CLI account that should be active for it
 #      (gh_account_for_owner, same lib — the SAME owner/account mapping the
 #      gh-account-autoswitch.sh / gh-account-blindness-hint.sh mechanisms
-#      already use; this file does not duplicate that mapping).
+#      already use; this file does not duplicate that mapping). THIS STEP
+#      REQUIRES A REAL, machine-local `~/.claude/local/accounts.config.json`
+#      populated with the operator's actual owner->account entries (M3, PR
+#      #67 review, PROVEN: on a machine where that file still holds only
+#      the shipped placeholder entries, this step returns empty for EVERY
+#      real owner, and step 3 below never runs at all — every resolution
+#      silently falls to step 4's git-config fallback instead, which is
+#      "matches the repo's configured email", not "the email logged into
+#      GH"). When the owner resolved in step 1 but this step returns
+#      empty, a signal-ledger `warn` is emitted so that degradation is
+#      visible rather than silently indistinguishable from the gh-API path
+#      actually having run.
 #   3. That account's PRIMARY VERIFIED EMAIL, via `gh api user/emails`
 #      targeted at that SPECIFIC account's stored token (`gh auth token -u
 #      <gh_user>`, NOT the currently-ACTIVE account — so this never has the
 #      side effect of switching accounts just to answer a read-only
 #      question). Cached under gia_state_dir()/<gh_user>.txt for
 #      GIA_CACHE_TTL_MIN minutes (default 1440 = 24h) so a hot commit path
-#      does not shell out to `gh api` every time.
+#      does not shell out to `gh api` every time; a FAILED lookup is
+#      negative-cached separately for GIA_NEGATIVE_CACHE_TTL_MIN minutes
+#      (default 5) so a repeatedly-failing account does not re-pay the
+#      `gh auth token` + `gh api` cost on every single commit (m3, PR #67
+#      review, measured ~2.0s vs ~1.5s per commit on a Windows box).
 #   4. If step 3 is unavailable for ANY reason (no gh binary, account not
-#      resolvable, or — the documented, LIVE case on this machine as of
-#      2026-09-27 — the account's token lacks the `user` scope and `gh api
-#      user/emails` 404s) -> fall back to the repo's OWN EFFECTIVE
-#      `git config user.email` (local overrides global, exactly like git
-#      itself resolves it).
+#      resolvable, or the account's token lacks the `user` scope and `gh
+#      api user/emails` 404s — a documented, LIVE case on some accounts as
+#      of 2026-09-27, though WHICH account varies by machine and by when
+#      that account's token was last (re)issued; do not assume any one
+#      named account is the affected one without checking
+#      `gia_gh_primary_email <account>` directly) -> fall back to the
+#      repo's OWN EFFECTIVE `git config user.email` (local overrides
+#      global, exactly like git itself resolves it).
 #   5. If NEITHER resolves -> empty. NEVER a `users.noreply.github.com`
 #      guess (operator directive, verbatim: "NEVER fall back to a
 #      users.noreply.github.com guess — Vercel would block it" — a
@@ -79,9 +99,10 @@
 # ============================================================
 # SELF-TEST SANDBOXING
 # ============================================================
-#   GIA_STATE_DIR      - cache directory override
-#   GIA_CACHE_TTL_MIN   - cache TTL in minutes (default 1440)
-#   GIA_GH_CMD          - path to a `gh` stub (never touches the real `gh`)
+#   GIA_STATE_DIR             - cache directory override
+#   GIA_CACHE_TTL_MIN          - positive-cache TTL in minutes (default 1440)
+#   GIA_NEGATIVE_CACHE_TTL_MIN - negative-cache TTL in minutes (default 5)
+#   GIA_GH_CMD                 - path to a `gh` stub (never touches the real `gh`)
 # Reuses gh-account-lib.sh's GHBLIND_ACCOUNTS / GHBLIND_ACTIVE for the
 # owner->account mapping half — no new config-sandboxing surface.
 #
@@ -98,6 +119,8 @@ _GH_COMMIT_IDENTITY_LIB_SOURCED=1
 _GIA_SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 # shellcheck disable=SC1091
 . "${_GIA_SELF_DIR}/gh-account-lib.sh" 2>/dev/null || true
+# shellcheck disable=SC1091
+. "${_GIA_SELF_DIR}/signal-ledger.sh" 2>/dev/null || true
 
 gia_state_dir() {
   printf '%s' "${GIA_STATE_DIR:-$HOME/.claude/state/gh-emails}"
@@ -143,12 +166,52 @@ gia_cache_email() {
   return 0
 }
 
+# m3 (PR #67 review, measured): with NO negative cache, every commit in a
+# repo whose account's `gh api user/emails` call fails (missing `user`
+# scope, or any other failure) re-spawned BOTH `gh auth token` and `gh api`
+# on every single commit — ~2.0s per commit on a Windows box, vs ~1.5s on a
+# positive-cache hit. A short negative-cache TTL (default 5 minutes,
+# independent of the much longer positive-cache TTL) means a repeatedly
+# committing agent pays the failed-lookup cost once per short window, not
+# once per commit, while still re-attempting soon enough that a fixed
+# token/scope problem is noticed quickly.
+gia_negative_cache_ttl_min() {
+  printf '%s' "${GIA_NEGATIVE_CACHE_TTL_MIN:-5}"
+}
+
+gia_negative_cache_path() {
+  printf '%s/%s.negative' "$(gia_state_dir)" "$(_gia_sanitize "$1")"
+}
+
+# True iff a fresh (< TTL) negative-cache marker exists for <gh_user> — a
+# recent `gh api user/emails` failure was already recorded for this
+# account, so the caller should skip re-attempting the API call and go
+# straight to the fallback rung.
+gia_negative_cache_fresh() {
+  local gh_user="$1" path
+  path="$(gia_negative_cache_path "$gh_user")"
+  [ -f "$path" ] || return 1
+  find "$path" -mmin "-$(gia_negative_cache_ttl_min)" 2>/dev/null | grep -q . || return 1
+  return 0
+}
+
+# Record a failed gh-api lookup for <gh_user>. Best-effort, same contract
+# as gia_cache_email — never fails the caller.
+gia_negative_cache_write() {
+  local gh_user="$1" dir path
+  dir="$(gia_state_dir)"
+  path="$(gia_negative_cache_path "$gh_user")"
+  ( mkdir -p "$dir" 2>/dev/null && : > "$path.tmp.$$" 2>/dev/null \
+      && mv "$path.tmp.$$" "$path" 2>/dev/null ) || true
+  return 0
+}
+
 # <gh_user>'s primary verified email, via THAT account's own stored gh CLI
 # token (never the currently-active account — this must never have the side
 # effect of switching accounts just to answer a read-only question). Empty +
 # rc=1 on ANY failure (no gh binary, account not stored, token has no `user`
-# scope so `gh api user/emails` 404s — the live MishaPT case as of
-# 2026-09-27).
+# scope so `gh api user/emails` 404s — a live case observed on one of this
+# machine's stored accounts as of 2026-09-27).
 gia_gh_primary_email() {
   local gh_user="$1" gh_bin tok
   gh_bin="$(gia_gh_bin)"
@@ -181,11 +244,31 @@ gia_resolve_expected_email() {
         GIA_EMAIL="$cached"; GIA_EMAIL_SOURCE="gh-api-cache:${gh_user}"
         return 0
       fi
-      resolved="$(gia_gh_primary_email "$gh_user")"
-      if [ -n "$resolved" ]; then
-        gia_cache_email "$gh_user" "$resolved"
-        GIA_EMAIL="$resolved"; GIA_EMAIL_SOURCE="gh-api:${gh_user}"
-        return 0
+      if ! gia_negative_cache_fresh "$gh_user"; then
+        resolved="$(gia_gh_primary_email "$gh_user")"
+        if [ -n "$resolved" ]; then
+          gia_cache_email "$gh_user" "$resolved"
+          GIA_EMAIL="$resolved"; GIA_EMAIL_SOURCE="gh-api:${gh_user}"
+          return 0
+        fi
+        gia_negative_cache_write "$gh_user"
+      fi
+    else
+      # M3 (PR #67 review, PROVEN): the repo has a REAL github.com remote
+      # (an owner resolved), but that owner has no entry in THIS machine's
+      # ~/.claude/local/accounts.config.json (on the reviewing machine,
+      # that file still held only the shipped placeholder entries, so
+      # owner->account resolution failed for every real owner tried, and
+      # every lookup silently fell through to the git-config rung below —
+      # meaning what was actually enforced was "matches the repo's
+      # configured email", not "the email logged into GH", with nothing
+      # saying so). Falling back to the repo's own git config is still a
+      # reasonable degradation, but it MUST be visible (constitution
+      # section 10), not silent — hence this warn on every such call.
+      # Populating that config file with a real mapping is a machine-
+      # config action for the operator, not something this code does.
+      if declare -F ledger_emit >/dev/null 2>&1; then
+        ledger_emit "gh-commit-author-identity" "warn" "owner '${owner}' has a github.com remote but no accounts.config.json mapping on this machine -- gh-API resolution skipped, falling back to repo git config (may not reflect the actual GH-logged-in identity)"
       fi
     fi
   fi
@@ -363,6 +446,61 @@ STUB
   else
     echo "  S7 gia_resolve_expected_name reads repo user.name: FAIL (got: $GIA_NAME)"; fail=$((fail+1))
   fi
+
+  # S8 (m3, PR #67 review): negative cache — a failed gh-api lookup is not
+  # re-attempted within GIA_NEGATIVE_CACHE_TTL_MIN, so a second call for the
+  # SAME account within that window makes ZERO additional auth-token/api
+  # calls (both calls fall straight to git-config).
+  git -C "$gr" config user.email "negcache-fallback@example.test"
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  calls="$tmp/calls-negcache.txt"; : > "$calls"
+  export GIA_STUB_CALLS="$calls"
+  export STUB_TOKEN_acct_work="tok-work-neg"
+  # deliberately no STUB_EMAIL_FOR_TOKEN_tok_work_neg -> api call fails
+  gia_resolve_expected_email "$gr" >/dev/null   # 1st call: attempts + negative-caches
+  gia_resolve_expected_email "$gr" >/dev/null   # 2nd call: should skip the attempt
+  local neg_api_calls neg_token_calls
+  neg_api_calls="$(grep -c '^api-user-emails' "$calls" 2>/dev/null || echo 0)"
+  neg_token_calls="$(grep -c '^auth-token' "$calls" 2>/dev/null || echo 0)"
+  if [ "$neg_api_calls" = "1" ] && [ "$neg_token_calls" = "1" ] && [ "$GIA_EMAIL" = "negcache-fallback@example.test" ]; then
+    echo "  S8 negative cache skips repeat attempt within TTL: PASS"; pass=$((pass+1))
+  else
+    echo "  S8 negative cache skips repeat attempt within TTL: FAIL (api-calls=$neg_api_calls token-calls=$neg_token_calls email=$GIA_EMAIL)"; fail=$((fail+1))
+  fi
+
+  # S9 (m3, PR #67 review): TTL=0 forces the negative cache to be treated
+  # as always-stale, so the attempt IS repeated.
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  calls="$tmp/calls-negcache-ttl0.txt"; : > "$calls"
+  GIA_STUB_CALLS="$calls" gia_resolve_expected_email "$gr" >/dev/null
+  GIA_STUB_CALLS="$calls" GIA_NEGATIVE_CACHE_TTL_MIN=0 gia_resolve_expected_email "$gr" >/dev/null
+  neg_api_calls="$(grep -c '^api-user-emails' "$calls" 2>/dev/null || echo 0)"
+  if [ "$neg_api_calls" = "2" ]; then
+    echo "  S9 negative-cache TTL=0 forces re-attempt: PASS"; pass=$((pass+1))
+  else
+    echo "  S9 negative-cache TTL=0 forces re-attempt: FAIL (api-calls=$neg_api_calls)"; fail=$((fail+1))
+  fi
+  unset STUB_TOKEN_acct_work
+
+  # S10 (M3, PR #67 review): owner resolves to a REAL github.com remote,
+  # but that owner has NO accounts.config.json mapping -> falls back to
+  # git-config AND emits a visible signal-ledger warn (not silent).
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  local gr_unmapped="$tmp/repo-unmapped"; mkdir -p "$gr_unmapped"
+  ( cd "$gr_unmapped" && git init -q 2>/dev/null \
+      && git remote add origin "https://github.com/some-other-real-org/x.git" 2>/dev/null \
+      && git config user.email "unmapped-fallback@example.test" )
+  export SIGNAL_LEDGER_PATH="$tmp/ledger.jsonl"
+  rm -f "$SIGNAL_LEDGER_PATH"
+  gia_resolve_expected_email "$gr_unmapped" >/dev/null
+  if [ "$GIA_EMAIL" = "unmapped-fallback@example.test" ] \
+     && grep -q '"gate":"gh-commit-author-identity"' "$SIGNAL_LEDGER_PATH" 2>/dev/null \
+     && grep -q 'accounts.config.json mapping' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "  S10 unmapped-but-real-owner falls back AND warns visibly: PASS"; pass=$((pass+1))
+  else
+    echo "  S10 unmapped-but-real-owner falls back AND warns visibly: FAIL (email=$GIA_EMAIL ledger=$(cat "$SIGNAL_LEDGER_PATH" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  unset SIGNAL_LEDGER_PATH
 
   unset GHBLIND_ACCOUNTS GIA_GH_CMD GIA_STUB_CALLS HARNESS_SELFTEST GIA_STATE_DIR
   rm -rf "$tmp" 2>/dev/null
