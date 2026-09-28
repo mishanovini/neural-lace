@@ -118,6 +118,29 @@ gh_ci_eq() {
   [ "$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')" = "$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')" ]
 }
 
+# Parse an owner login out of a github.com URL (https or ssh form). Added for
+# GH-COMMIT-IDENTITY-01 (hooks/gh-commit-author-identity-gate.sh via
+# hooks/lib/gh-commit-identity-lib.sh) — moved here from being a private copy
+# inside gh-account-autoswitch.sh (_ghas_owner_from_url) so a THIRD consumer
+# does not grow a THIRD hand-rolled parser. gh-account-autoswitch.sh keeps its
+# own existing private copy untouched (its self-test suite is large and this
+# change does not need to touch it); this is the one new callers should use.
+gh_owner_from_url() {
+  local url="$1" slug
+  slug="$(printf '%s' "$url" | grep -oiE 'github\.com[:/][A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' | head -1 \
+            | sed -E 's#^github\.com[:/]##')"
+  [ -n "$slug" ] || return 1
+  printf '%s' "${slug%%/*}"
+}
+
+# cwd repo's <remote> owner (default "origin"), via `git remote get-url`.
+gh_owner_from_cwd_remote() {
+  local cwd="$1" remote="${2:-origin}" url
+  command -v git >/dev/null 2>&1 || return 1
+  url="$(git -C "$cwd" remote get-url "$remote" 2>/dev/null)" || return 1
+  gh_owner_from_url "$url"
+}
+
 # ============================================================
 # --self-test (library-level: owner resolution only; the two callers each
 # keep their own event-specific self-tests)
@@ -143,6 +166,25 @@ JSON
   if [ -z "$got" ]; then echo "  L3 unknown owner -> empty: PASS"; pass=$((pass+1)); else echo "  L3 unknown owner -> empty: FAIL (got: $got)"; fail=$((fail+1)); fi
 
   if GHBLIND_ACTIVE="acct-work" gh_ci_eq "ACCT-work" "acct-Work"; then echo "  L4 gh_ci_eq case-insensitive: PASS"; pass=$((pass+1)); else echo "  L4 gh_ci_eq case-insensitive: FAIL"; fail=$((fail+1)); fi
+
+  got="$(gh_owner_from_url "https://github.com/some-org/some-repo.git")"
+  if [ "$got" = "some-org" ]; then echo "  L5 gh_owner_from_url https form: PASS"; pass=$((pass+1)); else echo "  L5 gh_owner_from_url https form: FAIL (got: $got)"; fail=$((fail+1)); fi
+
+  got="$(gh_owner_from_url "git@github.com:some-org/some-repo.git")"
+  if [ "$got" = "some-org" ]; then echo "  L6 gh_owner_from_url ssh form: PASS"; pass=$((pass+1)); else echo "  L6 gh_owner_from_url ssh form: FAIL (got: $got)"; fail=$((fail+1)); fi
+
+  got="$(gh_owner_from_url "not a github url")"
+  if [ -z "$got" ]; then echo "  L7 gh_owner_from_url non-github -> empty: PASS"; pass=$((pass+1)); else echo "  L7 gh_owner_from_url non-github -> empty: FAIL (got: $got)"; fail=$((fail+1)); fi
+
+  if command -v git >/dev/null 2>&1; then
+    local gr; gr="$tmp/repo"
+    mkdir -p "$gr"
+    ( cd "$gr" && git init -q 2>/dev/null && git remote add origin "https://github.com/some-org/some-repo.git" 2>/dev/null )
+    got="$(gh_owner_from_cwd_remote "$gr")"
+    if [ "$got" = "some-org" ]; then echo "  L8 gh_owner_from_cwd_remote origin: PASS"; pass=$((pass+1)); else echo "  L8 gh_owner_from_cwd_remote origin: FAIL (got: $got)"; fail=$((fail+1)); fi
+    got="$(gh_owner_from_cwd_remote "$gr" "nonexistent-remote")"
+    if [ -z "$got" ]; then echo "  L9 gh_owner_from_cwd_remote unknown remote -> empty: PASS"; pass=$((pass+1)); else echo "  L9 gh_owner_from_cwd_remote unknown remote -> empty: FAIL (got: $got)"; fail=$((fail+1)); fi
+  fi
 
   rm -rf "$tmp" 2>/dev/null
   echo ""

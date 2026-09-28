@@ -1112,6 +1112,32 @@
       "budget_class": "posttool"
     },
     {
+      "id": "gh-commit-author-identity",
+      "kind": "gate",
+      "doctrine_file": "doctrine/git.md",
+      "hooks": [
+        "gh-commit-author-identity-gate.sh",
+        "lib/gh-commit-identity-lib.sh"
+      ],
+      "events": [
+        "PreToolUse"
+      ],
+      "wired_template": true,
+      "selftest": true,
+      "jit_triggers": {
+        "paths": [],
+        "keywords": []
+      },
+      "blocking": true,
+      "budget_class": "pretool",
+      "added_after": "2026-09",
+      "golden_scenario": "2026-09-21, Circuit PR #1871: fixer subagents committed with author set to the session's own 'user email' context value (the value Claude Code hands every agent 'for authorship') rather than the repo's actual configured identity. The repo's git config was already correct, so the override must have been passed explicitly. Vercel maps commit emails to Vercel users and blocked the deploy over the mismatch (~1hr cost); the session's context email has since changed to yet another address, so the risk is structural, not a one-off. The gate resolves the EXPECTED identity for the repo a commit/commit-tree targets (the gh CLI account logged in for that repo's owner, via the same owner->account mapping gh-account-autoswitch.sh uses; that account's primary verified email via `gh api user/emails` targeted at its own stored token; falling back to the repo's own git config, NEVER a synthesized users.noreply.github.com guess) and blocks any --author=/-c user.email=/-c user.name=/GIT_AUTHOR_*/GIT_COMMITTER_* override that does not match it.",
+      "fp_expectation": "Low on the covered surface (self-test: 15/15, plus 9/9 on the resolver lib and 9/9 on the extended owner-mapping helper). A matching override (spells out the expected identity explicitly) is allowed, not blocked — verified by self-test. Known, accepted residual (named in the doctrine + hook header): an env var exported in an EARLIER, SEPARATE Bash tool call is invisible to this gate, which only ever sees one command at a time. Fails OPEN (never blocks) when no expected identity is resolvable at all (owner unknown AND no git config identity present) or on internal limitation (no git binary) — never fabricates a noreply guess to check against.",
+      "retirement_condition": "Retire or narrow if: (a) the operator consolidates to a single GitHub account across every repo (eliminating the account-mismatch problem this exists to catch), (b) `gh` ships a first-class 'commit as the account logged in for this repo' primitive making the check redundant, or (c) signal-ledger data over a full quarter shows zero 'block' events (meaning agents never attempt an identity override in practice and the gate is pure insurance) AND zero 'waiver' (ack) events.",
+      "honest_status": "gh-commit-author-identity-gate.sh (PreToolUse, matcher Bash) BLOCKS a git commit/commit-tree whose command overrides author/committer identity away from the identity expected for the repo it targets. Resolution chain + caching in hooks/lib/gh-commit-identity-lib.sh; owner->account mapping reused from hooks/lib/gh-account-lib.sh (gh_owner_from_cwd_remote/gh_owner_from_url added there for this gate, additive — gh-account-autoswitch.sh's own private copy is untouched). Escape: GIT_COMMIT_IDENTITY_GATE_ACK=1, logged as a waiver event on every use. Self-test: 15/15 (gate) + 9/9 (identity lib) + 9/9 (account lib).",
+      "waiver_path": "GIT_COMMIT_IDENTITY_GATE_ACK=1 prefixed to the same command, only after the user's explicit in-conversation say-so (constitution section 7) — never set preemptively by an agent to talk itself past the gate. Every use is recorded in the signal ledger (event: waiver) so a pattern of acks is visible to later review."
+    },
+    {
       "id": "gh-merge-canonical",
       "kind": "gate",
       "doctrine_file": "doctrine/gh-merge-canonical.md",

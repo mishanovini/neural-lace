@@ -391,6 +391,15 @@
             "command": "bash ~/.claude/hooks/gh-account-autoswitch.sh"
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash ~/.claude/hooks/gh-commit-author-identity-gate.sh"
+          }
+        ]
       }
     ],
     "PostToolUse": [
