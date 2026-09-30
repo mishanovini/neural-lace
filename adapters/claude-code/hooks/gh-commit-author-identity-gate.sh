@@ -172,9 +172,16 @@
 #   - An override whose value is only knowable at runtime (`$VAR` set in an
 #     earlier call, `$(...)`, backticks) is UNKNOWN: logged as a ledger
 #     `warn`, never blocked (MAJOR-1 — a literal "$E" is not an identity).
+#     Round 3 (record hcr-20260930-4bbe06a7) made this true for EVERY
+#     shape — separated and glued `--author`, a `git config user.email`
+#     SET, a `-c` whose key is computed — see note 6 below; round 2 had
+#     blocked the separated `--author "$(...)"` as an unparseable sentinel
+#     and silently skipped the glued and backtick forms.
 #   - A real `--author=` placed AFTER an unbalanced `$(`, a backtick, or a
 #     here-doc operator on the same commit segment: the flag walk stops
 #     there because it cannot know where the substitution ends.
+#   - A `git init "$(...)"` records no throwaway dir, so a later commit into
+#     that computed dir is judged normally (usually no remote -> fail open).
 #   - m6 (HYPOTHESIZED): the gh-API rung takes the PRIMARY email and ignores
 #     its visibility, so a private primary could still be rejected by a
 #     push-time email-privacy check. Dormant where the primary is public.
@@ -184,6 +191,10 @@
 #     reviewer+<session>@<host> identity (review-runner.sh finalize's A1
 #     stamp) AND every committed path is docs/reviews/records/<file>
 #     (MAJOR-3 — see _gcia_records_only). Logged as a ledger `skip`.
+#     Round 3 (MINOR-1): the path is resolved at the REPO ROOT, and a
+#     commit that takes content beyond its pathspecs (-a, -i/--include,
+#     --amend, -p/--patch, --interactive, --pathspec-from-file) never
+#     qualifies.
 #   - A commit into a repo that the same command `git init`s (a throwaway).
 #
 # SSH host-alias remotes (`git@github-<alias>:owner/repo`) are resolved via
@@ -334,6 +345,29 @@ _gcia_cwd() {
 #      inside a segment can only be inside a well-formed quoted value (the
 #      splitter breaks unquoted newlines), so stopping there would only buy
 #      a false negative on `-m "<multi-line>" --author=...`.
+#   6. (PR #67 review round 3, MAJOR-1, PROVEN.) A skipped or stop token
+#      is kept in _GCIA_ARGS as a SENTINEL (__GCIA_OPAQUE__ /
+#      __GCIA_STOP__) with its original text alongside in _GCIA_ARGS_RAW.
+#      Round 2 let the bare sentinel flow into an identity comparison:
+#      `--author "$(git log -1 --format='%an <%ae>' <sha>)"` was blocked as
+#      "--author=__GCIA_OPAQUE__" (unparseable -> fail closed), while the
+#      glued `--author="$(...)"` and both backtick forms were silently
+#      skipped with no ledger warn. Every consumer now handles a sentinel
+#      explicitly:
+#        --author (separated or glued)  UNKNOWN: ledger warn, not compared
+#        commit `-- <pathspec>`         kept raw -> never records-only
+#        --pathspec-from-file (either)  commit is not records-only
+#        git config <key> <value>       value -> UNKNOWN tracked value (a
+#                                       later same-repo commit warns);
+#                                       key -> ledger warn, not tracked
+#        git init <dir>                 NO init dir recorded (round 2
+#                                       recorded the CURRENT dir: a
+#                                       false negative on a later -c
+#                                       commit there)
+#        git add <path>                 wildcard marker -> never
+#                                       records-only
+#      _gcia_unresolved also treats any value containing a sentinel as
+#      unknown, as a backstop for the whole class.
 # ============================================================
 
 _gcia_normalize_ansi_c() { # <cmd> -> _GCIA_NORM
@@ -424,10 +458,13 @@ _gcia_strip_heredoc_bodies() { # <cmd> -> _GCIA_NORM
   _GCIA_NORM="$out"
 }
 
-# 0 iff the value cannot be known before the shell runs it.
+# 0 iff the value cannot be known before the shell runs it. A walk sentinel
+# (round-3 MAJOR-1 class: sentinel values flowing into identity
+# comparisons) is unknown by definition — a backstop, since every consumer
+# already reads the RAW token text rather than the sentinel.
 _gcia_unresolved() {
   case "$1" in
-    *'$'*|*'`'*) return 0 ;;
+    *'$'*|*'`'*|*__GCIA_OPAQUE__*|*__GCIA_STOP__*) return 0 ;;
   esac
   return 1
 }
@@ -612,10 +649,15 @@ _gcia_strip_env_prefix() { # <segment> -> stdout: segment with "env " stripped
 #   _GCIA_IS_TARGET    1 iff the subcommand is commit-creating
 #   _GCIA_TARGET_DIR   dir git will act in (-C / --work-tree / --git-dir / base)
 #   _GCIA_CFG_EMAIL/_GCIA_CFG_NAME   global `-c user.email=/user.name=` values
-#   _GCIA_AUTHOR_VAL   `commit --author` value
+#   _GCIA_AUTHOR_VAL   `commit --author` value (raw text)
+#   _GCIA_AUTHOR_UNKNOWN 1 iff that value came from an opaque/stop token
 #   _GCIA_PATHSPECS[]  `commit -- <paths>` (redirection-shaped tokens dropped)
 #   _GCIA_COMMIT_ALL   1 iff `commit -a/--all`
-#   _GCIA_ARGS[]       tokens after the subcommand (for config/init/add)
+#   _GCIA_COMMIT_WIDE  non-empty iff the commit takes content beyond its
+#                      pathspecs (-i/--include/--amend/-p/--pathspec-from-file)
+#   _GCIA_ARGS[]       tokens after the subcommand (for config/init/add),
+#                      with __GCIA_OPAQUE__/__GCIA_STOP__ sentinels
+#   _GCIA_ARGS_RAW[]   the same tokens, original text (index-aligned)
 # ============================================================
 
 _gcia_note_cfg() { # <token like "user.email=x@y.test">
@@ -624,6 +666,15 @@ _gcia_note_cfg() { # <token like "user.email=x@y.test">
     *=*) key="${kv%%=*}"; val="${kv#*=}" ;;
     *) return 0 ;;
   esac
+  # Round-3 sentinel sweep: a -c whose KEY is computed at run time
+  # (`git -c "$(...)" commit`) may or may not set an identity — unknown,
+  # visible as a warn, never a mismatch.
+  if _gcia_unresolved "$key"; then
+    if declare -F ledger_emit >/dev/null 2>&1; then
+      ledger_emit "gh-commit-author-identity" "warn" "-c key not resolvable before the shell runs (${kv}) — if it sets user.email, the commit's identity is not checked"
+    fi
+    return 0
+  fi
   case "$(printf '%s' "$key" | tr '[:upper:]' '[:lower:]')" in
     user.email) _GCIA_CFG_EMAIL="$val" ;;
     user.name) _GCIA_CFG_NAME="$val" ;;
@@ -633,7 +684,8 @@ _gcia_note_cfg() { # <token like "user.email=x@y.test">
 _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
   local seg="$1" base="$2"
   _GCIA_SUB=""; _GCIA_IS_TARGET=0; _GCIA_TARGET_DIR=""; _GCIA_CFG_EMAIL=""; _GCIA_CFG_NAME=""
-  _GCIA_AUTHOR_VAL=""; _GCIA_PATHSPECS=(); _GCIA_COMMIT_ALL=0; _GCIA_ARGS=()
+  _GCIA_AUTHOR_VAL=""; _GCIA_AUTHOR_UNKNOWN=0; _GCIA_PATHSPECS=(); _GCIA_COMMIT_ALL=0
+  _GCIA_COMMIT_WIDE=""; _GCIA_ARGS=(); _GCIA_ARGS_RAW=()
   _gcia_tokenize "$seg"
   local n=${#_GCIA_TOK[@]} i tok c_target="" work_tree="" git_dir=""
   [ "$n" -ge 2 ] || return 0
@@ -678,13 +730,20 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
   [ -n "$_GCIA_SUB" ] || return 0
 
   # Remaining tokens, cut at the first walk-stop token (see note 5 above).
+  # _GCIA_ARGS holds a SENTINEL in place of every token the walk cannot
+  # interpret: __GCIA_OPAQUE__ for a skipped balanced-$(...) or newline
+  # token, __GCIA_STOP__ for the token the walk stopped at (always the LAST
+  # entry). _GCIA_ARGS_RAW is index-aligned and holds the original text.
+  # Round-3 MAJOR-1 (PR #67, PROVEN): a sentinel must never flow into an
+  # identity comparison as if it were a value — note 6 above lists how each
+  # consumer treats one.
   local k cls
   for ((k=i+1; k<n; k++)); do
     tok="${_GCIA_TOK[$k]}"
     _gcia_token_class "$tok"; cls=$?
-    [ "$cls" = "0" ] && break
-    if [ "$cls" = "1" ]; then _GCIA_ARGS+=("__GCIA_OPAQUE__"); continue; fi
-    _GCIA_ARGS+=("$tok")
+    if [ "$cls" = "0" ]; then _GCIA_ARGS+=("__GCIA_STOP__"); _GCIA_ARGS_RAW+=("$tok"); break; fi
+    if [ "$cls" = "1" ]; then _GCIA_ARGS+=("__GCIA_OPAQUE__"); _GCIA_ARGS_RAW+=("$tok"); continue; fi
+    _GCIA_ARGS+=("$tok"); _GCIA_ARGS_RAW+=("$tok")
   done
 
   # M1 (PR #67 review, PROVEN): every commit-creating verb, not only commit.
@@ -694,12 +753,30 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
   esac
 
   # Phase 2: `--author` (commit only — no other verb in scope accepts it),
-  # plus the pathspec / -a facts the records-only exemption needs.
+  # plus the pathspec / -a / wide-content facts the records-only exemption
+  # needs.
   [ "$_GCIA_SUB" = "commit" ] || return 0
-  local m=${#_GCIA_ARGS[@]} after_dd=0
+  local m=${#_GCIA_ARGS[@]} after_dd=0 raw
   for ((k=0; k<m; k++)); do
-    tok="${_GCIA_ARGS[$k]}"
-    [ "$tok" = "__GCIA_OPAQUE__" ] && continue
+    tok="${_GCIA_ARGS[$k]}"; raw="${_GCIA_ARGS_RAW[$k]}"
+    case "$tok" in
+      __GCIA_OPAQUE__|__GCIA_STOP__)
+        # An uninterpretable token. After `--` it is a pathspec whose value
+        # is unknown (kept raw: _gcia_records_rel rejects it). Before `--`,
+        # a glued `--author=<opaque>` is an UNKNOWN author (ledger warn),
+        # never a mismatch; any other shape is skipped as a value.
+        if [ "$after_dd" = "1" ]; then
+          _GCIA_PATHSPECS+=("$raw")
+        else
+          case "$raw" in
+            --author=*) _GCIA_AUTHOR_VAL="${raw#--author=}"; _GCIA_AUTHOR_UNKNOWN=1 ;;
+            --pathspec-from-file=*) _GCIA_COMMIT_WIDE="--pathspec-from-file" ;;
+          esac
+        fi
+        [ "$tok" = "__GCIA_STOP__" ] && break
+        continue
+        ;;
+    esac
     if [ "$after_dd" = "1" ]; then
       _gcia_is_redirection "$tok" || _GCIA_PATHSPECS+=("$tok")
       continue
@@ -707,17 +784,58 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
     case "$tok" in
       --) after_dd=1 ;;
       --author=?*) _GCIA_AUTHOR_VAL="${tok#--author=}" ;;
-      --author) k=$((k+1)); [ "$k" -lt "$m" ] && _GCIA_AUTHOR_VAL="${_GCIA_ARGS[$k]}" ;;
+      --author)
+        k=$((k+1))
+        if [ "$k" -lt "$m" ]; then
+          _GCIA_AUTHOR_VAL="${_GCIA_ARGS_RAW[$k]}"
+          case "${_GCIA_ARGS[$k]}" in
+            __GCIA_OPAQUE__|__GCIA_STOP__) _GCIA_AUTHOR_UNKNOWN=1 ;;
+          esac
+          [ "${_GCIA_ARGS[$k]}" = "__GCIA_STOP__" ] && break
+        fi
+        ;;
       --all) _GCIA_COMMIT_ALL=1 ;;
+      # MINOR-1 (round 3, PROVEN): these make git commit MORE than the named
+      # pathspecs (-i/--include: the whole index too; --amend: the previous
+      # commit's content; --pathspec-from-file: paths this gate cannot see;
+      # --interactive/--patch: hunks chosen at run time), so the commit is
+      # never records-only.
+      --include|--amend|--interactive|--patch) _GCIA_COMMIT_WIDE="$tok" ;;
+      --pathspec-from-file=*) _GCIA_COMMIT_WIDE="--pathspec-from-file" ;;
+      --pathspec-from-file) _GCIA_COMMIT_WIDE="--pathspec-from-file"; k=$((k+1)) ;;
       --message|--file|--reuse-message|--reedit-message|--fixup|--squash|--template|--cleanup|--date|--trailer)
         k=$((k+1)) ;;
       --*) : ;;
       -[!-]*)
-        case "$tok" in -*a*) _GCIA_COMMIT_ALL=1 ;; esac
-        # Short cluster ending in a value-taking flag with no glued value
-        # (`-m`, `-am`, `-F`, `-C`, `-c`, `-t`) -> the next token is its value.
-        case "$tok" in -*[mFCct]) k=$((k+1)) ;; esac
+        _gcia_short_cluster "$tok"
+        [ "$_GCIA_CLUSTER_TAKES_NEXT" = "1" ] && k=$((k+1))
         ;;
+    esac
+  done
+  return 0
+}
+
+# A `git commit` short-option cluster (`-am`, `-qi`, `-mfix a`, `-S<key>`).
+# Letters are read left to right until the first option that takes a value:
+# the rest of the token is that value (so `-m"fix a typo"` is NOT `-a`),
+# and a value-taking letter at the very end means the NEXT token is its
+# value. Sets _GCIA_COMMIT_ALL / _GCIA_COMMIT_WIDE and
+# _GCIA_CLUSTER_TAKES_NEXT (0|1).
+_gcia_short_cluster() {
+  local t="${1#-}" c j len
+  _GCIA_CLUSTER_TAKES_NEXT=0
+  len=${#t}
+  for ((j=0; j<len; j++)); do
+    c="${t:j:1}"
+    case "$c" in
+      a) _GCIA_COMMIT_ALL=1 ;;
+      i) _GCIA_COMMIT_WIDE="-i" ;;
+      p) _GCIA_COMMIT_WIDE="-p" ;;
+      m|F|C|c|t)
+        [ $((j+1)) -ge "$len" ] && _GCIA_CLUSTER_TAKES_NEXT=1
+        return 0
+        ;;
+      S|u) return 0 ;;   # optional value, glued only
     esac
   done
   return 0
@@ -726,17 +844,33 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
 # `git [-C d] config [--local|--worktree] user.email|user.name <value>` —
 # a SET (not --get/--unset/--list; --global/--system are out of this
 # per-repo gate's scope). Uses the _GCIA_SUB/_GCIA_ARGS/_GCIA_TARGET_DIR
-# left by _gcia_analyze_segment. Sets _GCIA_CFGSET_KEY/_GCIA_CFGSET_VAL.
+# left by _gcia_analyze_segment. Sets _GCIA_CFGSET_KEY/_GCIA_CFGSET_VAL and
+# _GCIA_CFGSET_UNKNOWN (1 iff the value is an opaque/stop token — round-3
+# MAJOR-1 sweep: `git config user.email "$(gh api ...)"` was silently
+# ignored; it is now tracked as an UNKNOWN value, logged as a ledger warn
+# when a later commit in the same repo would pick it up). Also accepts the
+# git >= 2.46 `git config set <key> <value>` form and --add/--replace-all.
 _gcia_maybe_config_set() {
   [ "$_GCIA_SUB" = "config" ] || return 1
   local n=${#_GCIA_ARGS[@]} i=0 key
+  _GCIA_CFGSET_UNKNOWN=0
   while [ "$i" -lt "$n" ]; do
     case "${_GCIA_ARGS[$i]}" in
-      --local|--worktree) i=$((i+1)) ;;
+      --local|--worktree|--add|--replace-all|set) i=$((i+1)) ;;
       *) break ;;
     esac
   done
   [ "$i" -lt "$n" ] || return 1
+  case "${_GCIA_ARGS[$i]}" in
+    __GCIA_OPAQUE__|__GCIA_STOP__)
+      # The KEY itself is computed at run time — it may or may not be an
+      # identity key. Not a mismatch; visible as a warn.
+      if declare -F ledger_emit >/dev/null 2>&1; then
+        ledger_emit "gh-commit-author-identity" "warn" "git config key not resolvable before the shell runs (${_GCIA_ARGS_RAW[$i]}) for ${_GCIA_TARGET_DIR} — if it sets user.email, a later commit's identity is not checked"
+      fi
+      return 1
+      ;;
+  esac
   key="$(printf '%s' "${_GCIA_ARGS[$i]}" | tr '[:upper:]' '[:lower:]')"
   case "$key" in
     user.email|user.name) _GCIA_CFGSET_KEY="$key" ;;
@@ -744,8 +878,10 @@ _gcia_maybe_config_set() {
   esac
   i=$((i+1))
   [ "$i" -lt "$n" ] || return 1
-  [ "${_GCIA_ARGS[$i]}" = "__GCIA_OPAQUE__" ] && return 1
-  _GCIA_CFGSET_VAL="${_GCIA_ARGS[$i]}"
+  case "${_GCIA_ARGS[$i]}" in
+    __GCIA_OPAQUE__|__GCIA_STOP__) _GCIA_CFGSET_UNKNOWN=1 ;;
+  esac
+  _GCIA_CFGSET_VAL="${_GCIA_ARGS_RAW[$i]}"
   return 0
 }
 
@@ -754,13 +890,20 @@ _gcia_maybe_config_set() {
 # user.email=t@t commit` in a pre-existing non-repo dir INSIDE a GitHub
 # checkout was judged against the ENCLOSING repo's identity). A repo this
 # same command creates is a throwaway, exactly like the no-remote case (M4).
+# Round-3 MAJOR-1 sweep (PROVEN false negative): an opaque directory
+# argument (`git init "$(mktemp -d)"`) used to be SKIPPED, so the init was
+# recorded against the CURRENT directory and a later `-c user.email=<wrong>`
+# commit in that (GitHub) repo failed open. An opaque/stop directory now
+# records NO init dir (_GCIA_INIT_RESULT=""): the gate cannot know which
+# repo was created, so every later commit is judged normally.
 _gcia_init_dir() {
   local n=${#_GCIA_ARGS[@]} i=0 tok dir=""
   while [ "$i" -lt "$n" ]; do
     tok="${_GCIA_ARGS[$i]}"
     case "$tok" in
       -b|--initial-branch|--template|--separate-git-dir|--object-format|--ref-format|--shared) i=$((i+1)) ;;
-      -*|__GCIA_OPAQUE__) : ;;
+      __GCIA_OPAQUE__|__GCIA_STOP__) _GCIA_INIT_RESULT=""; return 0 ;;
+      -*) : ;;
       *) _gcia_is_redirection "$tok" || { dir="$tok"; break; } ;;
     esac
     i=$((i+1))
@@ -780,7 +923,8 @@ _gcia_note_add() {
   for ((i=0; i<n; i++)); do
     tok="${_GCIA_ARGS[$i]}"
     case "$tok" in
-      -A|--all|-u|--update|.|./|:/|__GCIA_OPAQUE__) _GCIA_ADD_PATHS+=("*"); _GCIA_ADD_DIRS+=("$_GCIA_TARGET_DIR") ;;
+      -A|--all|-u|--update|.|./|:/|__GCIA_OPAQUE__|__GCIA_STOP__|--pathspec-from-file|--pathspec-from-file=*)
+        _GCIA_ADD_PATHS+=("*"); _GCIA_ADD_DIRS+=("$_GCIA_TARGET_DIR") ;;
       --) : ;;
       -*) : ;;
       *) _gcia_is_redirection "$tok" || { _GCIA_ADD_PATHS+=("$tok"); _GCIA_ADD_DIRS+=("$_GCIA_TARGET_DIR"); } ;;
@@ -816,41 +960,95 @@ _gcia_is_init_dir() { # <target_dir>
 # from what is staged now plus what an earlier `git add` in the same command
 # will stage; `-a`/`--all`, a wildcard add, or any unresolved path is NOT
 # records-only.
+#
+# MINOR-1 (PR #67 review round 3, PROVEN): two over-acceptances, fixed.
+#   - `commit -i/--include -- <record>` (and --amend, -p/--patch,
+#     --interactive, --pathspec-from-file) commits MORE than the named
+#     pathspecs, so _GCIA_COMMIT_WIDE disqualifies it outright.
+#   - the old `*/docs/reviews/records/*` arm accepted the folder name at ANY
+#     depth (`evil/docs/reviews/records/x.sh`). A path is now resolved to
+#     the REPO ROOT first (the git dir's --show-prefix for a relative path,
+#     the --show-toplevel for an absolute one, `:/` top magic) and must be
+#     exactly docs/reviews/records/<file> there. Any other pathspec magic,
+#     a glob character, or a `.`/`..` segment is not records-only.
 # ============================================================
 
-_gcia_is_records_path() {
+# One spelling for an absolute path: backslashes -> `/`, MSYS `/c/...` ->
+# `c:/...` (cygpath when present, so `/tmp/...` matches git's `C:/...`).
+_gcia_abs_form() {
   local p="${1//\\//}"
-  _gcia_unresolved "$p" && return 1
-  p="${p#./}"
+  if command -v cygpath >/dev/null 2>&1; then
+    p="$(cygpath -m "$p" 2>/dev/null || printf '%s' "$p")"
+  fi
   case "$p" in
-    docs/reviews/records/*) p="${p#docs/reviews/records/}" ;;
-    */docs/reviews/records/*) p="${p##*/docs/reviews/records/}" ;;
+    /[A-Za-z]/*) p="${p:1:1}:${p:2}" ;;
+  esac
+  printf '%s' "$p"
+}
+
+# 0 iff <path>, interpreted from a git dir whose repo-relative prefix is
+# <prefix> ("" at the root, else "sub/") inside the repo whose toplevel is
+# <top>, is exactly docs/reviews/records/<file> at the repo root.
+_gcia_is_records_path() { # <path> <prefix> <top>
+  local p="${1//\\//}" prefix="$2" top="$3" pf tf lp lt rest
+  [ -n "$p" ] || return 1
+  _gcia_unresolved "$p" && return 1
+  case "$p" in *$'\n'*|*'*'*|*'?'*|*'['*) return 1 ;; esac
+  case "$p" in
+    :/*) p="${p#:/}" ;;
+    :*) return 1 ;;
+    /*|[A-Za-z]:/*)
+      # Absolute (review-runner.sh finalize passes "$repo_root/docs/...").
+      # The toplevel prefix is compared case-insensitively (Windows); the
+      # remainder keeps its case, so the records check below stays exact.
+      [ -n "$top" ] || return 1
+      pf="$(_gcia_abs_form "$p")"; tf="$(_gcia_abs_form "$top")"; tf="${tf%/}/"
+      lp="$(printf '%s' "$pf" | tr '[:upper:]' '[:lower:]')"
+      lt="$(printf '%s' "$tf" | tr '[:upper:]' '[:lower:]')"
+      case "$lp" in
+        "$lt"*) p="${pf:${#tf}}" ;;
+        *) return 1 ;;
+      esac
+      ;;
+    *) p="${prefix}${p}" ;;
+  esac
+  while [ "${p#./}" != "$p" ]; do p="${p#./}"; done
+  case "/$p/" in */./*|*/../*|*//*) return 1 ;; esac
+  case "$p" in
+    docs/reviews/records/?*) rest="${p#docs/reviews/records/}" ;;
     *) return 1 ;;
   esac
-  [ -n "$p" ] || return 1
-  case "$p" in */*|'*') return 1 ;; esac
+  case "$rest" in */*) return 1 ;; esac
   return 0
 }
 
 _gcia_records_only() { # <target_dir>
-  local target="$1" k p count=0
+  local target="$1" k p count=0 prefix top aprefix
   [ "${_GCIA_COMMIT_ALL:-0}" = "1" ] && return 1
+  [ -n "${_GCIA_COMMIT_WIDE:-}" ] && return 1
+  top="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -n "$top" ] || return 1
+  prefix="$(git -C "$target" rev-parse --show-prefix 2>/dev/null)"
   if [ "${#_GCIA_PATHSPECS[@]}" -gt 0 ]; then
     for ((k=0; k<${#_GCIA_PATHSPECS[@]}; k++)); do
-      _gcia_is_records_path "${_GCIA_PATHSPECS[$k]}" || return 1
+      _gcia_is_records_path "${_GCIA_PATHSPECS[$k]}" "$prefix" "$top" || return 1
       count=$((count+1))
     done
     [ "$count" -gt 0 ]
     return
   fi
-  while IFS= read -r p; do
+  # Staged index: repo-root-relative by construction; NUL-delimited so an
+  # unusual path cannot be re-rendered into a records-looking one
+  # (review-before-deploy enumeration rule 3).
+  while IFS= read -r -d '' p; do
     [ -n "$p" ] || continue
-    _gcia_is_records_path "$p" || return 1
+    _gcia_is_records_path "$p" "" "$top" || return 1
     count=$((count+1))
-  done <<< "$(git -C "$target" -c core.quotePath=false diff --cached --name-only 2>/dev/null)"
+  done < <(git -C "$target" -c core.quotePath=false diff --cached --name-only -z 2>/dev/null)
   for ((k=0; k<${#_GCIA_ADD_PATHS[@]}; k++)); do
     _gcia_same_repo "${_GCIA_ADD_DIRS[$k]}" "$target" || continue
-    _gcia_is_records_path "${_GCIA_ADD_PATHS[$k]}" || return 1
+    aprefix="$(git -C "${_GCIA_ADD_DIRS[$k]}" rev-parse --show-prefix 2>/dev/null)" || return 1
+    _gcia_is_records_path "${_GCIA_ADD_PATHS[$k]}" "$aprefix" "$top" || return 1
     count=$((count+1))
   done
   [ "$count" -gt 0 ]
@@ -868,8 +1066,8 @@ _gcia_is_reviewer_identity() {
 # 1, the detail fields used by the block message.
 # ============================================================
 
-_gcia_evaluate() { # <target_dir> <cfg_email> <cfg_email_label> <cfg_name> <author_val>
-  local target_dir="$1" cfg_email="$2" cfg_label="$3" cfg_name="$4" author_val="$5"
+_gcia_evaluate() { # <target_dir> <cfg_email> <cfg_email_label> <cfg_name> <author_val> [<cfg_email_unknown 0|1>]
+  local target_dir="$1" cfg_email="$2" cfg_label="$3" cfg_name="$4" author_val="$5" cfg_unknown="${6:-0}"
   _GCIA_VIOLATION=0
   _GCIA_AUTO_SET_NOTE=""
 
@@ -912,7 +1110,10 @@ _gcia_evaluate() { # <target_dir> <cfg_email> <cfg_email_label> <cfg_name> <auth
     # mismatch (MAJOR-1 P1 / note 4).
     local -a kinds=() vals=()
     if [ -n "$author_val" ]; then
-      if _gcia_unresolved "$author_val"; then
+      # Round-3 MAJOR-1 (PROVEN): an --author value taken from an opaque or
+      # walk-stop token (`--author "$(git log ...)"`, separated or glued,
+      # or a backtick form) is UNKNOWN — never compared, never a sentinel.
+      if [ "${_GCIA_AUTHOR_UNKNOWN:-0}" = "1" ] || _gcia_unresolved "$author_val"; then
         unknown="${unknown}--author=${author_val}; "
       else
         case "$author_val" in
@@ -931,7 +1132,7 @@ _gcia_evaluate() { # <target_dir> <cfg_email> <cfg_email_label> <cfg_name> <auth
         CE) v2="${_GCIA_ENV_COMMITTER_EMAIL:-}" ;;
       esac
       [ -n "$v2" ] || continue
-      if _gcia_unresolved "$v2"; then
+      if _gcia_unresolved "$v2" || { [ "$k2" = "cfg" ] && [ "$cfg_unknown" = "1" ]; }; then
         case "$k2" in
           cfg) unknown="${unknown}${cfg_label}=${v2}; " ;;
           AE) unknown="${unknown}GIT_AUTHOR_EMAIL=${v2}; " ;;
@@ -1100,7 +1301,7 @@ _gcia_run() {
   local violation=0 auto_note=""
   # m1 / r2-1: a `git config user.email X` SET earlier in the same command
   # persists into a later commit-creating segment IN THE SAME REPO only.
-  local cfg_track_email="" cfg_track_name="" cfg_track_dir=""
+  local cfg_track_email="" cfg_track_name="" cfg_track_dir="" cfg_track_unknown=0
 
   for ((i=0; i<n; i++)); do
     seg="${GCP_SEGMENTS[$i]}"
@@ -1150,14 +1351,18 @@ _gcia_run() {
 
     if _gcia_maybe_config_set; then
       case "$_GCIA_CFGSET_KEY" in
-        user.email) cfg_track_email="$_GCIA_CFGSET_VAL" ;;
+        user.email) cfg_track_email="$_GCIA_CFGSET_VAL"; cfg_track_unknown="$_GCIA_CFGSET_UNKNOWN" ;;
         user.name) cfg_track_name="$_GCIA_CFGSET_VAL" ;;
       esac
       cfg_track_dir="$_GCIA_TARGET_DIR"
       continue
     fi
     case "$_GCIA_SUB" in
-      init) _gcia_init_dir; _GCIA_INIT_DIRS+=("$_GCIA_INIT_RESULT"); continue ;;
+      init)
+        _gcia_init_dir
+        [ -n "$_GCIA_INIT_RESULT" ] && _GCIA_INIT_DIRS+=("$_GCIA_INIT_RESULT")
+        continue
+        ;;
       add) _gcia_note_add; continue ;;
     esac
 
@@ -1177,7 +1382,10 @@ _gcia_run() {
       eff_cfg_name="$cfg_track_name"
     fi
 
-    _gcia_evaluate "$_GCIA_TARGET_DIR" "$eff_cfg_email" "$eff_label" "$eff_cfg_name" "$_GCIA_AUTHOR_VAL"
+    local eff_cfg_unknown=0
+    [ "$eff_label" = "git config user.email" ] && eff_cfg_unknown="${cfg_track_unknown:-0}"
+
+    _gcia_evaluate "$_GCIA_TARGET_DIR" "$eff_cfg_email" "$eff_label" "$eff_cfg_name" "$_GCIA_AUTHOR_VAL" "$eff_cfg_unknown"
     if [ "$_GCIA_VIOLATION" = "1" ]; then
       violation=1
       break
@@ -1673,6 +1881,106 @@ STUB
   else
     echo "  R2 m3 ssh-alias cases SKIPPED: no ssh binary on this machine"
   fi
+
+  # ============================================================
+  # PR #67 review ROUND 3 — pinned NEGATIVE (must allow) and POSITIVE (must
+  # still block) cases for every fixed shape. No block message may ever
+  # show a walk sentinel.
+  # ============================================================
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+
+  _case_warn() { # <label> <cmd> <cwd> <grep-in-ledger>
+    rm -f "$SIGNAL_LEDGER_PATH"
+    _run "$2" "$3"
+    if [ "$RC" = "0" ] && grep -qF -- "$4" "$SIGNAL_LEDGER_PATH" 2>/dev/null \
+       && ! printf '%s' "$OUT" | grep -q '__GCIA_'; then
+      echo "  $1: PASS"; pass=$((pass+1))
+    else
+      echo "  $1: FAIL (rc=$RC out=[$OUT] ledger=$(cat "$SIGNAL_LEDGER_PATH" 2>/dev/null))"; fail=$((fail+1))
+    fi
+  }
+  _case_nosentinel() { # <label> <want-rc> <cmd> <cwd> <grep-in-OUT>
+    _run "$3" "$4"
+    if [ "$RC" = "$2" ] && printf '%s' "$OUT" | grep -qF -- "$5" && ! printf '%s' "$OUT" | grep -q '__GCIA_'; then
+      echo "  $1: PASS"; pass=$((pass+1))
+    else
+      echo "  $1: FAIL (rc=$RC want=$2 out=[$OUT])"; fail=$((fail+1))
+    fi
+  }
+
+  # MAJOR-1: an opaque / walk-stop --author value is UNKNOWN (ledger warn,
+  # never blocked, never shown as a sentinel) — separated AND glued.
+  _case_warn "R3 MAJOR-1 negative: separated --author \"\$(git log ...)\" is UNKNOWN (allow + warn)" \
+    "git commit --author \"\$(git log -1 --format='%an <%ae>' abc123)\" -m x" "$gr" "--author=\$(git log -1"
+  _case_warn "R3 MAJOR-1 negative: glued --author=\"\$(git log ...)\" is UNKNOWN (allow + warn)" \
+    "git commit --author=\"\$(git log -1 --format='%an <%ae>' abc123)\" -m x" "$gr" "--author=\$(git log -1"
+  _case_warn "R3 MAJOR-1 negative: separated --author backtick is UNKNOWN (allow + warn)" \
+    'git commit --author "`git log -1 --format=%an`" -m x' "$gr" '--author=`git log'
+  _case_warn "R3 MAJOR-1 negative: glued --author=backtick is UNKNOWN (allow + warn)" \
+    'git commit --author="`git log -1 --format=%an`" -m x' "$gr" '--author=`git log'
+  _case_nosentinel "R3 MAJOR-1 positive: separated literal --author mismatch blocked, real value shown" 2 \
+    'git commit --author "X <wrong@example.test>" -m x' "$gr" "--author=X <wrong@example.test>"
+  _case_nosentinel "R3 MAJOR-1 positive: glued literal --author mismatch blocked, real value shown" 2 \
+    'git commit --author="X <wrong@example.test>" -m x' "$gr" "--author=X <wrong@example.test>"
+  _case_nosentinel "R3 MAJOR-1 positive: an UNKNOWN --author does not mask a resolved -c mismatch" 2 \
+    "git -c user.email=wrong@example.test commit --author \"\$(git log -1 --format='%an <%ae>')\" -m x" "$gr" "-c user.email=wrong@example.test"
+
+  # MAJOR-1 sibling sweep: every other consumer of the walk's tokens.
+  _case_warn "R3 sweep negative: git config user.email \"\$(...)\" && commit is UNKNOWN (allow + warn)" \
+    'git config user.email "$(gh api user --jq .email)" && git commit -m x' "$gr" "git config user.email=\$(gh api"
+  _case_nosentinel "R3 sweep positive: git config set user.email <wrong> && commit (git >= 2.46 form) blocked" 2 \
+    'git config set user.email wrong@example.test && git commit -m x' "$gr" "wrong@example.test"
+  _case_warn "R3 sweep negative: -c with a run-time KEY is UNKNOWN (allow + warn)" \
+    'git -c "$(echo user.email)=wrong@example.test" commit -m x' "$gr" "-c key not resolvable"
+  _case_nosentinel "R3 sweep positive: git init \"\$(mktemp -d)\" does NOT exempt a -c commit in the cwd repo" 2 \
+    'git init "$(mktemp -d)" && git -c user.email=wrong@example.test commit -m x' "$gr" "wrong@example.test"
+  _case "R3 sweep negative: git init <literal dir> && cd <dir> && -c commit still fails open" 0 \
+    'git init -q scratch-init-r3 && cd scratch-init-r3 && git -c user.email=t@t.example commit --allow-empty -m base' "$gr"
+  _case "R3 sweep positive: reviewer+ identity after git add \"\$(...)\" is not records-only (blocked)" 2 \
+    'git add "$(ls docs/reviews/records/*)" && GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r' "$gr" "reviewer+s@h"
+
+  # MINOR-1: records-only accepts only records content, anchored at the root.
+  mkdir -p "$gr/docs/reviews/records" "$gr/evil/docs/reviews/records"
+  _case "R3 MINOR-1 positive: -c reviewer+ commit -i -- <record> blocked (-i commits the whole index)" 2 \
+    'git -c user.email=reviewer+s@h commit -i -m r -- docs/reviews/records/a.json' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: --include -- <record> blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit --include -m r -- docs/reviews/records/a.json' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: -im cluster -- <record> blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -im r -- docs/reviews/records/a.json' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: --amend -- <record> blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit --amend -m r -- docs/reviews/records/a.json' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: --pathspec-from-file=<f> blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r --pathspec-from-file=list.txt' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: -- evil/docs/reviews/records/x.sh (nested folder name) blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r -- evil/docs/reviews/records/x.sh' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: from a subdir, docs/reviews/records/x is NOT the root records folder" 2 \
+    'cd scratch-sub && GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r -- docs/reviews/records/x.json' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: a .. segment escaping the records folder blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r -- docs/reviews/records/../../../hooks/x.sh' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: a glob pathspec in the records folder blocked" 2 \
+    "GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r -- 'docs/reviews/records/*'" "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 positive: an opaque \"\$(...)\" pathspec blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r -- "$(ls docs/reviews/records/*)"' "$gr" "reviewer+s@h"
+  _case "R3 MINOR-1 negative: absolute record paths (review-runner finalize shape) exempt" 0 \
+    "GIT_AUTHOR_EMAIL=reviewer+s@h GIT_COMMITTER_EMAIL=reviewer+s@h git -C \"${gr}\" commit -q -m r -- \"${gr}/docs/reviews/records/a.json\" \"${gr}/docs/reviews/records/index.json\"" "$gr"
+  _case "R3 MINOR-1 negative: from docs/reviews, -- records/<file> is the root records folder (allow)" 0 \
+    'cd docs/reviews && GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r -- records/a.json' "$gr"
+  _case "R3 MINOR-1 negative: :/ top magic from a subdir (allow)" 0 \
+    'cd scratch-sub && GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r -- :/docs/reviews/records/a.json' "$gr"
+  _case "R3 MINOR-1 negative: glued -m\"review data\" is a message, not -a (allow)" 0 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m"review data" -- docs/reviews/records/index.json' "$gr"
+  # Staged-index path (no pathspec): the nested folder name must not pass.
+  printf 'x\n' > "$gr/evil/docs/reviews/records/x.sh"
+  printf '{}\n' > "$gr/docs/reviews/records/y.json"
+  git -C "$gr" read-tree --empty 2>/dev/null
+  git -C "$gr" add evil/docs/reviews/records/x.sh 2>/dev/null
+  _case "R3 MINOR-1 positive: staged evil/docs/reviews/records/x.sh (no pathspec) blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r' "$gr" "reviewer+s@h"
+  git -C "$gr" read-tree --empty 2>/dev/null
+  git -C "$gr" add docs/reviews/records/y.json 2>/dev/null
+  _case "R3 MINOR-1 negative: staged docs/reviews/records/y.json only (no pathspec) exempt" 0 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r' "$gr"
+  git -C "$gr" read-tree --empty 2>/dev/null
 
   unset HARNESS_SELFTEST SIGNAL_LEDGER_PATH GHBLIND_ACCOUNTS GIA_GH_CMD GIA_STATE_DIR \
     STUB_TOKEN_acct_work STUB_EMAIL_FOR_TOKEN_tok_work STUB_TOKEN_acct_personal STUB_EMAIL_FOR_TOKEN_tok_personal

@@ -278,6 +278,72 @@ catch the round-1 defects rather than restating the new code.
       - m5: a `git config user.email` set in a SEPARATE, earlier Bash call is not seen.
       - m6 (HYPOTHESIZED): the gh-API rung ignores primary-email visibility.
 
+## Review-Fix Round 3 (harness-reviewer REFORMULATE, record hcr-20260930-4bbe06a7)
+
+- [x] **MAJOR-1 (PROVEN, new in round 2): a walk sentinel flowed into the identity
+      comparison.** Reproduced before the fix, in a downstream project worktree with a sandboxed
+      ledger and state dir:
+      - `git commit --author "$(git log -1 --format='%an <%ae>' abc123)" -m x` returned
+        rc=2, and WHAT read `--author=__GCIA_OPAQUE__`.
+      - The glued `--author="$(...)"` and both backtick forms returned rc=0 with NO
+        ledger warn.
+      - Sibling sweep, same repro run: `git config user.email "$(gh api ...)" && git
+        commit` returned rc=0 with no warn. `git init "$(mktemp -d)" && git -c
+        user.email=<wrong> commit` returned rc=0. That is a FALSE NEGATIVE: the opaque
+        init dir was skipped, so the init was recorded against the current (GitHub)
+        repo, which then failed open.
+
+      The fix: `_GCIA_ARGS` keeps a sentinel (`__GCIA_OPAQUE__`, or `__GCIA_STOP__` for the
+      token the walk stopped at), and the index-aligned `_GCIA_ARGS_RAW` keeps the
+      original text. Each consumer handles a sentinel explicitly (gate header, note 6):
+      - `--author`, separated or glued: an UNKNOWN value, logged as a ledger warn and
+        never compared.
+      - a commit pathspec: kept raw, so the commit is never records-only.
+      - `git config <key> <value>`: an unknown value becomes a tracked UNKNOWN; an
+        unknown key is logged as a warn.
+      - `git init`: no init dir is recorded.
+      - `git add`: a wildcard marker.
+
+      Four smaller changes came with it:
+      - A `-c` whose key is computed at run time is now warned.
+      - `_gcia_unresolved` treats any value that contains a sentinel as unknown.
+      - `git config set <key> <value>` (git >= 2.46), `--add` and `--replace-all` are now
+        parsed as SETs.
+      - After the fix, the four `--author` shapes return rc=0 with the warn. The literal
+        mismatch still blocks and shows its real value. The init case blocks.
+- [x] **MINOR-1 (PROVEN): the records-only exemption over-accepted.** Records-only now
+      requires both of these:
+      - The commit takes nothing beyond its pathspecs. `-a`, `-i`/`--include`,
+        `--amend`, `-p`/`--patch`, `--interactive` and `--pathspec-from-file` each
+        disqualify it. Short clusters are now parsed letter by letter, so `-m"review
+        data"` is a message and not `-a`.
+      - Every path resolves at the REPO ROOT to exactly `docs/reviews/records/<file>`.
+        A relative path is resolved against the git dir's `--show-prefix`, an absolute
+        one against `--show-toplevel`, and `:/` magic is honored. A nested
+        `*/docs/reviews/records/` folder, a glob, a `..` or `.` segment, and other
+        pathspec magic are all rejected.
+
+      The staged index is now read with `-z` (review-before-deploy enumeration rule 3).
+      Two false positives went away with this:
+      - `cd docs/reviews && ... -- records/a.json` is now exempt. Round 2 blocked it.
+      - `-m"review data"` on a records commit is now exempt. Round 2 read it as `-a`.
+- [x] **MINOR-2 (HYPOTHESIZED, still not refutable here).** No bash 3.2 is installed on
+      this machine. The new code uses no bash-4 features: no `declare -A`, `mapfile`,
+      `${x,,}`, `local -n` or `coproc`. It uses `read -d ''` with `< <(...)`, which is
+      3.2-safe.
+- **Evidence.**
+  - Self-tests: gate 82/82 (53 earlier + 29 round-3 cases), identity lib 13/13, account
+    lib 13/13.
+  - The new round-3 cases were run against the ROUND-2 gate body (the new self-test
+    grafted onto `64cfce4a`'s gate): 18 of the 29 FAIL there, so they are not vacuous.
+    The other 11 are regression pins. All 53 earlier cases still pass on both bodies.
+  - FP replay: the same 58-command corpus gives IDENTICAL rc and block text on every
+    row, 18 blocked and 40 allowed, with 0 sentinel leaks. That is still 0/58 off-target.
+  - Latency, best of 5, round-2 body vs round 3, downstream project worktree:
+    - plain commit: 656 vs 615 ms;
+    - `--author` commit: 2716 vs 2714 ms;
+    - non-git command: 447 vs 429 ms.
+
 ## Files to Modify/Create
 - `adapters/claude-code/hooks/gh-commit-author-identity-gate.sh` — new PreToolUse gate.
 - `adapters/claude-code/hooks/lib/gh-commit-identity-lib.sh` — new resolution library.
