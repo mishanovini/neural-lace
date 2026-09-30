@@ -166,6 +166,12 @@ _gh_owner_from_ssh_alias_url() {
   # A Windows drive path (`C:/x`) or an absolute local path is not an SSH host.
   [ "${#host}" -ge 2 ] || return 1
   case "$host" in *[!A-Za-z0-9_.-]*) return 1 ;; esac
+  # A host that starts with `-` is an ssh OPTION, not a host: handed to
+  # `ssh -G "$host"` it would be parsed as a flag (`-F<file>` reads a config
+  # file named by the remote URL). git itself refuses such a remote for the
+  # same reason (CVE-2017-1000117), so no push can go through it and there is
+  # no owner to resolve. Refuse it before ssh ever runs (PR #67 round 5).
+  case "$host" in -*) return 1 ;; esac
   case "$p" in /*|\\*|'') return 1 ;; esac
   owner="${p%%/*}"; repo="${p#*/}"
   [ -n "$owner" ] && [ "$repo" != "$p" ] && [ -n "$repo" ] || return 1
@@ -194,7 +200,7 @@ gh_owner_from_cwd_remote() {
 # keep their own event-specific self-tests)
 # ============================================================
 _gh_account_lib_self_test() {
-  local pass=0 fail=0 tmp got
+  local pass=0 fail=0 tmp got got2
   tmp="$(mktemp -d 2>/dev/null || mktemp -d -t ghlib)"
   local cfg="$tmp/accounts.config.json"
   cat > "$cfg" <<'JSON'
@@ -236,6 +242,18 @@ JSON
   else
     echo "  L10-L12 SKIPPED: no ssh binary on this machine"
   fi
+  # L14 (round 5): an option-shaped host never reaches ssh. The stub records
+  # every call, so "ssh was not run" is asserted directly, not inferred from
+  # an empty result.
+  printf '#!/usr/bin/env bash\necho "$*" >> "%s"\nprintf "hostname github.com\\n"\n' "$tmp/ssh-calls" > "$tmp/ssh-stub"
+  chmod +x "$tmp/ssh-stub" 2>/dev/null || true
+  : > "$tmp/ssh-calls"
+  got="$(GHLIB_SSH_CMD="$tmp/ssh-stub" gh_owner_from_url "git@-Fevil:dash-org/some-repo.git")"
+  got2="$(GHLIB_SSH_CMD="$tmp/ssh-stub" gh_owner_from_url "ssh://git@-oX/dash-org/some-repo.git")"
+  if [ -z "$got" ] && [ -z "$got2" ] && [ ! -s "$tmp/ssh-calls" ]; then echo "  L14 option-shaped ssh host (-F..., -o...) -> empty, ssh never run: PASS"; pass=$((pass+1)); else echo "  L14 option-shaped ssh host -> empty, ssh never run: FAIL (got: $got / $got2, calls: $(cat "$tmp/ssh-calls" 2>/dev/null))"; fail=$((fail+1)); fi
+  got="$(GHLIB_SSH_CMD="$tmp/ssh-stub" gh_owner_from_url "git@gh-stub-alias:stub-org/some-repo.git")"
+  if [ "$got" = "stub-org" ] && [ -s "$tmp/ssh-calls" ]; then echo "  L15 ordinary alias host still reaches ssh -G (L14 control): PASS"; pass=$((pass+1)); else echo "  L15 ordinary alias host still reaches ssh -G: FAIL (got: $got)"; fail=$((fail+1)); fi
+
   got="$(gh_owner_from_url "C:/local/bare-repo.git")"
   if [ -z "$got" ]; then echo "  L13 windows drive-path remote -> empty (not an ssh host): PASS"; pass=$((pass+1)); else echo "  L13 windows drive-path remote -> empty: FAIL (got: $got)"; fail=$((fail+1)); fi
 

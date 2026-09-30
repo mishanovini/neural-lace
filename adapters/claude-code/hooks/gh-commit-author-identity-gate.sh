@@ -194,8 +194,24 @@
 #     names no pathspec. A NON-git step earlier in the same command (a
 #     script that runs `git add`) can change the index after this hook has
 #     read it. Earlier `git` steps that rewrite the index ARE handled.
-#   - This hook is registered on the Bash tool only. A commit run through
-#     the PowerShell tool is not checked.
+#   Added in round 5 (PowerShell). The hook is registered on Bash|PowerShell
+#   (it was Bash-only through round 4, so a commit run through the PowerShell
+#   tool, the primary shell on a Windows machine, was not checked at all). A
+#   PowerShell payload (.tool_name == "PowerShell") gets two PowerShell-only
+#   readings on top of the shared walk: a backtick line continuation is
+#   joined (otherwise a `--author` on a continued line is a separate segment
+#   the walk never sees), and a `$env:GIT_AUTHOR_EMAIL = "x"` segment (name
+#   case-insensitive) persists into later commits exactly like a bash
+#   `export`. Residuals that remain for PowerShell:
+#   - `[Environment]::SetEnvironmentVariable(...)`, `Set-Item Env:...` and
+#     `Remove-Item Env:...` are not parsed. The first two fail open; a
+#     `$env:` SET that is later removed in the same command is still
+#     compared against the expected identity.
+#   - A backtick-escaped quote inside a double-quoted string ("a `"b`" c")
+#     is a walk-stop token, so a real `--author` AFTER it on the same
+#     segment is not seen (the same residual as an unbalanced `$(`).
+#   - `Push-Location` is not treated as a cd (Set-Location, cd and pushd are).
+#   - A commit run through any tool other than Bash or PowerShell.
 #
 # ALSO ALLOWED (review round 2):
 #   - The harness's OWN review-record commits: every resolved override is a
@@ -319,6 +335,61 @@ _gcia_cwd() {
     [ -n "$c" ] && { printf '%s' "$c"; return 0; }
   fi
   printf '%s' "$PWD"
+}
+
+# Round 5: which tool sent the command. Only "PowerShell" changes anything
+# (see _gcia_ps_join_continuations / _gcia_maybe_ps_env); any other value,
+# including an absent field, keeps the bash reading. GCIA_TOOL is the
+# self-test seam, mirroring GCIA_CMD / GCIA_CWD.
+_gcia_tool_name() {
+  if [ -n "${GCIA_TOOL:-}" ]; then printf '%s' "$GCIA_TOOL"; return 0; fi
+  [ -n "${GCIA_CMD:-}" ] && return 0
+  command -v jq >/dev/null 2>&1 || return 0
+  if [ -n "${CLAUDE_TOOL_INPUT:-}" ]; then
+    local v; v="$(printf '%s' "$CLAUDE_TOOL_INPUT" | jq -r '.tool_name // ""' 2>/dev/null || true)"
+    [ -n "$v" ] && { printf '%s' "$v"; return 0; }
+  fi
+  [ -n "${_GCIA_PAYLOAD:-}" ] || return 0
+  printf '%s' "$_GCIA_PAYLOAD" | jq -r '.tool_name // ""' 2>/dev/null || true
+}
+
+# PowerShell only: a backtick at the end of a line is a line continuation.
+# Join it to the next line so continued flags stay in the same segment. Under
+# bash a backtick starts a command substitution, so this never runs there.
+_gcia_ps_join_continuations() { # <cmd> -> _GCIA_NORM
+  local s="$1" bt='`'
+  s="${s//${bt}$'\r'$'\n'/ }"
+  s="${s//${bt}$'\n'/ }"
+  _GCIA_NORM="$s"
+}
+
+# PowerShell only: `$env:NAME = value` / `$env:NAME=value` sets a process
+# environment variable that later native commands in the same command
+# inherit, which is the same effect as a bash `export`. PowerShell
+# environment names are case-insensitive on Windows, so the name is
+# upper-cased before the lookup. A value that is not a single literal ($var,
+# $(...)) stays unresolved and is judged UNKNOWN downstream (ledger warn,
+# never blocked).
+_gcia_maybe_ps_env() { # <segment> -> 0 if it was a $env: assignment
+  local seg="$1" name val
+  case "$seg" in
+    '$'[Ee][Nn][Vv]:*) : ;;
+    *) return 1 ;;
+  esac
+  _gcia_tokenize "${seg:5}"
+  case "${#_GCIA_TOK[@]}" in
+    1) case "${_GCIA_TOK[0]}" in *=*) : ;; *) return 1 ;; esac
+       name="${_GCIA_TOK[0]%%=*}"; val="${_GCIA_TOK[0]#*=}" ;;
+    2) case "${_GCIA_TOK[0]}" in *=) : ;; *) return 1 ;; esac
+       name="${_GCIA_TOK[0]%=}"; val="${_GCIA_TOK[1]}" ;;
+    3) [ "${_GCIA_TOK[1]}" = "=" ] || return 1
+       name="${_GCIA_TOK[0]}"; val="${_GCIA_TOK[2]}" ;;
+    *) return 1 ;;
+  esac
+  case "$name" in ''|*[!A-Za-z0-9_]*) return 1 ;; esac
+  name="$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]')"
+  _gcia_note_persistent "$name" "$val"
+  return 0
 }
 
 # ============================================================
@@ -1395,6 +1466,18 @@ _gcia_run() {
   _gcia_reset_env_state
   _GCIA_INIT_DIRS=(); _GCIA_ADD_PATHS=(); _GCIA_ADD_DIRS=()
 
+  # Round 5 (PowerShell): the tool name is only read when the command holds a
+  # shape whose meaning differs between the two shells, so an ordinary
+  # commit pays no extra jq call.
+  local is_ps=0
+  case "$cmd" in
+    *'`'*|*'$'[Ee][Nn][Vv]:*)
+      [ "$(_gcia_tool_name)" = "PowerShell" ] && is_ps=1 ;;
+  esac
+  if [ "$is_ps" = "1" ]; then
+    _gcia_ps_join_continuations "$cmd"; cmd="$_GCIA_NORM"
+  fi
+
   # MAJOR-1 notes 1-2: normalize the WHOLE command before splitting.
   _gcia_normalize_ansi_c "$cmd"; cmd="$_GCIA_NORM"
   _gcia_strip_heredoc_bodies "$cmd"; cmd="$_GCIA_NORM"
@@ -1443,6 +1526,7 @@ _gcia_run() {
     fi
 
     if _gcia_maybe_export "$seg"; then continue; fi
+    if [ "$is_ps" = "1" ] && _gcia_maybe_ps_env "$seg"; then continue; fi
 
     gcp_strip_command_prefix_var "$seg"
     case "$GCP_STRIPPED" in
@@ -2140,6 +2224,53 @@ STUB
     'git config --type=string user.email wrong@example.test && git commit -m x' "$gr" "wrong@example.test"
   _case "R4 MINOR negative: git config set --append user.email <expected> && commit (allow)" 0 \
     'git config set --append user.email acct-work@example.test && git commit -m x' "$gr"
+
+  # Round 5 (PowerShell): the hook is registered on Bash|PowerShell. The
+  # shared walk already reads -c / --author / Set-Location the same way; these
+  # pin the two PowerShell-only readings and prove neither leaks into Bash.
+  local bt='`'
+  export GCIA_TOOL=PowerShell
+  _case "R5 PS positive: Set-Location <repo>; git -c user.email=<wrong> commit blocked" 2 \
+    "Set-Location '$gr'; git -c user.email=wrong@example.test commit -m x" "$tmp" "wrong@example.test"
+  _case "R5 PS positive: \$env:GIT_AUTHOR_EMAIL = \"<wrong>\"; git commit blocked" 2 \
+    '$env:GIT_AUTHOR_EMAIL = "wrong@example.test"; git commit -m x' "$gr" "wrong@example.test"
+  _case "R5 PS positive: \$Env:git_committer_email='<wrong>' (any case, glued) blocked" 2 \
+    "\$Env:git_committer_email='wrong@example.test'; git commit -m x" "$gr" "wrong@example.test"
+  _case "R5 PS negative: \$env:GIT_AUTHOR_EMAIL = <expected>; git commit (allow)" 0 \
+    '$env:GIT_AUTHOR_EMAIL = "acct-work@example.test"; git commit -m x' "$gr"
+  _case "R5 PS negative: \$env:GIT_AUTHOR_EMAIL = \$e (runtime value) is UNKNOWN (allow)" 0 \
+    '$env:GIT_AUTHOR_EMAIL = $e; git commit -m x' "$gr"
+  _case "R5 PS negative: an unrelated \$env:PATH SET before a plain commit (allow)" 0 \
+    '$env:PATH = "C:\tools;" + $env:PATH; git commit -m x' "$gr"
+  _case "R5 PS positive: --author on a backtick-continued line blocked" 2 \
+    "git commit ${bt}${NL}  -m \"multi\" ${bt}${NL}  --author=\"A <wrong@example.test>\"" "$gr" "wrong@example.test"
+  _case "R5 PS positive: backtick continuation with CRLF line ends blocked" 2 \
+    "git commit ${bt}"$'\r'"${NL}  --author=\"A <wrong@example.test>\" -m x" "$gr" "wrong@example.test"
+  _case "R5 PS negative: backtick-escaped quotes in a message, no override (allow)" 0 \
+    "git commit -m \"say ${bt}\"hi${bt}\" there\"" "$gr"
+  unset GCIA_TOOL
+  _case "R5 Bash negative: backtick-newline is NOT joined for a Bash payload (allow, walk-stop)" 0 \
+    "git commit ${bt}${NL}  --author=\"A <wrong@example.test>\" -m x" "$gr"
+  _case "R5 Bash negative: \$env:X=<wrong> is NOT an assignment under bash (allow)" 0 \
+    '$env:GIT_AUTHOR_EMAIL=wrong@example.test; git commit -m x' "$gr"
+  # The real stdin payload: .tool_name is read from the PreToolUse JSON.
+  local psjson
+  psjson="$(jq -cn --arg c "\$env:GIT_AUTHOR_EMAIL = 'wrong@example.test'; git commit -m x" --arg d "$gr" \
+    '{tool_name:"PowerShell", tool_input:{command:$c}, cwd:$d}' 2>/dev/null)"
+  OUT="$(printf '%s' "$psjson" | GIA_STUB_CALLS=/dev/null bash "$SELF" 2>&1 1>/dev/null)"; RC=$?
+  if [ -n "$psjson" ] && [ "$RC" = "2" ] && printf '%s' "$OUT" | grep -qF 'wrong@example.test'; then
+    echo "  R5 PS positive: stdin payload with tool_name PowerShell is read as PowerShell: PASS"; pass=$((pass+1))
+  else
+    echo "  R5 PS positive: stdin payload with tool_name PowerShell is read as PowerShell: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+  psjson="$(jq -cn --arg c "\$env:GIT_AUTHOR_EMAIL = 'wrong@example.test'; git commit -m x" --arg d "$gr" \
+    '{tool_name:"Bash", tool_input:{command:$c}, cwd:$d}' 2>/dev/null)"
+  OUT="$(printf '%s' "$psjson" | GIA_STUB_CALLS=/dev/null bash "$SELF" 2>&1 1>/dev/null)"; RC=$?
+  if [ -n "$psjson" ] && [ "$RC" = "0" ]; then
+    echo "  R5 Bash negative: the same stdin payload with tool_name Bash is not read as PowerShell: PASS"; pass=$((pass+1))
+  else
+    echo "  R5 Bash negative: the same stdin payload with tool_name Bash is not read as PowerShell: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
 
   unset HARNESS_SELFTEST SIGNAL_LEDGER_PATH GHBLIND_ACCOUNTS GIA_GH_CMD GIA_STATE_DIR \
     STUB_TOKEN_acct_work STUB_EMAIL_FOR_TOKEN_tok_work STUB_TOKEN_acct_personal STUB_EMAIL_FOR_TOKEN_tok_personal
