@@ -344,6 +344,47 @@ catch the round-1 defects rather than restating the new code.
     - `--author` commit: 2716 vs 2714 ms;
     - non-git command: 447 vs 429 ms.
 
+## Review-Fix Round 4 (unrecorded harness-reviewer pass on `fa42a46b`, would-be REFORMULATE)
+
+- [x] **MAJOR (PROVEN by the reviewer): the records-only exemption read an incomplete
+      pathspec set.** Phase 2 collected pathspecs only after `--`. With a record staged,
+      `GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r hooks/x.sh` was exempt, although git
+      commits ONLY `hooks/x.sh` there; a positional record on a clean index was blocked.
+      The fix: every non-option token before `--` that is not the value of a value-taking
+      option is a pathspec, and when any pathspec exists it alone is judged. The walk now
+      models `git commit -h` (git 2.53): an unrecognised option (an abbreviation such as
+      `--mess`, or an unknown short letter), a walk-stop token, and `-o/--only` with no
+      pathspec each make the exemption unavailable. Sweep of the other path-set consumers:
+      `git add -p/-i/-e/--renormalize` now count as a wildcard add, and an earlier
+      index-rewriting git step (rm, mv, reset, restore, checkout, switch, stash,
+      read-tree, update-index, apply) disqualifies an exemption judged from the index.
+      Remaining residual, named in the header and manifest: a NON-git step earlier in the
+      same command that changes the index.
+- [x] **MINOR: gate committed as 100644.** Set to 100755 in the same commit as this
+      content change.
+- [x] **MINOR: `git config set --append user.email X` was a silent false negative.**
+      `--append`, `--type`/`--type=*` and `--no-type` are now parsed; `--file`/`-f`/`--blob`
+      are a named residual.
+- [x] **MINOR: stale verb scope in the budget comment.** `blocking-budget-check.js` now
+      names every commit-creating verb. The same stale `commit / commit-tree` claim was
+      swept out of `gh-commit-identity-lib.sh`'s header and the gate's `--help` text.
+- **Evidence.**
+  - Self-tests: gate 99/99 (82 earlier + 17 round-4 cases); identity lib and account lib
+    unchanged in behaviour.
+  - The 17 round-4 cases grafted onto the ROUND-3 gate body (`fa42a46b`): 15 FAIL there,
+    so they are not vacuous. The other 2 are regression pins. All 82 earlier cases pass on
+    both bodies.
+  - FP replay: the same 58-command corpus gives a byte-identical result TSV to round 3
+    (18 blocked, 40 allowed, 0 sentinel leaks). Still 0/58 off-target.
+  - Latency, best of 5, round-3 body vs round 4: plain commit 380 vs 381 ms; `--author`
+    commit 1771 vs 1614 ms; non-git command 285 vs 286 ms.
+- **Process note.** Round 3's fix commit was made from a script (`bash commit.sh`) that
+  staged and committed inside the script. The review-queue auto-enqueue runs in
+  `review-record-commit-gate.sh`, a PreToolUse hook that sees only the Bash command text
+  and reads the index at that moment, so it saw neither a `git commit` nor anything
+  staged, and filed no queue item. It also enqueues only files STAGED in that commit.
+  This round stages first, then commits with a plain `git commit` Bash command.
+
 ## Files to Modify/Create
 - `adapters/claude-code/hooks/gh-commit-author-identity-gate.sh` — new PreToolUse gate.
 - `adapters/claude-code/hooks/lib/gh-commit-identity-lib.sh` — new resolution library.

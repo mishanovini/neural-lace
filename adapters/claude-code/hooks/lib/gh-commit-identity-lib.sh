@@ -21,8 +21,9 @@
 # email (and, separately, name) SHOULD it carry?" The consuming gate
 # (hooks/gh-commit-author-identity-gate.sh) uses the answer to judge whether
 # an explicit override (--author=, -c user.email=/-c user.name=, or the
-# GIT_AUTHOR_*/GIT_COMMITTER_* env vars) in a git commit / commit-tree
-# command is legitimate or an accident worth blocking.
+# GIT_AUTHOR_*/GIT_COMMITTER_* env vars) in a commit-creating git command
+# (commit, commit-tree, merge, cherry-pick, revert, pull, rebase, am) is
+# legitimate or an accident worth blocking.
 #
 # ============================================================
 # RESOLUTION CHAIN (email) — never synthesizes a noreply guess

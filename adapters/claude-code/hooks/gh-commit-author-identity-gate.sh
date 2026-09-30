@@ -185,6 +185,17 @@
 #   - m6 (HYPOTHESIZED): the gh-API rung takes the PRIMARY email and ignores
 #     its visibility, so a private primary could still be rejected by a
 #     push-time email-privacy check. Dormant where the primary is public.
+#   Added in review round 4:
+#   - `git config --file <f>` / `-f <f>` / `--blob` followed by a
+#     user.email SET: the explicit config file is not parsed, so a set that
+#     lands in the repo's own config through `--file .git/config` is not
+#     tracked into a later commit in the same command.
+#   - The records-only exemption (below) reads the index when the commit
+#     names no pathspec. A NON-git step earlier in the same command (a
+#     script that runs `git add`) can change the index after this hook has
+#     read it. Earlier `git` steps that rewrite the index ARE handled.
+#   - This hook is registered on the Bash tool only. A commit run through
+#     the PowerShell tool is not checked.
 #
 # ALSO ALLOWED (review round 2):
 #   - The harness's OWN review-record commits: every resolved override is a
@@ -195,6 +206,14 @@
 #     commit that takes content beyond its pathspecs (-a, -i/--include,
 #     --amend, -p/--patch, --interactive, --pathspec-from-file) never
 #     qualifies.
+#     Round 4 (MAJOR): the content set is the one git will commit. Every
+#     pathspec counts, positional ones before `--` included (the values of
+#     value-taking options are skipped), and when any pathspec is present
+#     it alone is judged. With no pathspec, the index is judged, plus every
+#     `git add` earlier in the same command. An earlier git step that
+#     rewrites the index (rm, mv, reset, restore, checkout, switch, stash,
+#     read-tree, update-index, apply), -o/--only with no pathspec, an
+#     unrecognised option, or a walk-stop token each disqualify.
 #   - A commit into a repo that the same command `git init`s (a throwaway).
 #
 # SSH host-alias remotes (`git@github-<alias>:owner/repo`) are resolved via
@@ -651,10 +670,15 @@ _gcia_strip_env_prefix() { # <segment> -> stdout: segment with "env " stripped
 #   _GCIA_CFG_EMAIL/_GCIA_CFG_NAME   global `-c user.email=/user.name=` values
 #   _GCIA_AUTHOR_VAL   `commit --author` value (raw text)
 #   _GCIA_AUTHOR_UNKNOWN 1 iff that value came from an opaque/stop token
-#   _GCIA_PATHSPECS[]  `commit -- <paths>` (redirection-shaped tokens dropped)
+#   _GCIA_PATHSPECS[]  every `commit` pathspec: positional tokens before `--`
+#                      (values of value-taking options skipped) and every
+#                      token after it (redirection-shaped tokens dropped)
 #   _GCIA_COMMIT_ALL   1 iff `commit -a/--all`
+#   _GCIA_COMMIT_ONLY  1 iff `commit -o/--only`
 #   _GCIA_COMMIT_WIDE  non-empty iff the commit takes content beyond its
-#                      pathspecs (-i/--include/--amend/-p/--pathspec-from-file)
+#                      pathspecs (-i/--include/--amend/-p/--pathspec-from-file),
+#                      or its content set is UNKNOWN (an unrecognised option,
+#                      or a walk-stop token hiding the rest of the arguments)
 #   _GCIA_ARGS[]       tokens after the subcommand (for config/init/add),
 #                      with __GCIA_OPAQUE__/__GCIA_STOP__ sentinels
 #   _GCIA_ARGS_RAW[]   the same tokens, original text (index-aligned)
@@ -684,7 +708,7 @@ _gcia_note_cfg() { # <token like "user.email=x@y.test">
 _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
   local seg="$1" base="$2"
   _GCIA_SUB=""; _GCIA_IS_TARGET=0; _GCIA_TARGET_DIR=""; _GCIA_CFG_EMAIL=""; _GCIA_CFG_NAME=""
-  _GCIA_AUTHOR_VAL=""; _GCIA_AUTHOR_UNKNOWN=0; _GCIA_PATHSPECS=(); _GCIA_COMMIT_ALL=0
+  _GCIA_AUTHOR_VAL=""; _GCIA_AUTHOR_UNKNOWN=0; _GCIA_PATHSPECS=(); _GCIA_COMMIT_ALL=0; _GCIA_COMMIT_ONLY=0
   _GCIA_COMMIT_WIDE=""; _GCIA_ARGS=(); _GCIA_ARGS_RAW=()
   _gcia_tokenize "$seg"
   local n=${#_GCIA_TOK[@]} i tok c_target="" work_tree="" git_dir=""
@@ -753,34 +777,57 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
   esac
 
   # Phase 2: `--author` (commit only — no other verb in scope accepts it),
-  # plus the pathspec / -a / wide-content facts the records-only exemption
-  # needs.
+  # plus the content-set facts the records-only exemption needs.
+  #
+  # Round 4 (PR #67 review, MAJOR, PROVEN): git commit's grammar is
+  # `git commit [<options>] [--] [<pathspec>...]`, and parse-options lets
+  # options and pathspecs interleave, so EVERY non-option token before `--`
+  # that is not the value of a value-taking option is a pathspec, exactly
+  # like one after `--`. Round 3 collected pathspecs only after `--`, so
+  # `commit -m r hooks/x.sh` (which commits ONLY hooks/x.sh) was judged from
+  # the staged index, and a staged record made it records-only. The rules
+  # below judge the exemption from the content set git will actually commit:
+  #   - a positional token, or one after `--`, is a pathspec. An opaque one
+  #     keeps its raw text, which _gcia_is_records_path rejects;
+  #   - a value-taking option skips its separated value. An option this
+  #     walk does not recognise (an abbreviation like `--mess`, or an
+  #     unknown short letter) makes the content set UNKNOWN, because it may
+  #     or may not have swallowed the next token;
+  #   - a walk-stop token anywhere hides the rest of the argument list, so
+  #     the content set is UNKNOWN;
+  #   - -o/--only is recorded: with no pathspec it commits nothing from the
+  #     index, so it is never records-only.
+  # UNKNOWN is carried in _GCIA_COMMIT_WIDE. It disqualifies the exemption
+  # and does nothing else (it never blocks by itself).
   [ "$_GCIA_SUB" = "commit" ] || return 0
   local m=${#_GCIA_ARGS[@]} after_dd=0 raw
   for ((k=0; k<m; k++)); do
     tok="${_GCIA_ARGS[$k]}"; raw="${_GCIA_ARGS_RAW[$k]}"
+    if [ "$after_dd" = "1" ]; then
+      case "$tok" in
+        __GCIA_OPAQUE__|__GCIA_STOP__) _GCIA_PATHSPECS+=("$raw") ;;
+        *) _gcia_is_redirection "$tok" || _GCIA_PATHSPECS+=("$tok") ;;
+      esac
+      if [ "$tok" = "__GCIA_STOP__" ]; then _GCIA_COMMIT_WIDE="unparsed tail after ${raw}"; break; fi
+      continue
+    fi
     case "$tok" in
       __GCIA_OPAQUE__|__GCIA_STOP__)
-        # An uninterpretable token. After `--` it is a pathspec whose value
-        # is unknown (kept raw: _gcia_records_rel rejects it). Before `--`,
-        # a glued `--author=<opaque>` is an UNKNOWN author (ledger warn),
-        # never a mismatch; any other shape is skipped as a value.
-        if [ "$after_dd" = "1" ]; then
-          _GCIA_PATHSPECS+=("$raw")
-        else
-          case "$raw" in
-            --author=*) _GCIA_AUTHOR_VAL="${raw#--author=}"; _GCIA_AUTHOR_UNKNOWN=1 ;;
-            --pathspec-from-file=*) _GCIA_COMMIT_WIDE="--pathspec-from-file" ;;
-          esac
-        fi
-        [ "$tok" = "__GCIA_STOP__" ] && break
+        # An uninterpretable token before `--`. A glued `--author=<opaque>`
+        # is an UNKNOWN author (ledger warn), never a mismatch. Any other
+        # option-shaped token is classified from its raw text (its value is
+        # glued, so it never swallows the next token). Anything else is a
+        # positional pathspec whose value is unknown.
+        case "$raw" in
+          --author=*) _GCIA_AUTHOR_VAL="${raw#--author=}"; _GCIA_AUTHOR_UNKNOWN=1 ;;
+          --?*=*) _gcia_commit_long_opt "${raw%%=*}" 1 ;;
+          -[!-]*) _gcia_short_cluster "$raw" ;;
+          *) _GCIA_PATHSPECS+=("$raw") ;;
+        esac
+        if [ "$tok" = "__GCIA_STOP__" ]; then _GCIA_COMMIT_WIDE="unparsed tail after ${raw}"; break; fi
         continue
         ;;
     esac
-    if [ "$after_dd" = "1" ]; then
-      _gcia_is_redirection "$tok" || _GCIA_PATHSPECS+=("$tok")
-      continue
-    fi
     case "$tok" in
       --) after_dd=1 ;;
       --author=?*) _GCIA_AUTHOR_VAL="${tok#--author=}" ;;
@@ -791,27 +838,66 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
           case "${_GCIA_ARGS[$k]}" in
             __GCIA_OPAQUE__|__GCIA_STOP__) _GCIA_AUTHOR_UNKNOWN=1 ;;
           esac
-          [ "${_GCIA_ARGS[$k]}" = "__GCIA_STOP__" ] && break
+          if [ "${_GCIA_ARGS[$k]}" = "__GCIA_STOP__" ]; then _GCIA_COMMIT_WIDE="unparsed tail after ${_GCIA_ARGS_RAW[$k]}"; break; fi
         fi
         ;;
-      --all) _GCIA_COMMIT_ALL=1 ;;
-      # MINOR-1 (round 3, PROVEN): these make git commit MORE than the named
-      # pathspecs (-i/--include: the whole index too; --amend: the previous
-      # commit's content; --pathspec-from-file: paths this gate cannot see;
-      # --interactive/--patch: hunks chosen at run time), so the commit is
-      # never records-only.
-      --include|--amend|--interactive|--patch) _GCIA_COMMIT_WIDE="$tok" ;;
-      --pathspec-from-file=*) _GCIA_COMMIT_WIDE="--pathspec-from-file" ;;
-      --pathspec-from-file) _GCIA_COMMIT_WIDE="--pathspec-from-file"; k=$((k+1)) ;;
-      --message|--file|--reuse-message|--reedit-message|--fixup|--squash|--template|--cleanup|--date|--trailer)
-        k=$((k+1)) ;;
-      --*) : ;;
+      --?*=*) _gcia_commit_long_opt "${tok%%=*}" 1 ;;
+      --?*)
+        _gcia_commit_long_opt "$tok" 0
+        if [ "$_GCIA_OPT_TAKES_NEXT" = "1" ]; then
+          k=$((k+1))
+          if [ "$k" -lt "$m" ] && [ "${_GCIA_ARGS[$k]}" = "__GCIA_STOP__" ]; then _GCIA_COMMIT_WIDE="unparsed tail after ${_GCIA_ARGS_RAW[$k]}"; break; fi
+        fi
+        ;;
       -[!-]*)
         _gcia_short_cluster "$tok"
-        [ "$_GCIA_CLUSTER_TAKES_NEXT" = "1" ] && k=$((k+1))
+        if [ "$_GCIA_CLUSTER_TAKES_NEXT" = "1" ]; then
+          k=$((k+1))
+          if [ "$k" -lt "$m" ] && [ "${_GCIA_ARGS[$k]}" = "__GCIA_STOP__" ]; then _GCIA_COMMIT_WIDE="unparsed tail after ${_GCIA_ARGS_RAW[$k]}"; break; fi
+        fi
         ;;
+      '>'|'>>'|'<'|[0-9]'>'|[0-9]'>>'|'&>'|'&>>'|[0-9]'<')
+        # A bare redirection operator: its target is the next token, not a
+        # pathspec.
+        k=$((k+1))
+        ;;
+      *) _gcia_is_redirection "$tok" || _GCIA_PATHSPECS+=("$tok") ;;
     esac
   done
+  return 0
+}
+
+# One `git commit` long option, by name only (`--x`, without any `=value`).
+# <glued> is 1 when the token carried `=value`. Sets _GCIA_COMMIT_ALL,
+# _GCIA_COMMIT_ONLY, _GCIA_COMMIT_WIDE and _GCIA_OPT_TAKES_NEXT (0|1). The
+# list is git 2.53's `git commit -h`, and a `--no-<x>` negation takes no
+# value. An unrecognised name (an abbreviation, or a newer option) makes
+# the content set UNKNOWN, because it may have consumed the next token.
+_gcia_commit_long_opt() {
+  local name="$1" glued="$2"
+  _GCIA_OPT_TAKES_NEXT=0
+  case "$name" in
+    --all) _GCIA_COMMIT_ALL=1 ;;
+    --only) _GCIA_COMMIT_ONLY=1 ;;
+    # MINOR-1 (round 3, PROVEN): these make git commit MORE than the named
+    # pathspecs (-i/--include: the whole index too; --amend: the previous
+    # commit's content; --pathspec-from-file: paths this gate cannot see;
+    # --interactive/--patch: hunks chosen at run time), so the commit is
+    # never records-only.
+    --include|--amend|--interactive|--patch) _GCIA_COMMIT_WIDE="$name" ;;
+    --pathspec-from-file)
+      _GCIA_COMMIT_WIDE="--pathspec-from-file"
+      [ "$glued" = "1" ] || _GCIA_OPT_TAKES_NEXT=1
+      ;;
+    --message|--file|--reuse-message|--reedit-message|--fixup|--squash|--template|--cleanup|--date|--trailer|--unified|--inter-hunk-context)
+      [ "$glued" = "1" ] || _GCIA_OPT_TAKES_NEXT=1
+      ;;
+    --gpg-sign|--untracked-files) : ;;   # optional value, glued only
+    --quiet|--verbose|--signoff|--edit|--status|--reset-author|--allow-empty|--allow-empty-message|--no-verify|--verify|--dry-run|--short|--branch|--ahead-behind|--porcelain|--long|--null|--no-post-rewrite|--post-rewrite|--pathspec-file-nul|--no-?*)
+      [ "$glued" = "1" ] && _GCIA_COMMIT_WIDE="unrecognised option ${name}="
+      ;;
+    *) _GCIA_COMMIT_WIDE="unrecognised option ${name}" ;;
+  esac
   return 0
 }
 
@@ -819,8 +905,9 @@ _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
 # Letters are read left to right until the first option that takes a value:
 # the rest of the token is that value (so `-m"fix a typo"` is NOT `-a`),
 # and a value-taking letter at the very end means the NEXT token is its
-# value. Sets _GCIA_COMMIT_ALL / _GCIA_COMMIT_WIDE and
-# _GCIA_CLUSTER_TAKES_NEXT (0|1).
+# value. Sets _GCIA_COMMIT_ALL, _GCIA_COMMIT_ONLY, _GCIA_COMMIT_WIDE and
+# _GCIA_CLUSTER_TAKES_NEXT (0|1). An unknown letter makes the content set
+# UNKNOWN (round 4: it may be a value-taking option this walk does not know).
 _gcia_short_cluster() {
   local t="${1#-}" c j len
   _GCIA_CLUSTER_TAKES_NEXT=0
@@ -829,13 +916,16 @@ _gcia_short_cluster() {
     c="${t:j:1}"
     case "$c" in
       a) _GCIA_COMMIT_ALL=1 ;;
+      o) _GCIA_COMMIT_ONLY=1 ;;
       i) _GCIA_COMMIT_WIDE="-i" ;;
       p) _GCIA_COMMIT_WIDE="-p" ;;
-      m|F|C|c|t)
+      q|v|s|e|n|z) : ;;
+      m|F|C|c|t|U)
         [ $((j+1)) -ge "$len" ] && _GCIA_CLUSTER_TAKES_NEXT=1
         return 0
         ;;
       S|u) return 0 ;;   # optional value, glued only
+      *) _GCIA_COMMIT_WIDE="unrecognised option -${c}"; return 0 ;;
     esac
   done
   return 0
@@ -849,14 +939,19 @@ _gcia_short_cluster() {
 # MAJOR-1 sweep: `git config user.email "$(gh api ...)"` was silently
 # ignored; it is now tracked as an UNKNOWN value, logged as a ledger warn
 # when a later commit in the same repo would pick it up). Also accepts the
-# git >= 2.46 `git config set <key> <value>` form and --add/--replace-all.
+# git >= 2.46 `git config set <key> <value>` form and --add/--replace-all,
+# plus the 2.46 --append (the `set` spelling of --add) and --type/--no-type
+# (round 4, PROVEN false negative: `git config set --append user.email X`
+# was silently ignored). --file/-f/--blob are NOT parsed: a SET into an
+# explicit config file is a named residual in the header.
 _gcia_maybe_config_set() {
   [ "$_GCIA_SUB" = "config" ] || return 1
   local n=${#_GCIA_ARGS[@]} i=0 key
   _GCIA_CFGSET_UNKNOWN=0
   while [ "$i" -lt "$n" ]; do
     case "${_GCIA_ARGS[$i]}" in
-      --local|--worktree|--add|--replace-all|set) i=$((i+1)) ;;
+      --local|--worktree|--add|--append|--replace-all|--no-type|--type=*|set) i=$((i+1)) ;;
+      --type) i=$((i+2)) ;;
       *) break ;;
     esac
   done
@@ -917,13 +1012,15 @@ _gcia_init_dir() {
 
 # `git add <paths>` -> recorded (with its dir) for the records-only
 # exemption. `.`/-A/--all/-u/--update record a wildcard marker, which is
-# never records-only.
+# never records-only. So do the interactive and whole-tree forms (-p/--patch,
+# -i/--interactive, -e/--edit, --renormalize; round 4 sweep): with no path
+# they stage content from anywhere in the tree.
 _gcia_note_add() {
   local n=${#_GCIA_ARGS[@]} i tok
   for ((i=0; i<n; i++)); do
     tok="${_GCIA_ARGS[$i]}"
     case "$tok" in
-      -A|--all|-u|--update|.|./|:/|__GCIA_OPAQUE__|__GCIA_STOP__|--pathspec-from-file|--pathspec-from-file=*)
+      -A|--all|-u|--update|.|./|:/|__GCIA_OPAQUE__|__GCIA_STOP__|--pathspec-from-file|--pathspec-from-file=*|-p|--patch|-i|--interactive|-e|--edit|--renormalize)
         _GCIA_ADD_PATHS+=("*"); _GCIA_ADD_DIRS+=("$_GCIA_TARGET_DIR") ;;
       --) : ;;
       -*) : ;;
@@ -956,9 +1053,11 @@ _gcia_is_init_dir() { # <target_dir>
 # identity override has the reviewer+<...>@<...> shape AND whose content is
 # records-only (every path is docs/reviews/records/<file>) is EXEMPT, and is
 # logged as a signal-ledger `skip`. Records-only is judged from the commit's
-# own `-- <pathspec>` when present (git commits exactly those paths), else
+# own pathspecs when it has any, positional or after `--` (git commits
+# exactly those paths; round 4 MAJOR: round 3 read only the `--` ones), else
 # from what is staged now plus what an earlier `git add` in the same command
-# will stage; `-a`/`--all`, a wildcard add, or any unresolved path is NOT
+# will stage; `-a`/`--all`, `-o`/`--only` with no pathspec, a wildcard add,
+# an earlier index-rewriting git step, or any unresolved path is NOT
 # records-only.
 #
 # MINOR-1 (PR #67 review round 3, PROVEN): two over-acceptances, fixed.
@@ -1026,6 +1125,10 @@ _gcia_records_only() { # <target_dir>
   local target="$1" k p count=0 prefix top aprefix
   [ "${_GCIA_COMMIT_ALL:-0}" = "1" ] && return 1
   [ -n "${_GCIA_COMMIT_WIDE:-}" ] && return 1
+  # -o/--only with no pathspec commits nothing from the index (git refuses
+  # it, or makes an empty commit with --allow-empty), so the index is not
+  # the content set and it is never records-only.
+  [ "${_GCIA_COMMIT_ONLY:-0}" = "1" ] && [ "${#_GCIA_PATHSPECS[@]}" -eq 0 ] && return 1
   top="$(git -C "$target" rev-parse --show-toplevel 2>/dev/null)" || return 1
   [ -n "$top" ] || return 1
   prefix="$(git -C "$target" rev-parse --show-prefix 2>/dev/null)"
@@ -1364,6 +1467,14 @@ _gcia_run() {
         continue
         ;;
       add) _gcia_note_add; continue ;;
+      # Round 4 sweep (the records-only content set): these rewrite the
+      # index, so a later commit with no pathspec cannot be judged from the
+      # index as it stands when this hook runs. Recorded as a wildcard add,
+      # which is never records-only.
+      rm|mv|update-index|apply|restore|reset|checkout|switch|read-tree|stash)
+        _GCIA_ADD_PATHS+=("*"); _GCIA_ADD_DIRS+=("$_GCIA_TARGET_DIR")
+        continue
+        ;;
     esac
 
     [ "$_GCIA_IS_TARGET" = "1" ] || continue
@@ -1982,6 +2093,54 @@ STUB
     'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r' "$gr"
   git -C "$gr" read-tree --empty 2>/dev/null
 
+  # Round 4 MAJOR: the records-only content set is the set git will commit.
+  # A positional pathspec (no `--`) counts exactly like one after `--`, and
+  # when any pathspec is present the index is NOT consulted.
+  mkdir -p "$gr/hooks"
+  printf 'echo x\n' > "$gr/hooks/x.sh"
+  git -C "$gr" add docs/reviews/records/y.json 2>/dev/null
+  _case "R4 MAJOR positive: staged record + positional hooks/x.sh blocked (git commits only hooks/x.sh)" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h GIT_COMMITTER_EMAIL=reviewer+s@h git commit -m r hooks/x.sh' "$gr" "reviewer+s@h"
+  _case "R4 MAJOR positive: staged record + -c reviewer+ + positional hooks/x.sh blocked" 2 \
+    'git -c user.email=reviewer+s@h commit -m r hooks/x.sh' "$gr" "reviewer+s@h"
+  _case "R4 MAJOR positive: staged record + --only hooks/x.sh blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit --only -m r hooks/x.sh' "$gr" "reviewer+s@h"
+  _case "R4 MAJOR positive: positional path BEFORE the options (hooks/x.sh -m r) blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit hooks/x.sh -m r' "$gr" "reviewer+s@h"
+  _case "R4 MAJOR positive: record + positional hooks/x.sh (mixed pathspecs) blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r docs/reviews/records/y.json hooks/x.sh' "$gr" "reviewer+s@h"
+  _case "R4 MAJOR positive: -o with NO pathspec is not records-only (index not the content set)" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -o --allow-empty -m r' "$gr" "reviewer+s@h"
+  _case "R4 MAJOR positive: an abbreviated option (--mess) makes the content set unknown" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit --mess docs/reviews/records/y.json' "$gr" "reviewer+s@h"
+  _case "R4 MAJOR negative: staged record, no pathspec, value-taking options skipped (allow)" 0 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit --cleanup strip --trailer "Reviewed-by: x" -m r' "$gr"
+  git -C "$gr" read-tree --empty 2>/dev/null
+  _case "R4 MAJOR negative: positional record on a CLEAN index (allow)" 0 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h GIT_COMMITTER_EMAIL=reviewer+s@h git commit -m r docs/reviews/records/y.json' "$gr"
+  _case "R4 MAJOR negative: -m value that looks like a path is not a pathspec (allow)" 0 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m hooks/x.sh docs/reviews/records/y.json 2>&1' "$gr"
+  _case "R4 MAJOR negative: a bare > redirect target is not a pathspec (allow)" 0 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -q -m r docs/reviews/records/y.json > out.log' "$gr"
+  git -C "$gr" add hooks/x.sh 2>/dev/null
+  _case "R4 MAJOR negative: staged hooks/x.sh + positional record commits only the record (allow)" 0 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r docs/reviews/records/y.json' "$gr"
+  git -C "$gr" read-tree --empty 2>/dev/null
+  git -C "$gr" add docs/reviews/records/y.json 2>/dev/null
+  _case "R4 sweep positive: an earlier git rm in the same command rewrites the index (blocked)" 2 \
+    'git rm -q --cached hooks/x.sh; GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r' "$gr" "reviewer+s@h"
+  _case "R4 sweep positive: an earlier git add -p stages from anywhere (blocked)" 2 \
+    'git add -p && GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m r' "$gr" "reviewer+s@h"
+  git -C "$gr" read-tree --empty 2>/dev/null
+
+  # Round 4 MINOR: the git >= 2.46 `config set --append` spelling of --add.
+  _case "R4 MINOR positive: git config set --append user.email <wrong> && commit blocked" 2 \
+    'git config set --append user.email wrong@example.test && git commit -m x' "$gr" "wrong@example.test"
+  _case "R4 MINOR positive: git config --type=string user.email <wrong> && commit blocked" 2 \
+    'git config --type=string user.email wrong@example.test && git commit -m x' "$gr" "wrong@example.test"
+  _case "R4 MINOR negative: git config set --append user.email <expected> && commit (allow)" 0 \
+    'git config set --append user.email acct-work@example.test && git commit -m x' "$gr"
+
   unset HARNESS_SELFTEST SIGNAL_LEDGER_PATH GHBLIND_ACCOUNTS GIA_GH_CMD GIA_STATE_DIR \
     STUB_TOKEN_acct_work STUB_EMAIL_FOR_TOKEN_tok_work STUB_TOKEN_acct_personal STUB_EMAIL_FOR_TOKEN_tok_personal
   rm -rf "$tmp" 2>/dev/null
@@ -2000,8 +2159,9 @@ case "${1:-}" in
   --self-test) _gcia_self_test; exit $? ;;
   -h|--help)
     cat <<'GCIA_USAGE' >&2
-gh-commit-author-identity-gate.sh — PreToolUse gate: block a git commit /
-commit-tree whose command overrides author/committer identity away from the
+gh-commit-author-identity-gate.sh — PreToolUse gate: block a commit-creating
+git command (commit, commit-tree, merge, cherry-pick, revert, pull, rebase,
+am) whose command overrides author/committer identity away from the
 identity expected for the repo it targets (the gh CLI account logged in for
 that repo — never the Claude Code session's own context email).
 

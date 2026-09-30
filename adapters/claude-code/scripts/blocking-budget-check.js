@@ -54,9 +54,11 @@ const UNIT_MAP = {
   'claude-md-hygiene': 'commit-boundary',
   'vaporware-volume': 'commit-boundary',
   // gh-commit-author-identity (PR #67, GH-COMMIT-IDENTITY-01, 2026-09):
-  // fires ONLY on a git-commit-shaped Bash command (its own raw-payload
-  // prefilter exits immediately on anything else) — definitionally this
-  // same unit's class per the header note above. Independent review
+  // fires ONLY on a Bash command carrying a commit-creating git verb
+  // (commit, commit-tree, merge, cherry-pick, revert, pull, rebase, am —
+  // its own raw-payload prefilter exits immediately on anything else), so
+  // it runs at the same boundary as this unit's members, each of which
+  // fires when a commit is created. Independent review
   // (M2, PR #67) measured 16/14 on this PR's base commit and 17/14 on
   // its head with this row absent (a new standalone unit); this row
   // folds it back in so the PR consumes no net-new budget unit.
