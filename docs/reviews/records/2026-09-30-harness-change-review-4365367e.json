@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260930-4365367e",
+  "created_at": "2026-09-30T11:23:07Z",
+  "verdict": "PASS",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-opus",
+  "plan_ref": "docs/plans/gh-commit-author-identity-2026-09-27.md",
+  "change_ref": {
+    "commit_sha": "ae8f9ff24a6e0b527ed057322669ae1be4ace146",
+    "branch": "feat/commit-author-from-gh-account"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/gh-commit-author-identity-gate.sh",
+      "blob_sha": "2c6aa87555a30bb5dac0eb78b5795b659a2b3ad9"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/gh-account-lib.sh",
+      "blob_sha": "d33bc848465388450ec87f2dffa05d0554775232"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "c32e05ef75353444041d6adfd288de68aaeb7907"
+    },
+    {
+      "path": "adapters/claude-code/settings.json.template",
+      "blob_sha": "9b673c9c358073cd6a1b38b02c08407a22faab58"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "Round 5 PowerShell coverage and ssh option-host guard verified in a sandbox: golden forms, all 8 verbs, F1/F4/R1/P1, reviewer+ positional pathspecs and PS here-string shapes behave as claimed; 112/13/15 self-tests green; only Minor findings remain.",
+    "findings_summary": "No Critical/Major. Minor: (1) the block message's ESCAPE (bash env-prefix form) is not runnable under PowerShell though the gate accepts it and logs a waiver; the $env: form works. (2) header line 2 and the blocking-budget-check.js comment still say the matcher is Bash only. (3) a PowerShell backslash-before-quote (\"C:\\dir\\\") is read with bash escape rules, hiding a later real --author (false negative), not in the named PowerShell residuals."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "a1f0cc23-5ec2-4614-8133-d0938ac608af"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
