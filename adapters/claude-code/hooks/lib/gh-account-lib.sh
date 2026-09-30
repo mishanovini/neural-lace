@@ -125,12 +125,60 @@ gh_ci_eq() {
 # does not grow a THIRD hand-rolled parser. gh-account-autoswitch.sh keeps its
 # own existing private copy untouched (its self-test suite is large and this
 # change does not need to touch it); this is the one new callers should use.
+#
+# SSH HOST ALIASES (m3, PR #67 review round 2, PROVEN residual before this):
+# a multi-account machine commonly pushes over an ~/.ssh/config alias such as
+# `git@github-work:owner/repo.git`, whose host is NOT the literal github.com.
+# Such a remote used to resolve to no owner at all, so an identity gate
+# consuming this function failed open on it with no signal. When the URL has
+# no literal github.com, an scp-like (`[user@]host:owner/repo`) or
+# `ssh://[user@]host[:port]/owner/repo` URL is resolved through the SSH
+# client's own config (`ssh -G <host>`, which prints the effective HostName
+# without connecting — measured ~80ms on Windows Git Bash), and accepted only
+# when that effective HostName is github.com. Test seams: GHLIB_SSH_CMD (the
+# ssh binary) and GHLIB_SSH_CONFIG (passed as `-F <file>`).
 gh_owner_from_url() {
   local url="$1" slug
   slug="$(printf '%s' "$url" | grep -oiE 'github\.com[:/][A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+' | head -1 \
             | sed -E 's#^github\.com[:/]##')"
-  [ -n "$slug" ] || return 1
-  printf '%s' "${slug%%/*}"
+  if [ -n "$slug" ]; then
+    printf '%s' "${slug%%/*}"
+    return 0
+  fi
+  _gh_owner_from_ssh_alias_url "$url"
+}
+
+_gh_owner_from_ssh_alias_url() {
+  local url="$1" host="" p="" real owner repo ssh_bin
+  case "$url" in
+    ssh://*)
+      p="${url#ssh://}"; p="${p#*@}"
+      host="${p%%/*}"; host="${host%%:*}"
+      case "$p" in */*) p="${p#*/}" ;; *) return 1 ;; esac
+      ;;
+    *://*) return 1 ;;
+    *:*)
+      host="${url%%:*}"; host="${host#*@}"
+      p="${url#*:}"
+      ;;
+    *) return 1 ;;
+  esac
+  # A Windows drive path (`C:/x`) or an absolute local path is not an SSH host.
+  [ "${#host}" -ge 2 ] || return 1
+  case "$host" in *[!A-Za-z0-9_.-]*) return 1 ;; esac
+  case "$p" in /*|\\*|'') return 1 ;; esac
+  owner="${p%%/*}"; repo="${p#*/}"
+  [ -n "$owner" ] && [ "$repo" != "$p" ] && [ -n "$repo" ] || return 1
+  case "$owner" in *[!A-Za-z0-9_.-]*) return 1 ;; esac
+  ssh_bin="${GHLIB_SSH_CMD:-ssh}"
+  command -v "$ssh_bin" >/dev/null 2>&1 || return 1
+  local -a sargs=()
+  [ -n "${GHLIB_SSH_CONFIG:-}" ] && sargs=(-F "$GHLIB_SSH_CONFIG")
+  real="$("$ssh_bin" ${sargs[@]+"${sargs[@]}"} -G "$host" 2>/dev/null </dev/null \
+            | awk 'tolower($1)=="hostname"{print $2; exit}')"
+  [ -n "$real" ] || return 1
+  gh_ci_eq "$real" "github.com" || return 1
+  printf '%s' "$owner"
 }
 
 # cwd repo's <remote> owner (default "origin"), via `git remote get-url`.
@@ -175,6 +223,21 @@ JSON
 
   got="$(gh_owner_from_url "not a github url")"
   if [ -z "$got" ]; then echo "  L7 gh_owner_from_url non-github -> empty: PASS"; pass=$((pass+1)); else echo "  L7 gh_owner_from_url non-github -> empty: FAIL (got: $got)"; fail=$((fail+1)); fi
+
+  # L10-L12 (m3, PR #67 review round 2): SSH host alias resolution.
+  if command -v ssh >/dev/null 2>&1; then
+    printf 'Host gh-alias-test\n  HostName github.com\nHost not-gh-alias\n  HostName git.example.test\n' > "$tmp/ssh_config"
+    got="$(GHLIB_SSH_CONFIG="$tmp/ssh_config" gh_owner_from_url "git@gh-alias-test:alias-org/some-repo.git")"
+    if [ "$got" = "alias-org" ]; then echo "  L10 ssh host alias -> github.com resolves owner: PASS"; pass=$((pass+1)); else echo "  L10 ssh host alias -> github.com resolves owner: FAIL (got: $got)"; fail=$((fail+1)); fi
+    got="$(GHLIB_SSH_CONFIG="$tmp/ssh_config" gh_owner_from_url "git@not-gh-alias:other-org/some-repo.git")"
+    if [ -z "$got" ]; then echo "  L11 ssh host alias -> non-github host -> empty: PASS"; pass=$((pass+1)); else echo "  L11 ssh host alias -> non-github host -> empty: FAIL (got: $got)"; fail=$((fail+1)); fi
+    got="$(GHLIB_SSH_CONFIG="$tmp/ssh_config" gh_owner_from_url "ssh://git@gh-alias-test/alias-org2/some-repo.git")"
+    if [ "$got" = "alias-org2" ]; then echo "  L12 ssh:// URL with alias host resolves owner: PASS"; pass=$((pass+1)); else echo "  L12 ssh:// URL with alias host resolves owner: FAIL (got: $got)"; fail=$((fail+1)); fi
+  else
+    echo "  L10-L12 SKIPPED: no ssh binary on this machine"
+  fi
+  got="$(gh_owner_from_url "C:/local/bare-repo.git")"
+  if [ -z "$got" ]; then echo "  L13 windows drive-path remote -> empty (not an ssh host): PASS"; pass=$((pass+1)); else echo "  L13 windows drive-path remote -> empty: FAIL (got: $got)"; fail=$((fail+1)); fi
 
   if command -v git >/dev/null 2>&1; then
     local gr; gr="$tmp/repo"

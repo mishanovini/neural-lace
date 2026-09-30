@@ -206,6 +206,27 @@ gia_negative_cache_write() {
   return 0
 }
 
+# Unmapped-owner warn dedupe (m2, PR #67 review round 2). One marker file per
+# owner under gia_state_dir(); fresh (< GIA_UNMAPPED_WARN_TTL_MIN minutes)
+# means "already warned for this owner in the current window".
+gia_unmapped_marker_path() {
+  printf '%s/unmapped-%s.warned' "$(gia_state_dir)" "$(_gia_sanitize "$1")"
+}
+
+gia_unmapped_warned_recently() {
+  local path; path="$(gia_unmapped_marker_path "$1")"
+  [ -f "$path" ] || return 1
+  find "$path" -mmin "-${GIA_UNMAPPED_WARN_TTL_MIN:-1440}" 2>/dev/null | grep -q . || return 1
+  return 0
+}
+
+gia_unmapped_mark_warned() {
+  local dir path
+  dir="$(gia_state_dir)"; path="$(gia_unmapped_marker_path "$1")"
+  ( mkdir -p "$dir" 2>/dev/null && : > "$path" 2>/dev/null ) || true
+  return 0
+}
+
 # <gh_user>'s primary verified email, via THAT account's own stored gh CLI
 # token (never the currently-active account — this must never have the side
 # effect of switching accounts just to answer a read-only question). Empty +
@@ -267,8 +288,13 @@ gia_resolve_expected_email() {
       # section 10), not silent — hence this warn on every such call.
       # Populating that config file with a real mapping is a machine-
       # config action for the operator, not something this code does.
-      if declare -F ledger_emit >/dev/null 2>&1; then
+      # m2 (PR #67 review round 2, measured ~0.7s per commit): the warn is
+      # deduped to ONCE per owner per GIA_UNMAPPED_WARN_TTL_MIN (default
+      # 1440 = one day) via a marker file — still visible every day, no
+      # longer paid on every single commit.
+      if declare -F ledger_emit >/dev/null 2>&1 && ! gia_unmapped_warned_recently "$owner"; then
         ledger_emit "gh-commit-author-identity" "warn" "owner '${owner}' has a github.com remote but no accounts.config.json mapping on this machine -- gh-API resolution skipped, falling back to repo git config (may not reflect the actual GH-logged-in identity)"
+        gia_unmapped_mark_warned "$owner"
       fi
     fi
   fi
@@ -499,6 +525,19 @@ STUB
     echo "  S10 unmapped-but-real-owner falls back AND warns visibly: PASS"; pass=$((pass+1))
   else
     echo "  S10 unmapped-but-real-owner falls back AND warns visibly: FAIL (email=$GIA_EMAIL ledger=$(cat "$SIGNAL_LEDGER_PATH" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # S11 (m2, PR #67 review round 2): the unmapped-owner warn is deduped —
+  # a second resolution for the same owner inside the window writes NO
+  # second ledger line; TTL=0 (window expired) warns again.
+  gia_resolve_expected_email "$gr_unmapped" >/dev/null
+  local n_warn; n_warn="$(grep -c 'accounts.config.json mapping' "$SIGNAL_LEDGER_PATH" 2>/dev/null || echo 0)"
+  GIA_UNMAPPED_WARN_TTL_MIN=0 gia_resolve_expected_email "$gr_unmapped" >/dev/null
+  local n_warn2; n_warn2="$(grep -c 'accounts.config.json mapping' "$SIGNAL_LEDGER_PATH" 2>/dev/null || echo 0)"
+  if [ "$n_warn" = "1" ] && [ "$n_warn2" = "2" ]; then
+    echo "  S11 unmapped-owner warn deduped within window, re-warns after it: PASS"; pass=$((pass+1))
+  else
+    echo "  S11 unmapped-owner warn deduped within window, re-warns after it: FAIL (after-2nd=$n_warn after-ttl0=$n_warn2, wanted 1 then 2)"; fail=$((fail+1))
   fi
   unset SIGNAL_LEDGER_PATH
 

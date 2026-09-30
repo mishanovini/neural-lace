@@ -166,6 +166,29 @@
 #   - `GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=user.email
 #     GIT_CONFIG_VALUE_0=<val> git commit` — git's alternate indexed
 #     config-injection mechanism; not parsed.
+#   Added in review round 2 (record hcr-20260930-68fd4a0d):
+#   - A `git config user.email <val>` run in a DIFFERENT, earlier Bash call
+#     (m5): the later plain commit carries no override and short-circuits.
+#   - An override whose value is only knowable at runtime (`$VAR` set in an
+#     earlier call, `$(...)`, backticks) is UNKNOWN: logged as a ledger
+#     `warn`, never blocked (MAJOR-1 — a literal "$E" is not an identity).
+#   - A real `--author=` placed AFTER an unbalanced `$(`, a backtick, or a
+#     here-doc operator on the same commit segment: the flag walk stops
+#     there because it cannot know where the substitution ends.
+#   - m6 (HYPOTHESIZED): the gh-API rung takes the PRIMARY email and ignores
+#     its visibility, so a private primary could still be rejected by a
+#     push-time email-privacy check. Dormant where the primary is public.
+#
+# ALSO ALLOWED (review round 2):
+#   - The harness's OWN review-record commits: every resolved override is a
+#     reviewer+<session>@<host> identity (review-runner.sh finalize's A1
+#     stamp) AND every committed path is docs/reviews/records/<file>
+#     (MAJOR-3 — see _gcia_records_only). Logged as a ledger `skip`.
+#   - A commit into a repo that the same command `git init`s (a throwaway).
+#
+# SSH host-alias remotes (`git@github-<alias>:owner/repo`) are resolved via
+# `ssh -G` in gh-account-lib.sh and enforced when the alias points at
+# github.com (m3, round 2 — they previously failed open with no signal).
 #
 # Self-test: bash gh-commit-author-identity-gate.sh --self-test
 
@@ -202,6 +225,14 @@ if [ -z "$_GCIA_ARGV1" ]; then
   fi
   case "$_GCIA_RAW" in
     *commit*|*merge*|*cherry-pick*|*revert*|*pull*|*rebase*|*' am'*) : ;;
+    *) exit 0 ;;
+  esac
+  # m2 (PR #67 review round 2, measured ~450-520ms vs ~150-185ms): a payload
+  # whose description or cwd happens to contain a verb substring but which
+  # has no "git" anywhere cannot be a git command — still a pure superset
+  # filter (a git invocation always contains the substring "git").
+  case "$_GCIA_RAW" in
+    *git*) : ;;
     *) exit 0 ;;
   esac
 fi
@@ -261,35 +292,282 @@ _gcia_cwd() {
 }
 
 # ============================================================
-# Tracked env vars (the 4 identity vars + the ack), noted as assignments are
-# encountered walking the command left-to-right — mirrors real shell
-# semantics: an assignment earlier in the command is visible to everything
-# after it in the SAME command.
+# TEXT-AS-DATA NORMALIZATION (MAJOR-1, PR #67 review round 2, PROVEN false
+# positives: every one below was rc=2 on a command carrying NO mismatching
+# identity, with a WHAT line asserting an override that did not exist).
+#
+#   F1  git commit -m "$(cat <<'EOF' ... "git commit --author=X <y>" ... EOF)"
+#       — a double-quoted phrase inside the here-doc body flipped quote
+#       parity, so body text was tokenized as flags.
+#   F4  git commit -F - <<'EOF' ... --author=Foo ... EOF
+#       — the here-doc body stayed inside the segment and phase 2 walked it.
+#   R1  an ANSI-C $'...' string holding git text (a replayed transcript) —
+#       `\'` inside $'...' is an escaped quote, which a plain single-quote
+#       scanner reads as a terminator, flipping parity for the rest of the
+#       command.
+#   P1  E=<matching email> && GIT_AUTHOR_EMAIL="$E" git commit — the literal
+#       string "$E" was compared against the expected email.
+#
+# The fixes, applied to the WHOLE command before it is split:
+#   1. $'...' strings are decoded and re-emitted as plain single-quoted
+#      strings (an embedded ' becomes '"'"'), so every downstream scanner
+#      sees balanced, ordinary quoting.
+#   2. Here-doc BODIES are removed (the `<<DELIM` line and the terminator
+#      line are kept). A body is data, never flags. Only removed when the
+#      terminator line is actually present, so a stray `<<` in prose never
+#      swallows the rest of a command.
+# and, per segment:
+#   3. Assignment-only segments (`E=x`, `export E=x`) are remembered and
+#      substituted into later segments (gcp_subst_vars_var, the same helper
+#      gcp_resolve_commit_target uses), so P1 compares the real value.
+#   4. A value still containing `$` or a backtick after substitution is
+#      UNKNOWN (set in an earlier Bash call, or computed at runtime) — it is
+#      logged as a signal-ledger warn and never treated as a mismatch.
+#   5. The phase-2 flag walk STOPS at a here-doc operator token and at a
+#      token holding an unbalanced `$(` or a backtick: past that point the
+#      tokenizer cannot know where the substitution ends, so any later
+#      `--author=` could be message text. A token holding a BALANCED
+#      `$(...)` (the usual `-m "$(cat <<'EOF' ... )"` once the body is
+#      removed) is skipped as an opaque value and the walk continues, so a
+#      real `--author=` AFTER the message is still seen. A newline-bearing
+#      token is likewise skipped, not stopped at: after steps 1-2 a newline
+#      inside a segment can only be inside a well-formed quoted value (the
+#      splitter breaks unquoted newlines), so stopping there would only buy
+#      a false negative on `-m "<multi-line>" --author=...`.
+# ============================================================
+
+_gcia_normalize_ansi_c() { # <cmd> -> _GCIA_NORM
+  local s="$1"
+  case "$s" in
+    *"\$'"*) : ;;
+    *) _GCIA_NORM="$s"; return 0 ;;
+  esac
+  local out="" i=0 n=${#s} ch nx dec in_sq=0 in_dq=0 q="'\"'\"'"
+  while [ "$i" -lt "$n" ]; do
+    ch="${s:i:1}"
+    if [ "$in_sq" = "1" ]; then
+      out+="$ch"; [ "$ch" = "'" ] && in_sq=0
+      i=$((i+1)); continue
+    fi
+    if [ "$in_dq" = "1" ]; then
+      out+="$ch"
+      if [ "$ch" = '\' ]; then i=$((i+1)); out+="${s:i:1}"
+      elif [ "$ch" = '"' ]; then in_dq=0; fi
+      i=$((i+1)); continue
+    fi
+    case "$ch" in
+      "'") in_sq=1; out+="$ch" ;;
+      '"') in_dq=1; out+="$ch" ;;
+      '\') out+="$ch"; i=$((i+1)); out+="${s:i:1}" ;;
+      '$')
+        if [ "${s:i+1:1}" = "'" ]; then
+          i=$((i+2)); dec=""
+          while [ "$i" -lt "$n" ]; do
+            ch="${s:i:1}"
+            if [ "$ch" = '\' ]; then
+              nx="${s:i+1:1}"
+              case "$nx" in
+                n) dec+=$'\n' ;;
+                t) dec+=$'\t' ;;
+                "'") dec+="'" ;;
+                '"') dec+='"' ;;
+                '\') dec+='\' ;;
+                *) dec+="\\$nx" ;;
+              esac
+              i=$((i+2)); continue
+            fi
+            [ "$ch" = "'" ] && break
+            dec+="$ch"; i=$((i+1))
+          done
+          out+="'${dec//\'/$q}'"
+        else
+          out+="$ch"
+        fi
+        ;;
+      *) out+="$ch" ;;
+    esac
+    i=$((i+1))
+  done
+  _GCIA_NORM="$out"
+}
+
+_gcia_strip_heredoc_bodies() { # <cmd> -> _GCIA_NORM
+  local s="$1"
+  case "$s" in
+    *'<<'*) : ;;
+    *) _GCIA_NORM="$s"; return 0 ;;
+  esac
+  local -a L=()
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do L+=("$line"); done <<< "$s"
+  local n=${#L[@]} i=0 j found t dash delim out=""
+  local re="<<(-?)[[:space:]]*[\\\"']?([A-Za-z_][A-Za-z0-9_]*)"
+  while [ "$i" -lt "$n" ]; do
+    line="${L[$i]}"
+    out+="$line"
+    [ "$i" -lt $((n-1)) ] && out+=$'\n'
+    if [[ "$line" =~ $re ]] && [[ "$line" != *'<<<'* ]]; then
+      dash="${BASH_REMATCH[1]}"; delim="${BASH_REMATCH[2]}"
+      found=-1
+      for ((j=i+1; j<n; j++)); do
+        t="${L[$j]}"
+        [ -n "$dash" ] && t="${t#"${t%%[!$'\t']*}"}"
+        if [ "$t" = "$delim" ]; then found=$j; break; fi
+      done
+      if [ "$found" -gt 0 ]; then
+        i=$found
+        continue
+      fi
+    fi
+    i=$((i+1))
+  done
+  _GCIA_NORM="$out"
+}
+
+# 0 iff the value cannot be known before the shell runs it.
+_gcia_unresolved() {
+  case "$1" in
+    *'$'*|*'`'*) return 0 ;;
+  esac
+  return 1
+}
+
+# Tokenize like gcp_tokenize_segment, but honoring backslash escapes (inside
+# double quotes and unquoted) the way a shell does — an escaped `\"` inside a
+# -m message must not end the string and expose the rest as flags.
+_gcia_tokenize() { # <segment> -> _GCIA_TOK[]
+  local s="$1" i ch n cur="" in_dq=0 in_sq=0 have=0
+  _GCIA_TOK=()
+  n=${#s}
+  for ((i=0; i<n; i++)); do
+    ch="${s:i:1}"
+    if [ "$in_sq" = "1" ]; then
+      if [ "$ch" = "'" ]; then in_sq=0; else cur+="$ch"; fi
+      continue
+    fi
+    if [ "$in_dq" = "1" ]; then
+      if [ "$ch" = '"' ]; then in_dq=0
+      elif [ "$ch" = '\' ] && [ $((i+1)) -lt "$n" ]; then
+        case "${s:i+1:1}" in
+          '"'|'\'|'$'|'`') i=$((i+1)); cur+="${s:i:1}" ;;
+          *) cur+="$ch" ;;
+        esac
+      else cur+="$ch"; fi
+      continue
+    fi
+    case "$ch" in
+      "'") in_sq=1; have=1 ;;
+      '"') in_dq=1; have=1 ;;
+      '\')
+        if [ $((i+1)) -lt "$n" ]; then i=$((i+1)); cur+="${s:i:1}"; have=1; else cur+="$ch"; have=1; fi
+        ;;
+      ' '|$'\t')
+        if [ -n "$cur" ] || [ "$have" = "1" ]; then
+          _GCIA_TOK+=("$cur"); cur=""; have=0
+        fi
+        ;;
+      *) cur+="$ch"; have=1 ;;
+    esac
+  done
+  if [ -n "$cur" ] || [ "$have" = "1" ]; then
+    _GCIA_TOK+=("$cur")
+  fi
+}
+
+# Phase-2 walk control for one token: 0 = stop the walk, 1 = skip this token
+# as an opaque value, 2 = interpret normally.
+_gcia_token_class() {
+  local tok="$1" o c
+  case "$tok" in
+    '<<'*) return 0 ;;
+  esac
+  case "$tok" in
+    *'`'*) return 0 ;;
+  esac
+  case "$tok" in
+    *'$('*)
+      o="${tok//[^(]/}"; c="${tok//[^)]/}"
+      [ "${#o}" = "${#c}" ] && return 1
+      return 0
+      ;;
+  esac
+  case "$tok" in
+    *$'\n'*) return 1 ;;
+  esac
+  return 2
+}
+
+# Redirection-shaped tokens (`2>`, `>/dev/null`, `<in`) are not pathspecs.
+_gcia_is_redirection() {
+  case "$1" in
+    [0-9]*'>'*|'>'*|'<'*|'&'*|[0-9]'<'*) return 0 ;;
+  esac
+  return 1
+}
+
+# Normalize a directory string for equality checks (slashes, trailing /).
+_gcia_norm_path() {
+  local p="${1//\\//}"
+  while [ "${#p}" -gt 1 ] && [ "${p%/}" != "$p" ]; do p="${p%/}"; done
+  printf '%s' "$p"
+}
+
+# 0 iff <a> and <b> name the same repo: identical normalized text, or the
+# same `git rev-parse --show-toplevel` (only forked when the text differs).
+_gcia_same_repo() {
+  local a b ta tb
+  a="$(_gcia_norm_path "$1")"; b="$(_gcia_norm_path "$2")"
+  if gh_ci_eq "$a" "$b" 2>/dev/null || [ "$a" = "$b" ]; then return 0; fi
+  ta="$(git -C "$1" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  tb="$(git -C "$2" rev-parse --show-toplevel 2>/dev/null)" || return 1
+  [ -n "$ta" ] && [ "$ta" = "$tb" ]
+}
+
+# ============================================================
+# Tracked env vars (the 4 identity vars + the ack). PERSISTENT state comes
+# from `export NAME=...` segments and assignment-only segments, visible to
+# every later segment in the same command. A command-scoped prefix
+# (`NAME=... git commit`, or `env NAME=... git commit`) applies ONLY to its
+# own segment — the round-1 version let `GIT_AUTHOR_EMAIL=x git add f &&
+# git commit` leak the add's prefix into the commit, which no shell does.
 # ============================================================
 
 _gcia_reset_env_state() {
-  _GCIA_ACK=0
-  _GCIA_ENV_AUTHOR_EMAIL=""; _GCIA_ENV_COMMITTER_EMAIL=""
-  _GCIA_ENV_AUTHOR_NAME=""; _GCIA_ENV_COMMITTER_NAME=""
+  _GCIA_P_ACK=0; _GCIA_P_AE=""; _GCIA_P_CE=""; _GCIA_P_AN=""; _GCIA_P_CN=""
+  GCP_VAR_NAMES=(); GCP_VAR_VALUES=()
 }
 
-_gcia_note_env_assignment() { # <name> <value>
+_gcia_note_persistent() { # <name> <value>
   case "$1" in
-    GIT_AUTHOR_EMAIL) _GCIA_ENV_AUTHOR_EMAIL="$2" ;;
-    GIT_COMMITTER_EMAIL) _GCIA_ENV_COMMITTER_EMAIL="$2" ;;
-    GIT_AUTHOR_NAME) _GCIA_ENV_AUTHOR_NAME="$2" ;;
-    GIT_COMMITTER_NAME) _GCIA_ENV_COMMITTER_NAME="$2" ;;
-    GIT_COMMIT_IDENTITY_GATE_ACK) [ "$2" = "1" ] && _GCIA_ACK=1 ;;
+    GIT_AUTHOR_EMAIL) _GCIA_P_AE="$2" ;;
+    GIT_COMMITTER_EMAIL) _GCIA_P_CE="$2" ;;
+    GIT_AUTHOR_NAME) _GCIA_P_AN="$2" ;;
+    GIT_COMMITTER_NAME) _GCIA_P_CN="$2" ;;
+    GIT_COMMIT_IDENTITY_GATE_ACK) [ "$2" = "1" ] && _GCIA_P_ACK=1 ;;
   esac
+  GCP_VAR_NAMES+=("$1"); GCP_VAR_VALUES+=("$2")
 }
 
-# Recognize `export NAME=VALUE [NAME2=VALUE2 ...]` segments (which
-# gcp_strip_env_assignments_var deliberately does NOT treat as assignments —
-# "export" itself has no `=`) and note each NAME=VALUE the same way a
-# command-scoped assignment would be noted. Quote-aware via the shared
-# tokenizer (a value may be quoted: `export GIT_AUTHOR_EMAIL="a b"`).
-# Returns 0 iff the segment WAS an export (caller should `continue`, not
-# fall through to git-segment parsing).
+# Effective env for a commit segment = persistent state overlaid with that
+# segment's own command-scoped assignments (_GCIA_SEG_AN[] / _GCIA_SEG_AV[]).
+_gcia_effective_env() {
+  _GCIA_ACK="$_GCIA_P_ACK"
+  _GCIA_ENV_AUTHOR_EMAIL="$_GCIA_P_AE"; _GCIA_ENV_COMMITTER_EMAIL="$_GCIA_P_CE"
+  _GCIA_ENV_AUTHOR_NAME="$_GCIA_P_AN"; _GCIA_ENV_COMMITTER_NAME="$_GCIA_P_CN"
+  local j
+  for ((j=0; j<${#_GCIA_SEG_AN[@]}; j++)); do
+    case "${_GCIA_SEG_AN[$j]}" in
+      GIT_AUTHOR_EMAIL) _GCIA_ENV_AUTHOR_EMAIL="${_GCIA_SEG_AV[$j]}" ;;
+      GIT_COMMITTER_EMAIL) _GCIA_ENV_COMMITTER_EMAIL="${_GCIA_SEG_AV[$j]}" ;;
+      GIT_AUTHOR_NAME) _GCIA_ENV_AUTHOR_NAME="${_GCIA_SEG_AV[$j]}" ;;
+      GIT_COMMITTER_NAME) _GCIA_ENV_COMMITTER_NAME="${_GCIA_SEG_AV[$j]}" ;;
+      GIT_COMMIT_IDENTITY_GATE_ACK) [ "${_GCIA_SEG_AV[$j]}" = "1" ] && _GCIA_ACK=1 ;;
+    esac
+  done
+}
+
+# `export NAME=VALUE [NAME2=VALUE2 ...]` — persistent. Returns 0 iff the
+# segment WAS an export.
 _gcia_maybe_export() {
   local seg="$1" rest tok name val k n
   case "$seg" in
@@ -297,29 +575,24 @@ _gcia_maybe_export() {
     *) return 1 ;;
   esac
   rest="${seg#export}"
-  gcp_tokenize_segment "$rest"
-  n=${#GCP_SEG_TOKENS[@]}
+  _gcia_tokenize "$rest"
+  n=${#_GCIA_TOK[@]}
   for ((k=0; k<n; k++)); do
-    tok="${GCP_SEG_TOKENS[$k]}"
+    tok="${_GCIA_TOK[$k]}"
     case "$tok" in
       [A-Za-z_]*=*)
         name="${tok%%=*}"
         case "$name" in *[!A-Za-z0-9_]*) continue ;; esac
         val="${tok#*=}"
-        _gcia_note_env_assignment "$name" "$val"
+        _gcia_note_persistent "$name" "$val"
         ;;
     esac
   done
   return 0
 }
 
-# m1 (PR #67 review): `env NAME=VALUE... cmd` is functionally identical to
-# a command-scoped prefix (`NAME=VALUE cmd`) but gcp_strip_env_assignments_var
-# does not recognize it — the literal word "env" has no `=`, so it never
-# matched the leading-assignment scan. If the segment starts with a bare
-# "env" token, strip it and let the SAME assignment-stripping logic the
-# caller already runs handle the NAME=VALUE pairs that follow, exactly as
-# it already does for a plain command-scoped prefix. Does not attempt to
+# m1 (PR #67 review): `env NAME=VALUE... cmd` — strip the leading "env" so
+# the assignment stripper sees the command-scoped NAME=VALUE shape. Does not
 # parse env's OWN flags (`env -i ...`) — a named, accepted narrowing.
 _gcia_strip_env_prefix() { # <segment> -> stdout: segment with "env " stripped
   local seg="$1" rest
@@ -333,50 +606,16 @@ _gcia_strip_env_prefix() { # <segment> -> stdout: segment with "env " stripped
   esac
 }
 
-# m1 (PR #67 review): recognize a plain `git config user.email <value>` /
-# `git config user.name <value>` SET — not --get/--unset/--list — optionally
-# scoped `--local`/`--worktree`. This is "the likely path when an agent
-# answers git's 'please tell me who you are' prompt": a config SET followed
-# by a plain `git commit` in the same command carries no override on the
-# commit segment itself, so without this the identity change is invisible
-# to the gate. `--global`/`--system` scope is deliberately NOT recognized —
-# a machine-wide config change is a different, larger-blast-radius action
-# outside this per-repo gate's scope. Also deliberately narrow: does not
-# handle `-C`/global `-c` flags glued onto the `git config` invocation
-# itself (a named, accepted simplification — the plain form is the
-# overwhelmingly common shape). Sets _GCIA_CFGSET_KEY/_GCIA_CFGSET_VAL and
-# returns 0 on a match; returns 1 (no output vars touched) otherwise.
-_gcia_maybe_config_set() { # <segment starting with "git">
-  local seg="$1"
-  gcp_tokenize_segment "$seg"
-  local n=${#GCP_SEG_TOKENS[@]} i
-  [ "$n" -ge 4 ] || return 1
-  [ "${GCP_SEG_TOKENS[0]}" = "git" ] || return 1
-  [ "${GCP_SEG_TOKENS[1]}" = "config" ] || return 1
-  i=2
-  while [ "$i" -lt "$n" ]; do
-    case "${GCP_SEG_TOKENS[$i]}" in
-      --local|--worktree) i=$((i+1)) ;;
-      *) break ;;
-    esac
-  done
-  [ "$i" -lt "$n" ] || return 1
-  case "${GCP_SEG_TOKENS[$i]}" in
-    user.email) _GCIA_CFGSET_KEY="user.email" ;;
-    user.name) _GCIA_CFGSET_KEY="user.name" ;;
-    *) return 1 ;;
-  esac
-  i=$((i+1))
-  [ "$i" -lt "$n" ] || return 1
-  _GCIA_CFGSET_VAL="${GCP_SEG_TOKENS[$i]}"
-  return 0
-}
-
 # ============================================================
-# Per-git-segment analysis. Extends gcp_analyze_git_segment (which stops the
-# instant it sees the subcommand word, and treats commit-tree as NOT a
-# commit) with: commit-tree recognition, `-c` VALUE capture (not skip), and
-# continued scanning past the subcommand for `--author`.
+# Per-git-segment analysis. Sets:
+#   _GCIA_SUB          the subcommand word ("" when none)
+#   _GCIA_IS_TARGET    1 iff the subcommand is commit-creating
+#   _GCIA_TARGET_DIR   dir git will act in (-C / --work-tree / --git-dir / base)
+#   _GCIA_CFG_EMAIL/_GCIA_CFG_NAME   global `-c user.email=/user.name=` values
+#   _GCIA_AUTHOR_VAL   `commit --author` value
+#   _GCIA_PATHSPECS[]  `commit -- <paths>` (redirection-shaped tokens dropped)
+#   _GCIA_COMMIT_ALL   1 iff `commit -a/--all`
+#   _GCIA_ARGS[]       tokens after the subcommand (for config/init/add)
 # ============================================================
 
 _gcia_note_cfg() { # <token like "user.email=x@y.test">
@@ -391,168 +630,356 @@ _gcia_note_cfg() { # <token like "user.email=x@y.test">
   esac
 }
 
-# Sets: _GCIA_IS_TARGET (1 iff subcommand is commit or commit-tree),
-# _GCIA_TARGET_DIR, _GCIA_CFG_EMAIL, _GCIA_CFG_NAME, _GCIA_AUTHOR_VAL.
 _gcia_analyze_segment() { # <segment starting with "git"> <base-dir>
   local seg="$1" base="$2"
-  _GCIA_IS_TARGET=0; _GCIA_TARGET_DIR=""; _GCIA_CFG_EMAIL=""; _GCIA_CFG_NAME=""; _GCIA_AUTHOR_VAL=""
-  gcp_tokenize_segment "$seg"
-  local n=${#GCP_SEG_TOKENS[@]} i tok sub="" c_target="" work_tree="" git_dir=""
+  _GCIA_SUB=""; _GCIA_IS_TARGET=0; _GCIA_TARGET_DIR=""; _GCIA_CFG_EMAIL=""; _GCIA_CFG_NAME=""
+  _GCIA_AUTHOR_VAL=""; _GCIA_PATHSPECS=(); _GCIA_COMMIT_ALL=0; _GCIA_ARGS=()
+  _gcia_tokenize "$seg"
+  local n=${#_GCIA_TOK[@]} i tok c_target="" work_tree="" git_dir=""
   [ "$n" -ge 2 ] || return 0
-  [ "${GCP_SEG_TOKENS[0]}" = "git" ] || return 0
+  [ "${_GCIA_TOK[0]}" = "git" ] || return 0
 
   i=1
   while [ "$i" -lt "$n" ]; do
-    tok="${GCP_SEG_TOKENS[$i]}"
+    tok="${_GCIA_TOK[$i]}"
     case "$tok" in
       -C)
         i=$((i+1)); [ "$i" -lt "$n" ] || break
-        c_target="$(gcp_compose_dir "$c_target" "$base" "${GCP_SEG_TOKENS[$i]}")"
+        c_target="$(gcp_compose_dir "$c_target" "$base" "${_GCIA_TOK[$i]}")"
         ;;
       -C?*) c_target="$(gcp_compose_dir "$c_target" "$base" "${tok:2}")" ;;
       --work-tree=?*) work_tree="$(gcp_compose_dir "" "$base" "${tok#--work-tree=}")" ;;
       --git-dir=?*) git_dir="$(gcp_compose_dir "" "$base" "${tok#--git-dir=}")" ;;
       --work-tree)
         i=$((i+1)); [ "$i" -lt "$n" ] || break
-        work_tree="$(gcp_compose_dir "" "$base" "${GCP_SEG_TOKENS[$i]}")"
+        work_tree="$(gcp_compose_dir "" "$base" "${_GCIA_TOK[$i]}")"
         ;;
       --git-dir)
         i=$((i+1)); [ "$i" -lt "$n" ] || break
-        git_dir="$(gcp_compose_dir "" "$base" "${GCP_SEG_TOKENS[$i]}")"
+        git_dir="$(gcp_compose_dir "" "$base" "${_GCIA_TOK[$i]}")"
         ;;
       -c)
         i=$((i+1)); [ "$i" -lt "$n" ] || break
-        _gcia_note_cfg "${GCP_SEG_TOKENS[$i]}"
+        _gcia_note_cfg "${_GCIA_TOK[$i]}"
         ;;
       -c?*) _gcia_note_cfg "${tok#-c}" ;;
       --namespace) i=$((i+1)) ;;
       -*) : ;;
-      *) sub="$tok"; break ;;
+      *) _GCIA_SUB="$tok"; break ;;
     esac
     i=$((i+1))
   done
-
-  # M1 (PR #67 review, PROVEN): identity overrides on every OTHER
-  # commit-creating subcommand passed the gate — a real downstream project
-  # session transcript ran `git -c user.name=… -c user.email=… merge -q
-  # --no-ff origin/master -m "Merge origin/master"`, and that project's own
-  # merge procedure ("merge origin/master into the branch") makes merge commits
-  # the most frequent commit-creating path of all, not an edge case. `-c`
-  # is a GLOBAL git flag (already captured in phase 1 above regardless of
-  # subcommand), so the fix is simply widening which subcommands count as
-  # identity-bearing. `--author` stays commit-only below — none of these
-  # other verbs accept that flag (cherry-pick preserves original
-  # authorship automatically; git itself errors on `--author` elsewhere).
-  case "$sub" in
-    commit|commit-tree|merge|cherry-pick|revert|pull|rebase|am) _GCIA_IS_TARGET=1 ;;
-    *) return 0 ;;
-  esac
 
   if [ -n "$work_tree" ]; then _GCIA_TARGET_DIR="$work_tree"
   elif [ -n "$git_dir" ]; then _GCIA_TARGET_DIR="${git_dir%/.git}"
   elif [ -n "$c_target" ]; then _GCIA_TARGET_DIR="$c_target"
   else _GCIA_TARGET_DIR="$base"
   fi
+  [ -n "$_GCIA_SUB" ] || return 0
 
-  # Phase 2: subcommand-level flags — only --author matters here, and only
-  # for `commit` itself (see the M1 note above: no other verb in scope
-  # accepts --author).
-  if [ "$sub" = "commit" ]; then
-    i=$((i+1))
-    while [ "$i" -lt "$n" ]; do
-      tok="${GCP_SEG_TOKENS[$i]}"
-      case "$tok" in
-        --author=?*) _GCIA_AUTHOR_VAL="${tok#--author=}" ;;
-        --author)
-          i=$((i+1)); [ "$i" -lt "$n" ] && _GCIA_AUTHOR_VAL="${GCP_SEG_TOKENS[$i]}"
-          ;;
-      esac
-      i=$((i+1))
-    done
-  fi
+  # Remaining tokens, cut at the first walk-stop token (see note 5 above).
+  local k cls
+  for ((k=i+1; k<n; k++)); do
+    tok="${_GCIA_TOK[$k]}"
+    _gcia_token_class "$tok"; cls=$?
+    [ "$cls" = "0" ] && break
+    if [ "$cls" = "1" ]; then _GCIA_ARGS+=("__GCIA_OPAQUE__"); continue; fi
+    _GCIA_ARGS+=("$tok")
+  done
+
+  # M1 (PR #67 review, PROVEN): every commit-creating verb, not only commit.
+  case "$_GCIA_SUB" in
+    commit|commit-tree|merge|cherry-pick|revert|pull|rebase|am) _GCIA_IS_TARGET=1 ;;
+    *) return 0 ;;
+  esac
+
+  # Phase 2: `--author` (commit only — no other verb in scope accepts it),
+  # plus the pathspec / -a facts the records-only exemption needs.
+  [ "$_GCIA_SUB" = "commit" ] || return 0
+  local m=${#_GCIA_ARGS[@]} after_dd=0
+  for ((k=0; k<m; k++)); do
+    tok="${_GCIA_ARGS[$k]}"
+    [ "$tok" = "__GCIA_OPAQUE__" ] && continue
+    if [ "$after_dd" = "1" ]; then
+      _gcia_is_redirection "$tok" || _GCIA_PATHSPECS+=("$tok")
+      continue
+    fi
+    case "$tok" in
+      --) after_dd=1 ;;
+      --author=?*) _GCIA_AUTHOR_VAL="${tok#--author=}" ;;
+      --author) k=$((k+1)); [ "$k" -lt "$m" ] && _GCIA_AUTHOR_VAL="${_GCIA_ARGS[$k]}" ;;
+      --all) _GCIA_COMMIT_ALL=1 ;;
+      --message|--file|--reuse-message|--reedit-message|--fixup|--squash|--template|--cleanup|--date|--trailer)
+        k=$((k+1)) ;;
+      --*) : ;;
+      -[!-]*)
+        case "$tok" in -*a*) _GCIA_COMMIT_ALL=1 ;; esac
+        # Short cluster ending in a value-taking flag with no glued value
+        # (`-m`, `-am`, `-F`, `-C`, `-c`, `-t`) -> the next token is its value.
+        case "$tok" in -*[mFCct]) k=$((k+1)) ;; esac
+        ;;
+    esac
+  done
   return 0
 }
 
+# `git [-C d] config [--local|--worktree] user.email|user.name <value>` —
+# a SET (not --get/--unset/--list; --global/--system are out of this
+# per-repo gate's scope). Uses the _GCIA_SUB/_GCIA_ARGS/_GCIA_TARGET_DIR
+# left by _gcia_analyze_segment. Sets _GCIA_CFGSET_KEY/_GCIA_CFGSET_VAL.
+_gcia_maybe_config_set() {
+  [ "$_GCIA_SUB" = "config" ] || return 1
+  local n=${#_GCIA_ARGS[@]} i=0 key
+  while [ "$i" -lt "$n" ]; do
+    case "${_GCIA_ARGS[$i]}" in
+      --local|--worktree) i=$((i+1)) ;;
+      *) break ;;
+    esac
+  done
+  [ "$i" -lt "$n" ] || return 1
+  key="$(printf '%s' "${_GCIA_ARGS[$i]}" | tr '[:upper:]' '[:lower:]')"
+  case "$key" in
+    user.email|user.name) _GCIA_CFGSET_KEY="$key" ;;
+    *) return 1 ;;
+  esac
+  i=$((i+1))
+  [ "$i" -lt "$n" ] || return 1
+  [ "${_GCIA_ARGS[$i]}" = "__GCIA_OPAQUE__" ] && return 1
+  _GCIA_CFGSET_VAL="${_GCIA_ARGS[$i]}"
+  return 0
+}
+
+# `git init [opts] [dir]` -> the directory it initializes (m1-minor, PR #67
+# review round 2, PROVEN: `cd existing-subdir && git init && git -c
+# user.email=t@t commit` in a pre-existing non-repo dir INSIDE a GitHub
+# checkout was judged against the ENCLOSING repo's identity). A repo this
+# same command creates is a throwaway, exactly like the no-remote case (M4).
+_gcia_init_dir() {
+  local n=${#_GCIA_ARGS[@]} i=0 tok dir=""
+  while [ "$i" -lt "$n" ]; do
+    tok="${_GCIA_ARGS[$i]}"
+    case "$tok" in
+      -b|--initial-branch|--template|--separate-git-dir|--object-format|--ref-format|--shared) i=$((i+1)) ;;
+      -*|__GCIA_OPAQUE__) : ;;
+      *) _gcia_is_redirection "$tok" || { dir="$tok"; break; } ;;
+    esac
+    i=$((i+1))
+  done
+  if [ -n "$dir" ]; then
+    _GCIA_INIT_RESULT="$(gcp_compose_dir "" "$_GCIA_TARGET_DIR" "$dir")"
+  else
+    _GCIA_INIT_RESULT="$_GCIA_TARGET_DIR"
+  fi
+}
+
+# `git add <paths>` -> recorded (with its dir) for the records-only
+# exemption. `.`/-A/--all/-u/--update record a wildcard marker, which is
+# never records-only.
+_gcia_note_add() {
+  local n=${#_GCIA_ARGS[@]} i tok
+  for ((i=0; i<n; i++)); do
+    tok="${_GCIA_ARGS[$i]}"
+    case "$tok" in
+      -A|--all|-u|--update|.|./|:/|__GCIA_OPAQUE__) _GCIA_ADD_PATHS+=("*"); _GCIA_ADD_DIRS+=("$_GCIA_TARGET_DIR") ;;
+      --) : ;;
+      -*) : ;;
+      *) _gcia_is_redirection "$tok" || { _GCIA_ADD_PATHS+=("$tok"); _GCIA_ADD_DIRS+=("$_GCIA_TARGET_DIR"); } ;;
+    esac
+  done
+}
+
+_gcia_is_init_dir() { # <target_dir>
+  local k
+  for ((k=0; k<${#_GCIA_INIT_DIRS[@]}; k++)); do
+    if [ "$(_gcia_norm_path "${_GCIA_INIT_DIRS[$k]}")" = "$(_gcia_norm_path "$1")" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
 # ============================================================
-# Evaluate one commit/commit-tree segment: resolve expected identity for its
-# target dir, perform the (optional) auto-set side effect, and check every
-# override kind. Sets _GCIA_VIOLATION (0|1) and, on 1, the detail fields
-# used by the block message.
+# MAJOR-3 (PR #67 review round 2, PROVEN): the harness's OWN review-record
+# commits. scripts/review-runner.sh finalize commits a record as
+# reviewer+<claimant session_id>@<host> (review-runner.sh:~375, the A1
+# identity stamp) so harness-doctor's review-reviewer-independence check —
+# record author must differ from the reviewed commit's author — stays GREEN.
+# When that runner step fails, the documented manual fallback repeats the
+# same stamped commit by hand; three replayed transcript commands in the
+# harness repo are exactly that, and this gate blocked them — while its own
+# FIX ("drop the override") would produce a record authored by the reviewed
+# commit's identity, i.e. a doctor RED. So: a commit whose every RESOLVED
+# identity override has the reviewer+<...>@<...> shape AND whose content is
+# records-only (every path is docs/reviews/records/<file>) is EXEMPT, and is
+# logged as a signal-ledger `skip`. Records-only is judged from the commit's
+# own `-- <pathspec>` when present (git commits exactly those paths), else
+# from what is staged now plus what an earlier `git add` in the same command
+# will stage; `-a`/`--all`, a wildcard add, or any unresolved path is NOT
+# records-only.
 # ============================================================
 
-_gcia_evaluate() { # <target_dir> <cfg_email> <cfg_name> <author_val>
-  local target_dir="$1" cfg_email="$2" cfg_name="$3" author_val="$4"
+_gcia_is_records_path() {
+  local p="${1//\\//}"
+  _gcia_unresolved "$p" && return 1
+  p="${p#./}"
+  case "$p" in
+    docs/reviews/records/*) p="${p#docs/reviews/records/}" ;;
+    */docs/reviews/records/*) p="${p##*/docs/reviews/records/}" ;;
+    *) return 1 ;;
+  esac
+  [ -n "$p" ] || return 1
+  case "$p" in */*|'*') return 1 ;; esac
+  return 0
+}
+
+_gcia_records_only() { # <target_dir>
+  local target="$1" k p count=0
+  [ "${_GCIA_COMMIT_ALL:-0}" = "1" ] && return 1
+  if [ "${#_GCIA_PATHSPECS[@]}" -gt 0 ]; then
+    for ((k=0; k<${#_GCIA_PATHSPECS[@]}; k++)); do
+      _gcia_is_records_path "${_GCIA_PATHSPECS[$k]}" || return 1
+      count=$((count+1))
+    done
+    [ "$count" -gt 0 ]
+    return
+  fi
+  while IFS= read -r p; do
+    [ -n "$p" ] || continue
+    _gcia_is_records_path "$p" || return 1
+    count=$((count+1))
+  done <<< "$(git -C "$target" -c core.quotePath=false diff --cached --name-only 2>/dev/null)"
+  for ((k=0; k<${#_GCIA_ADD_PATHS[@]}; k++)); do
+    _gcia_same_repo "${_GCIA_ADD_DIRS[$k]}" "$target" || continue
+    _gcia_is_records_path "${_GCIA_ADD_PATHS[$k]}" || return 1
+    count=$((count+1))
+  done
+  [ "$count" -gt 0 ]
+}
+
+_gcia_is_reviewer_identity() {
+  case "$1" in
+    reviewer+?*@?*) return 0 ;;
+  esac
+  return 1
+}
+
+# ============================================================
+# Evaluate one commit-creating segment. Sets _GCIA_VIOLATION (0|1) and, on
+# 1, the detail fields used by the block message.
+# ============================================================
+
+_gcia_evaluate() { # <target_dir> <cfg_email> <cfg_email_label> <cfg_name> <author_val>
+  local target_dir="$1" cfg_email="$2" cfg_label="$3" cfg_name="$4" author_val="$5"
   _GCIA_VIOLATION=0
   _GCIA_AUTO_SET_NOTE=""
 
-  # M4 (PR #67 review, PROVEN false positive): a repo with NO resolvable
-  # github.com remote owner has no GitHub ground truth to check against.
-  # Without this guard, a throwaway `git init` scratch/fixture repo with
-  # its own local throwaway identity got compared against whatever this
-  # MACHINE's global ~/.gitconfig happens to hold — not "the account
-  # logged in for the repo" (there is no repo-level GH identity at all,
-  # so there is nothing this gate can legitimately enforce). Fail open
-  # completely: no check, no auto-set. A real transcript escaped this
-  # only because the cwd could not be resolved when the hook ran — this
-  # closes that gap structurally rather than by accident.
+  # m1-minor (round 2): a repo this same command `git init`s is a throwaway.
+  if _gcia_is_init_dir "$target_dir"; then
+    return 0
+  fi
+
+  local has_email=0 has_name=0
+  { [ -n "$author_val" ] || [ -n "$cfg_email" ] || [ -n "${_GCIA_ENV_AUTHOR_EMAIL:-}" ] || [ -n "${_GCIA_ENV_COMMITTER_EMAIL:-}" ]; } && has_email=1
+  { [ -n "$cfg_name" ] || [ -n "${_GCIA_ENV_AUTHOR_NAME:-}" ] || [ -n "${_GCIA_ENV_COMMITTER_NAME:-}" ]; } && has_name=1
+
+  # m2 (PR #67 review round 2, measured 1.7-2.8s per plain commit): with NO
+  # override at all, the only remaining job is the auto-set side effect,
+  # which fires only when user.email is unset at every level. One
+  # `git config --get` answers that — no owner lookup, no gh resolution.
+  if [ "$has_email" = "0" ] && [ "$has_name" = "0" ]; then
+    if [ -n "$(git -C "$target_dir" config --get user.email 2>/dev/null)" ]; then
+      return 0
+    fi
+  fi
+
+  # M4 (PR #67 review, PROVEN false positive): no resolvable github.com
+  # remote owner -> no GitHub ground truth -> fail open entirely.
   if [ -z "$(gh_owner_from_cwd_remote "$target_dir" 2>/dev/null)" ]; then
     return 0
   fi
 
-  gia_resolve_expected_email "$target_dir"
-  local expected_email="$GIA_EMAIL" expected_source="$GIA_EMAIL_SOURCE"
-
-  if [ "${_GCIA_ACK:-0}" = "1" ]; then
+  if [ "${_GCIA_ACK:-0}" = "1" ] && { [ "$has_email" = "1" ] || [ "$has_name" = "1" ]; }; then
     ledger_emit "gh-commit-author-identity" "waiver" "GIT_COMMIT_IDENTITY_GATE_ACK=1 present; override allowed through for target_dir=${target_dir}"
     return 0
   fi
 
-  if [ -z "$expected_email" ]; then
-    # Nothing resolvable at all -> nothing to check, nothing to auto-set.
-    return 0
-  fi
+  local expected_email="" expected_source="unresolved" resolved_expected=0
+  local bad_kind="" bad_val="" a_email="" unknown=""
+  local -a resolved_vals=()
 
-  local bad_kind="" bad_val=""
+  if [ "$has_email" = "1" ]; then
+    # Collect (kind, value) pairs; an unresolved value is UNKNOWN, not a
+    # mismatch (MAJOR-1 P1 / note 4).
+    local -a kinds=() vals=()
+    if [ -n "$author_val" ]; then
+      if _gcia_unresolved "$author_val"; then
+        unknown="${unknown}--author=${author_val}; "
+      else
+        case "$author_val" in
+          *"<"*">"*) a_email="${author_val#*<}"; a_email="${a_email%%>*}" ;;
+        esac
+        # an unparseable --author (no <email>) keeps an empty value, which
+        # the comparison below treats as a mismatch: fail closed.
+        kinds+=("--author"); vals+=("$a_email"); resolved_vals+=("$a_email")
+      fi
+    fi
+    local k2 v2
+    for k2 in cfg AE CE; do
+      case "$k2" in
+        cfg) v2="$cfg_email" ;;
+        AE) v2="${_GCIA_ENV_AUTHOR_EMAIL:-}" ;;
+        CE) v2="${_GCIA_ENV_COMMITTER_EMAIL:-}" ;;
+      esac
+      [ -n "$v2" ] || continue
+      if _gcia_unresolved "$v2"; then
+        case "$k2" in
+          cfg) unknown="${unknown}${cfg_label}=${v2}; " ;;
+          AE) unknown="${unknown}GIT_AUTHOR_EMAIL=${v2}; " ;;
+          CE) unknown="${unknown}GIT_COMMITTER_EMAIL=${v2}; " ;;
+        esac
+        continue
+      fi
+      case "$k2" in
+        cfg) kinds+=("$cfg_label") ;;
+        AE) kinds+=("GIT_AUTHOR_EMAIL") ;;
+        CE) kinds+=("GIT_COMMITTER_EMAIL") ;;
+      esac
+      vals+=("$v2"); resolved_vals+=("$v2")
+    done
 
-  if [ -n "$author_val" ]; then
-    local a_email=""
-    case "$author_val" in
-      *"<"*">"*) a_email="${author_val#*<}"; a_email="${a_email%%>*}" ;;
-    esac
-    if [ -z "$a_email" ] || ! gh_ci_eq "$a_email" "$expected_email"; then
-      bad_kind="--author"; bad_val="$author_val"
+    if [ -n "$unknown" ] && declare -F ledger_emit >/dev/null 2>&1; then
+      ledger_emit "gh-commit-author-identity" "warn" "identity override value(s) not resolvable before the shell runs (${unknown}) for ${target_dir} — not checked (unknown is not a mismatch)"
+    fi
+
+    if [ "${#kinds[@]}" -gt 0 ]; then
+      gia_resolve_expected_email "$target_dir"
+      expected_email="$GIA_EMAIL"; expected_source="$GIA_EMAIL_SOURCE"; resolved_expected=1
+      if [ -z "$expected_email" ]; then
+        # Nothing resolvable -> nothing to check, never a fabricated guess.
+        return 0
+      fi
+      local q
+      for ((q=0; q<${#kinds[@]}; q++)); do
+        if [ -z "${vals[$q]}" ] || ! gh_ci_eq "${vals[$q]}" "$expected_email"; then
+          bad_kind="${kinds[$q]}"
+          if [ "${kinds[$q]}" = "--author" ]; then bad_val="$author_val"; else bad_val="${vals[$q]}"; fi
+          break
+        fi
+      done
     fi
   fi
 
-  if [ -z "$bad_kind" ] && [ -n "$cfg_email" ] && ! gh_ci_eq "$cfg_email" "$expected_email"; then
-    bad_kind="-c user.email"; bad_val="$cfg_email"
-  fi
-
-  if [ -z "$bad_kind" ] && [ -n "${_GCIA_ENV_AUTHOR_EMAIL:-}" ] && ! gh_ci_eq "$_GCIA_ENV_AUTHOR_EMAIL" "$expected_email"; then
-    bad_kind="GIT_AUTHOR_EMAIL"; bad_val="$_GCIA_ENV_AUTHOR_EMAIL"
-  fi
-
-  if [ -z "$bad_kind" ] && [ -n "${_GCIA_ENV_COMMITTER_EMAIL:-}" ] && ! gh_ci_eq "$_GCIA_ENV_COMMITTER_EMAIL" "$expected_email"; then
-    bad_kind="GIT_COMMITTER_EMAIL"; bad_val="$_GCIA_ENV_COMMITTER_EMAIL"
-  fi
-
   # m2 (PR #67 review): a NAME-only mismatch is WARNED, never BLOCKED.
-  # Vercel and GitHub attribute commits by EMAIL, not display name — the
-  # directive this gate exists for ("use the email that's logged into
-  # GH") is about email specifically, and blocking on a name mismatch adds
-  # false-positive surface with no attribution benefit. Still visible
-  # (signal ledger), never silent; only reached when no EMAIL-based
-  # bad_kind was already set above (an email mismatch always wins).
-  if [ -z "$bad_kind" ] && { [ -n "$cfg_name" ] || [ -n "${_GCIA_ENV_AUTHOR_NAME:-}" ] || [ -n "${_GCIA_ENV_COMMITTER_NAME:-}" ]; }; then
+  if [ -z "$bad_kind" ] && [ "$has_name" = "1" ]; then
     gia_resolve_expected_name "$target_dir"
     local expected_name="$GIA_NAME"
     if [ -n "$expected_name" ]; then
       local name_bad_kind="" name_bad_val=""
-      if [ -n "$cfg_name" ] && [ "$cfg_name" != "$expected_name" ]; then
+      if [ -n "$cfg_name" ] && ! _gcia_unresolved "$cfg_name" && [ "$cfg_name" != "$expected_name" ]; then
         name_bad_kind="-c user.name"; name_bad_val="$cfg_name"
-      elif [ -n "${_GCIA_ENV_AUTHOR_NAME:-}" ] && [ "${_GCIA_ENV_AUTHOR_NAME}" != "$expected_name" ]; then
+      elif [ -n "${_GCIA_ENV_AUTHOR_NAME:-}" ] && ! _gcia_unresolved "$_GCIA_ENV_AUTHOR_NAME" && [ "${_GCIA_ENV_AUTHOR_NAME}" != "$expected_name" ]; then
         name_bad_kind="GIT_AUTHOR_NAME"; name_bad_val="$_GCIA_ENV_AUTHOR_NAME"
-      elif [ -n "${_GCIA_ENV_COMMITTER_NAME:-}" ] && [ "${_GCIA_ENV_COMMITTER_NAME}" != "$expected_name" ]; then
+      elif [ -n "${_GCIA_ENV_COMMITTER_NAME:-}" ] && ! _gcia_unresolved "$_GCIA_ENV_COMMITTER_NAME" && [ "${_GCIA_ENV_COMMITTER_NAME}" != "$expected_name" ]; then
         name_bad_kind="GIT_COMMITTER_NAME"; name_bad_val="$_GCIA_ENV_COMMITTER_NAME"
       fi
       if [ -n "$name_bad_kind" ] && declare -F ledger_emit >/dev/null 2>&1; then
@@ -562,23 +989,41 @@ _gcia_evaluate() { # <target_dir> <cfg_email> <cfg_name> <author_val>
   fi
 
   if [ -n "$bad_kind" ]; then
+    # MAJOR-3: the harness's own review-record identity, records-only.
+    local all_reviewer=1 rv
+    for rv in ${resolved_vals[@]+"${resolved_vals[@]}"}; do
+      _gcia_is_reviewer_identity "$rv" || { all_reviewer=0; break; }
+    done
+    [ "${#resolved_vals[@]}" -gt 0 ] || all_reviewer=0
+    if [ "$all_reviewer" = "1" ] && _gcia_records_only "$target_dir"; then
+      if declare -F ledger_emit >/dev/null 2>&1; then
+        ledger_emit "gh-commit-author-identity" "skip" "review-record identity ${bad_kind}=${bad_val} on a records-only commit (docs/reviews/records/**) in ${target_dir} — exempt (review-runner A1 identity stamp)"
+      fi
+      return 0
+    fi
     _GCIA_VIOLATION=1
+    _GCIA_VIOLATION_KIND="$bad_kind"
     _GCIA_VIOLATION_DETAIL="${bad_kind}=${bad_val}"
+    _GCIA_VIOLATION_VAL="$bad_val"
     _GCIA_VIOLATION_EXPECTED="$expected_email"
     _GCIA_VIOLATION_SOURCE="$expected_source"
     _GCIA_VIOLATION_TARGET="$target_dir"
+    _GCIA_VIOLATION_REVIEWER="$all_reviewer"
     return 0
   fi
 
   # No violation -> optional auto-set (obligation 3): only when the repo has
-  # NO user.email at ANY level and the expected value came from the gh API
-  # (never from the fallback rung, which by construction requires config to
-  # already exist).
-  if [ -z "$(git -C "$target_dir" config --get user.email 2>/dev/null)" ] \
-     && case "$expected_source" in gh-api*) true ;; *) false ;; esac; then
-    if git -C "$target_dir" config user.email "$expected_email" 2>/dev/null; then
-      _GCIA_AUTO_SET_NOTE="auto-set user.email=${expected_email} for ${target_dir} (was unset; resolved via ${expected_source})"
-      ledger_emit "gh-commit-author-identity" "warn" "$_GCIA_AUTO_SET_NOTE"
+  # NO user.email at ANY level and the expected value came from the gh API.
+  if [ -z "$(git -C "$target_dir" config --get user.email 2>/dev/null)" ]; then
+    if [ "$resolved_expected" = "0" ]; then
+      gia_resolve_expected_email "$target_dir"
+      expected_email="$GIA_EMAIL"; expected_source="$GIA_EMAIL_SOURCE"
+    fi
+    if [ -n "$expected_email" ] && case "$expected_source" in gh-api*) true ;; *) false ;; esac; then
+      if git -C "$target_dir" config user.email "$expected_email" 2>/dev/null; then
+        _GCIA_AUTO_SET_NOTE="auto-set user.email=${expected_email} for ${target_dir} (was unset; resolved via ${expected_source})"
+        ledger_emit "gh-commit-author-identity" "warn" "$_GCIA_AUTO_SET_NOTE"
+      fi
     fi
   fi
   return 0
@@ -587,8 +1032,21 @@ _gcia_evaluate() { # <target_dir> <cfg_email> <cfg_name> <author_val>
 _gcia_block() {
   local what why fix escape
   what="this commit sets identity via ${_GCIA_VIOLATION_DETAIL}, which does not match the identity expected for ${_GCIA_VIOLATION_TARGET} (${_GCIA_VIOLATION_EXPECTED}, resolved via ${_GCIA_VIOLATION_SOURCE})"
+  if [ "$_GCIA_VIOLATION_KIND" = "git config user.email" ]; then
+    what="${what} — the value comes from a \`git config user.email\` SET earlier in this same command, which persists into the commit"
+  fi
   why="Commits from Claude agents must carry the identity of the GitHub account logged in for the repo being committed to — never whatever email/name Claude Code's own session context hands the agent. A mismatch has already blocked a production deploy (Vercel maps commit emails to Vercel users; a downstream project's PR, 2026-09-21, ~1hr cost)."
-  fix="drop the override so the commit resolves to ${_GCIA_VIOLATION_EXPECTED} (resolved via ${_GCIA_VIOLATION_SOURCE}) — if ${_GCIA_VIOLATION_TARGET}'s own \`git config user.email\` differs from this value, fix the config there instead of relying on an inline override"
+  case "$_GCIA_VIOLATION_KIND" in
+    "git config user.email")
+      fix="do not set user.email in this command — the commit resolves to ${_GCIA_VIOLATION_EXPECTED} (resolved via ${_GCIA_VIOLATION_SOURCE}) on its own; if ${_GCIA_VIOLATION_TARGET}'s configured user.email is wrong, set it to that value instead"
+      ;;
+    *)
+      fix="drop the override so the commit resolves to ${_GCIA_VIOLATION_EXPECTED} (resolved via ${_GCIA_VIOLATION_SOURCE}) — if ${_GCIA_VIOLATION_TARGET}'s own \`git config user.email\` differs from this value, fix the config there instead of relying on an inline override"
+      ;;
+  esac
+  if [ "${_GCIA_VIOLATION_REVIEWER:-0}" = "1" ]; then
+    fix="${fix}. A reviewer+<session>@<host> identity is exempt ONLY on a records-only commit (every path under docs/reviews/records/, named via \`git commit ... -- <record.json> docs/reviews/records/index.json\`); for a review record, re-run \`bash scripts/review-runner.sh finalize\` or scope the commit to exactly the record files"
+  fi
   escape="GIT_COMMIT_IDENTITY_GATE_ACK=1 prefixed to the SAME command — only after the user in this conversation explicitly authorized committing under that other identity; never set it preemptively (constitution section 7)"
   {
     echo "================================================================"
@@ -602,6 +1060,10 @@ _gcia_block() {
       echo "FIX: $fix"
       echo "ESCAPE: $escape"
     fi
+    echo ""
+    echo "NOTE: this block prevented the ENTIRE command from running — including any"
+    echo "fix/edit/git add prefix before the git commit. Nothing was executed. Re-run"
+    echo "the non-commit part as its own call first, then commit separately. (NL-FINDING-016)"
     echo ""
     echo "This gate: ~/.claude/hooks/gh-commit-author-identity-gate.sh (source: adapters/claude-code/hooks/gh-commit-author-identity-gate.sh)"
   } >&2
@@ -618,13 +1080,7 @@ _gcia_run() {
   local cmd cwd
   cmd="$(_gcia_command)"
   [ -n "$cmd" ] || { exit 0; }
-  # M1 (PR #67 review): this second prefilter (on the PARSED command,
-  # after JSON extraction) must match the SAME verb-substring set as the
-  # raw-payload prefilter near the top of this file — a narrower pattern
-  # here would silently re-introduce the exact bug that prefilter's own
-  # comment now warns against (only checking "commit" here skipped
-  # merge/cherry-pick/revert/pull/rebase/am entirely, even though the raw
-  # prefilter had already let them through).
+  # M1 (PR #67 review): the SAME verb-substring set as the raw prefilter.
   case "$cmd" in *commit*|*merge*|*cherry-pick*|*revert*|*pull*|*rebase*|*' am'*) : ;; *) exit 0 ;; esac
   case "$cmd" in *git*) : ;; *) exit 0 ;; esac
   command -v git >/dev/null 2>&1 || { exit 0; }
@@ -633,15 +1089,18 @@ _gcia_run() {
   [ -n "$cwd" ] || cwd="$PWD"
 
   _gcia_reset_env_state
+  _GCIA_INIT_DIRS=(); _GCIA_ADD_PATHS=(); _GCIA_ADD_DIRS=()
+
+  # MAJOR-1 notes 1-2: normalize the WHOLE command before splitting.
+  _gcia_normalize_ansi_c "$cmd"; cmd="$_GCIA_NORM"
+  _gcia_strip_heredoc_bodies "$cmd"; cmd="$_GCIA_NORM"
 
   gcp_split_command "$cmd"
   local n=${#GCP_SEGMENTS[@]} i seg cd_target="" j
   local violation=0 auto_note=""
-  # m1 (PR #67 review): a plain `git config user.email X` earlier in the
-  # SAME command persists into a later commit-creating segment exactly
-  # like a real shell would apply it — tracked here the same way cd_target
-  # is tracked across segments.
-  local cfg_track_email="" cfg_track_name=""
+  # m1 / r2-1: a `git config user.email X` SET earlier in the same command
+  # persists into a later commit-creating segment IN THE SAME REPO only.
+  local cfg_track_email="" cfg_track_name="" cfg_track_dir=""
 
   for ((i=0; i<n; i++)); do
     seg="${GCP_SEGMENTS[$i]}"
@@ -649,20 +1108,26 @@ _gcia_run() {
     seg="${seg%"${seg##*[![:space:]]}"}"
     [ -n "$seg" ] || continue
 
-    # m1 (PR #67 review): `env NAME=VALUE... cmd` — strip the leading
-    # "env" token so the assignment-stripping call below sees the exact
-    # same NAME=VALUE shape it already handles for a bare command-scoped
-    # prefix.
     seg="$(_gcia_strip_env_prefix "$seg")"
     [ -n "$seg" ] || continue
 
+    # MAJOR-1 note 3: substitute assignments seen earlier in this command.
+    if [ "${#GCP_VAR_NAMES[@]}" -gt 0 ]; then
+      gcp_subst_vars_var "$seg"; seg="$GCP_SUBSTITUTED"
+    fi
+
     GCP_ASSIGN_NAMES=(); GCP_ASSIGN_VALUES=()
     gcp_strip_env_assignments_var "$seg"
-    for ((j=0; j<${#GCP_ASSIGN_NAMES[@]}; j++)); do
-      _gcia_note_env_assignment "${GCP_ASSIGN_NAMES[$j]}" "${GCP_ASSIGN_VALUES[$j]}"
-    done
+    if [ -z "$GCP_STRIPPED" ]; then
+      # Assignment-only segment: shell variables for the rest of the command.
+      for ((j=0; j<${#GCP_ASSIGN_NAMES[@]}; j++)); do
+        _gcia_note_persistent "${GCP_ASSIGN_NAMES[$j]}" "${GCP_ASSIGN_VALUES[$j]}"
+      done
+      continue
+    fi
+    _GCIA_SEG_AN=(${GCP_ASSIGN_NAMES[@]+"${GCP_ASSIGN_NAMES[@]}"})
+    _GCIA_SEG_AV=(${GCP_ASSIGN_VALUES[@]+"${GCP_ASSIGN_VALUES[@]}"})
     seg="$GCP_STRIPPED"
-    [ -n "$seg" ] || continue
 
     local base="$cd_target"
     [ -n "$base" ] || base="$cwd"
@@ -681,26 +1146,38 @@ _gcia_run() {
       *) continue ;;
     esac
 
-    if _gcia_maybe_config_set "$GCP_STRIPPED"; then
+    _gcia_analyze_segment "$GCP_STRIPPED" "$base"
+
+    if _gcia_maybe_config_set; then
       case "$_GCIA_CFGSET_KEY" in
         user.email) cfg_track_email="$_GCIA_CFGSET_VAL" ;;
         user.name) cfg_track_name="$_GCIA_CFGSET_VAL" ;;
       esac
+      cfg_track_dir="$_GCIA_TARGET_DIR"
       continue
     fi
+    case "$_GCIA_SUB" in
+      init) _gcia_init_dir; _GCIA_INIT_DIRS+=("$_GCIA_INIT_RESULT"); continue ;;
+      add) _gcia_note_add; continue ;;
+    esac
 
-    _gcia_analyze_segment "$GCP_STRIPPED" "$base"
     [ "$_GCIA_IS_TARGET" = "1" ] || continue
 
-    # m1: fold in a tracked earlier `git config user.email/name` SET only
-    # when this segment carries no explicit override of its own — an
-    # explicit -c/--author/env override on the commit segment itself
-    # always takes precedence, matching git's own last-wins semantics.
-    local eff_cfg_email="$_GCIA_CFG_EMAIL" eff_cfg_name="$_GCIA_CFG_NAME"
-    [ -n "$eff_cfg_email" ] || eff_cfg_email="$cfg_track_email"
-    [ -n "$eff_cfg_name" ] || eff_cfg_name="$cfg_track_name"
+    _gcia_effective_env
 
-    _gcia_evaluate "$_GCIA_TARGET_DIR" "$eff_cfg_email" "$eff_cfg_name" "$_GCIA_AUTHOR_VAL"
+    # A tracked earlier config SET folds in only when this segment carries
+    # no explicit -c of its own (git's last-wins) AND targets the repo the
+    # config was set in (r2-1, PR #67 review round 2, PROVEN: a set in repo
+    # A followed by `cd B && git commit` blocked B's commit).
+    local eff_cfg_email="$_GCIA_CFG_EMAIL" eff_cfg_name="$_GCIA_CFG_NAME" eff_label="-c user.email"
+    if [ -z "$eff_cfg_email" ] && [ -n "$cfg_track_email" ] && _gcia_same_repo "$cfg_track_dir" "$_GCIA_TARGET_DIR"; then
+      eff_cfg_email="$cfg_track_email"; eff_label="git config user.email"
+    fi
+    if [ -z "$eff_cfg_name" ] && [ -n "$cfg_track_name" ] && _gcia_same_repo "$cfg_track_dir" "$_GCIA_TARGET_DIR"; then
+      eff_cfg_name="$cfg_track_name"
+    fi
+
+    _gcia_evaluate "$_GCIA_TARGET_DIR" "$eff_cfg_email" "$eff_label" "$eff_cfg_name" "$_GCIA_AUTHOR_VAL"
     if [ "$_GCIA_VIOLATION" = "1" ]; then
       violation=1
       break
@@ -1076,6 +1553,125 @@ STUB
     echo "  m1 explicit commit-segment override wins over tracked config-set: PASS"; pass=$((pass+1))
   else
     echo "  m1 explicit commit-segment override wins over tracked config-set: FAIL (rc=$RC out=[$OUT])"; fail=$((fail+1))
+  fi
+
+  # ============================================================
+  # PR #67 review ROUND 2 — a pinned NEGATIVE (must allow) and POSITIVE
+  # (must still block) case for every fixed shape.
+  # ============================================================
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  git -C "$gr" config user.email "acct-work@example.test"
+  local NL=$'\n' okmail='Me <acct-work@example.test>'
+
+  _case() { # <label> <want-rc> <cmd> <cwd> [<grep-in-OUT>]
+    _run "$3" "$4"
+    if [ "$RC" = "$2" ] && { [ -z "${5:-}" ] || printf '%s' "$OUT" | grep -qF -- "$5"; }; then
+      echo "  $1: PASS"; pass=$((pass+1))
+    else
+      echo "  $1: FAIL (rc=$RC want=$2 out=[$OUT])"; fail=$((fail+1))
+    fi
+  }
+
+  # MAJOR-1 F1: heredoc-in-$(...) message quoting "git commit --author=..."
+  local f1body="fix: quoting${NL}${NL}See \"git commit --author=Someone <x@y.test>\" in the docs.${NL}EOF${NL})\""
+  _case "R2 MAJOR-1 F1 negative: quoted --author inside heredoc message is data (allow)" 0 \
+    "git commit --author=\"${okmail}\" -m \"\$(cat <<'EOF'${NL}${f1body}" "$gr"
+  _case "R2 MAJOR-1 F1 negative: same message, no override at all (allow)" 0 \
+    "git commit -m \"\$(cat <<'EOF'${NL}${f1body}" "$gr"
+  _case "R2 MAJOR-1 F1 positive: real --author AFTER the heredoc message still blocked" 2 \
+    "git commit -m \"\$(cat <<'EOF'${NL}${f1body} --author=\"X <wrong@example.test>\"" "$gr" "wrong@example.test"
+
+  # MAJOR-1 F4: `git commit -F - <<'EOF'` whose body mentions --author=
+  _case "R2 MAJOR-1 F4 negative: heredoc body mentioning --author= is data (allow)" 0 \
+    "git -c user.email=acct-work@example.test commit -F - <<'EOF'${NL}docs: explain --author=Foo <foo@example.test>${NL}EOF" "$gr"
+  _case "R2 MAJOR-1 F4 positive: real -c override on a heredoc-message commit blocked" 2 \
+    "git -c user.email=wrong@example.test commit -F - <<'EOF'${NL}body${NL}EOF" "$gr" "wrong@example.test"
+
+  # MAJOR-1 R1: ANSI-C $'...' holding git text (with \' escapes)
+  _case "R2 MAJOR-1 R1 negative: ANSI-C string holding git --author text is data (allow)" 0 \
+    "HD=\$'git commit --author=\"C <wrong@example.test>\" -m \"\$(cat <<\\'EOF\\'\\nx\\nEOF\\n)\"'${NL}echo \"\$HD\" && git -c user.email=acct-work@example.test commit -m x" "$gr"
+  _case "R2 MAJOR-1 R1 positive: ANSI-C message then a real --author mismatch blocked" 2 \
+    "git commit -m \$'line1\\nit\\'s line2' --author=\"X <wrong@example.test>\"" "$gr" "wrong@example.test"
+
+  # MAJOR-1 P1: same-command assignment expanded; unresolved -> unknown
+  _case "R2 MAJOR-1 P1 negative: E=<matching> && GIT_AUTHOR_EMAIL=\"\$E\" (allow)" 0 \
+    'E=acct-work@example.test && GIT_AUTHOR_EMAIL="$E" git commit -m x' "$gr"
+  _case "R2 MAJOR-1 P1 positive: E=<wrong> && GIT_AUTHOR_EMAIL=\"\$E\" blocked with the REAL value" 2 \
+    'E=wrong@example.test && GIT_AUTHOR_EMAIL="$E" git commit -m x' "$gr" "GIT_AUTHOR_EMAIL=wrong@example.test"
+  rm -f "$SIGNAL_LEDGER_PATH"
+  _run 'GIT_AUTHOR_EMAIL="$FROM_AN_EARLIER_CALL" git commit -m x' "$gr"
+  if [ "$RC" = "0" ] && grep -q 'not resolvable before the shell runs' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "  R2 MAJOR-1 unresolved \$VAR is UNKNOWN (allow + ledger warn), not a mismatch: PASS"; pass=$((pass+1))
+  else
+    echo "  R2 MAJOR-1 unresolved \$VAR is UNKNOWN (allow + ledger warn): FAIL (rc=$RC ledger=$(cat "$SIGNAL_LEDGER_PATH" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  _case "R2 MAJOR-1 escaped \\\" inside -m cannot expose --author text (allow)" 0 \
+    'git commit -m "x \" --author=a <b@example.test> \" y" --author="M <acct-work@example.test>"' "$gr"
+  _case "R2 command-scoped prefix on a NON-commit segment does not leak (allow)" 0 \
+    'GIT_AUTHOR_EMAIL=wrong@example.test git add f.txt && git commit -m x' "$gr"
+
+  # MAJOR-3: the harness's own review-record commits
+  rm -f "$SIGNAL_LEDGER_PATH"
+  _run 'GIT_AUTHOR_NAME="review-runner" GIT_AUTHOR_EMAIL="reviewer+sess-1@host-a" GIT_COMMITTER_NAME="review-runner" GIT_COMMITTER_EMAIL="reviewer+sess-1@host-a" git commit -q -m "review-record(rq-1): PASS on 1 file(s)" -- docs/reviews/records/2026-01-01-harness-change-review-abc.json docs/reviews/records/index.json 2>&1' "$gr"
+  if [ "$RC" = "0" ] && grep -q '"event":"skip"' "$SIGNAL_LEDGER_PATH" 2>/dev/null; then
+    echo "  R2 MAJOR-3 negative: reviewer+ identity on a records-only pathspec commit exempt (+ ledger skip): PASS"; pass=$((pass+1))
+  else
+    echo "  R2 MAJOR-3 negative: reviewer+ records-only pathspec exempt: FAIL (rc=$RC out=[$OUT] ledger=$(cat "$SIGNAL_LEDGER_PATH" 2>/dev/null))"; fail=$((fail+1))
+  fi
+  _case "R2 MAJOR-3 negative: reviewer+ identity, records staged by a git add in the same command (allow)" 0 \
+    'git add docs/reviews/records/r.json docs/reviews/records/index.json && GIT_AUTHOR_EMAIL=reviewer+s@h GIT_COMMITTER_EMAIL=reviewer+s@h git commit -m "review-record(x)"' "$gr"
+  _case "R2 MAJOR-3 positive: reviewer+ identity on a NON-records path blocked (names the runner)" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m x -- src/app.ts' "$gr" "review-runner.sh finalize"
+  _case "R2 MAJOR-3 positive: reviewer+ identity with records + one other path blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -m x -- docs/reviews/records/index.json README.md' "$gr" "reviewer+s@h"
+  _case "R2 MAJOR-3 positive: reviewer+ identity with commit -a blocked" 2 \
+    'GIT_AUTHOR_EMAIL=reviewer+s@h git commit -am x' "$gr" "reviewer+s@h"
+  _case "R2 MAJOR-3 positive: a NON-reviewer identity on a records-only commit still blocked" 2 \
+    'GIT_AUTHOR_EMAIL=wrong@example.test git commit -m x -- docs/reviews/records/index.json' "$gr" "wrong@example.test"
+
+  # m1-minor: pre-existing non-repo dir inside a GitHub checkout + git init
+  mkdir -p "$gr/scratch-sub"
+  _case "R2 m1 negative: cd existing-subdir && git init && -c commit fails open (throwaway repo)" 0 \
+    'cd scratch-sub && git init -q && git -c user.email=t@t.example commit --allow-empty -m base' "$gr"
+  _case "R2 m1 positive: same subdir WITHOUT git init is the enclosing repo -> blocked" 2 \
+    'cd scratch-sub && git -c user.email=wrong@example.test commit -m x' "$gr" "wrong@example.test"
+
+  # m5 / r2-1: a tracked `git config user.email` is scoped to ITS repo
+  _case "R2 r2-1 negative: config set in repo A, then cd B && commit -> not applied to B (allow)" 0 \
+    "git config user.email wrong@example.test && cd ${gr2} && git commit -m x" "$gr"
+  _case "R2 r2-1 positive: git -C B config user.email, then cd B && commit -> blocked, labelled as a config SET" 2 \
+    "git -C ${gr2} config user.email wrong@example.test && cd ${gr2} && git commit -m x" "$gr" "SET earlier in this same command"
+
+  # m4: block message carries the NL-FINDING-016 whole-command note
+  _case "R2 m4 block message states the ENTIRE command did not run" 2 \
+    'git add a.txt && git commit -m x --author="S <wrong@example.test>"' "$gr" "prevented the ENTIRE command from running"
+
+  # m2: short-circuit — no override + configured user.email = no gh calls
+  rm -f "$GIA_STATE_DIR"/*.txt "$GIA_STATE_DIR"/*.negative
+  calls="$tmp/calls-shortcircuit.txt"; : > "$calls"
+  RC=0
+  GCIA_CMD='git commit -m "plain"' GCIA_CWD="$gr" GIA_STUB_CALLS="$calls" bash "$SELF" >/dev/null 2>&1 || RC=$?
+  if [ "$RC" = "0" ] && [ ! -s "$calls" ]; then
+    echo "  R2 m2 plain commit with configured user.email short-circuits (zero gh calls): PASS"; pass=$((pass+1))
+  else
+    echo "  R2 m2 plain commit short-circuit: FAIL (rc=$RC calls=$(cat "$calls" 2>/dev/null))"; fail=$((fail+1))
+  fi
+
+  # m3: SSH host-alias remote resolves to its github.com owner (was fail-open)
+  if command -v ssh >/dev/null 2>&1; then
+    printf 'Host gh-alias-test\n  HostName github.com\nHost not-gh-alias\n  HostName git.example.test\n' > "$tmp/ssh_config"
+    local gra="$tmp/repo-alias" grn="$tmp/repo-alias-nongh"
+    mkdir -p "$gra" "$grn"
+    ( cd "$gra" && git init -q 2>/dev/null && git remote add origin "git@gh-alias-test:work-org/some-repo.git" 2>/dev/null && git config user.email "acct-work@example.test" )
+    ( cd "$grn" && git init -q 2>/dev/null && git remote add origin "git@not-gh-alias:work-org/some-repo.git" 2>/dev/null && git config user.email "x@example.test" )
+    export GHLIB_SSH_CONFIG="$tmp/ssh_config"
+    _case "R2 m3 positive: ssh host-alias remote (github-<alias>) enforced -> blocked" 2 \
+      'git -c user.email=wrong@example.test commit -m x' "$gra" "acct-work@example.test"
+    _case "R2 m3 negative: ssh alias to a NON-github host fails open (allow)" 0 \
+      'git -c user.email=wrong@example.test commit -m x' "$grn"
+    unset GHLIB_SSH_CONFIG
+  else
+    echo "  R2 m3 ssh-alias cases SKIPPED: no ssh binary on this machine"
   fi
 
   unset HARNESS_SELFTEST SIGNAL_LEDGER_PATH GHBLIND_ACCOUNTS GIA_GH_CMD GIA_STATE_DIR \

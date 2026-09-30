@@ -189,6 +189,95 @@ all fixes: 27/27 (gate) + 12/12 (identity lib) + 9/9 (account lib) = 48/48.
       files) and directly overlapping on one cited session (`dbe36e21`). Recorded in
       `fp_expectation`, replacing the self-test-only framing.
 
+## Review-Fix Round 2 (harness-reviewer REFORMULATE, record hcr-20260930-68fd4a0d)
+
+The record (`docs/reviews/records/2026-09-30-harness-change-review-68fd4a0d.json`) is
+cherry-picked onto this branch. Every finding below has a pinned NEGATIVE (must allow)
+and POSITIVE (must still block) self-test case, prefixed `R2` in the gate's suite. The
+suite run against the round-1 gate body (305d2e3c) fails 16 of the new cases, so they
+catch the round-1 defects rather than restating the new code.
+
+- [x] **MAJOR-1 (PROVEN, text-as-data read as identity overrides).** Four shapes were
+      rc=2 with no mismatching identity: F1 (a `-m "$(cat <<'EOF' ...)"` message quoting
+      `"git commit --author=..."`), F4 (`git commit -F - <<'EOF'` whose body mentions
+      `--author=`), R1 (an ANSI-C `$'...'` string holding git text), and P1
+      (`E=<matching> && GIT_AUTHOR_EMAIL="$E"`, where the literal `$E` was compared).
+      Fixes, in the gate:
+      - `$'...'` is decoded and re-emitted as ordinary single quotes.
+      - Here-doc BODIES are removed before splitting. Only a body whose terminator line
+        is present is removed.
+      - Assignment-only and `export` segments are substituted into later segments with
+        `gcp_subst_vars_var`.
+      - A value still holding `$` or a backtick is UNKNOWN. It gets a ledger warn and is
+        never treated as a mismatch.
+      - The flag walk stops at a `<<` token, a backtick, or an unbalanced `$(`.
+      - The shell-accurate tokenizer honours `\"` escapes.
+
+      One deliberate deviation from the reviewer's suggested fix: a token that holds a
+      BALANCED `$(...)`, or a newline, is SKIPPED as an opaque value rather than stopping
+      the walk. After the two whole-command normalizations, such a token can only be a
+      well-formed quoted value. Stopping at it would lose a real `--author=` placed AFTER
+      a multi-line message, and the R2 F1-positive case pins that such an `--author=` is
+      still blocked. A command-scoped prefix on a non-commit segment
+      (`GIT_AUTHOR_EMAIL=x git add f && git commit`) no longer leaks into the commit.
+- [x] **MAJOR-2 (PROVEN, section 10 FP RATE missing).** Re-ran the reviewer's classified
+      replay: the same 58 distinct identity-bearing commit-creating commands (from 12
+      transcripts, extracted by the reviewer's `extract.js`), fed through the round-2
+      gate as real PreToolUse payloads. The replay results:
+      - **18 blocked, all on-target, and 0 off-target**, so the FP rate is 0/58 (0.0%).
+        In round 1 it was 4/58 (6.9%), with 4 of 9 blocks off-target.
+      - The 18 on-target blocks break down as follows. 4 are `-c user.email=<session-context
+        email>` commits on a downstream worktree. 14 are `-c user.email=<AI-vendor noreply
+        address>` commits and merges in downstream worktrees. 13 of those 14 were FALSE NEGATIVES in
+        round 1, because `W=<dir>; cd "$W"` targets were left unresolved and therefore
+        failed open. The MAJOR-1 variable substitution closed that gap.
+      - 40 were allowed. One of the 40 (a `-c user.email=<session-context email>` commit)
+        is golden-class but unjudgeable in replay, because its target worktree no longer
+        exists and so the check fails open.
+      - HONEST CAVEAT: these fixes were written while looking at this same corpus. The 4
+        rows fixed are closed by general mechanisms (normalization, substitution, the
+        records exemption), not by special cases, but a fresh corpus is the stronger test.
+      - The per-row output is `replay-r2.tsv` in the round-2 author's scratchpad. It is
+        not committed, because it holds transcript text.
+- [x] **MAJOR-3 (PROVEN, blocked the harness's own review-record commits).** A commit is
+      exempt when both of these hold:
+      - every RESOLVED identity override has the `reviewer+<...>@<...>` shape that
+        `review-runner.sh` finalize stamps (A1);
+      - the content is records-only, meaning every path is `docs/reviews/records/<file>`.
+        This is judged from the commit's own `-- <pathspec>`, or else from the staged
+        index plus any `git add` earlier in the same command. `-a`, a wildcard add, and
+        an unresolved path each disqualify.
+
+      Every exemption is logged as a ledger `skip`. A `reviewer+` identity on anything
+      else is still blocked, and the FIX line then names `review-runner.sh finalize`. The
+      runner bug that forces the manual fallback (the writer's stdout captured with
+      `2>&1`, `review-runner.sh:~326`) is out of this PR's scope and remains on
+      origin/master.
+- [x] **Minors.** Each item below was fixed and pinned by a self-test:
+      - m2: a plain commit with no override and a configured `user.email` short-circuits
+        on one `git config --get`. Measured best of 5, from the round-1 gate to this one:
+        - a plain commit went from 2240 to 892 ms;
+        - a non-git call with a verb in its description went from 704 to 177 ms, after a
+          `*git*` raw prefilter was added;
+        - a plain commit on the unmapped-owner repo went from 2102 to 814 ms.
+
+        The unmapped-owner ledger warn is deduped to once per owner per day (lib S11).
+      - m1: a directory that this same command `git init`s fails open, like any throwaway
+        repo.
+      - m3: SSH host-alias remotes (`git@github-<alias>:owner/repo`) resolve through
+        `ssh -G`, and are enforced only when the effective HostName is github.com (lib
+        L10-L13, gate R2 m3).
+      - m4: the block message carries the NL-FINDING-016 note that the ENTIRE command did
+        not run. A tracked config set is labelled `git config user.email` and named as a
+        SET earlier in the same command.
+      - m5/r2-1: a tracked `git config user.email` applies only to a commit in the same
+        repo, compared by normalized path, then by `--show-toplevel`. `git -C <dir>
+        config ...` is now parsed.
+
+      Two items are named residuals rather than fixes:
+      - m5: a `git config user.email` set in a SEPARATE, earlier Bash call is not seen.
+      - m6 (HYPOTHESIZED): the gh-API rung ignores primary-email visibility.
+
 ## Files to Modify/Create
 - `adapters/claude-code/hooks/gh-commit-author-identity-gate.sh` — new PreToolUse gate.
 - `adapters/claude-code/hooks/lib/gh-commit-identity-lib.sh` — new resolution library.

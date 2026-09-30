@@ -224,8 +224,39 @@ command) is invisible to this gate by construction; `bash -c '...git commit...'`
 nested shell command is not recursively re-parsed); `git --config-env=user.email=VAR`
 (the effective value lives in an arbitrarily-named env var this hook cannot generally
 observe); and git's `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_N`/`GIT_CONFIG_VALUE_N` indexed
-config-injection mechanism. Self-test: `bash hooks/gh-commit-author-identity-gate.sh
---self-test` (27/27) + `bash hooks/lib/gh-commit-identity-lib.sh --self-test` (12/12) +
-`bash hooks/lib/gh-account-lib.sh --self-test` (9/9).
+config-injection mechanism.
+
+**Round 2 (harness-reviewer REFORMULATE, record hcr-20260930-68fd4a0d):**
+- **Text is data.** Commit-message and here-doc text, ANSI-C `$'...'` strings, and
+  escaped quotes are never read as identity flags.
+- **Values are resolved or unknown.** Same-command assignments (`E=x && GIT_AUTHOR_EMAIL="$E"`)
+  are substituted before comparison. A value that is only knowable at runtime (`$VAR` set in
+  an earlier call, `$(...)`) is UNKNOWN: it is logged as a ledger `warn` and never blocked.
+- **The harness's own review-record commits pass.** They must be made under the
+  `reviewer+<session>@<host>` identity that `review-runner.sh` finalize stamps, and every
+  committed path must be `docs/reviews/records/<file>`. They are exempt and logged as a
+  ledger `skip`. Use a `reviewer+` identity for anything else and it is blocked.
+- **A plain commit is cheap.** With no override and a configured `user.email`, the gate runs
+  one `git config --get` and stops.
+- **SSH host aliases are enforced.** A `git@github-<alias>:owner/repo` remote is resolved
+  through `ssh -G`.
+- **A throwaway repo fails open.** That means a repo the same command `git init`s.
+- **A config SET stays with its repo.** A `git config user.email` SET applies only to a later
+  commit in the same repo.
+- **The block message says nothing ran.** It states that the ENTIRE command did not run.
+
+**Measured FP rate:** 0/58 off-target blocks on a classified transcript replay. It was 4/58
+in round 1. The figures and method are in the manifest entry's `fp_expectation`.
+
+**Further named residuals:**
+- A `git config user.email` set in a SEPARATE earlier call is not seen.
+- A real `--author=` placed after an unbalanced `$(`, a backtick, or a here-doc operator is
+  not seen.
+- The gh-API rung ignores primary-email visibility (HYPOTHESIZED).
+
+**Self-test:**
+- `bash hooks/gh-commit-author-identity-gate.sh --self-test` (53/53)
+- `bash hooks/lib/gh-commit-identity-lib.sh --self-test` (13/13)
+- `bash hooks/lib/gh-account-lib.sh --self-test` (13/13)
 
 **Why:** incident 2026-06-18 — a silent git-auth failure produced a stale checkout that deployed with a green "success" result, masking that the intended commit never actually reached production. The preflight script exists specifically to catch this class of failure before it recurs.
