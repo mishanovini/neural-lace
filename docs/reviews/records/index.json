@@ -851,6 +851,21 @@
     },
     {
       "path": "adapters/claude-code/hooks/gh-commit-author-identity-gate.sh",
+      "blob_sha": "56078eb675f622126d310317ebc3dfaf43c52d42",
+      "record_id": "hcr-20260930-4bbe06a7",
+      "kind": "harness-change-review",
+      "verdict": "REFORMULATE",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-09-30T07:15:06Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "a1f0cc23-5ec2-4614-8133-d0938ac608af"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "adapters/claude-code/hooks/gh-commit-author-identity-gate.sh",
       "blob_sha": "a0b6af420ae89fd999a1e4b2082613de62aafcb5",
       "record_id": "hcr-20260930-68fd4a0d",
       "kind": "harness-change-review",
@@ -1190,6 +1205,21 @@
       "independence": null
     },
     {
+      "path": "adapters/claude-code/hooks/lib/gh-account-lib.sh",
+      "blob_sha": "5c829ec1a683c7691f7a0995f7e9104e7210de65",
+      "record_id": "hcr-20260930-4bbe06a7",
+      "kind": "harness-change-review",
+      "verdict": "REFORMULATE",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-09-30T07:15:06Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "a1f0cc23-5ec2-4614-8133-d0938ac608af"
+      },
+      "independence": "pathway"
+    },
+    {
       "path": "adapters/claude-code/hooks/lib/gh-commit-identity-lib.sh",
       "blob_sha": "3c59be94b82300006e96cd4e35e17a50c24235ad",
       "record_id": "hcr-20260930-68fd4a0d",
@@ -1197,6 +1227,21 @@
       "verdict": "REFORMULATE",
       "reviewer": "harness-reviewer",
       "created_at": "2026-09-30T03:54:09Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "a1f0cc23-5ec2-4614-8133-d0938ac608af"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/gh-commit-identity-lib.sh",
+      "blob_sha": "59ec432164450d5d9bdffd4b1d55ec1e40d6b83a",
+      "record_id": "hcr-20260930-4bbe06a7",
+      "kind": "harness-change-review",
+      "verdict": "REFORMULATE",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-09-30T07:15:06Z",
       "reviewer_principal": {
         "hostname": "Office_PC",
         "account": "mishanovini@users.noreply.github.com",
@@ -3260,6 +3305,21 @@
         "hostname": "Office_PC",
         "account": "mishanovini",
         "session_id": "4a470c8c-e5e4-49bb-a8f8-131206e35b58"
+      },
+      "independence": "pathway"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "d8c498ce603e89bb12c5cbeea4d166c254192d44",
+      "record_id": "hcr-20260930-4bbe06a7",
+      "kind": "harness-change-review",
+      "verdict": "REFORMULATE",
+      "reviewer": "harness-reviewer",
+      "created_at": "2026-09-30T07:15:06Z",
+      "reviewer_principal": {
+        "hostname": "Office_PC",
+        "account": "mishanovini@users.noreply.github.com",
+        "session_id": "a1f0cc23-5ec2-4614-8133-d0938ac608af"
       },
       "independence": "pathway"
     },

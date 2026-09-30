@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260930-4bbe06a7",
+  "created_at": "2026-09-30T07:15:06Z",
+  "verdict": "REFORMULATE",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-opus",
+  "plan_ref": "docs/plans/gh-commit-author-identity-2026-09-27.md",
+  "change_ref": {
+    "commit_sha": "5e0df231c1ae371d33c3f995f0c6c259a57b2a31",
+    "branch": "HEAD"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/gh-commit-author-identity-gate.sh",
+      "blob_sha": "56078eb675f622126d310317ebc3dfaf43c52d42"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/gh-account-lib.sh",
+      "blob_sha": "5c829ec1a683c7691f7a0995f7e9104e7210de65"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/gh-commit-identity-lib.sh",
+      "blob_sha": "59ec432164450d5d9bdffd4b1d55ec1e40d6b83a"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "d8c498ce603e89bb12c5cbeea4d166c254192d44"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "REFORMULATE -- every round-2 fix re-verifies (all golden forms + merge/cherry-pick/rebase/am/revert/pull/commit-tree block; F1/F4/R1/P1 now allow and F1/F4/P1 still rc=2 on the round-1 body; reviewer+ records-only commits exempt; throwaway repos fail open; cross-account blocks via live gh-api:MishaPT; plain commit ~0.85s; 53+13+13 self-tests green), but round 2 introduced one new defect: the opaque-token sentinel leaks into the --author value, so `git commit --author \"$(...)\"` is BLOCKED with WHAT `--author=__GCIA_OPAQUE__` while the glued `--author=\"$(...)\"` is allowed with no ledger warn -- both contradict the honest_status claim that a runtime-only value is UNKNOWN (ledger warn, never blocked).",
+    "findings_summary": "MAJOR-1 (PROVEN, new in round 2, gate.sh:686 + :710 + :915-923): _gcia_analyze_segment replaces a balanced-$( token with the literal sentinel __GCIA_OPAQUE__; the separated `--author` branch (:710) then takes that sentinel as the author value, _gcia_unresolved does not match it (no $), a_email stays empty, and the unparseable-author fail-closed path blocks. Repro (throwaway + Circuit worktree, sandboxed ledger/cache): git commit --author \"$(git log -1 --format=%an <%ae> abc123)\" -m x -> rc=2, WHAT \"sets identity via --author=__GCIA_OPAQUE__\"; the FIX line (drop the override) does not describe the command. The glued form --author=\"$(...)\" -> rc=0 with NO ledger warn (the opaque token is skipped before --author is ever seen), so note 4 / honest_status \"a value only knowable at runtime is UNKNOWN: ledger warn, never blocked\" is false in both directions for $(...). Corpus frequency: 0 hits for the separated shape in ~/.claude/projects outside this review session, so the live FP rate is ~0, but the diagnostic is wrong and no negative self-test pins the shape. Fix: in phase 2, when --author (or --author=) is followed by / holds an opaque or unresolved value, record it as UNKNOWN (ledger warn) instead of as the value; add a negative self-test for both the separated and glued $(...) forms and a positive one for a separated literal mismatch. Class: sentinel/placeholder values flowing into identity comparisons -- sweep every consumer of _GCIA_ARGS (--author, config set, init dir, add paths) for __GCIA_OPAQUE__ handling. MINOR-1 (PROVEN): records-only exemption over-accepts: `commit -i -- docs/reviews/records/a.json` with a non-record file staged -> rc=0 (git -i also commits the index), and `-- evil/docs/reviews/records/x.sh` -> rc=0 (the */docs/reviews/records/* arm matches any nested dir). HYPOTHESIZED siblings: --pathspec-from-file, -o. Impact limited to attributing non-record content to a synthetic reviewer+ identity. Fix: treat -i/--include/--pathspec-from-file as not-records-only and anchor the path to the repo-root records dir. MINOR-2: bash 3.2 not runnable here; grep found no bash-4-isms. VERIFIED OK: remedy chain (no other gate blocks the FIX/ACK shapes; NL-FINDING-016 note present); settings.json.template wiring shares the Bash matcher with gh-account-autoswitch but reads account-specific tokens (gh auth token -u), so there is no ordering race; active gh account stayed MishaPT. UNCOVERED after this record: settings.json.template (2d413416, no record, no live queue item) and scripts/blocking-budget-check.js (377ef1d2, REFORMULATE only, no live queue item; its comment still says the gate fires only on git-commit-shaped commands)."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "a1f0cc23-5ec2-4614-8133-d0938ac608af"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
