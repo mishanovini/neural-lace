@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "kind": "harness-change-review",
+  "record_id": "hcr-20260930-68fd4a0d",
+  "created_at": "2026-09-30T03:54:09Z",
+  "verdict": "REFORMULATE",
+  "reviewer": "harness-reviewer",
+  "reviewer_model": "claude-opus",
+  "plan_ref": "docs/plans/gh-commit-author-identity-2026-09-27.md",
+  "change_ref": {
+    "commit_sha": "305d2e3cd800c5f81a7136e05e24f35df82cacf6",
+    "branch": "HEAD"
+  },
+  "covered_files": [
+    {
+      "path": "adapters/claude-code/hooks/gh-commit-author-identity-gate.sh",
+      "blob_sha": "a0b6af420ae89fd999a1e4b2082613de62aafcb5"
+    },
+    {
+      "path": "adapters/claude-code/hooks/lib/gh-commit-identity-lib.sh",
+      "blob_sha": "3c59be94b82300006e96cd4e35e17a50c24235ad"
+    },
+    {
+      "path": "adapters/claude-code/manifest.json",
+      "blob_sha": "3f13223ab38de0611c3f6a00ebbb1189140968dd"
+    },
+    {
+      "path": "adapters/claude-code/scripts/blocking-budget-check.js",
+      "blob_sha": "377ef1d2dd06f1d76c5507e7ab73754d2f43677c"
+    }
+  ],
+  "dispatch_evidence": {
+    "transcript_ref": "",
+    "verdict_quote": "REFORMULATE -- the gate has real teeth (all 8 golden forms and all 6 non-commit verbs block; no-remote/mktemp/local-remote/-C-nonexistent fail open; 27+12+9 self-tests green; token never leaks), but it blocks commands that carry no mismatching identity (heredoc/$(...)/ANSI-C message text and $VAR values parsed as overrides, with a false WHAT line), its fp_expectation is a candidate count rather than the constitution-10 FP rate (my classified replay: 4 of 9 blocks off-target), and it blocks the harness's own reviewer+<sid>@<host> record-commit identity without acknowledging it.",
+    "findings_summary": "MAJOR-1 (PROVEN, text-as-data parsed as identity override): rc=2 on commands with no mismatching identity. F1: git commit -m \"$(cat <<'EOF' ...)\" whose body contains a double-quoted \"git commit --author=Someone <x@y.test>\" (dq parity flips). F4: git commit -F - <<'EOF' body mentioning --author=Foo (heredoc body stays inside the segment and phase-2 tokenizes it). Replay row 1: an ANSI-C $'...' string holding git text. P1: E=<matching email> && GIT_AUTHOR_EMAIL=\"$E\" git commit blocked because literal \"$E\" is compared. The WHAT line asserts an override that does not exist and FIX (drop the override) is inapplicable; no negative self-test covers any of these. Fix: stop the --author scan at a << token and at newline-bearing or $( tokens; expand same-command assignments with the existing gcp_subst_vars_var; treat an unresolved $VAR as unknown rather than a mismatch; add a negative self-test per shape. MAJOR-2 (PROVEN, constitution-10 FP rate missing): fp_expectation reports 22 candidate lines, not a rate. Classified replay of ~/.claude/projects: 58 distinct identity-bearing commit-creating commands (12 files) -> 9 blocked: 5 golden-class (4x session-context email -c user.email on a pt-leads worktree, 1x noreply@anthropic.com merge in Circuit), 4 off-target (3 review-record commits, 1 text-as-data); 49 allowed. Record a classified rate. MAJOR-3 (PROVEN, conflict with review-runner A1 identity stamping): 3 replayed commands in neural-lace are the manual finalize fallback committing records as reviewer+<sid>@<host> (the identity review-runner.sh:385-387 stamps so harness-doctor review-reviewer-independence does not RED). The gate blocks them. Its FIX yields a record authored by the reviewed commit's identity (doctor RED), and the ACK needs in-conversation user say-so that an unattended reviewer lacks. The runner bug behind that fallback (writer captured with 2>&1, review-runner.sh:326) is still on origin/master. Fix: exempt records-only pathspecs carrying the reviewer+ shape, or name the runner as the remedy in the block message and honest_status. MINOR: (m1) a pre-existing non-repo dir inside a GitHub repo, as in cd dir && git init && git -c user.email=t@t commit, is judged against the enclosing repo (rc=2, PROVEN). (m2) latency: a plain no-override commit costs 1.7-2.8s because resolution runs with nothing to check; the M3 ledger warn alone is ~0.7s per commit and not deduped. Non-git calls whose description or cwd contains a verb substring cost ~450-520ms vs ~150-185ms. Fix: short-circuit when no override is present and user.email is configured. (m3) SSH host-alias remotes (git@github-<alias>:owner/repo) fail open with no warn, an unnamed residual (PROVEN). (m4) The block message lacks pre-commit-gate.sh:47's NL-FINDING-016 whole-command-did-not-run note, and it labels a tracked git config user.email set as \"-c user.email\". (m5) Prior r2-1 re-verified: a config set in another dir, followed by cd, blocks the repo commit. A separate-call git config user.email is still unnamed. (m6, HYPOTHESIZED) the gh-API rung ignores primary-email visibility, so a private primary email could force GH007 push rejections. Dormant here: MishaPT's primary is public and equals Circuit's config; mishanovini's token lacks user scope. VERIFIED OK: M2 budget 16/14 at base and head (17/14 without the UNIT_MAP row); no bash-4-isms (bash 3.2 not runnable here); fail-open-on-crash posture (only exit 2 blocks); no remedy-chain deadlock (no other PreToolUse gate blocks git config user.email or the ACK prefix)."
+  },
+  "written_by": "orchestrator via write-review-record.sh",
+  "reviewer_principal": {
+    "hostname": "Office_PC",
+    "account": "mishanovini@users.noreply.github.com",
+    "session_id": "a1f0cc23-5ec2-4614-8133-d0938ac608af"
+  },
+  "independence": "pathway",
+  "payload": {}
+}
